@@ -96,6 +96,8 @@ impl Config {
         // Make relative paths absolute
         config.resolve_paths();
 
+        config.load_secret_file()?;
+
         // Validate the final configuration
         config.validate()?;
 
@@ -150,6 +152,19 @@ impl Config {
             path: path.to_path_buf(),
             source: e,
         })
+    }
+
+    fn load_secret_file(&self) -> Result<()> {
+        match dotenvy::from_path(&self.secret_file) {
+            Ok(_) => Ok(()),
+            Err(dotenvy::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(())
+            }
+            Err(source) => Err(Error::LoadSecretFile {
+                path: PathBuf::from(&self.secret_file),
+                source,
+            }),
+        }
     }
 
     /// Apply CLI flags to config
