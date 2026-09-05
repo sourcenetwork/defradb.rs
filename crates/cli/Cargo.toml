@@ -131,6 +131,8 @@ otel = ["telemetry/otlp"]
 
 [dev-dependencies]
 cid.workspace = true
+tokio = { workspace = true, features = ["process"] }
+rcgen = "0.13"
 toml = "0.9"
 tempfile = "3.17"
 portpicker = "0.1"
