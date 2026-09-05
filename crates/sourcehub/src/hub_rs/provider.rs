@@ -58,6 +58,10 @@ impl HubRsProvider {
                 .await
                 .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
         );
+        light_client
+            .wait_for_height(1, tuning.receipt_timeout)
+            .await
+            .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
         let client = HubRsClient::new(rpc_url, tuning.request_timeout, tuning.receipt_timeout)
@@ -183,20 +187,16 @@ impl HubRsProvider {
     }
 
     async fn query_policy_raw(&self, policy_id: &str) -> Result<Option<String>, ProviderError> {
-        let call = IAcp::getPolicyCall {
-            policyId: Self::policy_id_to_bytes32(policy_id),
-        };
-        let calldata = Bytes::from(call.abi_encode());
-        let result = self
-            .guarded_eth_call(|| self.client.eth_call(ACP_ADDRESS, calldata.clone()))
-            .await?;
-        let bytes = IAcp::getPolicyCall::abi_decode_returns(&result)
-            .map_err(|e| ProviderError::Query(format!("ABI decode: {}", e)))?;
-        if bytes.is_empty() {
+        let record = self
+            .light_client
+            .read_policy(policy_id)
+            .await
+            .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))?;
+        let Some(bytes) = record.value.as_deref() else {
             return Ok(None);
-        }
-        let record: HubRsPolicyRecord = serde_json::from_slice(&bytes)
-            .map_err(|e| ProviderError::Query(format!("policy JSON: {}", e)))?;
+        };
+        let record: HubRsPolicyRecord = serde_json::from_slice(bytes)
+            .map_err(|e| ProviderError::Query(format!("policy JSON: {e}")))?;
         Ok(record.raw_policy)
     }
 
@@ -280,6 +280,20 @@ fn is_nonce_error(error: &ClientError) -> bool {
 #[derive(Deserialize)]
 struct HubRsPolicyRecord {
     raw_policy: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HubRsRelationshipRecord {
+    archived: bool,
+}
+
+fn relationship_is_active(value: Option<&[u8]>) -> Result<bool, ProviderError> {
+    let Some(bytes) = value else {
+        return Ok(false);
+    };
+    let record: HubRsRelationshipRecord = serde_json::from_slice(bytes)
+        .map_err(|e| ProviderError::Query(format!("relationship JSON: {e}")))?;
+    Ok(!record.archived)
 }
 
 impl Drop for HubRsProvider {
@@ -619,10 +633,10 @@ impl SourceHubProvider for HubRsProvider {
             );
             let result = self
                 .light_client
-                .check_access(policy_id, &storage_key)
+                .read_relationship(policy_id, &storage_key)
                 .await
                 .map_err(|e| ProviderError::Query(format!("light client: {}", e)))?;
-            if result.allowed {
+            if relationship_is_active(result.value.as_deref())? {
                 return Ok(true);
             }
 
@@ -632,10 +646,10 @@ impl SourceHubProvider for HubRsProvider {
             );
             let result = self
                 .light_client
-                .check_access(policy_id, &wildcard_key)
+                .read_relationship(policy_id, &wildcard_key)
                 .await
                 .map_err(|e| ProviderError::Query(format!("light client: {}", e)))?;
-            if result.allowed {
+            if relationship_is_active(result.value.as_deref())? {
                 return Ok(true);
             }
         }
@@ -711,16 +725,16 @@ impl SourceHubProvider for HubRsProvider {
 
         let decision = self
             .light_client
-            .check_access_decision(&decision_id)
+            .read_access_decision(&decision_id)
             .await
             .map_err(|e| ProviderError::Query(format!("light client decision check: {}", e)))?;
         tracing::info!(
             decision_id = %decision_id,
-            allowed = decision.allowed,
+            present = decision.value.is_some(),
             verified_height = decision.verified_at_height,
             "hub.rs light client access decision lookup result"
         );
-        if !decision.allowed {
+        if decision.value.is_none() {
             return Err(ProviderError::Query(format!(
                 "access decision {} not visible after confirmation",
                 decision_id
@@ -768,6 +782,21 @@ mod tests {
             assert!(
                 matches!(error, ProviderError::Config(ref message) if message.contains("trusted consensus key"))
             );
+        }
+    }
+
+    #[test]
+    fn relationship_proofs_require_an_explicit_active_state() {
+        assert!(!relationship_is_active(None).unwrap());
+        assert!(relationship_is_active(Some(br#"{"archived":false}"#)).unwrap());
+        assert!(!relationship_is_active(Some(br#"{"archived":true}"#)).unwrap());
+        for value in [
+            b"{}".as_slice(),
+            br#"{"archived":"false"}"#,
+            b"null",
+            b"invalid",
+        ] {
+            assert!(relationship_is_active(Some(value)).is_err());
         }
     }
 

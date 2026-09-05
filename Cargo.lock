@@ -54,7 +54,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=456b3384ab2f7b3c02880ed67bb41c57b3c9200a#456b3384ab2f7b3c02880ed67bb41c57b3c9200a"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=7d0767d1a7c2bc51f29a652533e9a1b15a2efede#7d0767d1a7c2bc51f29a652533e9a1b15a2efede"
 dependencies = [
  "alloy-primitives",
  "commonware-codec",
@@ -6817,6 +6817,7 @@ dependencies = [
 name = "integration-test"
 version = "0.1.0"
 dependencies = [
+ "acp 0.5.0",
  "anyhow",
  "base64 0.22.1",
  "chrono",
@@ -6839,6 +6840,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde_json",
  "serial_test",
+ "sourcehub",
  "tempfile",
  "tokio",
 ]

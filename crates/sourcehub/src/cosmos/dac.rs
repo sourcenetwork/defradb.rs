@@ -201,15 +201,15 @@ impl DocumentACP for SourceHubDocumentACP {
         resource_name: &str,
         doc_id: &str,
     ) -> Result<bool> {
-        // Unregistered docs are public
-        let (is_registered, _owner) = self
-            .provider
-            .query_object_owner(policy_id, resource_name, doc_id)
-            .await
-            .map_err(provider_err)?;
-
-        if !is_registered {
-            return Ok(true);
+        if self.provider.unregistered_documents_are_public() {
+            let (is_registered, _owner) = self
+                .provider
+                .query_object_owner(policy_id, resource_name, doc_id)
+                .await
+                .map_err(provider_err)?;
+            if !is_registered {
+                return Ok(true);
+            }
         }
 
         let actor_did = match identity.did() {

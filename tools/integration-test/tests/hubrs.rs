@@ -8,3 +8,5 @@ mod p2p_acp;
 mod policy_lifecycle;
 #[path = "hubrs/smoke.rs"]
 mod smoke;
+#[path = "hubrs/verified_records.rs"]
+mod verified_records;

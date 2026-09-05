@@ -162,6 +162,10 @@ fn resolve_cosmos_bearer_token(
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SourceHubProvider for CosmosProvider {
+    fn unregistered_documents_are_public(&self) -> bool {
+        true
+    }
+
     fn authorized_account(&self) -> String {
         self.signer.address()
     }

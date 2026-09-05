@@ -47,6 +47,11 @@ pub enum ProviderError {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait SourceHubProvider: MaybeSendSync {
+    /// Whether missing registration permits access without evaluating the policy.
+    fn unregistered_documents_are_public(&self) -> bool {
+        false
+    }
+
     fn authorized_account(&self) -> String;
 
     async fn create_bearer_token(&self, did: &str) -> Result<String, ProviderError>;

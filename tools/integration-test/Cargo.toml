@@ -135,6 +135,8 @@ ctor = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
+acp = { path = "../../crates/acp" }
+sourcehub = { path = "../../crates/sourcehub" }
 tempfile = "3.17"
 libc = "0.2"
 identity = { path = "../../crates/identity" }
