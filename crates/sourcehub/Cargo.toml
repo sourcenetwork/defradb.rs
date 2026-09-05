@@ -68,13 +68,11 @@ alloy-rlp.workspace = true
 bs58.workspace = true
 
 # ACP light client (proof-validated cache)
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "e0c42841f212119a385ee6c10465c3afe6fc62d4" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "456b3384ab2f7b3c02880ed67bb41c57b3c9200a" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true
 prost.workspace = true
-tonic.workspace = true
-tonic-prost.workspace = true
 tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]

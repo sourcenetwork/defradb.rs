@@ -542,6 +542,11 @@ pub struct AcpConfig {
     #[serde(default)]
     pub hub_rs_address: String,
 
+    /// Trusted Vera consensus public key from operator configuration (hex).
+    #[cfg(feature = "sourcehub")]
+    #[serde(default)]
+    pub vera_consensus_key: String,
+
     /// Circuit breaker failure threshold before tripping. Default: 3.
     #[serde(default = "default_acp_cb_threshold")]
     pub circuit_breaker_threshold: u32,
@@ -596,6 +601,8 @@ impl Default for AcpConfig {
             sourcehub_chain_id: String::new(),
             #[cfg(feature = "sourcehub")]
             hub_rs_address: String::new(),
+            #[cfg(feature = "sourcehub")]
+            vera_consensus_key: String::new(),
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),
             request_timeout: default_acp_request_timeout(),

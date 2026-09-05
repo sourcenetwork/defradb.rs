@@ -40,6 +40,8 @@ fn cli_with_defaults() -> Cli {
         source_hub_chain_id: None,
         #[cfg(feature = "sourcehub")]
         hub_rs_address: None,
+        #[cfg(feature = "sourcehub")]
+        vera_consensus_key: None,
         secret_file: None,
         no_telemetry: None,
         development: None,
@@ -436,4 +438,19 @@ fn test_config_serialization_roundtrip() {
         deserialized.embedding.api_key_env
     );
     assert_eq!(original.keyring.backend, deserialized.keyring.backend);
+}
+
+#[cfg(feature = "sourcehub")]
+#[test]
+fn vera_consensus_key_survives_config_and_cli_override() {
+    use clap::Parser as _;
+    let mut config = Config::default();
+    config.acp.vera_consensus_key = "configured-key".into();
+    let encoded = toml::to_string(&config).expect("serialize config");
+    let mut config: Config = toml::from_str(&encoded).expect("deserialize config");
+    assert_eq!(config.acp.vera_consensus_key, "configured-key");
+    let cli = Cli::try_parse_from(["defra", "--vera-consensus-key", "operator-key", "version"])
+        .expect("parse trusted key flag");
+    config.apply_cli_flags(&cli).expect("apply config override");
+    assert_eq!(config.acp.vera_consensus_key, "operator-key");
 }

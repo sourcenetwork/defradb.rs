@@ -47,13 +47,14 @@ fn derive_ws_url(rpc_url: &str) -> String {
 impl HubRsProvider {
     pub async fn new(
         rpc_url: String,
+        trusted_consensus_key: &str,
         private_key: &[u8],
         tuning: &AcpTuning,
         event_bus: Option<Arc<dyn Bus>>,
     ) -> Result<Self, ProviderError> {
         let ws_url = derive_ws_url(&rpc_url);
         let light_client = Arc::new(
-            AcpLightClient::new(&rpc_url, &ws_url, 10)
+            AcpLightClient::new(&rpc_url, &ws_url, trusted_consensus_key, 10)
                 .await
                 .map_err(|e| ProviderError::Config(format!("light client: {}", e)))?,
         );
@@ -750,6 +751,25 @@ mod tests {
     use super::*;
     use crypto::PrivateKey;
     use identity::Identity;
+
+    #[tokio::test]
+    async fn trusted_consensus_key_is_required_before_connecting() {
+        for key in ["", "not-hex", "00"] {
+            let error = HubRsProvider::new(
+                "http://127.0.0.1:1".into(),
+                key,
+                &[],
+                &AcpTuning::default(),
+                None,
+            )
+            .await
+            .err()
+            .expect("invalid key must reject configuration");
+            assert!(
+                matches!(error, ProviderError::Config(ref message) if message.contains("trusted consensus key"))
+            );
+        }
+    }
 
     fn store_remote_secp256r1_identity(did: &str) {
         let private_key = crypto::generate_secp256r1().expect("should generate secp256r1 key");

@@ -251,6 +251,10 @@ impl Config {
         if let Some(ref addr) = cli.hub_rs_address {
             self.acp.hub_rs_address = addr.clone();
         }
+        #[cfg(feature = "sourcehub")]
+        if let Some(ref key) = cli.vera_consensus_key {
+            self.acp.vera_consensus_key = key.clone();
+        }
 
         Ok(())
     }

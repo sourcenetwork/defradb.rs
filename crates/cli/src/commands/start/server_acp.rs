@@ -134,6 +134,7 @@ impl Node {
             let provider = Arc::new(
                 sourcehub::HubRsProvider::new(
                     config.acp.hub_rs_address.clone(),
+                    &config.acp.vera_consensus_key,
                     signer_key_bytes,
                     &tuning,
                     Some(event_bus),

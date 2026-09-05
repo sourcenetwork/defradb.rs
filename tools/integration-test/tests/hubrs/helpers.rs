@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use commonware_codec::Encode as _;
+
 use identity::{Identity, IdentityKeyType, RawIdentity};
 use integration_test::{BinarySource, TestCluster, TestIdentity};
 
@@ -31,6 +33,7 @@ const GET_POLICY_SELECTOR: &str = "a3f685f9";
 pub async fn start_hub_cluster() -> hub_harness::cluster::TestCluster {
     let cluster = hub_harness::cluster::TestCluster::builder()
         .nodes(1)
+        .seed(0)
         .build()
         .await
         .expect("start hub.rs cluster");
@@ -53,9 +56,17 @@ pub async fn build_defra_with_hub_rs(
     p2p: bool,
 ) -> TestCluster {
     let previous_address = std::env::var_os("DEFRA_HUB_RS_ADDRESS");
+    let keys = hub_harness::cluster::KeySet::builder()
+        .nodes(1)
+        .seed(0)
+        .build()
+        .expect("bootstrap keys");
+    let trusted_key = hex::encode(keys.epoch_info().output.public().public().encode());
+    let previous_key = std::env::var_os("DEFRA_VERA_CONSENSUS_KEY");
     let previous_type = std::env::var_os("DEFRA_ACP_DOCUMENT_TYPE");
     unsafe {
         std::env::set_var("DEFRA_HUB_RS_ADDRESS", hub_rpc_url);
+        std::env::set_var("DEFRA_VERA_CONSENSUS_KEY", trusted_key);
         std::env::set_var("DEFRA_ACP_DOCUMENT_TYPE", "hub-rs");
     }
 
@@ -73,6 +84,7 @@ pub async fn build_defra_with_hub_rs(
     unsafe {
         for (name, value) in [
             ("DEFRA_HUB_RS_ADDRESS", previous_address),
+            ("DEFRA_VERA_CONSENSUS_KEY", previous_key),
             ("DEFRA_ACP_DOCUMENT_TYPE", previous_type),
         ] {
             match value {
