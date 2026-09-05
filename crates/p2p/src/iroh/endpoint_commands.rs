@@ -23,7 +23,8 @@ use super::endpoint::{
 };
 use super::endpoint_rpc::{
     close_peer_connections, handle_block_sync, handle_car_request_response, handle_fire_and_forget,
-    handle_request_response, handle_send_only, handle_two_stream_request, BlockSyncResources,
+    handle_request_response, handle_send_only, handle_two_stream_request, remember_connection,
+    BlockSyncResources,
 };
 use super::endpoint_streams::ConnectionStreamContext;
 use super::gossip_heal;
@@ -171,7 +172,7 @@ pub(super) async fn handle_command(
                 let result = handle_request_response(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_IDENTITY,
+                    protocols::STREAM_IDENTITY,
                     &request,
                     direct_addr,
                     &connection_cache,
@@ -289,8 +290,8 @@ pub(super) async fn handle_command(
             reply_msg,
             reply,
         } => {
-            // Retained for mixed-version peers whose request did not advertise
-            // same-stream reply support.
+            // The reply path for a request that did not advertise same-stream
+            // reply support.
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
@@ -298,7 +299,7 @@ pub(super) async fn handle_command(
                 let result = handle_send_only(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_TWOSTREAM_RESP,
+                    protocols::STREAM_TWOSTREAM_RESP,
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
@@ -322,7 +323,7 @@ pub(super) async fn handle_command(
                     handle_request_response(
                         &endpoint,
                         &peer_id,
-                        protocols::ALPN_DOCSYNC,
+                        protocols::STREAM_DOCSYNC,
                         &request,
                         direct_addr,
                         &connection_cache,
@@ -359,7 +360,7 @@ pub(super) async fn handle_command(
                     handle_request_response(
                         &endpoint,
                         &peer_id,
-                        protocols::ALPN_BRANCHABLE,
+                        protocols::STREAM_BRANCHABLE,
                         &request,
                         direct_addr,
                         &connection_cache,
@@ -394,7 +395,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_DOCSYNC_RESP,
+                    protocols::STREAM_DOCSYNC_RESP,
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
@@ -416,7 +417,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_BRANCHABLE_RESP,
+                    protocols::STREAM_BRANCHABLE_RESP,
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
@@ -497,7 +498,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_CAR_RESP,
+                    protocols::STREAM_CAR_RESP,
                     &car_data,
                     direct_addr,
                     &connection_cache,
@@ -519,7 +520,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_SE,
+                    protocols::STREAM_SE,
                     &request,
                     direct_addr,
                     &connection_cache,
@@ -541,7 +542,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_SE_QUERY_REQ,
+                    protocols::STREAM_SE_QUERY_REQ,
                     &request,
                     direct_addr,
                     &connection_cache,
@@ -563,7 +564,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_SE_QUERY_RESP,
+                    protocols::STREAM_SE_QUERY_RESP,
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
@@ -585,7 +586,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_MANAGE_REQ,
+                    protocols::STREAM_MANAGE_REQ,
                     &request,
                     direct_addr,
                     &connection_cache,
@@ -607,7 +608,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_MANAGE_RESP,
+                    protocols::STREAM_MANAGE_RESP,
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
@@ -629,7 +630,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_MANAGE_QUERY_REQ,
+                    protocols::STREAM_MANAGE_QUERY_REQ,
                     &request,
                     direct_addr,
                     &connection_cache,
@@ -651,7 +652,7 @@ pub(super) async fn handle_command(
                 let result = handle_fire_and_forget(
                     &endpoint,
                     &peer_id,
-                    protocols::ALPN_MANAGE_QUERY_RESP,
+                    protocols::STREAM_MANAGE_QUERY_RESP,
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
@@ -779,11 +780,13 @@ async fn handle_dial(
     let connection = ctx
         .resources
         .endpoint
-        .connect(endpoint_addr, protocols::ALPN_PUSHLOG)
+        .connect(endpoint_addr, protocols::ALPN_MUX)
         .await
         .map_err(|e| crate::error::Error::Dial(e.to_string()))?;
 
-    let conn_alpn = connection.alpn().to_vec();
+    // Send over the connection we just opened instead of dialling a second one
+    // on the first message.
+    remember_connection(&ctx.resources.connection_cache, peer_id, &connection)?;
 
     let is_new = ctx.resources.peer_map.lock().increment_connections(
         endpoint_id,
@@ -816,13 +819,8 @@ async fn handle_dial(
         ctx.event_tx.clone(),
     );
     let task = tokio::spawn(async move {
-        super::endpoint_streams::handle_connection_streams(
-            connection,
-            endpoint_id,
-            conn_alpn,
-            stream_context,
-        )
-        .await;
+        super::endpoint_streams::handle_connection_streams(connection, endpoint_id, stream_context)
+            .await;
     });
     track_task(&ctx.resources.spawned_tasks, task);
 
