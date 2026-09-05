@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{
     generate_identity, interaction_schema_with_policy, peak_schema_with_policy,
     secret_schema_with_policy, tweet_schema_with_policy, workout_schema_with_policy, TestCluster,
     HIKING_ACP_POLICY, SECRET_ACP_POLICY, XARCHIVE_ACP_POLICY,
 };
+use integration_test::{sourcehub_cli_binary, BinarySource};
 
 /// Helper to add a policy and return the policy ID.
 fn add_policy(node: &integration_test::DefraClient, policy: &str, identity: &str) -> String {
@@ -39,7 +39,7 @@ async fn rust_sourcehub_compartments() {
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&jack.private_key_hex)
         .build()

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, TestCluster, USER_ACP_POLICY};
+use integration_test::{sourcehub_cli_binary, BinarySource};
 
 /// P2P replication preserving Source Hub ACP.
 ///
@@ -13,13 +13,12 @@ use integration_test::{generate_identity, users_schema_with_policy, TestCluster,
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_sourcehub_p2p_acp() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
+    let binary = sourcehub_cli_binary();
     let jack = generate_identity(&binary).expect("Jack identity");
 
     let cluster = TestCluster::builder()
         .rust_nodes(2)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&jack.private_key_hex)
         .with_p2p()

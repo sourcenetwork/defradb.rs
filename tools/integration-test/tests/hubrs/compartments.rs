@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{
     generate_identity, interaction_schema_with_policy, peak_schema_with_policy,
     secret_schema_with_policy, tweet_schema_with_policy, workout_schema_with_policy,
@@ -32,8 +31,7 @@ fn add_policy(node: &integration_test::DefraClient, policy: &str, identity: &str
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_hubrs_compartments() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    let binary = helpers::defra_binary();
     let jack = helpers::funded_identity();
 
     let hub = helpers::start_hub_cluster().await;

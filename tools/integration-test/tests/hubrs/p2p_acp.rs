@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use integration_test::node::RustNode;
 use integration_test::{users_schema_with_policy, USER_ACP_POLICY};
 
 use super::helpers;
@@ -13,7 +12,6 @@ use super::helpers;
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_hubrs_p2p_acp() {
-    RustNode::build_with_features(&["sourcehub"]).expect("build hub.rs-enabled rust binary");
     let jack = helpers::funded_identity();
 
     let hub = helpers::start_hub_cluster().await;

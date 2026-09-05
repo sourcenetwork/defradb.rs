@@ -1,5 +1,5 @@
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, TestCluster, USER_ACP_POLICY};
+use integration_test::{sourcehub_cli_binary, BinarySource};
 
 /// Full on-chain policy lifecycle test.
 ///
@@ -20,7 +20,7 @@ async fn rust_sourcehub_policy_lifecycle() {
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&alice.private_key_hex)
         .build()

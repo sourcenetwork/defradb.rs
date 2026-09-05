@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, TestCluster, USER_ACP_POLICY};
+use integration_test::{sourcehub_cli_binary, BinarySource};
 
 /// Circuit breaker fail-closed for non-node callers when SourceHub becomes unreachable.
 ///
@@ -21,7 +21,7 @@ async fn rust_circuit_breaker_trip_recovery() {
 
     let mut cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&jack.private_key_hex)
         .build()
@@ -118,7 +118,7 @@ async fn rust_policy_cache_ttl_expiry() {
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&alice.private_key_hex)
         .build()

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, TestCluster, USER_ACP_POLICY};
+use integration_test::{sourcehub_cli_binary, BinarySource};
 
 /// Circuit breaker with threshold=1 trips on the very first failure after
 /// SourceHub goes down, rather than requiring the default 3 failures.
@@ -15,7 +15,7 @@ async fn rust_circuit_breaker_threshold_1_trips_immediately() {
 
     let mut cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&jack.private_key_hex)
         .with_acp_circuit_breaker_threshold(1)
@@ -101,7 +101,7 @@ async fn rust_cache_ttl_expiry_with_short_ttl() {
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&alice.private_key_hex)
         .with_acp_cache_ttl(2)
@@ -191,7 +191,7 @@ async fn rust_short_request_timeout_fail_closed() {
 
     let mut cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&jack.private_key_hex)
         .with_acp_request_timeout(1)
@@ -267,7 +267,7 @@ async fn rust_access_cache_grant_revoke_invalidation() {
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_source_hub()
         .with_identity(&alice.private_key_hex)
         .with_acp_cache_ttl(300)

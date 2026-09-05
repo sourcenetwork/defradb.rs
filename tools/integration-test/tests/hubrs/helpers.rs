@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use identity::{Identity, IdentityKeyType, RawIdentity};
-use integration_test::{TestCluster, TestIdentity};
+use integration_test::{BinarySource, TestCluster, TestIdentity};
+
+pub use integration_test::sourcehub_cli_binary as defra_binary;
 
 const FUNDED_PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
@@ -50,25 +52,36 @@ pub async fn build_defra_with_hub_rs(
     n_nodes: usize,
     p2p: bool,
 ) -> TestCluster {
+    let previous_address = std::env::var_os("DEFRA_HUB_RS_ADDRESS");
+    let previous_type = std::env::var_os("DEFRA_ACP_DOCUMENT_TYPE");
     unsafe {
         std::env::set_var("DEFRA_HUB_RS_ADDRESS", hub_rpc_url);
         std::env::set_var("DEFRA_ACP_DOCUMENT_TYPE", "hub-rs");
     }
 
-    let mut builder = TestCluster::builder().rust_nodes(n_nodes).skip_build();
+    let mut builder = TestCluster::builder()
+        .rust_nodes(n_nodes)
+        .with_rust_binary(BinarySource::Path(defra_binary()));
     for index in 0..n_nodes {
         builder = builder.with_node_identity(index, identity.to_string());
     }
     if p2p {
         builder = builder.with_p2p();
     }
-    let cluster = builder.build().await.expect("build defra cluster");
+    let cluster = builder.build().await;
 
     unsafe {
-        std::env::remove_var("DEFRA_HUB_RS_ADDRESS");
-        std::env::remove_var("DEFRA_ACP_DOCUMENT_TYPE");
+        for (name, value) in [
+            ("DEFRA_HUB_RS_ADDRESS", previous_address),
+            ("DEFRA_ACP_DOCUMENT_TYPE", previous_type),
+        ] {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
     }
-    cluster
+    cluster.expect("build defra cluster")
 }
 
 /// Query the ACP precompile directly via `eth_call` to verify a policy exists on-chain.

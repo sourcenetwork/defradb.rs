@@ -1,4 +1,3 @@
-use integration_test::node::RustNode;
 use integration_test::{users_schema_with_policy, USER_ACP_POLICY};
 
 use super::helpers;
@@ -12,7 +11,6 @@ use super::helpers;
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_hubrs_smoke() {
-    RustNode::build().expect("build rust binary");
     let jack = helpers::funded_identity();
 
     let hub = helpers::start_hub_cluster().await;

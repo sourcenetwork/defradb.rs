@@ -1,4 +1,3 @@
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, USER_ACP_POLICY};
 
 use super::helpers;
@@ -14,8 +13,7 @@ use super::helpers;
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_hubrs_policy_lifecycle() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    let binary = helpers::defra_binary();
     let alice = helpers::funded_identity();
 
     let hub = helpers::start_hub_cluster().await;

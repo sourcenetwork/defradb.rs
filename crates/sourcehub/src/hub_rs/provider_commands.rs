@@ -61,6 +61,8 @@ pub(crate) fn encode_delete_relationship_cmd(
 
 pub(crate) fn resolve_registered_or_passthrough_bearer_token(
     did: &str,
+    submitter: &str,
+    deployment_id: u64,
 ) -> Result<Option<String>, crate::provider::ProviderError> {
     use k256::ecdsa::SigningKey;
 
@@ -72,7 +74,7 @@ pub(crate) fn resolve_registered_or_passthrough_bearer_token(
                 crate::provider::ProviderError::Config(format!("invalid signing key: {}", e))
             })?;
 
-            return super::bearer::create_bearer_token(&key, did, 300)
+            return super::bearer::create_bearer_token(&key, did, submitter, deployment_id, 300)
                 .map(Some)
                 .map_err(|e| {
                     crate::provider::ProviderError::Config(format!(

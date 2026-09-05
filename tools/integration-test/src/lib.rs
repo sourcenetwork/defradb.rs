@@ -4,7 +4,7 @@ mod cross_runtime;
 mod feature_binaries;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
-pub use feature_binaries::build_cli_variant;
+pub use feature_binaries::{build_cli_variant, sourcehub_cli_binary};
 
 // Re-export modules from defra-harness
 pub use defra_harness::client;

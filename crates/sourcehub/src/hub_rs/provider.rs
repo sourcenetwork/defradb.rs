@@ -33,6 +33,7 @@ pub struct HubRsProvider {
     signer: EvmSigner,
     signing_key: SigningKey,
     nonce: AtomicU64,
+    sync_timeout: Duration,
     light_client_observability: Arc<AtomicU64>,
     light_client_observer_handle: tokio::task::JoinHandle<()>,
 }
@@ -85,6 +86,7 @@ impl HubRsProvider {
             signer,
             signing_key,
             nonce: AtomicU64::new(nonce),
+            sync_timeout: tuning.receipt_timeout,
             light_client_observability,
             light_client_observer_handle,
         })
@@ -119,10 +121,23 @@ impl HubRsProvider {
                 Err(e) => return Err(ProviderError::Transaction(format!("send: {}", e))),
             }
         };
-        self.client
+        let receipt = self
+            .client
             .wait_for_receipt(tx_hash)
             .await
-            .map_err(|e| ProviderError::Transaction(format!("receipt: {}", e)))
+            .map_err(|e| ProviderError::Transaction(format!("receipt: {}", e)))?;
+        let height = receipt["blockNumber"]
+            .as_str()
+            .and_then(|value| {
+                u64::from_str_radix(value.strip_prefix("0x").unwrap_or(value), 16).ok()
+            })
+            .ok_or_else(|| {
+                ProviderError::Transaction("receipt is missing a valid confirmation height".into())
+            })?;
+        // Reads must observe the operation before its caller is told it succeeded.
+        self.light_client.wait_for_height(height, self.sync_timeout).await
+            .map_err(|e| ProviderError::Unavailable(format!("operation confirmed at height {height}, but local proof state has not caught up: {e}")))?;
+        Ok(receipt)
     }
 
     fn reserve_nonce_at_or_after(&self, chain_nonce: u64) -> u64 {
@@ -335,17 +350,28 @@ async fn run_light_client_observer(
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SourceHubProvider for HubRsProvider {
     fn authorized_account(&self) -> String {
-        format!("{:?}", self.signer.address())
+        self.signer.did()
     }
 
     async fn create_bearer_token(&self, did: &str) -> Result<String, ProviderError> {
         if Some(did.to_string()) == self.self_did() {
-            return bearer::create_bearer_token(&self.signing_key, did, 300).map_err(|e| {
+            return bearer::create_bearer_token(
+                &self.signing_key,
+                did,
+                &self.signer.did(),
+                self.signer.deployment_id(),
+                300,
+            )
+            .map_err(|e| {
                 ProviderError::Config(format!("node bearer token creation failed: {}", e))
             });
         }
 
-        if let Some(token) = resolve_registered_or_passthrough_bearer_token(did)? {
+        if let Some(token) = resolve_registered_or_passthrough_bearer_token(
+            did,
+            &self.signer.did(),
+            self.signer.deployment_id(),
+        )? {
             return Ok(token);
         }
 
@@ -682,27 +708,6 @@ impl SourceHubProvider for HubRsProvider {
             "hub.rs checkAccess transaction confirmed"
         );
 
-        if let Some(block_number_hex) = receipt["blockNumber"].as_str() {
-            let block_number = u64::from_str_radix(
-                block_number_hex
-                    .strip_prefix("0x")
-                    .unwrap_or(block_number_hex),
-                16,
-            )
-            .unwrap_or_default();
-            if block_number > 0 {
-                self.light_client
-                    .wait_for_height(block_number, Duration::from_secs(5))
-                    .await
-                    .map_err(|e| {
-                        ProviderError::Unavailable(format!(
-                            "access decision sync at height {}: {}",
-                            block_number, e
-                        ))
-                    })?;
-            }
-        }
-
         let decision = self
             .light_client
             .check_access_decision(&decision_id)
@@ -775,9 +780,10 @@ mod tests {
         store_remote_secp256r1_identity(did);
         defra_core::signing::set_request_bearer_token(did, token.clone());
 
-        let resolved = resolve_registered_or_passthrough_bearer_token(did)
-            .expect("resolution should succeed")
-            .expect("token should resolve");
+        let resolved =
+            resolve_registered_or_passthrough_bearer_token(did, "did:key:submitter", 9001)
+                .expect("resolution should succeed")
+                .expect("token should resolve");
         assert_eq!(resolved, token);
 
         defra_core::signing::clear_request_bearer_token(did);
@@ -807,10 +813,20 @@ mod tests {
             },
         );
 
-        let resolved = resolve_registered_or_passthrough_bearer_token(&did)
-            .expect("resolution should succeed")
-            .expect("token should resolve");
-        assert_eq!(resolved.matches('.').count(), 2);
+        let resolved =
+            resolve_registered_or_passthrough_bearer_token(&did, "did:key:submitter", 9001)
+                .expect("resolution should succeed")
+                .expect("token should resolve");
+        use base64::Engine;
+        let payload = resolved.split('.').nth(1).expect("token payload");
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .expect("payload base64");
+        let claims: serde_json::Value = serde_json::from_slice(&payload).expect("claims");
+        assert_eq!(claims["iss"], did);
+        assert_eq!(claims["sub"], "did:key:submitter");
+        assert_eq!(claims["aud"], "vera:9001");
+        assert_eq!(claims["scope"], "acp:policy");
 
         defra_core::signing::clear_request_bearer_token(&did);
         defra_core::signing::clear_identity_store();

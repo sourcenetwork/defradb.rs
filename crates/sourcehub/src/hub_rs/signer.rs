@@ -21,6 +21,10 @@ impl EvmSigner {
         Ok(Self { signer, chain_id })
     }
 
+    pub fn deployment_id(&self) -> u64 {
+        self.chain_id
+    }
+
     pub fn address(&self) -> Address {
         self.signer.address()
     }

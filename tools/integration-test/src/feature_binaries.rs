@@ -2,8 +2,23 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 
 static SNAPSHOT_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+/// Resolve a CLI snapshot with the SourceHub providers enabled.
+pub fn sourcehub_cli_binary() -> PathBuf {
+    static BINARY: OnceLock<PathBuf> = OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            std::env::var_os("DEFRA_RUST_BINARY")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    build_cli_variant(&crate::workspace_root(), &["sourcehub"], "defra-sourcehub")
+                })
+        })
+        .clone()
+}
 
 /// Build and snapshot a CLI feature variant without racing other test processes.
 pub fn build_cli_variant(workspace: &Path, features: &[&str], output_name: &str) -> PathBuf {
