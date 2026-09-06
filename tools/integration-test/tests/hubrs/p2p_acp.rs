@@ -1,18 +1,15 @@
 use std::time::Duration;
 
-use integration_test::{users_schema_with_policy, USER_ACP_POLICY};
+use integration_test::{generate_identity, users_schema_with_policy, USER_ACP_POLICY};
 
 use super::helpers;
 
-/// P2P replication preserving hub.rs ACP.
-///
-/// Two Rust DefraDB nodes connected to the same hub.rs cluster.
-/// A document created on node 0 replicates to node 1.
-/// The owner can read on both nodes; anonymous cannot read on either.
+/// Replicated documents and commit history follow Vera grants and revocation.
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_hubrs_p2p_acp() {
     let jack = helpers::funded_identity();
+    let reader = generate_identity(&helpers::defra_binary()).expect("reader identity");
 
     let hub = helpers::start_hub_cluster().await;
     let hub_rpc_url = hub.node(0).rpc_url();
@@ -61,12 +58,15 @@ async fn rust_hubrs_p2p_acp() {
         .expect("set replicator");
 
     // Create document as Jack on node 0
-    node0
+    let created = node0
         .query_with_identity(
             r#"mutation { add_User(input: {name: "Jack", age: 30}) { _docID } }"#,
             &jack.private_key_hex,
         )
         .expect("create user on node0");
+    let doc_id = created["add_User"][0]["_docID"]
+        .as_str()
+        .expect("document ID");
 
     // Poll until replication completes (up to 30s)
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -86,14 +86,57 @@ async fn rust_hubrs_p2p_acp() {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    // Anonymous cannot read on node 1 (hub.rs ACP enforced)
-    let anon_on_node1 = node1
-        .query("query { User { _docID name } }")
-        .expect("anon query on node1");
-    let anon_users = anon_on_node1["User"].as_array().expect("anon users array");
-    assert_eq!(
-        anon_users.len(),
-        0,
-        "anonymous should NOT see docs on node 1"
-    );
+    let document_query = "query { User { _docID name } }";
+    let history_query = format!(r#"query {{ _commits(docID: "{doc_id}") {{ cid }} }}"#);
+    for node in [&node0, &node1] {
+        for (query, field) in [
+            (document_query, "User"),
+            (history_query.as_str(), "_commits"),
+        ] {
+            let owner_result = node
+                .query_with_identity(query, &jack.private_key_hex)
+                .expect("owner read");
+            assert!(!owner_result[field].as_array().unwrap().is_empty());
+            let anonymous_result = node.query(query).expect("anonymous read");
+            assert!(anonymous_result[field].as_array().unwrap().is_empty());
+            let reader_result = node
+                .query_with_identity(query, &reader.private_key_hex)
+                .expect("read before grant");
+            assert!(reader_result[field].as_array().unwrap().is_empty());
+        }
+    }
+
+    node0
+        .acp_relationship_add("User", doc_id, "reader", &reader.did, &jack.private_key_hex)
+        .expect("grant reader");
+    for node in [&node0, &node1] {
+        for query in [document_query, history_query.as_str()] {
+            let owner_result = node
+                .query_with_identity(query, &jack.private_key_hex)
+                .expect("owner read after grant");
+            let reader_result = node
+                .query_with_identity(query, &reader.private_key_hex)
+                .expect("reader read after grant");
+            assert_eq!(reader_result, owner_result);
+        }
+    }
+
+    node0
+        .acp_relationship_delete("User", doc_id, "reader", &reader.did, &jack.private_key_hex)
+        .expect("revoke reader");
+    for node in [&node0, &node1] {
+        for (query, field) in [
+            (document_query, "User"),
+            (history_query.as_str(), "_commits"),
+        ] {
+            let reader_result = node
+                .query_with_identity(query, &reader.private_key_hex)
+                .expect("read after revocation");
+            assert!(reader_result[field].as_array().unwrap().is_empty());
+            let owner_result = node
+                .query_with_identity(query, &jack.private_key_hex)
+                .expect("owner read after revocation");
+            assert!(!owner_result[field].as_array().unwrap().is_empty());
+        }
+    }
 }
