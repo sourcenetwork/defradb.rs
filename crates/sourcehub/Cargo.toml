@@ -68,7 +68,7 @@ alloy-rlp.workspace = true
 bs58.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "1bf3637484ef20a8e2f38d81b5c708f5e1e0d776" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "c82527e64b9f12f1be22834ab2b2981ef92a79bd" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true
