@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
 use k256::ecdsa::SigningKey;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
@@ -98,8 +97,15 @@ impl HubRsProvider {
     }
 
     async fn send_tx(&self, data: Bytes) -> Result<serde_json::Value, ProviderError> {
+        Ok(self.send_tx_with_sequence(data).await?.0)
+    }
+
+    async fn send_tx_with_sequence(
+        &self,
+        data: Bytes,
+    ) -> Result<(serde_json::Value, u64), ProviderError> {
         let mut nonce_retries = 0;
-        let tx_hash = loop {
+        let (tx_hash, sequence) = loop {
             let nonce = if nonce_retries == 0 {
                 self.nonce.fetch_add(1, Ordering::Relaxed)
             } else {
@@ -117,7 +123,7 @@ impl HubRsProvider {
                 .map_err(|e| ProviderError::Transaction(format!("sign: {}", e)))?;
 
             match self.client.send_raw_transaction(raw).await {
-                Ok(tx_hash) => break tx_hash,
+                Ok(tx_hash) => break (tx_hash, nonce),
                 Err(e) if nonce_retries < MAX_NONCE_RETRIES && is_nonce_error(&e) => {
                     nonce_retries += 1;
                     tracing::debug!(error = %e, "hub.rs transaction nonce stale; refreshing");
@@ -142,7 +148,7 @@ impl HubRsProvider {
         // Reads must observe the operation before its caller is told it succeeded.
         self.light_client.wait_for_height(height, self.sync_timeout).await
             .map_err(|e| ProviderError::Unavailable(format!("operation confirmed at height {height}, but local proof state has not caught up: {e}")))?;
-        Ok(receipt)
+        Ok((receipt, sequence))
     }
 
     fn reserve_nonce_at_or_after(&self, chain_nonce: u64) -> u64 {
@@ -208,59 +214,27 @@ impl HubRsProvider {
         arr[start..].copy_from_slice(&bytes[..bytes.len().min(32)]);
         FixedBytes::from(arr)
     }
+}
 
-    fn compute_access_decision_id(
-        policy_id: &str,
-        creator_did: &str,
-        actor_did: &str,
-        resource: &str,
-        object_id: &str,
-        permission: &str,
-    ) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(policy_id.as_bytes());
-        hasher.update(creator_did.as_bytes());
-        hasher.update(actor_did.as_bytes());
-        hasher.update(resource.as_bytes());
-        hasher.update(object_id.as_bytes());
-        hasher.update(permission.as_bytes());
-        hex::encode(hasher.finalize())
-    }
-
-    async fn verify_access_request_live(
-        &self,
-        policy_id: &str,
-        resource: &str,
-        object_id: &str,
-        permission: &str,
-        actor_did: &str,
-    ) -> Result<bool, ProviderError> {
-        let call = IAcp::verifyAccessRequestCall {
-            policyId: Self::policy_id_to_bytes32(policy_id),
-            resources: vec![resource.to_string()],
-            objectIds: vec![object_id.to_string()],
-            permissions: vec![permission.to_string()],
-            actor: actor_did.to_string(),
-        };
-        let calldata = Bytes::from(call.abi_encode());
-        let result = self
-            .guarded_eth_call(|| self.client.eth_call(ACP_ADDRESS, calldata.clone()))
-            .await?;
-
-        let allowed = IAcp::verifyAccessRequestCall::abi_decode_returns(&result)
-            .map_err(|e| ProviderError::Query(format!("ABI decode: {}", e)))?;
-        tracing::info!(
-            creator_did = %self.signer.did(),
-            policy_id = %policy_id,
-            resource = %resource,
-            object_id = %object_id,
-            permission = %permission,
-            actor_did = %actor_did,
-            allowed,
-            "hub.rs verifyAccessRequest result"
-        );
-        Ok(allowed)
-    }
+fn access_request(
+    resource: &str,
+    object_id: &str,
+    permission: &str,
+    actor_did: &str,
+) -> Result<acp_light_client::AccessRequest, ProviderError> {
+    let actor = actor_did
+        .parse()
+        .map_err(|e| ProviderError::Query(format!("actor DID: {e}")))?;
+    Ok(acp_light_client::AccessRequest {
+        actor: acp_light_client::Actor(actor),
+        operations: vec![acp_light_client::Operation {
+            object: acp_light_client::Object {
+                resource: resource.into(),
+                id: object_id.into(),
+            },
+            permission: permission.into(),
+        }],
+    })
 }
 
 fn is_nonce_error(error: &ClientError) -> bool {
@@ -598,19 +572,7 @@ impl SourceHubProvider for HubRsProvider {
         permission: &str,
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
-        let actor = actor_did
-            .parse()
-            .map_err(|e| ProviderError::Query(format!("actor DID: {e}")))?;
-        let request = acp_light_client::AccessRequest {
-            actor: acp_light_client::Actor(actor),
-            operations: vec![acp_light_client::Operation {
-                object: acp_light_client::Object {
-                    resource: resource.into(),
-                    id: object_id.into(),
-                },
-                permission: permission.into(),
-            }],
-        };
+        let request = access_request(resource, object_id, permission, actor_did)?;
         self.light_client
             .verify_access(policy_id, &request)
             .await
@@ -625,34 +587,7 @@ impl SourceHubProvider for HubRsProvider {
         permission: &str,
         actor_did: &str,
     ) -> Result<Option<String>, ProviderError> {
-        tracing::info!(
-            creator_did = %self.signer.did(),
-            policy_id = %policy_id,
-            resource = %resource,
-            object_id = %object_id,
-            permission = %permission,
-            actor_did = %actor_did,
-            "hub.rs create_access_decision start"
-        );
-        let currently_allowed = self
-            .verify_access_request_live(policy_id, resource, object_id, permission, actor_did)
-            .await?;
-        if !currently_allowed {
-            tracing::warn!(
-                creator_did = %self.signer.did(),
-                policy_id = %policy_id,
-                resource = %resource,
-                object_id = %object_id,
-                permission = %permission,
-                actor_did = %actor_did,
-                "hub.rs create_access_decision denied by verifyAccessRequest"
-            );
-            return Err(ProviderError::Query(format!(
-                "actor {} denied {} on {}:{}",
-                actor_did, permission, resource, object_id
-            )));
-        }
-
+        let request = access_request(resource, object_id, permission, actor_did)?;
         let call = IAcp::checkAccessCall {
             policyId: Self::policy_id_to_bytes32(policy_id),
             resources: vec![resource.to_string()],
@@ -660,48 +595,22 @@ impl SourceHubProvider for HubRsProvider {
             permissions: vec![permission.to_string()],
             actor: actor_did.to_string(),
         };
-        let calldata = Bytes::from(call.abi_encode());
-        let receipt = self.send_tx(calldata).await?;
-
-        let decision_id = Self::compute_access_decision_id(
-            policy_id,
-            &self.signer.did(),
-            actor_did,
-            resource,
-            object_id,
-            permission,
-        );
-        tracing::info!(
-            creator_did = %self.signer.did(),
-            policy_id = %policy_id,
-            resource = %resource,
-            object_id = %object_id,
-            permission = %permission,
-            actor_did = %actor_did,
-            decision_id = %decision_id,
-            receipt_block_number = ?receipt["blockNumber"].as_str(),
-            "hub.rs checkAccess transaction confirmed"
-        );
-
+        let (_, sequence) = self
+            .send_tx_with_sequence(Bytes::from(call.abi_encode()))
+            .await?;
+        let expected = acp_light_client::DecisionRequest {
+            deployment_id: self.signer.deployment_id(),
+            policy_id: policy_id.into(),
+            creator: self.signer.did(),
+            creator_sequence: sequence,
+            request,
+        };
         let decision = self
             .light_client
-            .read_access_decision(&decision_id)
+            .verify_access_decision(&expected)
             .await
-            .map_err(|e| ProviderError::Query(format!("light client decision check: {}", e)))?;
-        tracing::info!(
-            decision_id = %decision_id,
-            present = decision.value.is_some(),
-            verified_height = decision.verified_at_height,
-            "hub.rs light client access decision lookup result"
-        );
-        if decision.value.is_none() {
-            return Err(ProviderError::Query(format!(
-                "access decision {} not visible after confirmation",
-                decision_id
-            )));
-        }
-
-        Ok(Some(decision_id))
+            .map_err(|e| ProviderError::Query(format!("verified access decision: {e}")))?;
+        Ok(Some(decision.id))
     }
 
     fn acp_light_client_status(&self) -> Result<AcpLightClientStatus, ProviderError> {

@@ -114,7 +114,7 @@ name = "client_authored"
 path = "tests/client_authored.rs"
 
 [dependencies]
-hub-harness = { git = "https://github.com/sourcenetwork/hub.rs", rev = "55f15fd6958359d930d5b1d5c7e78c4acbd1f286" }
+hub-harness = { git = "https://github.com/sourcenetwork/hub.rs", rev = "667ddc1d61fa4bd7ab84b8a3fd647950e3489a90" }
 commonware-codec = "2026.9.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "9526a4ebfaa1cebf07fc3592de6f0a62d77f9e30" }
 document = { path = "../../crates/document" }

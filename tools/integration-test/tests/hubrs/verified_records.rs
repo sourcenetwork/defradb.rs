@@ -149,6 +149,20 @@ resources:
         .verify_access(&policy, "file", "report", "read", reader)
         .await
         .unwrap());
+    let first_decision = provider
+        .create_access_decision(&policy, "file", "report", "read", reader)
+        .await
+        .unwrap()
+        .unwrap();
+    let second_decision = provider
+        .create_access_decision(&policy, "file", "report", "read", reader)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        first_decision, second_decision,
+        "each signed submission must have its own decision"
+    );
     provider
         .set_relationship_subject(
             &policy,
@@ -172,6 +186,13 @@ resources:
             .await
             .unwrap(),
         "cross-object exclusions must override the reader grant"
+    );
+    assert!(
+        provider
+            .create_access_decision(&policy, "file", "report", "read", reader)
+            .await
+            .is_err(),
+        "a revoked actor must not obtain a decision"
     );
     assert!(provider
         .verify_access(&policy, "file", "report", "read", &owner_did)
