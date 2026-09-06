@@ -87,7 +87,7 @@ async fn archived_owner_record_does_not_authorize_access() {
 #[serial_test::serial]
 async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
     use sourcehub::SubjectRef;
-    let hub = helpers::start_hub_cluster().await;
+    let mut hub = helpers::start_hub_cluster().await;
     let keys = hub_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
@@ -203,4 +203,48 @@ resources:
         )
         .await
         .unwrap());
+    hub.kill_node(0);
+    // Outlive the native client's default maximum revision age.
+    tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+    let error = document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &policy,
+            "file",
+            "report",
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("stale"), "{error:?}");
+
+    hub.restart_node(0).unwrap();
+    hub.wait_ready(std::time::Duration::from_secs(30))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match document_acp
+                .check_doc_access(
+                    &identity,
+                    DocumentPermission::Read,
+                    &policy,
+                    "file",
+                    "report",
+                )
+                .await
+            {
+                Ok(allowed) => {
+                    assert!(allowed);
+                    break;
+                }
+                Err(error) => {
+                    assert!(error.to_string().contains("stale"), "{error:?}");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+    })
+    .await
+    .expect("fresh verified revision after Hub restart");
 }
