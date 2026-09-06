@@ -82,6 +82,7 @@ fn validation_distinguishes_empty_and_over_limit_counts() {
         collection_id: "collection".into(),
         roots: Vec::new(),
         blocks: vec![block.clone()],
+        relationships: Vec::new(),
     };
     assert!(matches!(
         sync.validate_document(&empty_roots),
