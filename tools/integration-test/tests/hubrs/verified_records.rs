@@ -82,3 +82,125 @@ async fn archived_owner_record_does_not_authorize_access() {
         }
     }
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
+    use sourcehub::SubjectRef;
+    let hub = helpers::start_hub_cluster().await;
+    let keys = hub_harness::cluster::KeySet::builder()
+        .nodes(1)
+        .seed(0)
+        .build()
+        .unwrap();
+    let consensus_key = hex::encode(keys.epoch_info().output.public().public().encode());
+    let owner = helpers::funded_identity();
+    let provider = Arc::new(
+        HubRsProvider::new(
+            hub.node(0).rpc_url(),
+            &consensus_key,
+            &hex::decode(&owner.private_key_hex).unwrap(),
+            &AcpTuning::default(),
+            None,
+        )
+        .await
+        .unwrap(),
+    );
+    let owner_did = provider.authorized_account();
+    let policy = provider
+        .create_policy(
+            r#"name: permissions
+resources:
+  - name: file
+    relations:
+      - name: reader
+      - name: blocked
+      - name: approved
+    permissions:
+      - name: read
+        expr: (reader & approved) - blocked->blocked
+"#,
+        )
+        .await
+        .unwrap();
+    let bearer = provider.create_bearer_token(&owner_did).await.unwrap();
+    provider
+        .register_object(&bearer, &policy, "file", "report")
+        .await
+        .unwrap();
+    let reader = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+    let subject = SubjectRef::Actor(reader.into());
+    provider
+        .set_relationship(&bearer, &policy, "file", "report", "reader", &subject)
+        .await
+        .unwrap();
+    assert!(
+        !provider
+            .verify_access(&policy, "file", "report", "read", reader)
+            .await
+            .unwrap(),
+        "a reader relation alone does not satisfy the policy"
+    );
+    provider
+        .set_relationship(&bearer, &policy, "file", "report", "approved", &subject)
+        .await
+        .unwrap();
+    assert!(provider
+        .verify_access(&policy, "file", "report", "read", reader)
+        .await
+        .unwrap());
+    provider
+        .set_relationship_subject(
+            &policy,
+            "file",
+            "report",
+            "blocked",
+            3,
+            "file",
+            "suspensions",
+            "blocked",
+        )
+        .await
+        .unwrap();
+    provider
+        .set_relationship(&bearer, &policy, "file", "suspensions", "blocked", &subject)
+        .await
+        .unwrap();
+    assert!(
+        !provider
+            .verify_access(&policy, "file", "report", "read", reader)
+            .await
+            .unwrap(),
+        "cross-object exclusions must override the reader grant"
+    );
+    assert!(provider
+        .verify_access(&policy, "file", "report", "read", &owner_did)
+        .await
+        .unwrap());
+    let document_acp = SourceHubDocumentACP::without_access_cache(provider.clone());
+    let identity = Identity::authenticated(identity::Did::new(reader).unwrap());
+    assert!(!document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &policy,
+            "file",
+            "report"
+        )
+        .await
+        .unwrap());
+    provider
+        .delete_relationship(&bearer, &policy, "file", "suspensions", "blocked", &subject)
+        .await
+        .unwrap();
+    assert!(document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &policy,
+            "file",
+            "report"
+        )
+        .await
+        .unwrap());
+}

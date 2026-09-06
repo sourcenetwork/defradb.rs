@@ -227,15 +227,6 @@ impl HubRsProvider {
         hex::encode(hasher.finalize())
     }
 
-    fn relations_for_permission(permission: &str) -> Vec<&str> {
-        match permission {
-            "read" => vec!["owner", "writer", "reader"],
-            "update" => vec!["owner", "writer"],
-            "delete" => vec!["owner"],
-            _ => vec![permission],
-        }
-    }
-
     async fn verify_access_request_live(
         &self,
         policy_id: &str,
@@ -280,20 +271,6 @@ fn is_nonce_error(error: &ClientError) -> bool {
 #[derive(Deserialize)]
 struct HubRsPolicyRecord {
     raw_policy: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct HubRsRelationshipRecord {
-    archived: bool,
-}
-
-fn relationship_is_active(value: Option<&[u8]>) -> Result<bool, ProviderError> {
-    let Some(bytes) = value else {
-        return Ok(false);
-    };
-    let record: HubRsRelationshipRecord = serde_json::from_slice(bytes)
-        .map_err(|e| ProviderError::Query(format!("relationship JSON: {e}")))?;
-    Ok(!record.archived)
 }
 
 impl Drop for HubRsProvider {
@@ -621,40 +598,23 @@ impl SourceHubProvider for HubRsProvider {
         permission: &str,
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
-        let actor_subject =
-            zanzibar::Subject::Entity(zanzibar::Did::new_unchecked(actor_did.to_string()));
-        let actor_hash = actor_subject.storage_hash();
-        let wildcard_hash = zanzibar::Subject::Wildcard.storage_hash();
-
-        for relation in Self::relations_for_permission(permission) {
-            let storage_key = format!(
-                "/rel/{}/{}/{}/{}",
-                resource, object_id, relation, actor_hash
-            );
-            let result = self
-                .light_client
-                .read_relationship(policy_id, &storage_key)
-                .await
-                .map_err(|e| ProviderError::Query(format!("light client: {}", e)))?;
-            if relationship_is_active(result.value.as_deref())? {
-                return Ok(true);
-            }
-
-            let wildcard_key = format!(
-                "/rel/{}/{}/{}/{}",
-                resource, object_id, relation, wildcard_hash
-            );
-            let result = self
-                .light_client
-                .read_relationship(policy_id, &wildcard_key)
-                .await
-                .map_err(|e| ProviderError::Query(format!("light client: {}", e)))?;
-            if relationship_is_active(result.value.as_deref())? {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        let actor = actor_did
+            .parse()
+            .map_err(|e| ProviderError::Query(format!("actor DID: {e}")))?;
+        let request = acp_light_client::AccessRequest {
+            actor: acp_light_client::Actor(actor),
+            operations: vec![acp_light_client::Operation {
+                object: acp_light_client::Object {
+                    resource: resource.into(),
+                    id: object_id.into(),
+                },
+                permission: permission.into(),
+            }],
+        };
+        self.light_client
+            .verify_access(policy_id, &request)
+            .await
+            .map_err(|e| ProviderError::Query(format!("verified permission: {e}")))
     }
 
     async fn create_access_decision(
@@ -785,21 +745,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn relationship_proofs_require_an_explicit_active_state() {
-        assert!(!relationship_is_active(None).unwrap());
-        assert!(relationship_is_active(Some(br#"{"archived":false}"#)).unwrap());
-        assert!(!relationship_is_active(Some(br#"{"archived":true}"#)).unwrap());
-        for value in [
-            b"{}".as_slice(),
-            br#"{"archived":"false"}"#,
-            b"null",
-            b"invalid",
-        ] {
-            assert!(relationship_is_active(Some(value)).is_err());
-        }
-    }
-
     fn store_remote_secp256r1_identity(did: &str) {
         let private_key = crypto::generate_secp256r1().expect("should generate secp256r1 key");
         let public_key = private_key.public_key();
@@ -879,34 +824,6 @@ mod tests {
 
         defra_core::signing::clear_request_bearer_token(&did);
         defra_core::signing::clear_identity_store();
-    }
-
-    #[test]
-    fn relations_for_permission_expands_standard_permissions() {
-        assert_eq!(
-            HubRsProvider::relations_for_permission("read"),
-            vec!["owner", "writer", "reader"]
-        );
-        assert_eq!(
-            HubRsProvider::relations_for_permission("update"),
-            vec!["owner", "writer"]
-        );
-        assert_eq!(
-            HubRsProvider::relations_for_permission("delete"),
-            vec!["owner"]
-        );
-    }
-
-    #[test]
-    fn relations_for_permission_preserves_relation_style_checks() {
-        assert_eq!(
-            HubRsProvider::relations_for_permission("writer"),
-            vec!["writer"]
-        );
-        assert_eq!(
-            HubRsProvider::relations_for_permission("signer"),
-            vec!["signer"]
-        );
     }
 
     #[test]
