@@ -342,12 +342,14 @@ mod tests {
                     cid: "block-one".into(),
                     data: "data-one".into(),
                 }],
+                relationships: Vec::new(),
             },
             BrowserSyncDocument {
                 doc_id: "doc-two".into(),
                 collection_id: "collection".into(),
                 roots: vec![],
                 blocks: vec![],
+                relationships: Vec::new(),
             },
         ];
         let incremental_size = documents.iter().enumerate().fold(
