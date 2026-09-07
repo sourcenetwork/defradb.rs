@@ -67,6 +67,7 @@ query = { path = "../query" }
 defra-core = { path = "../defra-core" }
 crypto = { path = "../crypto" }
 identity = { path = "../identity" }
+zeroize = "1.8"
 events = { path = "../events", features = ["channel"] }
 
 # IPLD

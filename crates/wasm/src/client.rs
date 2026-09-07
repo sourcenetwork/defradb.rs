@@ -551,7 +551,7 @@ fn is_secure_origin(server_url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crypto::keys::Key as _;
+    use crypto::keys::{Key as _, PrivateKey as _};
     use identity::Identity as _;
     use wasm_bindgen_test::*;
 
@@ -781,6 +781,50 @@ mod tests {
             relayed.relationships.is_empty(),
             "a document signed by another key must go out untouched"
         );
+        client.close().await.unwrap();
+    }
+
+    /// A browser generating its key with WebCrypto exports a JWK whose `d` is
+    /// the 32-byte seed, so that is what a caller has in hand. It names the
+    /// same identity as the 64-byte form this codebase stores.
+    #[wasm_bindgen_test]
+    async fn an_ed25519_seed_names_the_same_identity_as_the_full_key() {
+        let private_key = crypto::generate_ed25519().unwrap();
+        let full = private_key.raw().to_vec();
+        assert_eq!(full.len(), 64, "the stored form is seed || public key");
+        let seed = &full[..32];
+
+        let mut client = DefraClient::create(test_config("signing_seed"))
+            .await
+            .unwrap();
+        let from_seed = client.set_identity(&hex::encode(seed), "ed25519").unwrap();
+        let from_full = client.set_identity(&hex::encode(&full), "ed25519").unwrap();
+        assert_eq!(from_seed, from_full);
+
+        // And it signs: the seed is a whole key here, not just an identifier.
+        client
+            .add_schema("type User { name: String }")
+            .await
+            .unwrap();
+        client.set_identity(&hex::encode(seed), "ed25519").unwrap();
+        client
+            .mutate(r#"mutation { create_User(input: {name: "Alice"}) { _docID } }"#)
+            .await
+            .unwrap();
+        let expected = private_key.public_key().to_hex_string().into_bytes();
+        let keys = signing_keys(&client).await;
+        assert!(!keys.is_empty() && keys.iter().all(|key| *key == expected));
+        client.close().await.unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_key_of_the_wrong_length_is_still_refused() {
+        let mut client = DefraClient::create(test_config("signing_short"))
+            .await
+            .unwrap();
+        assert!(client
+            .set_identity(&hex::encode([7u8; 16]), "ed25519")
+            .is_err());
         client.close().await.unwrap();
     }
 

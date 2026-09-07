@@ -9,12 +9,16 @@ use std::time::Duration;
 
 use defra_core::signing::{SigningConfig, SigningKeyType};
 use identity::{Identity, IdentityKeyType, RawIdentity};
+use zeroize::Zeroize;
 
 use crate::error::{Result, WasmError};
 
 /// How long a minted token stays valid. Long enough to outlive a page's sync
 /// session, short enough that a leaked one expires.
 const TOKEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The `d` of an RFC 8037 Ed25519 JWK, which is the seed alone.
+const ED25519_SEED_BYTES: usize = 32;
 
 pub(crate) struct ClientIdentity {
     raw: RawIdentity,
@@ -25,10 +29,21 @@ pub(crate) struct ClientIdentity {
 impl ClientIdentity {
     pub(crate) fn from_private_key(private_key_hex: &str, key_type: &str) -> Result<Self> {
         let (key_type, signing_key_type) = parse_key_type(key_type)?;
-        let bytes = hex::decode(private_key_hex.trim_start_matches("0x"))
+        let mut bytes = hex::decode(private_key_hex.trim_start_matches("0x"))
             .map_err(|error| WasmError::Identity(format!("private key is not hex: {error}")))?;
+        // A browser generating its key with WebCrypto exports an RFC 8037 JWK,
+        // whose `d` is the 32-byte seed, while an Ed25519 key here is the
+        // 64-byte seed || public form. Promote at this boundary, as the CLI's
+        // JWK import does, rather than in the shared constructor.
+        if key_type == IdentityKeyType::Ed25519 && bytes.len() == ED25519_SEED_BYTES {
+            let promoted = crypto::ed25519_key_from_seed(&bytes)
+                .map_err(|error| WasmError::Identity(error.to_string()))?;
+            bytes.zeroize();
+            bytes = promoted;
+        }
         let raw = RawIdentity::from_identity_key_type(key_type, &bytes)
             .map_err(|error| WasmError::Identity(error.to_string()))?;
+        bytes.zeroize();
         let did = raw
             .did()
             .map_err(|error| WasmError::Identity(error.to_string()))?

@@ -3621,6 +3621,7 @@ dependencies = [
  "wasm-bindgen-test",
  "wasm-streams 0.4.2",
  "web-sys",
+ "zeroize",
 ]
 
 [[package]]
