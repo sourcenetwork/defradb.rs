@@ -135,6 +135,11 @@ ctor = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
+keyring = { path = "../../crates/keyring" }
+hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
+hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
+hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
+alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 sourcehub = { path = "../../crates/sourcehub" }
 tempfile = "3.17"
