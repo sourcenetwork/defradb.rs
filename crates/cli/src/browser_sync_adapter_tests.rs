@@ -1076,17 +1076,20 @@ async fn relationships_cannot_be_attached_to_a_foreign_signed_document() {
         matches!(error, defra_http::router::BrowserSyncError::Forbidden(_)),
         "expected a forbidden grant, got {error:?}"
     );
+    // The refused grant takes the registration this request made with it: the
+    // merge never ran, so ACP holds nothing for a document the node does not
+    // have. Bob has squatted nothing either way.
     assert_eq!(
         acp.get_doc_owner("users-policy", "users", &doc_id)
             .await
             .unwrap()
             .map(|did| did.to_string()),
-        Some(alice.clone()),
-        "ownership must still follow the verified genesis creator"
+        None,
+        "a refused push must leave no registration behind"
     );
 
-    // A refused grant does not leave the document stranded: Alice's own push
-    // lands the same grant.
+    // And the document is not stranded: Alice's own push registers her as the
+    // verified genesis creator and lands the same grant.
     adapter
         .sync(
             BrowserSyncRequest {
@@ -1104,6 +1107,14 @@ async fn relationships_cannot_be_attached_to_a_foreign_signed_document() {
         )
         .await
         .unwrap();
+    assert_eq!(
+        acp.get_doc_owner("users-policy", "users", &doc_id)
+            .await
+            .unwrap()
+            .map(|did| did.to_string()),
+        Some(alice.clone()),
+        "ownership follows the verified genesis creator, not the caller"
+    );
     let anonymous = adapter
         .sync(
             BrowserSyncRequest {
@@ -1204,7 +1215,8 @@ async fn relationships_refuse_the_owner_relation_and_an_unbounded_list() {
                 false,
             )
             .await
-            .expect_err("expected a refusal for {relationships:?}");
+            .err()
+            .unwrap_or_else(|| panic!("expected a refusal for {relationships:?}"));
         assert!(
             matches!(error, defra_http::router::BrowserSyncError::InvalidInput(_)),
             "expected invalid input for {relationships:?}, got {error:?}"

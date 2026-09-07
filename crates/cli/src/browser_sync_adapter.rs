@@ -184,9 +184,24 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
         }
         // Before the merge, so the document carries its grants by the time the
         // merge announces it to peers.
-        let granted = self
-            .apply_relationships(&document, &doc_id, identity)
-            .await?;
+        //
+        // A grant refused partway leaves the earlier ones durable, exactly as a
+        // refused merge would, so it reverts through the same path.
+        let mut granted = Vec::new();
+        if let Err(error) = self
+            .apply_relationships(&document, &doc_id, identity, &mut granted)
+            .await
+        {
+            self.revert_acp(
+                policy.as_ref(),
+                &doc_id,
+                registered_before,
+                &granted,
+                identity,
+            )
+            .await;
+            return Err(error);
+        }
 
         match self
             .engine
@@ -280,14 +295,19 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
     ///
     /// `managing_relations` is empty, so a manager who is not the owner has to
     /// use that endpoint, which resolves the policy's managers.
+    ///
+    /// `granted` collects what was actually created, and keeps it when this
+    /// returns an error: a list refused partway has already applied its earlier
+    /// entries, and the caller has to take those back.
     async fn apply_relationships(
         &self,
         document: &PendingSyncDocument,
         doc_id: &str,
         identity: &Identity,
-    ) -> BrowserSyncResult<Vec<PendingRelationship>> {
+        granted: &mut Vec<PendingRelationship>,
+    ) -> BrowserSyncResult<()> {
         if document.relationships.is_empty() {
-            return Ok(Vec::new());
+            return Ok(());
         }
         // Both established by `prepare_relationships` before anything in this
         // request was applied.
@@ -298,7 +318,6 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
                 "sync relationships reached apply without a caller or a policy".into(),
             ));
         };
-        let mut granted = Vec::new();
         for relationship in &document.relationships {
             let added = self
                 .document_acp
@@ -329,7 +348,7 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
                 });
             }
         }
-        Ok(granted)
+        Ok(())
     }
 
     async fn pull_documents(
