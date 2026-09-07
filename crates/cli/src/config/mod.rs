@@ -255,6 +255,10 @@ impl Config {
         if let Some(ref key) = cli.vera_consensus_key {
             self.acp.vera_consensus_key = key.clone();
         }
+        #[cfg(feature = "sourcehub")]
+        if let Some(id) = cli.vera_deployment_id {
+            self.acp.vera_deployment_id = Some(id);
+        }
 
         Ok(())
     }

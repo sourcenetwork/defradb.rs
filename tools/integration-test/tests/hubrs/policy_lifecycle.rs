@@ -18,7 +18,6 @@ async fn rust_hubrs_policy_lifecycle() {
 
     let bob = generate_identity(&binary).expect("Bob identity");
 
-    // Create policy on-chain
     let policy_result = node
         .acp_policy_add(USER_ACP_POLICY, &alice.private_key_hex)
         .expect("create policy");
@@ -28,9 +27,8 @@ async fn rust_hubrs_policy_lifecycle() {
         .expect("PolicyID")
         .to_string();
 
-    // Verify policy exists on-chain via EVM precompile query
-    let exists = helpers::policy_exists_on_chain(&hub_rpc_url, &policy_id).await;
-    assert!(exists, "policy should exist on-chain after creation");
+    let exists = helpers::policy_exists(&hub_rpc_url, &policy_id).await;
+    assert!(exists, "created policy must have a verified record");
 
     // Deploy schema with policy
     let schema = users_schema_with_policy(&policy_id);

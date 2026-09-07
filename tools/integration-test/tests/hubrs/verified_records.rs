@@ -17,6 +17,12 @@ async fn archived_owner_record_does_not_authorize_access() {
         .build()
         .expect("bootstrap keys");
     let consensus_key = hex::encode(keys.epoch_info().output.public().public().encode());
+    let worker_dir = tempfile::tempdir().unwrap();
+    let keyring =
+        keyring::FileKeyring::open(worker_dir.path().join("keys"), b"test-password").unwrap();
+    let worker =
+        sourcehub::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
+            .unwrap();
     let owner = helpers::funded_identity();
     let private_key = hex::decode(&owner.private_key_hex).expect("owner key");
     let provider = Arc::new(
@@ -24,13 +30,14 @@ async fn archived_owner_record_does_not_authorize_access() {
             hub.node(0).rpc_url(),
             &consensus_key,
             &private_key,
+            worker,
             &AcpTuning::default(),
             None,
         )
         .await
         .expect("provider"),
     );
-    let owner_did = provider.authorized_account();
+    let owner_did = provider.self_did().unwrap();
     let policy = provider
         .create_policy(USER_ACP_POLICY)
         .await
@@ -94,19 +101,26 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
         .build()
         .unwrap();
     let consensus_key = hex::encode(keys.epoch_info().output.public().public().encode());
+    let worker_dir = tempfile::tempdir().unwrap();
+    let keyring =
+        keyring::FileKeyring::open(worker_dir.path().join("keys"), b"test-password").unwrap();
+    let worker =
+        sourcehub::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
+            .unwrap();
     let owner = helpers::funded_identity();
     let provider = Arc::new(
         HubRsProvider::new(
             hub.node(0).rpc_url(),
             &consensus_key,
             &hex::decode(&owner.private_key_hex).unwrap(),
+            worker,
             &AcpTuning::default(),
             None,
         )
         .await
         .unwrap(),
     );
-    let owner_did = provider.authorized_account();
+    let owner_did = provider.self_did().unwrap();
     let policy = provider
         .create_policy(
             r#"name: permissions

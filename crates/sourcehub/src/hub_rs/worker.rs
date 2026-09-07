@@ -135,6 +135,11 @@ impl NativeWorker {
         self.signer.did()
     }
 
+    /// Deployment to which all signed requests are bound.
+    pub fn deployment_id(&self) -> u64 {
+        self.journal.deployment
+    }
+
     /// Sequence reserved for the pending or next request.
     pub fn next_sequence(&self) -> u64 {
         self.journal.next_sequence

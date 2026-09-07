@@ -131,11 +131,29 @@ impl Node {
                 "Resolved ACP tuning (hub.rs; access decision cache disabled)"
             );
 
+            let deployment = config.acp.vera_deployment_id.ok_or_else(|| {
+                Error::InvalidConfig(
+                    "vera_deployment_id is required for native Vera submissions".into(),
+                )
+            })?;
+            let worker_config = config.clone();
+            let worker = tokio::task::spawn_blocking(move || {
+                let keyring = crate::commands::open_keyring(&worker_config)?;
+                sourcehub::hub_rs::NativeWorker::open(
+                    &worker_config.rootdir.join("vera-worker"),
+                    keyring.as_ref(),
+                    deployment,
+                )
+                .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
+            })
+            .await
+            .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
             let provider = Arc::new(
                 sourcehub::HubRsProvider::new(
                     config.acp.hub_rs_address.clone(),
                     &config.acp.vera_consensus_key,
                     signer_key_bytes,
+                    worker,
                     &tuning,
                     Some(event_bus),
                 )

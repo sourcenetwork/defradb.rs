@@ -8,9 +8,12 @@ use crate::provider::{
 use crate::tuning::AcpTuning;
 use acp_light_client::AcpLightClient;
 use alloy_primitives::{Bytes, FixedBytes};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 use async_trait::async_trait;
+use commonware_codec::DecodeExt as _;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
+use hub_domain::ConsensusPublicKey;
+use hub_modules::acp::types::PolicyRecord;
 use k256::ecdsa::SigningKey;
 use serde::Deserialize;
 
@@ -21,17 +24,19 @@ use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
     encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token,
 };
-use super::signer::EvmSigner;
+use super::worker::NativeWorker;
 
-const MAX_NONCE_RETRIES: usize = 5;
-const MAX_NONCE_RESERVE_ATTEMPTS: usize = 16;
+mod submission;
 
 pub struct HubRsProvider {
     light_client: Arc<AcpLightClient>,
     client: HubRsClient,
-    signer: EvmSigner,
+    worker: Arc<tokio::sync::Mutex<NativeWorker>>,
+    worker_did: String,
+    actor_did: String,
+    deployment: u64,
+    trusted: ConsensusPublicKey,
     signing_key: SigningKey,
-    nonce: AtomicU64,
     sync_timeout: Duration,
     light_client_observability: Arc<AtomicU64>,
     light_client_observer_handle: tokio::task::JoinHandle<()>,
@@ -48,9 +53,18 @@ impl HubRsProvider {
         rpc_url: String,
         trusted_consensus_key: &str,
         private_key: &[u8],
+        worker: NativeWorker,
         tuning: &AcpTuning,
         event_bus: Option<Arc<dyn Bus>>,
     ) -> Result<Self, ProviderError> {
+        let encoded = hex::decode(
+            trusted_consensus_key
+                .strip_prefix("0x")
+                .unwrap_or(trusted_consensus_key),
+        )
+        .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
+        let trusted = ConsensusPublicKey::decode(encoded.as_slice())
+            .map_err(|e| ProviderError::Config(format!("invalid trusted consensus key: {e}")))?;
         let ws_url = derive_ws_url(&rpc_url);
         let light_client = Arc::new(
             AcpLightClient::new(&rpc_url, &ws_url, trusted_consensus_key, 10)
@@ -63,20 +77,13 @@ impl HubRsProvider {
             .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
-        let client = HubRsClient::new(rpc_url, tuning.request_timeout, tuning.receipt_timeout)
-            .map_err(|e| ProviderError::Config(format!("HTTP client: {}", e)))?;
-        let chain_id = client
-            .chain_id()
-            .await
-            .map_err(|e| ProviderError::Config(format!("failed to get chain ID: {}", e)))?;
-        let signer = EvmSigner::new(private_key, chain_id)
-            .map_err(|e| ProviderError::Config(format!("signer: {}", e)))?;
+        let client = HubRsClient::new(rpc_url, tuning.request_timeout)
+            .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
         let signing_key = SigningKey::from_slice(private_key)
-            .map_err(|e| ProviderError::Config(format!("k256 key: {}", e)))?;
-        let nonce = client
-            .get_nonce(signer.address())
-            .await
-            .map_err(|e| ProviderError::Config(format!("nonce: {}", e)))?;
+            .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
+        let actor_did = bearer::did_from_signing_key(&signing_key, true);
+        let worker_did = worker.did().to_owned();
+        let deployment = worker.deployment_id();
 
         let light_client_observer_handle = tokio::spawn(run_light_client_observer(
             light_client.clone(),
@@ -84,88 +91,21 @@ impl HubRsProvider {
             event_bus,
         ));
 
-        Ok(Self {
+        let provider = Self {
             light_client,
             client,
-            signer,
+            worker: Arc::new(tokio::sync::Mutex::new(worker)),
+            worker_did,
+            actor_did,
+            deployment,
+            trusted,
             signing_key,
-            nonce: AtomicU64::new(nonce),
             sync_timeout: tuning.receipt_timeout,
             light_client_observability,
             light_client_observer_handle,
-        })
-    }
-
-    async fn send_tx(&self, data: Bytes) -> Result<serde_json::Value, ProviderError> {
-        Ok(self.send_tx_with_sequence(data).await?.0)
-    }
-
-    async fn send_tx_with_sequence(
-        &self,
-        data: Bytes,
-    ) -> Result<(serde_json::Value, u64), ProviderError> {
-        let mut nonce_retries = 0;
-        let (tx_hash, sequence) = loop {
-            let nonce = if nonce_retries == 0 {
-                self.nonce.fetch_add(1, Ordering::Relaxed)
-            } else {
-                let chain_nonce = self
-                    .client
-                    .get_nonce(self.signer.address())
-                    .await
-                    .map_err(|e| ProviderError::Config(format!("nonce: {}", e)))?;
-                self.reserve_nonce_at_or_after(chain_nonce)
-            };
-
-            let raw = self
-                .signer
-                .sign_tx(nonce, ACP_ADDRESS, data.clone())
-                .map_err(|e| ProviderError::Transaction(format!("sign: {}", e)))?;
-
-            match self.client.send_raw_transaction(raw).await {
-                Ok(tx_hash) => break (tx_hash, nonce),
-                Err(e) if nonce_retries < MAX_NONCE_RETRIES && is_nonce_error(&e) => {
-                    nonce_retries += 1;
-                    tracing::debug!(error = %e, "hub.rs transaction nonce stale; refreshing");
-                    tokio::time::sleep(Duration::from_millis(100 * nonce_retries as u64)).await;
-                }
-                Err(e) => return Err(ProviderError::Transaction(format!("send: {}", e))),
-            }
         };
-        let receipt = self
-            .client
-            .wait_for_receipt(tx_hash)
-            .await
-            .map_err(|e| ProviderError::Transaction(format!("receipt: {}", e)))?;
-        let height = receipt["blockNumber"]
-            .as_str()
-            .and_then(|value| {
-                u64::from_str_radix(value.strip_prefix("0x").unwrap_or(value), 16).ok()
-            })
-            .ok_or_else(|| {
-                ProviderError::Transaction("receipt is missing a valid confirmation height".into())
-            })?;
-        // Reads must observe the operation before its caller is told it succeeded.
-        self.light_client.wait_for_height(height, self.sync_timeout).await
-            .map_err(|e| ProviderError::Unavailable(format!("operation confirmed at height {height}, but local proof state has not caught up: {e}")))?;
-        Ok((receipt, sequence))
-    }
-
-    fn reserve_nonce_at_or_after(&self, chain_nonce: u64) -> u64 {
-        for _ in 0..MAX_NONCE_RESERVE_ATTEMPTS {
-            let current = self.nonce.load(Ordering::Relaxed);
-            let nonce = current.max(chain_nonce);
-            if self
-                .nonce
-                .compare_exchange(current, nonce + 1, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                return nonce;
-            }
-        }
-
-        let _ = self.nonce.fetch_max(chain_nonce, Ordering::Relaxed);
-        self.nonce.fetch_add(1, Ordering::Relaxed).max(chain_nonce)
+        provider.recover_pending().await?;
+        Ok(provider)
     }
 
     async fn guarded_eth_call<F, Fut, T>(&self, op: F) -> Result<T, ProviderError>
@@ -175,21 +115,11 @@ impl HubRsProvider {
     {
         match op().await {
             Ok(value) => Ok(value),
-            Err(ClientError::Timeout(msg)) => {
-                Err(ProviderError::Unavailable(format!("timeout: {}", msg)))
+            Err(ClientError::Http(error)) if error.is_timeout() => {
+                Err(ProviderError::Unavailable(format!("timeout: {error}")))
             }
             Err(e) => Err(ProviderError::Query(e.to_string())),
         }
-    }
-
-    async fn query_policy_ids(&self) -> Result<Vec<String>, ProviderError> {
-        let call = IAcp::getPolicyIdsCall {};
-        let calldata = Bytes::from(call.abi_encode());
-        let result = self
-            .guarded_eth_call(|| self.client.eth_call(ACP_ADDRESS, calldata.clone()))
-            .await?;
-        IAcp::getPolicyIdsCall::abi_decode_returns(&result)
-            .map_err(|e| ProviderError::Query(format!("ABI decode: {}", e)))
     }
 
     async fn query_policy_raw(&self, policy_id: &str) -> Result<Option<String>, ProviderError> {
@@ -206,13 +136,8 @@ impl HubRsProvider {
         Ok(record.raw_policy)
     }
 
-    fn policy_id_to_bytes32(policy_id: &str) -> FixedBytes<32> {
-        let hex_str = policy_id.strip_prefix("0x").unwrap_or(policy_id);
-        let bytes = hex::decode(hex_str).unwrap_or_default();
-        let mut arr = [0u8; 32];
-        let start = 32usize.saturating_sub(bytes.len());
-        arr[start..].copy_from_slice(&bytes[..bytes.len().min(32)]);
-        FixedBytes::from(arr)
+    fn policy_id_to_bytes32(policy_id: &str) -> Result<FixedBytes<32>, ProviderError> {
+        hub_client::parse_policy_id(policy_id).map_err(|e| ProviderError::Query(e.to_string()))
     }
 }
 
@@ -235,11 +160,6 @@ fn access_request(
             permission: permission.into(),
         }],
     })
-}
-
-fn is_nonce_error(error: &ClientError) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("nonce") || message.contains("duplicate transaction")
 }
 
 #[derive(Deserialize)]
@@ -316,7 +236,7 @@ async fn run_light_client_observer(
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SourceHubProvider for HubRsProvider {
     fn authorized_account(&self) -> String {
-        self.signer.did()
+        self.worker_did.clone()
     }
 
     async fn create_bearer_token(&self, did: &str) -> Result<String, ProviderError> {
@@ -324,8 +244,8 @@ impl SourceHubProvider for HubRsProvider {
             return bearer::create_bearer_token(
                 &self.signing_key,
                 did,
-                &self.signer.did(),
-                self.signer.deployment_id(),
+                &self.worker_did,
+                self.deployment,
                 300,
             )
             .map_err(|e| {
@@ -333,11 +253,9 @@ impl SourceHubProvider for HubRsProvider {
             });
         }
 
-        if let Some(token) = resolve_registered_or_passthrough_bearer_token(
-            did,
-            &self.signer.did(),
-            self.signer.deployment_id(),
-        )? {
+        if let Some(token) =
+            resolve_registered_or_passthrough_bearer_token(did, &self.worker_did, self.deployment)?
+        {
             return Ok(token);
         }
 
@@ -352,27 +270,72 @@ impl SourceHubProvider for HubRsProvider {
     }
 
     fn self_did(&self) -> Option<String> {
-        Some(self.signer.did())
+        Some(self.actor_did.clone())
     }
 
     async fn create_policy(&self, policy_yaml: &str) -> Result<String, ProviderError> {
-        let call = IAcp::createPolicyCall {
-            policy: Bytes::from(policy_yaml.as_bytes().to_vec()),
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| ProviderError::Config(e.to_string()))?
+            .as_secs();
+        let token = hub_client::create_scoped_bearer_token(
+            &self.signing_key,
+            &self.worker_did,
+            self.deployment,
+            now,
+            now.checked_add(300)
+                .ok_or_else(|| ProviderError::Config("invalid clock".into()))?,
+            hub_client::DelegationScope::CreatePolicy,
+        )
+        .map_err(|e| ProviderError::Config(e.to_string()))?;
+        let call = IAcp::bearerCreatePolicyCall {
+            bearerToken: token,
+            policy: policy_yaml.as_bytes().to_vec().into(),
             marshalType: 1,
         };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
-
-        let ids = self.query_policy_ids().await?;
-        for id in ids.iter().rev() {
-            if let Some(raw_policy) = self.query_policy_raw(id).await? {
-                if raw_policy.trim() == policy_yaml.trim() {
-                    return Ok(id.clone());
-                }
-            }
+        let confirmed = self.send_tx_with_sequence(call.abi_encode().into()).await?;
+        let mut events = confirmed.receipt.logs().iter().filter(|log| {
+            log.address == ACP_ADDRESS
+                && log.topics().first() == Some(&IAcp::DelegatedPolicyCreated::SIGNATURE_HASH)
+        });
+        let log = events
+            .next()
+            .ok_or_else(|| ProviderError::Query("creation event missing".into()))?;
+        let event = IAcp::DelegatedPolicyCreated::decode_raw_log_validate(
+            log.topics().iter().copied(),
+            &log.data.data,
+        )
+        .map_err(|e| ProviderError::Query(format!("creation event: {e}")))?;
+        if events.next().is_some() || event.creator != self.actor_did {
+            return Err(ProviderError::Query(
+                "creation event does not match the actor".into(),
+            ));
         }
-
-        Err(ProviderError::Query("created policy ID not found".into()))
+        let id = hex::encode(event.policyId);
+        let record = self
+            .light_client
+            .read_policy(&id)
+            .await
+            .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))?;
+        let record: PolicyRecord = serde_json::from_slice(
+            record
+                .value
+                .as_deref()
+                .ok_or_else(|| ProviderError::Query("created policy absent".into()))?,
+        )
+        .map_err(|e| ProviderError::Query(format!("created policy record: {e}")))?;
+        if record.policy.id != id
+            || record.raw_policy != policy_yaml
+            || record.metadata.owner_did != self.actor_did
+            || record.metadata.tx_signer != self.worker_did
+            || record.metadata.tx_hash != confirmed.receipt.tx_hash.as_slice()
+            || record.metadata.creation_ts.block_height != confirmed.revision
+        {
+            return Err(ProviderError::Query(
+                "created policy does not match the signed request".into(),
+            ));
+        }
+        Ok(id)
     }
 
     async fn register_object(
@@ -382,7 +345,7 @@ impl SourceHubProvider for HubRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id);
+        let pid = Self::policy_id_to_bytes32(policy_id)?;
         let cmd = encode_register_object_cmd(resource, object_id);
         let call = IAcp::bearerPolicyCmdCall {
             bearerToken: bearer_token.to_string(),
@@ -408,7 +371,7 @@ impl SourceHubProvider for HubRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id);
+        let pid = Self::policy_id_to_bytes32(policy_id)?;
         let cmd = encode_archive_object_cmd(resource, object_id);
         let call = IAcp::bearerPolicyCmdCall {
             bearerToken: bearer_token.to_string(),
@@ -430,7 +393,7 @@ impl SourceHubProvider for HubRsProvider {
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id);
+        let pid = Self::policy_id_to_bytes32(policy_id)?;
         let cmd = encode_set_relationship_cmd(resource, object_id, relation, subject);
         let call = IAcp::bearerPolicyCmdCall {
             bearerToken: bearer_token.to_string(),
@@ -452,7 +415,7 @@ impl SourceHubProvider for HubRsProvider {
         relation: &str,
         subject: &SubjectRef,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id);
+        let pid = Self::policy_id_to_bytes32(policy_id)?;
         let cmd = encode_delete_relationship_cmd(resource, object_id, relation, subject);
         let call = IAcp::bearerPolicyCmdCall {
             bearerToken: bearer_token.to_string(),
@@ -476,19 +439,18 @@ impl SourceHubProvider for HubRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id);
-        let call = IAcp::setRelationshipSubjectCall {
-            policyId: pid,
-            resource: resource.to_string(),
-            objectId: object_id.to_string(),
-            relation: relation.to_string(),
-            subjectKind: kind,
-            subjectResource: subject_resource.to_string(),
-            subjectObjectId: subject_object_id.to_string(),
-            subjectRelation: subject_relation.to_string(),
+        let subject =
+            zanzibar::decode_subject(kind, subject_resource, subject_object_id, subject_relation)
+                .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))?;
+        let cmd = serde_json::to_vec(&serde_json::json!({
+            "SetRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
+        })).map_err(|e| ProviderError::Config(e.to_string()))?;
+        let call = IAcp::bearerPolicyCmdCall {
+            bearerToken: self.create_bearer_token(&self.actor_did).await?,
+            policyId: Self::policy_id_to_bytes32(policy_id)?,
+            cmd: cmd.into(),
         };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
+        self.send_tx(call.abi_encode().into()).await?;
         Ok(true)
     }
 
@@ -503,19 +465,18 @@ impl SourceHubProvider for HubRsProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> Result<bool, ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id);
-        let call = IAcp::deleteRelationshipSubjectCall {
-            policyId: pid,
-            resource: resource.to_string(),
-            objectId: object_id.to_string(),
-            relation: relation.to_string(),
-            subjectKind: kind,
-            subjectResource: subject_resource.to_string(),
-            subjectObjectId: subject_object_id.to_string(),
-            subjectRelation: subject_relation.to_string(),
+        let subject =
+            zanzibar::decode_subject(kind, subject_resource, subject_object_id, subject_relation)
+                .map_err(|e| ProviderError::Config(format!("relationship subject: {e}")))?;
+        let cmd = serde_json::to_vec(&serde_json::json!({
+            "DeleteRelationship": { "resource": resource, "object_id": object_id, "relation": relation, "subject": subject }
+        })).map_err(|e| ProviderError::Config(e.to_string()))?;
+        let call = IAcp::bearerPolicyCmdCall {
+            bearerToken: self.create_bearer_token(&self.actor_did).await?,
+            policyId: Self::policy_id_to_bytes32(policy_id)?,
+            cmd: cmd.into(),
         };
-        let calldata = Bytes::from(call.abi_encode());
-        self.send_tx(calldata).await?;
+        self.send_tx(call.abi_encode().into()).await?;
         Ok(true)
     }
 
@@ -540,7 +501,7 @@ impl SourceHubProvider for HubRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id);
+        let pid = Self::policy_id_to_bytes32(policy_id)?;
         let call = IAcp::getObjectOwnerCall {
             policyId: pid,
             resource: resource.to_string(),
@@ -589,20 +550,20 @@ impl SourceHubProvider for HubRsProvider {
     ) -> Result<Option<String>, ProviderError> {
         let request = access_request(resource, object_id, permission, actor_did)?;
         let call = IAcp::checkAccessCall {
-            policyId: Self::policy_id_to_bytes32(policy_id),
+            policyId: Self::policy_id_to_bytes32(policy_id)?,
             resources: vec![resource.to_string()],
             objectIds: vec![object_id.to_string()],
             permissions: vec![permission.to_string()],
             actor: actor_did.to_string(),
         };
-        let (_, sequence) = self
+        let confirmed = self
             .send_tx_with_sequence(Bytes::from(call.abi_encode()))
             .await?;
         let expected = acp_light_client::DecisionRequest {
-            deployment_id: self.signer.deployment_id(),
+            deployment_id: self.deployment,
             policy_id: policy_id.into(),
-            creator: self.signer.did(),
-            creator_sequence: sequence,
+            creator: self.worker_did.clone(),
+            creator_sequence: confirmed.sequence,
             request,
         };
         let decision = self
@@ -637,11 +598,16 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_consensus_key_is_required_before_connecting() {
-        for key in ["", "not-hex", "00"] {
+        let root = tempfile::tempdir().unwrap();
+        let keys = keyring::FileKeyring::open(root.path().join("keys"), b"test").unwrap();
+        for (index, key) in ["", "not-hex", "00"].into_iter().enumerate() {
+            let worker =
+                NativeWorker::open(&root.path().join(index.to_string()), &keys, 9001).unwrap();
             let error = HubRsProvider::new(
                 "http://127.0.0.1:1".into(),
                 key,
                 &[],
+                worker,
                 &AcpTuning::default(),
                 None,
             )
@@ -733,16 +699,5 @@ mod tests {
 
         defra_core::signing::clear_request_bearer_token(&did);
         defra_core::signing::clear_identity_store();
-    }
-
-    #[test]
-    fn nonce_errors_include_hubrs_duplicate_transaction_response() {
-        assert!(is_nonce_error(&ClientError::Rpc("nonce too low".into())));
-        assert!(is_nonce_error(&ClientError::Rpc(
-            "code -32000: duplicate transaction".into()
-        )));
-        assert!(!is_nonce_error(&ClientError::Rpc(
-            "execution reverted".into()
-        )));
     }
 }

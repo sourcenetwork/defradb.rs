@@ -8,9 +8,6 @@ license.workspace = true
 repository.workspace = true
 description = "SourceHub ACP client for DefraDB"
 
-[package.metadata.cargo-machete]
-ignored = ["alloy-rlp"]
-
 [lib]
 bench = false
 
@@ -54,6 +51,8 @@ rand.workspace = true
 tempfile = "3"
 hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
 hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
+hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
+commonware-codec = "2026.9.0"
 
 # Logging
 tracing.workspace = true
@@ -62,18 +61,13 @@ sha2.workspace = true
 # Base64 for bearer token
 base64.workspace = true
 
-# EVM / Alloy (hub.rs ACP backend)
+# ACP call encoding and identifiers
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
-alloy-consensus.workspace = true
-alloy-eips.workspace = true
-alloy-signer.workspace = true
-alloy-signer-local.workspace = true
-alloy-rlp.workspace = true
 bs58.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "c82527e64b9f12f1be22834ab2b2981ef92a79bd" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "c4c5accbced1eb5e74a481b0f6cea235d5a4f647" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true

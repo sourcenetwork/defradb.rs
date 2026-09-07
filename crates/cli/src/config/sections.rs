@@ -547,6 +547,11 @@ pub struct AcpConfig {
     #[serde(default)]
     pub vera_consensus_key: String,
 
+    /// Vera deployment identifier used to bind native submissions.
+    #[cfg(feature = "sourcehub")]
+    #[serde(default)]
+    pub vera_deployment_id: Option<u64>,
+
     /// Circuit breaker failure threshold before tripping. Default: 3.
     #[serde(default = "default_acp_cb_threshold")]
     pub circuit_breaker_threshold: u32,
@@ -603,6 +608,8 @@ impl Default for AcpConfig {
             hub_rs_address: String::new(),
             #[cfg(feature = "sourcehub")]
             vera_consensus_key: String::new(),
+            #[cfg(feature = "sourcehub")]
+            vera_deployment_id: None,
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),
             request_timeout: default_acp_request_timeout(),

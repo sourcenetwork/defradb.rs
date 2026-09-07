@@ -42,6 +42,8 @@ fn cli_with_defaults() -> Cli {
         hub_rs_address: None,
         #[cfg(feature = "sourcehub")]
         vera_consensus_key: None,
+        #[cfg(feature = "sourcehub")]
+        vera_deployment_id: None,
         secret_file: None,
         no_telemetry: None,
         development: None,
@@ -446,11 +448,21 @@ fn vera_consensus_key_survives_config_and_cli_override() {
     use clap::Parser as _;
     let mut config = Config::default();
     config.acp.vera_consensus_key = "configured-key".into();
+    config.acp.vera_deployment_id = Some(9001);
     let encoded = toml::to_string(&config).expect("serialize config");
     let mut config: Config = toml::from_str(&encoded).expect("deserialize config");
     assert_eq!(config.acp.vera_consensus_key, "configured-key");
-    let cli = Cli::try_parse_from(["defra", "--vera-consensus-key", "operator-key", "version"])
-        .expect("parse trusted key flag");
+    assert_eq!(config.acp.vera_deployment_id, Some(9001));
+    let cli = Cli::try_parse_from([
+        "defra",
+        "--vera-consensus-key",
+        "operator-key",
+        "--vera-deployment-id",
+        "9002",
+        "version",
+    ])
+    .expect("parse trusted key flag");
     config.apply_cli_flags(&cli).expect("apply config override");
     assert_eq!(config.acp.vera_consensus_key, "operator-key");
+    assert_eq!(config.acp.vera_deployment_id, Some(9002));
 }

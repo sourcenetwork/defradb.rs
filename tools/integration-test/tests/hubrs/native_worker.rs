@@ -135,3 +135,93 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
         );
     }
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn native_provider_recovers_pending_before_concurrent_requests() {
+    use commonware_codec::Encode as _;
+    use sourcehub::{AcpTuning, HubRsProvider, SourceHubProvider};
+
+    let hub = super::helpers::start_hub_cluster().await;
+    let trusted = *hub_harness::cluster::KeySet::builder()
+        .nodes(1)
+        .seed(0)
+        .build()
+        .unwrap()
+        .epoch_info()
+        .output
+        .public()
+        .public();
+    let consensus_key = format!("0x{}", hex::encode(trusted.encode()));
+    let root = tempfile::tempdir().unwrap();
+    let keys = FileKeyring::open(root.path().join("keys"), b"test-password").unwrap();
+    let directory = root.path().join("worker");
+    let mut worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
+    let did = worker.did().to_owned();
+    let rejected = worker
+        .prepare(ACP_ADDRESS, vec![1, 2, 3, 4].into())
+        .unwrap()
+        .to_vec();
+    let client = HubClient::new(hub.node(0).rpc_url());
+    client.send_native_tx(&rejected).await.unwrap();
+    drop(worker);
+
+    let actor = super::helpers::funded_identity();
+    let private_key = hex::decode(actor.private_key_hex).unwrap();
+    let provider = HubRsProvider::new(
+        hub.node(0).rpc_url(),
+        &consensus_key,
+        &private_key,
+        NativeWorker::open(&directory, &keys, 9001).unwrap(),
+        &AcpTuning::default(),
+        None,
+    )
+    .await
+    .expect("startup resolves the pending rejected request");
+    assert_eq!(provider.authorized_account(), did);
+    assert_ne!(provider.self_did().unwrap(), did);
+    let (first, second) = tokio::join!(
+        provider.create_policy(integration_test::USER_ACP_POLICY),
+        provider.create_policy(integration_test::USER_ACP_POLICY),
+    );
+    let first = first.unwrap();
+    assert_ne!(first, second.unwrap());
+    drop(provider);
+
+    let worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
+    assert_eq!(worker.did(), did);
+    assert_eq!(worker.next_sequence(), 3);
+    assert!(worker.pending().is_none());
+    let provider = HubRsProvider::new(
+        hub.node(0).rpc_url(),
+        &consensus_key,
+        &private_key,
+        worker,
+        &AcpTuning::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    let token = provider
+        .create_bearer_token(&provider.self_did().unwrap())
+        .await
+        .unwrap();
+    provider
+        .register_object(&token, &first, "users", "after-reopen")
+        .await
+        .unwrap();
+    assert!(provider
+        .verify_access(
+            &first,
+            "users",
+            "after-reopen",
+            "owner",
+            &provider.self_did().unwrap()
+        )
+        .await
+        .unwrap());
+    drop(provider);
+    let worker = NativeWorker::open(&directory, &keys, 9001).unwrap();
+    assert_eq!(worker.next_sequence(), 4);
+    assert!(worker.pending().is_none());
+}

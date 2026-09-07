@@ -51,7 +51,7 @@ pub fn create_bearer_token(
     Ok(format!("{}.{}", message, sig_b64))
 }
 
-fn did_from_signing_key(key: &SigningKey, compressed: bool) -> String {
+pub(super) fn did_from_signing_key(key: &SigningKey, compressed: bool) -> String {
     let verifying_key = key.verifying_key();
     let encoded_key = verifying_key.to_encoded_point(compressed);
     // multicodec prefix for secp256k1-pub: 0xe7 0x01

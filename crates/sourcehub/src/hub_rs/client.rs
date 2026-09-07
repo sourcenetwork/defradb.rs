@@ -1,217 +1,150 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::Duration;
 
 use alloy_primitives::{Address, Bytes, B256};
-
-const RECEIPT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+use hub_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse, RECEIPT_RESPONSE_BYTES};
+use serde::de::DeserializeOwned;
 
 pub struct HubRsClient {
     url: String,
     http: reqwest::Client,
-    receipt_timeout: std::time::Duration,
     next_id: AtomicU64,
 }
 
 impl HubRsClient {
-    pub fn new(
-        url: String,
-        request_timeout: std::time::Duration,
-        receipt_timeout: std::time::Duration,
-    ) -> Result<Self, ClientError> {
-        let http = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .build()
-            .map_err(ClientError::Http)?;
+    pub fn new(url: String, request_timeout: Duration) -> Result<Self, ClientError> {
         Ok(Self {
             url,
-            http,
-            receipt_timeout,
+            http: reqwest::Client::builder()
+                .timeout(request_timeout)
+                .build()?,
             next_id: AtomicU64::new(1),
         })
     }
 
-    fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
-    }
-
-    pub async fn chain_id(&self) -> Result<u64, ClientError> {
-        let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_id(),
-            "method": "eth_chainId",
-            "params": []
-        });
-        let resp: serde_json::Value = self
+    async fn rpc<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        maximum: usize,
+    ) -> Result<T, ClientError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut response = self
             .http
             .post(&self.url)
-            .json(&body)
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": method, "params": params,
+            }))
             .send()
             .await?
-            .json()
-            .await?;
-        check_rpc_error(&resp)?;
-        let hex_str = resp["result"]
-            .as_str()
-            .ok_or_else(|| ClientError::Rpc("missing result in eth_chainId".into()))?;
-        parse_hex_u64(hex_str)
+            .error_for_status()?;
+        if response
+            .content_length()
+            .is_some_and(|size| size > maximum as u64)
+        {
+            return Err(ClientError::InvalidResponse("response exceeds byte limit"));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > maximum - bytes.len() {
+                return Err(ClientError::InvalidResponse("response exceeds byte limit"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if value["jsonrpc"] != "2.0" || value["id"].as_u64() != Some(id) {
+            return Err(ClientError::InvalidResponse(
+                "request ID or protocol version mismatch",
+            ));
+        }
+        if let Some(error) = value.get("error") {
+            return Err(ClientError::Rpc {
+                code: error["code"].as_i64().unwrap_or(0),
+                message: error["message"]
+                    .as_str()
+                    .unwrap_or("unspecified error")
+                    .into(),
+            });
+        }
+        let result = value
+            .get_mut("result")
+            .ok_or(ClientError::InvalidResponse("missing result"))?
+            .take();
+        Ok(serde_json::from_value(result)?)
     }
 
-    pub async fn get_nonce(&self, address: Address) -> Result<u64, ClientError> {
-        let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_id(),
-            "method": "eth_getTransactionCount",
-            "params": [format!("{:?}", address), "pending"]
-        });
-        let resp: serde_json::Value = self
-            .http
-            .post(&self.url)
-            .json(&body)
-            .send()
-            .await?
-            .json()
+    pub async fn send(&self, wire: &[u8]) -> Result<B256, ClientError> {
+        let expected = NativeTx::decode_wire(wire)
+            .map_err(|_| ClientError::InvalidResponse("invalid signed request"))?
+            .tx_id()
+            .0;
+        let returned: B256 = self
+            .rpc(
+                "hub_sendNativeTx",
+                serde_json::json!([Bytes::copy_from_slice(wire)]),
+                4096,
+            )
             .await?;
-        check_rpc_error(&resp)?;
-        let hex_str = resp["result"]
-            .as_str()
-            .ok_or_else(|| ClientError::Rpc("missing result in eth_getTransactionCount".into()))?;
-        parse_hex_u64(hex_str)
+        if returned != expected {
+            return Err(ClientError::InvalidResponse("submission ID mismatch"));
+        }
+        Ok(expected)
+    }
+
+    pub async fn receipt(
+        &self,
+        hash: B256,
+        trusted: &ConsensusPublicKey,
+    ) -> Result<Option<ReceiptResponse>, ClientError> {
+        let response: Option<ReceiptResponse> = self
+            .rpc(
+                "hub_getReceiptProof",
+                serde_json::json!([hash]),
+                RECEIPT_RESPONSE_BYTES,
+            )
+            .await?;
+        if let Some(response) = &response {
+            response.verify(hash, trusted)?;
+        }
+        Ok(response)
     }
 
     pub async fn eth_call(&self, to: Address, data: Bytes) -> Result<Bytes, ClientError> {
-        let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_id(),
-            "method": "eth_call",
-            "params": [{
-                "to": format!("{:?}", to),
-                "data": format!("0x{}", hex::encode(&data)),
-            }, "latest"]
-        });
-        let resp: serde_json::Value = self
-            .http
-            .post(&self.url)
-            .json(&body)
-            .send()
-            .await?
-            .json()
-            .await?;
-        check_rpc_error(&resp)?;
-        let hex_str = resp["result"]
-            .as_str()
-            .ok_or_else(|| ClientError::Rpc("missing result in eth_call".into()))?;
-        let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))
-            .map_err(|e| ClientError::Rpc(format!("hex decode: {}", e)))?;
-        Ok(Bytes::from(bytes))
+        self.rpc(
+            "eth_call",
+            serde_json::json!([{ "to": to, "data": data }, "latest"]),
+            4 << 20,
+        )
+        .await
     }
-
-    pub async fn send_raw_transaction(&self, raw: Bytes) -> Result<B256, ClientError> {
-        let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_id(),
-            "method": "eth_sendRawTransaction",
-            "params": [format!("0x{}", hex::encode(&raw))]
-        });
-        let resp: serde_json::Value = self
-            .http
-            .post(&self.url)
-            .json(&body)
-            .send()
-            .await?
-            .json()
-            .await?;
-        check_rpc_error(&resp)?;
-        let hash_str = resp["result"]
-            .as_str()
-            .ok_or_else(|| ClientError::Rpc("missing result in eth_sendRawTransaction".into()))?;
-        let bytes = hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str))
-            .map_err(|e| ClientError::Rpc(format!("tx hash hex decode: {}", e)))?;
-        if bytes.len() != 32 {
-            return Err(ClientError::Rpc(format!(
-                "unexpected tx hash length: {}",
-                bytes.len()
-            )));
-        }
-        Ok(B256::from_slice(&bytes))
-    }
-
-    pub async fn wait_for_receipt(&self, tx_hash: B256) -> Result<serde_json::Value, ClientError> {
-        let start = Instant::now();
-        let tx_hash_hex = format!("0x{}", hex::encode(tx_hash));
-        let mut polls = 0u64;
-        loop {
-            if start.elapsed() > self.receipt_timeout {
-                return Err(ClientError::Timeout(format!(
-                    "receipt timeout for {:?}",
-                    tx_hash
-                )));
-            }
-            polls += 1;
-            let body = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": self.next_id(),
-                "method": "eth_getTransactionReceipt",
-                "params": [tx_hash_hex.clone()]
-            });
-            let resp: serde_json::Value = self
-                .http
-                .post(&self.url)
-                .json(&body)
-                .send()
-                .await?
-                .json()
-                .await?;
-            check_rpc_error(&resp)?;
-            if !resp["result"].is_null() {
-                let status = resp["result"]["status"].as_str().unwrap_or("0x0");
-                if status != "0x1" {
-                    return Err(ClientError::TxReverted(format!(
-                        "tx {:?} reverted (status {})",
-                        tx_hash, status
-                    )));
-                }
-                tracing::info!(
-                    tx_hash = %tx_hash_hex,
-                    polls,
-                    elapsed = ?start.elapsed(),
-                    "hub.rs transaction receipt found"
-                );
-                return Ok(resp["result"].clone());
-            }
-            tokio::time::sleep(RECEIPT_POLL_INTERVAL).await;
-        }
-    }
-}
-
-fn check_rpc_error(resp: &serde_json::Value) -> Result<(), ClientError> {
-    if let Some(err) = resp.get("error") {
-        let msg = err["message"].as_str().unwrap_or("unknown RPC error");
-        let code = err["code"].as_i64().unwrap_or(0);
-        return Err(ClientError::Rpc(format!("code {}: {}", code, msg)));
-    }
-    Ok(())
-}
-
-fn parse_hex_u64(s: &str) -> Result<u64, ClientError> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    u64::from_str_radix(s, 16).map_err(|e| ClientError::Rpc(format!("parse hex u64: {}", e)))
 }
 
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum ClientError {
-    #[error("HTTP error: {0}")]
+    #[error(transparent)]
     Http(#[from] reqwest::Error),
-
-    #[error("JSON error: {0}")]
+    #[error("RPC error ({code}): {message}")]
+    Rpc { code: i64, message: String },
+    #[error("invalid RPC response: {0}")]
+    InvalidResponse(&'static str),
+    #[error(transparent)]
     Json(#[from] serde_json::Error),
-
-    #[error("RPC error: {0}")]
-    Rpc(String),
-
-    #[error("transaction reverted: {0}")]
-    TxReverted(String),
-
-    #[error("timeout: {0}")]
-    Timeout(String),
+    #[error(transparent)]
+    Receipt(#[from] hub_domain::ReceiptResponseError),
 }
+
+impl ClientError {
+    pub fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Http(_)
+                | Self::Rpc {
+                    code: -32002 | -32000,
+                    ..
+                }
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests;

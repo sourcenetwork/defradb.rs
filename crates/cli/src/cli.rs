@@ -118,6 +118,11 @@ pub struct Cli {
     #[arg(long, global = true, env = "DEFRA_VERA_CONSENSUS_KEY")]
     pub vera_consensus_key: Option<String>,
 
+    /// Vera deployment identifier from operator configuration
+    #[cfg(feature = "sourcehub")]
+    #[arg(long, global = true, env = "DEFRA_VERA_DEPLOYMENT_ID")]
+    pub vera_deployment_id: Option<u64>,
+
     /// Path to the file containing secrets. Relative paths use the working directory.
     #[arg(long, global = true, env = "DEFRA_SECRET_FILE")]
     pub secret_file: Option<String>,

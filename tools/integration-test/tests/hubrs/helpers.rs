@@ -23,12 +23,6 @@ pub fn funded_identity() -> TestIdentity {
     }
 }
 
-/// ACP precompile address on hub.rs (0x0810).
-const ACP_PRECOMPILE: &str = "0x0000000000000000000000000000000000000810";
-
-/// Function selector for `getPolicy(bytes32)`: keccak256("getPolicy(bytes32)")[:4].
-const GET_POLICY_SELECTOR: &str = "a3f685f9";
-
 /// Start a 1-node hub.rs devnet cluster and wait for it to be healthy.
 pub async fn start_hub_cluster() -> hub_harness::cluster::TestCluster {
     let cluster = hub_harness::cluster::TestCluster::builder()
@@ -63,15 +57,18 @@ pub async fn build_defra_with_hub_rs(
         .expect("bootstrap keys");
     let trusted_key = hex::encode(keys.epoch_info().output.public().public().encode());
     let previous_key = std::env::var_os("DEFRA_VERA_CONSENSUS_KEY");
+    let previous_deployment = std::env::var_os("DEFRA_VERA_DEPLOYMENT_ID");
     let previous_type = std::env::var_os("DEFRA_ACP_DOCUMENT_TYPE");
     unsafe {
         std::env::set_var("DEFRA_HUB_RS_ADDRESS", hub_rpc_url);
         std::env::set_var("DEFRA_VERA_CONSENSUS_KEY", trusted_key);
+        std::env::set_var("DEFRA_VERA_DEPLOYMENT_ID", "9001");
         std::env::set_var("DEFRA_ACP_DOCUMENT_TYPE", "hub-rs");
     }
 
     let mut builder = TestCluster::builder()
         .rust_nodes(n_nodes)
+        .with_keyring()
         .with_rust_binary(BinarySource::Path(defra_binary()));
     for index in 0..n_nodes {
         builder = builder.with_node_identity(index, identity.to_string());
@@ -85,6 +82,7 @@ pub async fn build_defra_with_hub_rs(
         for (name, value) in [
             ("DEFRA_HUB_RS_ADDRESS", previous_address),
             ("DEFRA_VERA_CONSENSUS_KEY", previous_key),
+            ("DEFRA_VERA_DEPLOYMENT_ID", previous_deployment),
             ("DEFRA_ACP_DOCUMENT_TYPE", previous_type),
         ] {
             match value {
@@ -96,37 +94,21 @@ pub async fn build_defra_with_hub_rs(
     cluster.expect("build defra cluster")
 }
 
-/// Query the ACP precompile directly via `eth_call` to verify a policy exists on-chain.
-///
-/// Calls `getPolicy(bytes32 policyId)` on the ACP precompile (`0x0810`).
-/// Returns `true` if the response contains non-empty bytes (policy exists).
-pub async fn policy_exists_on_chain(hub_rpc_url: &str, policy_id: &str) -> bool {
-    let pid_hex = policy_id.strip_prefix("0x").unwrap_or(policy_id);
-    let pid_padded = format!("{:0>64}", pid_hex);
-    let calldata = format!("0x{}{}", GET_POLICY_SELECTOR, pid_padded);
-
-    let client = reqwest::Client::new();
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "eth_call",
-        "params": [{
-            "to": ACP_PRECOMPILE,
-            "data": calldata,
-        }, "latest"]
-    });
-
-    let resp: serde_json::Value = client
-        .post(hub_rpc_url)
-        .json(&body)
-        .send()
+pub async fn policy_exists(hub_rpc_url: &str, policy_id: &str) -> bool {
+    let keys = hub_harness::cluster::KeySet::builder()
+        .nodes(1)
+        .seed(0)
+        .build()
+        .expect("bootstrap keys");
+    let response = hub_client::HubClient::new(hub_rpc_url)
+        .read_current_record(
+            hub_domain::ModuleId::Acp,
+            &hub_modules::acp::keys::policy_key(policy_id),
+            1,
+            keys.epoch_info().output.public().public(),
+            hub_client::RECORD_PROOF_BYTES,
+        )
         .await
-        .expect("eth_call request failed")
-        .json()
-        .await
-        .expect("eth_call response parse failed");
-
-    let result = resp["result"].as_str().unwrap_or("0x");
-    // Non-empty means policy exists (more than just "0x" or empty ABI-encoded bytes)
-    result.len() > 66
+        .expect("verified policy record");
+    response.record.value.is_some()
 }
