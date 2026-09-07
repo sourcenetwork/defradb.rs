@@ -256,6 +256,45 @@ impl Key for PeerstoreSERetry {
     }
 }
 
+/// BrowserSyncHeadKey: What a browser-sync peer is known to hold for a document
+///
+/// Structure: /bsync/head/[Peer]/[DocID]
+/// Example: /bsync/head/https://node.example/bae123456789abcdef0123456789abcdef012345
+///
+/// The value is the peer's composite head CIDs, sorted and newline-joined. A
+/// node writes it when the peer hands it a document and when the peer accepts
+/// one, which is what lets the next push offer only what the peer has not got.
+///
+/// `peer` is the sync endpoint the record is about, verbatim, so it may contain
+/// separators; the key is only ever addressed exactly, never scanned by prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserSyncHeadKey {
+    /// The sync endpoint this record is about.
+    pub peer: String,
+    /// Document identifier.
+    pub doc_id: String,
+}
+
+impl BrowserSyncHeadKey {
+    /// Create a new BrowserSyncHeadKey
+    pub fn new(peer: impl Into<String>, doc_id: impl Into<String>) -> Self {
+        Self {
+            peer: peer.into(),
+            doc_id: doc_id.into(),
+        }
+    }
+}
+
+impl Key for BrowserSyncHeadKey {
+    fn bytes(&self) -> Vec<u8> {
+        format!("/bsync/head/{}/{}", self.peer, self.doc_id).into_bytes()
+    }
+
+    fn to_string(&self) -> String {
+        format!("/bsync/head/{}/{}", self.peer, self.doc_id)
+    }
+}
+
 #[cfg(test)]
 #[path = "peerstore_tests.rs"]
 mod tests;

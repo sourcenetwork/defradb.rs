@@ -34,6 +34,12 @@ impl SyncHttpClient {
         })
     }
 
+    /// The endpoint this client syncs against, which is the peer that
+    /// document-head records are about.
+    pub(super) fn peer(&self) -> &str {
+        &self.base_url
+    }
+
     pub(super) async fn sync(&self, request: &BrowserSyncRequest) -> Result<BrowserSyncResponse> {
         let body = serde_json::to_string(request)?;
         let response = self

@@ -155,6 +155,120 @@ async fn document_round_trip_uses_crdt_blocks() {
     );
 }
 
+/// A node that pulled a document and wrote down what its peer holds has
+/// nothing to offer that peer back.
+///
+/// This is the push half of the browser-sync failure: a synced browser
+/// answered every announcement by loading its own copy of the named document
+/// and putting it in the same exchange as the pull, whether or not it held a
+/// block the server lacked. For a document it did not author, that was
+/// somebody else's document going back where it came from, and the `403` that
+/// answered cost the exchange, the pull inside it, and — through
+/// `recover_full_sync`, which meets the same document again — the session.
+#[tokio::test]
+async fn a_document_the_peer_supplied_is_not_offered_back() {
+    let server = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let browser = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    server.create_collection(users_schema()).await.unwrap();
+    browser.create_collection(users_schema()).await.unwrap();
+
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let created = db::AutoCommitMutator::new(server.clone())
+        .create("Users", document)
+        .await
+        .unwrap();
+    let doc_id = created.doc_id.to_string();
+
+    let server_sync = BrowserSyncEngine::new(server);
+    let server_ref = server_sync.document_ref(&doc_id).await.unwrap().unwrap();
+    let pulled = server_sync
+        .load_document(&server_ref)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let browser_sync = BrowserSyncEngine::new(browser.clone());
+    let peer = "https://node.example";
+    browser_sync
+        .apply_document(&pulled, "server")
+        .await
+        .unwrap();
+    browser_sync
+        .record_peer_roots(peer, &[(doc_id.clone(), pulled.roots.clone())])
+        .await
+        .unwrap();
+
+    let browser_ref = browser_sync.document_ref(&doc_id).await.unwrap().unwrap();
+    assert!(
+        !browser_sync
+            .peer_needs_document(peer, &browser_ref)
+            .await
+            .unwrap(),
+        "the peer handed this over; it cannot need it back"
+    );
+    // The record is the peer's, not the document's: a node pointed at a second
+    // server still owes that server everything it holds.
+    assert!(browser_sync
+        .peer_needs_document("https://other.example", &browser_ref)
+        .await
+        .unwrap());
+
+    // A write here is a block the peer has not got, and the offer comes back.
+    let mut update = Document::new();
+    update.set_id(DocID::from_string(&doc_id).unwrap());
+    update.set("name", "Alice in the browser");
+    db::AutoCommitMutator::new(browser)
+        .update(
+            "Users",
+            update,
+            std::collections::HashSet::from(["name".to_string()]),
+        )
+        .await
+        .unwrap();
+    assert!(
+        browser_sync
+            .peer_needs_document(peer, &browser_ref)
+            .await
+            .unwrap(),
+        "a local write is exactly what a push is for"
+    );
+}
+
+/// The record survives the engine that wrote it, because the question it
+/// answers outlives a session: a second `sync()` on the same store used to
+/// start by offering the server everything it had just been given.
+#[tokio::test]
+async fn what_the_peer_holds_outlives_the_engine_that_recorded_it() {
+    let database = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    database.create_collection(users_schema()).await.unwrap();
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let created = db::AutoCommitMutator::new(database.clone())
+        .create("Users", document)
+        .await
+        .unwrap();
+    let doc_id = created.doc_id.to_string();
+
+    let session = BrowserSyncEngine::new(database.clone());
+    let document_ref = session.document_ref(&doc_id).await.unwrap().unwrap();
+    let roots = session.document_roots(&document_ref).await.unwrap();
+    assert!(session
+        .peer_needs_document("https://node.example", &document_ref)
+        .await
+        .unwrap());
+    session
+        .record_peer_roots("https://node.example", &[(doc_id, roots)])
+        .await
+        .unwrap();
+
+    let next_session = BrowserSyncEngine::new(database);
+    assert!(!next_session
+        .peer_needs_document("https://node.example", &document_ref)
+        .await
+        .unwrap());
+}
+
 /// What decides whether a pushed payload is an update at all: a payload whose
 /// blocks are already held cannot change anything, whoever sent it.
 #[tokio::test]

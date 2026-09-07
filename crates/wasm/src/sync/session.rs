@@ -59,9 +59,11 @@ pub(crate) async fn start(
     auth_token: Option<String>,
     grants: Grants,
 ) -> Result<SyncTask> {
+    let http = SyncHttpClient::new(server_url, auth_token)?;
     let session = Rc::new(SyncSession {
         engine: db::merge::BrowserSyncEngine::new(database),
-        http: SyncHttpClient::new(server_url, auth_token)?,
+        peer: http.peer().to_string(),
+        http,
         exchange_lock: Mutex::new(()),
         full_sync_lock: Mutex::new(()),
         grants,
@@ -100,6 +102,9 @@ pub(crate) async fn start(
 
 struct SyncSession {
     engine: db::merge::BrowserSyncEngine<RegolithStore>,
+    /// The server these head records are about, so a node pointed at a second
+    /// one still offers it everything.
+    peer: String,
     http: SyncHttpClient,
     exchange_lock: Mutex<()>,
     full_sync_lock: Mutex<()>,
@@ -132,6 +137,9 @@ impl SyncSession {
         let mut documents = Vec::new();
         let mut serialized_size = EMPTY_PUSH_REQUEST_BYTES;
         for document_ref in refs {
+            if !self.peer_needs_document(&document_ref).await? {
+                continue;
+            }
             let loaded = match self.engine.load_document(&document_ref).await {
                 Ok(loaded) => loaded,
                 // Cannot be represented as a sync payload — too large, or too
@@ -250,9 +258,10 @@ impl SyncSession {
         Ok(())
     }
 
-    /// The push payload for a document, or `None` when there is nothing local
-    /// to push: it is not held here, or it is too large to represent. Failing
-    /// instead would force a full sync on every update touching it.
+    /// The push payload for a document, or `None` when there is nothing to
+    /// push: it is not held here, the server already has what is held, or it
+    /// is too large to represent. Failing instead would force a full sync on
+    /// every update touching it.
     async fn load_push_document(&self, doc_id: &str) -> Result<Option<BrowserSyncDocument>> {
         let Some(document_ref) = self
             .engine
@@ -262,6 +271,9 @@ impl SyncSession {
         else {
             return Ok(None);
         };
+        if !self.peer_needs_document(&document_ref).await? {
+            return Ok(None);
+        }
         match self.engine.load_document(&document_ref).await {
             Ok(document) => Ok(document.map(|mut document| {
                 self.grants.attach(&mut document);
@@ -322,13 +334,52 @@ impl SyncSession {
                 refusal.doc_id, refusal.reason
             ));
         }
+        // What the server holds now, written down once for the whole
+        // exchange: what it took, and what it handed over.
+        let mut held = Vec::with_capacity(request.documents.len() + response.documents.len());
+        for document in &request.documents {
+            if response
+                .refused
+                .iter()
+                .any(|refusal| refusal.doc_id == document.doc_id)
+            {
+                continue;
+            }
+            held.push((document.doc_id.clone(), document.roots.clone()));
+        }
         for document in &response.documents {
             self.engine
                 .apply_document(document, "server")
                 .await
                 .map_err(engine_error)?;
+            held.push((document.doc_id.clone(), document.roots.clone()));
         }
+        self.record_peer_roots(&held).await;
         Ok(response)
+    }
+
+    /// Whether the server still lacks something this node holds for a
+    /// document. A push that is not the answer to that question is somebody
+    /// else's document going back where it came from.
+    async fn peer_needs_document(
+        &self,
+        document_ref: &db::merge::browser_sync::BrowserSyncDocumentRef,
+    ) -> Result<bool> {
+        self.engine
+            .peer_needs_document(&self.peer, document_ref)
+            .await
+            .map_err(engine_error)
+    }
+
+    /// Write down what the server now holds. A failure here costs a redundant
+    /// push later; failing the exchange over bookkeeping would cost the
+    /// session, which is the fault this record exists to prevent.
+    async fn record_peer_roots(&self, held: &[(String, Vec<String>)]) {
+        if let Err(error) = self.engine.record_peer_roots(&self.peer, held).await {
+            warn(&format!(
+                "browser sync could not record what the server holds: {error}"
+            ));
+        }
     }
 
     async fn run_local(self: Rc<Self>, mut subscription: events::Subscription) {
@@ -496,15 +547,22 @@ fn warn(message: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use defra_core::browser_sync::{
         BrowserSyncBlock, BrowserSyncDocument, BrowserSyncPull, BrowserSyncRequest,
         MAX_SYNC_BODY_BYTES, MAX_SYNC_DOCUMENTS_PER_REQUEST, MAX_SYNC_PAGE_SIZE,
         MAX_SYNC_PULL_DOC_IDS,
     };
+    use futures::lock::Mutex;
+    use query::mutator::DocMutator;
+    use storage::RegolithStore;
 
-    use wasm_bindgen_test::wasm_bindgen_test;
+    use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
-    use super::{SyncBatch, EMPTY_PUSH_REQUEST_BYTES};
+    use super::{Grants, SyncBatch, SyncHttpClient, SyncSession, EMPTY_PUSH_REQUEST_BYTES};
+
+    wasm_bindgen_test_configure!(run_in_browser);
 
     fn document(doc_id: &str, data: &str) -> BrowserSyncDocument {
         BrowserSyncDocument {
@@ -648,5 +706,68 @@ mod tests {
         assert!(flushed.bytes <= MAX_SYNC_BODY_BYTES);
         assert_eq!(flushed.documents.len(), 3);
         assert_eq!(batch.documents.len(), 1);
+    }
+
+    const PEER: &str = "https://node.example";
+
+    fn session(database: Arc<db::DB<RegolithStore>>) -> SyncSession {
+        SyncSession {
+            engine: db::merge::BrowserSyncEngine::new(database),
+            peer: PEER.into(),
+            http: SyncHttpClient::new(PEER, None).unwrap(),
+            exchange_lock: Mutex::new(()),
+            full_sync_lock: Mutex::new(()),
+            grants: Grants::default(),
+        }
+    }
+
+    /// The push half of the browser-sync failure, at the seam that decides it.
+    ///
+    /// Answering an announcement used to mean loading this node's copy of the
+    /// named document and putting it in the same exchange as the pull, whether
+    /// or not this node held a block the server lacked. A document pulled from
+    /// the server and not written to since is exactly that case, and offering
+    /// it back is what a node that does not own it is refused for.
+    // As `DefraClient::new_impl`: the browser has no threads to send it across.
+    #[allow(clippy::arc_with_non_send_sync)]
+    #[wasm_bindgen_test]
+    async fn a_document_the_server_supplied_is_not_offered_back() {
+        let database = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        database
+            .create_collection(schema::CollectionVersion::new(
+                "Users",
+                "users-version",
+                "users-collection",
+                vec![
+                    schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
+                    schema::FieldDescription::new("2", "name", schema::FieldKind::string()),
+                ],
+            ))
+            .await
+            .unwrap();
+        let mut document = document::Document::new();
+        document.set("name", "Alice");
+        let doc_id = db::AutoCommitMutator::new(database.clone())
+            .create("Users", document)
+            .await
+            .unwrap()
+            .doc_id
+            .to_string();
+
+        let session = session(database);
+        let pushed = session
+            .load_push_document(&doc_id)
+            .await
+            .unwrap()
+            .expect("a document the server has never seen is offered");
+
+        // What `exchange` writes down once the server has it.
+        session
+            .record_peer_roots(&[(doc_id.clone(), pushed.roots.clone())])
+            .await;
+        assert!(
+            session.load_push_document(&doc_id).await.unwrap().is_none(),
+            "the server holds this; there is nothing to offer"
+        );
     }
 }

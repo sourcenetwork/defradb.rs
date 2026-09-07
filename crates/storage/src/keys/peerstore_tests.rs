@@ -127,3 +127,16 @@ fn test_peerstore_se_retry() {
         format!("/se-retry/{}/{}/", peer_id, collection_id).as_bytes()
     );
 }
+
+#[test]
+fn test_browser_sync_head_key() {
+    let key = BrowserSyncHeadKey::new(
+        "https://node.example",
+        "bae123456789abcdef0123456789abcdef012345",
+    );
+    assert_eq!(
+        key.to_string(),
+        "/bsync/head/https://node.example/bae123456789abcdef0123456789abcdef012345"
+    );
+    assert_eq!(key.bytes(), key.to_string().as_bytes());
+}
