@@ -283,6 +283,8 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
             collection_id: document_ref.collection_id.clone(),
             roots: roots.into_iter().map(|cid| cid.to_string()).collect(),
             blocks,
+            // Grants are node-local state, not part of the DAG a pull carries.
+            relationships: Vec::new(),
         };
         self.validate_document(&document)?;
         Ok(Some(document))

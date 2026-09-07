@@ -3,8 +3,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use defra_core::browser_sync::{
-    BrowserSyncDocument, BrowserSyncPull, BrowserSyncRequest, BrowserSyncResponse,
-    MAX_SYNC_BODY_BYTES, MAX_SYNC_DOCUMENTS_PER_REQUEST, MAX_SYNC_PAGE_SIZE,
+    BrowserSyncDocument, BrowserSyncPull, BrowserSyncRelationship, BrowserSyncRequest,
+    BrowserSyncResponse, MAX_SYNC_BODY_BYTES, MAX_SYNC_DOCUMENTS_PER_REQUEST, MAX_SYNC_PAGE_SIZE,
+    MAX_SYNC_PULL_DOC_IDS,
 };
 use events::Bus;
 use futures::channel::oneshot;
@@ -15,12 +16,23 @@ use wasm_bindgen_futures::spawn_local;
 
 use crate::error::{Result, WasmError};
 
+use super::grants::attach_grants;
 use super::http::SyncHttpClient;
 use super::sse::SseStream;
 
 const INITIAL_RECONNECT_DELAY_MS: u32 = 1_000;
 const MAX_RECONNECT_DELAY_MS: u32 = 30_000;
 const EMPTY_PUSH_REQUEST_BYTES: usize = b"{\"documents\":[]}".len();
+
+/// What an exchange costs before a document or a pull ID is in it.
+/// `incremental_sync_size_matches_serialized_request` holds it against a real
+/// serialization.
+const EMPTY_SYNC_REQUEST_BYTES: usize =
+    b"{\"documents\":[],\"pull\":{\"doc_ids\":[],\"limit\":64}}".len();
+
+// The literal above spells out the page limit, so a limit of a different width
+// would silently mis-size every batch.
+const _: () = assert!(MAX_SYNC_PAGE_SIZE == 64);
 
 pub(crate) struct SyncTask {
     abort: AbortHandle,
@@ -45,12 +57,14 @@ pub(crate) async fn start(
     event_bus: &Arc<events::ChannelBus>,
     server_url: &str,
     auth_token: Option<String>,
+    grants: Grants,
 ) -> Result<SyncTask> {
     let session = Rc::new(SyncSession {
         engine: db::merge::BrowserSyncEngine::new(database),
         http: SyncHttpClient::new(server_url, auth_token)?,
         exchange_lock: Mutex::new(()),
         full_sync_lock: Mutex::new(()),
+        grants,
     });
     let subscription = event_bus.subscribe(&[events::EventName::Update]);
     let subscription_id = subscription.id();
@@ -89,6 +103,21 @@ struct SyncSession {
     http: SyncHttpClient,
     exchange_lock: Mutex<()>,
     full_sync_lock: Mutex<()>,
+    grants: Grants,
+}
+
+/// The grants this client puts on every document it authors, and the identity
+/// that says which documents those are.
+#[derive(Default, Clone)]
+pub(crate) struct Grants {
+    pub(crate) relationships: Vec<BrowserSyncRelationship>,
+    pub(crate) signer_identity: Vec<u8>,
+}
+
+impl Grants {
+    pub(crate) fn attach(&self, document: &mut BrowserSyncDocument) {
+        attach_grants(document, &self.relationships, &self.signer_identity);
+    }
 }
 
 impl SyncSession {
@@ -118,9 +147,10 @@ impl SyncSession {
                 }
                 Err(error) => return Err(engine_error(error)),
             };
-            let Some(document) = loaded else {
+            let Some(mut document) = loaded else {
                 continue;
             };
+            self.grants.attach(&mut document);
 
             let document_size = serde_json::to_vec(&document)?.len();
             let single_document_size = EMPTY_PUSH_REQUEST_BYTES + document_size;
@@ -185,38 +215,99 @@ impl SyncSession {
         }
     }
 
-    async fn sync_document(&self, doc_id: &str) -> Result<()> {
-        let mut documents = Vec::new();
-        if let Some(document_ref) = self
+    /// Push what is local and pull what is not, in as few exchanges as the wire
+    /// limits allow. A burst of writes raises one update event per document and
+    /// they arrive together, so one exchange each would cost a round trip per
+    /// document.
+    async fn sync_documents(&self, doc_ids: &[String]) -> Result<()> {
+        let mut batch = SyncBatch::default();
+        for doc_id in doc_ids {
+            let id_bytes = serde_json::to_vec(doc_id)?.len();
+            let mut document = self.load_push_document(doc_id).await?;
+            let mut document_bytes = match document.as_ref() {
+                Some(document) => Some(serde_json::to_vec(document)?.len()),
+                None => None,
+            };
+
+            // Over the limit alone, so no request can carry it. Drop it from
+            // the push; the pull still names it.
+            if !SyncBatch::default().fits(id_bytes, document_bytes) {
+                warn(&format!(
+                    "browser sync skipped document {doc_id} because it exceeds the sync request limit"
+                ));
+                document = None;
+                document_bytes = None;
+            }
+
+            if !batch.is_empty() && !batch.fits(id_bytes, document_bytes) {
+                self.exchange_batch(batch.take()).await?;
+            }
+            batch.accept(doc_id.clone(), document, id_bytes, document_bytes);
+        }
+        if !batch.is_empty() {
+            self.exchange_batch(batch.take()).await?;
+        }
+        Ok(())
+    }
+
+    /// The push payload for a document, or `None` when there is nothing local
+    /// to push: it is not held here, or it is too large to represent. Failing
+    /// instead would force a full sync on every update touching it.
+    async fn load_push_document(&self, doc_id: &str) -> Result<Option<BrowserSyncDocument>> {
+        let Some(document_ref) = self
             .engine
             .document_ref(doc_id)
             .await
             .map_err(engine_error)?
-        {
-            // Nothing to push for an over-large document, but the pull below
-            // still applies. Failing here would fall back to a full sync on
-            // every single update touching this document.
-            match self.engine.load_document(&document_ref).await {
-                Ok(Some(document)) => documents.push(document),
-                Ok(None) => {}
-                Err(error @ db::merge::browser_sync::BrowserSyncError::TooLarge(_)) => {
-                    warn(&format!(
-                        "browser sync skipped document {doc_id} because it cannot be represented as a sync payload: {error}"
-                    ));
+        else {
+            return Ok(None);
+        };
+        match self.engine.load_document(&document_ref).await {
+            Ok(document) => Ok(document.map(|mut document| {
+                self.grants.attach(&mut document);
+                document
+            })),
+            Err(error @ db::merge::browser_sync::BrowserSyncError::TooLarge(_)) => {
+                warn(&format!(
+                    "browser sync skipped document {doc_id} because it cannot be represented as a sync payload: {error}"
+                ));
+                Ok(None)
+            }
+            Err(error) => Err(engine_error(error)),
+        }
+    }
+
+    /// One batch: its documents pushed once, then its pull followed to the end.
+    /// A pull naming many documents can be cut short by the page limit, where a
+    /// pull naming one never could, so later requests carry no documents.
+    async fn exchange_batch(&self, batch: SyncBatch) -> Result<()> {
+        let SyncBatch {
+            mut documents,
+            doc_ids,
+            ..
+        } = batch;
+        let mut cursor = None;
+        loop {
+            let response = self
+                .exchange(BrowserSyncRequest {
+                    documents: std::mem::take(&mut documents),
+                    pull: Some(BrowserSyncPull {
+                        doc_ids: doc_ids.clone(),
+                        cursor: cursor.clone(),
+                        limit: Some(MAX_SYNC_PAGE_SIZE as u16),
+                    }),
+                })
+                .await?;
+            match response.next_cursor {
+                Some(next) if cursor.as_deref() != Some(next.as_str()) => cursor = Some(next),
+                Some(_) => {
+                    return Err(WasmError::Sync(
+                        "server returned a non-advancing sync cursor".into(),
+                    ))
                 }
-                Err(error) => return Err(engine_error(error)),
+                None => return Ok(()),
             }
         }
-        self.exchange(BrowserSyncRequest {
-            documents,
-            pull: Some(BrowserSyncPull {
-                doc_ids: vec![doc_id.to_string()],
-                cursor: None,
-                limit: Some(1),
-            }),
-        })
-        .await?;
-        Ok(())
     }
 
     async fn exchange(&self, request: BrowserSyncRequest) -> Result<BrowserSyncResponse> {
@@ -246,12 +337,13 @@ impl SyncSession {
             while let Ok(message) = subscription.try_recv() {
                 collect_local_update(&message, &mut doc_ids);
             }
-            for doc_id in doc_ids {
-                if let Err(error) = self.sync_document(&doc_id).await {
-                    self.recover_full_sync(&format!("syncing local document {doc_id}"), error)
-                        .await;
-                    break;
-                }
+            let doc_ids = Vec::from_iter(doc_ids);
+            if let Err(error) = self.sync_documents(&doc_ids).await {
+                self.recover_full_sync(
+                    &format!("syncing {} local document(s)", doc_ids.len()),
+                    error,
+                )
+                .await;
             }
         }
     }
@@ -261,9 +353,15 @@ impl SyncSession {
             loop {
                 match events.next_document_id().await {
                     Ok(Some(doc_id)) => {
-                        if let Err(error) = self.sync_document(&doc_id).await {
+                        // A burst arrives as one stream chunk, so what was
+                        // decoded alongside this ID belongs in the same
+                        // exchange.
+                        let mut doc_ids = BTreeSet::from([doc_id]);
+                        doc_ids.extend(events.take_decoded_document_ids());
+                        let doc_ids = Vec::from_iter(doc_ids);
+                        if let Err(error) = self.sync_documents(&doc_ids).await {
                             self.recover_full_sync(
-                                &format!("syncing remote document {doc_id}"),
+                                &format!("syncing {} remote document(s)", doc_ids.len()),
                                 error,
                             )
                             .await;
@@ -309,6 +407,68 @@ impl SyncSession {
     }
 }
 
+/// One exchange's worth of work, packed while documents are loaded one at a
+/// time. The limits are the server's, and packing is kept apart from loading so
+/// the rules can be checked without a node or a network.
+struct SyncBatch {
+    documents: Vec<BrowserSyncDocument>,
+    doc_ids: Vec<String>,
+    bytes: usize,
+}
+
+impl Default for SyncBatch {
+    fn default() -> Self {
+        Self {
+            documents: Vec::new(),
+            doc_ids: Vec::new(),
+            bytes: EMPTY_SYNC_REQUEST_BYTES,
+        }
+    }
+}
+
+impl SyncBatch {
+    fn is_empty(&self) -> bool {
+        self.doc_ids.is_empty()
+    }
+
+    /// Whether a document and its pull ID can still join this batch. An ID with
+    /// no document of its own still takes a place in the pull.
+    fn fits(&self, id_bytes: usize, document_bytes: Option<usize>) -> bool {
+        if self.doc_ids.len() == MAX_SYNC_PULL_DOC_IDS {
+            return false;
+        }
+        if document_bytes.is_some() && self.documents.len() == MAX_SYNC_DOCUMENTS_PER_REQUEST {
+            return false;
+        }
+        self.bytes + self.added_bytes(id_bytes, document_bytes) <= MAX_SYNC_BODY_BYTES
+    }
+
+    fn added_bytes(&self, id_bytes: usize, document_bytes: Option<usize>) -> usize {
+        let id = id_bytes + usize::from(!self.doc_ids.is_empty());
+        let document =
+            document_bytes.map_or(0, |bytes| bytes + usize::from(!self.documents.is_empty()));
+        id + document
+    }
+
+    fn accept(
+        &mut self,
+        doc_id: String,
+        document: Option<BrowserSyncDocument>,
+        id_bytes: usize,
+        document_bytes: Option<usize>,
+    ) {
+        self.bytes += self.added_bytes(id_bytes, document_bytes);
+        if let Some(document) = document {
+            self.documents.push(document);
+        }
+        self.doc_ids.push(doc_id);
+    }
+
+    fn take(&mut self) -> Self {
+        std::mem::take(self)
+    }
+}
+
 fn collect_local_update(message: &events::Message, doc_ids: &mut BTreeSet<String>) {
     if let Some(update) = message.as_update() {
         if !update.is_relay && !update.doc_id.is_empty() {
@@ -327,11 +487,46 @@ fn warn(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use defra_core::browser_sync::{BrowserSyncBlock, BrowserSyncDocument, BrowserSyncRequest};
+    use defra_core::browser_sync::{
+        BrowserSyncBlock, BrowserSyncDocument, BrowserSyncPull, BrowserSyncRequest,
+        MAX_SYNC_BODY_BYTES, MAX_SYNC_DOCUMENTS_PER_REQUEST, MAX_SYNC_PAGE_SIZE,
+        MAX_SYNC_PULL_DOC_IDS,
+    };
 
-    use super::EMPTY_PUSH_REQUEST_BYTES;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    use super::{SyncBatch, EMPTY_PUSH_REQUEST_BYTES};
+
+    fn document(doc_id: &str, data: &str) -> BrowserSyncDocument {
+        BrowserSyncDocument {
+            doc_id: doc_id.into(),
+            collection_id: "collection".into(),
+            roots: vec!["root".into()],
+            blocks: vec![BrowserSyncBlock {
+                cid: "block".into(),
+                data: data.into(),
+            }],
+            relationships: Vec::new(),
+        }
+    }
+
+    /// Offer a document the way `sync_documents` does, returning the batch its
+    /// arrival flushed.
+    fn offer(batch: &mut SyncBatch, document: BrowserSyncDocument) -> Option<SyncBatch> {
+        let id_bytes = serde_json::to_vec(&document.doc_id).unwrap().len();
+        let document_bytes = serde_json::to_vec(&document).unwrap().len();
+        let flushed = (!batch.is_empty() && !batch.fits(id_bytes, Some(document_bytes)))
+            .then(|| batch.take());
+        batch.accept(
+            document.doc_id.clone(),
+            Some(document),
+            id_bytes,
+            Some(document_bytes),
+        );
+        flushed
+    }
+
+    #[wasm_bindgen_test]
     fn incremental_push_size_matches_serialized_request() {
         let documents = vec![
             BrowserSyncDocument {
@@ -342,12 +537,14 @@ mod tests {
                     cid: "block-one".into(),
                     data: "data-one".into(),
                 }],
+                relationships: Vec::new(),
             },
             BrowserSyncDocument {
                 doc_id: "doc-two".into(),
                 collection_id: "collection".into(),
                 roots: vec![],
                 blocks: vec![],
+                relationships: Vec::new(),
             },
         ];
         let incremental_size = documents.iter().enumerate().fold(
@@ -365,5 +562,82 @@ mod tests {
             incremental_size,
             serde_json::to_vec(&request).unwrap().len()
         );
+    }
+    #[wasm_bindgen_test]
+    fn incremental_sync_size_matches_serialized_request() {
+        let mut batch = SyncBatch::default();
+        for index in 0..3 {
+            offer(&mut batch, document(&format!("doc-{index}"), "data"));
+        }
+        // The pull names every document in the batch and always asks for a
+        // full page.
+        let request = BrowserSyncRequest {
+            documents: batch.documents.clone(),
+            pull: Some(BrowserSyncPull {
+                doc_ids: batch.doc_ids.clone(),
+                cursor: None,
+                limit: Some(MAX_SYNC_PAGE_SIZE as u16),
+            }),
+        };
+        assert_eq!(batch.bytes, serde_json::to_vec(&request).unwrap().len());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_pull_id_without_a_document_costs_only_its_id() {
+        let mut batch = SyncBatch::default();
+        let doc_id = "doc-remote".to_string();
+        let id_bytes = serde_json::to_vec(&doc_id).unwrap().len();
+        batch.accept(doc_id.clone(), None, id_bytes, None);
+
+        let request = BrowserSyncRequest {
+            documents: Vec::new(),
+            pull: Some(BrowserSyncPull {
+                doc_ids: vec![doc_id],
+                cursor: None,
+                limit: Some(MAX_SYNC_PAGE_SIZE as u16),
+            }),
+        };
+        assert_eq!(batch.bytes, serde_json::to_vec(&request).unwrap().len());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_batch_ends_at_the_document_limit() {
+        let mut batch = SyncBatch::default();
+        for index in 0..MAX_SYNC_DOCUMENTS_PER_REQUEST {
+            assert!(offer(&mut batch, document(&format!("doc-{index}"), "data")).is_none());
+        }
+        let flushed = offer(&mut batch, document("doc-over", "data")).expect("batch is full");
+        assert_eq!(flushed.documents.len(), MAX_SYNC_DOCUMENTS_PER_REQUEST);
+        assert_eq!(batch.documents.len(), 1);
+    }
+
+    /// A document held only by the server has no push payload, so the pull
+    /// limit binds before the document limit.
+    #[wasm_bindgen_test]
+    fn a_batch_ends_at_the_pull_id_limit() {
+        let mut batch = SyncBatch::default();
+        for index in 0..MAX_SYNC_PULL_DOC_IDS {
+            let doc_id = format!("doc-{index}");
+            let id_bytes = serde_json::to_vec(&doc_id).unwrap().len();
+            assert!(batch.fits(id_bytes, None));
+            batch.accept(doc_id, None, id_bytes, None);
+        }
+        assert!(!batch.fits(serde_json::to_vec("doc-over").unwrap().len(), None));
+    }
+
+    #[wasm_bindgen_test]
+    fn a_batch_ends_at_the_body_limit() {
+        let heavy = "x".repeat(MAX_SYNC_BODY_BYTES / 4);
+        let mut batch = SyncBatch::default();
+        for index in 0..3 {
+            assert!(
+                offer(&mut batch, document(&format!("doc-{index}"), &heavy)).is_none(),
+                "three quarters of the body still fits"
+            );
+        }
+        let flushed = offer(&mut batch, document("doc-over", &heavy)).expect("body is full");
+        assert!(flushed.bytes <= MAX_SYNC_BODY_BYTES);
+        assert_eq!(flushed.documents.len(), 3);
+        assert_eq!(batch.documents.len(), 1);
     }
 }

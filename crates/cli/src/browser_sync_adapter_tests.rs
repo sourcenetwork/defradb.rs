@@ -3,11 +3,14 @@ use std::sync::Arc;
 
 use acp::{DocumentACP, LocalDocumentACP, MemoryAcpStore};
 use crypto::{Key as _, PrivateKey as _};
-use defra_core::browser_sync::{BrowserSyncPull, BrowserSyncRequest};
+use defra_core::browser_sync::{
+    BrowserSyncDocument, BrowserSyncPull, BrowserSyncRelationship, BrowserSyncRequest,
+};
 use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
+use std::str::FromStr;
 use storage::RegolithStore;
 
 use crate::browser_sync_adapter::BrowserSyncAdapter;
@@ -536,6 +539,288 @@ async fn concurrent_changes_converge_through_push_pull_exchange() {
     }
 }
 
+/// The grants precede the merge, so a merge that is refused leaves them behind.
+/// Nothing spans both stores — one ACP backend is a chain — so the adapter puts
+/// ACP back itself: a document it registered goes away whole, taking the owner
+/// tuple and every grant with it.
+///
+/// The refusal is a signature that cannot verify, reached by pointing an update
+/// block at the genesis block's signature. Validation verifies the genesis
+/// only, so this passes it and is refused by the merge, which is exactly the
+/// window the revert exists for.
+#[tokio::test]
+async fn a_refused_merge_leaves_no_grant_behind() {
+    let owner = install_signing_identity();
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let mutator = db::AutoCommitMutator::new(source.clone());
+    let created = mutator.create("Users", document).await.unwrap();
+    let doc_id = created.doc_id.to_string();
+
+    let mut updated = Document::new();
+    updated.set_id(created.doc_id.clone());
+    updated.set("name", "Alice Updated");
+    mutator
+        .update("Users", updated, HashSet::from(["name".to_string()]))
+        .await
+        .unwrap();
+    set_signing_config(None);
+
+    let engine = db::merge::BrowserSyncEngine::new(source.clone());
+    let document_ref = engine.document_ref(&doc_id).await.unwrap().unwrap();
+    let payload = engine.load_document(&document_ref).await.unwrap().unwrap();
+    let forged = point_root_at_the_genesis_signature(payload);
+
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    target.create_collection(users_schema(true)).await.unwrap();
+    let tuples = Arc::new(MemoryAcpStore::new());
+    let acp = Arc::new(LocalDocumentACP::new(tuples.clone()));
+    let adapter = BrowserSyncAdapter::new_arc(target, acp.clone(), None);
+
+    let refused = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![BrowserSyncDocument {
+                    relationships: vec![BrowserSyncRelationship {
+                        relation: "reader".into(),
+                        target: "*".into(),
+                    }],
+                    ..forged
+                }],
+                pull: None,
+            },
+            Some(&owner),
+            false,
+        )
+        .await;
+    assert!(
+        refused.is_err(),
+        "a signature that cannot verify must refuse the merge: {refused:?}"
+    );
+
+    assert!(
+        !acp.is_doc_registered("users-policy", "users", &doc_id)
+            .await
+            .unwrap(),
+        "a document whose merge was refused must not stay registered, and its \
+         grants go with the registration"
+    );
+    // The owner tuple and the grant go together: an unregistered document is
+    // public to this backend, so absence of tuples is the state to assert.
+    assert!(
+        acp::AcpStore::get_doc_tuples(tuples.as_ref(), "users-policy:users", &doc_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "no tuple may outlive the merge that was refused"
+    );
+}
+
+/// The other half: a document ACP already knew keeps what it had. Only the
+/// grant this request created comes off, and the owner tuple — which this
+/// request did not make — stays.
+#[tokio::test]
+async fn a_refused_merge_keeps_what_it_did_not_create() {
+    let owner = install_signing_identity();
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let mutator = db::AutoCommitMutator::new(source.clone());
+    let created = mutator.create("Users", document).await.unwrap();
+    let doc_id = created.doc_id.to_string();
+
+    let engine = db::merge::BrowserSyncEngine::new(source.clone());
+    let document_ref = engine.document_ref(&doc_id).await.unwrap().unwrap();
+    let create_payload = engine.load_document(&document_ref).await.unwrap().unwrap();
+
+    let mut updated = Document::new();
+    updated.set_id(created.doc_id.clone());
+    updated.set("name", "Alice Updated");
+    mutator
+        .update("Users", updated, HashSet::from(["name".to_string()]))
+        .await
+        .unwrap();
+    set_signing_config(None);
+    let update_payload = engine.load_document(&document_ref).await.unwrap().unwrap();
+    let forged = point_root_at_the_genesis_signature(update_payload);
+
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    target.create_collection(users_schema(true)).await.unwrap();
+    let tuples = Arc::new(MemoryAcpStore::new());
+    let acp = Arc::new(LocalDocumentACP::new(tuples.clone()));
+    let adapter = BrowserSyncAdapter::new_arc(target, acp.clone(), None);
+
+    adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![create_payload],
+                pull: None,
+            },
+            Some(&owner),
+            false,
+        )
+        .await
+        .expect("the create merges and registers the document");
+
+    let before = acp::AcpStore::get_doc_tuples(tuples.as_ref(), "users-policy:users", &doc_id)
+        .await
+        .unwrap();
+
+    let refused = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![BrowserSyncDocument {
+                    relationships: vec![BrowserSyncRelationship {
+                        relation: "reader".into(),
+                        target: "*".into(),
+                    }],
+                    ..forged
+                }],
+                pull: None,
+            },
+            Some(&owner),
+            false,
+        )
+        .await;
+    assert!(refused.is_err(), "the forged update must be refused");
+
+    assert!(
+        acp.is_doc_registered("users-policy", "users", &doc_id)
+            .await
+            .unwrap(),
+        "a registration this request did not make must survive"
+    );
+    let after = acp::AcpStore::get_doc_tuples(tuples.as_ref(), "users-policy:users", &doc_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "only the grant this request created may come off"
+    );
+}
+
+/// Repoint the payload's root at the genesis block's signature, so the root
+/// carries a signature made over different bytes. Every CID stays honest; only
+/// the pairing is wrong.
+fn point_root_at_the_genesis_signature(
+    mut payload: defra_core::browser_sync::BrowserSyncDocument,
+) -> defra_core::browser_sync::BrowserSyncDocument {
+    let decoded: Vec<(String, Vec<u8>)> = payload
+        .blocks
+        .iter()
+        .map(|block| (block.cid.clone(), hex::decode(&block.data).unwrap()))
+        .collect();
+    let genesis_signature = decoded
+        .iter()
+        .find_map(|(cid, bytes)| {
+            let block = defra_core::block::Block::from_dag_cbor(bytes).ok()?;
+            let cid = cid::Cid::from_str(cid).ok()?;
+            (db::block::builder::derive_doc_id(&cid) == payload.doc_id)
+                .then_some(block.signature)?
+        })
+        .expect("the genesis block is signed");
+
+    let root = payload.roots[0].clone();
+    let root_bytes = decoded
+        .iter()
+        .find_map(|(cid, bytes)| (*cid == root).then_some(bytes))
+        .expect("the root is in the payload");
+    let mut root_block = defra_core::block::Block::from_dag_cbor(root_bytes).unwrap();
+    assert_ne!(
+        root_block.signature,
+        Some(genesis_signature),
+        "the root must be an update, not the genesis itself"
+    );
+    let orphaned_signature = root_block.signature.expect("an update block is signed");
+    root_block.signature = Some(genesis_signature);
+
+    let forged_bytes = root_block.to_dag_cbor().unwrap();
+    let forged_cid = defra_core::block::generate_cid_from_bytes(&forged_bytes)
+        .unwrap()
+        .to_string();
+    for block in &mut payload.blocks {
+        if block.cid == root {
+            block.cid = forged_cid.clone();
+            block.data = hex::encode(&forged_bytes);
+        }
+    }
+    // The root's own signature is unreachable now, and a payload carrying a
+    // block outside its DAG is refused before it reaches the merge.
+    let orphan = orphaned_signature.to_string();
+    payload.blocks.retain(|block| block.cid != orphan);
+    payload.roots = vec![forged_cid];
+    payload
+}
+
+/// A pull naming several documents can be cut short by the page limit, and its
+/// cursor has to resume *within the named set* — resuming across the whole
+/// store would lose whatever fell off the first page.
+#[tokio::test]
+async fn a_pull_naming_several_documents_resumes_across_its_cursor() {
+    let database = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    database
+        .create_collection(users_schema(false))
+        .await
+        .unwrap();
+
+    let mut named = Vec::new();
+    for name in ["Alice", "Bob", "Carol"] {
+        named.push(create_document(&database, name).await.doc_id);
+    }
+    // In the store, not in the pull: a cursor over the whole store serves it.
+    let unnamed = create_document(&database, "Mallory").await.doc_id;
+
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(database, acp, None);
+
+    let mut cursor = None;
+    let mut seen: Vec<String> = Vec::new();
+    for _ in 0..8 {
+        let page = adapter
+            .sync(
+                BrowserSyncRequest {
+                    documents: Vec::new(),
+                    pull: Some(BrowserSyncPull {
+                        doc_ids: named.clone(),
+                        cursor: cursor.clone(),
+                        // Below the number named, so the pull must paginate.
+                        limit: Some(2),
+                    }),
+                },
+                None,
+                false,
+            )
+            .await
+            .expect("a pull naming several documents must be served");
+        seen.extend(page.documents.iter().map(|doc| doc.doc_id.clone()));
+        match page.next_cursor {
+            Some(next) => {
+                assert_ne!(Some(&next), cursor.as_ref(), "cursor must advance");
+                cursor = Some(next);
+            }
+            None => break,
+        }
+    }
+
+    seen.sort();
+    let mut expected = named.clone();
+    expected.sort();
+    assert_eq!(
+        seen, expected,
+        "every named document must be served across the pages"
+    );
+    assert!(
+        !seen.contains(&unnamed),
+        "a document the pull did not name must not be served"
+    );
+}
+
 /// #1188 skips the oversized document, but the property that matters is that
 /// pagination still reaches documents ordered *after* it. Doc IDs are
 /// content-derived, so this fixture asserts the oversized document actually
@@ -686,4 +971,255 @@ async fn pull_skips_a_block_heavy_document_and_keeps_paginating() {
         "every loadable document must be served, including those after the block-heavy one"
     );
     assert!(!seen.contains(&heavy));
+}
+
+/// The window this field exists to close: a protected document is invisible to
+/// every other key until its owner grants a read, and the push announces it
+/// between the two. Both halves are asserted — without the grant the anonymous
+/// pull is empty, with it the document is there.
+#[tokio::test]
+async fn relationships_on_the_push_make_a_protected_document_readable_at_once() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+    let owner = install_signing_identity();
+    let granted = create_document(&source, "Granted").await;
+    let ungranted = create_document(&source, "Ungranted").await;
+    set_signing_config(None);
+    let granted_doc_id = granted.doc_id.clone();
+    let ungranted_doc_id = ungranted.doc_id.clone();
+
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    target.create_collection(users_schema(true)).await.unwrap();
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(target, acp.clone(), None);
+
+    adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![
+                    BrowserSyncDocument {
+                        relationships: vec![BrowserSyncRelationship {
+                            relation: "reader".into(),
+                            target: "*".into(),
+                        }],
+                        ..granted
+                    },
+                    ungranted,
+                ],
+                pull: None,
+            },
+            Some(&owner),
+            false,
+        )
+        .await
+        .unwrap();
+
+    let anonymous = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: Vec::new(),
+                pull: Some(BrowserSyncPull::default()),
+            },
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    let seen: Vec<&str> = anonymous
+        .documents
+        .iter()
+        .map(|document| document.doc_id.as_str())
+        .collect();
+    assert_eq!(
+        seen,
+        vec![granted_doc_id.as_str()],
+        "only the document whose push carried a wildcard reader grant is visible anonymously"
+    );
+    assert!(!seen.contains(&ungranted_doc_id.as_str()));
+}
+
+/// The grant is applied as the caller, not as the owner the push established,
+/// so a relay pushing somebody else's DAG cannot attach one.
+#[tokio::test]
+async fn relationships_cannot_be_attached_to_a_foreign_signed_document() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+    let alice = install_signing_identity();
+    let document = create_document(&source, "Alice").await;
+    set_signing_config(None);
+    let doc_id = document.doc_id.clone();
+
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    target.create_collection(users_schema(true)).await.unwrap();
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(target, acp.clone(), None);
+
+    let bob = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+    let error = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![BrowserSyncDocument {
+                    relationships: vec![BrowserSyncRelationship {
+                        relation: "reader".into(),
+                        target: bob.into(),
+                    }],
+                    ..document.clone()
+                }],
+                pull: None,
+            },
+            Some(bob),
+            false,
+        )
+        .await
+        .expect_err("a caller who is not the owner must not be able to grant");
+    assert!(
+        matches!(error, defra_http::router::BrowserSyncError::Forbidden(_)),
+        "expected a forbidden grant, got {error:?}"
+    );
+    // The refused grant takes the registration this request made with it: the
+    // merge never ran, so ACP holds nothing for a document the node does not
+    // have. Bob has squatted nothing either way.
+    assert_eq!(
+        acp.get_doc_owner("users-policy", "users", &doc_id)
+            .await
+            .unwrap()
+            .map(|did| did.to_string()),
+        None,
+        "a refused push must leave no registration behind"
+    );
+
+    // And the document is not stranded: Alice's own push registers her as the
+    // verified genesis creator and lands the same grant.
+    adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![BrowserSyncDocument {
+                    relationships: vec![BrowserSyncRelationship {
+                        relation: "reader".into(),
+                        target: "*".into(),
+                    }],
+                    ..document
+                }],
+                pull: None,
+            },
+            Some(&alice),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        acp.get_doc_owner("users-policy", "users", &doc_id)
+            .await
+            .unwrap()
+            .map(|did| did.to_string()),
+        Some(alice.clone()),
+        "ownership follows the verified genesis creator, not the caller"
+    );
+    let anonymous = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: Vec::new(),
+                pull: Some(BrowserSyncPull::default()),
+            },
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        anonymous
+            .documents
+            .iter()
+            .map(|document| document.doc_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![doc_id.as_str()]
+    );
+}
+
+#[tokio::test]
+async fn relationships_require_an_authenticated_caller() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+    install_signing_identity();
+    let document = create_document(&source, "Alice").await;
+    set_signing_config(None);
+
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    target.create_collection(users_schema(true)).await.unwrap();
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(target, acp, None);
+
+    let error = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![BrowserSyncDocument {
+                    relationships: vec![BrowserSyncRelationship {
+                        relation: "reader".into(),
+                        target: "*".into(),
+                    }],
+                    ..document
+                }],
+                pull: None,
+            },
+            None,
+            false,
+        )
+        .await
+        .expect_err("an anonymous caller has no DID to grant as");
+    assert!(matches!(
+        error,
+        defra_http::router::BrowserSyncError::Forbidden(_)
+    ));
+}
+
+#[tokio::test]
+async fn relationships_refuse_the_owner_relation_and_an_unbounded_list() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+    let owner = install_signing_identity();
+    let document = create_document(&source, "Alice").await;
+    set_signing_config(None);
+
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    target.create_collection(users_schema(true)).await.unwrap();
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(target, acp, None);
+
+    for relationships in [
+        vec![BrowserSyncRelationship {
+            relation: "owner".into(),
+            target: "*".into(),
+        }],
+        vec![BrowserSyncRelationship {
+            relation: "reader".into(),
+            target: "not-a-did".into(),
+        }],
+        vec![
+            BrowserSyncRelationship {
+                relation: "reader".into(),
+                target: "*".into(),
+            };
+            defra_core::browser_sync::MAX_SYNC_RELATIONSHIPS_PER_DOCUMENT + 1
+        ],
+    ] {
+        let error = adapter
+            .sync(
+                BrowserSyncRequest {
+                    documents: vec![BrowserSyncDocument {
+                        relationships: relationships.clone(),
+                        ..document.clone()
+                    }],
+                    pull: None,
+                },
+                Some(&owner),
+                false,
+            )
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("expected a refusal for {relationships:?}"));
+        assert!(
+            matches!(error, defra_http::router::BrowserSyncError::InvalidInput(_)),
+            "expected invalid input for {relationships:?}, got {error:?}"
+        );
+    }
 }
