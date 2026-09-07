@@ -301,6 +301,17 @@ pub const PENDING_RETRY_BASE: Duration = Duration::from_secs(2);
 /// Ceiling for the per-root dispatch backoff.
 pub const PENDING_RETRY_CAP: Duration = Duration::from_secs(60);
 
+/// Seconds from the first fetch dispatch of a pending root to the fifth, when
+/// every dispatch in between fails to complete the DAG.
+///
+/// A pushed block whose DAG is incomplete is acked as success once it is
+/// registered pending, so the sender stops retrying and the receiver owns
+/// recovery on this ladder alone. Anything that waits on convergence has to
+/// allow at least this long, or it reports a fault where the pacing is simply
+/// still running; `a_root_that_keeps_failing_is_not_retried_for_a_minute`
+/// pins the arithmetic.
+pub const PENDING_RECOVERY_WORST_CASE_SECS: u64 = 60;
+
 /// Capped exponential backoff for pending-DAG fetch dispatches: 2s, 4s,
 /// 8s, 16s, 32s, then 60s forever.
 pub fn retry_backoff(dispatches: u32) -> Duration {

@@ -1211,6 +1211,17 @@ async fn poll_index_resolved(node: &DefraClient, timeout: Duration) -> bool {
 /// counts and the assertions would prove nothing. We only check the Rust node
 /// (the regression target); Go is the trusted reference, and Go/Rust print
 /// different explain shapes so a single substring check can't span both.
+/// How long a replica is given to converge.
+///
+/// A pushed block whose DAG is incomplete is acked as success once the receiver
+/// registers it pending, so the sender stops retrying and recovery runs on the
+/// receiver's backoff ladder alone: dispatches at 0s, 4s, 12s, 28s and 60s
+/// (`p2p::sync::manager::pending::PENDING_RECOVERY_WORST_CASE_SECS`, pinned by
+/// `a_root_that_keeps_failing_is_not_retried_for_a_minute`). Waiting 40s put
+/// the deadline inside that ladder: on a loaded runner where the early fetches
+/// lost, this reported non-convergence while the pacing was still running.
+const CONVERGENCE_BUDGET: Duration = Duration::from_secs(90);
+
 async fn run_indexed_lww_parity(
     cluster: TestCluster,
     label: &str,
@@ -1295,7 +1306,7 @@ async fn run_indexed_lww_parity(
             &cluster.client(0),
             &cluster.client(1),
             &id,
-            Duration::from_secs(40)
+            CONVERGENCE_BUDGET
         )
         .await,
         "[{label}] indexed-LWW DAGs did not converge across impls: a replica never merged the other's delta"
@@ -1303,7 +1314,7 @@ async fn run_indexed_lww_parity(
 
     for n in [0usize, 1] {
         assert!(
-            poll_index_resolved(&cluster.client(n), Duration::from_secs(40)).await,
+            poll_index_resolved(&cluster.client(n), CONVERGENCE_BUDGET).await,
             "[{label}] node{n} index did not reconcile to 99-only; age={} idx99={} idx20={} idx10={}",
             support::indexed_age(&cluster.client(n)),
             support::count_by_index(&cluster.client(n), 99),
