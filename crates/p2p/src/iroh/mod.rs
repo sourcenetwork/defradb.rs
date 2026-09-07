@@ -18,6 +18,8 @@ mod endpoint_config;
 mod endpoint_rpc;
 mod endpoint_streams;
 mod gossip_heal;
+#[cfg(test)]
+mod mux_tests;
 mod peer_map;
 mod protocols;
 mod secret_key;

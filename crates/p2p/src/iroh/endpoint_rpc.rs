@@ -14,16 +14,12 @@ use crate::QueryId;
 use super::peer_map::{parse_endpoint_id, PeerMap};
 use super::protocols;
 
-#[derive(Clone, Eq, Hash, PartialEq)]
-pub(super) struct ConnectionCacheKey {
-    endpoint_id: iroh::EndpointId,
-    alpn: Vec<u8>,
-}
-
+/// One shared connection per peer, keyed by endpoint alone: every protocol is
+/// multiplexed over [`protocols::ALPN_MUX`], so identity is the whole key.
 #[derive(Default)]
 pub(super) struct ConnectionCacheState {
-    connections: parking_lot::Mutex<HashMap<ConnectionCacheKey, iroh::endpoint::Connection>>,
-    dial_guards: parking_lot::Mutex<HashMap<ConnectionCacheKey, Arc<tokio::sync::Mutex<()>>>>,
+    connections: parking_lot::Mutex<HashMap<iroh::EndpointId, iroh::endpoint::Connection>>,
+    dial_guards: parking_lot::Mutex<HashMap<iroh::EndpointId, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
@@ -160,63 +156,94 @@ async fn connect_once(
     .map_err(|e| crate::error::Error::Dial(e.to_string()))
 }
 
-async fn open_bi_with_timeout(
+/// Open a stream for `tag` on the peer's shared connection and announce which
+/// protocol it carries.
+async fn open_tagged_stream(
     connection: &iroh::endpoint::Connection,
     peer_id: &PeerId,
-    alpn: &[u8],
+    tag: &[u8],
 ) -> crate::error::Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
-    tokio::time::timeout(OPEN_STREAM_TIMEOUT, connection.open_bi())
+    let (mut send, recv) = tokio::time::timeout(OPEN_STREAM_TIMEOUT, connection.open_bi())
         .await
         .map_err(|_| {
             crate::error::Error::Transport(format!(
                 "timed out opening {} stream to {} after {}s",
-                String::from_utf8_lossy(alpn),
+                String::from_utf8_lossy(tag),
                 peer_id,
                 OPEN_STREAM_TIMEOUT.as_secs()
             ))
         })?
-        .map_err(|e| crate::error::Error::Transport(e.to_string()))
+        .map_err(|e| crate::error::Error::Transport(e.to_string()))?;
+
+    protocols::write_stream_tag(&mut send, tag).await?;
+    Ok((send, recv))
 }
 
-fn connection_cache_key(peer_id: &PeerId, alpn: &[u8]) -> crate::error::Result<ConnectionCacheKey> {
-    Ok(ConnectionCacheKey {
-        endpoint_id: parse_endpoint_id(peer_id)?,
-        alpn: alpn.to_vec(),
-    })
-}
-
+/// The peer's shared connection, if one is cached and still open. A closed
+/// entry is dropped rather than handed out, so the caller redials.
 fn cached_connection(
     cache: &ConnectionCache,
     peer_id: &PeerId,
-    alpn: &[u8],
 ) -> crate::error::Result<Option<iroh::endpoint::Connection>> {
-    let key = connection_cache_key(peer_id, alpn)?;
-    Ok(cache.connections.lock().get(&key).cloned())
-}
-
-fn remember_connection(
-    cache: &ConnectionCache,
-    peer_id: &PeerId,
-    alpn: &[u8],
-    connection: &iroh::endpoint::Connection,
-) -> crate::error::Result<()> {
-    let key = connection_cache_key(peer_id, alpn)?;
-    cache.connections.lock().insert(key, connection.clone());
-    Ok(())
-}
-
-fn evict_connection(cache: &ConnectionCache, peer_id: &PeerId, alpn: &[u8]) {
-    if let Ok(key) = connection_cache_key(peer_id, alpn) {
-        cache.connections.lock().remove(&key);
+    let endpoint_id = parse_endpoint_id(peer_id)?;
+    let mut guard = cache.connections.lock();
+    match guard.get(&endpoint_id) {
+        Some(connection) if connection.close_reason().is_none() => Ok(Some(connection.clone())),
+        Some(_) => {
+            guard.remove(&endpoint_id);
+            Ok(None)
+        }
+        None => Ok(None),
     }
 }
 
-fn dial_guard(cache: &ConnectionCache, key: ConnectionCacheKey) -> Arc<tokio::sync::Mutex<()>> {
+/// Adopt `connection` as the peer's shared connection, so an explicit dial does
+/// not leave the first send to open a second one.
+pub(super) fn remember_connection(
+    cache: &ConnectionCache,
+    peer_id: &PeerId,
+    connection: &iroh::endpoint::Connection,
+) -> crate::error::Result<()> {
+    let endpoint_id = parse_endpoint_id(peer_id)?;
+    cache
+        .connections
+        .lock()
+        .insert(endpoint_id, connection.clone());
+    Ok(())
+}
+
+/// Drop a peer's shared connection, but only once QUIC has actually closed it:
+/// a stream-level failure must not evict the transport every other protocol is
+/// still using. The `stable_id` check avoids racing a concurrent dial.
+fn evict_if_closed(
+    cache: &ConnectionCache,
+    peer_id: &PeerId,
+    connection: &iroh::endpoint::Connection,
+) {
+    if connection.close_reason().is_none() {
+        return;
+    }
+    let Ok(endpoint_id) = parse_endpoint_id(peer_id) else {
+        return;
+    };
+    let mut guard = cache.connections.lock();
+    if guard
+        .get(&endpoint_id)
+        .is_some_and(|cached| cached.stable_id() == connection.stable_id())
+    {
+        guard.remove(&endpoint_id);
+    }
+}
+
+fn dial_guard(
+    cache: &ConnectionCache,
+    endpoint_id: iroh::EndpointId,
+) -> Arc<tokio::sync::Mutex<()>> {
     let mut guards = cache.dial_guards.lock();
     guards.retain(|_, guard| Arc::strong_count(guard) > 1);
     Arc::clone(
         guards
-            .entry(key)
+            .entry(endpoint_id)
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
     )
 }
@@ -225,29 +252,21 @@ fn dial_guard(cache: &ConnectionCache, key: ConnectionCacheKey) -> Arc<tokio::sy
 /// response to a `disconnect` request.
 const DISCONNECT_ERROR_CODE: u32 = 0;
 
-/// Close and remove every cached connection to `endpoint_id`.
+/// Close and remove the cached connection to `endpoint_id`.
 ///
 /// Used by `disconnect` to tear down the outbound-send connection cache for a
-/// peer. Closing is idempotent — a peer with no cached connections is a no-op.
+/// peer. Closing is idempotent — a peer with no cached connection is a no-op.
 pub(super) fn close_cached_connections(cache: &ConnectionCache, endpoint_id: &iroh::EndpointId) {
-    let mut guard = cache.connections.lock();
-    let keys: Vec<ConnectionCacheKey> = guard
-        .keys()
-        .filter(|key| &key.endpoint_id == endpoint_id)
-        .cloned()
-        .collect();
-    for key in keys {
-        if let Some(connection) = guard.remove(&key) {
-            connection.close(DISCONNECT_ERROR_CODE.into(), b"disconnect");
-        }
+    if let Some(connection) = cache.connections.lock().remove(endpoint_id) {
+        connection.close(DISCONNECT_ERROR_CODE.into(), b"disconnect");
     }
 }
 
 /// Hang up every connection we hold to a peer: all handles retained in
-/// `peer_map` (covering dial- and accept-initiated connections across every
-/// ALPN) and any cached outbound-send connections. Each stream task then
-/// observes the `accept_bi` error and decrements the count until it reaches
-/// zero and `PeerDisconnected` is emitted. Idempotent.
+/// `peer_map` (the inbound connection the peer dialled, plus our own outbound
+/// one) and the cached outbound-send connection. Each stream task then observes
+/// the `accept_bi` error and decrements the count until it reaches zero and
+/// `PeerDisconnected` is emitted. Idempotent.
 pub(super) fn close_peer_connections(
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
     cache: &ConnectionCache,
@@ -259,34 +278,39 @@ pub(super) fn close_peer_connections(
     close_cached_connections(cache, endpoint_id);
 }
 
+/// The peer's shared connection, dialling it if this is the first protocol to
+/// need it.
 async fn connect_with_cache(
     endpoint: &Endpoint,
     peer_id: &PeerId,
-    alpn: &[u8],
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
 ) -> crate::error::Result<iroh::endpoint::Connection> {
-    if let Some(connection) = cached_connection(cache, peer_id, alpn)? {
+    if let Some(connection) = cached_connection(cache, peer_id)? {
         return Ok(connection);
     }
 
-    let key = connection_cache_key(peer_id, alpn)?;
-    let guard = dial_guard(cache, key);
+    let guard = dial_guard(cache, parse_endpoint_id(peer_id)?);
     let _dial_guard = guard.lock().await;
 
-    // Another request may have established the shared QUIC connection while
-    // this request waited. Only the keyed dial owner may create it; requests
-    // remain concurrent as independent streams after this point.
-    if let Some(connection) = cached_connection(cache, peer_id, alpn)? {
+    // Another protocol may have established the shared connection while this
+    // request waited on the dial guard.
+    if let Some(connection) = cached_connection(cache, peer_id)? {
         return Ok(connection);
     }
 
     let connection =
-        connect_with_direct_addr_fallback(endpoint, peer_id, alpn, direct_addr).await?;
-    remember_connection(cache, peer_id, alpn, &connection)?;
+        connect_with_direct_addr_fallback(endpoint, peer_id, protocols::ALPN_MUX, direct_addr)
+            .await?;
+    remember_connection(cache, peer_id, &connection)?;
     Ok(connection)
 }
 
+/// Dial `alpn`, preferring a known direct address before falling back to
+/// discovery.
+///
+/// Gossip healing is the one caller that passes an ALPN other than
+/// [`protocols::ALPN_MUX`], because iroh-gossip owns its own handshake.
 pub(super) async fn connect_with_direct_addr_fallback(
     endpoint: &Endpoint,
     peer_id: &PeerId,
@@ -320,7 +344,7 @@ pub(super) async fn connect_with_direct_addr_fallback(
 pub(super) async fn handle_request_response<Req, Resp>(
     endpoint: &Endpoint,
     peer_id: &PeerId,
-    alpn: &[u8],
+    tag: &[u8],
     request: &Req,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
@@ -329,25 +353,25 @@ where
     Req: serde::Serialize,
     Resp: serde::de::DeserializeOwned,
 {
-    let connection = connect_with_cache(endpoint, peer_id, alpn, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
 
-    let (mut send, mut recv) = match open_bi_with_timeout(&connection, peer_id, alpn).await {
+    let (mut send, mut recv) = match open_tagged_stream(&connection, peer_id, tag).await {
         Ok(streams) => streams,
         Err(error) => {
-            evict_connection(cache, peer_id, alpn);
+            evict_if_closed(cache, peer_id, &connection);
             return Err(error);
         }
     };
 
     if let Err(error) = protocols::write_message(&mut send, request).await {
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
     if let Err(error) = send
         .finish()
         .map_err(|e| crate::error::Error::Transport(e.to_string()))
     {
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
 
@@ -357,28 +381,28 @@ where
     )
     .await
     .map_err(|_| {
-        let alpn_str = String::from_utf8_lossy(alpn);
         warn!(
             peer_id = %peer_id,
-            alpn = %alpn_str,
+            stream_tag = %String::from_utf8_lossy(tag),
             timeout_secs = REQUEST_RESPONSE_TIMEOUT.as_secs(),
             "request-response timed out waiting for peer"
         );
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
         crate::error::Error::ResponseTimeout
     })?
     .inspect_err(|_| {
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
     })?;
     Ok(response)
 }
 
 /// Send a two-stream PushLog request and accept either response shape.
 ///
-/// Current peers reply on this request's receive stream. During a rolling
-/// upgrade, older peers may still reverse-dial `ALPN_TWOSTREAM_RESP`, which is
-/// delivered through `legacy_reply`. A failure on either path is therefore not
-/// terminal while the other path can still produce the ACK.
+/// A peer normally replies on this request's receive stream. One that does not
+/// advertise same-stream reply support answers on a separate
+/// `STREAM_TWOSTREAM_RESP` stream instead, delivered through `legacy_reply`. A
+/// failure on either path is therefore not terminal while the other path can
+/// still produce the ACK.
 pub(super) async fn handle_two_stream_request(
     endpoint: &Endpoint,
     peer_id: &PeerId,
@@ -387,26 +411,26 @@ pub(super) async fn handle_two_stream_request(
     cache: &ConnectionCache,
     legacy_reply: oneshot::Receiver<PushLogReply>,
 ) -> crate::error::Result<PushLogReply> {
-    let alpn = protocols::ALPN_TWOSTREAM;
-    let connection = connect_with_cache(endpoint, peer_id, alpn, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
 
-    let (mut send, mut recv) = match open_bi_with_timeout(&connection, peer_id, alpn).await {
-        Ok(streams) => streams,
-        Err(error) => {
-            evict_connection(cache, peer_id, alpn);
-            return Err(error);
-        }
-    };
+    let (mut send, mut recv) =
+        match open_tagged_stream(&connection, peer_id, protocols::STREAM_TWOSTREAM).await {
+            Ok(streams) => streams,
+            Err(error) => {
+                evict_if_closed(cache, peer_id, &connection);
+                return Err(error);
+            }
+        };
 
     if let Err(error) = protocols::write_message(&mut send, request).await {
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
     if let Err(error) = send
         .finish()
         .map_err(|e| crate::error::Error::Transport(e.to_string()))
     {
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
 
@@ -438,41 +462,41 @@ pub(super) async fn handle_two_stream_request(
                 timeout_secs = REQUEST_RESPONSE_TIMEOUT.as_secs(),
                 "two-stream request timed out waiting for same-stream or legacy reply"
             );
-            evict_connection(cache, peer_id, alpn);
+            evict_if_closed(cache, peer_id, &connection);
             crate::error::Error::ResponseTimeout
         })?
         .inspect_err(|_| {
-            evict_connection(cache, peer_id, alpn);
+            evict_if_closed(cache, peer_id, &connection);
         })
 }
 
 async fn send_one_way_message<T: serde::Serialize>(
     endpoint: &Endpoint,
     peer_id: &PeerId,
-    alpn: &[u8],
+    tag: &[u8],
     msg: &T,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
 ) -> crate::error::Result<()> {
-    let connection = connect_with_cache(endpoint, peer_id, alpn, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
 
-    let (mut send, mut recv) = match open_bi_with_timeout(&connection, peer_id, alpn).await {
+    let (mut send, mut recv) = match open_tagged_stream(&connection, peer_id, tag).await {
         Ok(streams) => streams,
         Err(error) => {
-            evict_connection(cache, peer_id, alpn);
+            evict_if_closed(cache, peer_id, &connection);
             return Err(error);
         }
     };
 
     if let Err(error) = protocols::write_message(&mut send, msg).await {
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
     if let Err(error) = send
         .finish()
         .map_err(|e| crate::error::Error::Transport(e.to_string()))
     {
-        evict_connection(cache, peer_id, alpn);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
 
@@ -491,12 +515,12 @@ async fn send_one_way_message<T: serde::Serialize>(
 pub(super) async fn handle_fire_and_forget<T: serde::Serialize>(
     endpoint: &Endpoint,
     peer_id: &PeerId,
-    alpn: &[u8],
+    tag: &[u8],
     msg: &T,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
 ) -> crate::error::Result<()> {
-    send_one_way_message(endpoint, peer_id, alpn, msg, direct_addr, cache).await
+    send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache).await
 }
 
 /// Send a one-way message, then keep the bidirectional stream alive briefly so
@@ -509,12 +533,12 @@ pub(super) async fn handle_fire_and_forget<T: serde::Serialize>(
 pub(super) async fn handle_send_only<T: serde::Serialize>(
     endpoint: &Endpoint,
     peer_id: &PeerId,
-    alpn: &[u8],
+    tag: &[u8],
     msg: &T,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
 ) -> crate::error::Result<()> {
-    send_one_way_message(endpoint, peer_id, alpn, msg, direct_addr, cache).await
+    send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache).await
 }
 
 /// Send a CAR request and emit the response as a transport event.
@@ -531,28 +555,27 @@ pub(super) async fn handle_car_request_response(
     cache: &ConnectionCache,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<()> {
-    let connection =
-        connect_with_cache(endpoint, peer_id, protocols::ALPN_CAR, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
 
     let (mut send, mut recv) =
-        match open_bi_with_timeout(&connection, peer_id, protocols::ALPN_CAR).await {
+        match open_tagged_stream(&connection, peer_id, protocols::STREAM_CAR).await {
             Ok(streams) => streams,
             Err(error) => {
-                evict_connection(cache, peer_id, protocols::ALPN_CAR);
+                evict_if_closed(cache, peer_id, &connection);
                 return Err(error);
             }
         };
 
     let request = CarFetchRequest::full_dag(root_cid);
     if let Err(error) = protocols::write_message(&mut send, &request).await {
-        evict_connection(cache, peer_id, protocols::ALPN_CAR);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
     if let Err(error) = send
         .finish()
         .map_err(|e| crate::error::Error::Transport(e.to_string()))
     {
-        evict_connection(cache, peer_id, protocols::ALPN_CAR);
+        evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
 
@@ -562,11 +585,11 @@ pub(super) async fn handle_car_request_response(
     )
     .await
     .map_err(|_| {
-        evict_connection(cache, peer_id, protocols::ALPN_CAR);
+        evict_if_closed(cache, peer_id, &connection);
         crate::error::Error::ResponseTimeout
     })?
     .map_err(|e| {
-        evict_connection(cache, peer_id, protocols::ALPN_CAR);
+        evict_if_closed(cache, peer_id, &connection);
         crate::error::Error::Transport(e.to_string())
     })?;
 
@@ -612,31 +635,29 @@ async fn try_fetch_from_provider(
         };
     }
 
-    let connection =
-        match connect_with_cache(endpoint, provider, protocols::ALPN_CAR, direct_addr, cache).await
-        {
-            Ok(conn) => conn,
-            Err(e) => {
-                debug!(
-                    provider = %provider,
-                    root = %request.root_cid,
-                    recursive = request.recursive,
-                    requested_count = request.wanted_cids.len(),
-                    error = %e,
-                    "CAR fetch: connection failed"
-                );
-                return CarFetchAttempt {
-                    provider: provider.clone(),
-                    outcome: CarFetchOutcome::ConnectFailed(e.to_string()),
-                };
-            }
-        };
+    let connection = match connect_with_cache(endpoint, provider, direct_addr, cache).await {
+        Ok(conn) => conn,
+        Err(e) => {
+            debug!(
+                provider = %provider,
+                root = %request.root_cid,
+                recursive = request.recursive,
+                requested_count = request.wanted_cids.len(),
+                error = %e,
+                "CAR fetch: connection failed"
+            );
+            return CarFetchAttempt {
+                provider: provider.clone(),
+                outcome: CarFetchOutcome::ConnectFailed(e.to_string()),
+            };
+        }
+    };
 
     let (mut send, mut recv) =
-        match open_bi_with_timeout(&connection, provider, protocols::ALPN_CAR).await {
+        match open_tagged_stream(&connection, provider, protocols::STREAM_CAR).await {
             Ok(streams) => streams,
             Err(e) => {
-                evict_connection(cache, provider, protocols::ALPN_CAR);
+                evict_if_closed(cache, provider, &connection);
                 debug!(
                     provider = %provider,
                     root = %request.root_cid,
@@ -651,7 +672,7 @@ async fn try_fetch_from_provider(
         };
 
     if let Err(e) = protocols::write_message(&mut send, &request).await {
-        evict_connection(cache, provider, protocols::ALPN_CAR);
+        evict_if_closed(cache, provider, &connection);
         debug!(
             provider = %provider,
             root = %request.root_cid,
@@ -664,7 +685,7 @@ async fn try_fetch_from_provider(
         };
     }
     if let Err(e) = send.finish() {
-        evict_connection(cache, provider, protocols::ALPN_CAR);
+        evict_if_closed(cache, provider, &connection);
         debug!(
             provider = %provider,
             root = %request.root_cid,
@@ -691,7 +712,7 @@ async fn try_fetch_from_provider(
         {
             Ok(Ok(data)) => data,
             Ok(Err(e)) => {
-                evict_connection(cache, provider, protocols::ALPN_CAR);
+                evict_if_closed(cache, provider, &connection);
                 debug!(
                     provider = %provider,
                     root = %request.root_cid,
@@ -704,7 +725,7 @@ async fn try_fetch_from_provider(
                 };
             }
             Err(_) => {
-                evict_connection(cache, provider, protocols::ALPN_CAR);
+                evict_if_closed(cache, provider, &connection);
                 debug!(
                     provider = %provider,
                     root = %request.root_cid,
@@ -996,11 +1017,11 @@ mod tests {
             .expect("bind endpoint")
     }
 
-    /// Regression (#1092 review): a peer can hold several live connections
-    /// (one per ALPN, dial + accept). Hanging up must close every retained
-    /// handle — closing only the most recent one leaves the others alive, the
-    /// connection count never reaches zero, and `PeerDisconnected` never
-    /// fires.
+    /// Regression (#1092 review): a peer can hold several live connections —
+    /// the one it dialled and the one it accepted. Hanging up must close every
+    /// retained handle — closing only the most recent one leaves the others
+    /// alive, the connection count never reaches zero, and `PeerDisconnected`
+    /// never fires.
     #[tokio::test]
     async fn close_peer_connections_closes_every_retained_handle() {
         let accept_ep = localhost_endpoint(vec![b"test/a".to_vec(), b"test/b".to_vec()]).await;
@@ -1051,10 +1072,9 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_requests_share_one_connection_dial() {
-        const ALPN: &[u8] = b"test/shared-dial";
         const CALLERS: usize = 16;
 
-        let accept_ep = localhost_endpoint(vec![ALPN.to_vec()]).await;
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
         let dial_ep = localhost_endpoint(vec![]).await;
         let direct_addr = accept_ep
             .addr()
@@ -1088,7 +1108,7 @@ mod tests {
             let barrier = Arc::clone(&barrier);
             callers.spawn(async move {
                 barrier.wait().await;
-                connect_with_cache(&endpoint, &peer_id, ALPN, Some(direct_addr), &cache)
+                connect_with_cache(&endpoint, &peer_id, Some(direct_addr), &cache)
                     .await
                     .expect("shared connection")
             });

@@ -128,8 +128,12 @@ pub async fn spawn_endpoint(
     Arc<ReplicatorRegistry>,
     JoinHandle<()>,
 )> {
-    let mut alpns: Vec<Vec<u8>> = protocols::ALL_ALPNS.iter().map(|a| a.to_vec()).collect();
-    alpns.push(iroh_gossip::net::GOSSIP_ALPN.to_vec());
+    // Every Defra protocol is multiplexed over one ALPN. Gossip keeps its own:
+    // iroh-gossip owns that handshake and takes whole connections.
+    let alpns: Vec<Vec<u8>> = vec![
+        protocols::ALPN_MUX.to_vec(),
+        iroh_gossip::net::GOSSIP_ALPN.to_vec(),
+    ];
 
     let relay_mode = relay_mode_from_config(&config.relay_mode)?;
     let node_identity = config.node_identity.clone();

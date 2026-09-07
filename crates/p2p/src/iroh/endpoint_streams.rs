@@ -99,7 +99,7 @@ pub(super) async fn handle_incoming(
         event_tx.clone(),
     );
     let task = tokio::spawn(async move {
-        handle_connection_streams(connection, remote_id, conn_alpn, context).await;
+        handle_connection_streams(connection, remote_id, context).await;
     });
     track_task(&resources.spawned_tasks, task);
 }
@@ -130,13 +130,15 @@ impl ConnectionStreamContext {
     }
 }
 
-/// Process streams on an accepted connection, dispatching by ALPN.
+/// Process streams on an accepted connection, dispatching by stream tag.
+///
+/// The tag is read inside the spawned task, not the accept loop, so a peer that
+/// stalls before writing one cannot hold up the other protocols.
 ///
 /// Emits `PeerDisconnected` only when the last connection for this peer closes.
 pub(super) async fn handle_connection_streams(
     connection: Connection,
     remote_id: EndpointId,
-    alpn: Vec<u8>,
     context: ConnectionStreamContext,
 ) {
     let peer_id = endpoint_id_to_peer_id(&remote_id);
@@ -144,12 +146,18 @@ pub(super) async fn handle_connection_streams(
     while let Ok((send, mut recv)) = connection.accept_bi().await {
         let peer_id = peer_id.clone();
         let event_tx = context.event_tx.clone();
-        let alpn = alpn.clone();
         let pending_pushlog_replies = context.pending_pushlog_replies.clone();
         let node_identity = context.node_identity.clone();
         let task = tokio::spawn(async move {
+            let tag = match protocols::read_stream_tag(&mut recv).await {
+                Ok(tag) => tag,
+                Err(e) => {
+                    debug!(peer_id = %peer_id, error = %e, "Unreadable stream tag");
+                    return;
+                }
+            };
             if let Err(e) = dispatch_stream(
-                &alpn,
+                &tag,
                 &peer_id,
                 send,
                 &mut recv,
@@ -179,9 +187,9 @@ pub(super) async fn handle_connection_streams(
     }
 }
 
-/// Dispatch a stream based on the connection ALPN.
+/// Dispatch a stream based on the tag its opener wrote.
 async fn dispatch_stream(
-    alpn: &[u8],
+    tag: &[u8],
     peer_id: &PeerId,
     send: iroh::endpoint::SendStream,
     recv: &mut iroh::endpoint::RecvStream,
@@ -189,8 +197,8 @@ async fn dispatch_stream(
     pending_pushlog_replies: &PendingPushLogReplies,
     node_identity: Option<&identity::RawIdentity>,
 ) -> crate::error::Result<()> {
-    match alpn {
-        x if x == protocols::ALPN_IDENTITY => {
+    match tag {
+        x if x == protocols::STREAM_IDENTITY => {
             let request: crate::message::IdentityRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             let mut send = send;
@@ -221,7 +229,7 @@ async fn dispatch_stream(
             send.finish()
                 .map_err(|error| Error::Transport(error.to_string()))?;
         }
-        x if x == protocols::ALPN_PUSHLOG => {
+        x if x == protocols::STREAM_PUSHLOG => {
             let request: crate::message::PushLogRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             if event_tx
@@ -236,7 +244,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit PushLogRequest");
             }
         }
-        x if x == protocols::ALPN_TWOSTREAM => {
+        x if x == protocols::STREAM_TWOSTREAM => {
             let request: crate::message::PushLogRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             if event_tx
@@ -253,9 +261,9 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit TwoStreamRequest");
             }
         }
-        x if x == protocols::ALPN_TWOSTREAM_RESP => {
-            // Retained so upgraded senders can receive reverse-stream ACKs
-            // from older receivers during a rolling deployment.
+        x if x == protocols::STREAM_TWOSTREAM_RESP => {
+            // The reverse-stream ACK, for a request that did not advertise
+            // same-stream reply support.
             let reply: PushLogReply =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             let (sender, pending_len_after_remove) = {
@@ -274,7 +282,7 @@ async fn dispatch_stream(
                 );
             }
         }
-        x if x == protocols::ALPN_DOCSYNC => {
+        x if x == protocols::STREAM_DOCSYNC => {
             let request: crate::message::DocSyncRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             if event_tx
@@ -289,7 +297,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit DocSyncRequest");
             }
         }
-        x if x == protocols::ALPN_BRANCHABLE => {
+        x if x == protocols::STREAM_BRANCHABLE => {
             let request: crate::message::BranchableSyncRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             if event_tx
@@ -304,7 +312,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit BranchableSyncRequest");
             }
         }
-        x if x == protocols::ALPN_CAR => {
+        x if x == protocols::STREAM_CAR => {
             debug!(peer_id = %peer_id, "CAR dispatch: reading request");
             let request: crate::message::CarFetchRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
@@ -327,7 +335,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit CarFetchRequest");
             }
         }
-        x if x == protocols::ALPN_CAR_RESP => {
+        x if x == protocols::STREAM_CAR_RESP => {
             let car_data: Vec<u8> = protocols::read_message(recv, protocols::MAX_CAR_SIZE).await?;
             // Extract the root CID from the CAR headers for event correlation.
             let root_cid = match crate::sync::car::decode_car(&car_data) {
@@ -352,7 +360,7 @@ async fn dispatch_stream(
                 }
             }
         }
-        x if x == protocols::ALPN_DOCSYNC_RESP => {
+        x if x == protocols::STREAM_DOCSYNC_RESP => {
             let reply: crate::message::DocSyncReply =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             debug!(peer_id = %peer_id, "Received doc sync response via fire-and-forget");
@@ -367,7 +375,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit DocSyncReply");
             }
         }
-        x if x == protocols::ALPN_BRANCHABLE_RESP => {
+        x if x == protocols::STREAM_BRANCHABLE_RESP => {
             let reply: crate::message::BranchableSyncReply =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             debug!(peer_id = %peer_id, "Received branchable sync response via fire-and-forget");
@@ -382,7 +390,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit BranchableSyncReply");
             }
         }
-        x if x == protocols::ALPN_SE => {
+        x if x == protocols::STREAM_SE => {
             let request: crate::message::PushSEArtifactsRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             verify_iroh_message(&request)?;
@@ -406,7 +414,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit SEArtifactsReceived");
             }
         }
-        x if x == protocols::ALPN_SE_QUERY_REQ => {
+        x if x == protocols::STREAM_SE_QUERY_REQ => {
             let request: crate::message::QuerySEArtifactsRequest =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             verify_iroh_message(&request)?;
@@ -429,7 +437,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit SEQueryRequest");
             }
         }
-        x if x == protocols::ALPN_SE_QUERY_RESP => {
+        x if x == protocols::STREAM_SE_QUERY_RESP => {
             let reply: crate::message::QuerySEArtifactsReply =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             verify_iroh_message(&reply)?;
@@ -451,7 +459,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit SEQueryReply");
             }
         }
-        x if x == protocols::ALPN_MANAGE_REQ => {
+        x if x == protocols::STREAM_MANAGE_REQ => {
             let request: crate::message::ManageRequest =
                 protocols::read_message(recv, protocols::MAX_MANAGE_MSG_SIZE).await?;
             verify_iroh_message(&request)?;
@@ -472,7 +480,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit ManageRequest");
             }
         }
-        x if x == protocols::ALPN_MANAGE_RESP => {
+        x if x == protocols::STREAM_MANAGE_RESP => {
             let reply: crate::message::ManageReply =
                 protocols::read_message(recv, protocols::MAX_MANAGE_MSG_SIZE).await?;
             verify_iroh_message(&reply)?;
@@ -493,7 +501,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit ManageReply");
             }
         }
-        x if x == protocols::ALPN_MANAGE_QUERY_REQ => {
+        x if x == protocols::STREAM_MANAGE_QUERY_REQ => {
             let request: crate::message::ManageQueryRequest =
                 protocols::read_message(recv, protocols::MAX_MANAGE_MSG_SIZE).await?;
             verify_iroh_message(&request)?;
@@ -514,7 +522,7 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit ManageQueryRequest");
             }
         }
-        x if x == protocols::ALPN_MANAGE_QUERY_RESP => {
+        x if x == protocols::STREAM_MANAGE_QUERY_RESP => {
             let reply: crate::message::ManageQueryReply =
                 protocols::read_message(recv, protocols::MAX_MANAGE_MSG_SIZE).await?;
             verify_iroh_message(&reply)?;
@@ -536,7 +544,7 @@ async fn dispatch_stream(
             }
         }
         _ => {
-            debug!("Unknown ALPN: {:?}", String::from_utf8_lossy(alpn));
+            debug!("Unknown stream tag: {:?}", String::from_utf8_lossy(tag));
         }
     }
     Ok(())
