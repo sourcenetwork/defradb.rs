@@ -18,7 +18,9 @@ Three rules keep a verdict honest:
   test, which is correct for a deterministic count and is why a bench that
   repeats a timing should always report one.
 * **A floor on top of that.** Non-overlapping ranges can still be a fraction of
-  a percent apart. A change under ``--threshold`` is noise regardless.
+  a percent apart. A change within plus or minus ``--threshold`` percent is
+  acceptable and reported as noise regardless, so at the default only a move of
+  more than 5% either way is called a regression or an improvement.
 
 Comparisons are per platform. A metric measured on Linux is not a baseline for
 the same metric measured in a browser, and pretending otherwise would produce a
@@ -80,8 +82,8 @@ def classify(before, after, threshold):
     if before["lower"]:
         pct = -pct
 
-    if abs(pct) < threshold:
-        return NOISE, pct, f"within the {threshold:g}% threshold"
+    if abs(pct) <= threshold:
+        return NOISE, pct, f"within the {threshold:g}% band, which is acceptable"
 
     have_ranges = all(
         isinstance(side[k], (int, float)) for side in (before, after) for k in ("min", "max")
@@ -167,8 +169,9 @@ def markdown(deltas, platforms, only_cur, base, cur, threshold, note=""):
     out = ["## Performance", ""]
     out.append(
         f"`{(cur.get('commit') or '')[:12]}` ({cur.get('label') or 'this run'}) "
-        f"against `{(base.get('commit') or '')[:12]}` ({base.get('label') or 'baseline'}), "
-        f"threshold {threshold:g}%."
+        f"against `{(base.get('commit') or '')[:12]}` ({base.get('label') or 'baseline'}). "
+        f"Anything within plus or minus {threshold:g}% is acceptable; only a move past that "
+        f"is reported, and only when the two runs' measured ranges do not overlap."
     )
     if note:
         out.append("")
@@ -234,7 +237,7 @@ def main():
         "--threshold",
         type=float,
         default=5.0,
-        help="percent change below which a delta is noise (default 5)",
+        help="a change within plus or minus this percent is acceptable (default 5)",
     )
     ap.add_argument("--markdown", help="write the report here as well as to stdout")
     ap.add_argument(
