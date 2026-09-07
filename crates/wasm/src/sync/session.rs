@@ -313,6 +313,15 @@ impl SyncSession {
     async fn exchange(&self, request: BrowserSyncRequest) -> Result<BrowserSyncResponse> {
         let _guard = self.exchange_lock.lock().await;
         let response = self.http.sync(&request).await?;
+        // A document the server would not take is one document's problem. It
+        // is said out loud rather than counted, because the alternative to a
+        // dead session must not be a quiet one.
+        for refusal in &response.refused {
+            warn(&format!(
+                "browser sync could not push document {}: {}",
+                refusal.doc_id, refusal.reason
+            ));
+        }
         for document in &response.documents {
             self.engine
                 .apply_document(document, "server")

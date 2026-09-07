@@ -155,6 +155,69 @@ async fn document_round_trip_uses_crdt_blocks() {
     );
 }
 
+/// What decides whether a pushed payload is an update at all: a payload whose
+/// blocks are already held cannot change anything, whoever sent it.
+#[tokio::test]
+async fn a_payload_of_blocks_already_held_carries_nothing() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema()).await.unwrap();
+    target.create_collection(users_schema()).await.unwrap();
+
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let created = db::AutoCommitMutator::new(source.clone())
+        .create("Users", document)
+        .await
+        .unwrap();
+    let doc_id = created.doc_id.to_string();
+    let source_sync = BrowserSyncEngine::new(source.clone());
+    let source_ref = source_sync.document_ref(&doc_id).await.unwrap().unwrap();
+    let first = source_sync
+        .load_document(&source_ref)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let target_sync = BrowserSyncEngine::new(target);
+    assert!(
+        !target_sync
+            .holds_every_block(&target_sync.validate_document(&first).unwrap())
+            .await
+            .unwrap(),
+        "a document this node has never seen is all new"
+    );
+    target_sync.apply_document(&first, "browser").await.unwrap();
+    assert!(target_sync
+        .holds_every_block(&target_sync.validate_document(&first).unwrap())
+        .await
+        .unwrap());
+
+    let mut update = Document::new();
+    update.set_id(DocID::from_string(&doc_id).unwrap());
+    update.set("name", "Alice again");
+    db::AutoCommitMutator::new(source)
+        .update(
+            "Users",
+            update,
+            std::collections::HashSet::from(["name".to_string()]),
+        )
+        .await
+        .unwrap();
+    let second = source_sync
+        .load_document(&source_ref)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !target_sync
+            .holds_every_block(&target_sync.validate_document(&second).unwrap())
+            .await
+            .unwrap(),
+        "the update block is one this node does not hold"
+    );
+}
+
 #[tokio::test]
 async fn rejects_forged_document_id_before_merge() {
     let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());

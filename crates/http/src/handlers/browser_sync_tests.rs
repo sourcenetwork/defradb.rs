@@ -35,6 +35,7 @@ impl BrowserSyncOperations for RecordingSync {
         Ok(BrowserSyncResponse {
             documents: request.documents,
             next_cursor: None,
+            refused: Vec::new(),
         })
     }
 }

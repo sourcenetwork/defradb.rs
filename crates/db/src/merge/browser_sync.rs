@@ -221,6 +221,29 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
         Ok(None)
     }
 
+    /// Whether every block in a validated payload is already held here, in
+    /// which case merging it cannot change anything.
+    ///
+    /// The blocks are content-addressed, so holding the CID is holding the
+    /// block: a payload this answers `true` for has nothing in it this node
+    /// has not already seen.
+    pub async fn holds_every_block(
+        &self,
+        document: &ValidatedBrowserSyncDocument,
+    ) -> Result<bool, BrowserSyncError> {
+        for (cid, _) in &document.blocks {
+            if !self
+                .blockstore
+                .has(cid)
+                .await
+                .map_err(|error| BrowserSyncError::Storage(error.to_string()))?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub async fn load_document(
         &self,
         document_ref: &BrowserSyncDocumentRef,

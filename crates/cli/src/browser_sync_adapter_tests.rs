@@ -5,6 +5,7 @@ use acp::{DocumentACP, LocalDocumentACP, MemoryAcpStore};
 use crypto::{Key as _, PrivateKey as _};
 use defra_core::browser_sync::{
     BrowserSyncDocument, BrowserSyncPull, BrowserSyncRelationship, BrowserSyncRequest,
+    BrowserSyncResponse,
 };
 use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};
 use document::{DocID, Document, NormalValue};
@@ -63,6 +64,18 @@ async fn update_document(
         .update("Users", document, HashSet::from([field.to_string()]))
         .await
         .unwrap();
+}
+
+/// The one refusal a response carries for a document, which is where a push
+/// the node will not apply is reported now that it no longer fails the
+/// exchange it arrived in.
+fn refusal_for<'a>(response: &'a BrowserSyncResponse, doc_id: &str) -> &'a str {
+    let refusal = response
+        .refused
+        .iter()
+        .find(|refusal| refusal.doc_id == doc_id)
+        .unwrap_or_else(|| panic!("expected {doc_id} to be refused, got {response:?}"));
+    &refusal.reason
 }
 
 async fn read_document(database: &Arc<db::DB<RegolithStore>>, doc_id: &str) -> Document {
@@ -413,8 +426,91 @@ async fn duplicate_document_batch_is_rejected_before_merge() {
         .is_none());
 }
 
+/// A push that carries a block is an update, and an update to somebody else's
+/// document is refused however the caller dresses it up.
+///
+/// The change matters: an identical re-push carries no block and is not an
+/// update at all — `an_unchanged_push_is_not_an_update` is the other half, and
+/// the two together are the whole of what the delta check moved.
 #[tokio::test]
 async fn protected_document_rejects_updates_from_another_identity() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+    target.create_collection(users_schema(true)).await.unwrap();
+    let owner = install_signing_identity();
+    let document = create_document(&source, "Protected").await;
+    let doc_id = document.doc_id.clone();
+    set_signing_config(None);
+
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(target.clone(), acp, None);
+    adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![document.clone()],
+                pull: None,
+            },
+            Some(&owner),
+            false,
+        )
+        .await
+        .unwrap();
+
+    update_document(&source, &doc_id, "email", "protected@example.com").await;
+    let source_engine = db::merge::BrowserSyncEngine::new(source.clone());
+    let source_ref = source_engine.document_ref(&doc_id).await.unwrap().unwrap();
+    let changed = source_engine
+        .load_document(&source_ref)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let other = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+    let response = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![changed.clone()],
+                pull: None,
+            },
+            Some(other),
+            false,
+        )
+        .await
+        .unwrap();
+    assert!(refusal_for(&response, &doc_id).contains("update access denied"));
+    assert_eq!(
+        read_document(&target, &doc_id).await.get("email"),
+        None,
+        "a refused update must not reach the document"
+    );
+
+    adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![changed],
+                pull: None,
+            },
+            Some(other),
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        read_document(&target, &doc_id).await.get("email"),
+        Some(&NormalValue::String("protected@example.com".into()))
+    );
+}
+
+/// A payload whose blocks this node already holds changes nothing, so it is
+/// not an update and needs no permission to update.
+///
+/// This is the shape a synced browser used to arrive in: it pulled a document
+/// it does not own, and its next exchange offered the same document back. The
+/// 403 that answered cost the whole exchange, the pull inside it, and — once
+/// `recover_full_sync` met the same document again — the session.
+#[tokio::test]
+async fn an_unchanged_push_is_not_an_update() {
     let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     source.create_collection(users_schema(true)).await.unwrap();
@@ -437,34 +533,106 @@ async fn protected_document_rejects_updates_from_another_identity() {
         .await
         .unwrap();
 
-    let other = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
-    let error = adapter
-        .sync(
-            BrowserSyncRequest {
-                documents: vec![document.clone()],
-                pull: None,
-            },
-            Some(other),
-            false,
-        )
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        defra_http::router::BrowserSyncError::Forbidden(_)
-    ));
+    let stranger = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+    for caller in [Some(stranger), None] {
+        let response = adapter
+            .sync(
+                BrowserSyncRequest {
+                    documents: vec![document.clone()],
+                    pull: Some(BrowserSyncPull::default()),
+                },
+                caller,
+                false,
+            )
+            .await
+            .expect("an unchanged document is not an update");
+        assert!(
+            response.refused.is_empty(),
+            "nothing to refuse: {response:?}"
+        );
+    }
+}
 
+/// One document nobody may write is one document's problem. Before this, the
+/// refusal was the whole request's answer: the other documents never landed,
+/// the pull riding along never ran, and the browser driving it took the
+/// failure as a reason to start over and meet the same document again.
+#[tokio::test]
+async fn a_refused_document_does_not_cost_the_rest_of_the_exchange() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema(true)).await.unwrap();
+    target.create_collection(users_schema(true)).await.unwrap();
+    let owner = install_signing_identity();
+    let protected = create_document(&source, "Protected").await;
+    let protected_id = protected.doc_id.clone();
+
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(target.clone(), acp, None);
     adapter
         .sync(
             BrowserSyncRequest {
-                documents: vec![document],
+                documents: vec![protected],
                 pull: None,
             },
-            Some(other),
-            true,
+            Some(&owner),
+            false,
         )
         .await
         .unwrap();
+    set_signing_config(None);
+
+    update_document(&source, &protected_id, "email", "protected@example.com").await;
+    let source_engine = db::merge::BrowserSyncEngine::new(source.clone());
+    let protected_ref = source_engine
+        .document_ref(&protected_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let refused_document = source_engine
+        .load_document(&protected_ref)
+        .await
+        .unwrap()
+        .unwrap();
+    let mine = create_document(&source, "Mine").await;
+    let mine_id = mine.doc_id.clone();
+    // Held only by the node, so the pull has something of its own to answer
+    // with: the documents of the push are covered by the roots it carried.
+    let server_only_id = create_document(&target, "Server").await.doc_id;
+
+    let stranger = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
+    let response = adapter
+        .sync(
+            BrowserSyncRequest {
+                documents: vec![refused_document, mine],
+                pull: Some(BrowserSyncPull::default()),
+            },
+            Some(stranger),
+            false,
+        )
+        .await
+        .expect("one refused document must not fail the exchange");
+
+    assert!(refusal_for(&response, &protected_id).contains("update access denied"));
+    assert_eq!(
+        read_document(&target, &protected_id).await.get("email"),
+        None,
+        "a refused update must not reach the document"
+    );
+    assert_eq!(
+        read_document(&target, &mine_id).await.get("name"),
+        Some(&NormalValue::String("Mine".into())),
+        "the documents that were not refused still land"
+    );
+    assert_eq!(
+        response
+            .documents
+            .iter()
+            .map(|document| document.doc_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![server_only_id.as_str()],
+        "the pull still answers"
+    );
 }
 
 #[tokio::test]
@@ -1055,7 +1223,7 @@ async fn relationships_cannot_be_attached_to_a_foreign_signed_document() {
     let adapter = BrowserSyncAdapter::new_arc(target, acp.clone(), None);
 
     let bob = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH";
-    let error = adapter
+    let response = adapter
         .sync(
             BrowserSyncRequest {
                 documents: vec![BrowserSyncDocument {
@@ -1071,10 +1239,10 @@ async fn relationships_cannot_be_attached_to_a_foreign_signed_document() {
             false,
         )
         .await
-        .expect_err("a caller who is not the owner must not be able to grant");
+        .unwrap();
     assert!(
-        matches!(error, defra_http::router::BrowserSyncError::Forbidden(_)),
-        "expected a forbidden grant, got {error:?}"
+        refusal_for(&response, &doc_id).contains("cannot grant 'reader'"),
+        "a caller who is not the owner must not be able to grant"
     );
     // The refused grant takes the registration this request made with it: the
     // merge never ran, so ACP holds nothing for a document the node does not
@@ -1149,7 +1317,8 @@ async fn relationships_require_an_authenticated_caller() {
     let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
     let adapter = BrowserSyncAdapter::new_arc(target, acp, None);
 
-    let error = adapter
+    let doc_id = document.doc_id.clone();
+    let response = adapter
         .sync(
             BrowserSyncRequest {
                 documents: vec![BrowserSyncDocument {
@@ -1165,11 +1334,11 @@ async fn relationships_require_an_authenticated_caller() {
             false,
         )
         .await
-        .expect_err("an anonymous caller has no DID to grant as");
-    assert!(matches!(
-        error,
-        defra_http::router::BrowserSyncError::Forbidden(_)
-    ));
+        .unwrap();
+    assert!(
+        refusal_for(&response, &doc_id).contains("require an authenticated caller"),
+        "an anonymous caller has no DID to grant as"
+    );
 }
 
 #[tokio::test]

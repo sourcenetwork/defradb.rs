@@ -65,12 +65,29 @@ pub struct BrowserSyncRequest {
     pub pull: Option<BrowserSyncPull>,
 }
 
+/// One document of a push that was not applied, and why.
+///
+/// A refusal is a fact about a document, not about the exchange it arrived in:
+/// the rest of the push still applies and the pull still answers. Reporting it
+/// rather than failing the request is what keeps a session alive through a
+/// document it may not write — and naming it is what keeps that from being a
+/// silent drop.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserSyncRefusal {
+    pub doc_id: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrowserSyncResponse {
     #[serde(default)]
     pub documents: Vec<BrowserSyncDocument>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Documents of the request's push that were refused. Absent on the wire
+    /// means none, so a client built before this existed reads unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused: Vec<BrowserSyncRefusal>,
 }
 
 #[cfg(test)]
@@ -85,6 +102,17 @@ mod tests {
         let document: BrowserSyncDocument = serde_json::from_str(legacy).unwrap();
         assert!(document.relationships.is_empty());
         assert_eq!(serde_json::to_string(&document).unwrap(), legacy);
+    }
+
+    /// The response gained `refused` after clients existed. An old client must
+    /// still read a new server's answer, and a new client must still read an
+    /// old server's.
+    #[test]
+    fn a_response_without_refusals_round_trips_unchanged() {
+        let legacy = r#"{"documents":[]}"#;
+        let response: BrowserSyncResponse = serde_json::from_str(legacy).unwrap();
+        assert!(response.refused.is_empty());
+        assert_eq!(serde_json::to_string(&response).unwrap(), legacy);
     }
 
     #[test]
