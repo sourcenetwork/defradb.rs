@@ -23,6 +23,13 @@ impl SseStream {
         }
     }
 
+    /// Every document ID already decoded, taken without reading the stream
+    /// again. A burst arrives as one chunk, so these are the rest of it and can
+    /// be answered in one exchange.
+    pub(super) fn take_decoded_document_ids(&mut self) -> Vec<String> {
+        self.pending_doc_ids.drain(..).collect()
+    }
+
     pub(super) async fn next_document_id(&mut self) -> Result<Option<String>> {
         loop {
             if let Some(doc_id) = self.pending_doc_ids.pop_front() {
