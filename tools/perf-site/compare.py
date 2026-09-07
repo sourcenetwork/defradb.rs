@@ -22,6 +22,15 @@ Three rules keep a verdict honest:
   acceptable and reported as noise regardless, so at the default only a move of
   more than 5% either way is called a regression or an improvement.
 
+Each side may be given more than once, and should be. A benchmark's own
+confidence interval describes the spread *within* one measurement, which on a
+shared runner is a fraction of the spread *between* two of them: the first
+measurement in a job runs on a cold, idle machine and the last runs on a hot,
+contended one, which is a systematic drift in one direction rather than noise
+that averages out. Repeating each side and interleaving the passes is what makes
+the recorded range mean "what this metric does on this runner", and only then
+does a separation between two ranges mean the code changed.
+
 Comparisons are per platform. A metric measured on Linux is not a baseline for
 the same metric measured in a browser, and pretending otherwise would produce a
 regression report on every run.
@@ -69,6 +78,40 @@ def rows_of(doc, platform):
     return out
 
 
+def fold(docs, platform):
+    """One row set from repeated measurements of the same commit.
+
+    The point estimate is the median across passes, and the range spans every
+    pass: both the spread between them and each pass's own interval. Wider is
+    the honest direction here, because every percent of range that is left out
+    becomes a delta reported as real.
+    """
+    passes = [rows_of(doc, platform) for doc in docs]
+    keys = set().union(*(set(p) for p in passes)) if passes else set()
+    out = {}
+    for key in keys:
+        seen = [p[key] for p in passes if key in p]
+        if not seen:
+            continue
+        values = sorted(r["value"] for r in seen)
+        mid = len(values) // 2
+        median = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+        lows = [r["min"] if isinstance(r["min"], (int, float)) else r["value"] for r in seen]
+        highs = [r["max"] if isinstance(r["max"], (int, float)) else r["value"] for r in seen]
+        worst = max((r["trust"] for r in seen), key=lambda t: {"clean": 0}.get(t, 1))
+        out[key] = {
+            "value": median,
+            "min": min(lows + values),
+            "max": max(highs + values),
+            "unit": seen[0]["unit"],
+            "lower": seen[0]["lower"],
+            "trust": worst,
+            "family": seen[0]["family"],
+            "passes": len(seen),
+        }
+    return out
+
+
 def classify(before, after, threshold):
     """Verdict, percentage and reason for one pair of measurements."""
     if before["trust"] != TRUSTED:
@@ -98,14 +141,19 @@ def classify(before, after, threshold):
     return (REGRESSED if pct < 0 else IMPROVED), pct, ""
 
 
-def compare(base, cur, threshold):
-    platforms = sorted(
-        set((base.get("platforms") or {})) & set((cur.get("platforms") or {}))
-    )
-    only_cur = sorted(set(cur.get("platforms") or {}) - set(base.get("platforms") or {}))
+def platforms_of(docs):
+    seen = set()
+    for d in docs:
+        seen |= set(d.get("platforms") or {})
+    return seen
+
+
+def compare(bases, curs, threshold):
+    platforms = sorted(platforms_of(bases) & platforms_of(curs))
+    only_cur = sorted(platforms_of(curs) - platforms_of(bases))
     deltas = []
     for platform in platforms:
-        b, c = rows_of(base, platform), rows_of(cur, platform)
+        b, c = fold(bases, platform), fold(curs, platform)
         for key in sorted(set(b) | set(c)):
             if key not in b or key not in c:
                 deltas.append(
@@ -160,7 +208,7 @@ def fmt(v, unit):
     return f"{v:.4g}"
 
 
-def markdown(deltas, platforms, only_cur, base, cur, threshold, note=""):
+def markdown(deltas, platforms, only_cur, base, cur, threshold, note="", passes=(1, 1)):
     regressed = [d for d in deltas if d["verdict"] == REGRESSED]
     improved = [d for d in deltas if d["verdict"] == IMPROVED]
     unverified = [d for d in deltas if d["verdict"] == UNVERIFIED]
@@ -171,8 +219,15 @@ def markdown(deltas, platforms, only_cur, base, cur, threshold, note=""):
         f"`{(cur.get('commit') or '')[:12]}` ({cur.get('label') or 'this run'}) "
         f"against `{(base.get('commit') or '')[:12]}` ({base.get('label') or 'baseline'}). "
         f"Anything within plus or minus {threshold:g}% is acceptable; only a move past that "
-        f"is reported, and only when the two runs' measured ranges do not overlap."
+        f"is reported, and only when the two sides' measured ranges do not overlap."
     )
+    if max(passes) > 1:
+        out.append("")
+        out.append(
+            f"Measured over {passes[1]} pass(es) of this run and {passes[0]} of the baseline, "
+            "interleaved so that a runner getting slower as the job proceeds cannot read as a "
+            "change in the code. Each side's range spans its passes."
+        )
     if note:
         out.append("")
         out.append(note)
@@ -231,8 +286,18 @@ def markdown(deltas, platforms, only_cur, base, cur, threshold, note=""):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--baseline", required=True)
-    ap.add_argument("--current", required=True)
+    ap.add_argument(
+        "--baseline",
+        required=True,
+        action="append",
+        help="a run document for the baseline; repeat it once per measurement pass",
+    )
+    ap.add_argument(
+        "--current",
+        required=True,
+        action="append",
+        help="a run document for this run; repeat it once per measurement pass",
+    )
     ap.add_argument(
         "--threshold",
         type=float,
@@ -248,10 +313,13 @@ def main():
     ap.add_argument("--fail-on-regression", action="store_true")
     args = ap.parse_args()
 
-    base = json.loads(pathlib.Path(args.baseline).read_text())
-    cur = json.loads(pathlib.Path(args.current).read_text())
-    deltas, platforms, only_cur = compare(base, cur, args.threshold)
-    report = markdown(deltas, platforms, only_cur, base, cur, args.threshold, args.note)
+    bases = [json.loads(pathlib.Path(p).read_text()) for p in args.baseline]
+    curs = [json.loads(pathlib.Path(p).read_text()) for p in args.current]
+    deltas, platforms, only_cur = compare(bases, curs, args.threshold)
+    report = markdown(
+        deltas, platforms, only_cur, bases[0], curs[0], args.threshold, args.note,
+        passes=(len(bases), len(curs)),
+    )
     print(report)
     if args.markdown:
         pathlib.Path(args.markdown).write_text(report + "\n")

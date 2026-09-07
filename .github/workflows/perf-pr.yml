@@ -2,7 +2,7 @@ name: Performance (pull request)
 
 # Its own workflow, and that is the whole reason it exists separately.
 #
-# The full matrix is forty jobs across three platforms. Keeping it in the
+# The full sweep is forty jobs across three platforms. Keeping it in the
 # workflow a pull request triggers meant every PR carried forty skipped checks,
 # and GitHub renders a skipped matrix job without expanding its matrix: the
 # check list filled up with literal `${{ matrix.family }}` rows. A pull request
@@ -26,39 +26,50 @@ env:
   CARGO_INCREMENTAL: '0'
 
 jobs:
-  # Every pull request, no ceremony. Four families on Linux,
-  # measured against this PR's own merge base on this same runner with this
-  # same profile, and posted back as a comment.
+  # Every pull request, no ceremony. A few families on Linux, measured against
+  # this PR's own merge base, and posted back as a comment.
   #
-  # Two decisions keep it quick without making it dishonest.
+  # Three decisions keep it quick without making it dishonest.
   #
-  # `release-fast` rather than the `bench` profile: thin LTO and sixteen
-  # codegen units build in a fraction of the time fat LTO takes. It produces
-  # different absolute numbers, which is exactly why this path never publishes
-  # to the dashboard and never compares against it. Both sides of this
-  # comparison are built the same way, so the delta between them is real even
-  # though neither figure is the one a release would post.
+  # `release-fast` rather than the `bench` profile: thin LTO and sixteen codegen
+  # units build in a fraction of the time fat LTO takes. It produces different
+  # absolute numbers, which is exactly why this path never publishes to the
+  # dashboard and never compares against it.
   #
-  # And the base measurement is cached by its commit. A base is measured once
-  # and then reused by every later pull request that shares it, so only the
-  # first one after a merge to `main` pays for the second build.
+  # Both sides are built and measured in this one job, on this one runner. A
+  # cached baseline measured on some other runner days ago is not a baseline for
+  # anything: the machines differ by more than the code does.
+  #
+  # And the passes are interleaved: head, base, base, head. A runner is cold and
+  # idle at the start of a job and hot and contended by the end, which is a
+  # drift in one direction rather than noise that averages out. Measured
+  # sequentially, one pass each, that drift showed up as sixteen double-digit
+  # "improvements" on a pull request that changed only YAML. Interleaving puts
+  # both sides at both ends of the job, and each side's recorded range spans its
+  # passes, so a separation between the two ranges means the code moved.
   quick:
     name: Quick benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     permissions:
       contents: read
       pull-requests: write
     env:
       DEFRA_BENCH_CRITERION_ARGS: --warm-up-time 0.5 --measurement-time 1.5 --sample-size 10
       PERF_PROFILE: release-fast
+      PERF_THRESHOLD: '5'
       # The write path, the allocation counts that catch a stray clone before
       # the clock does, cold start, and the storage transaction seam.
       QUICK_FAMILIES: document_write allocs startup transaction
+      CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
     steps:
       - uses: actions/checkout@v4
         with:
           path: head
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
       - uses: extractions/setup-just@v2
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
@@ -83,129 +94,89 @@ jobs:
       - name: Record how quiet the host is
         run: python3 head/tools/perf-site/loadguard.py --out loadguard.json
 
-      - name: Measure this pull request
-        working-directory: head
-        env:
-          DEFRA_BENCH_OUT: ${{ github.workspace }}/head.jsonl
+      # Both builds first, so no compile sits between two measurement passes and
+      # adds its own heat to whichever side follows it.
+      - name: Build both sides
         run: |
           set -euo pipefail
-          for family in $QUICK_FAMILIES; do
-            echo "::group::$family"
-            rm -rf target/criterion
-            cargo bench --profile "$PERF_PROFILE" -p benches --bench "$family" \
-              -- $DEFRA_BENCH_CRITERION_ARGS
-            mkdir -p "$GITHUB_WORKSPACE/criterion-head/$family"
-            [ -d target/criterion ] && cp -R target/criterion/. "$GITHUB_WORKSPACE/criterion-head/$family/"
+          for side in head base; do
+            echo "::group::build $side"
+            ( cd "$side"
+              # A family this pull request introduces does not exist on the
+              # base. That is a new measurement, not a failure.
+              for family in $QUICK_FAMILIES; do
+                cargo bench --profile "$PERF_PROFILE" -p benches --bench "$family" --no-run \
+                  || echo "::notice::$family does not build on $side; it will show as new"
+              done )
             echo "::endgroup::"
           done
-          touch "$DEFRA_BENCH_OUT"
 
-      - name: Assemble this pull request's document
-        working-directory: head
-        env:
-          DEFRA_BENCH_OUT: ${{ github.workspace }}/head.jsonl
-          PERF_COMMIT: ${{ github.event.pull_request.head.sha }}
-          PERF_LABEL: pr-${{ github.event.pull_request.number }}
+      - name: Measure, interleaved
         run: |
           set -euo pipefail
-          cargo run --profile "$PERF_PROFILE" -p defra-perf --bin collect -- \
-            --criterion-root "$GITHUB_WORKSPACE/criterion-head" \
-            --out "$GITHUB_WORKSPACE/platform-head.json" \
-            --commit "$PERF_COMMIT" \
-            --label "$PERF_LABEL" \
-            --target x86_64-unknown-linux-gnu \
-            --loadguard "$GITHUB_WORKSPACE/loadguard.json"
-
-      # A base is the same commit for every PR branched off it, so measuring it
-      # once and reusing the document is the difference between paying for two
-      # builds on every pull request and paying for them once per merge.
-      - name: Restore the baseline measured for this base commit
-        id: basecache
-        uses: actions/cache@v4
-        with:
-          path: platform-base.json
-          key: perf-quick-base-${{ github.event.pull_request.base.sha }}-v1
-
-      - uses: actions/checkout@v4
-        if: steps.basecache.outputs.cache-hit != 'true'
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: base
-
-      - name: Measure the merge base
-        if: steps.basecache.outputs.cache-hit != 'true'
-        working-directory: base
-        env:
-          DEFRA_BENCH_OUT: ${{ github.workspace }}/base.jsonl
-          # The same target directory as the head build, so the second build
-          # reuses every dependency artifact the first one produced.
-          CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
-        run: |
-          set -euo pipefail
-          for family in $QUICK_FAMILIES; do
-            # A family this pull request introduces does not exist on the base,
-            # and that is a new measurement rather than a failure. The
-            # comparison reports it as measured on one side only.
-            echo "::group::$family"
-            rm -rf "$CARGO_TARGET_DIR/criterion"
-            cargo bench --profile "$PERF_PROFILE" -p benches --bench "$family" \
-              -- $DEFRA_BENCH_CRITERION_ARGS \
-              || echo "::notice::$family did not run on the base commit; it will show as new"
-            mkdir -p "$GITHUB_WORKSPACE/criterion-base/$family"
-            [ -d "$CARGO_TARGET_DIR/criterion" ] && \
-              cp -R "$CARGO_TARGET_DIR/criterion/." "$GITHUB_WORKSPACE/criterion-base/$family/"
+          pass() {
+            local side="$1" tag="$2"
+            echo "::group::measure $tag ($side)"
+            mkdir -p "$GITHUB_WORKSPACE/crit-$tag"
+            ( cd "$side"
+              for family in $QUICK_FAMILIES; do
+                rm -rf "$CARGO_TARGET_DIR/criterion"
+                DEFRA_BENCH_OUT="$GITHUB_WORKSPACE/$tag.jsonl" \
+                  cargo bench --profile "$PERF_PROFILE" -p benches --bench "$family" \
+                  -- $DEFRA_BENCH_CRITERION_ARGS || true
+                if [ -d "$CARGO_TARGET_DIR/criterion" ]; then
+                  mkdir -p "$GITHUB_WORKSPACE/crit-$tag/$family"
+                  cp -R "$CARGO_TARGET_DIR/criterion/." "$GITHUB_WORKSPACE/crit-$tag/$family/"
+                fi
+              done )
+            touch "$GITHUB_WORKSPACE/$tag.jsonl"
             echo "::endgroup::"
-          done
-          touch "$DEFRA_BENCH_OUT"
+          }
+          # head, base, base, head: both sides see the cold start and the hot
+          # end of the job, so a monotonic drift cancels instead of landing on
+          # whichever side happened to go last.
+          pass head head1
+          pass base base1
+          pass base base2
+          pass head head2
 
-      - name: Assemble the merge base's document
-        if: steps.basecache.outputs.cache-hit != 'true'
-        working-directory: base
+      - name: Assemble the four documents
         env:
-          DEFRA_BENCH_OUT: ${{ github.workspace }}/base.jsonl
-          CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
-          PERF_BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+          PERF_HEAD: ${{ github.event.pull_request.head.sha }}
+          PERF_BASE: ${{ github.event.pull_request.base.sha }}
+          PERF_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          # Built from the base checkout when it has the collector, and from
-          # this PR's when the PR is what introduces it.
-          manifest=Cargo.toml
-          if ! grep -q '"tools/perf"' Cargo.toml; then
-            manifest="$GITHUB_WORKSPACE/head/Cargo.toml"
-          fi
-          cargo run --manifest-path "$manifest" --profile "$PERF_PROFILE" \
-            -p defra-perf --bin collect -- \
-            --criterion-root "$GITHUB_WORKSPACE/criterion-base" \
-            --out "$GITHUB_WORKSPACE/platform-base.json" \
-            --commit "$PERF_BASE_COMMIT" \
-            --label "base" \
-            --target x86_64-unknown-linux-gnu \
-            --loadguard "$GITHUB_WORKSPACE/loadguard.json"
+          # Built from head's checkout in every case: the base may predate the
+          # collector, and a document is only comparable when both sides were
+          # assembled by the same version of it.
+          for tag in head1 head2 base1 base2; do
+            case "$tag" in head*) commit="$PERF_HEAD"; label="pr-$PERF_NUMBER";;
+                           base*) commit="$PERF_BASE"; label="base";; esac
+            DEFRA_BENCH_OUT="$GITHUB_WORKSPACE/$tag.jsonl" \
+              cargo run --manifest-path head/Cargo.toml --profile "$PERF_PROFILE" \
+                -p defra-perf --bin collect -- \
+                --criterion-root "$GITHUB_WORKSPACE/crit-$tag" \
+                --out "$GITHUB_WORKSPACE/platform-$tag.json" \
+                --commit "$commit" --label "$label" \
+                --target x86_64-unknown-linux-gnu \
+                --loadguard "$GITHUB_WORKSPACE/loadguard.json"
+          done
 
       - name: Compare
-        id: compare
-        env:
-          PERF_THRESHOLD: '5'
         run: |
           set -euo pipefail
-          mkdir -p head-site base-site
-          python3 head/tools/perf-site/publish.py --site head-site platform-head.json
-          if [ ! -f platform-base.json ]; then
-            {
-              echo "## Performance"
-              echo ""
-              echo "The merge base could not be measured, so there is nothing to compare"
-              echo "against. This pull request's own numbers are attached to the workflow run."
-            } > report.md
-          else
-            python3 head/tools/perf-site/publish.py --site base-site platform-base.json
-            python3 head/tools/perf-site/compare.py \
-              --baseline "$(ls base-site/runs/*.json | grep -v index.json | head -1)" \
-              --current  "$(ls head-site/runs/*.json | grep -v index.json | head -1)" \
-              --threshold "$PERF_THRESHOLD" \
-              --markdown report.md \
-              --note "Quick check: \`$QUICK_FAMILIES\` on \`x86_64-unknown-linux-gnu\`, built with the \`$PERF_PROFILE\` profile against this PR's own merge base on this runner. Both sides were built and measured identically, so the deltas are real; the absolute figures are not the release-profile ones the dashboard publishes. The full matrix across Linux, macOS and the browser runs on a push to \`main\`, or on demand from the Performance workflow."
-          fi
+          mkdir -p site-head1 site-head2 site-base1 site-base2
+          for tag in head1 head2 base1 base2; do
+            python3 head/tools/perf-site/publish.py --site "site-$tag" "platform-$tag.json" >/dev/null
+          done
+          run_doc() { ls "site-$1"/runs/*.json | grep -v index.json | head -1; }
+          python3 head/tools/perf-site/compare.py \
+            --baseline "$(run_doc base1)" --baseline "$(run_doc base2)" \
+            --current  "$(run_doc head1)" --current  "$(run_doc head2)" \
+            --threshold "$PERF_THRESHOLD" \
+            --markdown report.md \
+            --note "Quick check: \`$QUICK_FAMILIES\` on \`x86_64-unknown-linux-gnu\`, built with the \`$PERF_PROFILE\` profile. Both sides were built and measured in this job on this runner, so the deltas are real; the absolute figures are not the release-profile ones the dashboard publishes. The full matrix across Linux, macOS and the browser runs on a push to \`main\`, or on demand from the Performance workflow."
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment on the pull request
@@ -231,7 +202,9 @@ jobs:
           name: perf-quick
           path: |
             report.md
-            platform-head.json
-            platform-base.json
+            platform-head1.json
+            platform-head2.json
+            platform-base1.json
+            platform-base2.json
           if-no-files-found: warn
           retention-days: 30
