@@ -1,11 +1,7 @@
 //! The mux ALPN, its stream tags, and wire format helpers for iroh transport.
 //!
-//! Every Defra protocol shares one QUIC connection per peer. The connection is
-//! negotiated on [`ALPN_MUX`]; the protocol a stream carries is named by a tag
-//! written as that stream's first frame. Putting the discriminator in-band
-//! rather than in the ALPN is what lets one connection serve all of them — ALPN
-//! is negotiated once per TLS handshake, so an ALPN-per-protocol design costs a
-//! connection, a congestion controller, and a hole-punch per protocol.
+//! The discriminator is in-band — a tag in the stream's first frame — because
+//! ALPN is negotiated once per TLS handshake and so cannot vary per stream.
 
 use iroh::endpoint::{RecvStream, SendStream};
 
@@ -63,10 +59,8 @@ pub const STREAM_TWOSTREAM: &[u8] = b"/defra-iroh/twostream/0.1";
 /// Stream tag for two-stream push replies.
 pub const STREAM_TWOSTREAM_RESP: &[u8] = b"/defra-iroh/twostream/0.1/resp";
 
-/// Every stream tag this node dispatches, for the invariants asserted below.
-///
-/// Dispatch matches tags individually, so this list exists to prove the set is
-/// distinct, framable, and disjoint from the ALPN it travels on.
+/// Every stream tag this node dispatches. Dispatch matches tags individually;
+/// this list exists so the tests can assert the set is distinct and framable.
 #[cfg(test)]
 pub const ALL_STREAM_TAGS: &[&[u8]] = &[
     STREAM_PUSHLOG,
@@ -103,9 +97,8 @@ pub const MAX_MANAGE_MSG_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
 
 /// Write the tag naming the protocol this stream carries.
 ///
-/// Every stream opened on [`ALPN_MUX`] begins with this frame, before any
-/// protocol payload. The one-byte length distinguishes it from the four-byte
-/// message length prefix that follows.
+/// The length is one byte to distinguish it from the four-byte message length
+/// prefix that follows.
 pub async fn write_stream_tag(send: &mut SendStream, tag: &[u8]) -> crate::error::Result<()> {
     if tag.is_empty() || tag.len() > MAX_STREAM_TAG_LEN {
         return Err(crate::error::Error::Codec(format!(

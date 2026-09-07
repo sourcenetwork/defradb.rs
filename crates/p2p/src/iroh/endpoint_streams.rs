@@ -132,9 +132,8 @@ impl ConnectionStreamContext {
 
 /// Process streams on an accepted connection, dispatching by stream tag.
 ///
-/// Every protocol shares this one connection, so the tag is read inside the
-/// spawned task rather than in the accept loop — a peer that opens a stream and
-/// stalls before writing its tag must not hold up the other protocols.
+/// The tag is read inside the spawned task, not the accept loop, so a peer that
+/// stalls before writing one cannot hold up the other protocols.
 ///
 /// Emits `PeerDisconnected` only when the last connection for this peer closes.
 pub(super) async fn handle_connection_streams(
@@ -264,8 +263,7 @@ async fn dispatch_stream(
         }
         x if x == protocols::STREAM_TWOSTREAM_RESP => {
             // The reverse-stream ACK, for a request that did not advertise
-            // same-stream reply support. Now one more stream on the shared
-            // connection rather than a connection of its own.
+            // same-stream reply support.
             let reply: PushLogReply =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
             let (sender, pending_len_after_remove) = {

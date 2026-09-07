@@ -14,11 +14,8 @@ use crate::QueryId;
 use super::peer_map::{parse_endpoint_id, PeerMap};
 use super::protocols;
 
-/// One shared connection per peer, keyed by endpoint alone.
-///
-/// Every protocol is multiplexed over [`protocols::ALPN_MUX`], so the peer's
-/// identity is the whole key: the first caller to dial establishes the
-/// connection and every other protocol opens a stream on it.
+/// One shared connection per peer, keyed by endpoint alone: every protocol is
+/// multiplexed over [`protocols::ALPN_MUX`], so identity is the whole key.
 #[derive(Default)]
 pub(super) struct ConnectionCacheState {
     connections: parking_lot::Mutex<HashMap<iroh::EndpointId, iroh::endpoint::Connection>>,
@@ -182,11 +179,8 @@ async fn open_tagged_stream(
     Ok((send, recv))
 }
 
-/// The peer's shared connection, if one is cached and still open.
-///
-/// A closed entry is dropped rather than handed out: with every protocol on one
-/// connection, serving a dead handle would fail every protocol at once instead
-/// of redialling.
+/// The peer's shared connection, if one is cached and still open. A closed
+/// entry is dropped rather than handed out, so the caller redials.
 fn cached_connection(
     cache: &ConnectionCache,
     peer_id: &PeerId,
@@ -203,11 +197,8 @@ fn cached_connection(
     }
 }
 
-/// Adopt `connection` as the peer's shared connection.
-///
-/// An explicit dial calls this so the connection it just established is the one
-/// every protocol then sends over, rather than leaving the first send to open a
-/// second connection to a peer we are already talking to.
+/// Adopt `connection` as the peer's shared connection, so an explicit dial does
+/// not leave the first send to open a second one.
 pub(super) fn remember_connection(
     cache: &ConnectionCache,
     peer_id: &PeerId,
@@ -221,13 +212,9 @@ pub(super) fn remember_connection(
     Ok(())
 }
 
-/// Drop a peer's shared connection, but only once QUIC has actually closed it.
-///
-/// One connection now carries every protocol, so a stream-level failure — a
-/// malformed frame, a timeout on one slow request — must not evict the
-/// transport that replication and sync are still using. A live connection is
-/// left in the cache; only a closed one is removed, and only if it is still the
-/// entry a concurrent dial has not already replaced.
+/// Drop a peer's shared connection, but only once QUIC has actually closed it:
+/// a stream-level failure must not evict the transport every other protocol is
+/// still using. The `stable_id` check avoids racing a concurrent dial.
 fn evict_if_closed(
     cache: &ConnectionCache,
     peer_id: &PeerId,
@@ -306,9 +293,8 @@ async fn connect_with_cache(
     let guard = dial_guard(cache, parse_endpoint_id(peer_id)?);
     let _dial_guard = guard.lock().await;
 
-    // Another protocol may have established the shared QUIC connection while
-    // this request waited. Only the dial owner may create it; requests remain
-    // concurrent as independent streams after this point.
+    // Another protocol may have established the shared connection while this
+    // request waited on the dial guard.
     if let Some(connection) = cached_connection(cache, peer_id)? {
         return Ok(connection);
     }
@@ -323,9 +309,8 @@ async fn connect_with_cache(
 /// Dial `alpn`, preferring a known direct address before falling back to
 /// discovery.
 ///
-/// Defra traffic always passes [`protocols::ALPN_MUX`]; gossip healing is the
-/// one caller that dials a different ALPN, because iroh-gossip owns its own
-/// handshake.
+/// Gossip healing is the one caller that passes an ALPN other than
+/// [`protocols::ALPN_MUX`], because iroh-gossip owns its own handshake.
 pub(super) async fn connect_with_direct_addr_fallback(
     endpoint: &Endpoint,
     peer_id: &PeerId,

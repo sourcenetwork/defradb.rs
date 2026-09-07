@@ -1,8 +1,7 @@
 //! Every Defra protocol shares one QUIC connection per peer.
 //!
-//! The peer here is a bare iroh endpoint rather than a second transport, so the
-//! assertions are about what a real `IrohTransport` puts on the wire: how many
-//! connections it opens, and which protocol tags it multiplexes over them.
+//! The peer is a bare iroh endpoint, so the assertions are about what a real
+//! `IrohTransport` puts on the wire: connections opened, and tags muxed.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -169,10 +168,6 @@ async fn drive_six_protocols(transport: &IrohTransport, peer: &PeerId) {
 }
 
 /// The point of the mux ALPN: six protocols, one connection.
-///
-/// Before multiplexing each protocol negotiated its own ALPN, so this exchange
-/// cost six QUIC handshakes — six congestion controllers, six hole-punches, six
-/// keepalive timers — against a single peer.
 #[tokio::test]
 async fn six_protocols_share_one_connection() {
     let peer = spawn_bare_peer().await;
@@ -236,8 +231,7 @@ async fn repeated_sends_do_not_redial() {
 }
 
 /// A stream-level failure must not evict the connection every other protocol is
-/// using. An unknown tag is dispatched as a no-op by the peer; the sends around
-/// it keep flowing on the same connection.
+/// using.
 #[tokio::test]
 async fn a_failed_stream_does_not_tear_down_the_connection() {
     let peer = spawn_bare_peer().await;
