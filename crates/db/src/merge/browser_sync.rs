@@ -339,20 +339,24 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
             .map_err(|error| BrowserSyncError::Storage(error.to_string()))
     }
 
-    /// Whether every block in a validated payload is already held here, in
-    /// which case merging it cannot change anything.
+    /// Whether every block in a validated payload has already been merged
+    /// here, in which case merging it again cannot change anything.
     ///
-    /// The blocks are content-addressed, so holding the CID is holding the
-    /// block: a payload this answers `true` for has nothing in it this node
-    /// has not already seen.
-    pub async fn holds_every_block(
+    /// Merged, not merely held: the two come apart, and only the first is a
+    /// promise that the payload is inert. `apply_validated_document` stores
+    /// blocks before it merges them, so a merge that fails leaves them held
+    /// and unapplied, and the P2P stack holds the blocks of a pending or
+    /// quarantined DAG it has fetched but not merged. A payload of those
+    /// blocks would still change the document, so answering on presence alone
+    /// would let a caller who may not update it force the merge.
+    pub async fn has_merged_every_block(
         &self,
         document: &ValidatedBrowserSyncDocument,
     ) -> Result<bool, BrowserSyncError> {
         for (cid, _) in &document.blocks {
             if !self
                 .blockstore
-                .has(cid)
+                .is_merged(cid)
                 .await
                 .map_err(|error| BrowserSyncError::Storage(error.to_string()))?
             {
@@ -455,6 +459,7 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
             .await
             .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
 
+        let mut merged = false;
         for root in &document.roots {
             let data = document
                 .blocks
@@ -477,12 +482,23 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
                 .await
                 .map_err(|error| BrowserSyncError::Merge(error.to_string()))?
             {
-                MergeOutcome::Merged | MergeOutcome::Skipped { terminal: true, .. } => {}
+                MergeOutcome::Merged => merged = true,
+                MergeOutcome::Skipped { terminal: true, .. } => {}
                 MergeOutcome::Skipped { reason, .. } | MergeOutcome::Rejected { reason } => {
                     return Err(BrowserSyncError::Merge(reason));
                 }
                 _ => return Err(BrowserSyncError::Merge("unsupported merge outcome".into())),
             }
+        }
+
+        // A push that merged nothing has nothing to mark and nothing to tell
+        // the network. Validation rejects a payload holding a block its roots
+        // do not reach, so roots that were every one of them already merged
+        // means every block here was. Announcing anyway puts blocks the
+        // network already has back on the wire once per document, which is
+        // the whole store of a browser that has not been updated.
+        if !merged {
+            return Ok(());
         }
 
         let cids: Vec<_> = document.blocks.iter().map(|(cid, _)| *cid).collect();

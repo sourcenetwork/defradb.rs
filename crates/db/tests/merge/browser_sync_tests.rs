@@ -270,9 +270,9 @@ async fn what_the_peer_holds_outlives_the_engine_that_recorded_it() {
 }
 
 /// What decides whether a pushed payload is an update at all: a payload whose
-/// blocks are already held cannot change anything, whoever sent it.
+/// blocks this node has already merged cannot change anything, whoever sent it.
 #[tokio::test]
-async fn a_payload_of_blocks_already_held_carries_nothing() {
+async fn a_payload_of_blocks_already_merged_carries_nothing() {
     let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     source.create_collection(users_schema()).await.unwrap();
@@ -296,14 +296,14 @@ async fn a_payload_of_blocks_already_held_carries_nothing() {
     let target_sync = BrowserSyncEngine::new(target);
     assert!(
         !target_sync
-            .holds_every_block(&target_sync.validate_document(&first).unwrap())
+            .has_merged_every_block(&target_sync.validate_document(&first).unwrap())
             .await
             .unwrap(),
         "a document this node has never seen is all new"
     );
     target_sync.apply_document(&first, "browser").await.unwrap();
     assert!(target_sync
-        .holds_every_block(&target_sync.validate_document(&first).unwrap())
+        .has_merged_every_block(&target_sync.validate_document(&first).unwrap())
         .await
         .unwrap());
 
@@ -325,7 +325,7 @@ async fn a_payload_of_blocks_already_held_carries_nothing() {
         .unwrap();
     assert!(
         !target_sync
-            .holds_every_block(&target_sync.validate_document(&second).unwrap())
+            .has_merged_every_block(&target_sync.validate_document(&second).unwrap())
             .await
             .unwrap(),
         "the update block is one this node does not hold"
@@ -684,5 +684,110 @@ async fn an_unsigned_fragment_is_announced_without_a_creator_claim() {
     assert_eq!(
         events[0].creator_did, None,
         "with no signature there is no owner to claim on the receiving node"
+    );
+}
+
+/// Held is not merged, and only merged makes a payload inert.
+///
+/// `apply_validated_document` stores a payload's blocks before it merges them,
+/// so a merge that fails leaves them held and unapplied — as does a pending or
+/// quarantined DAG the P2P stack has fetched but not merged. Answering on
+/// presence alone would call such a payload an update that changes nothing, and
+/// wave it past the permission check that stands in front of the merge.
+#[tokio::test]
+async fn blocks_held_without_being_merged_are_not_already_applied() {
+    use blockstore::Blockstore as _;
+
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema()).await.unwrap();
+    target.create_collection(users_schema()).await.unwrap();
+    let (wire_document, _) = pushable_document(source, false).await;
+
+    // What a failed merge or a pending DAG leaves behind: the blocks, stored
+    // and unapplied. The `true` is the merge tracking every server-side
+    // blockstore is built with.
+    let held = blockstore::DefraBlockstore::new(target.store().clone(), true);
+    let decoded: Vec<(Cid, Vec<u8>)> = wire_document
+        .blocks
+        .iter()
+        .map(|block| {
+            (
+                Cid::try_from(block.cid.as_str()).unwrap(),
+                hex::decode(&block.data).unwrap(),
+            )
+        })
+        .collect();
+    held.put_many(
+        &decoded
+            .iter()
+            .map(|(cid, data)| (cid, data.as_slice()))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .unwrap();
+
+    let target_sync = BrowserSyncEngine::new(target);
+    assert!(
+        !target_sync
+            .has_merged_every_block(&target_sync.validate_document(&wire_document).unwrap())
+            .await
+            .unwrap(),
+        "the blocks are here and nothing has applied them, so this payload would still change the document"
+    );
+
+    target_sync
+        .apply_document(&wire_document, "browser")
+        .await
+        .unwrap();
+    assert!(
+        target_sync
+            .has_merged_every_block(&target_sync.validate_document(&wire_document).unwrap())
+            .await
+            .unwrap(),
+        "merged now, so the same payload would change nothing"
+    );
+}
+
+/// A push that merges nothing announces nothing.
+///
+/// A browser that has not been updated offers its whole store back, and every
+/// document of it reaches the merge only to be terminally skipped. Announcing
+/// those would put blocks the network already holds back on the wire once per
+/// document, at every boot, for every such browser — which is exactly the
+/// traffic a node fixed on its own has to absorb.
+#[tokio::test]
+async fn a_push_that_merges_nothing_is_not_announced() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema()).await.unwrap();
+    target.create_collection(users_schema()).await.unwrap();
+    let (wire_document, _) = pushable_document(source, true).await;
+
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let broadcaster: Arc<dyn db::event::emission::TxnBroadcaster> =
+        Arc::new(CapturingBroadcaster {
+            events: events.clone(),
+        });
+    let target_sync = BrowserSyncEngine::with_broadcaster(target, broadcaster);
+
+    target_sync
+        .apply_document(&wire_document, "the-pusher")
+        .await
+        .unwrap();
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "the merge that landed is announced"
+    );
+
+    target_sync
+        .apply_document(&wire_document, "the-pusher")
+        .await
+        .unwrap();
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "the same document again merged nothing, so there is nothing to tell peers"
     );
 }

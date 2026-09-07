@@ -95,14 +95,14 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
             .map_err(map_engine_error)?;
         let collection = self.collection(document.collection_id())?;
         // The delta before the permission, because what changes nothing is not
-        // an update. A peer that offers back a document it was given holds no
-        // block this node lacks, and refusing that costs the exchange it rode
-        // in on — the pull included. A payload that does carry a block is an
-        // update and is checked as one, so this narrows what needs permission
-        // without widening what may be written.
+        // an update. A peer that offers back a document it was given carries no
+        // block this node has not already merged, and refusing that costs the
+        // exchange it rode in on — the pull included. A payload that would
+        // still apply is an update and is checked as one, so this narrows what
+        // needs permission without widening what may be written.
         if !self
             .engine
-            .holds_every_block(&document)
+            .has_merged_every_block(&document)
             .await
             .map_err(map_engine_error)?
             && !self
