@@ -538,6 +538,69 @@ async fn concurrent_changes_converge_through_push_pull_exchange() {
     }
 }
 
+/// A pull naming several documents can be cut short by the page limit, and its
+/// cursor has to resume *within the named set* — resuming across the whole
+/// store would lose whatever fell off the first page.
+#[tokio::test]
+async fn a_pull_naming_several_documents_resumes_across_its_cursor() {
+    let database = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    database
+        .create_collection(users_schema(false))
+        .await
+        .unwrap();
+
+    let mut named = Vec::new();
+    for name in ["Alice", "Bob", "Carol"] {
+        named.push(create_document(&database, name).await.doc_id);
+    }
+    // In the store, not in the pull: a cursor over the whole store serves it.
+    let unnamed = create_document(&database, "Mallory").await.doc_id;
+
+    let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
+    let adapter = BrowserSyncAdapter::new_arc(database, acp);
+
+    let mut cursor = None;
+    let mut seen: Vec<String> = Vec::new();
+    for _ in 0..8 {
+        let page = adapter
+            .sync(
+                BrowserSyncRequest {
+                    documents: Vec::new(),
+                    pull: Some(BrowserSyncPull {
+                        doc_ids: named.clone(),
+                        cursor: cursor.clone(),
+                        // Below the number named, so the pull must paginate.
+                        limit: Some(2),
+                    }),
+                },
+                None,
+                false,
+            )
+            .await
+            .expect("a pull naming several documents must be served");
+        seen.extend(page.documents.iter().map(|doc| doc.doc_id.clone()));
+        match page.next_cursor {
+            Some(next) => {
+                assert_ne!(Some(&next), cursor.as_ref(), "cursor must advance");
+                cursor = Some(next);
+            }
+            None => break,
+        }
+    }
+
+    seen.sort();
+    let mut expected = named.clone();
+    expected.sort();
+    assert_eq!(
+        seen, expected,
+        "every named document must be served across the pages"
+    );
+    assert!(
+        !seen.contains(&unnamed),
+        "a document the pull did not name must not be served"
+    );
+}
+
 /// #1188 skips the oversized document, but the property that matters is that
 /// pagination still reaches documents ordered *after* it. Doc IDs are
 /// content-derived, so this fixture asserts the oversized document actually
