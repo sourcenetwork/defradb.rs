@@ -1,0 +1,71 @@
+name: Artifacts
+
+# Its own workflow so that a pull request never sees it.
+#
+# This job only ever ran on a push, but it lived in a workflow that pull
+# requests also trigger, so every PR carried it as a skipped check. GitHub
+# renders a skipped matrix job without expanding its matrix, so what the check
+# list showed was the literal `Release Artifacts (${{ matrix.platform }})`.
+# Triggered only by a push, the job is never skipped and its name always
+# resolves.
+#
+# It no longer waits on the integration binaries. That was a gate rather than a
+# dependency: this builds its own release binaries and consumed nothing from
+# that job. On a `main` that does not compile, the cost is one failing job here
+# instead of a skipped one, which is the more visible of the two.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifacts-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  artifacts:
+    name: Release Artifacts (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            platform: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: .github/scripts/install-linux-ci-deps.sh
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.platform }}
+      - name: Build release binaries
+        run: |
+          mkdir -p artifacts
+          cargo build --release -p cli
+          cp target/release/defra artifacts/defra
+          cargo build --release -p cli --features iroh
+          cp target/release/defra artifacts/defra-iroh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: defra-${{ matrix.platform }}
+          path: artifacts/defra
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: defra-iroh-${{ matrix.platform }}
+          path: artifacts/defra-iroh
+          retention-days: 30
