@@ -235,6 +235,12 @@ pub enum Error {
     #[error("PushLog for CID {cid} is already being processed, retry later")]
     PushLogInFlight { cid: String },
 
+    /// Processing reported success for a block that is neither merged nor
+    /// registered as pending, so acking success would lose it: the sender
+    /// stops retrying and nothing on this side is left to drive recovery.
+    #[error("PushLog for CID {cid} left no durable state, retry later")]
+    PushLogNotDurable { cid: String },
+
     /// Request rejected because the caller is not authorized.
     #[error("unauthorized: {0}")]
     Unauthorized(String),
@@ -400,8 +406,12 @@ impl Error {
         }
         // Pacing/transient backpressure: rate limiting and single-flight
         // in-flight suppression (defradb#1120) — a short retry, not a park.
-        (self.is_rate_limited() || matches!(self, Error::PushLogInFlight { .. }))
-            .then_some(RATE_LIMITED_MESSAGE)
+        (self.is_rate_limited()
+            || matches!(
+                self,
+                Error::PushLogInFlight { .. } | Error::PushLogNotDurable { .. }
+            ))
+        .then_some(RATE_LIMITED_MESSAGE)
     }
 }
 

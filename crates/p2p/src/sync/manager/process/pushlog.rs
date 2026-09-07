@@ -224,7 +224,56 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             explicit_replay_authorization,
             recovery_provider_evidenced,
         )
-        .await
+        .await?;
+
+        self.assert_pushlog_left_durable_state(&cid, msg).await
+    }
+
+    /// Hold the ack contract for a block that carries a document head: success
+    /// means it is merged or registered as pending. The sender stops retrying
+    /// on success, and only those two states leave anything on this side to
+    /// finish the work, so acking without one loses the update for good —
+    /// silently, because nothing failed.
+    ///
+    /// A block that carries no head is exempt. A peer may push a field or a
+    /// signature on its own, and storing it for a later root to use is the
+    /// whole of what it needs; it becomes a head through the composite that
+    /// links it.
+    ///
+    /// Reported as retryable rather than swallowed: the sender re-pushes, and
+    /// the error names a receiver-side fault rather than a peer's.
+    async fn assert_pushlog_left_durable_state(
+        &self,
+        cid: &Cid,
+        msg: &PushLogBroadcast,
+    ) -> Result<()> {
+        let carries_head = defra_core::block::Block::from_dag_cbor(&msg.block)
+            .is_ok_and(|block| matches!(block.delta, defra_core::CrdtDelta::Composite(_)));
+        if !carries_head {
+            return Ok(());
+        }
+        if self.is_pending_dag_recovery_registered(cid) {
+            return Ok(());
+        }
+        let merged = self
+            .blockstore
+            .is_merged(cid)
+            .await
+            .map_err(Error::from_blockstore)?;
+        if merged {
+            return Ok(());
+        }
+
+        tracing::error!(
+            cid = %cid,
+            doc_id = %msg.doc_id,
+            collection_id = %msg.collection_id,
+            "PushLog processing reported success but left the block neither \
+             merged nor pending; nacking so the sender retries"
+        );
+        Err(Error::PushLogNotDurable {
+            cid: cid.to_string(),
+        })
     }
 
     /// Inner block processing logic.
@@ -898,6 +947,42 @@ mod tests {
             "creator1".to_string(),
             Bytes::from(block),
         )
+    }
+
+    /// The ack contract, checked at the boundary that answers the sender.
+    ///
+    /// A block that came out of processing neither merged nor pending has
+    /// nothing left to finish it, and a success reply would stop the sender
+    /// re-pushing it — the shape of the lost update seen in CI, where a node
+    /// answered a push and then did nothing at all for the rest of the test.
+    #[tokio::test]
+    async fn a_block_left_neither_merged_nor_pending_is_nacked_not_acked() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let peer_state = Arc::new(PeerStateTracker::new());
+        let (manager, _events) =
+            SyncManager::new(blockstore.clone(), peer_state, SyncConfig::default());
+
+        let (field_cid, _) = create_lww_block("name");
+        let (composite_cid, composite_block) = create_composite_block("doc123", "name", field_cid);
+        let broadcast = make_broadcast("doc123", composite_cid, composite_block, "collection1");
+
+        let outcome = manager
+            .assert_pushlog_left_durable_state(&composite_cid, &broadcast)
+            .await;
+
+        assert!(
+            matches!(outcome, Err(Error::PushLogNotDurable { .. })),
+            "an ack that leaves no state must be reported, got {outcome:?}"
+        );
+        assert_eq!(
+            outcome
+                .unwrap_err()
+                .backpressure_reply_message()
+                .expect("the sender is told to retry"),
+            crate::error::RATE_LIMITED_MESSAGE,
+            "the reply has to be the one the pusher retries on"
+        );
     }
 
     #[tokio::test]
