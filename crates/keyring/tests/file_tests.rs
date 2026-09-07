@@ -79,6 +79,54 @@ fn test_file_keyring_overwrite() {
     assert_eq!(&retrieved[..], b"updated");
 }
 
+#[cfg(unix)]
+#[test]
+fn replacement_preserves_open_readers_and_restricts_permissions() {
+    use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let keyring = FileKeyring::open(dir.path(), b"password").unwrap();
+    keyring.set("worker", b"original").unwrap();
+    let path = dir.path().join("worker");
+    let original = std::fs::read(&path).unwrap();
+    let mut reader = std::fs::File::open(&path).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    keyring.set("worker", b"replacement").unwrap();
+
+    let mut observed = Vec::new();
+    reader.read_to_end(&mut observed).unwrap();
+    assert_eq!(observed, original);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let reopened = FileKeyring::open(dir.path(), b"password").unwrap();
+    assert_eq!(&*reopened.get("worker").unwrap(), b"replacement");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn failed_replacement_preserves_destination_and_cleans_staging() {
+    let dir = tempfile::tempdir().unwrap();
+    let keyring = FileKeyring::open(dir.path(), b"password").unwrap();
+    let destination = dir.path().join("worker");
+    std::fs::create_dir(&destination).unwrap();
+    std::fs::write(destination.join("sentinel"), b"keep").unwrap();
+
+    assert!(matches!(
+        keyring.set("worker", b"replacement"),
+        Err(Error::Io(_))
+    ));
+    assert_eq!(
+        std::fs::read(destination.join("sentinel")).unwrap(),
+        b"keep"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    assert!(keyring.list().unwrap().is_empty());
+}
+
 #[test]
 fn test_file_keyring_wrong_password() {
     let temp_dir = tempfile::tempdir().unwrap();
