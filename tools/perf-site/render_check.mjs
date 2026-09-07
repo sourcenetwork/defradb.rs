@@ -206,7 +206,9 @@ if (!drewHeading("Overview")) failures.push(`${platform}: the overview section i
 if (Object.keys(newest.platforms ?? {}).length > 1 && !drewHeading("Across platforms")) {
   failures.push(`${platform}: the run has more than one platform but the cross-platform section is missing`);
 }
-if (index.runs.length && !drewHeading("Trend across every recorded run")) {
+// Only when this platform has something to plot: the trend reads scalars, so a
+// platform that drew no family has no series and correctly renders nothing.
+if (drawn && index.runs.length && !drewHeading("Trend across every recorded run")) {
   failures.push(`${platform}: the trend section is missing`);
 }
 if (out.length < 2000) {
