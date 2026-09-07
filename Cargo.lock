@@ -2060,6 +2060,7 @@ dependencies = [
  "base64 0.22.1",
  "blockstore",
  "bytes",
+ "cid",
  "clap",
  "crypto",
  "db",

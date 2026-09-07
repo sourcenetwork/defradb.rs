@@ -160,6 +160,18 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
     ) -> BrowserSyncResult<()> {
         let doc_id = document.document.doc_id().to_string();
         let creator = identity.did().map_or("browser-sync", |did| did.as_str());
+        let policy = document.collection.schema().policy.clone();
+
+        // Whether ACP knew this document before this request, which decides how
+        // much of ACP is this request's to undo.
+        let registered_before = match (policy.as_ref(), document.register_owner.as_ref()) {
+            (Some(policy), Some(_)) => self
+                .document_acp
+                .is_doc_registered(&policy.id, &policy.resource_name, &doc_id)
+                .await
+                .map_err(|error| BrowserSyncError::Internal(error.to_string()))?,
+            _ => true,
+        };
         if let Some(owner) = document.register_owner.as_ref() {
             db::collection::acp::register_doc_if_needed(
                 self.document_acp.as_ref(),
@@ -172,13 +184,93 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
         }
         // Before the merge, so the document carries its grants by the time the
         // merge announces it to peers.
-        self.apply_relationships(&document, &doc_id, identity)
+        let granted = self
+            .apply_relationships(&document, &doc_id, identity)
             .await?;
 
-        self.engine
+        match self
+            .engine
             .apply_validated_document(document.document, creator)
             .await
-            .map_err(map_engine_error)
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.revert_acp(
+                    policy.as_ref(),
+                    &doc_id,
+                    registered_before,
+                    &granted,
+                    identity,
+                )
+                .await;
+                Err(map_engine_error(error))
+            }
+        }
+    }
+
+    /// Put ACP back as this request found it, for a merge that did not happen.
+    ///
+    /// The grants precede the merge so that nothing is announced before it can
+    /// be read, which leaves them durable when the merge is refused. There is
+    /// no transaction to span both: the ACP backends are separate stores, one
+    /// of them a chain.
+    ///
+    /// A document this request registered can be undone in one call —
+    /// `unregister_doc_object` takes the owner tuple and every grant with it.
+    /// A document that existed before keeps whatever it had, so only the grants
+    /// this request created come off, and a grant that was already there stays.
+    ///
+    /// A failure here cannot be reported: the merge error is what the caller
+    /// needs. It is logged, and re-pushing the document applies the same grants
+    /// again.
+    async fn revert_acp(
+        &self,
+        policy: Option<&schema::PolicyDescription>,
+        doc_id: &str,
+        registered_before: bool,
+        granted: &[PendingRelationship],
+        identity: &Identity,
+    ) {
+        let Some(policy) = policy else { return };
+        if !registered_before {
+            if let Err(error) = self
+                .document_acp
+                .unregister_doc_object(&policy.id, &policy.resource_name, doc_id)
+                .await
+            {
+                tracing::warn!(
+                    %doc_id,
+                    %error,
+                    "browser sync could not unregister a document whose merge was refused"
+                );
+            }
+            return;
+        }
+        let Some(requestor) = identity.did() else {
+            return;
+        };
+        for relationship in granted {
+            if let Err(error) = self
+                .document_acp
+                .delete_actor_relationship(
+                    requestor,
+                    &relationship.target,
+                    &policy.id,
+                    &policy.resource_name,
+                    doc_id,
+                    &relationship.relation,
+                    &[],
+                )
+                .await
+            {
+                tracing::warn!(
+                    %doc_id,
+                    relation = %relationship.relation,
+                    %error,
+                    "browser sync could not revoke a grant whose merge was refused"
+                );
+            }
+        }
     }
 
     /// Apply the push's grants as the authenticated caller, never as the owner
@@ -193,9 +285,9 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
         document: &PendingSyncDocument,
         doc_id: &str,
         identity: &Identity,
-    ) -> BrowserSyncResult<()> {
+    ) -> BrowserSyncResult<Vec<PendingRelationship>> {
         if document.relationships.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         // Both established by `prepare_relationships` before anything in this
         // request was applied.
@@ -206,8 +298,10 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
                 "sync relationships reached apply without a caller or a policy".into(),
             ));
         };
+        let mut granted = Vec::new();
         for relationship in &document.relationships {
-            self.document_acp
+            let added = self
+                .document_acp
                 .add_actor_relationship(
                     requestor,
                     &relationship.target,
@@ -227,8 +321,15 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
                     }
                     error => BrowserSyncError::Internal(error.to_string()),
                 })?;
+            // Only what this request added is this request's to take back.
+            if added {
+                granted.push(PendingRelationship {
+                    relation: relationship.relation.clone(),
+                    target: relationship.target.clone(),
+                });
+            }
         }
-        Ok(())
+        Ok(granted)
     }
 
     async fn pull_documents(
