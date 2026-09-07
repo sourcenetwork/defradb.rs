@@ -33,6 +33,9 @@ pub enum WasmError {
     #[error("Sync error: {0}")]
     Sync(String),
 
+    #[error("Identity error: {0}")]
+    Identity(String),
+
     #[error("Client not initialized")]
     NotInitialized,
 

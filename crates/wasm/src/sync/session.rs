@@ -3,8 +3,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use defra_core::browser_sync::{
-    BrowserSyncDocument, BrowserSyncPull, BrowserSyncRequest, BrowserSyncResponse,
-    MAX_SYNC_BODY_BYTES, MAX_SYNC_DOCUMENTS_PER_REQUEST, MAX_SYNC_PAGE_SIZE, MAX_SYNC_PULL_DOC_IDS,
+    BrowserSyncDocument, BrowserSyncPull, BrowserSyncRelationship, BrowserSyncRequest,
+    BrowserSyncResponse, MAX_SYNC_BODY_BYTES, MAX_SYNC_DOCUMENTS_PER_REQUEST, MAX_SYNC_PAGE_SIZE,
+    MAX_SYNC_PULL_DOC_IDS,
 };
 use events::Bus;
 use futures::channel::oneshot;
@@ -15,6 +16,7 @@ use wasm_bindgen_futures::spawn_local;
 
 use crate::error::{Result, WasmError};
 
+use super::grants::attach_grants;
 use super::http::SyncHttpClient;
 use super::sse::SseStream;
 
@@ -27,6 +29,10 @@ const EMPTY_PUSH_REQUEST_BYTES: usize = b"{\"documents\":[]}".len();
 /// serialization.
 const EMPTY_SYNC_REQUEST_BYTES: usize =
     b"{\"documents\":[],\"pull\":{\"doc_ids\":[],\"limit\":64}}".len();
+
+// The literal above spells out the page limit, so a limit of a different width
+// would silently mis-size every batch.
+const _: () = assert!(MAX_SYNC_PAGE_SIZE == 64);
 
 pub(crate) struct SyncTask {
     abort: AbortHandle,
@@ -51,12 +57,14 @@ pub(crate) async fn start(
     event_bus: &Arc<events::ChannelBus>,
     server_url: &str,
     auth_token: Option<String>,
+    grants: Grants,
 ) -> Result<SyncTask> {
     let session = Rc::new(SyncSession {
         engine: db::merge::BrowserSyncEngine::new(database),
         http: SyncHttpClient::new(server_url, auth_token)?,
         exchange_lock: Mutex::new(()),
         full_sync_lock: Mutex::new(()),
+        grants,
     });
     let subscription = event_bus.subscribe(&[events::EventName::Update]);
     let subscription_id = subscription.id();
@@ -95,6 +103,21 @@ struct SyncSession {
     http: SyncHttpClient,
     exchange_lock: Mutex<()>,
     full_sync_lock: Mutex<()>,
+    grants: Grants,
+}
+
+/// The grants this client puts on every document it authors, and the identity
+/// that says which documents those are.
+#[derive(Default, Clone)]
+pub(crate) struct Grants {
+    pub(crate) relationships: Vec<BrowserSyncRelationship>,
+    pub(crate) signer_identity: Vec<u8>,
+}
+
+impl Grants {
+    pub(crate) fn attach(&self, document: &mut BrowserSyncDocument) {
+        attach_grants(document, &self.relationships, &self.signer_identity);
+    }
 }
 
 impl SyncSession {
@@ -124,9 +147,10 @@ impl SyncSession {
                 }
                 Err(error) => return Err(engine_error(error)),
             };
-            let Some(document) = loaded else {
+            let Some(mut document) = loaded else {
                 continue;
             };
+            self.grants.attach(&mut document);
 
             let document_size = serde_json::to_vec(&document)?.len();
             let single_document_size = EMPTY_PUSH_REQUEST_BYTES + document_size;
@@ -239,7 +263,10 @@ impl SyncSession {
             return Ok(None);
         };
         match self.engine.load_document(&document_ref).await {
-            Ok(document) => Ok(document),
+            Ok(document) => Ok(document.map(|mut document| {
+                self.grants.attach(&mut document);
+                document
+            })),
             Err(error @ db::merge::browser_sync::BrowserSyncError::TooLarge(_)) => {
                 warn(&format!(
                     "browser sync skipped document {doc_id} because it cannot be represented as a sync payload: {error}"

@@ -23,6 +23,7 @@ base64.workspace = true
 # Replaces a hand-rolled ASN.1 parser in `token/der.rs` (#775).
 k256.workspace = true
 p256 = "0.13"
+web-time.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

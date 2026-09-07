@@ -28,6 +28,7 @@ web-sys = { version = "0.3", features = [
     "Request",
     "RequestInit",
     "Response",
+    "Url",
     "Window",
 ] }
 wasm-streams = "0.4"
@@ -65,6 +66,7 @@ document = { path = "../document" }
 query = { path = "../query" }
 defra-core = { path = "../defra-core" }
 crypto = { path = "../crypto" }
+identity = { path = "../identity" }
 events = { path = "../events", features = ["channel"] }
 
 # IPLD

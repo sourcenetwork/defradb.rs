@@ -24,6 +24,10 @@ pub fn from_js<T: DeserializeOwned>(value: JsValue) -> Result<T> {
 pub struct ClientConfig {
     /// Database name for storage
     pub db_name: Option<String>,
+    /// Hex-encoded private key this client authors with, if it holds one.
+    pub private_key: Option<String>,
+    /// Key type of `private_key`: ed25519, secp256k1 or secp256r1.
+    pub key_type: Option<String>,
 }
 
 /// Collection info returned to JavaScript.
