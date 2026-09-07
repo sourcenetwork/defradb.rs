@@ -1,0 +1,55 @@
+{
+ "runs": [
+  {
+   "file": "64b03ba3c9112f8c16b77bd1f2819eb0ac85941c.json",
+   "commit": "64b03ba3c9112f8c16b77bd1f2819eb0ac85941c",
+   "label": "main",
+   "timestamp": "2026-09-07T13:53:43Z",
+   "platforms": [
+    "aarch64-apple-darwin",
+    "wasm32-unknown-unknown",
+    "x86_64-unknown-linux-gnu"
+   ],
+   "quiet_hosts": false,
+   "trust": {
+    "criterion_backup": "contaminated",
+    "criterion_crypto": "contaminated",
+    "criterion_document_read": "contaminated",
+    "criterion_document_write": "contaminated",
+    "criterion_query_e2e": "contaminated",
+    "criterion_startup": "contaminated",
+    "criterion_transaction": "contaminated",
+    "criterion_transport": "contaminated",
+    "disk_footprint": "clean",
+    "document_ops": "contaminated",
+    "memory": "clean",
+    "startup": "contaminated",
+    "browser_storage": "contaminated",
+    "criterion": "absent",
+    "allocs": "clean",
+    "artifact_size": "clean",
+    "criterion_acp": "contaminated",
+    "criterion_block": "contaminated",
+    "criterion_block_write": "contaminated",
+    "criterion_blockstore": "contaminated",
+    "criterion_cursor_codec": "contaminated",
+    "criterion_document_codec": "contaminated",
+    "criterion_events": "contaminated",
+    "criterion_filter": "contaminated",
+    "criterion_groupby": "contaminated",
+    "criterion_identity": "contaminated",
+    "criterion_merge": "contaminated",
+    "criterion_merge_dag": "contaminated",
+    "criterion_p2p_codec": "contaminated",
+    "criterion_parsing": "contaminated",
+    "criterion_planner": "contaminated",
+    "criterion_replication_filter": "contaminated",
+    "criterion_retry_markers": "contaminated",
+    "criterion_schema_validate": "contaminated",
+    "criterion_sift": "contaminated",
+    "criterion_vector_mutations": "contaminated",
+    "criterion_vector_search": "contaminated"
+   }
+  }
+ ]
+}
