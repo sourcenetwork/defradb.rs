@@ -260,6 +260,49 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # What the shipped artifacts weigh. Its own job because it is the only thing
+  # here that needs a release build rather than a benchmark, and because a size
+  # is read off an artifact instead of measured by running one.
+  size:
+    name: artifact size
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: perf-size
+      - name: Build the shipped artifacts
+        run: |
+          set -euo pipefail
+          cargo build --release -p cli
+          command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
+          CARGO_PROFILE_RELEASE_OPT_LEVEL=z RUSTFLAGS="-C target-feature=+simd128" \
+            wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
+      - name: Weigh them
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --break-system-packages brotli || \
+            echo "::notice::brotli is unavailable; the bundle is reported gzip-only"
+          python3 tools/perf-site/artifact_sizes.py --out bench-size.jsonl \
+            "defra=target/release/defra" \
+            "defra-wasm=pkg/wasm/defra_wasm_bg.wasm"
+      - name: Record how quiet the host is
+        run: python3 tools/perf-site/loadguard.py --out loadguard.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-x86_64-unknown-linux-gnu-size
+          path: |
+            bench-size.jsonl
+            loadguard.json
+          if-no-files-found: error
+          retention-days: 7
+
   # Fold one platform's families into one platform document. Cheap: `collect`
   # depends on the reporting contract and nothing else, so this does not build
   # the database on every platform in the matrix.
@@ -269,7 +312,7 @@ jobs:
     # is rendered by GitHub without expanding its matrix, so the job list would
     # show a literal `${{ matrix.target }}`. Whether scope actually produced
     # anything is checked below, where it can fail with a reason.
-    needs: [scope, bench, bench-wasm]
+    needs: [scope, bench, bench-wasm, size]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -303,6 +346,11 @@ jobs:
         env:
           PERF_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           PERF_LABEL: ${{ needs.scope.outputs.label }}
+          # Where `collect` reads the families from. Without it the collector
+          # falls back to ./bench-out/, which does not exist in this job, and
+          # every family a bench emitted is dropped while the criterion harvest
+          # survives and hides the loss.
+          DEFRA_BENCH_OUT: ${{ github.workspace }}/families.jsonl
         run: |
           set -euo pipefail
           if [ ! -d artifacts ] || [ -z "$(ls -A artifacts 2>/dev/null)" ]; then
@@ -311,8 +359,9 @@ jobs:
           fi
           # One JSON Lines stream out of every family this platform recorded,
           # and one criterion tree out of every runner's estimates.
-          : > families.jsonl
-          find artifacts -name '*.jsonl' -exec cat {} + >> families.jsonl || true
+          : > "$DEFRA_BENCH_OUT"
+          find artifacts -name '*.jsonl' -exec cat {} + >> "$DEFRA_BENCH_OUT" || true
+          echo "collect: $(wc -l < "$DEFRA_BENCH_OUT") family record(s) for ${{ matrix.target }}"
           mkdir -p criterion-merged
           for d in artifacts/*/criterion-out; do
             [ -d "$d" ] && cp -R "$d/." criterion-merged/ || true
@@ -333,6 +382,31 @@ jobs:
               --label "$PERF_LABEL" \
               --target "${{ matrix.target }}" \
               ${guard:+--loadguard "$guard"}
+      # A family that reached this job and not the document is a silent loss,
+      # and it stays silent until the dashboard is short a section three jobs
+      # later. Fail here, where the cause is.
+      - name: Refuse to drop a family that was collected
+        run: |
+          set -euo pipefail
+          python3 - "$DEFRA_BENCH_OUT" "platform-${{ matrix.target }}.json" <<'PY'
+          import json, sys
+          records, document = sys.argv[1], sys.argv[2]
+          emitted = set()
+          with open(records) as f:
+              for line in f:
+                  if line.strip():
+                      emitted.add(json.loads(line)["family"])
+          families = set(json.load(open(document))["families"])
+          lost = sorted(emitted - families)
+          if lost:
+              print(f"::error::{len(lost)} family record(s) reached the collector and "
+                    f"not the document: {', '.join(lost)}", file=sys.stderr)
+              sys.exit(1)
+          print(f"{len(emitted)} emitted famil(ies) all present, "
+                f"{len(families) - len(emitted)} harvested from criterion")
+          PY
+        env:
+          DEFRA_BENCH_OUT: ${{ github.workspace }}/families.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: perf-platform-${{ matrix.target }}
