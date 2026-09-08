@@ -18,3 +18,4 @@ mod se_coordinator;
 mod se_receiver;
 mod se_storage;
 mod se_validate;
+mod single_root_batch;
