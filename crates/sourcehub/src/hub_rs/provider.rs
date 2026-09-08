@@ -15,7 +15,6 @@ use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
 use hub_domain::ConsensusPublicKey;
 use hub_modules::acp::types::PolicyRecord;
 use k256::ecdsa::SigningKey;
-use serde::Deserialize;
 
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
@@ -108,20 +107,6 @@ impl HubRsProvider {
         Ok(provider)
     }
 
-    async fn query_policy_raw(&self, policy_id: &str) -> Result<Option<String>, ProviderError> {
-        let record = self
-            .light_client
-            .read_policy(policy_id)
-            .await
-            .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))?;
-        let Some(bytes) = record.value.as_deref() else {
-            return Ok(None);
-        };
-        let record: HubRsPolicyRecord = serde_json::from_slice(bytes)
-            .map_err(|e| ProviderError::Query(format!("policy JSON: {e}")))?;
-        Ok(record.raw_policy)
-    }
-
     fn policy_id_to_bytes32(policy_id: &str) -> Result<FixedBytes<32>, ProviderError> {
         hub_client::parse_policy_id(policy_id).map_err(|e| ProviderError::Query(e.to_string()))
     }
@@ -146,11 +131,6 @@ fn access_request(
             permission: permission.into(),
         }],
     })
-}
-
-#[derive(Deserialize)]
-struct HubRsPolicyRecord {
-    raw_policy: Option<String>,
 }
 
 impl Drop for HubRsProvider {
@@ -470,15 +450,27 @@ impl SourceHubProvider for HubRsProvider {
         &self,
         policy_id: &str,
     ) -> Result<Option<ProviderPolicyInfo>, ProviderError> {
-        if let Some(raw_policy) = self.query_policy_raw(policy_id).await? {
-            Ok(Some(ProviderPolicyInfo {
-                id: policy_id.to_string(),
-                name: policy_id.to_string(),
-                raw_policy: Some(raw_policy),
-            }))
-        } else {
-            Ok(None)
+        let id = hex::encode(Self::policy_id_to_bytes32(policy_id)?);
+        let proof = self
+            .light_client
+            .read_policy(&id)
+            .await
+            .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))?;
+        let Some(bytes) = proof.value.as_deref() else {
+            return Ok(None);
+        };
+        let record: PolicyRecord = serde_json::from_slice(bytes)
+            .map_err(|e| ProviderError::Query(format!("policy JSON: {e}")))?;
+        if record.policy.id != id {
+            return Err(ProviderError::Query(
+                "policy record identity mismatch".into(),
+            ));
         }
+        Ok(Some(ProviderPolicyInfo {
+            id,
+            name: record.policy.name,
+            raw_policy: Some(record.raw_policy),
+        }))
     }
 
     async fn query_object_owner(

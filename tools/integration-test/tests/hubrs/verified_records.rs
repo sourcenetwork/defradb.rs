@@ -311,18 +311,77 @@ resources:
         .set_relationship(&bearer, &policy, "group", "editors", "member", &subject)
         .await
         .unwrap();
-    let spec_policy = provider
-        .create_policy(
-            "spec: defra\nname: files\nresources:\n  - name: file\n    relations:\n      - name: writer\n    permissions:\n      - name: read\n      - name: write\n        expr: writer\n",
-        )
+    let specification = r#"spec: defra
+name: files
+description: Actor-managed file access
+meta:
+  purpose: consumer conformance
+  revision: one
+actor:
+  relations:
+    - name: editor
+      types: [actor]
+resources:
+  - name: file
+    relations:
+      - name: writer
+        types: [actor->editor]
+    permissions:
+      - name: read
+      - name: write
+        expr: writer
+"#;
+    let spec_policy = provider.create_policy(specification).await.unwrap();
+    let stored = provider
+        .query_policy(&format!("0x{spec_policy}"))
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(stored.id, spec_policy);
+    assert_eq!(stored.name, "files");
+    assert_eq!(stored.raw_policy.as_deref(), Some(specification));
+    let compiled = document_acp
+        .get_policy(&spec_policy)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(compiled.name, "files");
+    assert_eq!(compiled.description, "Actor-managed file access");
+    assert_eq!(compiled.attributes["purpose"], "consumer conformance");
+    assert!(compiled.get_relation("actor", "editor").is_some());
+    assert!(provider
+        .register_object(&bearer, &spec_policy, "actor", reader)
+        .await
+        .is_err());
     provider
         .register_object(&bearer, &spec_policy, "file", "report")
         .await
         .unwrap();
     provider
-        .set_relationship(&bearer, &spec_policy, "file", "report", "writer", &subject)
+        .set_relationship_subject(
+            &spec_policy,
+            "file",
+            "report",
+            "writer",
+            3,
+            "actor",
+            reader,
+            "editor",
+        )
+        .await
+        .unwrap();
+    assert!(!document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &spec_policy,
+            "file",
+            "report"
+        )
+        .await
+        .unwrap());
+    provider
+        .set_relationship(&bearer, &spec_policy, "actor", reader, "editor", &subject)
         .await
         .unwrap();
     assert!(document_acp
@@ -400,7 +459,7 @@ resources:
         .await
         .unwrap());
     provider
-        .delete_relationship(&bearer, &spec_policy, "file", "report", "writer", &subject)
+        .delete_relationship(&bearer, &spec_policy, "actor", reader, "editor", &subject)
         .await
         .unwrap();
     assert!(!document_acp

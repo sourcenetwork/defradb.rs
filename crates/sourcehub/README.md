@@ -25,6 +25,10 @@ policy record's actor, worker, submission ID, and creation revision. Policy,
 permission, access-decision and object-owner reads verify native evidence.
 Owner lookup proves the complete set of owner relations; missing or archived
 objects have no live owner. Unavailable evidence remains an error.
+Policy lookup accepts plain or `0x`-prefixed IDs and returns the canonical ID,
+certified name and original definition. A malformed stored record is an error,
+not absence. Definitions retain actor roles, descriptions, metadata and Defra
+specification rules when reconstructed through the document ACP provider.
 
 Receipt recovery is distinct from caller-level operation idempotency. Retrying
 a completed operation can issue a new request, including creating another
