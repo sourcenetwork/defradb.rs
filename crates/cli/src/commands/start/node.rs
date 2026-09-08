@@ -188,9 +188,34 @@ impl Node {
     /// Create a new node
     #[doc(hidden)]
     pub async fn new(
-        config: Config,
+        mut config: Config,
         user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
     ) -> Result<Self> {
+        if config.api.pubkey_path.is_empty() && config.api.privkey_path.is_empty() {
+            let cert = config.rootdir.join("certs/server.crt");
+            let key = config.rootdir.join("certs/server.key");
+            if cert.is_file() {
+                config.api.pubkey_path = cert.display().to_string();
+            }
+            if key.is_file() {
+                config.api.privkey_path = key.display().to_string();
+            }
+        }
+        config.api.validate()?;
+        // Reject invalid TLS before starting stores or background tasks.
+        let tls = if config.api.tls_enabled() {
+            Some(
+                defra_http::TlsConfig::from_pem_file(
+                    &config.api.pubkey_path,
+                    &config.api.privkey_path,
+                )
+                .await
+                .map_err(|e| crate::error::Error::InvalidConfig(format!("HTTP TLS: {e}")))?,
+            )
+        } else {
+            None
+        };
+
         info!("Initializing DefraDB node");
         info!("Root directory: {}", config.rootdir.display());
         info!("Data directory: {}", config.data_path().display());
@@ -223,7 +248,7 @@ impl Node {
         }
 
         // Initialize storage, database, and set up P2P and HTTP server
-        let servers = match config.datastore.store {
+        let mut servers = match config.datastore.store {
             DatastoreType::Memory => {
                 info!("Using in-memory datastore");
                 let acp_store: Arc<dyn acp::AcpStore> = Arc::new(acp::MemoryAcpStore::new());
@@ -265,6 +290,10 @@ impl Node {
                 .await?
             }
         };
+
+        if let Some(tls) = tls {
+            servers.http_server = servers.http_server.with_tls(tls);
+        }
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
