@@ -31,10 +31,13 @@ use storage::index::IndexIterator;
 use storage::RegolithStore;
 use tokio::sync::Notify;
 
+mod unique_conflicts;
+
 #[derive(Default)]
 struct SetVerifiedStore {
     transforms: RwLock<HashSet<TransformId>>,
     transform_calls: AtomicUsize,
+    verified_value: Option<serde_json::Value>,
 }
 
 #[async_trait]
@@ -63,8 +66,12 @@ impl TransformStore for SetVerifiedStore {
             return Err(lens::Error::TransformNotFound(id.to_string()));
         }
         self.transform_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::pin(docs.map(|mut doc| {
-            doc.insert("verified".to_string(), serde_json::Value::Bool(true));
+        let value = self
+            .verified_value
+            .clone()
+            .unwrap_or(serde_json::Value::Bool(true));
+        Ok(Box::pin(docs.map(move |mut doc| {
+            doc.insert("verified".to_string(), value.clone());
             Ok(doc)
         })))
     }

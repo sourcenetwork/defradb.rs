@@ -498,7 +498,7 @@ impl IndexManager {
         })
     }
 
-    /// Rebuild an index using the same deterministic unique-conflict rule as replication.
+    /// Rebuild an index, preserving existing conflicts but rejecting migration-created ones.
     pub(crate) async fn bulk_index_resolving_unique_conflicts(
         &self,
         datastore: &NamespaceView,
@@ -506,17 +506,18 @@ impl IndexManager {
         index_name: &str,
         documents: &[(u64, Document)],
         schema: &CollectionVersion,
+        original_keys: &HashMap<u64, std::collections::HashSet<Vec<u8>>>,
     ) -> Result<()> {
         let index = self
             .indexes
             .get(index_name)
             .ok_or_else(|| Error::Other(format!("index '{}' not found", index_name)))?;
 
-        if !matches!(index, IndexType::Unique(_)) {
+        let IndexType::Unique(unique) = index else {
             self.bulk_index(datastore, index_name, documents, schema)
                 .await?;
             return Ok(());
-        }
+        };
 
         let mut mutable_datastore = datastore.clone();
 
@@ -533,6 +534,30 @@ impl IndexManager {
                 .to_string();
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
             for values in &value_sets {
+                let holder = if original_keys.is_empty() {
+                    None
+                } else {
+                    unique
+                        .conflicting_doc_id(&mutable_datastore, values)
+                        .await
+                        .map_err(Error::Storage)?
+                };
+                if let Some(holder) = holder {
+                    let key = self.encode_index_key(index.description(), values)?;
+                    // Both documents must have held this value before the lens ran.
+                    // Missing snapshots denote documents with no transform to apply.
+                    if holder != *doc_short_id
+                        && [holder, *doc_short_id].iter().any(|id| {
+                            original_keys
+                                .get(id)
+                                .is_some_and(|keys| !keys.contains(&key))
+                        })
+                    {
+                        return Err(Error::Storage(
+                            storage::corekv::Error::UniqueConstraintViolation,
+                        ));
+                    }
+                }
                 self.save_resolving_unique_conflict(
                     &mut mutable_datastore,
                     systemstore,

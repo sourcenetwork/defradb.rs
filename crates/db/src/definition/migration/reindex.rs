@@ -141,6 +141,13 @@ impl<S: Store> DB<S> {
                 .await?;
 
             let mut migrated_docs = Vec::with_capacity(raw_docs.len());
+            let index_manager = IndexManager::from_indexes(
+                short_id,
+                collection.schema(),
+                collection.write_indexes(),
+            )
+            .map_err(|e| Error::Other(format!("failed to create index manager: {}", e)))?;
+            let mut original_keys = std::collections::HashMap::new();
             for (doc_short_id, doc, _) in raw_docs {
                 let Some(doc_version) = doc.schema_version_id().map(str::to_string) else {
                     if materialize_identity_paths {
@@ -218,6 +225,10 @@ impl<S: Store> DB<S> {
                     })?
                     .map_err(|e| Error::Lens(e.to_string()))?;
                 let migrated = lens_doc_to_document(migrated_lens_doc, &doc, &collection);
+                original_keys.insert(
+                    doc_short_id,
+                    index_manager.unique_index_keys(&doc, collection.schema())?,
+                );
                 if cache_migrated_document(&datastore, &txn_systemstore, &collection, &migrated)
                     .await?
                 {
@@ -227,13 +238,6 @@ impl<S: Store> DB<S> {
             }
 
             if !collection.write_indexes().is_empty() {
-                let index_manager = IndexManager::from_indexes(
-                    short_id,
-                    collection.schema(),
-                    collection.write_indexes(),
-                )
-                .map_err(|e| Error::Other(format!("failed to create index manager: {}", e)))?;
-
                 for index_desc in collection.write_indexes() {
                     if let Some(index) = index_manager.get_index(&index_desc.name) {
                         index
@@ -249,6 +253,7 @@ impl<S: Store> DB<S> {
                             &index_desc.name,
                             &migrated_docs,
                             collection.schema(),
+                            &original_keys,
                         )
                         .await?;
                 }

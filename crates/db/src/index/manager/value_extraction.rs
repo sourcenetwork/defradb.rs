@@ -7,6 +7,42 @@ use schema::{CollectionVersion, IndexDescription};
 use super::IndexManager;
 
 impl IndexManager {
+    pub(crate) fn unique_index_keys(
+        &self,
+        doc: &document::Document,
+        schema: &CollectionVersion,
+    ) -> Result<std::collections::HashSet<Vec<u8>>> {
+        let mut keys = std::collections::HashSet::new();
+        for index in self.indexes.values() {
+            if !matches!(index, super::IndexType::Unique(_)) {
+                continue;
+            }
+            for values in self.extract_index_values(doc, index.description(), schema)? {
+                if !values.iter().any(NormalValue::is_nil) {
+                    keys.insert(self.encode_index_key(index.description(), &values)?);
+                }
+            }
+        }
+        Ok(keys)
+    }
+
+    pub(super) fn encode_index_key(
+        &self,
+        desc: &IndexDescription,
+        values: &[NormalValue],
+    ) -> Result<Vec<u8>> {
+        let fields = values
+            .iter()
+            .zip(&desc.fields)
+            .map(|(value, field)| {
+                storage::keys::datastore::IndexedField::new(value.clone(), field.descending)
+            })
+            .collect();
+        storage::keys::IndexDataStoreKey::new(self.collection_short_id, desc.id, fields)
+            .try_bytes()
+            .map_err(Error::Storage)
+    }
+
     /// Extract field values from a document for indexing.
     ///
     /// # Multi-Value Indexing (Arrays)
