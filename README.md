@@ -171,7 +171,9 @@ let (handle, _tracer) = telemetry::init(
 Document creation returns an array of document IDs. Supply `x-defradb-tx` to bind
 REST document reads, writes and ID listings to an existing transaction, including
 uncommitted schemas. Committing publishes those writes; discarding removes them.
-Read-only and finalized transactions reject mutations.
+Read-only and finalized transactions reject mutations. Transaction handles belong
+to the identity that opened them; other callers receive the same not-found
+response as an unknown handle. Renewed tokens for the same identity retain access.
 
 ## Testing
 

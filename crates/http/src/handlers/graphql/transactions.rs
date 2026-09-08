@@ -2,9 +2,9 @@
 //!
 //! # NAC Permission Model
 //!
-//! Transaction lifecycle endpoints (begin, commit, discard) have no NAC checks,
-//! matching FFI behavior. Permissions are enforced per-operation when executing
-//! queries within the transaction (via `graphql_transactional` handler).
+//! Transactions belong to the identity that opened them. The registry rejects
+//! access or finalization by another caller. Node permissions are enforced on
+//! each operation within the transaction.
 
 use axum::{
     extract::{Path, Query, State},
@@ -46,7 +46,7 @@ pub struct TxPathParam {
 /// Go DefraDB uses query parameter `read_only` (not request body).
 /// Returns `{"id": uint64}` to match Go's `CreateTxResponse`.
 ///
-/// No NAC check — permissions are enforced per-operation within the transaction.
+/// The registry enforces caller ownership; node permissions are checked per operation.
 pub async fn tx_begin(
     State(state): State<AppState>,
     Query(query): Query<TxBeginQuery>,
@@ -75,7 +75,7 @@ pub async fn tx_begin(
 ///
 /// Go DefraDB uses path parameter for transaction ID and returns empty body on success.
 ///
-/// No NAC check — permissions are enforced per-operation within the transaction.
+/// The registry enforces caller ownership; node permissions are checked per operation.
 pub async fn tx_commit(
     State(state): State<AppState>,
     Path(params): Path<TxPathParam>,
@@ -111,7 +111,7 @@ pub async fn tx_commit(
 /// Go DefraDB uses DELETE method with path parameter for transaction ID.
 /// Returns empty body on success.
 ///
-/// No NAC check — permissions are enforced per-operation within the transaction.
+/// The registry enforces caller ownership; node permissions are checked per operation.
 pub async fn tx_discard(
     State(state): State<AppState>,
     Path(params): Path<TxPathParam>,

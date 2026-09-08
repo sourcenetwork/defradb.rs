@@ -154,12 +154,15 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 
     /// Get an existing transaction by ID (for internal use).
     ///
-    /// Returns `Ok(None)` if the transaction doesn't exist.
+    /// Returns `Ok(None)` if the transaction doesn't exist or belongs to another caller.
     /// Returns `Err(LockPoisoned)` if the lock is poisoned (indicates a panic elsewhere).
     pub fn get_ctx(&self, txn_id: &str) -> Result<Option<Arc<DbTransactionContext<S>>>> {
         match self.transactions.read() {
             Ok(guard) => {
-                let ctx = guard.get(txn_id).cloned();
+                let ctx = guard
+                    .get(txn_id)
+                    .filter(|ctx| ctx.is_owned_by_caller())
+                    .cloned();
                 if let Some(ctx) = &ctx {
                     ctx.touch();
                 }

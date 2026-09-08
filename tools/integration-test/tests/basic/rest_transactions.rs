@@ -2,7 +2,7 @@ use integration_test::TestCluster;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
 
-async fn request(
+pub(super) async fn request(
     client: &Client,
     base: &str,
     method: Method,

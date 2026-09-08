@@ -277,10 +277,9 @@ async fn add_schema_in_txn_denied_for_non_owner() {
     db.set_nac_manager(enabled_manager().await);
     let registry = DbTransactionRegistry::new(db.clone());
 
-    let txn_id = registry.begin(false).await.unwrap();
-
     let guard =
         defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
+    let txn_id = registry.begin(false).await.unwrap();
     let err = registry
         .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
         .await
@@ -305,9 +304,8 @@ async fn add_schema_in_txn_allowed_for_owner() {
     db.set_nac_manager(enabled_manager().await);
     let registry = DbTransactionRegistry::new(db.clone());
 
-    let txn_id = registry.begin(false).await.unwrap();
-
     let guard = defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
+    let txn_id = registry.begin(false).await.unwrap();
     registry
         .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
         .await

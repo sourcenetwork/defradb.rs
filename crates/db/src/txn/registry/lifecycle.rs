@@ -3,6 +3,26 @@
 use super::*;
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
+    fn take_owned_ctx(
+        &self,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<Arc<DbTransactionContext<S>>, TransactionError> {
+        let mut transactions = self.transactions.write().map_err(|_| {
+            TransactionError::lock_poisoned("failed to acquire transaction registry write lock")
+        })?;
+        match transactions.entry(handle.to_string()) {
+            std::collections::hash_map::Entry::Occupied(entry)
+                if entry.get().is_owned_by_caller() =>
+            {
+                Ok(entry.remove())
+            }
+            _ => Err(TransactionError::not_found(format!(
+                "transaction '{}' not found",
+                handle
+            ))),
+        }
+    }
+
     /// Apply the txn's recorded counter ops (#1044) then durably commit.
     ///
     /// LOCK LIFECYCLE — conforms to `proofs/tla/InteractiveTxnCounter.tla` GREEN
@@ -295,7 +315,11 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
 
     fn get(&self, handle: &TransactionHandle) -> GetTransactionResult {
         match self.transactions.read() {
-            Ok(guard) => match guard.get(handle.as_str()).cloned() {
+            Ok(guard) => match guard
+                .get(handle.as_str())
+                .filter(|ctx| ctx.is_owned_by_caller())
+                .cloned()
+            {
                 Some(ctx) => {
                     ctx.touch();
                     GetTransactionResult::Found(ctx as Arc<dyn TransactionContext>)
@@ -317,19 +341,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self
-            .transactions
-            .write()
-            .map_err(|_| {
-                TransactionError::lock_poisoned(format!(
-                    "failed to acquire write lock during commit of '{}'",
-                    handle
-                ))
-            })?
-            .remove(handle.as_str())
-            .ok_or_else(|| {
-                TransactionError::not_found(format!("transaction '{}' not found", handle))
-            })?;
+        let ctx = self.take_owned_ctx(handle)?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 
@@ -347,19 +359,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self
-            .transactions
-            .write()
-            .map_err(|_| {
-                TransactionError::lock_poisoned(format!(
-                    "failed to acquire write lock during rollback of '{}'",
-                    handle
-                ))
-            })?
-            .remove(handle.as_str())
-            .ok_or_else(|| {
-                TransactionError::not_found(format!("transaction '{}' not found", handle))
-            })?;
+        let ctx = self.take_owned_ctx(handle)?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 
@@ -383,19 +383,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         handle: &TransactionHandle,
         apply_read_effects: bool,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self
-            .transactions
-            .write()
-            .map_err(|_| {
-                TransactionError::lock_poisoned(format!(
-                    "failed to acquire write lock while finalizing implicit read '{}'",
-                    handle
-                ))
-            })?
-            .remove(handle.as_str())
-            .ok_or_else(|| {
-                TransactionError::not_found(format!("transaction '{}' not found", handle))
-            })?;
+        let ctx = self.take_owned_ctx(handle)?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 
