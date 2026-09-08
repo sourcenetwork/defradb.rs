@@ -45,7 +45,47 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         details: Some(format!("Direct tuple check for subject {}", subject)),
                     });
 
-                    Ok(result)
+                    if result {
+                        return Ok(true);
+                    }
+                    for target in self
+                        .store
+                        .get_relation_subjects(policy_id, resource, object_id, relation)
+                        .await?
+                    {
+                        let Subject::EntitySet {
+                            resource,
+                            object_id,
+                            relation,
+                        } = target
+                        else {
+                            continue;
+                        };
+                        let node_id = NodeId::new(&resource, &object_id, &relation);
+                        if trail.contains(&node_id) {
+                            continue;
+                        }
+                        let expression = self
+                            .lookup
+                            .get_expression(policy_id, &resource, &relation)?;
+                        if self
+                            .evaluate_expr_with_trace(
+                                policy_id,
+                                &resource,
+                                &object_id,
+                                &relation,
+                                subject,
+                                expression,
+                                trail.with_node(node_id),
+                                cache.clone(),
+                                trace,
+                            )
+                            .await?
+                        {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
                 }
 
                 RelationExpression::ComputedUserset {

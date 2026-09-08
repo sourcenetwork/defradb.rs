@@ -80,7 +80,49 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .store
                         .check_permission_direct(policy_id, resource, object_id, relation, subject)
                         .await?;
-                    Ok((granted, false))
+                    if granted {
+                        return Ok((true, false));
+                    }
+                    let mut tainted = false;
+                    for target in self
+                        .store
+                        .get_relation_subjects(policy_id, resource, object_id, relation)
+                        .await?
+                    {
+                        let Subject::EntitySet {
+                            resource,
+                            object_id,
+                            relation,
+                        } = target
+                        else {
+                            continue;
+                        };
+                        let node_id = NodeId::new(&resource, &object_id, &relation);
+                        if trail.contains(&node_id) {
+                            tainted = true;
+                            continue;
+                        }
+                        let expression = self
+                            .lookup
+                            .get_expression(policy_id, &resource, &relation)?;
+                        let (granted, target_tainted) = self
+                            .evaluate_expr_cached(
+                                policy_id,
+                                &resource,
+                                &object_id,
+                                &relation,
+                                subject,
+                                expression,
+                                trail.with_node(node_id),
+                                cache.clone(),
+                            )
+                            .await?;
+                        if granted {
+                            return Ok((true, target_tainted));
+                        }
+                        tainted |= target_tainted;
+                    }
+                    Ok((false, tainted))
                 }
 
                 RelationExpression::ComputedUserset {
