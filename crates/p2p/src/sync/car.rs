@@ -39,6 +39,50 @@ impl CarCollectOutcome {
     pub fn truncated(&self) -> bool {
         self.truncated_by_blocks || self.truncated_by_bytes
     }
+
+    async fn read_block<B: Blockstore>(
+        &mut self,
+        blockstore: &B,
+        cid: &Cid,
+        remaining: usize,
+    ) -> Result<Option<Bytes>> {
+        let size = blockstore.get_size(cid).await.map_err(|e| {
+            Error::BlockstoreError(format!("failed to get block size {}: {}", cid, e))
+        })?;
+        let Some(size) = size else {
+            self.blockstore_misses += 1;
+            return Ok(None);
+        };
+        if self.exceeds_budget(cid, size, remaining) {
+            self.blockstore_hits += 1;
+            return Ok(None);
+        }
+        let data = blockstore
+            .get(cid)
+            .await
+            .map_err(|e| Error::BlockstoreError(format!("failed to get block {}: {}", cid, e)))?;
+        let Some(data) = data else {
+            self.blockstore_misses += 1;
+            return Ok(None);
+        };
+        self.blockstore_hits += 1;
+        // Retain the payload check for stores without an immutable read snapshot.
+        if self.exceeds_budget(cid, data.len(), remaining) {
+            return Ok(None);
+        }
+        Ok(Some(data))
+    }
+
+    fn exceeds_budget(&mut self, cid: &Cid, size: usize, remaining: usize) -> bool {
+        if size <= remaining {
+            return false;
+        }
+        self.truncated_by_bytes = true;
+        if size > CAR_MAX_BYTES {
+            self.oversized_blocks.push((*cid, size));
+        }
+        true
+    }
 }
 
 /// Encode blocks as a CARv1 byte stream.
@@ -156,28 +200,12 @@ pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
             break;
         }
 
-        let data = match blockstore.get(&cid).await {
-            Ok(Some(d)) => d,
-            Ok(None) => {
-                outcome.blockstore_misses += 1;
-                continue;
-            }
-            Err(e) => {
-                return Err(Error::BlockstoreError(format!(
-                    "failed to get block {}: {}",
-                    cid, e
-                )));
-            }
-        };
-
-        outcome.blockstore_hits += 1;
-        if data.len() > CAR_MAX_BYTES - total_bytes {
-            outcome.truncated_by_bytes = true;
-            if data.len() > CAR_MAX_BYTES {
-                outcome.oversized_blocks.push((cid, data.len()));
-            }
+        let Some(data) = outcome
+            .read_block(blockstore, &cid, CAR_MAX_BYTES - total_bytes)
+            .await?
+        else {
             continue;
-        }
+        };
         total_bytes += data.len();
 
         let refs = extract_links(&data);
@@ -212,28 +240,12 @@ pub async fn collect_exact_blocks<B: Blockstore>(
             break;
         }
 
-        let data = match blockstore.get(cid).await {
-            Ok(Some(d)) => d,
-            Ok(None) => {
-                outcome.blockstore_misses += 1;
-                continue;
-            }
-            Err(e) => {
-                return Err(Error::BlockstoreError(format!(
-                    "failed to get block {}: {}",
-                    cid, e
-                )));
-            }
-        };
-
-        outcome.blockstore_hits += 1;
-        if data.len() > CAR_MAX_BYTES - total_bytes {
-            outcome.truncated_by_bytes = true;
-            if data.len() > CAR_MAX_BYTES {
-                outcome.oversized_blocks.push((*cid, data.len()));
-            }
+        let Some(data) = outcome
+            .read_block(blockstore, cid, CAR_MAX_BYTES - total_bytes)
+            .await?
+        else {
             continue;
-        }
+        };
 
         total_bytes += data.len();
         outcome.blocks.push((*cid, data));

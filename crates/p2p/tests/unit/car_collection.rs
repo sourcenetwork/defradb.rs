@@ -164,3 +164,71 @@ fn linked_block(links: Vec<DAGLink>) -> Vec<u8> {
     .to_dag_cbor()
     .unwrap()
 }
+
+struct SizeOnlyBlockstore(usize);
+
+#[async_trait::async_trait]
+impl Blockstore for SizeOnlyBlockstore {
+    async fn get(&self, _: &Cid) -> blockstore::Result<Option<bytes::Bytes>> {
+        panic!("block outside the response budget must not be read")
+    }
+
+    async fn get_size(&self, _: &Cid) -> blockstore::Result<Option<usize>> {
+        Ok(Some(self.0))
+    }
+
+    async fn put(&self, _: &Cid, _: &[u8]) -> blockstore::Result<()> {
+        unreachable!()
+    }
+    async fn put_many(&self, _: &[(&Cid, &[u8])]) -> blockstore::Result<()> {
+        unreachable!()
+    }
+    async fn has(&self, _: &Cid) -> blockstore::Result<bool> {
+        unreachable!()
+    }
+    async fn delete(&self, _: &Cid) -> blockstore::Result<()> {
+        unreachable!()
+    }
+    async fn all_cids(&self) -> blockstore::Result<Vec<Cid>> {
+        unreachable!()
+    }
+    fn hash_on_read(&self, _: bool) {
+        unreachable!()
+    }
+    async fn is_merged(&self, _: &Cid) -> blockstore::Result<bool> {
+        unreachable!()
+    }
+    async fn mark_as_merged(&self, _: &Cid) -> blockstore::Result<()> {
+        unreachable!()
+    }
+    async fn get_unmerged(&self) -> blockstore::Result<Vec<Cid>> {
+        unreachable!()
+    }
+}
+
+#[tokio::test]
+async fn size_preflight_skips_payload_reads_outside_the_budget() {
+    let cid = Cid::new_v1(0x71, Code::Sha2_256.digest(b"large"));
+    let store = SizeOnlyBlockstore(usize::MAX);
+    for recursive in [false, true] {
+        let outcome = if recursive {
+            collect_dag_blocks_from_roots(&store, &[cid]).await
+        } else {
+            collect_exact_blocks(&store, &[cid]).await
+        }
+        .unwrap();
+        assert!(outcome.blocks.is_empty());
+        assert_eq!(outcome.oversized_blocks, vec![(cid, usize::MAX)]);
+        assert_eq!(outcome.blockstore_hits, 1);
+        assert_eq!(outcome.blockstore_misses, 0);
+    }
+
+    let mut outcome = super::CarCollectOutcome::default();
+    assert!(outcome
+        .read_block(&SizeOnlyBlockstore(6), &cid, 5)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(outcome.truncated_by_bytes);
+    assert!(outcome.oversized_blocks.is_empty());
+}
