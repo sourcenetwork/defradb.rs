@@ -6,6 +6,7 @@
 //! 3. Config file (config.yaml in rootdir)
 //! 4. Default values
 
+mod secret_file;
 mod sections;
 mod types;
 
@@ -96,6 +97,8 @@ impl Config {
         // Make relative paths absolute
         config.resolve_paths();
 
+        config.load_secret_file()?;
+
         // Validate the final configuration
         config.validate()?;
 
@@ -150,6 +153,10 @@ impl Config {
             path: path.to_path_buf(),
             source: e,
         })
+    }
+
+    fn load_secret_file(&self) -> Result<()> {
+        secret_file::load(Path::new(&self.secret_file))
     }
 
     /// Apply CLI flags to config
