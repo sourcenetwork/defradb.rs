@@ -297,6 +297,10 @@ async fn burst_bidirectional_test(cluster: TestCluster) {
             if node0_docs.len() >= total && node1_docs.len() >= total {
                 assert_eq!(node0_docs.len(), total, "node0 records: {node0_docs:#?}");
                 assert_eq!(node1_docs.len(), total, "node1 records: {node1_docs:#?}");
+                assert_eq!(
+                    node0_docs, node1_docs,
+                    "burst writes produced different records"
+                );
                 break;
             }
         }
