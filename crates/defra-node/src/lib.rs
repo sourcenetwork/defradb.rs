@@ -470,6 +470,12 @@ impl EmbeddedNode {
         self.event_bus.subscribe(event_names)
     }
 
+    /// Subscribe to bounded current-state invalidations without retaining every
+    /// historical revision. Subscribe before the initial query to avoid gaps.
+    pub fn subscribe_document_changes(&self) -> events::DocumentChangeSubscription {
+        self.event_bus.subscribe_document_changes()
+    }
+
     /// Begin a manually finalized transaction. Dropping its handle does not
     /// roll it back; use [`Self::begin_transaction_guard`] for scope ownership.
     pub async fn begin_transaction(

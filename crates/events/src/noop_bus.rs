@@ -39,6 +39,11 @@ impl Bus for NoOpBus {
 
     fn unsubscribe(&self, _sub_id: u64) {}
 
+    #[cfg(feature = "channel")]
+    fn subscribe_document_changes(&self) -> crate::DocumentChangeSubscription {
+        crate::DocumentChangeSubscription::closed()
+    }
+
     fn close(&self) {}
 
     fn is_closed(&self) -> bool {

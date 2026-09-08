@@ -22,6 +22,11 @@ pub trait Bus: Send + Sync {
     /// Use `EventName::WildCard` to receive all events.
     fn subscribe(&self, events: &[EventName]) -> Subscription;
 
+    /// Observe current document state with bounded, coalesced invalidations.
+    /// Revision-sensitive consumers must keep using `subscribe` instead.
+    #[cfg(feature = "channel")]
+    fn subscribe_document_changes(&self) -> crate::DocumentChangeSubscription;
+
     /// Unsubscribe by subscription ID.
     ///
     /// After unsubscribing, the subscription will no longer receive events

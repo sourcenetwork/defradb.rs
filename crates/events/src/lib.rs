@@ -22,10 +22,17 @@
 //! and records dropped messages per subscription. Consumers that observe a
 //! non-zero dropped count must resync from the database before trusting further
 //! incremental observations.
+//!
+//! Current-state readers can instead use `Bus::subscribe_document_changes`:
+//! repeated revisions coalesce by collection/document without retaining blocks.
+//! Distinct-document overflow produces one explicit resync invalidation. This
+//! opt-in surface does not change raw revision or replication event delivery.
 
 mod bus;
 #[cfg(feature = "channel")]
 mod channel_bus;
+#[cfg(feature = "channel")]
+mod document_changes;
 mod event;
 mod noop_bus;
 mod subscription;
@@ -33,6 +40,8 @@ mod subscription;
 pub use bus::Bus;
 #[cfg(feature = "channel")]
 pub use channel_bus::{ChannelBus, ChannelBusConfig};
+#[cfg(feature = "channel")]
+pub use document_changes::{DocumentChange, DocumentChangeBatch, DocumentChangeSubscription};
 pub use event::{
     AcpCacheInvalidatedData, AcpHeightAdvancedData, EventName, MergeCompleteData, Message,
     PendingDagQuarantinedData, SEArtifactReceivedData, TopicPeerEventData, Update,
