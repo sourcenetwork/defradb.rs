@@ -1886,7 +1886,7 @@ async fn car_authorization_timeout_preserves_only_independent_grants() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn filtered_car_recovers_descendant_beyond_first_response_limit() {
     use ipld_core::{codec::Codec, ipld};
     use serde_ipld_dagcbor::codec::DagCborCodec;
