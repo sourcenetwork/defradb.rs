@@ -5,11 +5,12 @@ use blockstore::Blockstore;
 use defra_core::merge::{MergeBlock, MergeHandler, MergeOutcome};
 use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
 use document::{Document, NormalValue};
+use events::{Bus, EventName};
 use storage::corekv::Store;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
-    let (handler, blockstore, _bus) = make_handler_with_schema_and_bus().await;
+    let (handler, blockstore, bus) = make_handler_with_schema_and_bus().await;
     let collection = handler
         .db()
         .find_collection_by_id("col-users")
@@ -57,6 +58,14 @@ async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         composite_heads = vec![cid];
     }
     let (cid, data) = latest.unwrap();
+    let mut raw = bus.subscribe(&[EventName::Update]);
+    let mut changes = bus.subscribe_document_changes();
+    let observation = tokio::spawn(async move {
+        tokio::time::timeout(std::time::Duration::from_secs(5), changes.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    });
     let stats = handler.db().store().transaction_stats_handle().unwrap();
     let before = stats.snapshot().commits;
     let results = handler
@@ -81,6 +90,23 @@ async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         commits, 2,
         "one document transaction plus one field-marker transaction"
     );
+    let batch = observation.await.unwrap();
+    assert_eq!(batch.changes.len(), 1);
+    assert_eq!(batch.changes[0].doc_id, doc_id.to_string());
+    assert_eq!(
+        batch.updates, 257,
+        "one state notification for the entire committed history"
+    );
+    assert!(!batch.resync_required);
+    let mut raw_count = 0;
+    while raw.try_recv().is_ok() {
+        raw_count += 1;
+    }
+    assert_eq!(
+        raw_count, 257,
+        "revision subscribers still receive every update"
+    );
+    assert_eq!(raw.dropped_count(), 0);
     let txn = handler.db().new_txn(true).await.unwrap();
     let stored = collection
         .get_by_doc_id(

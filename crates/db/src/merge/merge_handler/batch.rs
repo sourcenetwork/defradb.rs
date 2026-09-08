@@ -268,9 +268,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // Emit all collected events
         if let Some(bus) = self.db.event_bus() {
             let events = pending_events.into_inner().unwrap();
-            for event in events {
-                bus.publish(event.message);
-            }
+            bus.publish_batch(events.into_iter().map(|event| event.message).collect());
         }
 
         Ok(results)

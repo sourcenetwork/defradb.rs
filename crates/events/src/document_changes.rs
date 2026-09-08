@@ -43,21 +43,31 @@ pub(crate) struct ChangePublisher {
 
 impl ChangePublisher {
     pub(crate) fn publish(&self, update: &Update) {
+        self.publish_batch(std::iter::once(update));
+    }
+
+    pub(crate) fn publish_batch<'a>(&self, updates: impl Iterator<Item = &'a Update>) {
         let mut pending = self.pending.lock();
-        pending.updates = pending.updates.saturating_add(1);
-        if !pending.resync_required {
-            let key = (update.collection_id.clone(), update.doc_id.clone());
-            if let Some(local) = pending.documents.get_mut(&key) {
-                *local |= !update.is_relay;
-            } else if pending.documents.len() < self.capacity {
-                pending.documents.insert(key, !update.is_relay);
-            } else {
-                pending.documents.clear();
-                pending.resync_required = true;
+        let mut changed = false;
+        for update in updates {
+            changed = true;
+            pending.updates = pending.updates.saturating_add(1);
+            if !pending.resync_required {
+                let key = (update.collection_id.clone(), update.doc_id.clone());
+                if let Some(local) = pending.documents.get_mut(&key) {
+                    *local |= !update.is_relay;
+                } else if pending.documents.len() < self.capacity {
+                    pending.documents.insert(key, !update.is_relay);
+                } else {
+                    pending.documents.clear();
+                    pending.resync_required = true;
+                }
             }
         }
         // One pending wake is sufficient; the state above is authoritative.
-        let _ = self.wake.try_send(());
+        if changed {
+            let _ = self.wake.try_send(());
+        }
     }
 
     pub(crate) fn is_closed(&self) -> bool {

@@ -100,3 +100,44 @@ fn dropped_observers_are_cleaned_up() {
     bus.publish(update("c", "d", true));
     assert_eq!(bus.subscriber_count(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn committed_batch_wakes_state_reader_once_and_preserves_raw_order() {
+    let bus = std::sync::Arc::new(ChannelBus::with_config(
+        ChannelBusConfig::new().with_event_buffer_size(12_000),
+    ));
+    let mut changes = bus.subscribe_document_changes();
+    let mut raw = bus.subscribe(&[EventName::Update]);
+    let publisher = bus.clone();
+    let task = tokio::spawn(async move {
+        publisher.publish_batch(
+            (0_u32..12_000)
+                .map(|revision| {
+                    Message::update(Update::new(
+                        "doc".into(),
+                        cid::Cid::default(),
+                        "c".into(),
+                        revision.to_be_bytes().to_vec(),
+                        false,
+                        true,
+                    ))
+                })
+                .collect(),
+        );
+    });
+    let batch = changes.recv().await.unwrap();
+    assert_eq!(batch.updates, 12_000);
+    assert_eq!(batch.changes.len(), 1);
+    assert!(!batch.resync_required);
+    task.await.unwrap();
+    assert!(changes.try_recv().is_err());
+    for revision in 0_u32..12_000 {
+        let message = raw.try_recv().unwrap();
+        assert_eq!(
+            message.as_update().unwrap().block.as_ref(),
+            &revision.to_be_bytes()
+        );
+    }
+    assert!(raw.try_recv().is_err());
+    assert_eq!(raw.dropped_count(), 0);
+}
