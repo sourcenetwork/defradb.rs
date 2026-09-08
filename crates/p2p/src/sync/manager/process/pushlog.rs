@@ -224,7 +224,68 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             explicit_replay_authorization,
             recovery_provider_evidenced,
         )
-        .await
+        .await?;
+
+        self.assert_pushlog_left_durable_state(&cid, msg, sender_peer)
+            .await
+    }
+
+    /// Hold the ack contract for a block that carries a document head: success
+    /// means it is merged, registered as pending, or covered by a newer head
+    /// already durable for the same sender scope. The sender stops retrying on
+    /// success, and only those states leave something on this side to finish
+    /// the work, so acking without one loses the update for good — silently,
+    /// because nothing failed.
+    ///
+    /// A block that carries no head is exempt. A peer may push a field or a
+    /// signature on its own, and storing it for a later root to use is the
+    /// whole of what it needs; it becomes a head through the composite that
+    /// links it.
+    ///
+    /// Reported as retryable rather than swallowed: the sender re-pushes, and
+    /// the error names a receiver-side fault rather than a peer's.
+    async fn assert_pushlog_left_durable_state(
+        &self,
+        cid: &Cid,
+        msg: &PushLogBroadcast,
+        sender_peer: Option<&str>,
+    ) -> Result<()> {
+        let AnnouncedBlockKind::Head(head_priority) = announced_block_kind(&msg.block) else {
+            return Ok(());
+        };
+        if self.is_pending_dag_recovery_registered(cid) {
+            return Ok(());
+        }
+        if self.scope_head_is_covered_by_current(
+            *cid,
+            sender_peer,
+            &msg.collection_id,
+            &msg.doc_id,
+            Some(head_priority),
+        ) {
+            return Ok(());
+        }
+        let merged = self
+            .blockstore
+            .is_merged(cid)
+            .await
+            .map_err(Error::from_blockstore)?;
+        if merged {
+            return Ok(());
+        }
+
+        tracing::error!(
+            cid = %cid,
+            doc_id = %msg.doc_id,
+            collection_id = %msg.collection_id,
+            source_peer = ?sender_peer,
+            "PushLog processing reported success but left the block neither \
+             merged, pending, nor covered by a newer head; nacking so the \
+             sender retries"
+        );
+        Err(Error::PushLogNotDurable {
+            cid: cid.to_string(),
+        })
     }
 
     /// Inner block processing logic.
@@ -898,6 +959,90 @@ mod tests {
             "creator1".to_string(),
             Bytes::from(block),
         )
+    }
+
+    fn composite_with_priority(priority: u64, field_name: &str) -> (Cid, Vec<u8>) {
+        let (field_cid, _) = create_lww_block(field_name);
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                schema_version_id: "schema1".to_string(),
+                priority,
+                status: 1,
+            }),
+            vec![],
+            vec![DAGLink::new(field_name, field_cid)],
+        );
+        let bytes = block.to_dag_cbor().expect("encode composite block");
+        let cid = block.generate_cid().expect("generate composite cid");
+        (cid, bytes)
+    }
+
+    /// The third state that honours the contract: a head retired because a
+    /// newer one from the same sender scope is already registered. Nothing is
+    /// lost — the newer head carries the document forward — so nacking it
+    /// would put the sender in a retry loop over work already owned.
+    #[tokio::test]
+    async fn a_head_superseded_by_a_newer_scope_head_is_acked() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let peer_state = Arc::new(PeerStateTracker::new());
+        let (manager, _events) = SyncManager::new(blockstore, peer_state, SyncConfig::default());
+
+        let (old_root, old_bytes) = composite_with_priority(1, "old");
+        let (new_root, new_bytes) = composite_with_priority(2, "new");
+        let old = make_broadcast("doc123", old_root, old_bytes, "collection1");
+        let new = make_broadcast("doc123", new_root, new_bytes, "collection1");
+
+        manager
+            .process_pushlog(&old, Some("peer-1"), true, None)
+            .await
+            .expect("old head registers pending");
+        manager
+            .process_pushlog(&new, Some("peer-1"), true, None)
+            .await
+            .expect("newer head supersedes it");
+        assert_eq!(manager.pending_dag_cids(), vec![new_root]);
+
+        manager
+            .assert_pushlog_left_durable_state(&old_root, &old, Some("peer-1"))
+            .await
+            .expect("the superseded head is covered, not lost");
+    }
+
+    /// The ack contract, checked at the boundary that answers the sender.
+    ///
+    /// A block that came out of processing neither merged nor pending has
+    /// nothing left to finish it, and a success reply would stop the sender
+    /// re-pushing it — the shape of the lost update seen in CI, where a node
+    /// answered a push and then did nothing at all for the rest of the test.
+    #[tokio::test]
+    async fn a_block_left_neither_merged_nor_pending_is_nacked_not_acked() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let peer_state = Arc::new(PeerStateTracker::new());
+        let (manager, _events) =
+            SyncManager::new(blockstore.clone(), peer_state, SyncConfig::default());
+
+        let (field_cid, _) = create_lww_block("name");
+        let (composite_cid, composite_block) = create_composite_block("doc123", "name", field_cid);
+        let broadcast = make_broadcast("doc123", composite_cid, composite_block, "collection1");
+
+        let outcome = manager
+            .assert_pushlog_left_durable_state(&composite_cid, &broadcast, Some("peer-1"))
+            .await;
+
+        assert!(
+            matches!(outcome, Err(Error::PushLogNotDurable { .. })),
+            "an ack that leaves no state must be reported, got {outcome:?}"
+        );
+        assert_eq!(
+            outcome
+                .unwrap_err()
+                .backpressure_reply_message()
+                .expect("the sender is told to retry"),
+            crate::error::RATE_LIMITED_MESSAGE,
+            "the reply has to be the one the pusher retries on"
+        );
     }
 
     #[tokio::test]

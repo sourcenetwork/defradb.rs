@@ -561,6 +561,94 @@ async fn backoff_doubles_and_caps() {
     assert_eq!(retry_backoff(30), std::time::Duration::from_secs(60));
 }
 
+/// How long a root that keeps failing to fetch stays unretried, which is what
+/// a caller waiting for convergence is really waiting on.
+///
+/// A pushed block whose DAG is incomplete is acked as success once it is
+/// registered pending, so the sender never retries and the receiver owns
+/// recovery alone. The rungs are 2s, 4s, 8s, 16s, 32s: the first dispatch is
+/// immediate and the fifth lands a full minute later. Anything asserting
+/// convergence sooner than that is asserting something this pacing does not
+/// promise.
+#[tokio::test(start_paused = true)]
+async fn a_root_that_keeps_failing_is_not_retried_for_a_minute() {
+    let manager = test_manager();
+    let root = test_cid(1);
+    let mut dag = pending_dag("doc", Instant::now());
+    dag.missing.insert(test_cid(2));
+    assert!(manager.insert_pending_dag(root, dag));
+
+    let start = tokio::time::Instant::now();
+    let mut dispatches = Vec::new();
+    // Every dispatch fails to complete the DAG, so the root stays pending and
+    // only the rung advances.
+    while dispatches.len() < 5 {
+        let now = tokio::time::Instant::now();
+        if manager.try_claim_pending_dag_dispatch(&root, now) {
+            dispatches.push(now.duration_since(start).as_secs());
+            continue;
+        }
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    }
+
+    assert_eq!(
+        dispatches,
+        vec![0, 4, 12, 28, 60],
+        "each failed dispatch advances the rung, so the retries spread out"
+    );
+    assert_eq!(
+        *dispatches.last().expect("five dispatches"),
+        crate::sync::manager::pending::PENDING_RECOVERY_WORST_CASE_SECS,
+        "the constant conformance waits on must track the ladder"
+    );
+}
+
+/// The failure a 40s convergence deadline produces, and why the budget moved.
+///
+/// A root whose first four fetches lose is retried on the ladder above. Inside
+/// 40s it has been dispatched four times and is still pending, so a caller
+/// polling for a merged value sees nothing and calls it non-convergence. The
+/// fifth dispatch — the one that would have succeeded — is not due until 60s.
+#[tokio::test(start_paused = true)]
+async fn a_forty_second_deadline_lands_between_the_fourth_and_fifth_retry() {
+    let manager = test_manager();
+    let root = test_cid(1);
+    let mut dag = pending_dag("doc", Instant::now());
+    dag.missing.insert(test_cid(2));
+    assert!(manager.insert_pending_dag(root, dag));
+
+    let start = tokio::time::Instant::now();
+
+    // Walk the clock to 40s, claiming every dispatch that comes due.
+    let mut within_forty = 0;
+    while tokio::time::Instant::now().duration_since(start).as_secs() < 40 {
+        if manager.try_claim_pending_dag_dispatch(&root, tokio::time::Instant::now()) {
+            within_forty += 1;
+        }
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    }
+    assert_eq!(
+        within_forty, 4,
+        "the old deadline expires after the fourth dispatch"
+    );
+    assert!(
+        !manager.try_claim_pending_dag_dispatch(&root, tokio::time::Instant::now()),
+        "and the fifth is not due yet, so the root is still pending at 40s"
+    );
+
+    // The budget the conformance suite now allows reaches it.
+    while tokio::time::Instant::now().duration_since(start).as_secs() < 90 {
+        if manager.try_claim_pending_dag_dispatch(&root, tokio::time::Instant::now()) {
+            within_forty += 1;
+        }
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    }
+    assert!(
+        within_forty > 4,
+        "a budget past the ladder's minute gives the root its next chance"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn expedite_makes_entry_due_now_without_resetting_backoff() {
     let manager = test_manager();
