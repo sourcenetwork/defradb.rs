@@ -155,6 +155,183 @@ async fn document_round_trip_uses_crdt_blocks() {
     );
 }
 
+/// A node that pulled a document and wrote down what its peer holds has
+/// nothing to offer that peer back.
+///
+/// This is the push half of the browser-sync failure: a synced browser
+/// answered every announcement by loading its own copy of the named document
+/// and putting it in the same exchange as the pull, whether or not it held a
+/// block the server lacked. For a document it did not author, that was
+/// somebody else's document going back where it came from, and the `403` that
+/// answered cost the exchange, the pull inside it, and — through
+/// `recover_full_sync`, which meets the same document again — the session.
+#[tokio::test]
+async fn a_document_the_peer_supplied_is_not_offered_back() {
+    let server = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let browser = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    server.create_collection(users_schema()).await.unwrap();
+    browser.create_collection(users_schema()).await.unwrap();
+
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let created = db::AutoCommitMutator::new(server.clone())
+        .create("Users", document)
+        .await
+        .unwrap();
+    let doc_id = created.doc_id.to_string();
+
+    let server_sync = BrowserSyncEngine::new(server);
+    let server_ref = server_sync.document_ref(&doc_id).await.unwrap().unwrap();
+    let pulled = server_sync
+        .load_document(&server_ref)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let browser_sync = BrowserSyncEngine::new(browser.clone());
+    let peer = "https://node.example";
+    browser_sync
+        .apply_document(&pulled, "server")
+        .await
+        .unwrap();
+    browser_sync
+        .record_peer_roots(peer, &[(doc_id.clone(), pulled.roots.clone())])
+        .await
+        .unwrap();
+
+    let browser_ref = browser_sync.document_ref(&doc_id).await.unwrap().unwrap();
+    assert!(
+        !browser_sync
+            .peer_needs_document(peer, &browser_ref)
+            .await
+            .unwrap(),
+        "the peer handed this over; it cannot need it back"
+    );
+    // The record is the peer's, not the document's: a node pointed at a second
+    // server still owes that server everything it holds.
+    assert!(browser_sync
+        .peer_needs_document("https://other.example", &browser_ref)
+        .await
+        .unwrap());
+
+    // A write here is a block the peer has not got, and the offer comes back.
+    let mut update = Document::new();
+    update.set_id(DocID::from_string(&doc_id).unwrap());
+    update.set("name", "Alice in the browser");
+    db::AutoCommitMutator::new(browser)
+        .update(
+            "Users",
+            update,
+            std::collections::HashSet::from(["name".to_string()]),
+        )
+        .await
+        .unwrap();
+    assert!(
+        browser_sync
+            .peer_needs_document(peer, &browser_ref)
+            .await
+            .unwrap(),
+        "a local write is exactly what a push is for"
+    );
+}
+
+/// The record survives the engine that wrote it, because the question it
+/// answers outlives a session: a second `sync()` on the same store used to
+/// start by offering the server everything it had just been given.
+#[tokio::test]
+async fn what_the_peer_holds_outlives_the_engine_that_recorded_it() {
+    let database = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    database.create_collection(users_schema()).await.unwrap();
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let created = db::AutoCommitMutator::new(database.clone())
+        .create("Users", document)
+        .await
+        .unwrap();
+    let doc_id = created.doc_id.to_string();
+
+    let session = BrowserSyncEngine::new(database.clone());
+    let document_ref = session.document_ref(&doc_id).await.unwrap().unwrap();
+    let roots = session.document_roots(&document_ref).await.unwrap();
+    assert!(session
+        .peer_needs_document("https://node.example", &document_ref)
+        .await
+        .unwrap());
+    session
+        .record_peer_roots("https://node.example", &[(doc_id, roots)])
+        .await
+        .unwrap();
+
+    let next_session = BrowserSyncEngine::new(database);
+    assert!(!next_session
+        .peer_needs_document("https://node.example", &document_ref)
+        .await
+        .unwrap());
+}
+
+/// What decides whether a pushed payload is an update at all: a payload whose
+/// blocks this node has already merged cannot change anything, whoever sent it.
+#[tokio::test]
+async fn a_payload_of_blocks_already_merged_carries_nothing() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema()).await.unwrap();
+    target.create_collection(users_schema()).await.unwrap();
+
+    let mut document = Document::new();
+    document.set("name", "Alice");
+    let created = db::AutoCommitMutator::new(source.clone())
+        .create("Users", document)
+        .await
+        .unwrap();
+    let doc_id = created.doc_id.to_string();
+    let source_sync = BrowserSyncEngine::new(source.clone());
+    let source_ref = source_sync.document_ref(&doc_id).await.unwrap().unwrap();
+    let first = source_sync
+        .load_document(&source_ref)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let target_sync = BrowserSyncEngine::new(target);
+    assert!(
+        !target_sync
+            .has_merged_every_block(&target_sync.validate_document(&first).unwrap())
+            .await
+            .unwrap(),
+        "a document this node has never seen is all new"
+    );
+    target_sync.apply_document(&first, "browser").await.unwrap();
+    assert!(target_sync
+        .has_merged_every_block(&target_sync.validate_document(&first).unwrap())
+        .await
+        .unwrap());
+
+    let mut update = Document::new();
+    update.set_id(DocID::from_string(&doc_id).unwrap());
+    update.set("name", "Alice again");
+    db::AutoCommitMutator::new(source)
+        .update(
+            "Users",
+            update,
+            std::collections::HashSet::from(["name".to_string()]),
+        )
+        .await
+        .unwrap();
+    let second = source_sync
+        .load_document(&source_ref)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !target_sync
+            .has_merged_every_block(&target_sync.validate_document(&second).unwrap())
+            .await
+            .unwrap(),
+        "the update block is one this node does not hold"
+    );
+}
+
 #[tokio::test]
 async fn rejects_forged_document_id_before_merge() {
     let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
@@ -507,5 +684,110 @@ async fn an_unsigned_fragment_is_announced_without_a_creator_claim() {
     assert_eq!(
         events[0].creator_did, None,
         "with no signature there is no owner to claim on the receiving node"
+    );
+}
+
+/// Held is not merged, and only merged makes a payload inert.
+///
+/// `apply_validated_document` stores a payload's blocks before it merges them,
+/// so a merge that fails leaves them held and unapplied — as does a pending or
+/// quarantined DAG the P2P stack has fetched but not merged. Answering on
+/// presence alone would call such a payload an update that changes nothing, and
+/// wave it past the permission check that stands in front of the merge.
+#[tokio::test]
+async fn blocks_held_without_being_merged_are_not_already_applied() {
+    use blockstore::Blockstore as _;
+
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema()).await.unwrap();
+    target.create_collection(users_schema()).await.unwrap();
+    let (wire_document, _) = pushable_document(source, false).await;
+
+    // What a failed merge or a pending DAG leaves behind: the blocks, stored
+    // and unapplied. The `true` is the merge tracking every server-side
+    // blockstore is built with.
+    let held = blockstore::DefraBlockstore::new(target.store().clone(), true);
+    let decoded: Vec<(Cid, Vec<u8>)> = wire_document
+        .blocks
+        .iter()
+        .map(|block| {
+            (
+                Cid::try_from(block.cid.as_str()).unwrap(),
+                hex::decode(&block.data).unwrap(),
+            )
+        })
+        .collect();
+    held.put_many(
+        &decoded
+            .iter()
+            .map(|(cid, data)| (cid, data.as_slice()))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .unwrap();
+
+    let target_sync = BrowserSyncEngine::new(target);
+    assert!(
+        !target_sync
+            .has_merged_every_block(&target_sync.validate_document(&wire_document).unwrap())
+            .await
+            .unwrap(),
+        "the blocks are here and nothing has applied them, so this payload would still change the document"
+    );
+
+    target_sync
+        .apply_document(&wire_document, "browser")
+        .await
+        .unwrap();
+    assert!(
+        target_sync
+            .has_merged_every_block(&target_sync.validate_document(&wire_document).unwrap())
+            .await
+            .unwrap(),
+        "merged now, so the same payload would change nothing"
+    );
+}
+
+/// A push that merges nothing announces nothing.
+///
+/// A browser that has not been updated offers its whole store back, and every
+/// document of it reaches the merge only to be terminally skipped. Announcing
+/// those would put blocks the network already holds back on the wire once per
+/// document, at every boot, for every such browser — which is exactly the
+/// traffic a node fixed on its own has to absorb.
+#[tokio::test]
+async fn a_push_that_merges_nothing_is_not_announced() {
+    let source = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let target = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    source.create_collection(users_schema()).await.unwrap();
+    target.create_collection(users_schema()).await.unwrap();
+    let (wire_document, _) = pushable_document(source, true).await;
+
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let broadcaster: Arc<dyn db::event::emission::TxnBroadcaster> =
+        Arc::new(CapturingBroadcaster {
+            events: events.clone(),
+        });
+    let target_sync = BrowserSyncEngine::with_broadcaster(target, broadcaster);
+
+    target_sync
+        .apply_document(&wire_document, "the-pusher")
+        .await
+        .unwrap();
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "the merge that landed is announced"
+    );
+
+    target_sync
+        .apply_document(&wire_document, "the-pusher")
+        .await
+        .unwrap();
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "the same document again merged nothing, so there is nothing to tell peers"
     );
 }

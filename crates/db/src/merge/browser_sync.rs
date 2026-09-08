@@ -6,7 +6,8 @@ use blockstore::{Blockstore, DefraBlockstore};
 use cid::Cid;
 use defra_core::browser_sync::{BrowserSyncBlock, BrowserSyncDocument, MAX_SYNC_PAYLOAD_BYTES};
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
-use storage::corekv::{IterOptions, Store};
+use storage::corekv::{IterOptions, Key as _, Store};
+use storage::keys::BrowserSyncHeadKey;
 
 use crate::event::emission::{TxnBroadcastEvent, TxnBroadcaster};
 use crate::merge::merge_handler::DbMergeHandler;
@@ -221,6 +222,150 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
         Ok(None)
     }
 
+    /// The document's current composite heads, without loading its DAG.
+    ///
+    /// This is what a push would offer, and it is read on its own so that
+    /// deciding not to push costs a headstore lookup rather than the whole
+    /// history.
+    pub async fn document_roots(
+        &self,
+        document_ref: &BrowserSyncDocumentRef,
+    ) -> Result<Vec<String>, BrowserSyncError> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+        head_roots(&txn, document_ref).await
+    }
+
+    /// Whether `peer` still needs what this node holds for the document.
+    ///
+    /// A push can only ever deliver a block the peer has not got. When the
+    /// peer's last recorded heads are this node's current heads, there is no
+    /// such block, and offering the document anyway is somebody else's
+    /// document coming back unchanged — which the receiver has every right to
+    /// refuse, and which used to end the exchange it rode in on.
+    ///
+    /// Absent a record the answer is yes: a node that has never exchanged this
+    /// document with the peer must assume the peer lacks it.
+    ///
+    /// One transaction, because a full sync asks this of every document it
+    /// holds before it loads any of them.
+    pub async fn peer_needs_document(
+        &self,
+        peer: &str,
+        document_ref: &BrowserSyncDocumentRef,
+    ) -> Result<bool, BrowserSyncError> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+        let recorded = read_peer_roots(
+            &txn.peerstore()
+                .map_err(|error| BrowserSyncError::Storage(error.to_string()))?,
+            peer,
+            &document_ref.doc_id,
+        )
+        .await?;
+        let Some(recorded) = recorded else {
+            return Ok(true);
+        };
+        Ok(recorded != head_roots(&txn, document_ref).await?)
+    }
+
+    /// The heads `peer` was last known to hold for a document.
+    pub async fn peer_roots(
+        &self,
+        peer: &str,
+        doc_id: &str,
+    ) -> Result<Option<Vec<String>>, BrowserSyncError> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+        read_peer_roots(
+            &txn.peerstore()
+                .map_err(|error| BrowserSyncError::Storage(error.to_string()))?,
+            peer,
+            doc_id,
+        )
+        .await
+    }
+
+    /// Record the heads `peer` holds: the roots it handed over, or the roots
+    /// it accepted.
+    ///
+    /// Durable, because the question it answers outlives a session. A second
+    /// `sync()`, a reconnect and a reopened store all start by asking what the
+    /// peer needs, and a record that died with the session would answer
+    /// "everything" every time.
+    ///
+    /// A whole exchange in one transaction: a pull page carries up to
+    /// sixty-four documents and an initial pull is every document there is.
+    pub async fn record_peer_roots(
+        &self,
+        peer: &str,
+        documents: &[(String, Vec<String>)],
+    ) -> Result<(), BrowserSyncError> {
+        if documents.is_empty() {
+            return Ok(());
+        }
+        let txn = self
+            .db
+            .new_txn(false)
+            .await
+            .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+        {
+            // The view borrows the transaction, and a transaction with a
+            // reference outstanding will not commit.
+            let peerstore = txn
+                .peerstore()
+                .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+            for (doc_id, roots) in documents {
+                peerstore
+                    .set(
+                        &BrowserSyncHeadKey::new(peer, doc_id).bytes(),
+                        sorted_roots(roots.iter().cloned()).join("\n").as_bytes(),
+                    )
+                    .await
+                    .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+            }
+        }
+        txn.commit()
+            .await
+            .map_err(|error| BrowserSyncError::Storage(error.to_string()))
+    }
+
+    /// Whether every block in a validated payload has already been merged
+    /// here, in which case merging it again cannot change anything.
+    ///
+    /// Merged, not merely held: the two come apart, and only the first is a
+    /// promise that the payload is inert. `apply_validated_document` stores
+    /// blocks before it merges them, so a merge that fails leaves them held
+    /// and unapplied, and the P2P stack holds the blocks of a pending or
+    /// quarantined DAG it has fetched but not merged. A payload of those
+    /// blocks would still change the document, so answering on presence alone
+    /// would let a caller who may not update it force the merge.
+    pub async fn has_merged_every_block(
+        &self,
+        document: &ValidatedBrowserSyncDocument,
+    ) -> Result<bool, BrowserSyncError> {
+        for (cid, _) in &document.blocks {
+            if !self
+                .blockstore
+                .is_merged(cid)
+                .await
+                .map_err(|error| BrowserSyncError::Storage(error.to_string()))?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub async fn load_document(
         &self,
         document_ref: &BrowserSyncDocumentRef,
@@ -314,6 +459,7 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
             .await
             .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
 
+        let mut merged = false;
         for root in &document.roots {
             let data = document
                 .blocks
@@ -336,12 +482,23 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
                 .await
                 .map_err(|error| BrowserSyncError::Merge(error.to_string()))?
             {
-                MergeOutcome::Merged | MergeOutcome::Skipped { terminal: true, .. } => {}
+                MergeOutcome::Merged => merged = true,
+                MergeOutcome::Skipped { terminal: true, .. } => {}
                 MergeOutcome::Skipped { reason, .. } | MergeOutcome::Rejected { reason } => {
                     return Err(BrowserSyncError::Merge(reason));
                 }
                 _ => return Err(BrowserSyncError::Merge("unsupported merge outcome".into())),
             }
+        }
+
+        // A push that merged nothing has nothing to mark and nothing to tell
+        // the network. Validation rejects a payload holding a block its roots
+        // do not reach, so roots that were every one of them already merged
+        // means every block here was. Announcing anyway puts blocks the
+        // network already has back on the wire once per document, which is
+        // the whole store of a browser that has not been updated.
+        if !merged {
+            return Ok(());
         }
 
         let cids: Vec<_> = document.blocks.iter().map(|(cid, _)| *cid).collect();
@@ -440,4 +597,56 @@ impl<S: Store + 'static> BrowserSyncEngine<S> {
             document.to_map().ok()?.into_iter().collect(),
         ))
     }
+}
+
+/// A document's composite heads, in the canonical order.
+async fn head_roots<S: Store + 'static>(
+    txn: &crate::txn::DbTxn<S>,
+    document_ref: &BrowserSyncDocumentRef,
+) -> Result<Vec<String>, BrowserSyncError> {
+    let headstore = txn
+        .headstore()
+        .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+    let blockstore = txn
+        .blockstore()
+        .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+    Ok(sorted_roots(
+        load_latest_composite_head_cids(&headstore, &blockstore, document_ref.doc_short_id)
+            .await
+            .into_iter()
+            .map(|cid| cid.to_string()),
+    ))
+}
+
+/// What a peer was last recorded as holding, or `None` where nothing was.
+async fn read_peer_roots(
+    peerstore: &datastore::NamespaceView,
+    peer: &str,
+    doc_id: &str,
+) -> Result<Option<Vec<String>>, BrowserSyncError> {
+    let Some(stored) = peerstore
+        .get(&BrowserSyncHeadKey::new(peer, doc_id).bytes())
+        .await
+        .map_err(|error| BrowserSyncError::Storage(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let stored = std::str::from_utf8(&stored)
+        .map_err(|error| BrowserSyncError::Storage(error.to_string()))?;
+    // A document with no heads is not one a push can carry, so the empty
+    // record is the empty set rather than a set holding an empty root.
+    Ok(Some(if stored.is_empty() {
+        Vec::new()
+    } else {
+        stored.split('\n').map(ToString::to_string).collect()
+    }))
+}
+
+/// Root CIDs in a canonical order, so that two head sets compare equal exactly
+/// when they hold the same roots.
+fn sorted_roots(roots: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut roots: Vec<String> = roots.into_iter().collect();
+    roots.sort();
+    roots.dedup();
+    roots
 }

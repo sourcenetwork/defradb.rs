@@ -4,9 +4,9 @@ use std::sync::Arc;
 use acp::{DocumentPermission, Identity};
 use async_trait::async_trait;
 use defra_core::browser_sync::{
-    BrowserSyncDocument, BrowserSyncPull, BrowserSyncRequest, BrowserSyncResponse,
-    DEFAULT_SYNC_PAGE_SIZE, MAX_SYNC_BODY_BYTES, MAX_SYNC_ID_BYTES, MAX_SYNC_PAGE_SIZE,
-    MAX_SYNC_PAYLOAD_BYTES, MAX_SYNC_RELATIONSHIPS_PER_DOCUMENT,
+    BrowserSyncDocument, BrowserSyncPull, BrowserSyncRefusal, BrowserSyncRequest,
+    BrowserSyncResponse, DEFAULT_SYNC_PAGE_SIZE, MAX_SYNC_BODY_BYTES, MAX_SYNC_ID_BYTES,
+    MAX_SYNC_PAGE_SIZE, MAX_SYNC_PAYLOAD_BYTES, MAX_SYNC_RELATIONSHIPS_PER_DOCUMENT,
 };
 use defra_http::router::{BrowserSyncError, BrowserSyncOperations, BrowserSyncResult};
 use storage::corekv::Store;
@@ -94,15 +94,26 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
             .validate_document(document)
             .map_err(map_engine_error)?;
         let collection = self.collection(document.collection_id())?;
+        // The delta before the permission, because what changes nothing is not
+        // an update. A peer that offers back a document it was given carries no
+        // block this node has not already merged, and refusing that costs the
+        // exchange it rode in on — the pull included. A payload that would
+        // still apply is an update and is checked as one, so this narrows what
+        // needs permission without widening what may be written.
         if !self
-            .can_access(
-                identity,
-                DocumentPermission::Update,
-                &collection,
-                document.doc_id(),
-                bypass_dac,
-            )
-            .await?
+            .engine
+            .has_merged_every_block(&document)
+            .await
+            .map_err(map_engine_error)?
+            && !self
+                .can_access(
+                    identity,
+                    DocumentPermission::Update,
+                    &collection,
+                    document.doc_id(),
+                    bypass_dac,
+                )
+                .await?
         {
             return Err(BrowserSyncError::Forbidden(format!(
                 "update access denied for document {}",
@@ -489,6 +500,7 @@ impl<S: Store + 'static> BrowserSyncAdapter<S> {
         Ok(BrowserSyncResponse {
             documents,
             next_cursor: has_more.then_some(resume_cursor).flatten(),
+            refused: Vec::new(),
         })
     }
 }
@@ -524,24 +536,51 @@ impl<S: Store + 'static> BrowserSyncOperations for BrowserSyncAdapter<S> {
             .map(|document| (document.doc_id.clone(), document.roots.clone()))
             .collect();
 
+        // A refusal is scoped to its document; every other failure is a fact
+        // about the request and still fails all of it. That is what keeps the
+        // batch atomic where atomicity means something — an invalid or
+        // duplicated document is rejected before anything is written — while
+        // one document nobody may write no longer costs the other documents,
+        // the pull, and the session that was driving them.
+        let mut refused = Vec::new();
         let mut pending = Vec::with_capacity(request.documents.len());
         for document in &request.documents {
-            pending.push(
-                self.prepare_document(document, &identity, bypass_dac)
-                    .await?,
-            );
+            match self.prepare_document(document, &identity, bypass_dac).await {
+                Ok(prepared) => pending.push(prepared),
+                Err(BrowserSyncError::Forbidden(reason)) => {
+                    refused.push(refusal(&document.doc_id, reason))
+                }
+                Err(error) => return Err(error),
+            }
         }
         for document in pending {
-            self.apply_document(document, &identity).await?;
+            let doc_id = document.document.doc_id().to_string();
+            match self.apply_document(document, &identity).await {
+                Ok(()) => {}
+                Err(BrowserSyncError::Forbidden(reason)) => refused.push(refusal(&doc_id, reason)),
+                Err(error) => return Err(error),
+            }
         }
 
-        match request.pull {
+        let mut response = match request.pull {
             Some(pull) => {
                 self.pull_documents(pull, &identity, &known_roots, bypass_dac)
-                    .await
+                    .await?
             }
-            None => Ok(BrowserSyncResponse::default()),
-        }
+            None => BrowserSyncResponse::default(),
+        };
+        response.refused = refused;
+        Ok(response)
+    }
+}
+
+/// Report a refused document, and say so in the log as well: a refusal the
+/// caller decides to ignore must still be visible to whoever runs the node.
+fn refusal(doc_id: &str, reason: String) -> BrowserSyncRefusal {
+    tracing::warn!(%doc_id, %reason, "browser sync refused a pushed document");
+    BrowserSyncRefusal {
+        doc_id: doc_id.to_string(),
+        reason,
     }
 }
 
