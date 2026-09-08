@@ -1,8 +1,8 @@
 //! #1154 at-scale repro: every success-acked document must merge on the
-//! restarted hub. This is the pre-rewrite `p2p_admission_restart` workload
-//! (writer threads, SIGSTOP freeze, hard kill/restart) with a scale floor
-//! (≥500 docs before the freeze hunt) so the pusher retry ladders carry
-//! hundreds of nacked pushes.
+//! restarted hub. Four persistent pushers commit at least 500 documents while
+//! source-side CAR serving is disabled. All-matching filtered replication in
+//! Controlled mode also denies legacy Bitswap fallback, holding a durable
+//! crash window without racing the receiver's recovery speed.
 //!
 //! Own binary: injects process-wide node settings inherited by every spawned
 //! node.
@@ -13,101 +13,37 @@ use std::time::{Duration, Instant};
 
 use integration_test::TestCluster;
 
-const SCHEMA: &str = "type User { name: String  age: Int }";
+const SCHEMA: &str = "type User { name: String  age: Int @immutable }";
 const PUSHERS: usize = 4;
 const MIN_DOCS: usize = 500;
 
-fn signal(pid: u32, signal: &str) {
-    let status = std::process::Command::new("kill")
-        .arg(signal)
-        .arg(pid.to_string())
-        .status()
-        .expect("spawn kill");
-    assert!(status.success(), "kill {signal} {pid} failed");
-}
+#[path = "issue1154_repro/support.rs"]
+mod support;
+use support::{log_field, pending_dags, registered_doc_ids, sender_retry_snapshot, sync_status};
 
-async fn pending_dags(hub_api: &str) -> u64 {
-    let Ok(response) = reqwest::get(format!("{hub_api}/api/v0/p2p/sync/status")).await else {
-        return 0;
-    };
-    response
-        .json::<serde_json::Value>()
-        .await
-        .ok()
-        .and_then(|status| status["pending_dags"].as_u64())
-        .unwrap_or(0)
-}
-
-async fn sync_status(cluster: &TestCluster, node: usize) -> serde_json::Value {
-    reqwest::get(format!("{}/api/v0/p2p/sync/status", cluster.api_url(node)))
-        .await
-        .expect("sync status request")
-        .json()
-        .await
-        .expect("sync status json")
-}
-
-async fn sender_retry_snapshot(cluster: &TestCluster) -> (usize, u64) {
-    let mut markers = 0usize;
-    let mut active_jobs = 0u64;
-    for pusher in 1..=PUSHERS {
-        let status = sync_status(cluster, pusher).await;
-        markers += status["push_retry_markers"]["document_markers"]
-            .as_u64()
-            .expect("document marker count") as usize;
-        active_jobs += status["push_backlog"]["active_jobs"]
-            .as_u64()
-            .expect("active sender jobs");
-    }
-    (markers, active_jobs)
-}
-
-fn log_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.split_whitespace()
-        .find_map(|value| value.strip_prefix(field))
-}
-
-/// Documents the hub durably registered before acknowledging their push.
-///
-/// `SyncManager::process_pushlog` commits the record and only then acks, so
-/// the ack destroyed the pusher's retry record for exactly these documents:
-/// after the kill the hub is their only remaining owner. An at-capacity push
-/// returns before this line is logged, so the set holds only registrations
-/// that really reached the store. Each document here is created once and
-/// never updated, so one document maps to at most one live root.
-fn registered_doc_ids(hub_log: &std::path::Path) -> std::collections::HashSet<String> {
-    std::fs::read_to_string(hub_log)
-        .unwrap_or_default()
-        .lines()
-        .filter(|line| line.contains("Persisted pending DAG registration"))
-        .filter_map(|line| log_field(line, "doc_id=").map(str::to_string))
-        .collect()
-}
-
-/// Pushers write continuously into a 1-slot hub while the test arranges a
-/// deterministic crash window: once a pending registration is observed, the
-/// pushers are SIGSTOPped (so Bitswap cannot resolve it), the registration is
-/// re-confirmed, and the hub is hard-killed and respawned on its rootdir.
+/// Pushers write into a 1-slot hub with source-side CAR serving disabled.
+/// A real success acknowledgment and an unmerged durable registration must
+/// coexist before the hub is hard-killed and respawned on its rootdir.
 ///
 /// The restart contract under test (PendingDagRestart.tla INV_AckBacked): the
-/// success ack destroyed the pusher's retry record, so the frozen-slot doc
-/// can only merge if the hub's registration was durable. The test gates on
-/// the restore log (durable records actually survived and were re-driven) and
-/// then requires full completeness — with process-local registrations the doc
-/// occupying the slot at kill time is silently lost forever.
+/// success ack can discharge the sender's retry record. Require both durable
+/// restoration and exact registered-document recovery: merging alone cannot
+/// prove restoration because restarted sources may also replay their state.
 #[tokio::test]
 async fn hub_restart_recovers_success_acked_pending_dags() {
     std::env::set_var("DEFRA_P2P_MAX_PENDING_DAGS", "1");
+    std::env::set_var("DEFRA_P2P_RATE_LIMIT_BURST", "500");
     std::env::set_var("RUST_LOG", "info,p2p::sync::restart_recovery=debug");
 
-    // The hub must survive a restart with identity and state intact: the
+    // Every node must survive a restart with identity and state intact: the
     // harness defaults (memory store, no keyring => ephemeral peer key) would
     // make the respawned hub an empty stranger the pushers cannot dial.
     let mut cluster = TestCluster::builder()
         .rust_nodes(1 + PUSHERS)
-        .with_node_store(0, "regolith")
+        .with_store("regolith")
         .with_keyring()
         .with_p2p()
+        .with_acp_local()
         .build()
         .await
         .expect("cluster start");
@@ -133,10 +69,38 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
     for pusher in 1..=PUSHERS {
         let client = cluster.client(pusher);
         client.schema_add(SCHEMA).expect("pusher schema");
+        cluster.nodes[pusher].process.kill();
+        std::env::set_var("DEFRA_P2P_RATE_LIMIT_BURST", "0");
+        cluster
+            .restart_node(pusher, Duration::from_secs(60))
+            .await
+            .expect("restart source with CAR serving disabled");
+        std::env::set_var("DEFRA_P2P_RATE_LIMIT_BURST", "500");
+        let client = cluster.client(pusher);
         client.p2p_connect(&[&hub_addr]).expect("connect to hub");
-        client
-            .p2p_replicator_set(&["User"], &hub_addr)
-            .expect("replicator pusher -> hub");
+        // Filtered replicas recover through rooted CAR; Controlled mode
+        // denies their legacy Bitswap data-block fallback as well.
+        let added = std::process::Command::new(client.binary_path())
+            .arg("--url")
+            .arg(cluster.api_url(pusher).strip_prefix("http://").unwrap())
+            .args([
+                "client",
+                "p2p",
+                "replicator",
+                "add",
+                "-c",
+                "User",
+                "--filter",
+                r#"{"age":{"_gte":0}}"#,
+                &hub_addr,
+            ])
+            .output()
+            .expect("add all-matching filtered replicator");
+        assert!(
+            added.status.success(),
+            "filtered replicator: {}",
+            String::from_utf8_lossy(&added.stderr)
+        );
     }
 
     // Continuous head-only write load: every live push has missing field
@@ -168,9 +132,7 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
         })
         .collect();
 
-    // Scale floor: make sure the writers have produced hundreds of documents
-    // (and therefore hundreds of nacked pushes queued in the pusher retry
-    // ladders behind the 1-slot hub) before hunting for the crash window.
+    // Keep the at-scale backlog while holding the missing-link fetch boundary.
     let load_deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let produced = doc_ids.lock().unwrap().len();
@@ -184,63 +146,7 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // Deterministic crash window: observe a live registration, freeze the
-    // pushers so Bitswap cannot resolve it, and confirm it is still pending
-    // after in-flight blocks settle. Only then is the hub killed.
-    let hub_api = cluster.api_url(0).to_string();
-    let pusher_pids: Vec<u32> = (1..=PUSHERS)
-        .map(|pusher| cluster.nodes[pusher].process.id().expect("pusher pid"))
-        .collect();
-    let freeze_deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        assert!(
-            Instant::now() < freeze_deadline,
-            "hub never held a pending-DAG registration across a pusher freeze"
-        );
-        if pending_dags(&hub_api).await == 0 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            continue;
-        }
-        for pid in &pusher_pids {
-            signal(*pid, "-STOP");
-        }
-        // Let the hub finish processing in-flight blocks: whatever can still
-        // resolve, resolves now.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        if pending_dags(&hub_api).await >= 1 {
-            break;
-        }
-        for pid in &pusher_pids {
-            signal(*pid, "-CONT");
-        }
-    }
-
-    let hub_log = cluster.nodes[0]
-        .rootdir
-        .parent()
-        .expect("hub rootdir has a parent")
-        .join("logs/stdout.log");
-    let registered = registered_doc_ids(&hub_log);
-    assert!(
-        !registered.is_empty(),
-        "hub never durably registered a pending DAG before the kill"
-    );
-    eprintln!(
-        "issue1154_repro: {} durably registered documents at kill time",
-        registered.len()
-    );
-
-    cluster.nodes[0].process.kill();
     stop_writers.store(true, Ordering::Relaxed);
-
-    cluster
-        .restart_node(0, Duration::from_secs(60))
-        .await
-        .expect("restart hub on its rootdir");
-
-    for pid in &pusher_pids {
-        signal(*pid, "-CONT");
-    }
     for handle in writer_handles {
         handle.join().expect("writer thread panicked");
     }
@@ -248,10 +154,87 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
         .expect("writers joined")
         .into_inner()
         .unwrap();
-    assert!(
-        expected_doc_ids.len() >= PUSHERS,
-        "writers never produced load"
+    assert!(expected_doc_ids.len() >= MIN_DOCS);
+
+    let hub_api = cluster.api_url(0).to_string();
+    let hub_log = cluster.nodes[0]
+        .rootdir
+        .parent()
+        .expect("hub rootdir has a parent")
+        .join("logs/stdout.log");
+    let registration_deadline = Instant::now() + Duration::from_secs(30);
+    let registered = loop {
+        let registered = registered_doc_ids(&hub_log);
+        if !registered.is_empty() {
+            break registered;
+        }
+        assert!(
+            Instant::now() < registration_deadline,
+            "hub never durably registered a pending DAG before the kill"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    eprintln!(
+        "issue1154_repro: {} durably registered documents at kill time",
+        registered.len()
     );
+
+    let registration = std::fs::read_to_string(&hub_log).expect("hub log");
+    let registration = registration
+        .lines()
+        .rev()
+        .find(|line| line.contains("Persisted pending DAG registration"))
+        .expect("pending registration");
+    let pending_cid = log_field(registration, "cid=").expect("registration CID");
+    let pending_doc = log_field(registration, "doc_id=").expect("registration doc ID");
+    let ack_deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let acknowledged = (1..=PUSHERS).any(|pusher| {
+            let log = cluster.nodes[pusher]
+                .rootdir
+                .parent()
+                .unwrap()
+                .join("logs/stdout.log");
+            std::fs::read_to_string(log).is_ok_and(|log| {
+                log.lines().any(|line| {
+                    line.contains("PushLog head hint accepted by replicator")
+                        && log_field(line, "cid=") == Some(pending_cid)
+                })
+            })
+        });
+        let status = sync_status(&cluster, 0).await;
+        let (sender_markers, _) = sender_retry_snapshot(&cluster).await;
+        if acknowledged
+            && status["pending_dag_capacity_shed"].as_u64().unwrap_or(0) > 0
+            && sender_markers >= MIN_DOCS - 1
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < ack_deadline,
+            "missing success ack or at-scale retry backlog"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Hold beyond the ten-second CAR-first fallback window. A CAR-only gate
+    // would allow libp2p Bitswap to discharge the supposedly frozen root.
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    assert_eq!(pending_dags(&hub_api).await, 1);
+    assert_eq!(sync_status(&cluster, 0).await["persisted_pending_dags"], 1);
+    let before_crash = hub.query("query { User { _docID } }").expect("hub query");
+    assert!(before_crash["User"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["_docID"] != pending_doc));
+
+    cluster.nodes[0].process.kill();
+
+    cluster
+        .restart_node(0, Duration::from_secs(60))
+        .await
+        .expect("restart hub on its rootdir");
+
     eprintln!(
         "issue1154_repro: {} committed documents expected on restarted hub",
         expected_doc_ids.len()
@@ -273,10 +256,23 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
+    // Restore proof precedes re-enabling source-side CAR serving.
+    for pusher in 1..=PUSHERS {
+        cluster.nodes[pusher].process.kill();
+        cluster
+            .restart_node(pusher, Duration::from_secs(60))
+            .await
+            .expect("restart source with normal request intake");
+        cluster
+            .client(pusher)
+            .p2p_connect(&[&hub_addr])
+            .expect("reconnect source");
+    }
+
     // Every document the hub durably registered must merge on the restarted
-    // hub. Those are the roots whose success ack destroyed the pusher's retry
-    // record, so a lost registration strands them with no owner at all -- the
-    // #1154 failure. The roots that were actionably nacked instead keep sender
+    // hub. These roots may have been success-acked, discharging the sender's
+    // retry record; losing their receiver registration is the #1154 failure.
+    // The roots that were actionably nacked instead keep sender
     // markers on the Go-compatible 30s..32m ladder; with a one-slot receiver,
     // requiring hundreds of those to traverse the ladder inside this test's
     // four-minute bound would test wall-clock tuning rather than crash

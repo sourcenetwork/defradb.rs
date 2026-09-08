@@ -196,7 +196,7 @@ pub struct SyncStatus {
     pub push_backlog: crate::sync::push_backlog::PushBacklogSnapshot,
     /// Gossip updates folded into a newer update during the short window.
     pub broadcast_coalesced_total: u64,
-    /// Replicator fan-outs folded before enumerating peers.
+    /// Duplicate replicator updates folded by the bounded outgoing queue.
     pub push_updates_coalesced_total: u64,
     /// Gossip messages rejected because an unsubscribed sender was configured
     /// only as an outbound replicator target.
@@ -641,8 +641,6 @@ pub(super) struct SyncRuntime<T: P2PTransport> {
 
     pub(super) broadcast_coalescer: Arc<super::broadcast_coalescer::BroadcastCoalescer>,
 
-    pub(super) push_fanout_coalescer: Arc<super::push_fanout_coalescer::PushFanoutCoalescer>,
-
     /// Temporary per-peer CAR grants scoped to DAGs in active outbound pushes.
     pub(super) selective_car_access: Arc<selective_car_access::SelectiveCarAccess>,
 
@@ -774,10 +772,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,
         ) = self.runtime.shutdown.non_authoritative_broadcast_stats();
+        let push_backlog = self.runtime.push_backlog.snapshot();
+        let push_updates_coalesced_total = push_backlog.coalesced_total;
         SyncStatus {
-            push_backlog: self.runtime.push_backlog.snapshot(),
+            push_backlog,
             broadcast_coalesced_total: self.runtime.broadcast_coalescer.coalesced(),
-            push_updates_coalesced_total: self.runtime.push_fanout_coalescer.coalesced(),
+            push_updates_coalesced_total,
             gossip_direction_filtered_total: self
                 .access
                 .gossip_direction_filtered
@@ -858,17 +858,20 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         }
     }
 
-    /// The receiver's sole re-arm loop (#1116 stage 2): every `interval`, claim
-    /// only as many due roots as the bounded fetch owner can accept.
+    /// The receiver's sole re-arm loop (#1116 stage 2): wake on newly eligible
+    /// work or each `interval`, claiming only what the bounded owner can accept.
     /// Registration, partial progress, reconnect, and restart only make roots
     /// due; none of them emits `DagNeedsFetch` independently.
     pub async fn run_pending_dag_retry_clock(&self, interval: Duration) {
+        let mut retry_tick = tokio::time::interval(interval);
+        retry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             if self.runtime.shutdown.is_shutting_down() {
                 return;
             }
             tokio::select! {
-                _ = tokio::time::sleep(interval) => {}
+                _ = retry_tick.tick() => {}
+                _ = self.manager.pending_dag_ready() => {}
                 _ = self.runtime.shutdown.cancelled() => return,
             }
             self.dispatch_due_pending_dag_fetches(tokio::time::Instant::now());

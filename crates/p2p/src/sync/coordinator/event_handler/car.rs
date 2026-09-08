@@ -208,14 +208,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let peer_str = peer_id.to_string();
         let serve = self.serve_acp.get();
         let mut identity: Option<acp::Identity> = None;
-        let candidates = std::mem::take(&mut blocks.blocks)
-            .into_iter()
-            .map(|(cid, data)| (cid, Some(data), None))
-            .chain(
-                std::mem::take(&mut blocks.oversized_blocks)
-                    .into_iter()
-                    .map(|(cid, size)| (cid, None, Some(size))),
-            );
         let rooted_grant = self
             .runtime
             .selective_car_access
@@ -224,18 +216,38 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .has_restart_safe_root_authority(peer_id, root_cid)
                 .await;
         let granted_cids = if rooted_grant {
-            crate::sync::car::collect_dag_cids(
+            match crate::sync::car_authorization::requested_descendants(
                 self.manager.blockstore().as_ref(),
-                root_cid,
-                crate::sync::car::CAR_MAX_BLOCKS,
+                *root_cid,
+                blocks
+                    .blocks
+                    .iter()
+                    .map(|(cid, _)| *cid)
+                    .chain(blocks.oversized_blocks.iter().map(|(cid, _)| *cid))
+                    .collect(),
             )
             .await
-            .ok()
-            .map(|cids| cids.into_iter().collect::<std::collections::HashSet<_>>())
+            {
+                Ok(cids) => Some(cids),
+                Err(error) => {
+                    // A failed rooted check grants nothing, but must not veto
+                    // independent per-block replicator or ACP authority.
+                    tracing::debug!(%error, %peer_id, %root_cid, "CAR rooted authorization unavailable; checking individual grants");
+                    None
+                }
+            }
         } else {
             None
         };
 
+        let candidates = std::mem::take(&mut blocks.blocks)
+            .into_iter()
+            .map(|(cid, data)| (cid, Some(data), None))
+            .chain(
+                std::mem::take(&mut blocks.oversized_blocks)
+                    .into_iter()
+                    .map(|(cid, size)| (cid, None, Some(size))),
+            );
         for (cid, data, oversized) in candidates {
             let granted = granted_cids
                 .as_ref()

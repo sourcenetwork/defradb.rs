@@ -76,6 +76,29 @@ fn linked_dag_providers_require_positive_missing_cid_evidence() {
     );
 }
 
+#[tokio::test]
+async fn pending_dag_wakeup_requires_registration_and_preserves_backoff() {
+    use futures::FutureExt;
+
+    let manager = test_manager();
+    let root = test_cid(900);
+    let inserted_at = Instant::now();
+    manager.insert_pending_dag(root, pending_dag_from("wake", Some("peer"), inserted_at));
+    assert!(manager.pending_dag_ready().now_or_never().is_none());
+    manager.expedite_pending_dag_retry(&root);
+    assert!(manager.pending_dag_ready().now_or_never().is_none());
+
+    manager.mark_pending_dag_recovery_registered(&root, inserted_at);
+    manager.mark_pending_dag_recovery_registered(&root, inserted_at);
+    assert!(manager.pending_dag_ready().now_or_never().is_some());
+    assert!(manager.pending_dag_ready().now_or_never().is_none());
+    let now = tokio::time::Instant::now();
+    assert!(manager.try_claim_pending_dag_dispatch(&root, now));
+    manager.mark_pending_dag_recovery_registered(&root, inserted_at);
+    assert!(manager.pending_dag_ready().now_or_never().is_some());
+    assert!(!manager.try_claim_pending_dag_dispatch(&root, now));
+}
+
 struct BlockingRemoveStore {
     inner: crate::sync::pending_store::PendingDagStore<RegolithStore>,
     remove_calls: std::sync::atomic::AtomicUsize,

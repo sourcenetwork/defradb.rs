@@ -1373,6 +1373,47 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn receiver_clock_wakes_for_new_work_without_waiting_for_retry_tick() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (coordinator, mut events) =
+            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
+                .await
+                .expect("coordinator");
+        let coordinator = Arc::new(coordinator);
+        let runner = Arc::clone(&coordinator);
+        let clock = tokio::spawn(async move {
+            runner
+                .run_pending_dag_retry_clock(Duration::from_secs(60))
+                .await;
+        });
+        // Let the initial tick run before admitting work. No virtual time
+        // advances until after the assertion below.
+        tokio::task::yield_now().await;
+        let now = tokio::time::Instant::now();
+        let (field_cid, _) = create_lww_block("name");
+        let (root_cid, root_block) = create_composite_block("wake", "name", field_cid);
+        coordinator
+            .manager()
+            .process_pushlog(
+                &make_broadcast("wake", root_cid, root_block, "collection1"),
+                Some("peer-1"),
+                false,
+                None,
+            )
+            .await
+            .expect("register pending root");
+        tokio::task::yield_now().await;
+        assert!(
+            matches!(events.try_recv(), Ok(SyncEvent::DagNeedsFetch { root_cid: root, .. }) if root == root_cid)
+        );
+        assert_eq!(tokio::time::Instant::now(), now);
+        assert_eq!(coordinator.sync_status().pending_dag_retry_dispatched, 1);
+        coordinator.shutdown().await;
+        clock.await.expect("retry owner exits on shutdown");
+    }
+
     #[tokio::test]
     async fn receiver_clock_does_not_claim_behind_the_fetch_task_bound() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());

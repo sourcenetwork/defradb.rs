@@ -1,6 +1,73 @@
 use super::*;
 use crate::sync::car::{decode_car, decode_car_oversized, encode_car_response, CAR_MAX_BYTES};
 
+#[tokio::test(start_paused = true)]
+async fn filtered_root_grant_covers_payloads_and_only_related_size_notices() {
+    let peer = random_peer_id();
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let small_data = b"small";
+    let small = cid_for(small_data);
+    let large_data = vec![0; CAR_MAX_BYTES + 1];
+    let large = cid_for(&large_data);
+    let unrelated_data = vec![1; CAR_MAX_BYTES + 1];
+    let unrelated = cid_for(&unrelated_data);
+    let root_data =
+        serde_ipld_dagcbor::to_vec(&ipld_core::ipld!({ "small": small, "large": large })).unwrap();
+    let root = cid_for(&root_data);
+    for (cid, data) in [
+        (small, small_data.as_slice()),
+        (large, large_data.as_slice()),
+        (unrelated, unrelated_data.as_slice()),
+        (root, root_data.as_slice()),
+    ] {
+        blockstore.put(&cid, data).await.unwrap();
+    }
+    let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        blockstore,
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        filtered_replicator_registry(&peer, "collection1"),
+        Arc::new(NoOpCollectionStorage),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_owned(),
+        }),
+        Arc::new(LateBoundServeAcp::default()),
+    )
+    .await
+    .unwrap();
+
+    for allowed in [false, true] {
+        let requesting_peer = if allowed {
+            peer.clone()
+        } else {
+            random_peer_id()
+        };
+        coordinator
+            .handle_transport_event(selective_car_fetch_event(
+                requesting_peer,
+                root,
+                vec![large, unrelated, small],
+            ))
+            .await
+            .unwrap();
+        let responses = transport.car_responses();
+        let response = responses.last().unwrap();
+        let (_, blocks) = decode_car(response).unwrap();
+        let notices = decode_car_oversized(response).unwrap();
+        if allowed {
+            assert_eq!(blocks, vec![(small, small_data.to_vec())]);
+            assert_eq!(notices, vec![(large, large_data.len())]);
+        } else {
+            assert!(blocks.is_empty());
+            assert!(notices.is_empty());
+        }
+    }
+}
+
 #[tokio::test]
 async fn oversized_car_block_keeps_sibling_and_accurate_presence_counts() {
     for allowed in [false, true] {

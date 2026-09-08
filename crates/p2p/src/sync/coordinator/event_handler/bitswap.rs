@@ -227,7 +227,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.manager
             .block_sync_completion_tracker()
             .cancel(query_id);
-        self.manager.expedite_pending_dag_retry(&root_cid);
+        // The dispatch claim already set the retry deadline. A busy local
+        // owner is not new provider availability: keep that backoff rather
+        // than immediately fetching the same DAG again.
         tracing::debug!(
             query_id = query_id.0,
             root_cid = %root_cid,
@@ -643,6 +645,46 @@ mod tests {
             .await
             .expect("block stores after the owner releases");
         assert!(blockstore.has(&cid).await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deferred_ingest_preserves_the_claimed_retry_deadline() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (coordinator, _events) =
+            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
+                .await
+                .unwrap();
+        let (field, _) = create_lww_block("name");
+        let (root, block) = create_composite_block("doc123", "name", field);
+        coordinator
+            .manager()
+            .process_pushlog(
+                &make_broadcast("doc123", root, block, "collection1"),
+                Some("peer-1"),
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+        let now = tokio::time::Instant::now();
+        assert!(coordinator
+            .manager()
+            .try_claim_pending_dag_dispatch(&root, now));
+        let query = QueryId(77);
+        let _ = coordinator.manager().register_query(query, root);
+        coordinator.handle_bitswap_deferred(query).await.unwrap();
+        assert!(coordinator.manager().take_query_root(query).is_none());
+        assert!(
+            !coordinator
+                .manager()
+                .try_claim_pending_dag_dispatch(&root, now),
+            "local ingest contention must not turn the eligibility wakeup into a fetch loop"
+        );
+        tokio::time::advance(Duration::from_secs(4)).await;
+        assert!(coordinator
+            .manager()
+            .try_claim_pending_dag_dispatch(&root, tokio::time::Instant::now()));
     }
 
     /// #1116 stage 2 (#1112): registration and failed completion only update
