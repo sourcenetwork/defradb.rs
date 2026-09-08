@@ -128,6 +128,34 @@ impl PendingDagRegistry {
             .is_some_and(|(current, current_root)| *current_root == root_cid || version > *current)
     }
 
+    /// True when a newer head for the same sender scope is the current
+    /// pending root, so this root is subsumed by an obligation that is
+    /// already registered.
+    pub(super) fn scope_head_is_covered_by_current(
+        &self,
+        root_cid: Cid,
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        let (Some(source_peer), Some(priority)) = (source_peer, head_priority) else {
+            return false;
+        };
+        let key = PendingScopeKey {
+            source_peer: source_peer.to_owned(),
+            collection_id: collection_id.to_owned(),
+            doc_id: doc_id.to_owned(),
+        };
+        let version = HeadVersion {
+            priority,
+            cid: root_cid,
+        };
+        self.current_by_source_scope
+            .get(&key)
+            .is_some_and(|(current, current_root)| *current_root != root_cid && version <= *current)
+    }
+
     fn scope_key(dag: &PendingDag) -> Option<PendingScopeKey> {
         let source_peer = dag.source_peer.as_ref()?;
         dag.head_priority?;
