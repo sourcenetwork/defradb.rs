@@ -62,8 +62,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     /// Attempt batch merge with binary-split retry on failure.
     ///
     /// Tries the whole batch first. On failure, splits into two halves and
-    /// recurses on each half. Base case: single block falls back to individual
-    /// processing. This isolates bad blocks with ~log2(N) batch attempts
+    /// recurses on each half. A single root also uses the shared transaction:
+    /// its history may contain thousands of revisions. Only a failed singleton
+    /// falls back to individual processing. This isolates bad blocks with ~log2(N) batch attempts
     /// instead of falling back to N individual transactions.
     #[allow(clippy::type_complexity)]
     pub(crate) fn try_batch_merge_with_split<'a>(
@@ -71,8 +72,8 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         blocks: &'a [MergeBlock],
     ) -> defra_core::thread_bounds::MaybeBoxFuture<'a, Vec<Result<MergeOutcome, MergeError>>> {
         Box::pin(async move {
-            if blocks.len() <= 1 {
-                return self.merge_blocks_individually(blocks).await;
+            if blocks.is_empty() {
+                return Vec::new();
             }
 
             match self.try_batch_merge(blocks).await {
@@ -89,6 +90,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     self.merge_blocks_individually(blocks).await
                 }
                 Err(e) => {
+                    if blocks.len() == 1 {
+                        return self.merge_blocks_individually(blocks).await;
+                    }
                     tracing::debug!(
                         error = %e,
                         batch_size = blocks.len(),
@@ -247,11 +251,19 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             }
         }
 
-        let field_block_finalizations = pending_field_block_finalizations.into_inner().unwrap();
-        for finalization in field_block_finalizations {
-            self.best_effort_finalize_linked_field_blocks(&finalization.cids)
-                .await;
-        }
+        // Finalization belongs to the committed batch too. Persisting one
+        // merged marker transaction per historical revision would restore
+        // linear fsync overhead after the shared document transaction.
+        let mut field_cids: Vec<Cid> = pending_field_block_finalizations
+            .into_inner()
+            .unwrap()
+            .into_iter()
+            .flat_map(|finalization| finalization.cids)
+            .collect();
+        field_cids.sort_unstable();
+        field_cids.dedup();
+        self.best_effort_finalize_linked_field_blocks(&field_cids)
+            .await;
 
         // Emit all collected events
         if let Some(bus) = self.db.event_bus() {

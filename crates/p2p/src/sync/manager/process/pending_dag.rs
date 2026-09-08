@@ -104,8 +104,14 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if let Some(dag) = self.pending_dags.write().get_mut(root_cid) {
             if dag.inserted_at == inserted_at {
                 dag.is_recovery_registered = true;
+                self.pending_dag_ready.notify_one();
             }
         }
+    }
+
+    /// Wake the existing dispatch owner without creating another fetch owner.
+    pub(crate) async fn pending_dag_ready(&self) {
+        self.pending_dag_ready.notified().await;
     }
 
     /// Milliseconds until the earliest due pending-DAG retry, including a
@@ -327,8 +333,12 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
         let superseded =
             superseded_root.and_then(|root| pending.remove(&root).map(|previous| (root, previous)));
+        let registered = dag.is_recovery_registered;
         pending.insert(root_cid, dag);
         self.diagnostics.observe_pending_dag_depth(pending.len());
+        if registered {
+            self.pending_dag_ready.notify_one();
+        }
         PendingDagAdmission::Admitted {
             superseded: Box::new(superseded),
         }
@@ -385,6 +395,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     pub fn expedite_pending_dag_retry(&self, root_cid: &Cid) {
         if let Some(dag) = self.pending_dags.write().get_mut(root_cid) {
             dag.next_retry_at = dag.next_retry_at.min(tokio::time::Instant::now());
+            if dag.is_recovery_registered {
+                self.pending_dag_ready.notify_one();
+            }
         }
     }
 

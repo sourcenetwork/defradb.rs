@@ -97,10 +97,6 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeHandler
         &self,
         blocks: &[MergeBlock],
     ) -> Vec<Result<MergeOutcome, Self::Error>> {
-        if blocks.len() <= 1 {
-            return self.merge_blocks_individually(blocks).await;
-        }
-
         self.try_batch_merge_with_split(blocks).await
     }
 }

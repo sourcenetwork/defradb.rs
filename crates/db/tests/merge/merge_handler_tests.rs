@@ -148,7 +148,7 @@ async fn register_test_block_owner(
 
 /// Create a document locally through the genesis-CID identity flow:
 /// blocks first (derives the DocID), then mappings, then the blob.
-async fn create_doc_locally(
+pub(super) async fn create_doc_locally(
     handler: &DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
     collection: &Collection,
     doc: &mut Document,
@@ -224,7 +224,7 @@ fn make_handler() -> (
     (handler, blockstore)
 }
 
-async fn make_handler_with_schema_and_bus() -> (
+pub(super) async fn make_handler_with_schema_and_bus() -> (
     DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
     Arc<DefraBlockstore<RegolithStore>>,
     Arc<ChannelBus>,

@@ -203,14 +203,21 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .has_restart_safe_root_authority(peer_id, root_cid)
                 .await;
         let granted_cids = if rooted_grant {
-            crate::sync::car::collect_dag_cids(
+            match crate::sync::car_authorization::requested_descendants(
                 self.manager.blockstore().as_ref(),
-                root_cid,
-                crate::sync::car::CAR_MAX_BLOCKS,
+                *root_cid,
+                blocks.iter().map(|(cid, _)| *cid).collect(),
             )
             .await
-            .ok()
-            .map(|cids| cids.into_iter().collect::<std::collections::HashSet<_>>())
+            {
+                Ok(cids) => Some(cids),
+                Err(error) => {
+                    // A failed rooted check grants nothing, but must not veto
+                    // independent per-block replicator or ACP authority.
+                    tracing::debug!(%error, %peer_id, %root_cid, "CAR rooted authorization unavailable; checking individual grants");
+                    None
+                }
+            }
         } else {
             None
         };
