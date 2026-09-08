@@ -126,34 +126,40 @@ async fn set_embedding_skips_when_effective_config_is_missing() {
 
 #[tokio::test]
 async fn set_embedding_uses_each_field_provider_and_model() {
-    use axum::{routing::post, Json, Router};
+    use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
     use serde_json::{json, Value};
     use tokio::net::TcpListener;
 
-    async fn openai(Json(request): Json<Value>) -> Json<Value> {
-        assert_eq!(
-            request,
-            json!({"model": "text-embedding-3-small", "input": "hello\n"})
-        );
-        Json(json!({"data": [{"embedding": [1.0, 0.0]}]}))
+    type Requests = tokio::sync::mpsc::UnboundedSender<(&'static str, HeaderMap, Value)>;
+
+    async fn openai(
+        State(requests): State<Requests>,
+        headers: HeaderMap,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        requests.send(("openai", headers, request)).unwrap();
+        Json(json!({"data": [{"embedding": [3.0, 4.0]}]}))
     }
 
-    async fn ollama(Json(request): Json<Value>) -> Json<Value> {
-        assert_eq!(
-            request,
-            json!({"model": "nomic-embed-text", "prompt": "world\n"})
-        );
+    async fn ollama(
+        State(requests): State<Requests>,
+        headers: HeaderMap,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        requests.send(("ollama", headers, request)).unwrap();
         Json(json!({"embedding": [0.0, 2.0]}))
     }
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
             Router::new()
                 .route("/openai/embeddings", post(openai))
-                .route("/ollama/embeddings", post(ollama)),
+                .route("/ollama/embeddings", post(ollama))
+                .with_state(requests),
         )
         .await
         .unwrap();
@@ -181,16 +187,35 @@ async fn set_embedding_uses_each_field_provider_and_model() {
         &mut doc,
         true,
         None,
-        &EmbeddingClientConfig::new(),
+        &EmbeddingClientConfig::new()
+            .with_url(format!("http://{address}/unused"))
+            .with_model("unused-model")
+            .with_api_key("test-key"),
     )
     .await
     .unwrap();
     server.abort();
 
+    let mut requests: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+    requests.sort_by_key(|(provider, _, _)| *provider);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].0, "ollama");
+    assert!(requests[0].1.get("authorization").is_none());
+    assert_eq!(
+        requests[0].2,
+        json!({"model": "nomic-embed-text", "prompt": "world\n"})
+    );
+    assert_eq!(requests[1].0, "openai");
+    assert_eq!(requests[1].1["authorization"], "Bearer test-key");
+    assert_eq!(
+        requests[1].2,
+        json!({"model": "text-embedding-3-small", "input": "hello\n"})
+    );
+
     assert_eq!(generated, vec!["content_v", "summary_v"]);
     assert_eq!(
         doc.get("content_v"),
-        Some(&document::NormalValue::Float64Array(vec![1.0, 0.0]))
+        Some(&document::NormalValue::Float64Array(vec![3.0, 4.0]))
     );
     assert_eq!(
         doc.get("summary_v"),
