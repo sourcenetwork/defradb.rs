@@ -22,8 +22,9 @@ to bypass a timeout: its sequence and signing identity belong together.
 
 Policy creation returns the ID from the verified creation event and checks the
 policy record's actor, worker, submission ID, and creation revision. Policy,
-permission, and access-decision reads verify native evidence. Object-owner
-lookup still uses the legacy read endpoint.
+permission, access-decision and object-owner reads verify native evidence.
+Owner lookup proves the complete set of owner relations; missing or archived
+objects have no live owner. Unavailable evidence remains an error.
 
 Receipt recovery is distinct from caller-level operation idempotency. Retrying
 a completed operation can issue a new request, including creating another

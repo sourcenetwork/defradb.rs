@@ -19,7 +19,7 @@ use serde::Deserialize;
 
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
-use super::client::{ClientError, HubRsClient};
+use super::client::HubRsClient;
 use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
     encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token,
@@ -106,20 +106,6 @@ impl HubRsProvider {
         };
         provider.recover_pending().await?;
         Ok(provider)
-    }
-
-    async fn guarded_eth_call<F, Fut, T>(&self, op: F) -> Result<T, ProviderError>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<T, ClientError>>,
-    {
-        match op().await {
-            Ok(value) => Ok(value),
-            Err(ClientError::Http(error)) if error.is_timeout() => {
-                Err(ProviderError::Unavailable(format!("timeout: {error}")))
-            }
-            Err(e) => Err(ProviderError::Query(e.to_string())),
-        }
     }
 
     async fn query_policy_raw(&self, policy_id: &str) -> Result<Option<String>, ProviderError> {
@@ -501,28 +487,20 @@ impl SourceHubProvider for HubRsProvider {
         resource: &str,
         object_id: &str,
     ) -> Result<(bool, String), ProviderError> {
-        let pid = Self::policy_id_to_bytes32(policy_id)?;
-        let call = IAcp::getObjectOwnerCall {
-            policyId: pid,
-            resource: resource.to_string(),
-            objectId: object_id.to_string(),
+        let policy = hex::encode(Self::policy_id_to_bytes32(policy_id)?);
+        let object = acp_light_client::Object {
+            resource: resource.into(),
+            id: object_id.into(),
         };
-        let calldata = Bytes::from(call.abi_encode());
-
-        let result = self
-            .guarded_eth_call(|| self.client.eth_call(ACP_ADDRESS, calldata.clone()))
-            .await?;
-
-        let decoded = IAcp::getObjectOwnerCall::abi_decode_returns(&result)
-            .map_err(|e| ProviderError::Query(format!("ABI decode: {}", e)))?;
-
-        let owner = if decoded.registered {
-            String::from_utf8(decoded.record.to_vec()).unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-        Ok((decoded.registered, owner))
+        let owner = self
+            .light_client
+            .read_object_owner(&policy, &object)
+            .await
+            .map_err(|e| ProviderError::Query(format!("owner proof: {e}")))?;
+        Ok(match owner {
+            Some(owner) => (true, owner.0.as_str().into()),
+            None => (false, String::new()),
+        })
     }
 
     async fn verify_access(

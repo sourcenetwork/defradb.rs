@@ -49,9 +49,9 @@ keyring = { path = "../keyring" }
 events = { path = "../events" }
 rand.workspace = true
 tempfile = "3"
-hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
-hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
-hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "c0c62ddb4965725beddd1236be228fab2e3ede23" }
+hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "8e529e6f9104969109381392930650074697a479" }
+hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "8e529e6f9104969109381392930650074697a479" }
+hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "8e529e6f9104969109381392930650074697a479" }
 commonware-codec = "2026.9.0"
 
 # Logging
@@ -67,7 +67,7 @@ alloy-primitives.workspace = true
 bs58.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "c4c5accbced1eb5e74a481b0f6cea235d5a4f647" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "612421f8ac0cd7d1f53930d5b7ae34a06d8045b8" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true

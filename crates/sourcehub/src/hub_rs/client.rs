@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Bytes, B256};
 use hub_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse, RECEIPT_RESPONSE_BYTES};
 use serde::de::DeserializeOwned;
 
@@ -107,15 +107,6 @@ impl HubRsClient {
             response.verify(hash, trusted)?;
         }
         Ok(response)
-    }
-
-    pub async fn eth_call(&self, to: Address, data: Bytes) -> Result<Bytes, ClientError> {
-        self.rpc(
-            "eth_call",
-            serde_json::json!([{ "to": to, "data": data }, "latest"]),
-            4 << 20,
-        )
-        .await
     }
 }
 

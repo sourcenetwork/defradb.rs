@@ -54,10 +54,48 @@ async fn archived_owner_record_does_not_authorize_access() {
         .verify_access(&policy, "users", "archived-document", "owner", &owner_did)
         .await
         .expect("owner proof"));
-    provider
-        .archive_object(&token, &policy, "users", "archived-document")
+    let document_acp = SourceHubDocumentACP::without_access_cache(provider.clone());
+    assert_eq!(
+        document_acp
+            .get_doc_owner(&policy, "users", "archived-document")
+            .await
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        owner_did
+    );
+    assert!(document_acp
+        .is_doc_registered(&policy, "users", "archived-document")
         .await
-        .expect("archive object");
+        .unwrap());
+    assert_eq!(
+        provider
+            .query_object_owner(&format!("0x{policy}"), "users", "archived-document")
+            .await
+            .unwrap(),
+        (true, owner_did.clone())
+    );
+    assert!(!document_acp
+        .is_doc_registered(&policy, "users", "never-registered")
+        .await
+        .unwrap());
+    assert!(provider
+        .query_object_owner(&policy, "users/other", "archived-document")
+        .await
+        .is_err());
+    document_acp
+        .unregister_doc_object(&policy, "users", "archived-document")
+        .await
+        .expect("archive through verified owner lookup");
+    assert!(!document_acp
+        .is_doc_registered(&policy, "users", "archived-document")
+        .await
+        .unwrap());
+    assert!(document_acp
+        .get_doc_owner(&policy, "users", "archived-document")
+        .await
+        .unwrap()
+        .is_none());
     for _ in 0..2 {
         assert!(
             !provider
@@ -67,7 +105,6 @@ async fn archived_owner_record_does_not_authorize_access() {
             "retained ownership must not grant access after archival"
         );
     }
-    let document_acp = SourceHubDocumentACP::without_access_cache(provider);
     for identity in [
         Identity::anonymous(),
         Identity::authenticated(identity::Did::new(&owner_did).unwrap()),
@@ -252,6 +289,11 @@ resources:
         .await
         .unwrap_err();
     assert!(error.to_string().contains("stale"), "{error:?}");
+    let error = provider
+        .query_object_owner(&policy, "file", "report")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("stale"), "{error:?}");
 
     hub.restart_node(0).unwrap();
     hub.wait_ready(std::time::Duration::from_secs(30))
@@ -275,6 +317,11 @@ resources:
                 }
                 Err(error) => {
                     assert!(error.to_string().contains("stale"), "{error:?}");
+                    let error = provider
+                        .query_object_owner(&policy, "file", "report")
+                        .await
+                        .unwrap_err();
+                    assert!(error.to_string().contains("stale"), "{error:?}");
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
@@ -282,4 +329,11 @@ resources:
     })
     .await
     .expect("fresh verified revision after Hub restart");
+    assert_eq!(
+        provider
+            .query_object_owner(&policy, "file", "report")
+            .await
+            .unwrap(),
+        (true, owner_did)
+    );
 }

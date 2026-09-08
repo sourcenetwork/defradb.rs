@@ -1,3 +1,4 @@
+use crate::hub_rs::client::ClientError;
 use alloy_primitives::Bytes;
 use hub_domain::{ExecutionReceipt, NativeTx};
 use tokio::sync::OwnedMutexGuard;
@@ -81,7 +82,7 @@ impl HubRsProvider {
                         Ok(_) => awaiting_receipt = true,
                         Err(error) if error.retryable() => {}
                         // Admission errors cannot disprove an earlier submission.
-                        Err(super::ClientError::Rpc { .. }) => awaiting_receipt = true,
+                        Err(ClientError::Rpc { .. }) => awaiting_receipt = true,
                         Err(error) => return Err(unavailable(error)),
                     },
                     Ok(None) => {}
