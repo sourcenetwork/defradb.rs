@@ -178,7 +178,7 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
         .expect("query initial hub Users");
     let initially_merged = initial_result["User"].as_array().map_or(0, Vec::len);
 
-    // M1: wait for at least one later retry to merge, then require exact
+    // M1: wait for full convergence or at least one later retry to merge, then require exact
     // obligation conservation across sender markers, durable receiver roots,
     // and merged documents. The 90s bound covers the first two production
     // ladder rungs without weakening their Go-compatible timing.
@@ -229,7 +229,10 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
 
         let balanced =
             present.len() + receiver_obligations + sender_markers == expected_doc_ids.len();
-        if present.len() > initially_merged && sender_jobs == 0 && balanced {
+        let fully_merged = expected_doc_ids
+            .iter()
+            .all(|doc_id| present.contains(doc_id.as_str()));
+        if (fully_merged || present.len() > initially_merged) && sender_jobs == 0 && balanced {
             break;
         }
         assert!(
