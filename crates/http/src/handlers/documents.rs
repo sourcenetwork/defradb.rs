@@ -5,19 +5,19 @@
 //!
 //! All endpoints enforce NAC permissions when NAC is enabled.
 //!
-//! Note: Create, update, and delete operations return empty bodies to match
-//! Go DefraDB behavior. Go returns only HTTP 200 status with no body.
+//! Creation returns document IDs; update and delete return empty success bodies.
 
 use axum::{
     body::Bytes,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::error::HttpError;
+use crate::handlers::txn_header::rest_for_request;
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::router::{AppState, NodePermission};
@@ -33,14 +33,12 @@ use crate::router::{AppState, NodePermission};
 pub async fn get_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path((collection, doc_id)): Path<(String, String)>,
 ) -> Result<Json<JsonValue>, HttpError> {
     require_permission(&state, &identity, NodePermission::DocumentRead).await?;
 
-    let rest = state
-        .rest
-        .as_ref()
-        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    let rest = rest_for_request(&state, &headers)?;
 
     match rest
         .get_document(&collection, &doc_id, identity.did())
@@ -74,19 +72,17 @@ pub async fn get_document(
 ///
 /// Requires `DocumentUpdate` permission when NAC is enabled.
 ///
-/// Returns HTTP 200 with empty body to match Go DefraDB behavior.
+/// Returns the created document IDs in input order.
 pub async fn create_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(collection): Path<String>,
     Json(body): Json<JsonValue>,
-) -> Result<StatusCode, HttpError> {
+) -> Result<Json<Vec<String>>, HttpError> {
     require_permission(&state, &identity, NodePermission::DocumentUpdate).await?;
 
-    let rest = state
-        .rest
-        .as_ref()
-        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    let rest = rest_for_request(&state, &headers)?;
 
     let result = if body.is_array() {
         let docs: Vec<JsonValue> = body
@@ -108,8 +104,16 @@ pub async fn create_document(
                 count = docs.len(),
                 "Documents created"
             );
-            // Return empty body to match Go DefraDB behavior
-            Ok(StatusCode::OK)
+            let ids = docs
+                .iter()
+                .map(|doc| {
+                    doc.get("_docID")
+                        .and_then(JsonValue::as_str)
+                        .map(str::to_owned)
+                        .ok_or_else(|| HttpError::Internal("created document has no ID".into()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Json(ids))
         }
         Err(e) => {
             tracing::warn!(collection = %collection, error = %e, "Failed to create document");
@@ -131,15 +135,13 @@ pub async fn create_document(
 pub async fn update_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path((collection, doc_id)): Path<(String, String)>,
     Json(patch): Json<JsonValue>,
 ) -> Result<StatusCode, HttpError> {
     require_permission(&state, &identity, NodePermission::DocumentUpdate).await?;
 
-    let rest = state
-        .rest
-        .as_ref()
-        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    let rest = rest_for_request(&state, &headers)?;
 
     match rest
         .update_document(&collection, &doc_id, patch, identity.did())
@@ -179,14 +181,12 @@ pub async fn update_document(
 pub async fn delete_document(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path((collection, doc_id)): Path<(String, String)>,
 ) -> Result<StatusCode, HttpError> {
     require_permission(&state, &identity, NodePermission::DocumentDelete).await?;
 
-    let rest = state
-        .rest
-        .as_ref()
-        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    let rest = rest_for_request(&state, &headers)?;
 
     match rest
         .delete_document(&collection, &doc_id, identity.did())
@@ -322,6 +322,7 @@ fn required_updater(request: &JsonValue) -> Result<JsonValue, HttpError> {
 pub async fn delete_documents_with_filter(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(collection): Path<String>,
     body: Bytes,
 ) -> Result<Json<DocumentsResult>, HttpError> {
@@ -329,10 +330,7 @@ pub async fn delete_documents_with_filter(
 
     let filter = required_filter(&request_body(&body)?)?;
 
-    let rest = state
-        .rest
-        .as_ref()
-        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    let rest = rest_for_request(&state, &headers)?;
 
     match rest
         .delete_documents_with_filter(&collection, &filter, identity.did())
@@ -364,6 +362,7 @@ pub async fn delete_documents_with_filter(
 pub async fn update_documents_with_filter(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(collection): Path<String>,
     body: Bytes,
 ) -> Result<Json<DocumentsResult>, HttpError> {
@@ -373,10 +372,7 @@ pub async fn update_documents_with_filter(
     let filter = required_filter(&request)?;
     let updater = required_updater(&request)?;
 
-    let rest = state
-        .rest
-        .as_ref()
-        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    let rest = rest_for_request(&state, &headers)?;
 
     match rest
         .update_documents_with_filter(&collection, &filter, &updater, identity.did())

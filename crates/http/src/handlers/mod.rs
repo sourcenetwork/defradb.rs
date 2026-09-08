@@ -45,7 +45,7 @@ pub use collections::{
     collection_exists, delete_collection_versions, delete_collections_by_names,
     describe_collection, find_collection_by_id, get_all_collections, get_collection_by_version_id,
     get_collection_doc_ids, list_collections, patch_collection, set_active, truncate_collection,
-    CollectionDocIdsResponse, CollectionsResponse,
+    CollectionDocIdsResponse,
 };
 pub use documents::{
     create_document, delete_document, delete_documents_with_filter, get_document, update_document,

@@ -40,7 +40,16 @@ struct Versions {
 }
 
 fn version(name: &str, version_id: &str, collection_id: &str, active: bool) -> CollectionVersion {
-    let mut version = CollectionVersion::new(name, version_id, collection_id, vec![]);
+    let mut version = CollectionVersion::new(
+        name,
+        version_id,
+        collection_id,
+        vec![schema::FieldDescription::new(
+            "field-id",
+            "title",
+            schema::FieldKind::string(),
+        )],
+    );
     version.is_active = active;
     version
 }
@@ -119,11 +128,16 @@ async fn names(query: &str) -> Vec<String> {
     let (status, body) = get(router(), query).await;
     assert_eq!(status, StatusCode::OK, "{query}: {body}");
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
-    parsed["collections"]
+    parsed
         .as_array()
         .expect("collections array")
         .iter()
-        .map(|name| name.as_str().expect("name is a string").to_string())
+        .map(|version| {
+            version["Name"]
+                .as_str()
+                .expect("name is a string")
+                .to_string()
+        })
         .collect()
 }
 
@@ -158,7 +172,7 @@ async fn a_collection_id_selects_its_active_version() {
 async fn get_inactive_widens_to_the_inactive_versions() {
     assert_eq!(
         names("?get_inactive=true").await,
-        vec!["Books", "Orders", "Users"]
+        vec!["Books", "Orders", "Users", "Users"]
     );
     assert_eq!(names("").await, vec!["Books", "Users"]);
 }
@@ -185,13 +199,17 @@ async fn a_name_with_get_inactive_reaches_an_inactive_version() {
     assert!(names("?name=Orders").await.is_empty());
 }
 
-/// The listing is a name list, so the two versions of one collection must not
-/// show up as a repeated name.
 #[tokio::test]
-async fn a_collection_with_two_versions_is_named_once() {
+async fn collection_listing_preserves_each_selected_version() {
+    let (status, body) = get(router(), "?collection_id=users-c&get_inactive=true").await;
+    assert_eq!(status, StatusCode::OK);
+    let actual: Vec<CollectionVersion> = serde_json::from_str(&body).unwrap();
     assert_eq!(
-        names("?collection_id=users-c&get_inactive=true").await,
-        vec!["Users"]
+        actual,
+        vec![
+            version("Users", "users-v1", "users-c", false),
+            version("Users", "users-v2", "users-c", true)
+        ]
     );
 }
 
@@ -246,7 +264,7 @@ async fn get_inactive_accepts_every_go_boolean_form() {
     for value in ["1", "t", "T", "true", "TRUE", "True"] {
         assert_eq!(
             names(&format!("?get_inactive={value}")).await,
-            vec!["Books", "Orders", "Users"],
+            vec!["Books", "Orders", "Users", "Users"],
             "{value} should be true"
         );
     }
@@ -289,7 +307,8 @@ async fn a_transaction_header_reads_transaction_visible_collections() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
-    assert_eq!(body["collections"], serde_json::json!(["MockCollection"]));
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["Name"], "MockCollection");
 }
 
 /// Go keys the selectors off `Query().Has(..)`, so `?name=` is a name set to

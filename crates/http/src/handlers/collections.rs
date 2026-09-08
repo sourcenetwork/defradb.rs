@@ -17,19 +17,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{http_error_from_backend_message, HttpError};
 use crate::handlers::collection_selector::CollectionSelectorQuery;
-use crate::handlers::txn_header::txn_id_from_headers;
+use crate::handlers::txn_header::{rest_for_request, txn_id_from_headers};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::router::{AppState, NodePermission};
 
 const DEFAULT_DOC_IDS_LIMIT: usize = 100;
 const MAX_DOC_IDS_LIMIT: usize = 1000;
-
-/// Response for listing collections.
-#[derive(Debug, Clone, Serialize)]
-pub struct CollectionsResponse {
-    pub collections: Vec<String>,
-}
 
 /// Response for listing document IDs in a collection.
 #[derive(Debug, Clone, Serialize)]
@@ -103,9 +97,7 @@ fn parse_collection_doc_ids_pagination(
 /// `?name=Users`. Go answers both from the stored collections
 /// (`description.GetActiveCollections`), which is what the version store is.
 ///
-/// The response is still a name list. Go returns full collection definitions
-/// here; that shape difference is tracked separately, and `GET
-/// /collections/versions` already serves version-level detail.
+/// Returns the full definition of each selected collection version.
 ///
 /// Requires `CollectionGet` permission when NAC is enabled.
 pub async fn list_collections(
@@ -113,7 +105,7 @@ pub async fn list_collections(
     identity: ExtractIdentity,
     headers: HeaderMap,
     query: CollectionSelectorQuery,
-) -> Result<Json<CollectionsResponse>, HttpError> {
+) -> Result<Json<Vec<schema::CollectionVersion>>, HttpError> {
     require_permission(&state, &identity, NodePermission::CollectionGet).await?;
 
     let selector = query.into_selector();
@@ -150,15 +142,13 @@ pub async fn list_collections(
         }
     }
 
-    let mut collections: Vec<String> = versions
+    let mut collections: Vec<_> = versions
         .into_iter()
         .filter(|version| selector.selects(version))
-        .map(|version| version.name)
         .collect();
-    collections.sort();
-    collections.dedup();
+    collections.sort_by(|a, b| (&a.name, &a.version_id).cmp(&(&b.name, &b.version_id)));
 
-    Ok(Json(CollectionsResponse { collections }))
+    Ok(Json(collections))
 }
 
 /// Get document IDs in a collection.
@@ -171,16 +161,14 @@ pub async fn list_collections(
 pub async fn get_collection_doc_ids(
     State(state): State<AppState>,
     identity: ExtractIdentity,
+    headers: HeaderMap,
     Path(name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<CollectionDocIdsResponse>, HttpError> {
     require_permission(&state, &identity, NodePermission::CollectionGet).await?;
 
     let pagination = parse_collection_doc_ids_pagination(&params)?;
-    let rest = state
-        .rest
-        .as_ref()
-        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    let rest = rest_for_request(&state, &headers)?;
 
     match rest
         .get_collection_doc_ids_page(&name, pagination, identity.did())

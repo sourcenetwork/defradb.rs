@@ -6,9 +6,10 @@ use async_trait::async_trait;
 use identity::Did;
 use serde_json::Value as JsonValue;
 
-use crate::fetcher::DocFetcher;
+use crate::executor::{QueryExecutor, QueryRequest};
+use crate::fetcher::{CollectionProvider, DocFetcher};
 use crate::runner::QueryRunner;
-use crate::txn::TransactionRegistry;
+use crate::txn::{TransactionHandle, TransactionRegistry};
 
 use super::error::{RestError, RestResult};
 use super::gql;
@@ -19,12 +20,67 @@ use super::trait_def::{CollectionDocIdsPage, CollectionDocIdsPagination, RestOpe
 /// This wraps a QueryRunner and translates REST operations into GraphQL queries/mutations.
 pub struct RestOperationsImpl<F: DocFetcher, R: TransactionRegistry> {
     runner: Arc<QueryRunner<F, R>>,
+    transaction: Option<(TransactionHandle, Arc<dyn CollectionProvider>)>,
 }
 
 impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
     /// Create a new REST operations implementation.
     pub fn new(runner: Arc<QueryRunner<F, R>>) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            transaction: None,
+        }
+    }
+
+    async fn has_collection(&self, name: &str) -> RestResult<bool> {
+        match &self.transaction {
+            Some((_, provider)) => Ok(provider.get_collection(name).await?.is_some()),
+            None => Ok(self.runner.has_collection(name).await?),
+        }
+    }
+
+    async fn get_collection(&self, name: &str) -> RestResult<Arc<schema::CollectionVersion>> {
+        match &self.transaction {
+            Some((_, provider)) => provider
+                .get_collection(name)
+                .await?
+                .ok_or_else(|| RestError::collection_not_found(name)),
+            None => Ok(self.runner.get_collection(name).await?),
+        }
+    }
+
+    async fn execute(
+        &self,
+        query: &str,
+        identity: Option<&Did>,
+        mutation: bool,
+    ) -> RestResult<JsonValue> {
+        if let Some((handle, _)) = &self.transaction {
+            let response = self
+                .runner
+                .execute_in_txn(
+                    QueryRequest::new(query).with_identity(identity.cloned()),
+                    handle,
+                )
+                .await;
+            if let Some(error) = response.errors.first() {
+                return Err(RestError::internal(error.message.clone()));
+            }
+            return response
+                .data
+                .ok_or_else(|| RestError::internal("transaction returned no data"));
+        }
+        if mutation {
+            Ok(self
+                .runner
+                .execute_mutation_with_identity(query, identity.cloned())
+                .await?)
+        } else {
+            Ok(self
+                .runner
+                .execute_query_with_identity(query, identity.cloned())
+                .await?)
+        }
     }
 
     /// Pull the `_docID` list out of a `<op>_<Collection>` mutation result.
@@ -141,7 +197,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
         identity: Option<&Did>,
     ) -> RestResult<Option<JsonValue>> {
         let coll = self
-            .runner
             .get_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?;
@@ -163,10 +218,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
             selection = selection
         );
 
-        let result = self
-            .runner
-            .execute_query_with_identity(&query, identity.cloned())
-            .await?;
+        let result = self.execute(&query, identity, false).await?;
 
         let doc = result
             .get(collection)
@@ -180,8 +232,23 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOperationsImpl<F, R> {
+impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> RestOperations
+    for RestOperationsImpl<F, R>
+{
+    fn with_transaction(&self, handle: TransactionHandle) -> RestResult<Arc<dyn RestOperations>> {
+        let provider = self.runner.transaction_collection_provider(&handle)?;
+        Ok(Arc::new(Self {
+            runner: self.runner.clone(),
+            transaction: Some((handle, provider)),
+        }))
+    }
+
     async fn list_collections(&self) -> RestResult<Vec<String>> {
+        if let Some((_, provider)) = &self.transaction {
+            let mut names = provider.list_collections().await?;
+            names.sort();
+            return Ok(names);
+        }
         self.runner
             .collection_names()
             .await
@@ -194,7 +261,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<Vec<String>> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -203,10 +269,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let query = gql::build_list_ids_query(collection, None);
-        let result = self
-            .runner
-            .execute_query_with_identity(&query, identity.cloned())
-            .await?;
+        let result = self.execute(&query, identity, false).await?;
         self.extract_doc_ids(&result, collection)
     }
 
@@ -217,7 +280,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<CollectionDocIdsPage> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -226,10 +288,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let count_query = gql::build_count_query(collection);
-        let count_result = self
-            .runner
-            .execute_query_with_identity(&count_query, identity.cloned())
-            .await?;
+        let count_result = self.execute(&count_query, identity, false).await?;
         let total = self.extract_doc_id_total(&count_result, collection)?;
 
         if pagination.offset >= total {
@@ -242,10 +301,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let query = gql::build_list_ids_query(collection, Some(pagination));
-        let result = self
-            .runner
-            .execute_query_with_identity(&query, identity.cloned())
-            .await?;
+        let result = self.execute(&query, identity, false).await?;
         let doc_ids = self.extract_doc_ids(&result, collection)?;
 
         Ok(CollectionDocIdsPage {
@@ -263,7 +319,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<Option<JsonValue>> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -281,7 +336,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<JsonValue> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -290,10 +344,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let mutation = gql::build_create_mutation(collection, &data)?;
-        let result = self
-            .runner
-            .execute_mutation_with_identity(&mutation, identity.cloned())
-            .await?;
+        let result = self.execute(&mutation, identity, true).await?;
 
         let doc = result
             .get(format!("add_{}", collection))
@@ -312,7 +363,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<Vec<JsonValue>> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -321,10 +371,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let mutation = gql::build_create_many_mutation(collection, &data)?;
-        let result = self
-            .runner
-            .execute_mutation_with_identity(&mutation, identity.cloned())
-            .await?;
+        let result = self.execute(&mutation, identity, true).await?;
 
         let docs = result
             .get(format!("add_{}", collection))
@@ -343,7 +390,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<JsonValue> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -359,9 +405,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let mutation = gql::build_update_mutation(collection, doc_id, &patch)?;
-        self.runner
-            .execute_mutation_with_identity(&mutation, identity.cloned())
-            .await?;
+        self.execute(&mutation, identity, true).await?;
 
         self.fetch_full_document(collection, doc_id, identity)
             .await?
@@ -375,7 +419,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<bool> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -391,10 +434,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let mutation = gql::build_delete_mutation(collection, doc_id);
-        let result = self
-            .runner
-            .execute_mutation_with_identity(&mutation, identity.cloned())
-            .await?;
+        let result = self.execute(&mutation, identity, true).await?;
 
         let deleted = !self
             .mutation_doc_ids(&result, collection, "delete")?
@@ -410,7 +450,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<Vec<String>> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -419,10 +458,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let mutation = gql::build_filtered_delete_mutation(collection, filter)?;
-        let result = self
-            .runner
-            .execute_mutation_with_identity(&mutation, identity.cloned())
-            .await?;
+        let result = self.execute(&mutation, identity, true).await?;
 
         self.mutation_doc_ids(&result, collection, "delete")
     }
@@ -435,7 +471,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         identity: Option<&Did>,
     ) -> RestResult<Vec<String>> {
         if !self
-            .runner
             .has_collection(collection)
             .await
             .map_err(|e| RestError::internal(e.to_string()))?
@@ -444,10 +479,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperations for RestOpe
         }
 
         let mutation = gql::build_filtered_update_mutation(collection, filter, updater)?;
-        let result = self
-            .runner
-            .execute_mutation_with_identity(&mutation, identity.cloned())
-            .await?;
+        let result = self.execute(&mutation, identity, true).await?;
 
         self.mutation_doc_ids(&result, collection, "update")
     }

@@ -165,6 +165,14 @@ let (handle, _tracer) = telemetry::init(
 // installing it as the process-wide global tracer.
 ```
 
+## HTTP transactions
+
+`GET /api/v0/collections` returns the full definitions of the selected versions.
+Document creation returns an array of document IDs. Supply `x-defradb-tx` to bind
+REST document reads, writes and ID listings to an existing transaction, including
+uncommitted schemas. Committing publishes those writes; discarding removes them.
+Read-only and finalized transactions reject mutations.
+
 ## Testing
 
 ### Integration Tests

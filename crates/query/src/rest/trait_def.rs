@@ -1,11 +1,13 @@
 //! REST operations trait definition.
 
+use crate::txn::TransactionHandle;
 use async_trait::async_trait;
 use identity::Did;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 use storage::corekv::MaybeSendSync;
 
-use super::error::RestResult;
+use super::error::{RestError, RestResult};
 
 /// Pagination window for listing collection document IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +34,7 @@ impl CollectionDocIdsPage {
 /// REST operations trait for collection and document CRUD.
 ///
 /// This trait provides REST-specific operations separate from GraphQL execution.
-/// Each operation runs with auto-commit semantics (one transaction per operation).
+/// Operations use auto-commit unless bound to an explicit transaction.
 ///
 /// # Identity and ACP
 ///
@@ -44,6 +46,13 @@ impl CollectionDocIdsPage {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait RestOperations: MaybeSendSync {
+    /// Bind subsequent operations to an existing transaction.
+    fn with_transaction(&self, _handle: TransactionHandle) -> RestResult<Arc<dyn RestOperations>> {
+        Err(RestError::invalid_input(
+            "transactional REST operations are unavailable",
+        ))
+    }
+
     /// List all collection names.
     async fn list_collections(&self) -> RestResult<Vec<String>>;
 
