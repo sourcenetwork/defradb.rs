@@ -1,6 +1,7 @@
 //! Start command implementation
 
 mod node;
+mod node_identity;
 mod p2p;
 mod run;
 mod server;
@@ -676,6 +677,7 @@ impl StartArgs {
             config.embedding.api_key_env = api_key_env.clone();
         }
         config.api.validate()?;
+        config.retry_schedule()?;
         Ok(())
     }
 }

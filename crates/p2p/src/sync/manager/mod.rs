@@ -16,7 +16,7 @@ mod config;
 pub(crate) mod diagnostics;
 mod events;
 pub(crate) mod links;
-mod pending;
+pub(crate) mod pending;
 mod process;
 
 pub use config::{

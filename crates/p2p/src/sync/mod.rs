@@ -19,6 +19,8 @@ mod dag_sync;
 mod event_dispatcher;
 mod head_provider;
 mod manager;
+
+pub use manager::pending::PENDING_RECOVERY_WORST_CASE_SECS;
 mod merge;
 mod peer_state;
 pub mod pending_store;

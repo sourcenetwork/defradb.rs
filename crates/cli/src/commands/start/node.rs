@@ -164,7 +164,7 @@ impl Node {
         config: &Config,
         peer_keypair: Option<p2p::Keypair>,
         user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
-        node_identity_did: Option<String>,
+        node_identity: Option<Arc<identity::RawIdentity>>,
         se_key: Option<[u8; 32]>,
     ) -> Result<ServerSetup> {
         info!("Using unified ACP store (namespace isolated in main database)");
@@ -179,7 +179,7 @@ impl Node {
             user_identity,
             acp_store,
             zanzibar_store,
-            node_identity_did,
+            node_identity,
             se_key,
         )
         .await
@@ -188,24 +188,44 @@ impl Node {
     /// Create a new node
     #[doc(hidden)]
     pub async fn new(
-        config: Config,
+        mut config: Config,
         user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
     ) -> Result<Self> {
+        if config.api.pubkey_path.is_empty() && config.api.privkey_path.is_empty() {
+            let cert = config.rootdir.join("certs/server.crt");
+            let key = config.rootdir.join("certs/server.key");
+            if cert.is_file() {
+                config.api.pubkey_path = cert.display().to_string();
+            }
+            if key.is_file() {
+                config.api.privkey_path = key.display().to_string();
+            }
+        }
+        config.api.validate()?;
+        // Reject invalid TLS before starting stores or background tasks.
+        let tls = if config.api.tls_enabled() {
+            Some(
+                defra_http::TlsConfig::from_pem_file(
+                    &config.api.pubkey_path,
+                    &config.api.privkey_path,
+                )
+                .await
+                .map_err(|e| crate::error::Error::InvalidConfig(format!("HTTP TLS: {e}")))?,
+            )
+        } else {
+            None
+        };
+
         info!("Initializing DefraDB node");
         info!("Root directory: {}", config.rootdir.display());
         info!("Data directory: {}", config.data_path().display());
 
-        // Initialize peer keypair from keyring (if P2P enabled and keyring not disabled)
-        let (peer_keypair, node_identity_did) =
-            if !config.net.p2p_disabled && !config.keyring.disabled {
-                let (kp, did) = Self::init_peer_key(&config)?;
-                (Some(kp), Some(did))
-            } else if !config.net.p2p_disabled {
-                info!("Keyring disabled, using ephemeral peer identity");
-                (None, None)
-            } else {
-                (None, None)
-            };
+        let node_identity = super::node_identity::resolve(&config, user_identity.clone())?;
+        let peer_keypair = if !config.net.p2p_disabled && !config.keyring.disabled {
+            Some(Self::init_peer_key(&config)?)
+        } else {
+            None
+        };
 
         // Load the cluster-shared searchable-encryption key from the keyring
         // (Go's getOrCreateSearchableEncryptionKey). `None` when SE or the
@@ -223,7 +243,7 @@ impl Node {
         }
 
         // Initialize storage, database, and set up P2P and HTTP server
-        let servers = match config.datastore.store {
+        let mut servers = match config.datastore.store {
             DatastoreType::Memory => {
                 info!("Using in-memory datastore");
                 let acp_store: Arc<dyn acp::AcpStore> = Arc::new(acp::MemoryAcpStore::new());
@@ -239,7 +259,7 @@ impl Node {
                     user_identity.clone(),
                     acp_store,
                     zanzibar_store,
-                    node_identity_did.clone(),
+                    node_identity.clone(),
                     se_key,
                 )
                 .await?
@@ -259,12 +279,16 @@ impl Node {
                     &config,
                     peer_keypair,
                     user_identity.clone(),
-                    node_identity_did.clone(),
+                    node_identity.clone(),
                     se_key,
                 )
                 .await?
             }
         };
+
+        if let Some(tls) = tls {
+            servers.http_server = servers.http_server.with_tls(tls);
+        }
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 

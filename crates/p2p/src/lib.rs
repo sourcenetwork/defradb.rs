@@ -140,6 +140,7 @@ pub use transport::{P2PTransport, TransportEvent};
 pub use sync::IrohSyncCoordinator;
 #[cfg(feature = "libp2p-transport")]
 pub use sync::Libp2pSyncCoordinator;
+pub use sync::PENDING_RECOVERY_WORST_CASE_SECS;
 pub use sync::{
     Broadcaster, CreateReplicatorResult, DagSync, DagSyncConfig, DagSyncState,
     LoadReplicatorsResult, NeedsFetchData, PeerStateTracker, ProcessQueue, SyncConfig,

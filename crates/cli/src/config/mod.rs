@@ -6,6 +6,7 @@
 //! 3. Config file (config.yaml in rootdir)
 //! 4. Default values
 
+mod secret_file;
 mod sections;
 mod types;
 
@@ -43,8 +44,12 @@ pub struct Config {
     pub development: bool,
     pub secret_file: String,
     pub telemetry_disabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_replicator_retry_intervals")]
     pub replicator_retry_intervals: Vec<u32>,
+}
+
+fn default_replicator_retry_intervals() -> Vec<u32> {
+    vec![30, 60, 120, 240, 480, 960, 1920]
 }
 
 impl Default for Config {
@@ -61,7 +66,7 @@ impl Default for Config {
             development: false,
             secret_file: ".env".to_string(),
             telemetry_disabled: false,
-            replicator_retry_intervals: vec![30, 60, 120, 240, 480, 960, 1920],
+            replicator_retry_intervals: default_replicator_retry_intervals(),
         }
     }
 }
@@ -92,6 +97,8 @@ impl Config {
         // Make relative paths absolute
         config.resolve_paths();
 
+        config.load_secret_file()?;
+
         // Validate the final configuration
         config.validate()?;
 
@@ -103,7 +110,20 @@ impl Config {
         self.api.validate()?;
         self.net.validate()?;
         self.acp.validate()?;
+        self.retry_schedule()?;
         Ok(())
+    }
+
+    /// Runtime policy shared by head registration and persisted retry dispatch.
+    pub fn retry_schedule(&self) -> Result<storage::stores::RetrySchedule> {
+        storage::stores::RetrySchedule::new(
+            self.replicator_retry_intervals
+                .iter()
+                .copied()
+                .map(u64::from)
+                .collect(),
+        )
+        .map_err(Error::InvalidConfig)
     }
 
     /// Resolve the rootdir path
@@ -133,6 +153,10 @@ impl Config {
             path: path.to_path_buf(),
             source: e,
         })
+    }
+
+    fn load_secret_file(&self) -> Result<()> {
+        secret_file::load(Path::new(&self.secret_file))
     }
 
     /// Apply CLI flags to config

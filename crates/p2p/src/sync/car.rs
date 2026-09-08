@@ -11,19 +11,30 @@ use cid::Cid;
 
 use crate::error::{Error, Result};
 
+#[cfg(test)]
+#[path = "../../tests/unit/car_collection.rs"]
+mod collection_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/car_size_notices.rs"]
+mod size_notice_tests;
+
 /// Maximum number of blocks allowed in a single CAR response.
 ///
 /// Prevents a malicious or faulty peer from causing the server to collect and
 /// send an arbitrarily large DAG in a single response.
 pub const CAR_MAX_BLOCKS: usize = 10_000;
 
-/// Maximum total byte size of a single CAR response (16 MiB).
+/// Maximum block payload bytes collected for a CAR response (16 MiB).
 pub const CAR_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 /// Result of collecting blocks for a CAR response.
 #[derive(Debug, Clone, Default)]
 pub struct CarCollectOutcome {
     pub blocks: Vec<(Cid, Bytes)>,
+    pub blockstore_hits: usize,
+    pub blockstore_misses: usize,
+    pub oversized_blocks: Vec<(Cid, usize)>,
     pub truncated_by_blocks: bool,
     pub truncated_by_bytes: bool,
 }
@@ -32,16 +43,71 @@ impl CarCollectOutcome {
     pub fn truncated(&self) -> bool {
         self.truncated_by_blocks || self.truncated_by_bytes
     }
+
+    async fn read_block<B: Blockstore>(
+        &mut self,
+        blockstore: &B,
+        cid: &Cid,
+        remaining: usize,
+    ) -> Result<Option<Bytes>> {
+        let size = blockstore.get_size(cid).await.map_err(|e| {
+            Error::BlockstoreError(format!("failed to get block size {}: {}", cid, e))
+        })?;
+        let Some(size) = size else {
+            self.blockstore_misses += 1;
+            return Ok(None);
+        };
+        if self.exceeds_budget(cid, size, remaining) {
+            self.blockstore_hits += 1;
+            return Ok(None);
+        }
+        let data = blockstore
+            .get(cid)
+            .await
+            .map_err(|e| Error::BlockstoreError(format!("failed to get block {}: {}", cid, e)))?;
+        let Some(data) = data else {
+            self.blockstore_misses += 1;
+            return Ok(None);
+        };
+        self.blockstore_hits += 1;
+        // Retain the payload check for stores without an immutable read snapshot.
+        if self.exceeds_budget(cid, data.len(), remaining) {
+            return Ok(None);
+        }
+        Ok(Some(data))
+    }
+
+    fn exceeds_budget(&mut self, cid: &Cid, size: usize, remaining: usize) -> bool {
+        if size <= remaining {
+            return false;
+        }
+        self.truncated_by_bytes = true;
+        if size > CAR_MAX_BYTES {
+            self.oversized_blocks.push((*cid, size));
+        }
+        true
+    }
 }
 
 /// Encode blocks as a CARv1 byte stream.
 ///
 /// Format: varint-prefixed DAG-CBOR header, then varint-prefixed (CID + data) sections.
+#[cfg(test)]
 pub fn encode_car(roots: &[Cid], blocks: &[(&Cid, &[u8])]) -> Result<Vec<u8>> {
+    encode_car_response(roots, blocks, &[])
+}
+
+/// Rust CAR peers ignore unknown header fields. Keep ordinary responses byte
+/// identical, adding size-limit notices only when authorized blocks cannot fit.
+pub(crate) fn encode_car_response(
+    roots: &[Cid],
+    blocks: &[(&Cid, &[u8])],
+    oversized: &[(Cid, usize)],
+) -> Result<Vec<u8>> {
     let mut out = Vec::new();
 
     // Header: DAG-CBOR map {version: 1, roots: [CID]}
-    let header = encode_car_header(roots)?;
+    let header = encode_car_header(roots, oversized)?;
     write_varint_prefixed(&mut out, &header);
 
     // Each block: varint(len(cid_bytes + data)) + cid_bytes + data
@@ -123,10 +189,10 @@ pub fn decode_car(data: &[u8]) -> Result<CarContents> {
 
 /// Traverse DAGs from a missing frontier, collecting reachable blocks.
 ///
-/// Collection is capped at [`CAR_MAX_BLOCKS`] blocks and [`CAR_MAX_BYTES`] total
-/// bytes.  If either limit is reached the function returns the blocks collected
-/// so far without error; the caller can detect truncation by checking whether
-/// the returned slice represents a complete DAG.
+/// Collection examines at most [`CAR_MAX_BLOCKS`] distinct CIDs and retains at
+/// most [`CAR_MAX_BYTES`] block bytes. Blocks that do not fit are skipped without
+/// walking their links, so later roots and siblings can still be served.
+/// The outcome distinguishes absent blocks, oversized blocks, and truncation.
 /// All roots share the same visited set and response limits, so overlapping
 /// branches are sent once and a large frontier cannot multiply the bounded
 /// CAR response size.
@@ -144,26 +210,17 @@ pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
             continue;
         }
 
-        if outcome.blocks.len() >= CAR_MAX_BLOCKS {
+        if visited.len() > CAR_MAX_BLOCKS {
             outcome.truncated_by_blocks = true;
             break;
         }
 
-        let data = match blockstore.get(&cid).await {
-            Ok(Some(d)) => d,
-            Ok(None) => continue,
-            Err(e) => {
-                return Err(Error::BlockstoreError(format!(
-                    "failed to get block {}: {}",
-                    cid, e
-                )));
-            }
+        let Some(data) = outcome
+            .read_block(blockstore, &cid, CAR_MAX_BYTES - total_bytes)
+            .await?
+        else {
+            continue;
         };
-
-        if total_bytes + data.len() > CAR_MAX_BYTES {
-            outcome.truncated_by_bytes = true;
-            break;
-        }
         total_bytes += data.len();
 
         let refs = extract_links(&data);
@@ -179,7 +236,8 @@ pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
     Ok(outcome)
 }
 
-/// Collect the exact requested blocks without walking descendant links.
+/// Collect exact requested blocks under the same limits as the recursive walk,
+/// without walking descendant links.
 pub async fn collect_exact_blocks<B: Blockstore>(
     blockstore: &B,
     cids: &[Cid],
@@ -192,26 +250,17 @@ pub async fn collect_exact_blocks<B: Blockstore>(
         if !visited.insert(*cid) {
             continue;
         }
-        if outcome.blocks.len() >= CAR_MAX_BLOCKS {
+        if visited.len() > CAR_MAX_BLOCKS {
             outcome.truncated_by_blocks = true;
             break;
         }
 
-        let data = match blockstore.get(cid).await {
-            Ok(Some(d)) => d,
-            Ok(None) => continue,
-            Err(e) => {
-                return Err(Error::BlockstoreError(format!(
-                    "failed to get block {}: {}",
-                    cid, e
-                )));
-            }
+        let Some(data) = outcome
+            .read_block(blockstore, cid, CAR_MAX_BYTES - total_bytes)
+            .await?
+        else {
+            continue;
         };
-
-        if total_bytes + data.len() > CAR_MAX_BYTES {
-            outcome.truncated_by_bytes = true;
-            break;
-        }
 
         total_bytes += data.len();
         outcome.blocks.push((*cid, data));
@@ -252,7 +301,7 @@ fn extract_links(block_data: &[u8]) -> Vec<Cid> {
 // CIDs are stored as plain CBOR byte strings (no tag 42) since this
 // is an internal Rust-to-Rust protocol.
 
-fn encode_car_header(roots: &[Cid]) -> Result<Vec<u8>> {
+fn encode_car_header(roots: &[Cid], oversized: &[(Cid, usize)]) -> Result<Vec<u8>> {
     use ciborium::Value;
     let roots_val: Vec<Value> = roots
         .iter()
@@ -263,15 +312,79 @@ fn encode_car_header(roots: &[Cid]) -> Result<Vec<u8>> {
     // explicitly here. It previously came from a BTreeMap, which sorted the
     // keys; "roots" < "version" alphabetically, so this order reproduces the
     // existing bytes exactly. `car_header_bytes_unchanged_by_encoder` pins it.
-    let header = Value::Map(vec![
+    let mut fields = vec![
         (Value::Text("roots".into()), Value::Array(roots_val)),
         (Value::Text("version".into()), Value::Integer(1.into())),
-    ]);
+    ];
+    if !oversized.is_empty() {
+        fields.push((
+            Value::Text("oversized".into()),
+            Value::Array(
+                oversized
+                    .iter()
+                    .map(|(cid, size)| {
+                        Value::Array(vec![
+                            Value::Bytes(cid.to_bytes()),
+                            Value::Integer((*size as u64).into()),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    let header = Value::Map(fields);
 
     let mut out = Vec::new();
     ciborium::into_writer(&header, &mut out)
         .map_err(|e| Error::Codec(format!("failed to encode CAR header: {}", e)))?;
     Ok(out)
+}
+
+/// Optional notices from a Rust peer, not proof of a block's size or absence.
+pub(crate) fn decode_car_oversized(data: &[u8]) -> Result<Vec<(Cid, usize)>> {
+    use ciborium::Value;
+    let mut cursor = data;
+    let header_len = read_varint(&mut cursor)?;
+    let header_len = usize::try_from(header_len)
+        .ok()
+        .filter(|length| *length <= cursor.len())
+        .ok_or_else(|| Error::Codec("CAR header length exceeds data".into()))?;
+    let header: Value = defra_core::cbor::from_slice(&cursor[..header_len])
+        .map_err(|e| Error::Codec(format!("invalid CAR header: {e}")))?;
+    let Value::Map(fields) = header else {
+        return Err(Error::Codec("CAR header is not a CBOR map".into()));
+    };
+    let mut notices = fields
+        .into_iter()
+        .filter_map(|(key, value)| (key == Value::Text("oversized".into())).then_some(value));
+    let Some(value) = notices.next() else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(entries) = value else {
+        return Err(Error::Codec(
+            "CAR oversized notices must be an array".into(),
+        ));
+    };
+    if notices.next().is_some() || entries.len() > CAR_MAX_BLOCKS {
+        return Err(Error::Codec("invalid CAR oversized block notices".into()));
+    }
+    let invalid = || Error::Codec("invalid CAR oversized block notice".into());
+    let mut result = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let Value::Array(pair) = entry else {
+            return Err(invalid());
+        };
+        let [Value::Bytes(cid), Value::Integer(size)] = pair.as_slice() else {
+            return Err(invalid());
+        };
+        let size = usize::try_from(i128::from(*size)).map_err(|_| invalid())?;
+        if size <= CAR_MAX_BYTES {
+            return Err(invalid());
+        }
+        let cid = Cid::try_from(cid.as_slice()).map_err(|_| invalid())?;
+        result.push((cid, size));
+    }
+    Ok(result)
 }
 
 fn decode_car_header(data: &[u8]) -> Result<Vec<Cid>> {

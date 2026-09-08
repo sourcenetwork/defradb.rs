@@ -128,6 +128,34 @@ impl PendingDagRegistry {
             .is_some_and(|(current, current_root)| *current_root == root_cid || version > *current)
     }
 
+    /// True when a newer head for the same sender scope is the current
+    /// pending root, so this root is subsumed by an obligation that is
+    /// already registered.
+    pub(super) fn scope_head_is_covered_by_current(
+        &self,
+        root_cid: Cid,
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        let (Some(source_peer), Some(priority)) = (source_peer, head_priority) else {
+            return false;
+        };
+        let key = PendingScopeKey {
+            source_peer: source_peer.to_owned(),
+            collection_id: collection_id.to_owned(),
+            doc_id: doc_id.to_owned(),
+        };
+        let version = HeadVersion {
+            priority,
+            cid: root_cid,
+        };
+        self.current_by_source_scope
+            .get(&key)
+            .is_some_and(|(current, current_root)| *current_root != root_cid && version <= *current)
+    }
+
     fn scope_key(dag: &PendingDag) -> Option<PendingScopeKey> {
         let source_peer = dag.source_peer.as_ref()?;
         dag.head_priority?;
@@ -300,6 +328,17 @@ impl PendingDagRegistry {
 pub const PENDING_RETRY_BASE: Duration = Duration::from_secs(2);
 /// Ceiling for the per-root dispatch backoff.
 pub const PENDING_RETRY_CAP: Duration = Duration::from_secs(60);
+
+/// Seconds from the first fetch dispatch of a pending root to the fifth, when
+/// every dispatch in between fails to complete the DAG.
+///
+/// A pushed block whose DAG is incomplete is acked as success once it is
+/// registered pending, so the sender stops retrying and the receiver owns
+/// recovery on this ladder alone. Anything that waits on convergence has to
+/// allow at least this long, or it reports a fault where the pacing is simply
+/// still running; `a_root_that_keeps_failing_is_not_retried_for_a_minute`
+/// pins the arithmetic.
+pub const PENDING_RECOVERY_WORST_CASE_SECS: u64 = 60;
 
 /// Capped exponential backoff for pending-DAG fetch dispatches: 2s, 4s,
 /// 8s, 16s, 32s, then 60s forever.

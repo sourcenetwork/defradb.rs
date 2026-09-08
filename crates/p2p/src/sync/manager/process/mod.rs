@@ -210,6 +210,40 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         }
     }
 
+    /// True when a newer head for the same sender scope is already durable,
+    /// so this root's work is subsumed rather than dropped.
+    ///
+    /// Retiring a superseded root is deliberate: the newer head carries the
+    /// same document forward, and driving both would duplicate the fetch.
+    pub(super) fn scope_head_is_covered_by_current(
+        &self,
+        root_cid: Cid,
+        source_peer: Option<&str>,
+        collection_id: &str,
+        doc_id: &str,
+        head_priority: Option<u64>,
+    ) -> bool {
+        if matches!(
+            self.persisted_scope_decision(
+                root_cid,
+                source_peer,
+                collection_id,
+                doc_id,
+                head_priority
+            ),
+            PersistedScopeDecision::CoveredByCurrent
+        ) {
+            return true;
+        }
+        self.pending_dags.read().scope_head_is_covered_by_current(
+            root_cid,
+            source_peer,
+            collection_id,
+            doc_id,
+            head_priority,
+        )
+    }
+
     pub(super) fn scope_head_is_refresh_or_newer(
         &self,
         root_cid: Cid,
