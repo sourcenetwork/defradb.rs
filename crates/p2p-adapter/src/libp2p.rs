@@ -1032,6 +1032,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 .filter_map(|head| cid::Cid::try_from(head.as_slice()).ok());
             let pending_heads = unmerged_heads(coord.blockstore().as_ref(), heads).await;
             let result = branchable_sync::wait_for_heads(
+                coord.blockstore().as_ref(),
                 &mut sub,
                 collection_id,
                 pending_heads,
