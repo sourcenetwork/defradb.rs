@@ -1,4 +1,5 @@
 mod parse;
+mod schema;
 mod validate;
 
 pub use parse::{check_duplicate_yaml_keys, parse_policy_yaml};
@@ -56,6 +57,7 @@ fn hash_policy_fields(policy: &ParsedPolicy) -> Vec<u8> {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ParsedPolicy {
     #[serde(default)]
     pub name: String,
@@ -64,12 +66,19 @@ pub struct ParsedPolicy {
     #[serde(default, deserialize_with = "parse::deserialize_specification")]
     pub spec: PolicySpecification,
     #[serde(default)]
+    pub meta: HashMap<String, String>,
+    #[serde(default)]
+    pub actor: PolicyActor,
+    #[serde(default)]
     pub resources: Vec<PolicyResource>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyResource {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     #[serde(default)]
     pub permissions: Vec<PolicyPermission>,
     #[serde(default)]
@@ -77,19 +86,32 @@ pub struct PolicyResource {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyPermission {
     pub name: String,
+    #[serde(default)]
+    pub doc: String,
     #[serde(default)]
     pub expr: String,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyRelation {
     pub name: String,
+    #[serde(default)]
+    pub doc: String,
     #[serde(default)]
     pub types: Vec<String>,
     #[serde(default)]
     pub manages: Vec<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyActor {
+    #[serde(default)]
+    pub relations: Vec<PolicyRelation>,
 }
 
 /// Map a relation's declared `types:` to an enforced [`SubjectRestriction`].
@@ -176,6 +198,7 @@ impl PolicyResource {
 /// The `counter` parameter is a monotonic sequence number used together with
 /// the parsed policy fields to generate Go-compatible policy IDs.
 pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result<Policy> {
+    schema::validate(parsed)?;
     if parsed.spec == PolicySpecification::Defra {
         for resource in &parsed.resources {
             for permission in ["read", "write"] {
@@ -190,27 +213,26 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
     }
     let id = generate_policy_id(parsed, counter);
 
-    let mut attributes = HashMap::new();
-    if !parsed.description.is_empty() {
-        attributes.insert("description".to_string(), parsed.description.clone());
-    }
-
     let mut resources = Vec::new();
     for res in &parsed.resources {
         let mut relations = Vec::new();
 
         // Auto-inject the reserved 'owner' relation (matches Go DefraDB behavior)
-        relations.push(Relation::direct("owner"));
+        relations.push(
+            match res
+                .relations
+                .iter()
+                .find(|relation| relation.name == "owner")
+            {
+                Some(owner) => build_relation(owner)?,
+                None => Relation::direct("owner"),
+            },
+        );
 
         for rel in &res.relations {
-            let mut relation = Relation::direct(&rel.name);
-            if !rel.manages.is_empty() {
-                relation = relation.with_manages(rel.manages.clone());
+            if rel.name != "owner" {
+                relations.push(build_relation(rel)?);
             }
-            if let Some(restriction) = build_subject_restriction(&rel.types)? {
-                relation = relation.with_restriction(restriction);
-            }
-            relations.push(relation);
         }
 
         for perm in &res.permissions {
@@ -232,20 +254,46 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
                     RelationExpression::computed_userset("write"),
                 ]);
             }
-            relations.push(Relation::computed(&perm.name, expression));
+            let mut relation = Relation::computed(&perm.name, expression);
+            relation.description = perm.doc.clone();
+            relations.push(relation);
         }
 
         resources.push(Resource {
             name: res.name.clone(),
+            description: res.description.clone(),
             relations,
         });
     }
 
-    Ok(Policy {
+    let policy = Policy {
         id,
         name: parsed.name.clone(),
         resources,
-        attributes,
+        attributes: parsed.meta.clone(),
+        description: parsed.description.clone(),
+        actor: Some(Resource {
+            name: "actor".into(),
+            description: String::new(),
+            relations: parsed
+                .actor
+                .relations
+                .iter()
+                .map(build_relation)
+                .collect::<crate::error::Result<_>>()?,
+        }),
         specification: parsed.spec,
-    })
+    };
+    policy
+        .validate()
+        .map_err(|error| crate::error::Error::InvalidPolicy(error.to_string()))?;
+    Ok(policy)
+}
+
+fn build_relation(parsed: &PolicyRelation) -> crate::error::Result<Relation> {
+    let mut relation = Relation::direct(&parsed.name);
+    relation.description = parsed.doc.clone();
+    relation.manages = parsed.manages.clone();
+    relation.subject_restriction = build_subject_restriction(&parsed.types)?;
+    Ok(relation)
 }

@@ -3,7 +3,7 @@ use super::ParsedPolicy;
 /// Validate permission expressions in a parsed policy.
 ///
 /// Checks:
-/// 1. Expressions cannot reference the reserved `owner` relation
+/// 1. Local expressions cannot reference `owner`; TTU targets may reference it
 /// 2. Expressions can use Zanzibar operators, including TTU (`->`)
 /// 3. Direct relation references and TTU tuple relations must exist in the same resource
 pub fn validate_policy_expressions(policy: &ParsedPolicy) -> Result<(), String> {
@@ -31,14 +31,12 @@ pub fn validate_policy_expressions(policy: &ParsedPolicy) -> Result<(), String> 
             for token in &tokens {
                 match token {
                     ExprToken::Identifier(name) => {
-                        // Check for owner reference
-                        if name == "owner" {
-                            return Err("permission cannot reference `owner` relation".to_string());
-                        }
-
                         if skip_local_relation_check {
                             skip_local_relation_check = false;
                             continue;
+                        }
+                        if name == "owner" {
+                            return Err("permission cannot reference `owner` relation".to_string());
                         }
 
                         // Check that the relation or computed permission exists in this resource.

@@ -11,19 +11,21 @@ use crate::types::Policy;
 #[derive(Debug, Default)]
 pub struct PolicyLookupTable {
     policies: HashMap<String, HashMap<String, HashMap<String, RelationExpression>>>,
+    actors: HashMap<String, String>,
 }
 
 impl PolicyLookupTable {
     pub fn new() -> Self {
         Self {
             policies: HashMap::new(),
+            actors: HashMap::new(),
         }
     }
 
     pub fn add_policy(&mut self, policy: &Policy) {
         let mut resources = HashMap::new();
 
-        for resource in &policy.resources {
+        for resource in policy.resources.iter().chain(policy.actor.iter()) {
             let mut relations = HashMap::new();
 
             for relation in &resource.relations {
@@ -33,11 +35,16 @@ impl PolicyLookupTable {
             resources.insert(resource.name.clone(), relations);
         }
 
+        self.actors.remove(&policy.id);
+        if let Some(actor) = &policy.actor {
+            self.actors.insert(policy.id.clone(), actor.name.clone());
+        }
         self.policies.insert(policy.id.clone(), resources);
     }
 
     pub fn remove_policy(&mut self, policy_id: &str) {
         self.policies.remove(policy_id);
+        self.actors.remove(policy_id);
     }
 
     pub fn update_policy(&mut self, policy: &Policy) {
@@ -47,6 +54,13 @@ impl PolicyLookupTable {
 
     pub fn clear(&mut self) {
         self.policies.clear();
+        self.actors.clear();
+    }
+
+    pub fn is_actor_resource(&self, policy_id: &str, resource: &str) -> bool {
+        self.actors
+            .get(policy_id)
+            .is_some_and(|name| name == resource)
     }
 
     pub fn get_expression(

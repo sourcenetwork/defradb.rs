@@ -6,6 +6,8 @@ use crate::expression::RelationExpression;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Resource {
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     pub relations: Vec<Relation>,
 }
 
@@ -13,6 +15,7 @@ impl Resource {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            description: String::new(),
             relations: Vec::new(),
         }
     }
@@ -30,6 +33,8 @@ impl Resource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relation {
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     pub expression: RelationExpression,
     #[serde(default)]
     pub subject_restriction: Option<SubjectRestriction>,
@@ -41,6 +46,7 @@ impl Relation {
     pub fn direct(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            description: String::new(),
             expression: RelationExpression::This,
             subject_restriction: None,
             manages: Vec::new(),
@@ -50,6 +56,7 @@ impl Relation {
     pub fn computed(name: impl Into<String>, expression: RelationExpression) -> Self {
         Self {
             name: name.into(),
+            description: String::new(),
             expression,
             subject_restriction: None,
             manages: Vec::new(),

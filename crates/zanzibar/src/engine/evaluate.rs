@@ -97,6 +97,14 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         else {
                             continue;
                         };
+                        if relation.is_empty() {
+                            if self.lookup.is_actor_resource(policy_id, &resource)
+                                && object_id == subject.as_str()
+                            {
+                                return Ok((true, false));
+                            }
+                            continue;
+                        }
                         let node_id = NodeId::new(&resource, &object_id, &relation);
                         if trail.contains(&node_id) {
                             tainted = true;

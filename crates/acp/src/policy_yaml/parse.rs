@@ -4,7 +4,12 @@ use zanzibar::PolicySpecification;
 use super::ParsedPolicy;
 
 pub fn parse_policy_yaml(yaml: &str) -> Result<ParsedPolicy, String> {
-    serde_yaml::from_str(yaml).map_err(|e| format!("invalid policy YAML: {}", e))
+    if yaml.len() > 64 * 1024 {
+        return Err("policy definition exceeds 64 KiB".into());
+    }
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(yaml).map_err(|e| format!("invalid policy YAML: {e}"))?;
+    serde_yaml::from_value(value).map_err(|e| format!("invalid policy YAML: {e}"))
 }
 
 pub(super) fn deserialize_specification<'de, D>(
