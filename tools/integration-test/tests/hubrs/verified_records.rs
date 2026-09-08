@@ -170,6 +170,10 @@ resources:
     permissions:
       - name: read
         expr: (reader & approved) - blocked->blocked
+  - name: group
+    relations:
+      - name: member
+        types: [actor]
 "#,
         )
         .await
@@ -193,7 +197,17 @@ resources:
         "a reader relation alone does not satisfy the policy"
     );
     provider
-        .set_relationship(&bearer, &policy, "file", "report", "approved", &subject)
+        .register_object(&bearer, &policy, "group", "editors")
+        .await
+        .unwrap();
+    provider
+        .set_relationship(&bearer, &policy, "group", "editors", "member", &subject)
+        .await
+        .unwrap();
+    provider
+        .set_relationship_subject(
+            &policy, "file", "report", "approved", 3, "group", "editors", "member",
+        )
         .await
         .unwrap();
     assert!(provider
@@ -275,6 +289,28 @@ resources:
         )
         .await
         .unwrap());
+    provider
+        .delete_relationship(&bearer, &policy, "group", "editors", "member", &subject)
+        .await
+        .unwrap();
+    assert!(!document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &policy,
+            "file",
+            "report"
+        )
+        .await
+        .unwrap());
+    assert!(provider
+        .create_access_decision(&policy, "file", "report", "read", reader)
+        .await
+        .is_err());
+    provider
+        .set_relationship(&bearer, &policy, "group", "editors", "member", &subject)
+        .await
+        .unwrap();
     hub.kill_node(0);
     // Outlive the native client's default maximum revision age.
     tokio::time::sleep(std::time::Duration::from_secs(31)).await;
