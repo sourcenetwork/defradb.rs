@@ -114,7 +114,7 @@ name = "client_authored"
 path = "tests/client_authored.rs"
 
 [dependencies]
-hub-harness = { git = "https://github.com/sourcenetwork/hub.rs", rev = "361f3d830666041b8afa307f3a547b239b18788f" }
+hub-harness = { git = "https://github.com/sourcenetwork/hub.rs", rev = "f032e60b7d678ccba4878465f5d08fe6e1b9e4dc" }
 commonware-codec = "2026.9.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "9526a4ebfaa1cebf07fc3592de6f0a62d77f9e30" }
 document = { path = "../../crates/document" }
@@ -136,9 +136,9 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 keyring = { path = "../../crates/keyring" }
-hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "361f3d830666041b8afa307f3a547b239b18788f" }
-hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "361f3d830666041b8afa307f3a547b239b18788f" }
-hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "361f3d830666041b8afa307f3a547b239b18788f" }
+hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "f032e60b7d678ccba4878465f5d08fe6e1b9e4dc" }
+hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "f032e60b7d678ccba4878465f5d08fe6e1b9e4dc" }
+hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "f032e60b7d678ccba4878465f5d08fe6e1b9e4dc" }
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 sourcehub = { path = "../../crates/sourcehub" }

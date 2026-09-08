@@ -311,6 +311,30 @@ resources:
         .set_relationship(&bearer, &policy, "group", "editors", "member", &subject)
         .await
         .unwrap();
+    let spec_policy = provider
+        .create_policy(
+            "spec: defra\nname: files\nresources:\n  - name: file\n    relations:\n      - name: writer\n    permissions:\n      - name: read\n      - name: write\n        expr: writer\n",
+        )
+        .await
+        .unwrap();
+    provider
+        .register_object(&bearer, &spec_policy, "file", "report")
+        .await
+        .unwrap();
+    provider
+        .set_relationship(&bearer, &spec_policy, "file", "report", "writer", &subject)
+        .await
+        .unwrap();
+    assert!(document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &spec_policy,
+            "file",
+            "report"
+        )
+        .await
+        .unwrap());
     hub.kill_node(0);
     // Outlive the native client's default maximum revision age.
     tokio::time::sleep(std::time::Duration::from_secs(31)).await;
@@ -365,6 +389,31 @@ resources:
     })
     .await
     .expect("fresh verified revision after Hub restart");
+    assert!(document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &spec_policy,
+            "file",
+            "report"
+        )
+        .await
+        .unwrap());
+    provider
+        .delete_relationship(&bearer, &spec_policy, "file", "report", "writer", &subject)
+        .await
+        .unwrap();
+    assert!(!document_acp
+        .check_doc_access(
+            &identity,
+            DocumentPermission::Read,
+            &spec_policy,
+            "file",
+            "report"
+        )
+        .await
+        .unwrap());
+
     assert_eq!(
         provider
             .query_object_owner(&policy, "file", "report")
