@@ -8,7 +8,9 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use zanzibar::{Policy, Relation, RelationExpression, Resource, SubjectRestriction};
+use zanzibar::{
+    Policy, PolicySpecification, Relation, RelationExpression, Resource, SubjectRestriction,
+};
 
 /// Generate a Go-compatible policy ID from parsed policy fields.
 ///
@@ -59,6 +61,8 @@ pub struct ParsedPolicy {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default, deserialize_with = "parse::deserialize_specification")]
+    pub spec: PolicySpecification,
     #[serde(default)]
     pub resources: Vec<PolicyResource>,
 }
@@ -172,6 +176,18 @@ impl PolicyResource {
 /// The `counter` parameter is a monotonic sequence number used together with
 /// the parsed policy fields to generate Go-compatible policy IDs.
 pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result<Policy> {
+    if parsed.spec == PolicySpecification::Defra {
+        for resource in &parsed.resources {
+            for permission in ["read", "write"] {
+                if !resource.has_permission(permission) {
+                    return Err(crate::error::Error::InvalidPolicy(format!(
+                        "Defra specification requires permission '{permission}' on resource '{}'",
+                        resource.name
+                    )));
+                }
+            }
+        }
+    }
     let id = generate_policy_id(parsed, counter);
 
     let mut attributes = HashMap::new();
@@ -198,7 +214,7 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         }
 
         for perm in &res.permissions {
-            let expression = if perm.expr.is_empty() {
+            let mut expression = if perm.expr.is_empty() {
                 // A permission with no explicit expression is still valid and
                 // defaults to owner-only access in Go.
                 RelationExpression::computed_userset("owner")
@@ -210,6 +226,12 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
                     user_expr,
                 ])
             };
+            if parsed.spec == PolicySpecification::Defra && perm.name == "read" {
+                expression = RelationExpression::Union(vec![
+                    expression,
+                    RelationExpression::computed_userset("write"),
+                ]);
+            }
             relations.push(Relation::computed(&perm.name, expression));
         }
 
@@ -224,5 +246,6 @@ pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result
         name: parsed.name.clone(),
         resources,
         attributes,
+        specification: parsed.spec,
     })
 }

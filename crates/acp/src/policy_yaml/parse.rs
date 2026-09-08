@@ -1,7 +1,26 @@
+use serde::{Deserialize, Deserializer};
+use zanzibar::PolicySpecification;
+
 use super::ParsedPolicy;
 
 pub fn parse_policy_yaml(yaml: &str) -> Result<ParsedPolicy, String> {
     serde_yaml::from_str(yaml).map_err(|e| format!("invalid policy YAML: {}", e))
+}
+
+pub(super) fn deserialize_specification<'de, D>(
+    deserializer: D,
+) -> Result<PolicySpecification, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    match value.to_ascii_lowercase().as_str() {
+        "" | "none" => Ok(PolicySpecification::None),
+        "defra" => Ok(PolicySpecification::Defra),
+        _ => Err(serde::de::Error::custom(format!(
+            "unknown policy specification '{value}'"
+        ))),
+    }
 }
 
 /// Check for duplicate map keys in raw YAML text.

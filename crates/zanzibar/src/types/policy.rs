@@ -6,6 +6,21 @@ use super::resource::{Relation, Resource};
 use crate::error::{Error, Result};
 use crate::expression::RelationExpression;
 
+/// Permission rules selected when a policy is created.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicySpecification {
+    #[default]
+    None,
+    Defra,
+}
+
+impl PolicySpecification {
+    pub const fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
     pub id: String,
@@ -13,6 +28,8 @@ pub struct Policy {
     pub resources: Vec<Resource>,
     #[serde(default)]
     pub attributes: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "PolicySpecification::is_none")]
+    pub specification: PolicySpecification,
 }
 
 impl Policy {
@@ -22,6 +39,7 @@ impl Policy {
             name: name.into(),
             resources: Vec::new(),
             attributes: HashMap::new(),
+            specification: PolicySpecification::None,
         }
     }
 
