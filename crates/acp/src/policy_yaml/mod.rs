@@ -5,7 +5,7 @@ mod validate;
 pub use parse::{check_duplicate_yaml_keys, parse_policy_yaml};
 pub use validate::validate_policy_expressions;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -66,7 +66,7 @@ pub struct ParsedPolicy {
     #[serde(default, deserialize_with = "parse::deserialize_specification")]
     pub spec: PolicySpecification,
     #[serde(default)]
-    pub meta: HashMap<String, String>,
+    pub meta: BTreeMap<String, String>,
     #[serde(default)]
     pub actor: PolicyActor,
     #[serde(default)]

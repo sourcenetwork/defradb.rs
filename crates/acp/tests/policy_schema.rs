@@ -117,3 +117,16 @@ fn malformed_expressions_return_errors_without_panicking() {
         assert!(build_policy(&parse_policy_yaml(&definition).unwrap(), 1).is_err());
     }
 }
+
+#[test]
+fn metadata_serialization_has_a_stable_key_order() {
+    let policy = build_policy(
+        &parse_policy_yaml("name: files\nmeta:\n  z: last\n  a: first\n").unwrap(),
+        1,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_string(&policy.attributes).unwrap(),
+        r#"{"a":"first","z":"last"}"#
+    );
+}

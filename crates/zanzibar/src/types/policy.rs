@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use super::relationship::Relationship;
 use super::resource::{Relation, Resource};
@@ -31,7 +31,7 @@ pub struct Policy {
     pub actor: Option<Resource>,
     pub resources: Vec<Resource>,
     #[serde(default)]
-    pub attributes: HashMap<String, String>,
+    pub attributes: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "PolicySpecification::is_none")]
     pub specification: PolicySpecification,
 }
@@ -44,7 +44,7 @@ impl Policy {
             description: String::new(),
             actor: None,
             resources: Vec::new(),
-            attributes: HashMap::new(),
+            attributes: BTreeMap::new(),
             specification: PolicySpecification::None,
         }
     }
