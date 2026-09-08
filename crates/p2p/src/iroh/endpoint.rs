@@ -85,12 +85,30 @@ pub(super) fn spawn_task(
     Some(tasks.spawn(future))
 }
 
-async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks) {
+async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks, readers: Vec<JoinHandle<()>>) {
     // Closing registration under the spawn lock also covers child tasks
     // scheduled by work that was already running when shutdown began.
     let tasks = spawned_tasks.lock().take();
-    if let Some(mut tasks) = tasks {
-        tasks.shutdown().await;
+    let task_count = tasks.as_ref().map_or(0, JoinSet::len) + readers.len();
+    for reader in &readers {
+        reader.abort();
+    }
+    let drain = async move {
+        if let Some(mut tasks) = tasks {
+            tasks.shutdown().await;
+        }
+        for reader in readers {
+            let _ = reader.await;
+        }
+    };
+    if tokio::time::timeout(std::time::Duration::from_secs(5), drain)
+        .await
+        .is_err()
+    {
+        warn!(
+            task_count,
+            "Timed out draining Iroh tasks after cancellation"
+        );
     }
 }
 
@@ -293,13 +311,10 @@ async fn run_event_loop(
     );
 
     let tracked_started = std::time::Instant::now();
-    shutdown_tracked_tasks(spawned_tasks).await;
-    for reader in readers {
-        let _ = reader.await;
-    }
-    warn!(
+    shutdown_tracked_tasks(spawned_tasks, readers).await;
+    debug!(
         elapsed_ms = tracked_started.elapsed().as_millis(),
-        "Iroh endpoint shutdown: tracked spawned tasks drained"
+        "Iroh endpoint shutdown: task drain finished"
     );
 
     let gossip_started = std::time::Instant::now();

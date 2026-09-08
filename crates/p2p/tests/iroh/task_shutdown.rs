@@ -14,7 +14,7 @@ fn spawn(tasks: &SpawnedTasks, future: impl Future<Output = ()> + Send + 'static
 #[tokio::test]
 async fn shutdown_rejects_new_work_without_polling_it() {
     let tasks = registry();
-    shutdown_tracked_tasks(tasks.clone()).await;
+    shutdown_tracked_tasks(tasks.clone(), vec![]).await;
     let resource = Arc::new(());
     let retained = Arc::downgrade(&resource);
     spawn(&tasks, async move {
@@ -58,7 +58,7 @@ async fn shutdown_joins_tasks_and_rejects_work_spawned_during_cleanup() {
         pending::<()>().await;
     });
     ready.await.unwrap();
-    shutdown_tracked_tasks(tasks).await;
+    shutdown_tracked_tasks(tasks, vec![]).await;
     assert!(
         retained.upgrade().is_none(),
         "late-spawned task escaped shutdown"
@@ -69,9 +69,13 @@ async fn shutdown_joins_tasks_and_rejects_work_spawned_during_cleanup() {
 async fn spawning_reaps_completed_tasks_and_preserves_individual_cancellation() {
     let tasks = registry();
     let completed = spawn_task(&tasks, async {}).unwrap();
-    while !completed.is_finished() {
-        tokio::task::yield_now().await;
-    }
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !completed.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("completed task was not reaped");
     let resource = Arc::new(());
     let retained = Arc::downgrade(&resource);
     let running = spawn_task(&tasks, async move {
@@ -81,10 +85,10 @@ async fn spawning_reaps_completed_tasks_and_preserves_individual_cancellation() 
     .unwrap();
     assert_eq!(tasks.lock().as_ref().unwrap().len(), 1);
     running.abort();
-    shutdown_tracked_tasks(tasks.clone()).await;
+    shutdown_tracked_tasks(tasks.clone(), vec![]).await;
     assert!(retained.upgrade().is_none());
     assert!(tasks.lock().is_none());
-    shutdown_tracked_tasks(tasks).await;
+    shutdown_tracked_tasks(tasks, vec![]).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -108,10 +112,40 @@ async fn concurrent_spawn_and_shutdown_release_all_resources() {
     }
     drop(resource);
     barrier.wait().await;
-    shutdown_tracked_tasks(tasks.clone()).await;
+    shutdown_tracked_tasks(tasks.clone(), vec![]).await;
     while let Some(result) = callers.join_next().await {
         result.unwrap();
     }
     assert!(tasks.lock().is_none());
     assert!(retained.upgrade().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_bounds_non_cooperative_tasks_and_readers() {
+    for reader in [false, true] {
+        let tasks = registry();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let work = async move {
+            started.send(()).unwrap();
+            // Deliberately model a synchronous section that cannot be aborted.
+            let _ = blocked.recv();
+        };
+        let readers = if reader {
+            vec![tokio::spawn(work)]
+        } else {
+            spawn(&tasks, work);
+            vec![]
+        };
+        ready.await.unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(7),
+            shutdown_tracked_tasks(tasks.clone(), readers),
+        )
+        .await;
+        // Release even on failure so the test runtime can shut down.
+        let _ = release.send(());
+        result.expect("shutdown exceeded its task drain budget");
+        assert!(tasks.lock().is_none());
+    }
 }
