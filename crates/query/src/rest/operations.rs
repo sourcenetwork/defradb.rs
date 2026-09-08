@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use identity::Did;
 use serde_json::Value as JsonValue;
 
-use crate::executor::{QueryExecutor, QueryRequest};
+use crate::executor::{QueryExecutor, QueryRequest, TXN_CONFLICT_ERROR_CODE};
 use crate::fetcher::{CollectionProvider, DocFetcher};
 use crate::runner::QueryRunner;
 use crate::txn::{TransactionHandle, TransactionRegistry};
@@ -64,6 +64,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
                 )
                 .await;
             if let Some(error) = response.errors.first() {
+                if error
+                    .extensions
+                    .as_ref()
+                    .is_some_and(|extension| extension.code == TXN_CONFLICT_ERROR_CODE)
+                {
+                    return Err(RestError::TransactionConflict);
+                }
                 return Err(RestError::internal(error.message.clone()));
             }
             return response
