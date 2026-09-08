@@ -34,6 +34,7 @@ impl RunningNode {
             .arg("--rootdir")
             .arg(root.path())
             .env("RUST_LOG", "info")
+            .env("TOKIO_WORKER_THREADS", "2")
             .stdout(log.try_clone().unwrap())
             .stderr(log)
             .kill_on_drop(true);
@@ -241,4 +242,51 @@ async fn invalid_tls_configuration_fails_before_serving() {
             node.logs()
         );
     }
+}
+
+#[tokio::test]
+async fn default_certificate_directory_enables_https() {
+    let root = tempfile::tempdir().unwrap();
+    let certificate = write_certificate(root.path());
+    let certs = root.path().join("certs");
+    std::fs::create_dir(&certs).unwrap();
+    std::fs::rename(root.path().join("cert.pem"), certs.join("server.crt")).unwrap();
+    std::fs::rename(root.path().join("key.pem"), certs.join("server.key")).unwrap();
+    let mut node = RunningNode::start(root, false);
+    node.healthy(&client(Some(certificate)), "https").await;
+    assert!(client(None)
+        .get(format!("http://{}/health-check", node.address))
+        .send()
+        .await
+        .is_err());
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn partial_default_certificate_pair_fails_before_serving() {
+    for filename in ["server.crt", "server.key"] {
+        let root = tempfile::tempdir().unwrap();
+        let certs = root.path().join("certs");
+        std::fs::create_dir(&certs).unwrap();
+        std::fs::write(certs.join(filename), "incomplete pair").unwrap();
+        let mut node = RunningNode::start(root, false);
+        let status = timeout(Duration::from_secs(10), node.child.wait())
+            .await
+            .expect("startup did not reject the incomplete certificate pair")
+            .unwrap();
+        assert!(!status.success(), "{}", node.logs());
+        assert!(!node.logs().contains("DefraDB node started"));
+    }
+}
+
+#[tokio::test]
+async fn explicit_certificates_override_default_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let certificate = write_certificate(root.path());
+    let certs = root.path().join("certs");
+    std::fs::create_dir(&certs).unwrap();
+    std::fs::write(certs.join("server.crt"), "unused certificate").unwrap();
+    let mut node = RunningNode::start(root, true);
+    node.healthy(&client(Some(certificate)), "https").await;
+    node.stop().await;
 }

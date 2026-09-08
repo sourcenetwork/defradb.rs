@@ -188,9 +188,19 @@ impl Node {
     /// Create a new node
     #[doc(hidden)]
     pub async fn new(
-        config: Config,
+        mut config: Config,
         user_identity: Option<std::sync::Arc<identity::RawIdentity>>,
     ) -> Result<Self> {
+        if config.api.pubkey_path.is_empty() && config.api.privkey_path.is_empty() {
+            let cert = config.rootdir.join("certs/server.crt");
+            let key = config.rootdir.join("certs/server.key");
+            if cert.is_file() {
+                config.api.pubkey_path = cert.display().to_string();
+            }
+            if key.is_file() {
+                config.api.privkey_path = key.display().to_string();
+            }
+        }
         config.api.validate()?;
         // Reject invalid TLS before starting stores or background tasks.
         let tls = if config.api.tls_enabled() {
