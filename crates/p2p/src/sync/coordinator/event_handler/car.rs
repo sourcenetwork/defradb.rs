@@ -77,9 +77,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         };
         let truncated = collected.truncated();
         let collected_count = collected.blocks.len();
-        let blocks = self
+        let blocks = match self
             .filter_car_response_blocks(&peer_id, &request.root_cid, collected.blocks)
-            .await;
+            .await
+        {
+            Ok(blocks) => blocks,
+            Err(error) => return Err(self.reject_car_fetch(&peer_id, token, error).await),
+        };
         let kept_count = blocks.len();
         let filtered_count = collected_count.saturating_sub(kept_count);
         let blockstore_miss_count = request.wanted_cids.len().saturating_sub(collected_count);
@@ -186,9 +190,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         peer_id: &PeerId,
         root_cid: &Cid,
         blocks: Vec<(Cid, Bytes)>,
-    ) -> Vec<(Cid, Bytes)> {
+    ) -> Result<Vec<(Cid, Bytes)>> {
         if self.access.access_mode.is_open() {
-            return blocks;
+            return Ok(blocks);
         }
 
         let peer_str = peer_id.to_string();
@@ -203,14 +207,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .has_restart_safe_root_authority(peer_id, root_cid)
                 .await;
         let granted_cids = if rooted_grant {
-            crate::sync::car::collect_dag_cids(
-                self.manager.blockstore().as_ref(),
-                root_cid,
-                crate::sync::car::CAR_MAX_BLOCKS,
+            Some(
+                crate::sync::car_authorization::requested_descendants(
+                    self.manager.blockstore().as_ref(),
+                    *root_cid,
+                    blocks.iter().map(|(cid, _)| *cid).collect(),
+                )
+                .await?,
             )
-            .await
-            .ok()
-            .map(|cids| cids.into_iter().collect::<std::collections::HashSet<_>>())
         } else {
             None
         };
@@ -270,7 +274,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
         }
 
-        kept
+        Ok(kept)
     }
 
     /// Re-derive the authority installed before a head hint after the sender

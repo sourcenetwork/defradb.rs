@@ -103,6 +103,9 @@ pub struct SyncManager<B: Blockstore> {
     /// missing CID.
     pub(super) pending_dags: Arc<RwLock<PendingDagRegistry>>,
 
+    /// Coalesced wakeup for the sole bounded receiver dispatch owner.
+    pub(super) pending_dag_ready: tokio::sync::Notify,
+
     /// Maps Bitswap QueryId → root CID for tracking completions.
     pub(super) query_to_root: Arc<RwLock<HashMap<QueryId, Cid>>>,
 
@@ -288,6 +291,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             event_tx,
             peer_state,
             pending_dags: Arc::new(RwLock::new(PendingDagRegistry::default())),
+            pending_dag_ready: tokio::sync::Notify::new(),
             query_to_root: Arc::new(RwLock::new(HashMap::new())),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),

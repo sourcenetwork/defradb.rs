@@ -5,8 +5,6 @@
 //! sends. Admission happens before any task is spawned or payload captured,
 //! so outbound resident state stays bounded under sustained writes (#1099).
 
-use std::sync::Arc;
-
 use blockstore::Blockstore;
 use bytes::Bytes;
 use cid::Cid;
@@ -18,9 +16,17 @@ use crate::error::Result;
 use crate::message::{PushSEArtifactsRequest, SEArtifact};
 use crate::sync::broadcaster::Broadcaster;
 use crate::sync::push_backlog::{EnqueueOutcome, PushJobSpec};
-use crate::sync::push_fanout_coalescer::PendingPush;
 use crate::sync::BroadcastResult;
 use crate::transport::{P2PTransport, PeerId};
+
+struct PendingPush {
+    cid: Cid,
+    block: Bytes,
+    doc_id: String,
+    collection_id: String,
+    creator: String,
+    document: Option<JsonValue>,
+}
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn list_replicators_for_push(&self) -> Result<Vec<crate::replicator::ReplicatorInfo>> {
@@ -169,7 +175,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         creator_override: Option<&str>,
     ) -> Result<()> {
         let creator = creator_override.unwrap_or(&self.access.local_peer_id);
-        self.coalesce_replicator_push(PendingPush {
+        self.admit_replicator_push(PendingPush {
             cid: *cid,
             block: Bytes::copy_from_slice(block),
             doc_id: doc_id.to_string(),
@@ -193,7 +199,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         creator_override: Option<&str>,
     ) -> Result<()> {
         let creator = creator_override.unwrap_or(&self.access.local_peer_id);
-        self.coalesce_replicator_push(PendingPush {
+        self.admit_replicator_push(PendingPush {
             cid: *cid,
             block: Bytes::copy_from_slice(block),
             doc_id: doc_id.to_string(),
@@ -204,13 +210,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         .await
     }
 
-    async fn coalesce_replicator_push(&self, push: PendingPush) -> Result<()> {
-        // Register every peer/scope obligation before coalescing or queueing.
+    async fn admit_replicator_push(&self, push: PendingPush) -> Result<()> {
+        // Register every peer/scope obligation before queueing. The bounded
+        // backlog owns newest-head coalescing; a second debounce owner here
+        // would hold every local commit open even with no replication peers.
         // The marker is presence-only, so observing a newer head remains
         // idempotent while making a storage failure visible to the committed
         // write path instead of silently dropping delivery.
-        for job in self.push_jobs(&push).await? {
-            if !report_observed_head(&self.runtime.failure_tx, &job).await {
+        let jobs = self.push_jobs(&push).await?;
+        for job in &jobs {
+            if !report_observed_head(&self.runtime.failure_tx, job).await {
                 self.runtime.push_backlog.record_head_hint_failure(
                     crate::sync::push_backlog::HeadHintFailureReason::Local,
                 );
@@ -227,12 +236,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
         }
 
-        let coalescer = Arc::clone(&self.runtime.push_fanout_coalescer);
-        coalescer
-            .run(push, |latest| async move {
-                self.dispatch_replicator_push(latest).await;
-            })
-            .await;
+        for job in jobs {
+            self.enqueue_replicator_push(job).await;
+        }
         Ok(())
     }
 
@@ -268,26 +274,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             ));
         }
         Ok(jobs)
-    }
-
-    async fn dispatch_replicator_push(&self, push: PendingPush) {
-        let jobs = match self.push_jobs(&push).await {
-            Ok(jobs) => jobs,
-            Err(error) => {
-                tracing::warn!(%error, "Durably marked head deferred to retry sweep");
-                return;
-            }
-        };
-        tracing::debug!(
-            cid = %push.cid,
-            doc_id = %push.doc_id,
-            collection_id = %push.collection_id,
-            replicator_count = jobs.len(),
-            "Queueing coalesced push to replicators"
-        );
-        for job in jobs {
-            self.enqueue_replicator_push(job).await;
-        }
     }
 
     /// Push searchable-encryption artifacts for a committed document to

@@ -339,9 +339,6 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             broadcast_coalescer: Arc::new(
                 crate::sync::broadcast_coalescer::BroadcastCoalescer::default(),
             ),
-            push_fanout_coalescer: Arc::new(
-                crate::sync::push_fanout_coalescer::PushFanoutCoalescer::default(),
-            ),
             selective_car_access: Arc::new(
                 super::selective_car_access::SelectiveCarAccess::default(),
             ),
@@ -1764,6 +1761,112 @@ async fn derived_selective_car_authority_is_peer_and_root_scoped() {
     let responses = transport_handle.car_responses();
     let (_roots, blocks) = crate::sync::car::decode_car(&responses[3]).unwrap();
     assert_eq!(blocks, vec![(field_cid, field_data)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta};
+
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (mut coordinator, _events) =
+        SyncCoordinator::new(transport.clone(), blockstore, SyncConfig::default())
+            .await
+            .unwrap();
+    let (failure_tx, mut failure_rx) = tokio::sync::mpsc::channel::<super::PushFailure>(16);
+    coordinator.set_failure_channel(failure_tx);
+    let registered = Arc::new(AtomicUsize::new(0));
+    let observer = Arc::clone(&registered);
+    let markers = tokio::spawn(async move {
+        while let Some(mut observation) = failure_rx.recv().await {
+            if let Some(ack) = observation.durable_tx.take() {
+                observer.fetch_add(1, Ordering::SeqCst);
+                let _ = ack.send(true);
+            }
+        }
+    });
+    let block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            schema_version_id: "version1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![],
+    );
+    let data = block.to_dag_cbor().unwrap();
+    let root = block.generate_cid().unwrap();
+    for paired in [false, true] {
+        if paired {
+            transport
+                .create_replicator(&random_peer_id(), vec!["collection1".to_string()])
+                .await
+                .unwrap();
+        }
+        let started = tokio::time::Instant::now();
+        coordinator
+            .push_to_replicators(&root, &data, "doc1", "collection1")
+            .await
+            .unwrap();
+        assert_eq!(tokio::time::Instant::now(), started, "committed writes must wait for durable admission, not debounce windows; paired={paired}");
+        if paired {
+            assert_eq!(registered.load(Ordering::SeqCst), 1);
+        }
+    }
+    coordinator.shutdown().await;
+    markers.abort();
+}
+
+#[tokio::test]
+async fn filtered_car_recovers_descendant_beyond_first_response_limit() {
+    use ipld_core::{codec::Codec, ipld};
+    use serde_ipld_dagcbor::codec::DagCborCodec;
+
+    let receiver = random_peer_id();
+    let transport = NoopTransport::new();
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let leaf_data = DagCborCodec::encode_to_vec(&ipld!({"value": 0})).unwrap();
+    let leaf = Cid::new_v1(0x71, Code::Sha2_256.digest(&leaf_data));
+    blockstore.put(&leaf, &leaf_data).await.unwrap();
+    let mut root = leaf;
+    for _ in 0..crate::sync::car::CAR_MAX_BLOCKS {
+        let data = DagCborCodec::encode_to_vec(&ipld!({"child": root})).unwrap();
+        root = Cid::new_v1(0x71, Code::Sha2_256.digest(&data));
+        blockstore.put(&root, &data).await.unwrap();
+    }
+    let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        blockstore,
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        filtered_replicator_registry(&receiver, "collection1"),
+        Arc::new(NoOpCollectionStorage),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(StaticDataClassifier {
+            collection_id: "collection1".to_string(),
+        }),
+        Arc::new(LateBoundServeAcp::new()),
+    )
+    .await
+    .unwrap();
+    let _grant = coordinator
+        .runtime
+        .selective_car_access
+        .register(receiver.clone(), root)
+        .unwrap();
+    coordinator
+        .handle_transport_event(selective_dag_car_fetch_event(receiver, root, vec![leaf]))
+        .await
+        .unwrap();
+    let responses = transport.car_responses();
+    let response = responses.last().expect("selective recovery response");
+    let (_, blocks) = crate::sync::car::decode_car(response).unwrap();
+    assert!(
+        blocks.iter().any(|(cid, _)| *cid == leaf),
+        "response-size limit must not permanently exclude authorized older history"
+    );
 }
 
 #[tokio::test]
