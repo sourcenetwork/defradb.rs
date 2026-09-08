@@ -6,7 +6,10 @@ use tokio::sync::oneshot;
 async fn concurrent_shutdown_callers_wait_for_task_completion() {
     let shutdown = SyncShutdownHandle::new(1);
     let (release, wait) = oneshot::channel();
+    let resource = Arc::new(());
+    let retained = Arc::downgrade(&resource);
     shutdown.spawn_task(async move {
+        let _resource = resource;
         let _ = wait.await;
     });
 
@@ -27,7 +30,34 @@ async fn concurrent_shutdown_callers_wait_for_task_completion() {
     release.send(()).unwrap();
     second.await;
     first.await.unwrap();
+    assert!(retained.upgrade().is_none());
     shutdown.shutdown().await;
+}
+
+#[tokio::test]
+async fn abandoned_drain_releases_shutdown_waiters() {
+    let shutdown = SyncShutdownHandle::new(1);
+    assert!(shutdown.begin_shutdown());
+    // Model a drain future dropped before its first poll.
+    drop(shutdown.inner.shutdown_complete_tx.lock().take());
+    tokio::time::timeout(std::time::Duration::from_secs(1), shutdown.shutdown())
+        .await
+        .expect("shutdown waited forever after losing its drain");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_bounds_joining_a_non_cooperative_task() {
+    let shutdown = SyncShutdownHandle::new(1);
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (started, ready) = oneshot::channel();
+    shutdown.spawn_task(async move {
+        started.send(()).unwrap();
+        let _ = blocked.recv();
+    });
+    ready.await.unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(7), shutdown.shutdown()).await;
+    let _ = release.send(());
+    result.expect("shutdown exceeded its cancellation budget");
 }
 
 #[tokio::test(start_paused = true)]

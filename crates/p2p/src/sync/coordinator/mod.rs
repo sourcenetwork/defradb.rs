@@ -265,7 +265,8 @@ struct SyncShutdownState {
     /// remains the single source of truth and stays a plain atomic because it
     /// is read on hot paths.
     shutdown_notify: Notify,
-    shutdown_complete: watch::Sender<bool>,
+    shutdown_complete: watch::Receiver<bool>,
+    shutdown_complete_tx: Mutex<Option<watch::Sender<bool>>>,
     background_tasks: Mutex<Vec<JoinHandle<()>>>,
     non_authoritative_broadcast_slots: Arc<Semaphore>,
     non_authoritative_broadcast_high_water: AtomicUsize,
@@ -283,6 +284,7 @@ enum PendingDagFetchTask {
 }
 
 const BACKGROUND_TASK_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+const BACKGROUND_TASK_ABORT_TIMEOUT: Duration = Duration::from_secs(5);
 const NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT: usize = 32;
 
 /// Shared limiter for poll-based DAG fetches.
@@ -351,11 +353,13 @@ pub struct SyncShutdownHandle {
 
 impl SyncShutdownHandle {
     fn new(pending_dag_fetch_task_limit: usize) -> Self {
+        let (shutdown_complete_tx, shutdown_complete) = watch::channel(false);
         Self {
             inner: Arc::new(SyncShutdownState {
                 is_shutting_down: AtomicBool::new(false),
                 shutdown_notify: Notify::new(),
-                shutdown_complete: watch::channel(false).0,
+                shutdown_complete,
+                shutdown_complete_tx: Mutex::new(Some(shutdown_complete_tx)),
                 background_tasks: Mutex::new(Vec::new()),
                 non_authoritative_broadcast_slots: Arc::new(Semaphore::new(
                     NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
@@ -405,20 +409,27 @@ impl SyncShutdownHandle {
         notified.await;
     }
 
-    /// Wait for registered tasks to finish, including cancellation cleanup.
+    /// Wait for registered tasks within the graceful and cancellation budgets.
     /// Concurrent callers share teardown; cancelling a caller does not stop it.
     pub async fn shutdown(&self) {
-        let mut complete = self.inner.shutdown_complete.subscribe();
+        let mut complete = self.inner.shutdown_complete.clone();
         if self.begin_shutdown() {
             let shutdown = self.clone();
+            // The drain owns the only sender, so cancellation or panic closes
+            // the channel instead of leaving other shutdown callers parked.
+            let sender = self.inner.shutdown_complete_tx.lock().take();
             tokio::spawn(async move {
                 shutdown
                     .drain_background_tasks(BACKGROUND_TASK_SHUTDOWN_TIMEOUT)
                     .await;
-                shutdown.inner.shutdown_complete.send_replace(true);
+                if let Some(sender) = sender {
+                    sender.send_replace(true);
+                }
             });
         }
-        let _ = complete.wait_for(|complete| *complete).await;
+        if complete.wait_for(|complete| *complete).await.is_err() {
+            tracing::warn!("Coordinator shutdown drain stopped before completing");
+        }
     }
 
     fn spawn_task<F>(&self, future: F) -> bool
@@ -571,10 +582,13 @@ impl SyncShutdownHandle {
         let deadline = tokio::time::Instant::now() + timeout;
         let mut handles = handles.into_iter();
         while let Some(mut handle) = handles.next() {
-            if tokio::time::timeout_at(deadline, &mut handle)
-                .await
-                .is_err()
-            {
+            let result = tokio::time::timeout_at(deadline, &mut handle).await;
+            if let Ok(Err(error)) = &result {
+                if error.is_panic() {
+                    tracing::warn!(%error, "Coordinator background task panicked");
+                }
+            }
+            if result.is_err() {
                 tracing::debug!(
                     timeout_ms = timeout.as_millis() as u64,
                     "Coordinator background task exceeded shutdown drain window; aborting remaining tasks"
@@ -583,9 +597,21 @@ impl SyncShutdownHandle {
                 for pending in handles.as_slice() {
                     pending.abort();
                 }
-                let _ = handle.await;
-                for pending in handles {
-                    let _ = pending.await;
+                let remaining = handles.len() + 1;
+                let join = async move {
+                    for pending in std::iter::once(handle).chain(handles) {
+                        if let Err(error) = pending.await {
+                            if error.is_panic() {
+                                tracing::warn!(%error, "Coordinator background task panicked");
+                            }
+                        }
+                    }
+                };
+                if tokio::time::timeout(BACKGROUND_TASK_ABORT_TIMEOUT, join)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(remaining, "Timed out joining cancelled coordinator tasks");
                 }
                 return;
             }
