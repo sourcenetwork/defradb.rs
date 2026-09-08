@@ -122,7 +122,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
     assert!(blockstore.has(&root).await.unwrap());
     assert!(blockstore.has(&small).await.unwrap());
 
-    // A claim about a block already present must not veto this fetch.
+    // An irrelevant notice is not a size-limit result or successful progress.
     let completion = coordinator
         .manager()
         .block_sync_completion_tracker()
@@ -137,7 +137,7 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         })
         .await
         .unwrap();
-    assert_eq!(completion.await.unwrap(), FetchCompletion::Success);
+    assert_eq!(completion.await.unwrap(), FetchCompletion::Failure);
 
     let mut completion = coordinator
         .manager()

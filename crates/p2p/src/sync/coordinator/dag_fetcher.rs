@@ -402,6 +402,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     // Walk DAG, fetching missing blocks level by level. The walk stops as soon
     // as an iteration makes no progress (`!made_progress` below); the iteration
     // ceiling is only a defensive backstop, not a functional depth limit.
+    let mut unservable = false;
     for iteration in 0..MAX_DAG_WALK_ITERATIONS {
         let root_data = match blockstore.get(&root_cid).await {
             Ok(Some(data)) => data,
@@ -466,7 +467,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                     );
                 }
                 FetchBatchOutcome::Deferred => return FetchAttemptOutcome::Deferred,
-                FetchBatchOutcome::Unservable => return FetchAttemptOutcome::Unservable,
+                FetchBatchOutcome::Unservable => unservable = true,
             }
         }
         if !made_progress {
@@ -487,6 +488,8 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         info!(root_cid = %root_cid, doc_id = %context.doc_id, "DAG fetch complete");
         emit_dag_ready(event_tx, root_cid, context, &root_data).await;
         FetchAttemptOutcome::Complete
+    } else if unservable {
+        FetchAttemptOutcome::Unservable
     } else {
         FetchAttemptOutcome::Incomplete {
             remaining: remaining.len(),

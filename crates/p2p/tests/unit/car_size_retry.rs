@@ -1,6 +1,65 @@
 use super::*;
 
 #[tokio::test(start_paused = true)]
+async fn unservable_batch_does_not_hide_later_servable_blocks() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let blocks: HashMap<_, _> = (0..2050)
+        .map(|i| {
+            let data = encode_ipld(ipld!({ "value": i }));
+            (make_cid(&data), data)
+        })
+        .collect();
+    let links: Vec<_> = blocks.keys().copied().map(Ipld::Link).collect();
+    let root_data = encode_ipld(ipld!({ "children": links }));
+    let root = make_cid(&root_data);
+    blockstore.put(&root, &root_data).await.unwrap();
+    let missing =
+        crate::sync::manager::links::find_all_missing_links(blockstore.as_ref(), &root_data)
+            .await
+            .unwrap();
+    let oversized = missing[0];
+    let last = *missing.last().unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root,
+        root_data,
+        HashMap::new(),
+        HashMap::from([(last, blocks[&last].clone())]),
+    );
+    let completions = crate::sync::manager::BlockSyncCompletionTracker::default();
+    transport
+        .size_limited_providers
+        .lock()
+        .unwrap()
+        .insert("remote-peer".into(), (oversized, completions.clone()));
+    let context = DagFetchContext::new(
+        "doc".into(),
+        "collection".into(),
+        String::new(),
+        PeerId::new("remote-peer".into()),
+    )
+    .with_block_sync_completions(completions);
+    let (tx, mut rx) = mpsc::channel(4);
+    poll_fetch_dag(
+        transport,
+        blockstore.clone(),
+        tx,
+        root,
+        context,
+        DagFetchLimiter::new(1),
+        diagnostics(),
+    )
+    .await;
+    assert!(
+        blockstore.has(&last).await.unwrap(),
+        "later batch was skipped"
+    );
+    assert!(!blockstore.has(&oversized).await.unwrap());
+    assert!(rx.try_recv().is_err(), "incomplete DAG reported ready");
+}
+
+#[tokio::test(start_paused = true)]
 async fn size_limited_provider_is_not_retried_but_alternate_can_finish() {
     for alternate in [false, true] {
         let store = Arc::new(RegolithStore::in_memory().unwrap());

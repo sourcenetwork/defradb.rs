@@ -6,6 +6,10 @@ use tokio::sync::oneshot;
 async fn serve(endpoint: Endpoint, response: Vec<u8>, ready: Option<oneshot::Receiver<()>>) {
     let connection = endpoint.accept().await.unwrap().await.unwrap();
     let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+    assert_eq!(
+        protocols::read_stream_tag(&mut recv).await.unwrap(),
+        protocols::STREAM_CAR
+    );
     recv.read_to_end(4096).await.unwrap();
     if let Some(ready) = ready {
         ready.await.unwrap();
@@ -20,8 +24,8 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         for alternate in [false, true] {
             let client = tests::localhost_endpoint(vec![]).await;
-            let limited = tests::localhost_endpoint(vec![protocols::ALPN_CAR.to_vec()]).await;
-            let healthy = tests::localhost_endpoint(vec![protocols::ALPN_CAR.to_vec()]).await;
+            let limited = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+            let healthy = tests::localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
             let root = cid::Cid::new_v1(0x71, Code::Sha2_256.digest(b"block"));
             let notice = encode_car_response(&[root], &[], &[(root, CAR_MAX_BYTES + 1)]).unwrap();
             let limited_task = tokio::spawn(serve(limited.clone(), notice, None));
@@ -44,10 +48,9 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
             for endpoint in endpoints {
                 let provider = PeerId::new(endpoint.id().to_string());
                 let addr = endpoint.addr().ip_addrs().next().copied().unwrap();
-                let connection =
-                    connect_with_cache(&client, &provider, protocols::ALPN_CAR, Some(addr), &cache)
-                        .await
-                        .unwrap();
+                let connection = connect_with_cache(&client, &provider, Some(addr), &cache)
+                    .await
+                    .unwrap();
                 peer_map
                     .lock()
                     .increment_connections(endpoint.id(), Some(addr), connection);

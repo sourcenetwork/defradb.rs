@@ -612,7 +612,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 root_cid,
                 car_data,
             } => {
-                let has_blocks = crate::sync::car::car_has_any_block(&car_data);
+                let has_blocks =
+                    !car_data.is_empty() && crate::sync::car::car_has_any_block(&car_data);
                 let has_notices = crate::sync::car::decode_car_oversized(&car_data)
                     .is_ok_and(|notices| !notices.is_empty());
                 let result = self
@@ -625,7 +626,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     Some(car::CarIngestDisposition::Completed) => {
                         self.manager
                             .rooted_car_completion_tracker()
-                            .complete(root_cid, &peer_id, true);
+                            .complete(root_cid, &peer_id, has_blocks);
                     }
                     Some(car::CarIngestDisposition::Busy) => {
                         self.manager
@@ -653,7 +654,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     if has_blocks || has_notices {
                         match disposition {
                             Some(car::CarIngestDisposition::Completed) => {
-                                self.handle_bitswap_complete(query_id, true, None).await?;
+                                self.handle_bitswap_complete(query_id, has_blocks, None)
+                                    .await?;
                             }
                             Some(car::CarIngestDisposition::Busy) => {
                                 self.handle_bitswap_deferred(query_id).await?;

@@ -379,6 +379,7 @@ impl P2PTransport for TestTransport {
                 .unwrap()
                 .get(peer.as_str())
                 .cloned()
+                .filter(|(cid, _)| missing.contains(cid))
         }) {
             completion.size_limit(query_id, cid);
             return Ok(query_id);
