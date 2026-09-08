@@ -156,6 +156,7 @@ impl Bus for ChannelBus {
     fn unsubscribe(&self, sub_id: u64) {
         self.document_observers.write().remove(&sub_id);
         self.subscribers.write().remove(&sub_id);
+        tracing::debug!(sub_id, "Unsubscribed");
     }
 
     fn close(&self) {
@@ -164,6 +165,7 @@ impl Bus for ChannelBus {
         }
         self.subscribers.write().clear();
         self.document_observers.write().clear();
+        tracing::info!("Event bus closed");
     }
 
     fn is_closed(&self) -> bool {
@@ -185,6 +187,9 @@ impl Bus for ChannelBus {
 
 impl ChannelBus {
     fn publish_raw(&self, msg: Message) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
         // Collect dead subscriber IDs for lazy cleanup
         let mut dead_subs: Vec<u64> = Vec::new();
 
@@ -261,6 +266,7 @@ impl ChannelBus {
     }
 
     fn subscribe_raw(&self, events: &[EventName]) -> Subscription {
+        let mut subscribers = self.subscribers.write();
         if self.closed.load(Ordering::Acquire) {
             // Return a subscription with a closed channel
             let (_tx, rx) = async_channel::bounded(1);
@@ -279,7 +285,7 @@ impl ChannelBus {
             dropped_count: dropped_count.clone(),
         };
 
-        self.subscribers.write().insert(id, subscriber);
+        subscribers.insert(id, subscriber);
 
         tracing::debug!(
             sub_id = id,

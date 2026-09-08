@@ -141,3 +141,31 @@ async fn committed_batch_wakes_state_reader_once_and_preserves_raw_order() {
     assert!(raw.try_recv().is_err());
     assert_eq!(raw.dropped_count(), 0);
 }
+
+#[test]
+fn subscription_registration_cannot_escape_close() {
+    for _ in 0..100 {
+        let bus = std::sync::Arc::new(ChannelBus::new());
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let registering_bus = bus.clone();
+        let registering_barrier = barrier.clone();
+        let thread = std::thread::spawn(move || {
+            registering_barrier.wait();
+            (
+                registering_bus.subscribe(&[EventName::Update]),
+                registering_bus.subscribe_document_changes(),
+            )
+        });
+        barrier.wait();
+        bus.close();
+        let (mut raw, mut changes) = thread.join().unwrap();
+        assert!(matches!(
+            raw.try_recv(),
+            Err(events::TryRecvError::Disconnected)
+        ));
+        assert!(matches!(
+            changes.try_recv(),
+            Err(events::TryRecvError::Disconnected)
+        ));
+    }
+}
