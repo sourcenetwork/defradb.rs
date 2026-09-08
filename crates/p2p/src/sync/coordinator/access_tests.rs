@@ -379,6 +379,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
 
 struct ConflictOnceBlockstore {
     inner: TestBlockstore,
+    delayed_get: Option<Cid>,
     remaining_put_conflicts: AtomicUsize,
     remaining_put_many_conflicts: AtomicUsize,
     put_attempts: AtomicUsize,
@@ -503,6 +504,7 @@ impl ConflictOnceBlockstore {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         Self {
             inner: DefraBlockstore::new(store, true),
+            delayed_get: None,
             remaining_put_conflicts: AtomicUsize::new(1),
             remaining_put_many_conflicts: AtomicUsize::new(0),
             put_attempts: AtomicUsize::new(0),
@@ -514,6 +516,7 @@ impl ConflictOnceBlockstore {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         Self {
             inner: DefraBlockstore::new(store, true),
+            delayed_get: None,
             remaining_put_conflicts: AtomicUsize::new(0),
             remaining_put_many_conflicts: AtomicUsize::new(1),
             put_attempts: AtomicUsize::new(0),
@@ -533,6 +536,9 @@ impl ConflictOnceBlockstore {
 #[async_trait]
 impl Blockstore for ConflictOnceBlockstore {
     async fn get(&self, cid: &Cid) -> blockstore::Result<Option<bytes::Bytes>> {
+        if self.delayed_get.as_ref() == Some(cid) {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
         self.inner.get(cid).await
     }
 
@@ -1816,6 +1822,68 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     }
     coordinator.shutdown().await;
     markers.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn car_authorization_timeout_preserves_only_independent_grants() {
+    use ipld_core::{codec::Codec, ipld};
+    use serde_ipld_dagcbor::codec::DagCborCodec;
+
+    let leaf_data = DagCborCodec::encode_to_vec(&ipld!({"value": 0})).unwrap();
+    let leaf = cid_for(&leaf_data);
+    let root_data = DagCborCodec::encode_to_vec(&ipld!({"child": leaf})).unwrap();
+    let root = cid_for(&root_data);
+    for filtered in [false, true] {
+        let peer = random_peer_id();
+        let mut store = ConflictOnceBlockstore::new();
+        store.delayed_get = Some(root);
+        store.inner.put(&root, &root_data).await.unwrap();
+        store.inner.put(&leaf, &leaf_data).await.unwrap();
+        let registry = if filtered {
+            filtered_replicator_registry(&peer, "collection1")
+        } else {
+            let registry = Arc::new(ReplicatorRegistry::new());
+            registry.add_replicator("collection1", peer.as_str());
+            registry
+        };
+        let transport = NoopTransport::new();
+        let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+            transport.clone(),
+            Arc::new(store),
+            SyncConfig::default(),
+            AccessMode::Controlled,
+            registry,
+            Arc::new(NoOpCollectionStorage),
+            Arc::new(crate::replicator::EqOnlyFilterMatcher),
+            Arc::new(StaticDataClassifier {
+                collection_id: "collection1".to_string(),
+            }),
+            Arc::new(LateBoundServeAcp::new()),
+        )
+        .await
+        .unwrap();
+        let _grant = coordinator
+            .runtime
+            .selective_car_access
+            .register(peer.clone(), root)
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        coordinator
+            .handle_transport_event(selective_car_fetch_event(peer, root, vec![leaf]))
+            .await
+            .unwrap();
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        let responses = transport.car_responses();
+        let (_, blocks) = crate::sync::car::decode_car(responses.last().unwrap()).unwrap();
+        assert_eq!(
+            blocks.len(),
+            usize::from(!filtered),
+            "timeout grants no partial rooted authority, but cannot veto an independent grant"
+        );
+        if !filtered {
+            assert_eq!(blocks[0], (leaf, leaf_data.clone()));
+        }
+    }
 }
 
 #[tokio::test]
