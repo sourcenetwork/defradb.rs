@@ -1,5 +1,7 @@
 mod cache;
 mod evaluate;
+mod limits;
+pub use limits::{MAX_EVALUATION_DEPTH, MAX_EVALUATION_STEPS};
 mod trace;
 
 use std::sync::Arc;
@@ -136,6 +138,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         self.lookup.clear();
     }
 
+    /// Evaluate with deterministic depth and work limits; exhaustion returns an error.
     pub async fn check(
         &self,
         policy_id: &str,
@@ -191,6 +194,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         futures::executor::block_on(self.check(policy_id, resource, object_id, relation, subject))
     }
 
+    /// Evaluate a batch with one shared cache and work budget.
     pub async fn check_many(&self, requests: &[PermissionCheckRequest<'_>]) -> Vec<Result<bool>> {
         let cache = Arc::new(CheckCache::new());
 

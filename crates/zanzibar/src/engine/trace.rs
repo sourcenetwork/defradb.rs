@@ -25,6 +25,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         trace: &'a mut EvaluationTrace,
     ) -> MaybeBoxFuture<'a, Result<bool>> {
         Box::pin(async move {
+            let _evaluation = cache.budget.enter()?;
             match expression {
                 RelationExpression::This => {
                     let result = self
@@ -53,6 +54,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .get_relation_subjects(policy_id, resource, object_id, relation)
                         .await?
                     {
+                        cache.budget.charge()?;
                         let Subject::EntitySet {
                             resource,
                             object_id,
@@ -148,7 +150,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                             subject,
                             computed_expr,
                             new_trail,
-                            cache,
+                            cache.clone(),
                             trace,
                         )
                         .await?;
@@ -191,6 +193,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for target in targets {
+                        cache.budget.charge()?;
                         let node_id =
                             NodeId::new(&target.resource, &target.object_id, computed_relation);
                         if trail.contains(&node_id) {
@@ -247,6 +250,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for subj in subjects {
+                        cache.budget.charge()?;
                         match subj {
                             Subject::EntitySet {
                                 resource: target_resource,
@@ -462,7 +466,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                     let (subtract_result, _) = self
                         .evaluate_expr_inner(
                             policy_id, resource, object_id, relation, subject, subtract, trail,
-                            cache,
+                            cache.clone(),
                         )
                         .await?;
 

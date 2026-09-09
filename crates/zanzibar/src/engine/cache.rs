@@ -65,6 +65,7 @@ impl CheckKey {
 
 #[derive(Debug, Default)]
 pub(crate) struct CheckCache {
+    pub(crate) budget: super::limits::EvaluationBudget,
     results: RwLock<HashMap<CheckKey, bool>>,
 }
 

@@ -35,6 +35,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         Box::pin(async move {
             let key = CheckKey::new(policy_id, resource, object_id, relation, subject);
             if let Some(cached) = cache.get(&key).await {
+                cache.budget.charge()?;
                 // Only untainted results are ever stored, so a hit is trail-independent.
                 return Ok((cached, false));
             }
@@ -73,6 +74,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         cache: Arc<CheckCache>,
     ) -> MaybeBoxFuture<'a, Result<Eval>> {
         Box::pin(async move {
+            let _evaluation = cache.budget.enter()?;
             match expression {
                 RelationExpression::This => {
                     let granted = self
@@ -88,6 +90,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .get_relation_subjects(policy_id, resource, object_id, relation)
                         .await?
                     {
+                        cache.budget.charge()?;
                         let Subject::EntitySet {
                             resource,
                             object_id,
@@ -154,7 +157,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         subject,
                         computed_expr,
                         new_trail,
-                        cache,
+                        cache.clone(),
                     )
                     .await
                 }
@@ -171,6 +174,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for target in targets {
+                        cache.budget.charge()?;
                         let node_id =
                             NodeId::new(&target.resource, &target.object_id, computed_relation);
                         if trail.contains(&node_id) {
@@ -210,6 +214,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for subj in subjects {
+                        cache.budget.charge()?;
                         match subj {
                             Subject::EntitySet {
                                 resource: target_resource,
@@ -331,7 +336,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                     let (subtract_granted, subtract_tainted) = self
                         .evaluate_expr_inner(
                             policy_id, resource, object_id, relation, subject, subtract, trail,
-                            cache,
+                            cache.clone(),
                         )
                         .await?;
 
