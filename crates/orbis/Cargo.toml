@@ -24,7 +24,7 @@ tonic-prost = { workspace = true }
 prost = { workspace = true }
 
 # Async runtime (dedicated runtime for sync bridge)
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 # Encoding
 base64.workspace = true

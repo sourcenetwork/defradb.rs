@@ -53,17 +53,27 @@ impl OrbisClient {
         let public_key = crypto::BlsPublicKey::from_bytes(&public_key_bytes).map_err(error)?;
         let signer_did = public_key.did().map_err(error)?;
         let public_key_hex = hex::encode(public_key.raw());
-        let channel = Channel::from_shared(endpoint)
+        let endpoint = Channel::from_shared(endpoint)
             .map_err(error)?
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(60))
-            .connect()
-            .await
-            .map_err(error)?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
+            .timeout(Duration::from_secs(60));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
             .build()
             .map_err(error)?;
+        let connection = runtime
+            .spawn(async move { endpoint.connect().await })
+            .await
+            .map_err(error)
+            .and_then(|result| result.map_err(error));
+        let channel = match connection {
+            Ok(channel) => channel,
+            Err(error) => {
+                runtime.shutdown_background();
+                return Err(error);
+            }
+        };
         Ok(Self {
             channel,
             derivation_id,

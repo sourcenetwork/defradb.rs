@@ -113,13 +113,20 @@ async fn client(
             .await
             .unwrap();
     });
-    let client = OrbisClient::new(
-        endpoint,
-        DERIVATION.into(),
-        key(7).sk_to_pk().compress().to_vec(),
-        identity,
-    )
+    let client = tokio::task::spawn_blocking(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(OrbisClient::new(
+                endpoint,
+                DERIVATION.into(),
+                key(7).sk_to_pk().compress().to_vec(),
+                identity,
+            ))
+    })
     .await
+    .unwrap()
     .unwrap();
     (client, task, tokens)
 }
