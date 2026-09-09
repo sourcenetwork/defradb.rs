@@ -599,6 +599,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         last_fetch_error: None,
                         next_retry_at: tokio::time::Instant::now(),
                         dispatches: 0,
+                        storage_blocker: None,
                     },
                 );
                 // Report the limit that actually tripped so the nack and its

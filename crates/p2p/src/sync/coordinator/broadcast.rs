@@ -245,8 +245,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn push_jobs(&self, push: &PendingPush) -> Result<Vec<PushJobSpec>> {
         let replicators = self.list_replicators_for_push().await?;
         let mut jobs = Vec::new();
+        let mut collection_misses = 0usize;
+        let mut missing_documents = 0usize;
+        let mut filter_misses = 0usize;
         for rep in &replicators {
             if !Self::replicator_in_collection(rep, &push.collection_id) {
+                collection_misses += 1;
                 continue;
             }
             let Some(peer_id) = Self::peer_id_for_replicator(rep) else {
@@ -254,6 +258,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             };
             if rep.is_filtered_for_collection(&push.collection_id) {
                 let Some(document) = push.document.as_ref() else {
+                    missing_documents += 1;
                     continue;
                 };
                 if !rep.matches_filter(
@@ -261,6 +266,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     &push.collection_id,
                     document,
                 ) {
+                    filter_misses += 1;
                     continue;
                 }
             }
@@ -273,6 +279,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 push.block.clone(),
             ));
         }
+        tracing::debug!(
+            target: "p2p::sync::delivery_admission",
+            doc_id = %push.doc_id,
+            collection_id = %push.collection_id,
+            cid = %push.cid,
+            replicators = replicators.len(),
+            jobs = jobs.len(),
+            collection_misses,
+            missing_documents,
+            filter_misses,
+            "Committed head sender selection"
+        );
         Ok(jobs)
     }
 

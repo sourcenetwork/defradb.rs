@@ -61,6 +61,8 @@ pub struct PendingDag {
     pub next_retry_at: tokio::time::Instant,
     /// Fetch dispatches claimed for this root (drives the backoff rung).
     pub dispatches: u32,
+    /// Transient local contention; discarded with this bounded pending root.
+    pub storage_blocker: Option<Cid>,
 }
 
 /// Pending roots and the reverse index used to route arriving blocks only to

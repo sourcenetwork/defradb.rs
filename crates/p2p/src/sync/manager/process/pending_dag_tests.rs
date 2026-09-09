@@ -1,5 +1,6 @@
 use super::*;
 use std::sync::Arc;
+use std::time::Duration;
 
 use blockstore::DefraBlockstore;
 use defra_core::{Block as DefraBlock, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
@@ -46,6 +47,7 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         last_fetch_error: None,
         next_retry_at: tokio::time::Instant::now(),
         dispatches: 0,
+        storage_blocker: None,
     }
 }
 
@@ -74,6 +76,54 @@ fn linked_dag_providers_require_positive_missing_cid_evidence() {
         vec!["descendant-provider".to_string()],
         "root possession and connectivity alone must not advertise linked-DAG availability"
     );
+}
+
+#[tokio::test]
+async fn storage_release_wakes_only_contended_roots_without_resetting_backoff() {
+    use futures::FutureExt;
+    let manager = test_manager();
+    let root = test_cid(910);
+    let other = test_cid(911);
+    let blocker = test_cid(912);
+    let now = tokio::time::Instant::now();
+    for cid in [root, other] {
+        let mut dag = pending_dag("storage", Instant::now());
+        dag.next_retry_at = now;
+        manager.insert_pending_dag(cid, dag);
+        assert!(manager.try_claim_pending_dag_dispatch(&cid, now));
+    }
+    let owner = manager.process_queue.try_acquire_nowait(&blocker).unwrap();
+    manager.defer_pending_dag_for_storage(&root, blocker);
+    assert!(manager.pending_dag_ready().now_or_never().is_some());
+    assert!(manager.due_pending_dag_retries(now).is_empty());
+    assert!(!manager.try_claim_pending_dag_dispatch(&root, now + Duration::from_secs(60)));
+    drop(owner);
+    assert!(manager.pending_dag_ready().now_or_never().is_some());
+    let due = manager.due_pending_dag_retries(now);
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].0, root);
+    assert_eq!(due[0].1.dispatches, 1);
+    assert!(manager.try_claim_pending_dag_dispatch(&root, now));
+    assert!(!manager.try_claim_pending_dag_dispatch(&root, now));
+    assert!(manager.due_pending_dag_retries(now).is_empty());
+}
+
+#[tokio::test]
+async fn storage_release_before_registration_does_not_lose_wakeup() {
+    use futures::FutureExt;
+    let manager = test_manager();
+    let root = test_cid(920);
+    let blocker = test_cid(921);
+    manager.insert_pending_dag(root, pending_dag("storage", Instant::now()));
+    let now = tokio::time::Instant::now();
+    assert!(manager.try_claim_pending_dag_dispatch(&root, now));
+    let owner = manager.process_queue.try_acquire_nowait(&blocker).unwrap();
+    drop(owner);
+    assert!(manager.pending_dag_ready().now_or_never().is_some());
+    assert!(manager.due_pending_dag_retries(now).is_empty());
+    manager.defer_pending_dag_for_storage(&root, blocker);
+    assert!(manager.pending_dag_ready().now_or_never().is_some());
+    assert_eq!(manager.due_pending_dag_retries(now)[0].0, root);
 }
 
 #[tokio::test]
