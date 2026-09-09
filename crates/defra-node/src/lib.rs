@@ -470,6 +470,12 @@ impl EmbeddedNode {
         self.event_bus.subscribe(event_names)
     }
 
+    /// Subscribe to bounded current-state invalidations without retaining every
+    /// historical revision. Subscribe before the initial query to avoid gaps.
+    pub fn subscribe_document_changes(&self) -> events::DocumentChangeSubscription {
+        self.event_bus.subscribe_document_changes()
+    }
+
     /// Begin a manually finalized transaction. Dropping its handle does not
     /// roll it back; use [`Self::begin_transaction_guard`] for scope ownership.
     pub async fn begin_transaction(
@@ -933,6 +939,20 @@ impl NodeBuilder {
     #[cfg(feature = "sourcehub")]
     pub fn with_sourcehub(mut self, config: SourceHubConfig) -> Self {
         self.document_acp = DocumentAcpConfig::SourceHub(config);
+        self
+    }
+
+    /// Configure SourceHub ACP when LCD and gRPC use distinct endpoints.
+    #[cfg(feature = "sourcehub")]
+    pub fn with_sourcehub_lcd(
+        mut self,
+        config: SourceHubConfig,
+        lcd_address: impl Into<String>,
+    ) -> Self {
+        self.document_acp = DocumentAcpConfig::SourceHubWithLcd {
+            config,
+            lcd_address: lcd_address.into(),
+        };
         self
     }
 

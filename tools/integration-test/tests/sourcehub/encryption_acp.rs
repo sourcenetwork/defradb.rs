@@ -107,8 +107,8 @@ async fn wait_for_names(
 /// + the Users schema on both nodes, and return `(cluster, policy_id, ids)`.
 ///
 /// This deliberately does NOT wire node0 -> node1 replication. Callers connect
-/// node1 explicitly via [`connect_and_replicate`] at the point they want the
-/// doc to start syncing — this lets the positive test grant the on-chain
+/// node1 explicitly via [`connect_and_replicate_without_delegation`] when they
+/// want the doc to start syncing. This lets the positive test grant on-chain
 /// `reader` relations BEFORE node1 ever sees the encrypted block, mirroring
 /// Go's grant-then-`WaitForSync` ordering (peer_acp_test.go).
 ///
@@ -117,7 +117,7 @@ async fn wait_for_names(
 /// meaningful for the KMS node-gate.
 async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let node0 = generate_identity(&binary).expect("node0 identity");
     let node1 = generate_identity(&binary).expect("node1 identity");
 
@@ -156,7 +156,8 @@ async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
 
     // Collections are registered for P2P on both nodes here; the actual
     // connection + replicator (which starts the push of the encrypted DAG to
-    // node1) is deferred to `connect_and_replicate` so callers control timing.
+    // node1) is deferred to `connect_and_replicate_without_delegation` so
+    // callers control timing.
     c0.p2p_collection_add(&["Users"]).expect("col add node0");
     c1.p2p_collection_add(&["Users"]).expect("col add node1");
 
@@ -177,15 +178,17 @@ struct NodeIds {
     node1_did: String,
 }
 
-/// Connect node0 -> node1 and set node0's replicator so the (already-created,
-/// already-granted) encrypted DAG starts pushing to node1. Call this only AFTER
-/// the relevant `reader` grants are durable on-chain so node1's KMS fetch is
-/// served against an already-registered, already-authorized document.
-fn connect_and_replicate(cluster: &TestCluster, node0_key: &str) {
+/// Connect node0 -> node1 without an explicit-replay delegation.
+///
+/// An identity-bearing replicator request intentionally delegates the
+/// authorizer's collection access to the target peer, including its KMS fetch.
+/// Tests that assert the target node remains unauthorized must therefore use
+/// the ordinary node-authenticated replication path.
+fn connect_and_replicate_without_delegation(cluster: &TestCluster) {
     let addr1 = extract_p2p_addr(cluster, 1);
     let c0 = cluster.client(0);
     c0.p2p_connect(&[&addr1]).expect("connect");
-    c0.p2p_replicator_set_with_identity(&["Users"], &addr1, node0_key)
+    c0.p2p_replicator_set(&["Users"], &addr1)
         .expect("set replicator");
 }
 
@@ -231,7 +234,7 @@ async fn encryption_acp_user_and_node_access() {
         .expect("grant node1 reader");
 
     // Only now wire replication so the doc syncs to node1 with grants in place.
-    connect_and_replicate(&cluster, &ids.node0_key);
+    connect_and_replicate_without_delegation(&cluster);
 
     // The user on node1 should eventually see the decrypted doc.
     let names = wait_for_names(
@@ -290,9 +293,10 @@ async fn encryption_acp_user_access_not_node() {
     c0.acp_relationship_add("Users", &doc_id, "reader", &user.did, &ids.node0_key)
         .expect("grant user reader");
 
-    // Now wire replication. node1 receives the ciphertext DAG but its KMS DEK
-    // fetch is denied by node0's serve-gate (node1 has no `reader` grant).
-    connect_and_replicate(&cluster, &ids.node0_key);
+    // Now wire replication without an explicit-replay delegation. The target
+    // node has no `reader` grant, so neither private replay admission nor a
+    // KMS DEK fetch can borrow the owner's authority.
+    connect_and_replicate_without_delegation(&cluster);
 
     // Give replication + (failed) key-fetch a chance to settle.
     tokio::time::sleep(Duration::from_secs(8)).await;
@@ -308,12 +312,10 @@ async fn encryption_acp_user_access_not_node() {
         users
     );
 
-    // Without node-level rights, node1 must not hold the decryptable doc;
-    // the user query above already asserts this. (The Go original also asserts
-    // empty `_commits`, but the Rust explicit-replicator push delivers the
-    // ciphertext DAG regardless — only the DEK is gated — so commit blocks may
-    // be present. The security-critical property is that the doc cannot be
-    // decrypted, which the empty-result assertion above enforces.)
+    // Without node-level rights, node1 must not expose the document. Private
+    // replay admission can reject it before storage; if it reaches storage,
+    // the KMS gate must still prevent decryption. The empty result asserts the
+    // end-to-end security property without depending on which gate rejects it.
 }
 
 /// Port: TestDocEncryptionACP_IfNodeHasAccessToSomeDocs_ShouldFetchOnlyThem
@@ -410,7 +412,7 @@ async fn encryption_acp_node_partial_access() {
     let _shahzad = public_create("Shahzad", false);
 
     // Grants are now durable on-chain; wire replication so node1 starts syncing.
-    connect_and_replicate(&cluster, &ids.node0_key);
+    connect_and_replicate_without_delegation(&cluster);
 
     // node1 queries as itself. The node-identity full-access shortcut means
     // node1 sees everything it physically *has*; the gating happened at sync /
@@ -456,7 +458,7 @@ async fn encryption_acp_node_partial_access() {
 #[ignore = "SourceHub harness funds only one account (node0); node1 cannot sign its merge-side ACP registration or a post-shutdown grant (account not found) — single-signer harness funding limitation, not the DEK-leak race (#976)"]
 async fn encryption_acp_server_not_available() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let node0 = generate_identity(&binary).expect("node0 identity");
     let node1 = generate_identity(&binary).expect("node1 identity");
     let node2 = generate_identity(&binary).expect("node2 identity");

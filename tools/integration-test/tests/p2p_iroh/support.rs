@@ -1,6 +1,9 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use integration_test::{build_cli_variant, workspace_root};
+
+static SOURCEHUB_IROH_BINARY: OnceLock<PathBuf> = OnceLock::new();
 
 #[ctor::ctor]
 fn prepare_iroh_binary() {
@@ -21,6 +24,18 @@ pub fn sourcehub_binary_available() -> bool {
     std::env::var_os("SOURCEHUB_BINARY").is_some()
         || std::env::var_os("SOURCEHUB_WORKSPACE").is_some()
         || path_contains_binary("sourcehubd")
+}
+
+pub fn sourcehub_iroh_binary() -> PathBuf {
+    SOURCEHUB_IROH_BINARY
+        .get_or_init(|| {
+            build_cli_variant(
+                &workspace_root(),
+                &["iroh", "sourcehub"],
+                "defra-iroh-sourcehub",
+            )
+        })
+        .clone()
 }
 
 fn path_contains_binary(name: &str) -> bool {

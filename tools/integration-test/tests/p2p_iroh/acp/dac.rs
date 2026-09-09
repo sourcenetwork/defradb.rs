@@ -12,8 +12,8 @@
 use std::time::Duration;
 
 use integration_test::{
-    extract_p2p_addr, generate_identity, poll_until, users_schema_with_policy, TestCluster,
-    USER_ACP_POLICY,
+    extract_p2p_addr, generate_identity, poll_until, users_schema_with_policy, BinarySource,
+    TestCluster, USER_ACP_POLICY,
 };
 use serial_test::serial;
 
@@ -81,6 +81,7 @@ async fn setup_sourcehub_cluster() -> Option<(TestCluster, String, String)> {
         .rust_nodes(2)
         .with_source_hub()
         .with_iroh_transport()
+        .with_rust_binary(BinarySource::Path(support::sourcehub_iroh_binary()))
         .with_identity(&owner_key)
         .build()
         .await

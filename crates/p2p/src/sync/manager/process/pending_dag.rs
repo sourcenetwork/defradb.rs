@@ -119,7 +119,19 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     /// Wake the existing dispatch owner without creating another fetch owner.
     pub(crate) async fn pending_dag_ready(&self) {
-        self.pending_dag_ready.notified().await;
+        tokio::select! {
+            _ = self.pending_dag_ready.notified() => {},
+            _ = self.process_queue.released() => {},
+        }
+    }
+
+    /// Remember contention without retaining a transport task or CAR buffer.
+    pub(crate) fn defer_pending_dag_for_storage(&self, root: &Cid, blocker: Cid) {
+        if let Some(dag) = self.pending_dags.write().get_mut(root) {
+            dag.storage_blocker = Some(blocker);
+            // Also wake if the owner released before registration.
+            self.pending_dag_ready.notify_one();
+        }
     }
 
     /// Milliseconds until the earliest due pending-DAG retry, including a
@@ -388,7 +400,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             self.diagnostics.record_pending_dag_retry_suppressed();
             return false;
         };
-        if !dag.is_recovery_registered || now < dag.next_retry_at {
+        if !dag.is_recovery_registered || dag.storage_blocker.is_some() || now < dag.next_retry_at {
             self.diagnostics.record_pending_dag_retry_suppressed();
             return false;
         }
@@ -417,10 +429,29 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         &self,
         now: tokio::time::Instant,
     ) -> Vec<(Cid, PendingDag)> {
-        let pending = self.pending_dags.read();
+        let mut pending = self.pending_dags.write();
+        let released: Vec<_> = pending
+            .iter()
+            .filter_map(|(root, dag)| {
+                dag.storage_blocker
+                    .filter(|cid| !self.process_queue.is_active(cid))
+                    .map(|_| *root)
+            })
+            .collect();
+        for root in released {
+            let dag = pending
+                .get_mut(&root)
+                .expect("pending root held under write lock");
+            dag.storage_blocker = None;
+            dag.next_retry_at = dag.next_retry_at.min(now);
+        }
         let mut due: Vec<_> = pending
             .iter()
-            .filter(|(_, dag)| dag.is_recovery_registered && now >= dag.next_retry_at)
+            .filter(|(_, dag)| {
+                dag.is_recovery_registered
+                    && dag.storage_blocker.is_none()
+                    && now >= dag.next_retry_at
+            })
             .map(|(cid, dag)| (*cid, dag.clone()))
             .collect();
         due.sort_unstable_by(|(left_cid, left), (right_cid, right)| {
@@ -793,6 +824,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 last_fetch_error: None,
                 next_retry_at: tokio::time::Instant::now(),
                 dispatches: 0,
+                storage_blocker: None,
             };
 
             let superseded = match self.try_insert_pending_dag(root_cid, dag.clone()) {

@@ -235,6 +235,51 @@ async fn two_stream_request_still_accepts_legacy_reverse_stream_reply() {
 }
 
 #[tokio::test]
+async fn disconnected_two_stream_requests_release_send_slots_before_reply_timeout() {
+    let sender = TestNode::spawn().await;
+    let mut receiver = TestNode::spawn().await;
+    connect(&sender.transport, &receiver.transport).await;
+
+    let mut sends = Vec::new();
+    for index in 0..4 {
+        let request = signed_request(&sender.transport, &format!("disconnect-{index}"));
+        let transport = sender.transport.clone();
+        let peer = receiver.transport.local_peer_id().clone();
+        sends.push(tokio::spawn(async move {
+            transport.send_two_stream_request(&peer, request).await
+        }));
+    }
+    // Every request reached the peer, but neither reply format is returned.
+    let mut response_tokens = Vec::new();
+    for _ in 0..4 {
+        let (_, _, token) = next_two_stream_request(&mut receiver.events).await;
+        response_tokens.push(token);
+    }
+    receiver
+        .transport
+        .disconnect(sender.transport.local_peer_id())
+        .await
+        .unwrap();
+    let completed = timeout(Duration::from_secs(1), async {
+        for send in &mut sends {
+            assert!(send.await.unwrap().is_err());
+        }
+    })
+    .await;
+    // Clean up even on the red path: the 30-second legacy wait must not leak.
+    for send in sends {
+        send.abort();
+    }
+    drop(response_tokens);
+    sender.shutdown().await;
+    receiver.shutdown().await;
+    assert!(
+        completed.is_ok(),
+        "closed QUIC connection retained pending PushLog requests"
+    );
+}
+
+#[tokio::test]
 async fn concurrent_two_stream_fan_in_replies_on_request_streams() {
     const SENDERS: usize = 32;
 

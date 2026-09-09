@@ -15,7 +15,7 @@ use integration_test::{generate_identity, users_schema_with_policy, TestCluster,
 #[serial_test::serial]
 async fn rust_circuit_breaker_trip_recovery() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let jack = generate_identity(&binary).expect("Jack identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
@@ -112,7 +112,7 @@ async fn rust_circuit_breaker_trip_recovery() {
 #[serial_test::serial]
 async fn rust_policy_cache_ttl_expiry() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let alice = generate_identity(&binary).expect("Alice identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
@@ -196,7 +196,7 @@ async fn rust_policy_cache_ttl_expiry() {
 #[ignore = "Go node with SourceHub not yet supported"]
 async fn go_circuit_breaker_trip_recovery() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let jack = generate_identity(&binary).expect("Jack identity");
 
     let cluster = TestCluster::builder()
@@ -239,7 +239,7 @@ async fn go_circuit_breaker_trip_recovery() {
 #[ignore = "Go node with SourceHub not yet supported"]
 async fn go_policy_cache_ttl_expiry() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let alice = generate_identity(&binary).expect("Alice identity");
 
     let cluster = TestCluster::builder()

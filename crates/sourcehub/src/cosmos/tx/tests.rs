@@ -39,6 +39,11 @@ impl RpcState {
     }
 }
 
+#[test]
+fn signer_uses_sourcehub_account_prefix() {
+    assert!(test_signer().address().starts_with("source1"));
+}
+
 #[tokio::test]
 async fn sign_and_broadcast_holds_sequence_lock_until_inclusion() {
     let state = Arc::new(RpcState::new(ServerMode::DelayFirstTx));
@@ -277,6 +282,7 @@ fn successful_tx_response() -> String {
 
 fn test_client(base_url: &str) -> SourceHubClient {
     SourceHubClient::new(
+        base_url.to_string(),
         base_url.to_string(),
         base_url.to_string(),
         Duration::from_secs(5),

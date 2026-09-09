@@ -457,7 +457,19 @@ pub(super) async fn handle_two_stream_request(
         }
     };
 
-    tokio::time::timeout(REQUEST_RESPONSE_TIMEOUT, wait_for_reply)
+    // A stream reset can still receive a legacy reverse-stream reply. A closed
+    // connection must release this attempt so durable retry and newer heads do
+    // not wait behind dead requests occupying every per-peer sender slot.
+    let wait_for_reply_or_disconnect = async {
+        tokio::select! {
+            biased;
+            reply = wait_for_reply => reply,
+            reason = connection.closed() => Err(crate::error::Error::Transport(
+                format!("PushLog connection closed before acknowledgement: {reason}")
+            )),
+        }
+    };
+    tokio::time::timeout(REQUEST_RESPONSE_TIMEOUT, wait_for_reply_or_disconnect)
         .await
         .map_err(|_| {
             warn!(

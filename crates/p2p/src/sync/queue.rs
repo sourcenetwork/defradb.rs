@@ -31,6 +31,7 @@ impl std::fmt::Debug for ProcessQueue {
 }
 
 struct ProcessQueueInner {
+    released: tokio::sync::Notify,
     /// Map of CID -> list of waiters
     waiters: Mutex<HashMap<Cid, Vec<oneshot::Sender<()>>>>,
 }
@@ -40,6 +41,7 @@ impl ProcessQueue {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(ProcessQueueInner {
+                released: tokio::sync::Notify::new(),
                 waiters: Mutex::new(HashMap::new()),
             }),
         }
@@ -50,6 +52,14 @@ impl ProcessQueue {
     /// Useful for monitoring and debugging.
     pub fn active_count(&self) -> usize {
         self.inner.waiters.lock().len()
+    }
+
+    pub(crate) fn is_active(&self, cid: &Cid) -> bool {
+        self.inner.waiters.lock().contains_key(cid)
+    }
+
+    pub(crate) async fn released(&self) {
+        self.inner.released.notified().await;
     }
 
     /// Get all CIDs currently being processed.
@@ -76,6 +86,7 @@ impl ProcessQueue {
     pub fn force_release(&self, cid: &Cid) -> bool {
         let mut waiters = self.inner.waiters.lock();
         if let Some(waiting) = waiters.remove(cid) {
+            self.inner.released.notify_one();
             tracing::warn!(
                 ?cid,
                 waiter_count = waiting.len(),
@@ -102,6 +113,7 @@ impl ProcessQueue {
         let mut waiters = self.inner.waiters.lock();
         let count = waiters.len();
         if count > 0 {
+            self.inner.released.notify_one();
             tracing::warn!(count = count, "Force-releasing all stuck CIDs");
             for (cid, waiting) in waiters.drain() {
                 tracing::debug!(?cid, "Force-releasing CID");
@@ -213,6 +225,7 @@ impl ProcessQueue {
     fn release_sync(&self, cid: &Cid) {
         let mut waiters = self.inner.waiters.lock();
         if let Some(waiting) = waiters.remove(cid) {
+            self.inner.released.notify_one();
             // Notify all waiters that processing is complete
             let waiter_count = waiting.len();
             let mut notified = 0;

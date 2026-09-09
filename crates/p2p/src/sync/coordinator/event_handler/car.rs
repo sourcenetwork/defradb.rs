@@ -473,6 +473,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         {
             Ok(owners) => owners,
             Err(conflicting_cid) => {
+                self.manager
+                    .defer_pending_dag_for_storage(&root_cid, conflicting_cid);
                 self.manager.diagnostics.record_single_flight_suppressed();
                 let same_root = conflicting_cid == root_cid;
                 tracing::debug!(

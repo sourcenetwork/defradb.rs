@@ -7,15 +7,17 @@ use async_channel::{Sender, TrySendError};
 use parking_lot::RwLock;
 
 use crate::bus::Bus;
+use crate::document_changes::{ChangePublisher, DocumentChangeSubscription};
 use crate::event::{EventName, Message};
 use crate::subscription::Subscription;
 
 /// Configuration for the channel-based event bus.
 #[derive(Debug, Clone)]
 pub struct ChannelBusConfig {
-    /// Buffer size for subscriber event channels.
+    /// Buffer size for raw event channels, and the maximum number of distinct
+    /// pending documents for current-state observers.
     /// When the buffer is full, new messages are dropped with a warning.
-    /// Default: 100
+    /// Default: 4096
     pub event_buffer_size: usize,
     /// Whether to send a resync signal when messages are dropped due to buffer overflow.
     /// When enabled, a special "resync_needed" flag is tracked per subscriber.
@@ -66,6 +68,7 @@ pub struct ChannelBus {
     next_id: AtomicU64,
     /// Active subscribers indexed by ID.
     subscribers: RwLock<HashMap<u64, Subscriber>>,
+    document_observers: RwLock<HashMap<u64, ChangePublisher>>,
     /// Whether the bus is closed.
     closed: AtomicBool,
     /// Configuration for the bus.
@@ -83,6 +86,7 @@ impl ChannelBus {
         Self {
             next_id: AtomicU64::new(1),
             subscribers: RwLock::new(HashMap::new()),
+            document_observers: RwLock::new(HashMap::new()),
             closed: AtomicBool::new(false),
             config,
         }
@@ -90,7 +94,7 @@ impl ChannelBus {
 
     /// Get the number of active subscribers.
     pub fn subscriber_count(&self) -> usize {
-        self.subscribers.read().len()
+        self.subscribers.read().len() + self.document_observers.read().len()
     }
 
     /// Get the current configuration.
@@ -112,6 +116,80 @@ impl Bus for ChannelBus {
             return;
         }
 
+        if let Some(update) = msg.as_update() {
+            let mut observers = self.document_observers.write();
+            observers.retain(|_, observer| {
+                if observer.is_closed() {
+                    return false;
+                }
+                observer.publish(update);
+                true
+            });
+        }
+
+        self.publish_raw(msg);
+    }
+
+    fn publish_batch(&self, messages: Vec<Message>) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        {
+            let mut observers = self.document_observers.write();
+            observers.retain(|_, observer| {
+                if observer.is_closed() {
+                    return false;
+                }
+                observer.publish_batch(messages.iter().filter_map(Message::as_update));
+                true
+            });
+        }
+        for message in messages {
+            self.publish_raw(message);
+        }
+    }
+
+    fn subscribe(&self, events: &[EventName]) -> Subscription {
+        self.subscribe_raw(events)
+    }
+
+    fn unsubscribe(&self, sub_id: u64) {
+        self.document_observers.write().remove(&sub_id);
+        self.subscribers.write().remove(&sub_id);
+        tracing::debug!(sub_id, "Unsubscribed");
+    }
+
+    fn close(&self) {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        self.subscribers.write().clear();
+        self.document_observers.write().clear();
+        tracing::info!("Event bus closed");
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    fn subscribe_document_changes(&self) -> DocumentChangeSubscription {
+        let mut observers = self.document_observers.write();
+        if self.closed.load(Ordering::Acquire) {
+            return DocumentChangeSubscription::closed();
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (publisher, subscription) =
+            DocumentChangeSubscription::new(id, self.config.event_buffer_size);
+        observers.insert(id, publisher);
+        subscription
+    }
+}
+
+impl ChannelBus {
+    fn publish_raw(&self, msg: Message) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
         // Collect dead subscriber IDs for lazy cleanup
         let mut dead_subs: Vec<u64> = Vec::new();
 
@@ -187,7 +265,8 @@ impl Bus for ChannelBus {
         }
     }
 
-    fn subscribe(&self, events: &[EventName]) -> Subscription {
+    fn subscribe_raw(&self, events: &[EventName]) -> Subscription {
+        let mut subscribers = self.subscribers.write();
         if self.closed.load(Ordering::Acquire) {
             // Return a subscription with a closed channel
             let (_tx, rx) = async_channel::bounded(1);
@@ -206,7 +285,7 @@ impl Bus for ChannelBus {
             dropped_count: dropped_count.clone(),
         };
 
-        self.subscribers.write().insert(id, subscriber);
+        subscribers.insert(id, subscriber);
 
         tracing::debug!(
             sub_id = id,
@@ -216,31 +295,5 @@ impl Bus for ChannelBus {
         );
 
         Subscription::with_dropped_counter(id, rx, dropped_count)
-    }
-
-    fn unsubscribe(&self, sub_id: u64) {
-        if let Some(subscriber) = self.subscribers.write().remove(&sub_id) {
-            // Drop the sender to close the receiver
-            drop(subscriber);
-            tracing::debug!(sub_id = sub_id, "Unsubscribed");
-        }
-    }
-
-    fn close(&self) {
-        if self.closed.swap(true, Ordering::AcqRel) {
-            // Already closed
-            return;
-        }
-
-        // Clear all subscribers (this will close all channels)
-        let mut subscribers = self.subscribers.write();
-        let count = subscribers.len();
-        subscribers.clear();
-
-        tracing::info!(subscribers_closed = count, "Event bus closed");
-    }
-
-    fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
     }
 }

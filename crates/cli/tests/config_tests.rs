@@ -31,6 +31,8 @@ fn cli_with_defaults() -> Cli {
         #[cfg(feature = "sourcehub")]
         source_hub_address: None,
         #[cfg(feature = "sourcehub")]
+        source_hub_grpc_address: None,
+        #[cfg(feature = "sourcehub")]
         source_hub_comet_address: None,
         #[cfg(feature = "sourcehub")]
         source_hub_events_ws: None,
@@ -155,6 +157,7 @@ fn test_apply_cli_flags_valid_values_succeed() {
     #[cfg(feature = "sourcehub")]
     {
         cli.source_hub_address = Some("http://localhost:1317".to_string());
+        cli.source_hub_grpc_address = Some("http://localhost:9090".to_string());
         cli.source_hub_comet_address = Some("http://localhost:26657".to_string());
         cli.source_hub_events_ws = Some("ws://localhost:26657/websocket".to_string());
         cli.source_hub_chain_id = Some("sourcehub-test".to_string());
@@ -183,6 +186,7 @@ fn test_apply_cli_flags_valid_values_succeed() {
     #[cfg(feature = "sourcehub")]
     {
         assert_eq!(config.acp.sourcehub_address, "http://localhost:1317");
+        assert_eq!(config.acp.sourcehub_grpc_address, "http://localhost:9090");
         assert_eq!(config.acp.sourcehub_comet_address, "http://localhost:26657");
         assert_eq!(
             config.acp.sourcehub_events_ws,
@@ -209,6 +213,8 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "no-keyring",
     #[cfg(feature = "sourcehub")]
     "source-hub-address",
+    #[cfg(feature = "sourcehub")]
+    "source-hub-grpc-address",
     #[cfg(feature = "sourcehub")]
     "source-hub-comet-address",
     #[cfg(feature = "sourcehub")]

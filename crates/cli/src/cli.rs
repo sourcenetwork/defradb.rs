@@ -78,10 +78,15 @@ pub struct Cli {
     #[arg(long, global = true, env = "DEFRA_NO_KEYRING", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser())]
     pub no_keyring: Option<bool>,
 
-    /// The SourceHub address authorized by the client to make SourceHub transactions
+    /// SourceHub LCD address used for REST queries
     #[cfg(feature = "sourcehub")]
     #[arg(long, global = true, env = "DEFRA_SOURCE_HUB_ADDRESS")]
     pub source_hub_address: Option<String>,
+
+    /// SourceHub gRPC address used for authorization queries
+    #[cfg(feature = "sourcehub")]
+    #[arg(long, global = true, env = "DEFRA_SOURCE_HUB_GRPC_ADDRESS")]
+    pub source_hub_grpc_address: Option<String>,
 
     /// SourceHub CometBFT RPC address for transaction broadcast
     #[cfg(feature = "sourcehub")]

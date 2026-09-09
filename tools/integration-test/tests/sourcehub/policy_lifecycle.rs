@@ -15,7 +15,7 @@ use integration_test::{generate_identity, users_schema_with_policy, TestCluster,
 #[serial_test::serial]
 async fn rust_sourcehub_policy_lifecycle() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let alice = generate_identity(&binary).expect("Alice identity");
 
     let cluster = TestCluster::builder()

@@ -14,6 +14,14 @@ pub trait Bus: Send + Sync {
     /// whose event filter matches the message's event name.
     fn publish(&self, msg: Message);
 
+    /// Publish one committed batch. Raw subscribers retain every event; state
+    /// observers may receive one invalidation per affected document.
+    fn publish_batch(&self, messages: Vec<Message>) {
+        for message in messages {
+            self.publish(message);
+        }
+    }
+
     /// Subscribe to events matching the given event names.
     ///
     /// Returns a `Subscription` that can be used to receive events.
@@ -21,6 +29,11 @@ pub trait Bus: Send + Sync {
     ///
     /// Use `EventName::WildCard` to receive all events.
     fn subscribe(&self, events: &[EventName]) -> Subscription;
+
+    /// Observe current document state with bounded, coalesced invalidations.
+    /// Revision-sensitive consumers must keep using `subscribe` instead.
+    #[cfg(feature = "channel")]
+    fn subscribe_document_changes(&self) -> crate::DocumentChangeSubscription;
 
     /// Unsubscribe by subscription ID.
     ///
