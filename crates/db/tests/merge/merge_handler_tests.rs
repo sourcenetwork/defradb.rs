@@ -682,6 +682,37 @@ async fn verify_corrupt_signature_block_returns_error() {
     ));
 }
 
+#[tokio::test]
+async fn verify_signature_rejects_non_utf8_identity() {
+    let (handler, blockstore) = make_handler();
+    let mut block = make_lww_block(None);
+    sign_block_ed25519(&mut block, &blockstore).await;
+    let bytes = blockstore
+        .get(&block.signature.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut signature = Signature::from_dag_cbor(&bytes).unwrap();
+    signature.header.identity.push(0xff);
+    let signature_cid = signature.generate_cid().unwrap();
+    blockstore
+        .put(&signature_cid, &signature.to_dag_cbor().unwrap())
+        .await
+        .unwrap();
+    block.signature = Some(signature_cid);
+    let result = handler
+        .verify_block_signature(
+            &block.generate_cid().unwrap(),
+            &block,
+            &block.to_dag_cbor().unwrap(),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(MergeError::SignatureVerificationFailed { reason, .. })
+        if reason.contains("not valid UTF-8"))
+    );
+}
+
 /// Helper: sign a block with a BLS12-381 key (using blst directly), store signature in blockstore.
 /// Returns (hex_pubkey, did).
 async fn sign_block_bls(
