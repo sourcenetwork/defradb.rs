@@ -34,7 +34,6 @@ members = [
     "crates/replication-filter",
     "crates/telemetry",
     "tools/lens-host",
-    "tools/perf",
     "tools/ffi-test",
     "tools/integration-test",
     "proofs",
@@ -99,7 +98,7 @@ iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Storage
-regolith = "0.1.4"
+regolith = { git = "https://github.com/sourcenetwork/regolith", rev = "807da3a50ed7b29f4cdb6849a005614d18d77911" }
 
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["serde", "zeroize"] }
