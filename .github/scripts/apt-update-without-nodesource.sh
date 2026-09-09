@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Self-hosted runners may have NodeSource configured for operator-managed Node
-# upgrades. That third-party repository is not needed by DefraDB builds, and a
-# stale or unavailable NodeSource endpoint must not prevent Ubuntu packages
-# from being refreshed. Build a request-local source set instead of mutating
-# the runner's global APT configuration.
+# Runners may have third-party repositories configured for preinstalled tools.
+# They are not needed by DefraDB builds, and stale or partially propagated
+# metadata must not prevent Ubuntu packages from being refreshed. Build a
+# request-local source set instead of mutating the runner's global APT
+# configuration.
+unneeded_sources='deb\.nodesource\.com|dl\.google\.com/linux/chrome'
 filtered_root="$(mktemp -d)"
 trap 'rm -rf "${filtered_root}"' EXIT
 mkdir -p "${filtered_root}/sources.list.d"
 
 if [[ -f /etc/apt/sources.list ]]; then
-  grep -Fv "deb.nodesource.com" /etc/apt/sources.list \
+  grep -Ev "${unneeded_sources}" /etc/apt/sources.list \
     >"${filtered_root}/sources.list" || true
 else
   : >"${filtered_root}/sources.list"
@@ -23,8 +24,8 @@ for source_file in /etc/apt/sources.list.d/*; do
     *.list | *.sources) ;;
     *) continue ;;
   esac
-  if grep -Fq "deb.nodesource.com" "${source_file}"; then
-    echo "Skipping unavailable NodeSource APT source: ${source_file}"
+  if grep -Eq "${unneeded_sources}" "${source_file}"; then
+    echo "Skipping unrelated third-party APT source: ${source_file}"
     continue
   fi
   cp "${source_file}" "${filtered_root}/sources.list.d/"
