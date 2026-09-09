@@ -93,6 +93,12 @@ pub enum DocumentAcpConfig {
     Local,
     #[cfg(feature = "sourcehub")]
     SourceHub(SourceHubConfig),
+    /// SourceHub ACP with distinct LCD and gRPC endpoints.
+    #[cfg(feature = "sourcehub")]
+    SourceHubWithLcd {
+        config: SourceHubConfig,
+        lcd_address: String,
+    },
 }
 
 /// SourceHub document ACP configuration.

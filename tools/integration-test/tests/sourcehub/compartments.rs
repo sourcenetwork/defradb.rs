@@ -34,7 +34,7 @@ fn add_policy(node: &integration_test::DefraClient, policy: &str, identity: &str
 #[serial_test::serial]
 async fn rust_sourcehub_compartments() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let jack = generate_identity(&binary).expect("Jack identity");
 
     let cluster = TestCluster::builder()

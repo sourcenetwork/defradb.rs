@@ -9,7 +9,7 @@ use integration_test::{generate_identity, users_schema_with_policy, TestCluster,
 #[serial_test::serial]
 async fn rust_circuit_breaker_threshold_1_trips_immediately() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let jack = generate_identity(&binary).expect("Jack identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
@@ -95,7 +95,7 @@ async fn rust_circuit_breaker_threshold_1_trips_immediately() {
 #[serial_test::serial]
 async fn rust_cache_ttl_expiry_with_short_ttl() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let alice = generate_identity(&binary).expect("Alice identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
@@ -185,7 +185,7 @@ async fn rust_cache_ttl_expiry_with_short_ttl() {
 #[serial_test::serial]
 async fn rust_short_request_timeout_fail_closed() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let jack = generate_identity(&binary).expect("Jack identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
@@ -261,7 +261,7 @@ async fn rust_short_request_timeout_fail_closed() {
 #[serial_test::serial]
 async fn rust_access_cache_grant_revoke_invalidation() {
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let alice = generate_identity(&binary).expect("Alice identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 

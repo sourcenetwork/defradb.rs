@@ -43,6 +43,33 @@ where
                 sourcehub_acp: Some(sh_acp),
             })
         }
+        #[cfg(feature = "sourcehub")]
+        crate::DocumentAcpConfig::SourceHubWithLcd {
+            config: sourcehub_config,
+            lcd_address,
+        } => {
+            let tuning = sourcehub::AcpTuning::default();
+            let provider = Arc::new(
+                sourcehub::CosmosProvider::new_with_grpc(
+                    lcd_address.clone(),
+                    sourcehub_config.grpc_address.clone(),
+                    sourcehub_config.comet_rpc_address.clone(),
+                    &sourcehub_config.signer_key,
+                    &sourcehub_config.chain_id,
+                    &tuning,
+                )
+                .map_err(|error| anyhow!("failed to create SourceHub provider: {error}"))?,
+            );
+            let sourcehub_acp = Arc::new(sourcehub::SourceHubDocumentACP::new(
+                provider,
+                tuning.cache_ttl,
+            ));
+            Ok(DocumentAcpSetup {
+                document_acp: sourcehub_acp.clone(),
+                local_zanzibar_store: None,
+                sourcehub_acp: Some(sourcehub_acp),
+            })
+        }
         crate::DocumentAcpConfig::Local => match persistence {
             Persistence::Persistent => {
                 let zanzibar_store = Arc::new(acp::PersistentZanzibarStore::from_store(store));

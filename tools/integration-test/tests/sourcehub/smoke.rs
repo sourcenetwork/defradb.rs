@@ -16,7 +16,7 @@ use integration_test::node::{DefraNode, RustNode};
 async fn rust_sourcehub_smoke() {
     // Pre-generate Jack's identity so the node starts with his key
     let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    RustNode::build_with_features(&["sourcehub"]).expect("build sourcehub-enabled rust binary");
     let jack = generate_identity(&binary).expect("failed to generate Jack identity");
 
     let cluster = TestCluster::builder()

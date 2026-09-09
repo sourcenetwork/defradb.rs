@@ -60,8 +60,13 @@ impl Node {
             );
 
             let provider = Arc::new(
-                sourcehub::CosmosProvider::new(
+                sourcehub::CosmosProvider::new_with_grpc(
                     config.acp.sourcehub_address.clone(),
+                    if config.acp.sourcehub_grpc_address.is_empty() {
+                        config.acp.sourcehub_address.clone()
+                    } else {
+                        config.acp.sourcehub_grpc_address.clone()
+                    },
                     config.acp.sourcehub_comet_address.clone(),
                     signer_key_bytes,
                     &config.acp.sourcehub_chain_id,

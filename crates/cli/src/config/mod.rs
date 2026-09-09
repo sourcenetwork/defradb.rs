@@ -230,6 +230,10 @@ impl Config {
             self.acp.sourcehub_address = addr.clone();
         }
         #[cfg(feature = "sourcehub")]
+        if let Some(ref addr) = cli.source_hub_grpc_address {
+            self.acp.sourcehub_grpc_address = addr.clone();
+        }
+        #[cfg(feature = "sourcehub")]
         if let Some(ref addr) = cli.source_hub_comet_address {
             self.acp.sourcehub_comet_address = addr.clone();
         }

@@ -1,18 +1,72 @@
-/// Client for SourceHub ACP gRPC/REST queries and CometBFT tx broadcast.
-///
-/// Uses the Cosmos LCD REST API for queries (avoids proto compilation)
-/// and CometBFT JSON-RPC for transaction broadcast.
+/// Client for SourceHub ACP queries and CometBFT transaction broadcast.
 pub(crate) struct SourceHubClient {
-    /// LCD/REST base URL derived from gRPC address (same host, port 1317 or LCD port)
-    grpc_address: String,
+    /// LCD/REST base URL.
+    lcd_address: String,
+    /// Reusable gRPC channel. Cloning a channel preserves its connection pool.
+    #[cfg(not(target_arch = "wasm32"))]
+    grpc_channel: tonic::transport::Channel,
+    /// Whole-operation budget for gRPC authorization.
+    #[cfg(not(target_arch = "wasm32"))]
+    request_timeout: std::time::Duration,
     /// CometBFT RPC address for broadcast_tx_sync
     comet_rpc_address: String,
     /// HTTP client for REST queries (configured with per-request timeout)
     http: reqwest::Client,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, PartialEq, prost::Message)]
+struct VerifyAccessRequest {
+    #[prost(string, tag = "1")]
+    policy_id: String,
+    #[prost(message, optional, tag = "2")]
+    access_request: Option<AccessRequest>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, PartialEq, prost::Message)]
+struct AccessRequest {
+    #[prost(message, repeated, tag = "1")]
+    operations: Vec<Operation>,
+    #[prost(message, optional, tag = "2")]
+    actor: Option<Actor>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, PartialEq, prost::Message)]
+struct Operation {
+    #[prost(message, optional, tag = "1")]
+    object: Option<Object>,
+    #[prost(string, tag = "2")]
+    permission: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, PartialEq, prost::Message)]
+struct Object {
+    #[prost(string, tag = "1")]
+    resource: String,
+    #[prost(string, tag = "2")]
+    id: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, PartialEq, prost::Message)]
+struct Actor {
+    #[prost(string, tag = "1")]
+    id: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, PartialEq, prost::Message)]
+struct VerifyAccessResponse {
+    #[prost(bool, tag = "1")]
+    valid: bool,
+}
+
 impl SourceHubClient {
     pub(crate) fn new(
+        lcd_address: String,
         grpc_address: String,
         comet_rpc_address: String,
         request_timeout: std::time::Duration,
@@ -21,8 +75,19 @@ impl SourceHubClient {
             .timeout(request_timeout)
             .build()
             .map_err(ClientError::Http)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let grpc_channel =
+            tonic::transport::Endpoint::from_shared(normalize_base_url(&grpc_address))
+                .map_err(|error| ClientError::QueryFailed(error.to_string()))?
+                .connect_lazy();
+        #[cfg(target_arch = "wasm32")]
+        let _ = grpc_address;
         Ok(Self {
-            grpc_address,
+            lcd_address,
+            #[cfg(not(target_arch = "wasm32"))]
+            grpc_channel,
+            #[cfg(not(target_arch = "wasm32"))]
+            request_timeout,
             comet_rpc_address,
             http,
         })
@@ -34,7 +99,7 @@ impl SourceHubClient {
         policy_id: &str,
     ) -> Result<Option<PolicyInfo>, ClientError> {
         let url = format!(
-            "{}/sourcenetwork/vera/acp/policy/{}",
+            "{}/sourcenetwork/sourcehub/acp/policy/{}",
             self.rest_base_url(),
             policy_id
         );
@@ -71,7 +136,7 @@ impl SourceHubClient {
         object_id: &str,
     ) -> Result<(bool, String), ClientError> {
         let url = format!(
-            "{}/sourcenetwork/vera/acp/object_owner/{}/{}/{}",
+            "{}/sourcenetwork/sourcehub/acp/object_owner/{}/{}/{}",
             self.rest_base_url(),
             policy_id,
             resource,
@@ -96,8 +161,8 @@ impl SourceHubClient {
 
     /// Verify if an actor has access to an object.
     ///
-    /// Uses CometBFT ABCI query with protobuf-encoded request since
-    /// the REST/LCD endpoint doesn't support repeated nested fields in GET params.
+    /// Uses SourceHub's gRPC API because its REST gateway cannot represent
+    /// the repeated nested operation without dropping it.
     pub(crate) async fn verify_access(
         &self,
         policy_id: &str,
@@ -106,54 +171,59 @@ impl SourceHubClient {
         permission: &str,
         actor_did: &str,
     ) -> Result<bool, ClientError> {
-        // Protobuf-encode the QueryVerifyAccessRequestRequest
-        let request_bytes =
-            encode_verify_access_request(policy_id, resource, object_id, permission, actor_did);
-        let request_hex = hex::encode(&request_bytes);
-
-        let url = format!(
-            "{}/abci_query?path=\"/vera.acp.Query/VerifyAccessRequest\"&data=0x{}",
-            self.comet_rpc_base_url(),
-            request_hex
-        );
-        let resp = self.http.get(&url).send().await?;
-        if !resp.status().is_success() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (policy_id, resource, object_id, permission, actor_did);
             return Err(ClientError::QueryFailed(
-                resp.text().await.unwrap_or_default(),
+                "SourceHub access verification requires native gRPC".to_string(),
             ));
         }
-        let body: serde_json::Value = resp.json().await?;
 
-        // Check ABCI response code.
-        // Code 0 means success; any other code means the query itself failed
-        // (invalid request, chain error, etc.) — NOT an access denial.
-        // Returning Ok(false) here would fail-open on SourceHub errors.
-        let abci_code = body["result"]["response"]["code"].as_u64().unwrap_or(0);
-        if abci_code != 0 {
-            let log = body["result"]["response"]["log"]
-                .as_str()
-                .unwrap_or("unknown");
-            tracing::warn!(abci_code, log, "verify_access ABCI query failed");
-            return Err(ClientError::QueryFailed(format!(
-                "ABCI code {}: {}",
-                abci_code, log
-            )));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let operation = async {
+                let mut grpc = tonic::client::Grpc::new(self.grpc_channel.clone());
+                grpc.ready()
+                    .await
+                    .map_err(|error| ClientError::QueryFailed(error.to_string()))?;
+                let request = VerifyAccessRequest {
+                    policy_id: policy_id.to_string(),
+                    access_request: Some(AccessRequest {
+                        operations: vec![Operation {
+                            object: Some(Object {
+                                resource: resource.to_string(),
+                                id: object_id.to_string(),
+                            }),
+                            permission: permission.to_string(),
+                        }],
+                        actor: Some(Actor {
+                            id: actor_did.to_string(),
+                        }),
+                    }),
+                };
+                let response: tonic::Response<VerifyAccessResponse> = grpc
+                    .unary(
+                        tonic::Request::new(request),
+                        tonic::codegen::http::uri::PathAndQuery::from_static(
+                            "/sourcehub.acp.Query/VerifyAccessRequest",
+                        ),
+                        tonic_prost::ProstCodec::default(),
+                    )
+                    .await
+                    .map_err(|error| ClientError::QueryFailed(error.to_string()))?;
+                let valid = response.into_inner().valid;
+                tracing::debug!(permission, actor_did, valid, "verify_access result");
+                Ok(valid)
+            };
+            tokio::time::timeout(self.request_timeout, operation)
+                .await
+                .map_err(|_| {
+                    ClientError::Timeout(format!(
+                        "gRPC access verification exceeded {:?}",
+                        self.request_timeout
+                    ))
+                })?
         }
-
-        // Decode base64-encoded protobuf response
-        let result_b64 = body["result"]["response"]["value"].as_str().unwrap_or("");
-        if result_b64.is_empty() {
-            return Ok(false);
-        }
-        let result_bytes =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, result_b64)
-                .map_err(|e| ClientError::QueryFailed(format!("base64 decode: {}", e)))?;
-
-        // QueryVerifyAccessRequestResponse: field 1 (bool) valid
-        // Protobuf: tag 0x08 (field 1, varint), value 0x01 (true)
-        let valid = result_bytes.len() >= 2 && result_bytes[0] == 0x08 && result_bytes[1] == 0x01;
-        tracing::debug!(permission, actor_did, valid, "verify_access result");
-        Ok(valid)
     }
 
     /// Query account number and sequence for transaction signing.
@@ -254,12 +324,9 @@ impl SourceHubClient {
         format!("{}::{}", self.comet_rpc_address, address)
     }
 
-    /// Derive REST base URL from gRPC address.
-    /// SourceHub exposes REST on port 1317 by default, but in tests it uses
-    /// the gRPC port. We use the gRPC address directly since the LCD gateway
-    /// runs on the same address in the test environment.
+    /// Normalize the configured LCD base URL.
     fn rest_base_url(&self) -> String {
-        let addr = &self.grpc_address;
+        let addr = &self.lcd_address;
         if addr.starts_with("http") {
             addr.clone()
         } else if let Some(rest) = addr.strip_prefix("tcp://") {
@@ -278,6 +345,16 @@ impl SourceHubClient {
         } else {
             format!("http://{}", addr)
         }
+    }
+}
+
+fn normalize_base_url(address: &str) -> String {
+    if address.starts_with("http") {
+        address.to_string()
+    } else if let Some(rest) = address.strip_prefix("tcp://") {
+        format!("http://{rest}")
+    } else {
+        format!("http://{address}")
     }
 }
 
@@ -322,80 +399,42 @@ impl From<reqwest::Error> for ClientError {
     }
 }
 
-// === Protobuf encoding helpers for ABCI queries ===
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use std::time::{Duration, Instant};
 
-/// Encode QueryVerifyAccessRequestRequest as protobuf bytes.
-///
-/// Proto definition:
-///   message QueryVerifyAccessRequestRequest {
-///     string policy_id = 1;
-///     AccessRequest access_request = 2;
-///   }
-///   message AccessRequest { repeated Operation operations = 1; Actor actor = 2; }
-///   message Operation { Object object = 1; string permission = 2; }
-///   message Object { string resource = 1; string id = 2; }
-///   message Actor { string id = 1; }
-fn encode_verify_access_request(
-    policy_id: &str,
-    resource: &str,
-    object_id: &str,
-    permission: &str,
-    actor_did: &str,
-) -> Vec<u8> {
-    // Build Object { resource, id }
-    let mut object_buf = Vec::new();
-    pb_string(&mut object_buf, 1, resource);
-    pb_string(&mut object_buf, 2, object_id);
+    use tokio::net::TcpListener;
 
-    // Build Operation { object, permission }
-    let mut operation_buf = Vec::new();
-    pb_bytes(&mut operation_buf, 1, &object_buf);
-    pb_string(&mut operation_buf, 2, permission);
+    use super::{ClientError, SourceHubClient};
 
-    // Build Actor { id }
-    let mut actor_buf = Vec::new();
-    pb_string(&mut actor_buf, 1, actor_did);
+    #[tokio::test]
+    async fn grpc_access_verification_obeys_request_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("stalled gRPC server should bind");
+        let address = format!(
+            "http://{}",
+            listener
+                .local_addr()
+                .expect("stalled gRPC server should have an address")
+        );
+        tokio::spawn(async move {
+            let _connection = listener
+                .accept()
+                .await
+                .expect("stalled gRPC server should accept");
+            std::future::pending::<()>().await;
+        });
+        let timeout = Duration::from_millis(50);
+        let client = SourceHubClient::new(address.clone(), address.clone(), address, timeout)
+            .expect("client should build");
 
-    // Build AccessRequest { operations: [operation], actor }
-    let mut access_request_buf = Vec::new();
-    pb_bytes(&mut access_request_buf, 1, &operation_buf);
-    pb_bytes(&mut access_request_buf, 2, &actor_buf);
+        let started = Instant::now();
+        let result = client
+            .verify_access("policy", "resource", "object", "read", "did:key:zactor")
+            .await;
 
-    // Build QueryVerifyAccessRequestRequest { policy_id, access_request }
-    let mut buf = Vec::new();
-    pb_string(&mut buf, 1, policy_id);
-    pb_bytes(&mut buf, 2, &access_request_buf);
-
-    buf
-}
-
-// Minimal protobuf encoding helpers (duplicated from tx.rs to avoid coupling)
-
-fn pb_varint(buf: &mut Vec<u8>, mut value: u64) {
-    loop {
-        let byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value == 0 {
-            buf.push(byte);
-            break;
-        }
-        buf.push(byte | 0x80);
+        assert!(matches!(result, Err(ClientError::Timeout(_))));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
-}
-
-fn pb_string(buf: &mut Vec<u8>, field_num: u32, value: &str) {
-    if value.is_empty() {
-        return;
-    }
-    let tag = (field_num << 3) | 2;
-    pb_varint(buf, tag as u64);
-    pb_varint(buf, value.len() as u64);
-    buf.extend_from_slice(value.as_bytes());
-}
-
-fn pb_bytes(buf: &mut Vec<u8>, field_num: u32, value: &[u8]) {
-    let tag = (field_num << 3) | 2;
-    pb_varint(buf, tag as u64);
-    pb_varint(buf, value.len() as u64);
-    buf.extend_from_slice(value);
 }

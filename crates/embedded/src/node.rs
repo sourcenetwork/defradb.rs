@@ -309,6 +309,20 @@ impl NodeBuilder {
         self
     }
 
+    /// Configure SourceHub ACP when LCD and gRPC use distinct endpoints.
+    #[cfg(feature = "sourcehub")]
+    pub fn with_sourcehub_lcd(
+        mut self,
+        config: SourceHubConfig,
+        lcd_address: impl Into<String>,
+    ) -> Self {
+        self.config.document_acp = DocumentAcpConfig::SourceHubWithLcd {
+            config,
+            lcd_address: lcd_address.into(),
+        };
+        self
+    }
+
     pub fn with_query_limits(mut self, limits: query::QueryLimits) -> Self {
         self.config.query_limits = limits;
         self

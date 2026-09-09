@@ -512,10 +512,15 @@ pub struct AcpConfig {
     /// - `source-hub`: Remote SourceHub access control
     pub document_type: AcpDocumentType,
 
-    /// SourceHub gRPC/LCD endpoint (e.g., "http://localhost:1317")
+    /// SourceHub LCD endpoint (e.g., "http://localhost:1317")
     #[cfg(feature = "sourcehub")]
     #[serde(default)]
     pub sourcehub_address: String,
+
+    /// SourceHub gRPC endpoint (e.g., "http://localhost:9090")
+    #[cfg(feature = "sourcehub")]
+    #[serde(default)]
+    pub sourcehub_grpc_address: String,
 
     /// SourceHub CometBFT RPC endpoint (e.g., "http://localhost:26657")
     #[cfg(feature = "sourcehub")]
@@ -581,6 +586,8 @@ impl Default for AcpConfig {
             document_type: AcpDocumentType::None,
             #[cfg(feature = "sourcehub")]
             sourcehub_address: String::new(),
+            #[cfg(feature = "sourcehub")]
+            sourcehub_grpc_address: String::new(),
             #[cfg(feature = "sourcehub")]
             sourcehub_comet_address: String::new(),
             #[cfg(feature = "sourcehub")]

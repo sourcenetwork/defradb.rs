@@ -20,7 +20,10 @@ pub(super) fn sanitized_node_options(
     #[cfg(feature = "sourcehub")]
     let (sourcehub_chain_id, sourcehub_grpc_address, sourcehub_comet_address) = (
         redacted_text(!config.acp.sourcehub_chain_id.is_empty()),
-        redacted_text(!config.acp.sourcehub_address.is_empty()),
+        redacted_text(
+            !config.acp.sourcehub_grpc_address.is_empty()
+                || !config.acp.sourcehub_address.is_empty(),
+        ),
         redacted_text(!config.acp.sourcehub_comet_address.is_empty()),
     );
     #[cfg(not(feature = "sourcehub"))]

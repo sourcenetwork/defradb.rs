@@ -17,6 +17,13 @@ pub enum DocumentAcpConfig {
     /// Requires the `sourcehub` feature (on by default).
     #[cfg(feature = "sourcehub")]
     SourceHub(SourceHubConfig),
+    /// On-chain document ACP via SourceHub with distinct LCD and gRPC
+    /// endpoints.
+    #[cfg(feature = "sourcehub")]
+    SourceHubWithLcd {
+        config: SourceHubConfig,
+        lcd_address: String,
+    },
 }
 
 /// SourceHub document ACP configuration.
