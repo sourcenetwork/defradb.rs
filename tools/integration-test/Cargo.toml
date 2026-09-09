@@ -114,8 +114,8 @@ name = "client_authored"
 path = "tests/client_authored.rs"
 
 [dependencies]
-hub-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3d1544ec783b093186422d82b5af326457e63609" }
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "3d1544ec783b093186422d82b5af326457e63609" }
+hub-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "e0c42841f212119a385ee6c10465c3afe6fc62d4" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "e0c42841f212119a385ee6c10465c3afe6fc62d4" }
 document = { path = "../../crates/document" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { version = "0.12", default-features = false, features = [
