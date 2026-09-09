@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::did::Did;
 use crate::thread_bounds::MaybeBoxFuture;
 
-use super::cache::{CheckCache, NodeId, NodeTrail};
+use super::cache::{CheckCache, CheckKey, NodeId, NodeTrail};
 use super::PermissionEngine;
 use crate::error::Result;
 use crate::expression::RelationExpression;
@@ -33,7 +33,8 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         cache: Arc<CheckCache>,
     ) -> MaybeBoxFuture<'a, Result<Eval>> {
         Box::pin(async move {
-            if let Some(cached) = cache.get(resource, object_id, relation, subject).await {
+            let key = CheckKey::new(policy_id, resource, object_id, relation, subject);
+            if let Some(cached) = cache.get(&key).await {
                 // Only untainted results are ever stored, so a hit is trail-independent.
                 return Ok((cached, false));
             }
@@ -52,9 +53,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                 .await?;
 
             if !tainted {
-                cache
-                    .set(resource, object_id, relation, subject, value)
-                    .await;
+                cache.set(key, value).await;
             }
 
             Ok((value, tainted))
