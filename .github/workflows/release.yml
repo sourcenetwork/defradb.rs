@@ -62,7 +62,7 @@ jobs:
             APT_ARGS=(-o APT::Architecture=arm64 -o APT::Architectures=arm64)
           fi
 
-          bash .github/scripts/apt-update-without-nodesource.sh "${APT_ARGS[@]}"
+          bash .github/scripts/apt-update-without-third-party.sh "${APT_ARGS[@]}"
           sudo apt-get "${APT_ARGS[@]}" install -y libssl-dev pkg-config protobuf-compiler libdbus-1-dev
 
       - name: Install system dependencies (macOS)
@@ -120,7 +120,7 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          bash .github/scripts/apt-update-without-nodesource.sh
+          bash .github/scripts/apt-update-without-third-party.sh
           sudo apt-get install -y protobuf-compiler
 
       - name: Isolate the WASM dependency graph
@@ -240,7 +240,7 @@ jobs:
             APT_ARGS=(-o APT::Architecture=arm64 -o APT::Architectures=arm64)
           fi
 
-          bash .github/scripts/apt-update-without-nodesource.sh "${APT_ARGS[@]}"
+          bash .github/scripts/apt-update-without-third-party.sh "${APT_ARGS[@]}"
           sudo apt-get "${APT_ARGS[@]}" install -y libssl-dev pkg-config protobuf-compiler libdbus-1-dev
 
       - name: Install system dependencies (macOS)
@@ -465,7 +465,7 @@ jobs:
       - name: Report release artifact sizes
         run: |
           if ! command -v brotli >/dev/null 2>&1; then
-            bash .github/scripts/apt-update-without-nodesource.sh
+            bash .github/scripts/apt-update-without-third-party.sh
             sudo apt-get install -y brotli
           fi
 
