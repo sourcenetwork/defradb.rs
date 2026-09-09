@@ -60,6 +60,9 @@ pub enum OrbisClientError {
     #[error("Orbis Sign returned empty signature")]
     EmptySignature,
 
+    #[error("Orbis Sign returned an invalid signature: {0}")]
+    InvalidSignature(String),
+
     #[error("Orbis sign_sync worker thread panicked")]
     WorkerThreadPanicked,
 }
@@ -384,6 +387,17 @@ impl OrbisClient {
             return Err(OrbisClientError::EmptySignature);
         }
 
+        let public_key = crypto::BlsPublicKey::from_bytes(&self.public_key_bytes)
+            .map_err(|e| OrbisClientError::InvalidPublicKey(e.to_string()))?;
+        if !public_key
+            .verify(data, &signature)
+            .map_err(|e| OrbisClientError::InvalidSignature(e.to_string()))?
+        {
+            return Err(OrbisClientError::InvalidSignature(
+                "verification failed".into(),
+            ));
+        }
+
         Ok(signature)
     }
 }
@@ -421,11 +435,11 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use identity::Identity;
     use tokio::sync::oneshot;
-    use tokio_stream::wrappers::TcpListenerStream;
     use tokio_stream::StreamExt;
+    use tokio_stream::wrappers::TcpListenerStream;
     use tonic::transport::Server;
     use tonic::{Request, Response, Status};
 
@@ -716,6 +730,53 @@ mod tests {
         assert!(err.contains("Orbis Sign returned empty signature"));
     }
 
+    fn bls_signature(message: &[u8], seed: u8) -> Vec<u8> {
+        blst::min_pk::SecretKey::key_gen(&[seed; 32], &[])
+            .expect("BLS secret key")
+            .sign(message, b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_", &[])
+            .compress()
+            .to_vec()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sign_sync_rejects_invalid_responses() {
+        for signature in [
+            vec![1, 2, 3],
+            bls_signature(b"different message", 7),
+            bls_signature(b"hello", 8),
+        ] {
+            let server = TestServer::start(MockUtilityService {
+                derive_public_key_response: DerivePublicKeyResponse {
+                    public_key: valid_bls_public_key_bytes(),
+                    algorithm: 0,
+                },
+                sign_response: SignResponse {
+                    signature,
+                    algorithm: 0,
+                    public_key: valid_bls_public_key_bytes(),
+                    metadata: Default::default(),
+                },
+            })
+            .await;
+            let client = OrbisClient::new(
+                server.endpoint.clone(),
+                "ring-123".into(),
+                "platform".into(),
+                make_test_service_identity(),
+            )
+            .await
+            .expect("client");
+            let error = tokio::task::spawn_blocking(move || client.sign_sync(b"hello", None))
+                .await
+                .expect("signing task")
+                .expect_err("invalid signature must fail");
+            assert!(
+                error.contains("Orbis Sign returned an invalid signature"),
+                "{error}"
+            );
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sign_sync_reuses_initialized_grpc_channel() {
         let server = TestServer::start(MockUtilityService {
@@ -724,7 +785,7 @@ mod tests {
                 algorithm: 0,
             },
             sign_response: SignResponse {
-                signature: vec![1, 2, 3],
+                signature: bls_signature(b"hello", 7),
                 algorithm: 0,
                 public_key: vec![],
                 metadata: Default::default(),
@@ -745,14 +806,14 @@ mod tests {
 
         let (first_signature, second_signature) = tokio::task::spawn_blocking(move || {
             let first_signature = client.sign_sync(b"hello", None).expect("first sign");
-            let second_signature = client.sign_sync(b"world", None).expect("second sign");
+            let second_signature = client.sign_sync(b"hello", None).expect("second sign");
             (first_signature, second_signature)
         })
         .await
         .expect("blocking task should join");
 
-        assert_eq!(first_signature, vec![1, 2, 3]);
-        assert_eq!(second_signature, vec![1, 2, 3]);
+        assert_eq!(first_signature, bls_signature(b"hello", 7));
+        assert_eq!(second_signature, first_signature);
         assert_eq!(server.accepted_connections(), 1);
     }
 }
