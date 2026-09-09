@@ -36,7 +36,7 @@ fn default_start_args() -> StartArgs {
         #[cfg(feature = "orbis")]
         signer_orbis_endpoint: None,
         #[cfg(feature = "orbis")]
-        signer_orbis_ring_id: None,
+        signer_orbis_derivation_id: None,
         #[cfg(feature = "orbis")]
         signer_orbis_derivation: None,
         #[cfg(feature = "orbis")]
@@ -168,7 +168,7 @@ fn test_apply_to_config_all_flags() {
         #[cfg(feature = "orbis")]
         signer_orbis_endpoint: None,
         #[cfg(feature = "orbis")]
-        signer_orbis_ring_id: None,
+        signer_orbis_derivation_id: None,
         #[cfg(feature = "orbis")]
         signer_orbis_derivation: None,
         #[cfg(feature = "orbis")]

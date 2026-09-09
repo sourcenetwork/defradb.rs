@@ -6,7 +6,7 @@
 mod client;
 
 pub mod proto {
-    tonic::include_proto!("orbis.utility.v1");
+    tonic::include_proto!("orbis.v0.sign");
 }
 
 pub use client::{OrbisClient, OrbisClientError};
