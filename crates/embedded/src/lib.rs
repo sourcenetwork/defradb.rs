@@ -2,6 +2,8 @@ mod node;
 mod node_acp;
 mod node_identity;
 mod node_p2p;
+#[cfg(any(feature = "libp2p", feature = "iroh"))]
+mod node_peer_key;
 mod node_recovery;
 mod node_tasks;
 
@@ -69,6 +71,8 @@ pub struct IrohConfig {
     pub relay_mode: p2p::iroh::IrohRelayModeConfig,
     pub discovery: p2p::iroh::IrohDiscoveryConfig,
     pub max_concurrent_multipath_paths: Option<u32>,
+    /// Iroh key file from before the node shared one peer key across transports.
+    /// Imported as the node's peer key when the store has none; never written.
     pub secret_key_path: Option<std::path::PathBuf>,
     /// Who may open an inbound connection. `AcceptAll` (the default) keeps
     /// the behaviour every existing embedder has. `Explicit` restricts

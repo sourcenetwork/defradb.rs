@@ -58,6 +58,8 @@ pub(crate) struct MobileIrohConfig {
     pub discovery: Option<bool>,
     pub discovery_origin_domain: Option<String>,
     pub pkarr_relay_url: Option<String>,
+    /// Iroh key file from before the node shared one peer key across transports.
+    /// Imported as the node's peer key when the store has none; never written.
     pub key_path: Option<String>,
 }
 

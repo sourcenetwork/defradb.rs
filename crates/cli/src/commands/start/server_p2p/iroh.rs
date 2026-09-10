@@ -262,6 +262,8 @@ mod tests {
                     .collect()
             )
         );
+    }
+
     #[test]
     fn iroh_secret_key_is_the_peer_key() {
         let keypair = p2p::Keypair::generate_ed25519();

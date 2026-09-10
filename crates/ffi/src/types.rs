@@ -212,7 +212,8 @@ pub struct NodeInitOptions {
     pub iroh_discovery_origin_domain: *const c_char,
     /// Optional custom pkarr relay URL for iroh discovery publishing.
     pub iroh_pkarr_relay_url: *const c_char,
-    /// Optional path to persist the iroh secret key.
+    /// Iroh key file from before the node shared one peer key across transports.
+    /// Imported as the node's peer key when the store has none; never written.
     pub iroh_key_path: *const c_char,
     /// Maximum concurrent DAG fetch tasks. 0 means use default.
     pub max_concurrent_dag_fetches: usize,
