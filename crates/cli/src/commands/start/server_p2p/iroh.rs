@@ -479,15 +479,21 @@ impl Node {
             manage_requester: Some(manage_requester),
         })
     }
+    /// Both transports are Ed25519, so the iroh endpoint reuses the peer key's
+    /// seed and the node keeps one identity whichever transport it runs.
     fn iroh_secret_key(peer_keypair: Option<&p2p::Keypair>) -> Result<iroh_net::SecretKey> {
-        if let Some(kp) = peer_keypair {
-            let seed = kp.derive_secret(b"iroh-transport").ok_or_else(|| {
-                Error::InvalidConfig("iroh transport requires Ed25519 key".into())
+        let Some(kp) = peer_keypair else {
+            return Ok(iroh_net::SecretKey::generate());
+        };
+        let ed25519 = kp
+            .clone()
+            .try_into_ed25519()
+            .map_err(|_| Error::InvalidConfig("iroh transport requires Ed25519 key".into()))?;
+        let seed: [u8; 32] =
+            ed25519.secret().as_ref().try_into().map_err(|_| {
+                Error::InvalidConfig("Ed25519 peer key seed must be 32 bytes".into())
             })?;
-            Ok(iroh_net::SecretKey::from_bytes(&seed))
-        } else {
-            Ok(iroh_net::SecretKey::generate())
-        }
+        Ok(iroh_net::SecretKey::from_bytes(&seed))
     }
 
     fn iroh_relay_mode(config: &Config) -> Result<p2p::iroh::IrohRelayModeConfig> {
@@ -546,5 +552,20 @@ impl Node {
             (false, None, None) => Ok(p2p::iroh::IrohDiscoveryConfig::Disabled),
             (true, None, None) => Ok(p2p::iroh::IrohDiscoveryConfig::N0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iroh_secret_key_is_the_peer_key() {
+        let keypair = p2p::Keypair::generate_ed25519();
+        let libp2p_public = keypair.public().try_into_ed25519().unwrap().to_bytes();
+
+        let iroh_key = Node::iroh_secret_key(Some(&keypair)).unwrap();
+
+        assert_eq!(iroh_key.public().as_bytes(), &libp2p_public);
     }
 }

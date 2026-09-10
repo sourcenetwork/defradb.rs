@@ -112,29 +112,10 @@ where
     let blockstore = Arc::new(EmbeddedBlockstore::new(store.clone(), true));
     let bitswap_store = BitswapStoreAdapter::new(blockstore.clone());
 
-    let p2p_keypair = {
-        let peerstore = Peerstore::new(store.clone());
-        let key_id = "__local_p2p_identity__";
-        match peerstore.get_replicator(key_id).await {
-            Ok(Some(bytes)) => match libp2p::identity::Keypair::from_protobuf_encoding(&bytes) {
-                Ok(keypair) => keypair,
-                Err(_) => {
-                    let keypair = libp2p::identity::Keypair::generate_ed25519();
-                    if let Ok(encoded) = keypair.to_protobuf_encoding() {
-                        let _ = peerstore.create_replicator(key_id, &encoded).await;
-                    }
-                    keypair
-                }
-            },
-            _ => {
-                let keypair = libp2p::identity::Keypair::generate_ed25519();
-                if let Ok(encoded) = keypair.to_protobuf_encoding() {
-                    let _ = peerstore.create_replicator(key_id, &encoded).await;
-                }
-                keypair
-            }
-        }
-    };
+    let mut seed =
+        crate::node_peer_key::load_or_create(&Peerstore::new(store.clone()), None).await?;
+    let p2p_keypair = libp2p::identity::Keypair::ed25519_from_bytes(&mut *seed)
+        .map_err(|error| anyhow!("invalid peer key: {error}"))?;
 
     let classifier = defra_p2p_adapter::DbBlockClassifier::new_arc(database.clone());
     let serve_acp = Arc::new(p2p::bitswap::LateBoundServeAcp::new());
@@ -465,8 +446,12 @@ where
     use crate::node_recovery::{restore_iroh_documents, restore_iroh_replicators};
     use crate::node_tasks::spawn_iroh_event_handler;
 
-    let secret_key =
-        p2p::iroh::load_or_generate_secret_key(config.secret_key_path.as_deref()).await?;
+    let seed = crate::node_peer_key::load_or_create(
+        &Peerstore::new(store.clone()),
+        config.secret_key_path.as_deref(),
+    )
+    .await?;
+    let secret_key = p2p::iroh::SecretKey::from_bytes(&seed);
     let iroh_config = p2p::iroh::IrohEndpointConfig {
         secret_key: secret_key.clone(),
         node_identity,

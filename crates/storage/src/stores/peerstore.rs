@@ -250,6 +250,19 @@ impl<S: Store> Peerstore<S> {
         txn.has(&key.bytes()).await
     }
 
+    /// Store the node's Ed25519 peer key seed, shared by every transport.
+    pub async fn set_local_peer_key(&self, seed: &[u8]) -> Result<()> {
+        let mut txn = self.store.new_txn(false).await?;
+        txn.set(b"/p2p/local-peer-key", seed).await?;
+        txn.commit().await
+    }
+
+    /// Load the node's Ed25519 peer key seed.
+    pub async fn get_local_peer_key(&self) -> Result<Option<Bytes>> {
+        let txn = self.store.new_txn(true).await?;
+        txn.get(b"/p2p/local-peer-key").await
+    }
+
     /// Store P2P collection subscriptions (persists across restarts).
     pub async fn set_p2p_collections(&self, data: &[u8]) -> Result<()> {
         let mut txn = self.store.new_txn(false).await?;
