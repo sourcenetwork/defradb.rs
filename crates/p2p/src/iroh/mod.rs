@@ -36,5 +36,6 @@ pub use config::{IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::spawn_endpoint;
 pub use endpoint_config::IrohEndpointConfig;
 pub use gossip_heal::GossipHealConfig;
+pub use iroh::SecretKey;
 pub use secret_key::load_or_generate_secret_key;
 pub use transport::IrohTransport;
