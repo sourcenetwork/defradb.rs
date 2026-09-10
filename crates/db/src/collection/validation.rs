@@ -162,9 +162,31 @@ fn is_value_compatible_with_scalar(value: &NormalValue, scalar: ScalarKind) -> b
                 NormalValue::Bytes(_) | NormalValue::NillableBytes(_) | NormalValue::String(_)
             )
         }
-        // Accept both NormalValue::Json and NormalValue::String for JSON fields
-        // String values are used for @default JSON values (stored as serialized strings)
-        ScalarKind::Json => matches!(value, NormalValue::Json(_) | NormalValue::String(_)),
+        // CBOR preserves JSON content but not the Json wrapper: retained scalar
+        // and array values return as their inferred native variants. Restrict
+        // these to JSON-native values; binary/document/time values remain invalid.
+        ScalarKind::Json => {
+            matches!(
+                value,
+                NormalValue::Json(_)
+                    | NormalValue::JsonArray(_)
+                    | NormalValue::Bool(_)
+                    | NormalValue::Int(_)
+                    | NormalValue::Float64(_)
+                    | NormalValue::Float32(_)
+                    | NormalValue::String(_)
+                    | NormalValue::BoolArray(_)
+                    | NormalValue::IntArray(_)
+                    | NormalValue::Float64Array(_)
+                    | NormalValue::Float32Array(_)
+                    | NormalValue::StringArray(_)
+                    | NormalValue::NillableBoolElementArray(_)
+                    | NormalValue::NillableIntElementArray(_)
+                    | NormalValue::NillableFloat64ElementArray(_)
+                    | NormalValue::NillableFloat32ElementArray(_)
+                    | NormalValue::NillableStringElementArray(_)
+            ) && document::encoding::normal_value_to_json(value).is_ok()
+        }
         _ => false,
     }
 }

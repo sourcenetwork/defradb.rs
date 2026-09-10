@@ -382,3 +382,27 @@ fn unrepresentable_value_returns_none() {
         None
     );
 }
+
+#[test]
+fn nullable_float_elements_preserve_null_and_reject_nonfinite_values() {
+    for value in [
+        NormalValue::NillableFloat64ElementArray(vec![Some(1.5), None, Some(2.5)]),
+        NormalValue::NillableFloat32ElementArray(vec![Some(1.5), None, Some(2.5)]),
+    ] {
+        assert_eq!(
+            document::encoding::normal_value_to_json(&value).unwrap(),
+            serde_json::json!([1.5, null, 2.5])
+        );
+    }
+    for value in [
+        NormalValue::NillableFloat64ElementArray(vec![None, Some(f64::NAN)]),
+        NormalValue::NillableFloat64ElementArray(vec![Some(f64::INFINITY)]),
+        NormalValue::NillableFloat32ElementArray(vec![None, Some(f32::NAN)]),
+        NormalValue::NillableFloat32ElementArray(vec![Some(f32::NEG_INFINITY)]),
+    ] {
+        assert!(
+            document::encoding::normal_value_to_json(&value).is_err(),
+            "accepted {value:?}"
+        );
+    }
+}
