@@ -10,6 +10,8 @@
 //! - Communication via `IrohCommand` enum over mpsc channel
 
 mod addr;
+#[cfg(test)]
+mod allowlist_tests;
 mod command;
 mod config;
 mod endpoint;
@@ -32,7 +34,7 @@ pub use addr::{
     endpoint_ticket_string, format_public_listen_addrs, is_ticket_string, parse_canonical_peer_id,
     parse_public_peer_addr,
 };
-pub use config::{IrohDiscoveryConfig, IrohRelayModeConfig};
+pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::spawn_endpoint;
 pub use endpoint_config::IrohEndpointConfig;
 pub use gossip_heal::GossipHealConfig;

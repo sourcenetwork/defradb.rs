@@ -18,6 +18,10 @@ use super::gossip_heal;
 use super::peer_map::{endpoint_id_to_peer_id, PeerMap};
 use super::protocols;
 
+/// QUIC application error code closing a connection refused by the inbound
+/// allowlist. Distinct from the disconnect code (0) used elsewhere.
+const REFUSED_CONNECTION_CODE: u32 = 1;
+
 /// Handle an incoming QUIC connection.
 pub(super) async fn handle_incoming(
     incoming: iroh::endpoint::Incoming,
@@ -59,6 +63,20 @@ pub(super) async fn handle_incoming(
         }
     };
 
+    // Establish identity from the accepted connection itself (the iroh
+    // endpoint id authenticated by the QUIC/TLS handshake), never from
+    // anything the caller sends in a payload. A refused peer is closed here,
+    // before it reaches the gossip layer or the mux layer below.
+    let remote_id = connection.remote_id();
+    if !resources.allowlist.is_allowed(&remote_id) {
+        warn!(
+            peer_id = %endpoint_id_to_peer_id(&remote_id),
+            "Refused inbound Iroh connection: peer is not on the inbound allowlist"
+        );
+        connection.close(REFUSED_CONNECTION_CODE.into(), b"peer not authorized");
+        return;
+    }
+
     let conn_alpn = connection.alpn().to_vec();
 
     // If it's a gossip ALPN, hand off to the gossip layer
@@ -68,8 +86,6 @@ pub(super) async fn handle_incoming(
         }
         return;
     }
-
-    let remote_id = connection.remote_id();
 
     let is_new =
         resources

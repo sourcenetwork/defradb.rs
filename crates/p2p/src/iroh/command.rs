@@ -25,6 +25,13 @@ pub enum IrohCommand {
         peer_id: PeerId,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
+    /// Add an endpoint id to the inbound allowlist while the endpoint is
+    /// running. A no-op when the endpoint was configured to accept every
+    /// peer: nothing is narrowed by adding one more.
+    AllowPeer {
+        peer_id: PeerId,
+        reply: oneshot::Sender<crate::error::Result<()>>,
+    },
     Listen {
         addr: PeerAddr,
         reply: oneshot::Sender<crate::error::Result<()>>,

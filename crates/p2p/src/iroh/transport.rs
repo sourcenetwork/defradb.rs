@@ -104,6 +104,20 @@ impl IrohTransport {
             .await
     }
 
+    /// Authorize an inbound connection from `peer_id` while the endpoint is
+    /// running, without a restart.
+    ///
+    /// Only meaningful when the endpoint was configured with an explicit
+    /// inbound allowlist (`IrohAllowlistConfig::Explicit`); a no-op when it
+    /// was configured to accept every peer.
+    pub async fn allow_peer(&self, peer_id: &PeerId) -> Result<()> {
+        self.send_command(|reply| IrohCommand::AllowPeer {
+            peer_id: peer_id.clone(),
+            reply,
+        })
+        .await
+    }
+
     /// Resolve a peer's Defra identity over its authenticated QUIC endpoint.
     ///
     /// The returned token is signed by the remote DID and audience-bound to
@@ -621,6 +635,7 @@ mod tests {
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
             gossip_heal: Default::default(),
+            allowlist: Default::default(),
         }
     }
 

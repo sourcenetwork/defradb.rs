@@ -35,6 +35,7 @@ impl TestNode {
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
             gossip_heal: Default::default(),
+            allowlist: Default::default(),
         };
         let (command_tx, events, _replicators, task) = spawn_endpoint(config).await.unwrap();
         Self {

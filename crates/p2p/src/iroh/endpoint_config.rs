@@ -1,10 +1,12 @@
 //! Configuration helpers for the iroh endpoint.
 
-use iroh::endpoint::BindOpts;
-use iroh::SecretKey;
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::config::{IrohDiscoveryConfig, IrohRelayModeConfig};
+use iroh::endpoint::BindOpts;
+use iroh::{EndpointId, SecretKey};
+
+use super::config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 use super::gossip_heal::GossipHealConfig;
 
 // iroh 1.0 silently ignores custom values below its internal default plus one.
@@ -32,6 +34,9 @@ pub struct IrohEndpointConfig {
     pub max_concurrent_multipath_paths: Option<u32>,
     /// Gossip send-path healing (#1092).
     pub gossip_heal: GossipHealConfig,
+    /// Inbound-connection authorization. Defaults to accepting every peer,
+    /// matching the transport's behavior before this allowlist existed.
+    pub allowlist: IrohAllowlistConfig,
 }
 
 impl Default for IrohEndpointConfig {
@@ -45,6 +50,57 @@ impl Default for IrohEndpointConfig {
             bind_addr: None,
             max_concurrent_multipath_paths: None,
             gossip_heal: GossipHealConfig::default(),
+            allowlist: IrohAllowlistConfig::default(),
+        }
+    }
+}
+
+/// Runtime inbound-allowlist state, held by the endpoint for the life of the
+/// process.
+///
+/// Mirrors [`IrohAllowlistConfig`] but keeps the explicit set behind a lock so
+/// [`IrohCommand::AllowPeer`](super::command::IrohCommand::AllowPeer) can add
+/// a newly authorized peer while the endpoint is running, without a restart.
+pub(super) enum AllowlistState {
+    AcceptAll,
+    Explicit(parking_lot::Mutex<HashSet<EndpointId>>),
+}
+
+impl AllowlistState {
+    /// Whether an inbound connection from `id` may proceed.
+    pub(super) fn is_allowed(&self, id: &EndpointId) -> bool {
+        match self {
+            Self::AcceptAll => true,
+            Self::Explicit(ids) => ids.lock().contains(id),
+        }
+    }
+
+    /// Add `id` to the explicit set. A no-op under `AcceptAll`: every peer is
+    /// already accepted, so there is nothing to widen.
+    pub(super) fn allow(&self, id: EndpointId) {
+        if let Self::Explicit(ids) = self {
+            ids.lock().insert(id);
+        }
+    }
+}
+
+pub(super) fn allowlist_state_from_config(
+    config: &IrohAllowlistConfig,
+) -> crate::error::Result<AllowlistState> {
+    match config {
+        IrohAllowlistConfig::AcceptAll => Ok(AllowlistState::AcceptAll),
+        IrohAllowlistConfig::Explicit(ids) => {
+            let mut parsed = HashSet::with_capacity(ids.len());
+            for id in ids {
+                let endpoint_id: EndpointId = id.parse().map_err(|e: iroh::KeyParsingError| {
+                    crate::error::Error::Transport(format!(
+                        "invalid allowlisted iroh endpoint id '{}': {}",
+                        id, e
+                    ))
+                })?;
+                parsed.insert(endpoint_id);
+            }
+            Ok(AllowlistState::Explicit(parking_lot::Mutex::new(parsed)))
         }
     }
 }
@@ -179,5 +235,59 @@ mod tests {
         assert!(
             apply_multipath_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS),).is_ok()
         );
+    }
+
+    #[test]
+    fn accept_all_allows_any_endpoint_id() {
+        let state = allowlist_state_from_config(&IrohAllowlistConfig::AcceptAll).unwrap();
+        let id = iroh::SecretKey::generate().public();
+
+        assert!(state.is_allowed(&id));
+    }
+
+    #[test]
+    fn explicit_allowlist_rejects_unlisted_ids() {
+        let listed = iroh::SecretKey::generate().public();
+        let unlisted = iroh::SecretKey::generate().public();
+        let state = allowlist_state_from_config(&IrohAllowlistConfig::Explicit(
+            [listed.to_string()].into_iter().collect(),
+        ))
+        .unwrap();
+
+        assert!(state.is_allowed(&listed));
+        assert!(!state.is_allowed(&unlisted));
+    }
+
+    #[test]
+    fn explicit_allowlist_rejects_malformed_endpoint_id() {
+        let result = allowlist_state_from_config(&IrohAllowlistConfig::Explicit(
+            ["not-an-endpoint-id".to_string()].into_iter().collect(),
+        ));
+
+        assert!(matches!(
+            result,
+            Err(crate::error::Error::Transport(message))
+                if message.contains("invalid allowlisted iroh endpoint id")
+        ));
+    }
+
+    #[test]
+    fn allow_adds_a_peer_to_an_explicit_allowlist() {
+        let newly_allowed = iroh::SecretKey::generate().public();
+        let state =
+            allowlist_state_from_config(&IrohAllowlistConfig::Explicit(HashSet::new())).unwrap();
+
+        assert!(!state.is_allowed(&newly_allowed));
+        state.allow(newly_allowed);
+        assert!(state.is_allowed(&newly_allowed));
+    }
+
+    #[test]
+    fn allow_is_a_no_op_under_accept_all() {
+        let id = iroh::SecretKey::generate().public();
+        let state = allowlist_state_from_config(&IrohAllowlistConfig::AcceptAll).unwrap();
+
+        state.allow(id);
+        assert!(matches!(state, AllowlistState::AcceptAll));
     }
 }
