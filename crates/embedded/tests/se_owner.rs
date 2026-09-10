@@ -137,6 +137,7 @@ async fn embedded_iroh_se_owner_queries_replicator() -> Result<()> {
             discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
             max_concurrent_multipath_paths: None,
             secret_key_path: None,
+            allowlist: Default::default(),
         }
     }
 

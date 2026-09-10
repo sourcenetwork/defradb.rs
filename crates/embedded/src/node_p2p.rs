@@ -476,7 +476,7 @@ where
         bind_addr: config.bind_addr,
         max_concurrent_multipath_paths: config.max_concurrent_multipath_paths,
         gossip_heal: p2p::iroh::GossipHealConfig::from_env(),
-        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
+        allowlist: config.allowlist.clone(),
     };
     let (command_tx, event_rx, replicator_registry, endpoint_task) =
         p2p::iroh::spawn_endpoint(iroh_config)

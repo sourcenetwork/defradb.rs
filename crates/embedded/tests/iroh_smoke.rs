@@ -64,6 +64,50 @@ async fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
     Ok(())
 }
 
+/// A node configured with an explicit allowlist starts, listens, and
+/// authorizes a peer at runtime.
+///
+/// The allowlist is only reachable from an embedder through
+/// [`IrohConfig::allowlist`], and `allow_p2p_peer` is a no-op under
+/// `AcceptAll`, so a node that could not be built with `Explicit` could not
+/// use the feature at all. Starting empty (`Explicit(Default::default())`)
+/// is the strictest case: nothing is authorized yet, and the endpoint still
+/// has to come up and answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_embedded_node_starts_with_an_explicit_allowlist() -> Result<()> {
+    let node = NodeBuilder::default()
+        .with_iroh(IrohConfig {
+            allowlist: p2p::iroh::IrohAllowlistConfig::Explicit(Default::default()),
+            ..test_iroh_config()
+        })
+        .build()
+        .await?;
+
+    let p2p = node.p2p().cloned().context("node missing p2p system")?;
+    let addr = wait_for_connectable_iroh_addr(&p2p).await?;
+    assert!(
+        !addr.is_empty(),
+        "a node with an explicit allowlist must still listen"
+    );
+
+    // The runtime half of the same feature: with the allowlist on, admitting
+    // a peer is a real change rather than the no-op it is under AcceptAll.
+    let peer = p2p
+        .ops()
+        .local_peer_id()
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let peer = defra_http::TransportPeerId::new(peer).map_err(|error| anyhow::anyhow!(error))?;
+    p2p.ops()
+        .allow_peer(&peer)
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+
+    p2p.shutdown().await;
+    node.database.close().await?;
+    Ok(())
+}
+
 fn test_iroh_config() -> IrohConfig {
     IrohConfig {
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
@@ -72,6 +116,7 @@ fn test_iroh_config() -> IrohConfig {
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
+        allowlist: Default::default(),
     }
 }
 

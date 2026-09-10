@@ -60,6 +60,13 @@ pub struct IrohConfig {
     pub discovery: p2p::iroh::IrohDiscoveryConfig,
     pub max_concurrent_multipath_paths: Option<u32>,
     pub secret_key_path: Option<std::path::PathBuf>,
+    /// Who may open an inbound connection. `AcceptAll` (the default) keeps
+    /// the behaviour every existing embedder has. `Explicit` restricts
+    /// inbound connections to the listed endpoint ids, and
+    /// `P2POperations::allow_peer` can add more while the node runs. That
+    /// runtime call is a no-op under `AcceptAll`, so an embedder that never
+    /// sets this cannot turn the allowlist on at all.
+    pub allowlist: p2p::iroh::IrohAllowlistConfig,
 }
 
 /// Node signing configuration.

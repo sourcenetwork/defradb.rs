@@ -11,7 +11,7 @@ use bytes::Bytes;
 use iroh::SecretKey;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
+use tokio::time::{timeout, Instant};
 
 use super::{
     spawn_endpoint, IrohAllowlistConfig, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport,
@@ -142,6 +142,11 @@ async fn shutdown_all(
     server_task.await.unwrap();
 }
 
+/// How long a refused peer is given to deliver gossip before the test
+/// concludes that it cannot. Long enough for the mesh to have healed and
+/// retried several times if the allowlist were not holding.
+const GOSSIP_OBSERVATION_WINDOW: Duration = Duration::from_secs(2);
+
 /// A peer not on the allowlist is refused: it never appears connected on the
 /// accepting side, and no gossip message crosses (the gossip ALPN connection
 /// the mesh would open is refused by the same check).
@@ -161,14 +166,30 @@ async fn refuses_a_peer_not_on_the_allowlist_and_blocks_gossip() {
     let topic = DefraTopic::collection("collection");
     dialer.subscribe(topic.clone()).await.unwrap();
     server.subscribe(topic.clone()).await.unwrap();
-    dialer.publish(topic, test_broadcast()).await.unwrap();
 
-    let outcome = timeout(Duration::from_millis(500), server_events.recv()).await;
-    if let Ok(Some(event)) = outcome {
-        assert!(
-            !matches!(event, TransportEvent::GossipMessage { .. }),
-            "a refused peer must not be able to deliver gossip: {event:?}"
-        );
+    // Publish throughout the observation window and inspect every event the
+    // server sees, rather than sampling the first one. One publish followed
+    // by one `recv` passes the moment any unrelated event arrives first,
+    // which proves nothing: what has to hold is that no `GossipMessage`
+    // appears at all before the deadline.
+    let deadline = Instant::now() + GOSSIP_OBSERVATION_WINDOW;
+    while Instant::now() < deadline {
+        dialer
+            .publish(topic.clone(), test_broadcast())
+            .await
+            .unwrap();
+        match timeout(Duration::from_millis(100), server_events.recv()).await {
+            Ok(Some(event)) => assert!(
+                !matches!(event, TransportEvent::GossipMessage { .. }),
+                "a refused peer must not be able to deliver gossip: {event:?}"
+            ),
+            // The endpoint closed its event stream; there is nothing left to
+            // observe and nothing was delivered.
+            Ok(None) => break,
+            // A quiet tick, which is the expected shape of this test: keep
+            // publishing until the window is over.
+            Err(_) => {}
+        }
     }
 
     shutdown_all(dialer, server, dialer_task, server_task).await;
