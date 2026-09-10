@@ -51,6 +51,16 @@ pub struct Libp2pConfig {
 }
 
 /// Iroh transport configuration.
+///
+/// # Migrating
+///
+/// This struct gained an `allowlist` field. It is not `#[non_exhaustive]`,
+/// so an existing struct literal that names every field no longer compiles:
+/// either add `allowlist: Default::default()`, which keeps exactly the
+/// behaviour the code had (accept every inbound peer), or switch the
+/// literal to `..Default::default()` so a later field costs nothing. Only
+/// construction is affected; a node built from a literal that compiled
+/// before behaves identically after.
 #[cfg(feature = "iroh")]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IrohConfig {
