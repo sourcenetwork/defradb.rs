@@ -624,6 +624,27 @@ impl EmbeddedNode {
         self.p2p_ops.as_ref().map(Arc::clone)
     }
 
+    /// Authorize a peer to open an inbound P2P connection to this node while
+    /// it is running, without a restart.
+    ///
+    /// Widens who may connect in: it does not itself dial, connect to, or
+    /// disconnect from the peer, and it is a no-op when the active transport
+    /// already accepts every inbound peer. Returns an error if P2P is not
+    /// enabled, or if the active transport has no concept of an inbound
+    /// allowlist.
+    #[cfg(feature = "p2p")]
+    pub async fn allow_p2p_peer(&self, peer_id: &str) -> anyhow::Result<()> {
+        let ops = self
+            .p2p_ops
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("P2P is not enabled for this node"))?;
+        let peer_id = defra_http::TransportPeerId::new(peer_id)
+            .map_err(|error| anyhow::anyhow!("invalid peer ID: {error}"))?;
+        ops.allow_peer(&peer_id)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to authorize peer: {error}"))
+    }
+
     /// Gracefully stop background services owned by this embedded node.
     ///
     /// **The node should not be used after this call.** When the `otel`

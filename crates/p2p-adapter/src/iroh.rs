@@ -350,6 +350,18 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         Ok(())
     }
 
+    async fn allow_peer(&self, peer_id: &TransportPeerId) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerConnect)
+            .await?;
+
+        let peer_id = parse_canonical_peer_id(peer_id.as_str())
+            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        self.transport
+            .allow_peer(&peer_id)
+            .await
+            .map_err(|error| P2PError::transport(error.to_string()))
+    }
+
     async fn notify_network_change(&self) -> P2PResult<()> {
         self.transport
             .network_change()
@@ -977,8 +989,8 @@ mod tests {
     use bytes::Bytes;
     use cid::Cid;
     use p2p::iroh::{
-        is_ticket_string, load_or_generate_secret_key, spawn_endpoint, IrohDiscoveryConfig,
-        IrohEndpointConfig, IrohRelayModeConfig,
+        is_ticket_string, load_or_generate_secret_key, spawn_endpoint, IrohAllowlistConfig,
+        IrohDiscoveryConfig, IrohEndpointConfig, IrohRelayModeConfig,
     };
     use p2p::P2PTransport;
 
@@ -1121,6 +1133,77 @@ mod tests {
             .connect_peer(&format!("{phantom}@127.0.0.1:1"))
             .await
             .expect_err("dial to an unconnected, undialable peer must fail");
+    }
+
+    /// `allow_peer` mirrors `connect_peer`/`disconnect_peer`: parse the
+    /// canonical peer id and delegate to the transport. Regression for the
+    /// runtime-authorization path: `IrohTransport::allow_peer` is unreachable
+    /// from anything above the transport unless the adapter passes it through.
+    #[tokio::test]
+    async fn allow_peer_authorizes_a_peer_refused_by_the_allowlist() {
+        let key_a = load_or_generate_secret_key(None).await.expect("key a");
+        let key_b = load_or_generate_secret_key(None).await.expect("key b");
+        let (command_tx_a, _events_a, _replicators_a, _task_a) =
+            spawn_endpoint(test_endpoint_config(key_a.clone()))
+                .await
+                .expect("endpoint a");
+
+        // Endpoint b starts with an explicit allowlist that excludes a.
+        let mut config_b = test_endpoint_config(key_b.clone());
+        config_b.allowlist = IrohAllowlistConfig::Explicit(Default::default());
+        let (command_tx_b, _events_b, _replicators_b, _task_b) =
+            spawn_endpoint(config_b).await.expect("endpoint b");
+
+        let transport_a = IrohTransport::new(command_tx_a, key_a);
+        let transport_b = IrohTransport::new(command_tx_b, key_b);
+        let adapter_a = IrohP2PAdapter::<NoopBlockstore>::for_tests(transport_a.clone());
+        let adapter_b = IrohP2PAdapter::<NoopBlockstore>::for_tests(transport_b.clone());
+
+        let dial_addr = dialable_ticket(&transport_b).await;
+        adapter_a
+            .connect_peer(&dial_addr)
+            .await
+            .expect("dial reaches endpoint b");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            let connected = transport_b
+                .connected_peers()
+                .await
+                .expect("endpoint b connected_peers");
+            assert!(
+                connected.is_empty(),
+                "a peer refused by the allowlist must never appear connected"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        // Clear a's stale local view of the refused attempt before redialing,
+        // so the next `connect_peer` cannot short-circuit on it as "already
+        // connected".
+        adapter_a
+            .disconnect_peer(&dial_addr)
+            .await
+            .expect("clear stale attempt");
+
+        let peer_a =
+            TransportPeerId::new(transport_a.local_peer_id().as_str()).expect("canonical peer id");
+        adapter_b
+            .allow_peer(&peer_a)
+            .await
+            .expect("authorize a at runtime");
+
+        adapter_a
+            .connect_peer(&dial_addr)
+            .await
+            .expect("connect after authorization");
+        transport_b
+            .poll_until_connected(
+                transport_a.local_peer_id(),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .expect("endpoint b sees the authorized peer connected");
     }
 
     /// `add_replicator` shares the rationale: installing a replicator over an
