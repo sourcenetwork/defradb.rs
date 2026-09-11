@@ -328,6 +328,16 @@ pub struct NetConfig {
     /// LAN addresses to peers on different networks. None = 0.0.0.0 (all interfaces).
     #[serde(default)]
     pub iroh_bind_addr: Option<std::net::IpAddr>,
+    /// Endpoint ids allowed to open an inbound iroh connection. Empty (the
+    /// default) accepts every peer, which is the behaviour this option was
+    /// added alongside and is fine on a private network. Listing any id
+    /// switches the transport to accepting only the ids listed, which is
+    /// what a node reachable over relays needs: a gossip topic is named by a
+    /// content-derived collection id, identical for anyone holding the same
+    /// schema, so an open endpoint hands its documents to any peer that can
+    /// name a collection.
+    #[serde(default)]
+    pub iroh_allowed_peers: Vec<String>,
     /// Maximum concurrent QUIC paths per iroh connection. None keeps iroh's
     /// default; custom values must be at least 9.
     #[serde(default)]
@@ -439,6 +449,7 @@ impl Default for NetConfig {
             iroh_pkarr_relay_url: None,
             iroh_bind_port: None,
             iroh_bind_addr: None,
+            iroh_allowed_peers: Vec::new(),
             iroh_max_concurrent_multipath_paths: None,
             p2p_rate_limit_burst: default_rate_limit_burst(),
             p2p_rate_limit_rate: default_rate_limit_rate(),

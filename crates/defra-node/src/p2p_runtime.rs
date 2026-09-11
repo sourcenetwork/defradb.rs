@@ -189,6 +189,7 @@ pub(super) async fn setup_p2p<S: storage::corekv::Store + 'static>(
         bind_addr: config.bind_addr,
         max_concurrent_multipath_paths: config.max_concurrent_multipath_paths,
         gossip_heal: p2p::iroh::GossipHealConfig::from_env(),
+        allowlist: config.allowlist.clone(),
     };
     let (command_tx, iroh_events, replicator_registry, endpoint_task) =
         p2p::iroh::spawn_endpoint(iroh_config)

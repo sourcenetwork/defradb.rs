@@ -113,6 +113,10 @@ pub struct P2PConfig {
     pub relay_mode: p2p::iroh::IrohRelayModeConfig,
     /// Address publishing / lookup behavior.
     pub discovery: p2p::iroh::IrohDiscoveryConfig,
+    /// Inbound-connection authorization. Defaults to accepting every peer;
+    /// restrict to an explicit set of iroh endpoint ids once this node is
+    /// reachable from the internet (relay-enabled).
+    pub allowlist: p2p::iroh::IrohAllowlistConfig,
     /// Maximum concurrent QUIC paths per connection. None keeps iroh's default.
     pub max_concurrent_multipath_paths: Option<u32>,
     /// Path to persist secret key. None = ephemeral (new identity each restart).

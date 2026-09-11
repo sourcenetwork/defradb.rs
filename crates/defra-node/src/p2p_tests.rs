@@ -36,6 +36,7 @@ fn test_p2p_config() -> P2PConfig {
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
         load_persisted_collections: false,
@@ -1986,4 +1987,75 @@ async fn encrypted_create_replicates_plaintext_to_replicator() {
 
     writer.shutdown().await;
     replica.shutdown().await;
+}
+
+/// `EmbeddedNode::allow_p2p_peer` is the only reachable way to widen an
+/// already-running node's inbound allowlist: it must actually flow through
+/// `p2p-adapter` down to `IrohTransport::allow_peer`, not stop at the
+/// transport layer, or an operator admitting a new peer at runtime would
+/// have no way to do so short of a restart.
+#[tokio::test]
+async fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
+    init_tracing();
+
+    let node_a = EmbeddedNode::builder()
+        .with_p2p(test_p2p_config())
+        .build()
+        .await
+        .expect("build node_a");
+
+    // node_b starts with an explicit allowlist that excludes node_a.
+    let mut config_b = test_p2p_config();
+    config_b.allowlist = p2p::iroh::IrohAllowlistConfig::Explicit(Default::default());
+    let node_b = EmbeddedNode::builder()
+        .with_p2p(config_b)
+        .build()
+        .await
+        .expect("build node_b");
+
+    let addr_b = wait_for_listen_addr(&node_b).await;
+    let p2p_a = node_a.p2p().expect("node_a p2p");
+    let p2p_b = node_b.p2p().expect("node_b p2p");
+    let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
+
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("dial reaches node_b");
+
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        let connected = p2p_b
+            .connected_peers()
+            .await
+            .expect("node_b connected_peers");
+        assert!(
+            connected.is_empty(),
+            "a peer refused by the allowlist must never appear connected"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Clear node_a's stale local view of the refused attempt before
+    // redialing, so the next connect cannot short-circuit as "already
+    // connected".
+    p2p_a
+        .disconnect_peer(&addr_b)
+        .await
+        .expect("clear stale attempt");
+
+    node_b
+        .allow_p2p_peer(&peer_a)
+        .await
+        .expect("authorize node_a at runtime");
+
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("connect after authorization");
+    wait_for_connected_peer(&node_a).await;
+    wait_for_connected_peer(&node_b).await;
+
+    node_a.shutdown().await;
+    node_b.shutdown().await;
 }

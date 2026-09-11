@@ -239,6 +239,20 @@ pub trait P2POperations: Send + Sync {
     /// Disconnect the live connection to the peer at the given address.
     async fn disconnect_peer(&self, addr: &str) -> P2PResult<()>;
 
+    /// Authorize a peer to open an inbound connection to this node while it
+    /// is running, without a restart.
+    ///
+    /// Widens who may connect in: it does not itself dial, connect to, or
+    /// disconnect from the peer, and it is a no-op when the transport already
+    /// accepts every inbound peer. The input is a canonical raw transport
+    /// peer ID, never an address returned by `connected_peers`. Transports
+    /// without an inbound allowlist concept return an unsupported error.
+    async fn allow_peer(&self, _peer_id: &TransportPeerId) -> P2PResult<()> {
+        Err(P2PError::unsupported(
+            "inbound peer allowlisting is unavailable",
+        ))
+    }
+
     /// Notify the transport that local network conditions may have changed.
     ///
     /// Some transports, such as iroh, use this to refresh relay/direct

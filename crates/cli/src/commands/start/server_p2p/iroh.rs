@@ -40,6 +40,7 @@ impl Node {
                 bind_addr: config.net.iroh_bind_addr,
                 max_concurrent_multipath_paths: config.net.iroh_max_concurrent_multipath_paths,
                 gossip_heal: p2p::iroh::GossipHealConfig::from_env(),
+                allowlist: Self::iroh_allowlist(config),
             })
             .await
             .map_err(Error::P2P)?;
@@ -527,6 +528,25 @@ impl Node {
         urls
     }
 
+    /// Who may open an inbound connection.
+    ///
+    /// An empty `iroh_allowed_peers` keeps the behaviour every existing
+    /// deployment has: accept everyone. Listing any id restricts inbound
+    /// connections to the ids listed, and
+    /// [`IrohTransport::allow_peer`](p2p::iroh::IrohTransport::allow_peer)
+    /// can add more while the node runs. That runtime call is a no-op under
+    /// `AcceptAll`, so without this setting the allowlist could not be
+    /// turned on for this binary at all.
+    fn iroh_allowlist(config: &Config) -> p2p::iroh::IrohAllowlistConfig {
+        if config.net.iroh_allowed_peers.is_empty() {
+            p2p::iroh::IrohAllowlistConfig::AcceptAll
+        } else {
+            p2p::iroh::IrohAllowlistConfig::Explicit(
+                config.net.iroh_allowed_peers.iter().cloned().collect(),
+            )
+        }
+    }
+
     fn iroh_discovery(config: &Config) -> Result<p2p::iroh::IrohDiscoveryConfig> {
         match (
             config.net.iroh_discovery,
@@ -546,5 +566,37 @@ impl Node {
             (false, None, None) => Ok(p2p::iroh::IrohDiscoveryConfig::Disabled),
             (true, None, None) => Ok(p2p::iroh::IrohDiscoveryConfig::N0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The setting is what turns the allowlist on for this binary.
+    ///
+    /// `IrohTransport::allow_peer` is a no-op under `AcceptAll`, so a
+    /// deployment that cannot express `Explicit` here cannot restrict
+    /// inbound connections at all, whatever it does at runtime. Both
+    /// directions are asserted: the default stays open, matching every
+    /// existing deployment, and a listed id closes it to exactly that set.
+    #[test]
+    fn listed_peers_switch_the_endpoint_to_an_explicit_allowlist() {
+        let mut config = Config::default();
+        assert_eq!(
+            Node::iroh_allowlist(&config),
+            p2p::iroh::IrohAllowlistConfig::AcceptAll,
+            "an unset allowlist must not change what an existing node accepts"
+        );
+
+        config.net.iroh_allowed_peers = vec!["peer-one".to_string(), "peer-two".to_string()];
+        assert_eq!(
+            Node::iroh_allowlist(&config),
+            p2p::iroh::IrohAllowlistConfig::Explicit(
+                ["peer-one".to_string(), "peer-two".to_string()]
+                    .into_iter()
+                    .collect()
+            )
+        );
     }
 }
