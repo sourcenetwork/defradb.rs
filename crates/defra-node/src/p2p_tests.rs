@@ -1480,6 +1480,112 @@ async fn p2p_replicator_survives_embedded_restart() {
     let _ = tokio::fs::remove_dir_all(data_path1).await;
 }
 
+#[tokio::test]
+async fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
+    init_tracing();
+
+    let data_path0 = unique_data_path("filtered-p2p-replicator-node0");
+    let data_path1 = unique_data_path("filtered-p2p-replicator-node1");
+    let secret_key_path0 = data_path0.join("p2p.key");
+    let secret_key_path1 = data_path1.join("p2p.key");
+
+    let expected = {
+        let node0 = build_persistent_p2p_node(data_path0.clone(), secret_key_path0.clone()).await;
+        let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
+
+        node0
+            .add_schema(AGENT_SCHEMA)
+            .await
+            .expect("schema on node0");
+        node1
+            .add_schema(AGENT_SCHEMA)
+            .await
+            .expect("schema on node1");
+
+        install_filtered_one_way_replicator(
+            &node0,
+            &node1,
+            &["AgentDoc"],
+            agent_did_in_filter(&["did:key:phone"]),
+        )
+        .await;
+        let replicators = node0
+            .p2p()
+            .expect("node0 p2p")
+            .get_replicators()
+            .await
+            .expect("list replicators before restart");
+        let expected = replicators
+            .into_iter()
+            .find(|replicator| !replicator.filters.is_empty())
+            .expect("filtered replicator before restart");
+
+        node0.shutdown().await;
+        node1.shutdown().await;
+        expected
+    };
+
+    {
+        let node0 = build_persistent_p2p_node(data_path0.clone(), secret_key_path0).await;
+        let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1).await;
+        let restored = node0
+            .p2p()
+            .expect("node0 p2p")
+            .get_replicators()
+            .await
+            .expect("list replicators after restart")
+            .into_iter()
+            .find(|replicator| replicator.id == expected.id)
+            .expect("replicator restored into live registry");
+
+        assert_eq!(restored.collections, expected.collections);
+        assert_eq!(restored.address, expected.address);
+        assert_eq!(
+            restored.filters, expected.filters,
+            "startup must preserve filters so an idempotent add does not trigger full replay"
+        );
+
+        install_filtered_one_way_replicator(
+            &node0,
+            &node1,
+            &["AgentDoc"],
+            agent_did_in_filter(&["did:key:phone"]),
+        )
+        .await;
+
+        for (agent_did, body) in [
+            ("did:key:phone", "allowed after restart"),
+            ("did:key:other", "denied after restart"),
+        ] {
+            let response = node0
+                .execute(&format!(
+                    r#"mutation {{ add_AgentDoc(input: {{agent_did: "{agent_did}", body: "{body}"}}) {{ _docID }} }}"#
+                ))
+                .await;
+            assert!(
+                response.errors.is_empty(),
+                "add_AgentDoc({agent_did}) returned errors: {:?}",
+                response.errors
+            );
+        }
+
+        wait_for_agent_doc_dids(&node1, &["did:key:phone"]).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let present = query_agent_doc_dids(&node1).await;
+        assert_eq!(
+            present,
+            vec!["did:key:phone"],
+            "restored filter must still govern live replication after idempotent re-add"
+        );
+
+        node0.shutdown().await;
+        node1.shutdown().await;
+    }
+
+    let _ = tokio::fs::remove_dir_all(data_path0).await;
+    let _ = tokio::fs::remove_dir_all(data_path1).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "stress test for same-session follow-up replication under desktop-like load"]
 async fn live_replicator_same_session_followup_turn_converges() {

@@ -686,10 +686,24 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await?;
 
         if let Some(ref coordinator) = self.sync_coordinator {
-            coordinator
+            let collection_ids = coordinator
                 .get_subscribed_collections()
                 .await
-                .map_err(|error| P2PError::transport(error.to_string()))
+                .map_err(|error| P2PError::transport(error.to_string()))?;
+            if let Some(ref pusher) = self.doc_pusher {
+                collection_ids
+                    .into_iter()
+                    .map(|collection_id| {
+                        pusher.get_collection_name(&collection_id)?.ok_or_else(|| {
+                            P2PError::not_found(format!(
+                                "collection with ID '{collection_id}' not found"
+                            ))
+                        })
+                    })
+                    .collect()
+            } else {
+                Ok(collection_ids)
+            }
         } else {
             Ok(Vec::new())
         }
@@ -700,35 +714,26 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await?;
 
         if let Some(ref coordinator) = self.sync_coordinator {
-            for collection_name in collections {
-                let topic_id = if let Some(ref pusher) = self.doc_pusher {
-                    if let Some(collection_id) = pusher.get_collection_id(&collection_name) {
-                        collection_id
+            let topic_ids = collections
+                .into_iter()
+                .map(|collection_name| {
+                    if let Some(ref pusher) = self.doc_pusher {
+                        pusher.get_collection_id(&collection_name).ok_or_else(|| {
+                            P2PError::not_found(format!(
+                                "collection '{}' not found - add schema before subscribing to P2P",
+                                collection_name
+                            ))
+                        })
                     } else {
-                        return Err(P2PError::not_found(format!(
-                            "collection '{}' not found - add schema before subscribing to P2P",
-                            collection_name
-                        )));
+                        Ok(collection_name)
                     }
-                } else {
-                    collection_name.clone()
-                };
+                })
+                .collect::<P2PResult<Vec<_>>>()?;
 
-                coordinator
-                    .subscribe_collection(&topic_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-            }
-
-            if let Some(ref pusher) = self.doc_pusher {
-                let all_cols = coordinator
-                    .get_subscribed_collections()
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-                if let Err(error) = pusher.persist_p2p_collections(&all_cols).await {
-                    tracing::warn!(error = %error, "failed to persist P2P collections");
-                }
-            }
+            coordinator
+                .subscribe_collections(&topic_ids)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
 
             Ok(())
         } else {
@@ -759,22 +764,10 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 })
                 .collect::<P2PResult<Vec<_>>>()?;
 
-            for topic_id in topic_ids {
-                coordinator
-                    .unsubscribe_collection(&topic_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-            }
-
-            if let Some(ref pusher) = self.doc_pusher {
-                let all_cols = coordinator
-                    .get_subscribed_collections()
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-                if let Err(error) = pusher.persist_p2p_collections(&all_cols).await {
-                    tracing::warn!(error = %error, "failed to persist P2P collections after removal");
-                }
-            }
+            coordinator
+                .unsubscribe_collections(&topic_ids)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
 
             Ok(())
         } else {

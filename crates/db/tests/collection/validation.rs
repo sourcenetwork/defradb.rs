@@ -134,3 +134,53 @@ async fn creation_accepts_supported_scalar_defaults() {
         .await
         .unwrap();
 }
+
+#[test]
+fn json_validation_preserves_non_json_and_nonfinite_rejection() {
+    use document::NormalValue;
+    let collection = Collection::new(CollectionVersion::new(
+        "JsonDoc",
+        "json_doc_version",
+        "json_doc_collection",
+        vec![FieldDescription::new("1", "payload", FieldKind::json())],
+    ));
+    for value in [
+        NormalValue::Bytes(vec![1, 2]),
+        NormalValue::BytesArray(vec![vec![1]]),
+        NormalValue::Document(Box::new(Document::new())),
+        NormalValue::DocumentArray(vec![Document::new()]),
+        NormalValue::Time(chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()),
+        NormalValue::Float64(f64::NAN),
+        NormalValue::Float64(f64::INFINITY),
+        NormalValue::Float64Array(vec![1.0, f64::NEG_INFINITY]),
+        NormalValue::NillableFloat64ElementArray(vec![None, Some(f64::NAN)]),
+        NormalValue::NillableFloat32ElementArray(vec![None, Some(f32::INFINITY)]),
+    ] {
+        let mut doc = Document::new();
+        doc.set("payload", value.clone());
+        assert!(
+            collection.validate_document(&doc).is_err(),
+            "accepted non-JSON {value:?}"
+        );
+    }
+}
+
+#[test]
+fn retained_json_scalar_values_do_not_relax_other_field_kinds() {
+    use document::NormalValue;
+    let collection = Collection::new(CollectionVersion::new(
+        "StrictDoc",
+        "strict_doc_version",
+        "strict_doc_collection",
+        vec![FieldDescription::new("1", "payload", FieldKind::string())],
+    ));
+    for value in [
+        NormalValue::Bool(true),
+        NormalValue::Int(1),
+        NormalValue::JsonArray(vec![]),
+    ] {
+        let mut doc = Document::new();
+        doc.set("payload", value);
+        assert!(collection.validate_document(&doc).is_err());
+    }
+}

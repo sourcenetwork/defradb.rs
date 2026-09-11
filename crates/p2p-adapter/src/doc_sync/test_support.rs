@@ -75,6 +75,10 @@ impl TransportDocPusher for StubPusher {
         unimplemented!("not reached by doc-sync tests")
     }
 
+    fn get_collection_name(&self, _collection_id: &str) -> P2PResult<Option<String>> {
+        unimplemented!("not reached by doc-sync tests")
+    }
+
     fn list_collections(&self) -> P2PResult<Vec<String>> {
         unimplemented!("not reached by doc-sync tests")
     }

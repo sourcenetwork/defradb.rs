@@ -57,6 +57,8 @@ pub trait TransportDocPusher: Send + Sync {
 
     fn get_collection_id(&self, name: &str) -> Option<String>;
 
+    fn get_collection_name(&self, collection_id: &str) -> P2PResult<Option<String>>;
+
     fn list_collections(&self) -> P2PResult<Vec<String>>;
 
     fn validate_replication_filters(&self, _filters: &p2p::ReplicationFilters) -> P2PResult<()> {
@@ -302,6 +304,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
                 None
             }
         }
+    }
+
+    fn get_collection_name(&self, collection_id: &str) -> P2PResult<Option<String>> {
+        self.db
+            .find_collection_by_id(collection_id)
+            .map(|collection| collection.map(|collection| collection.name().to_string()))
+            .map_err(|error| {
+                P2PError::internal(format!(
+                    "failed to find collection '{collection_id}': {error}"
+                ))
+            })
     }
 
     fn list_collections(&self) -> P2PResult<Vec<String>> {

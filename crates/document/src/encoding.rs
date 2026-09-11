@@ -378,6 +378,24 @@ pub fn normal_value_to_json(value: &NormalValue) -> Result<serde_json::Value> {
             }
             Ok(serde_json::Value::Array(result))
         }
+        NormalValue::NillableFloat64ElementArray(arr) => arr
+            .iter()
+            .map(|value| {
+                value
+                    .map(float64_to_json)
+                    .unwrap_or(Ok(serde_json::Value::Null))
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(serde_json::Value::Array),
+        NormalValue::NillableFloat32ElementArray(arr) => arr
+            .iter()
+            .map(|value| {
+                value
+                    .map(|value| float64_to_json(value as f64))
+                    .unwrap_or(Ok(serde_json::Value::Null))
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(serde_json::Value::Array),
         NormalValue::JsonArray(arr) => Ok(serde_json::Value::Array(arr.clone())),
         // Nillable variants
         NormalValue::NillableBool(opt) => Ok(opt
