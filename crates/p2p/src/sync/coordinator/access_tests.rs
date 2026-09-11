@@ -365,6 +365,9 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             subscribed_collections: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashSet::new(),
             )),
+            retrying_subscribes: Arc::new(
+                tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            ),
             retrying_unsubscribes: Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),

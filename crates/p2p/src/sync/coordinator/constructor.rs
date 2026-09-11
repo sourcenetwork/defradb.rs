@@ -262,6 +262,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 subscriptions: SyncSubscriptionState {
                     mutation: Arc::new(tokio::sync::Mutex::new(())),
                     subscribed_collections,
+                    retrying_subscribes: Arc::new(tokio::sync::Mutex::new(
+                        std::collections::HashSet::new(),
+                    )),
                     retrying_unsubscribes: Arc::new(tokio::sync::Mutex::new(
                         std::collections::HashSet::new(),
                     )),

@@ -693,6 +693,9 @@ pub(super) struct SyncSubscriptionState {
     /// Set of subscribed collection IDs for P2P sync (in-memory cache).
     pub(super) subscribed_collections: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
 
+    /// Desired topics with one background installation retry owner.
+    pub(super) retrying_subscribes: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+
     /// Undesired live topics with one background removal retry owner.
     pub(super) retrying_unsubscribes: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
 

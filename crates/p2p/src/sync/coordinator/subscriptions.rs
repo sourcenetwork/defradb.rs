@@ -12,6 +12,8 @@ use crate::transport::P2PTransport;
 
 const MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS: usize = 16;
 const COLLECTION_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(5);
+const COLLECTION_SUBSCRIBE_RETRY_MIN: Duration = Duration::from_millis(100);
+const COLLECTION_SUBSCRIBE_RETRY_MAX: Duration = Duration::from_secs(5);
 const COLLECTION_UNSUBSCRIBE_RETRY_MIN: Duration = Duration::from_millis(100);
 const COLLECTION_UNSUBSCRIBE_RETRY_MAX: Duration = Duration::from_secs(5);
 
@@ -99,7 +101,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         let mut installed = Vec::new();
         let mut newly_installed = 0;
-        let mut first_error = None;
+        let mut failures = Vec::new();
         for (collection_id, result) in results {
             match result {
                 Ok(was_new) => {
@@ -112,9 +114,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         error = %error,
                         "Failed to install durable collection subscription"
                     );
-                    if first_error.is_none() {
-                        first_error = Some(error);
-                    }
+                    failures.push((collection_id, error));
                 }
             }
         }
@@ -131,7 +131,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             transport_installed = newly_installed,
             "Applied durable collection subscription batch"
         );
-        if let Some(error) = first_error {
+        for (collection_id, _) in &failures {
+            self.schedule_collection_subscribe_retry(collection_id.clone())
+                .await;
+        }
+        if let Some((_, error)) = failures.into_iter().next() {
             return Err(error);
         }
         Ok(newly_installed)
@@ -171,16 +175,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .remove_collections(&requested)
             .await?;
 
-        let live = self.subscriptions.subscribed_collections.read().await;
-        let installed = requested
-            .iter()
-            .filter(|collection_id| live.contains(collection_id.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        drop(live);
-
         let broadcaster = self.runtime.broadcaster.clone();
-        let results = stream::iter(installed)
+        // Always issue the idempotent transport removal. A timed-out subscribe
+        // is ambiguous: the topic may be live even though it never reached the
+        // cache, and filtering only by the cache would strand that topic.
+        let results = stream::iter(requested.iter().cloned())
             .map(move |collection_id| {
                 let broadcaster = broadcaster.clone();
                 async move {
@@ -256,6 +255,91 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .await?;
         collections.sort();
         Ok(collections)
+    }
+
+    async fn schedule_collection_subscribe_retry(&self, collection_id: String) {
+        let mut retrying = self.subscriptions.retrying_subscribes.lock().await;
+        if !retrying.insert(collection_id.clone()) {
+            return;
+        }
+        drop(retrying);
+
+        let broadcaster = self.runtime.broadcaster.clone();
+        let mutation = Arc::clone(&self.subscriptions.mutation);
+        let collection_store = Arc::clone(&self.subscriptions.collection_store);
+        let subscribed = Arc::clone(&self.subscriptions.subscribed_collections);
+        let retrying = Arc::clone(&self.subscriptions.retrying_subscribes);
+        let shutdown = self.runtime.shutdown.clone();
+        let task_shutdown = shutdown.clone();
+        let retry_id = collection_id.clone();
+        let spawned = shutdown.spawn_task(async move {
+            let mut delay = COLLECTION_SUBSCRIBE_RETRY_MIN;
+            loop {
+                tokio::select! {
+                    _ = task_shutdown.cancelled() => break,
+                    _ = tokio::time::sleep(delay) => {}
+                }
+
+                // Desired state, the live cache, and transport installation
+                // are observed under the same mutation guard as foreground
+                // add/remove calls. This makes a concurrent unsubscribe either
+                // cancel the retry or clean up a completed installation.
+                let _mutation = mutation.lock().await;
+                match collection_store.is_subscribed(&retry_id).await {
+                    Ok(false) => {
+                        retrying.lock().await.remove(&retry_id);
+                        return;
+                    }
+                    Ok(true) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            collection_id = %retry_id,
+                            error = %error,
+                            "Failed to read durable subscription state before subscribe retry"
+                        );
+                        delay = (delay * 2).min(COLLECTION_SUBSCRIBE_RETRY_MAX);
+                        continue;
+                    }
+                }
+
+                if subscribed.read().await.contains(&retry_id) {
+                    retrying.lock().await.remove(&retry_id);
+                    return;
+                }
+
+                let result = tokio::time::timeout(
+                    COLLECTION_SUBSCRIPTION_TIMEOUT,
+                    broadcaster.subscribe_collection(&retry_id),
+                )
+                .await;
+                match result {
+                    Ok(Ok(_)) => {
+                        subscribed.write().await.insert(retry_id.clone());
+                        retrying.lock().await.remove(&retry_id);
+                        return;
+                    }
+                    Ok(Err(error)) => tracing::warn!(
+                        collection_id = %retry_id,
+                        error = %error,
+                        "Collection subscribe retry failed"
+                    ),
+                    Err(_) => tracing::warn!(
+                        collection_id = %retry_id,
+                        "Collection subscribe retry timed out"
+                    ),
+                }
+                delay = (delay * 2).min(COLLECTION_SUBSCRIBE_RETRY_MAX);
+            }
+            retrying.lock().await.remove(&retry_id);
+        });
+
+        if !spawned {
+            self.subscriptions
+                .retrying_subscribes
+                .lock()
+                .await
+                .remove(&collection_id);
+        }
     }
 
     async fn schedule_collection_unsubscribe_retry(&self, collection_id: String) {
@@ -382,6 +466,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .await;
 
         let mut installed = Vec::new();
+        let mut failed = Vec::new();
         for (collection_id, result) in results {
             match result {
                 Ok(_) => installed.push(collection_id),
@@ -391,6 +476,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                         error = %error,
                         "Failed to subscribe to persisted P2P collection"
                     );
+                    failed.push(collection_id);
                 }
             }
         }
@@ -400,6 +486,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .write()
             .await
             .extend(installed);
+
+        for collection_id in failed {
+            self.schedule_collection_subscribe_retry(collection_id)
+                .await;
+        }
 
         tracing::info!(loaded = loaded, "Finished loading P2P collections");
         Ok(loaded)
@@ -471,6 +562,7 @@ mod tests {
         pubkey: Vec<u8>,
         subscribed: Arc<Mutex<HashSet<String>>>,
         fail_subscribe: Arc<Mutex<HashSet<String>>>,
+        fail_subscribe_remaining: Arc<Mutex<HashMap<String, usize>>>,
         fail_unsubscribe_remaining: Arc<Mutex<HashMap<String, usize>>>,
         unsubscribe_started: Option<Arc<tokio::sync::Notify>>,
         unsubscribe_release: Option<Arc<tokio::sync::Notify>>,
@@ -488,6 +580,7 @@ mod tests {
                 pubkey: vec![1, 2, 3],
                 subscribed: Arc::new(Mutex::new(HashSet::new())),
                 fail_subscribe: Arc::new(Mutex::new(HashSet::new())),
+                fail_subscribe_remaining: Arc::new(Mutex::new(HashMap::new())),
                 fail_unsubscribe_remaining: Arc::new(Mutex::new(HashMap::new())),
                 unsubscribe_started: None,
                 unsubscribe_release: None,
@@ -504,6 +597,14 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(topic.to_string());
+            self
+        }
+
+        fn fail_subscribe_once(self, topic: &str) -> Self {
+            self.fail_subscribe_remaining
+                .lock()
+                .unwrap()
+                .insert(topic.to_string(), 1);
             self
         }
 
@@ -607,7 +708,18 @@ mod tests {
                 tokio::time::sleep(self.subscribe_delay).await;
             }
 
-            let result = if self.fail_subscribe.lock().unwrap().contains(&topic) {
+            let should_fail_once = {
+                let mut remaining = self.fail_subscribe_remaining.lock().unwrap();
+                match remaining.get_mut(&topic) {
+                    Some(count) if *count > 0 => {
+                        *count -= 1;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            let result = if should_fail_once || self.fail_subscribe.lock().unwrap().contains(&topic)
+            {
                 Err(crate::error::Error::Transport(format!(
                     "injected subscribe failure for {topic}"
                 )))
@@ -1019,6 +1131,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_subscribe_retries_durable_intent_without_restart() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport =
+            RecordingTransport::new("subscribe-retry-peer").fail_subscribe_once("users");
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+
+        coordinator
+            .subscribe_collection("users")
+            .await
+            .expect_err("first live installation should fail after intent is durable");
+
+        assert_eq!(
+            coordinator.get_subscribed_collections().await.unwrap(),
+            vec!["users".to_string()],
+            "the public list is durable desired state"
+        );
+        assert!(transport.subscribed_topics().is_empty());
+        assert_eq!(collection_store.add_batches(), 1);
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if transport.subscribed_topics() == vec!["users"] {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("background subscribe retry should converge without a restart or caller sweep");
+
+        assert!(coordinator
+            .subscriptions
+            .subscribed_collections
+            .read()
+            .await
+            .contains("users"));
+        assert!(coordinator
+            .subscriptions
+            .retrying_subscribes
+            .lock()
+            .await
+            .is_empty());
+        assert_eq!(transport.subscribe_calls(), 2);
+        assert_eq!(collection_store.add_batches(), 1);
+    }
+
+    #[tokio::test]
     async fn load_p2p_collections_reinstalls_subscriptions_after_restart() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let initial_transport = RecordingTransport::new("initial-peer");
@@ -1043,6 +1209,51 @@ mod tests {
             restarted.get_subscribed_collections().await.unwrap(),
             vec!["users".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn load_p2p_collections_retries_failed_restoration_in_process() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport = RecordingTransport::new("restore-retry-peer").fail_subscribe_once("users");
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        collection_store
+            .add_collections(&["users".to_string()])
+            .await
+            .unwrap();
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+
+        assert_eq!(
+            coordinator.load_p2p_collections().await.unwrap(),
+            0,
+            "the initial restoration reports only topics installed during that call"
+        );
+        assert!(transport.subscribed_topics().is_empty());
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if transport.subscribed_topics() == vec!["users"] {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("failed startup restoration should converge in-process");
+
+        assert_eq!(transport.subscribe_calls(), 2);
+        assert_eq!(collection_store.add_batches(), 1);
+        assert!(coordinator
+            .subscriptions
+            .retrying_subscribes
+            .lock()
+            .await
+            .is_empty());
     }
 
     #[tokio::test]
