@@ -143,13 +143,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 "timed out unsubscribing from collection {collection_id}"
             )))
         });
+        let result = result?;
+
         self.subscriptions
             .subscribed_collections
             .write()
             .await
             .remove(collection_id);
-
-        let result = result?;
 
         if result {
             tracing::debug!(collection_id = %collection_id, "Unsubscribed from collection (persisted)");
@@ -302,6 +302,7 @@ mod tests {
         pubkey: Vec<u8>,
         subscribed: Arc<Mutex<HashSet<String>>>,
         fail_subscribe: Arc<Mutex<HashSet<String>>>,
+        fail_unsubscribe_once: Arc<Mutex<HashSet<String>>>,
         subscribe_calls: Arc<AtomicUsize>,
         subscribe_delay: Duration,
         subscribe_in_flight: Arc<AtomicUsize>,
@@ -316,6 +317,7 @@ mod tests {
                 pubkey: vec![1, 2, 3],
                 subscribed: Arc::new(Mutex::new(HashSet::new())),
                 fail_subscribe: Arc::new(Mutex::new(HashSet::new())),
+                fail_unsubscribe_once: Arc::new(Mutex::new(HashSet::new())),
                 subscribe_calls: Arc::new(AtomicUsize::new(0)),
                 subscribe_delay: Duration::ZERO,
                 subscribe_in_flight: Arc::new(AtomicUsize::new(0)),
@@ -334,6 +336,14 @@ mod tests {
 
         fn with_subscribe_delay(mut self, delay: Duration) -> Self {
             self.subscribe_delay = delay;
+            self
+        }
+
+        fn fail_unsubscribe_once(self, topic: &str) -> Self {
+            self.fail_unsubscribe_once
+                .lock()
+                .unwrap()
+                .insert(topic.to_string());
             self
         }
 
@@ -422,11 +432,13 @@ mod tests {
         }
 
         async fn unsubscribe(&self, topic: DefraTopic) -> crate::Result<bool> {
-            Ok(self
-                .subscribed
-                .lock()
-                .unwrap()
-                .remove(&topic.topic_string()))
+            let topic = topic.topic_string();
+            if self.fail_unsubscribe_once.lock().unwrap().remove(&topic) {
+                return Err(crate::error::Error::Transport(format!(
+                    "injected unsubscribe failure for {topic}"
+                )));
+            }
+            Ok(self.subscribed.lock().unwrap().remove(&topic))
         }
 
         async fn publish(
@@ -853,5 +865,48 @@ mod tests {
 
         assert_eq!(restored, 1, "restart should retry durable desired state");
         assert_eq!(restarted_transport.subscribed_topics(), vec!["users"]);
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_failure_keeps_live_topic_retryable() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport = RecordingTransport::new("unsubscribe-peer").fail_unsubscribe_once("users");
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+
+        assert!(coordinator.subscribe_collection("users").await.unwrap());
+        let error = coordinator
+            .unsubscribe_collection("users")
+            .await
+            .expect_err("injected transport failure should be returned");
+
+        assert!(error.to_string().contains("injected unsubscribe failure"));
+        assert!(
+            collection_store.collections().is_empty(),
+            "durable desired state must record the unsubscribe before transport work"
+        );
+        assert_eq!(transport.subscribed_topics(), vec!["users"]);
+        assert_eq!(
+            coordinator.get_subscribed_collections().await.unwrap(),
+            vec!["users"],
+            "failed live removal must remain visible for retry"
+        );
+
+        assert!(coordinator.unsubscribe_collection("users").await.unwrap());
+        assert!(transport.subscribed_topics().is_empty());
+        assert!(
+            coordinator
+                .get_subscribed_collections()
+                .await
+                .unwrap()
+                .is_empty(),
+            "successful retry must retire the live topic"
+        );
     }
 }
