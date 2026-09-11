@@ -238,6 +238,35 @@ fn evict_if_closed(
     }
 }
 
+/// Retire a shared connection that stayed transport-open but failed to answer
+/// an application request before its deadline.
+///
+/// QUIC can keep reporting a path as open after a mobile network transition
+/// even though no request on that path can make progress. Reusing that cached
+/// handle makes every durable retry wait on the same poisoned connection. The
+/// stable-id check preserves a newer connection installed by a concurrent
+/// dial, while closing this handle also tears down any clones retained by the
+/// peer map.
+fn retire_timed_out_connection(
+    cache: &ConnectionCache,
+    peer_id: &PeerId,
+    connection: &iroh::endpoint::Connection,
+) {
+    let Ok(endpoint_id) = parse_endpoint_id(peer_id) else {
+        connection.close(DISCONNECT_ERROR_CODE.into(), b"response timeout");
+        return;
+    };
+    let mut guard = cache.connections.lock();
+    if guard
+        .get(&endpoint_id)
+        .is_some_and(|cached| cached.stable_id() == connection.stable_id())
+    {
+        guard.remove(&endpoint_id);
+    }
+    drop(guard);
+    connection.close(DISCONNECT_ERROR_CODE.into(), b"response timeout");
+}
+
 fn dial_guard(
     cache: &ConnectionCache,
     endpoint_id: iroh::EndpointId,
@@ -390,7 +419,7 @@ where
             timeout_secs = REQUEST_RESPONSE_TIMEOUT.as_secs(),
             "request-response timed out waiting for peer"
         );
-        evict_if_closed(cache, peer_id, &connection);
+        retire_timed_out_connection(cache, peer_id, &connection);
         crate::error::Error::ResponseTimeout
     })?
     .inspect_err(|_| {
@@ -477,7 +506,7 @@ pub(super) async fn handle_two_stream_request(
                 timeout_secs = REQUEST_RESPONSE_TIMEOUT.as_secs(),
                 "two-stream request timed out waiting for same-stream or legacy reply"
             );
-            evict_if_closed(cache, peer_id, &connection);
+            retire_timed_out_connection(cache, peer_id, &connection);
             crate::error::Error::ResponseTimeout
         })?
         .inspect_err(|_| {
@@ -600,7 +629,7 @@ pub(super) async fn handle_car_request_response(
     )
     .await
     .map_err(|_| {
-        evict_if_closed(cache, peer_id, &connection);
+        retire_timed_out_connection(cache, peer_id, &connection);
         crate::error::Error::ResponseTimeout
     })?
     .map_err(|e| {
@@ -740,7 +769,7 @@ async fn try_fetch_from_provider(
                 };
             }
             Err(_) => {
-                evict_if_closed(cache, provider, &connection);
+                retire_timed_out_connection(cache, provider, &connection);
                 debug!(
                     provider = %provider,
                     root = %request.root_cid,
@@ -1096,6 +1125,87 @@ mod tests {
             conn_b.close_reason().is_some(),
             "second retained handle must be closed"
         );
+
+        accept_task.abort();
+    }
+
+    #[tokio::test]
+    async fn response_timeout_closes_and_evicts_the_cached_connection() {
+        let accept_ep = localhost_endpoint(vec![b"test/timeout".to_vec()]).await;
+        let dial_ep = localhost_endpoint(vec![]).await;
+        let accept_task = tokio::spawn({
+            let ep = accept_ep.clone();
+            async move {
+                let mut held = Vec::new();
+                while let Some(incoming) = ep.accept().await {
+                    if let Ok(connection) = incoming.await {
+                        held.push(connection);
+                    }
+                }
+            }
+        });
+
+        let connection = dial_ep
+            .connect(accept_ep.addr(), b"test/timeout")
+            .await
+            .expect("connect");
+        let peer = PeerId::new(accept_ep.id().to_string());
+        let cache = new_connection_cache();
+        remember_connection(&cache, &peer, &connection).expect("cache connection");
+
+        retire_timed_out_connection(&cache, &peer, &connection);
+
+        assert!(
+            connection.close_reason().is_some(),
+            "a transport-open connection that missed its response deadline must close"
+        );
+        assert!(
+            cached_connection(&cache, &peer)
+                .expect("read cache")
+                .is_none(),
+            "the next request must dial a fresh connection"
+        );
+
+        accept_task.abort();
+    }
+
+    #[tokio::test]
+    async fn late_timeout_does_not_evict_a_newer_cached_connection() {
+        let accept_ep = localhost_endpoint(vec![b"test/old".to_vec(), b"test/new".to_vec()]).await;
+        let dial_ep = localhost_endpoint(vec![]).await;
+        let accept_task = tokio::spawn({
+            let ep = accept_ep.clone();
+            async move {
+                let mut held = Vec::new();
+                while let Some(incoming) = ep.accept().await {
+                    if let Ok(connection) = incoming.await {
+                        held.push(connection);
+                    }
+                }
+            }
+        });
+
+        let old = dial_ep
+            .connect(accept_ep.addr(), b"test/old")
+            .await
+            .expect("connect old");
+        let newer = dial_ep
+            .connect(accept_ep.addr(), b"test/new")
+            .await
+            .expect("connect new");
+        let peer = PeerId::new(accept_ep.id().to_string());
+        let cache = new_connection_cache();
+        remember_connection(&cache, &peer, &old).expect("cache old");
+        remember_connection(&cache, &peer, &newer).expect("cache new");
+
+        retire_timed_out_connection(&cache, &peer, &old);
+
+        let cached = cached_connection(&cache, &peer)
+            .expect("read cache")
+            .expect("newer connection remains cached");
+        assert_eq!(cached.stable_id(), newer.stable_id());
+        assert!(newer.close_reason().is_none());
+        assert!(old.close_reason().is_some());
 
         accept_task.abort();
     }
