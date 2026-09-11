@@ -2,60 +2,116 @@
 
 use blockstore::Blockstore;
 use cid::Cid;
+use futures::{stream, StreamExt};
+use std::time::Duration;
 
 use super::SyncCoordinator;
 use crate::error::Result;
 use crate::transport::P2PTransport;
 
+const MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS: usize = 16;
+const COLLECTION_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Subscribe to a collection for sync.
-    ///
-    /// Uses a write lock for the entire operation to prevent concurrent
-    /// subscribe calls from racing past the contains-check.
     pub async fn subscribe_collection(&self, collection_id: &str) -> Result<bool> {
-        let mut subscribed_collections = self.subscriptions.subscribed_collections.write().await;
+        let subscribed = self
+            .subscribe_collections(&[collection_id.to_string()])
+            .await?;
+        Ok(subscribed == 1)
+    }
 
-        if subscribed_collections.contains(collection_id) {
-            return Ok(false);
+    /// Subscribe to collection topics as one durable, bounded batch.
+    ///
+    /// The durable set is desired state, matching Go DefraDB: it commits
+    /// atomically before transport work begins and can therefore heal on a
+    /// later call or restart. The live cache contains only topics whose
+    /// transport installation succeeded.
+    pub async fn subscribe_collections(&self, collection_ids: &[String]) -> Result<usize> {
+        let _mutation = self.subscriptions.mutation.lock().await;
+
+        let mut seen = std::collections::HashSet::new();
+        let missing = {
+            let subscribed_collections = self.subscriptions.subscribed_collections.read().await;
+            collection_ids
+                .iter()
+                .filter(|collection_id| {
+                    !subscribed_collections.contains(collection_id.as_str())
+                        && seen.insert((*collection_id).clone())
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        if missing.is_empty() {
+            return Ok(0);
         }
 
         self.subscriptions
             .collection_store
-            .add_collection(collection_id)
+            .add_collections(&missing)
             .await?;
 
-        let result = self
-            .runtime
-            .broadcaster
-            .subscribe_collection(collection_id)
+        let broadcaster = self.runtime.broadcaster.clone();
+        let results = stream::iter(missing.iter().cloned())
+            .map(move |collection_id| {
+                let broadcaster = broadcaster.clone();
+                async move {
+                    let result = tokio::time::timeout(
+                        COLLECTION_SUBSCRIPTION_TIMEOUT,
+                        broadcaster.subscribe_collection(&collection_id),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(crate::error::Error::Transport(format!(
+                            "timed out subscribing to collection {collection_id}"
+                        )))
+                    });
+                    (collection_id, result)
+                }
+            })
+            .buffer_unordered(MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS)
+            .collect::<Vec<_>>()
             .await;
 
-        match result {
-            Ok(subscribed) => {
-                subscribed_collections.insert(collection_id.to_string());
-
-                if subscribed {
-                    tracing::debug!(collection_id = %collection_id, "Subscribed to collection (persisted)");
+        let mut installed = Vec::new();
+        let mut newly_installed = 0;
+        let mut first_error = None;
+        for (collection_id, result) in results {
+            match result {
+                Ok(was_new) => {
+                    newly_installed += usize::from(was_new);
+                    installed.push(collection_id);
                 }
-                Ok(subscribed)
-            }
-            Err(e) => {
-                if let Err(remove_err) = self
-                    .subscriptions
-                    .collection_store
-                    .remove_collection(collection_id)
-                    .await
-                {
-                    tracing::error!(
+                Err(error) => {
+                    tracing::warn!(
                         collection_id = %collection_id,
-                        subscribe_error = %e,
-                        remove_error = %remove_err,
-                        "Failed to rollback storage after GossipSub subscription failure"
+                        error = %error,
+                        "Failed to install durable collection subscription"
                     );
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
                 }
-                Err(e)
             }
         }
+
+        {
+            let mut subscribed_collections =
+                self.subscriptions.subscribed_collections.write().await;
+            subscribed_collections.extend(installed);
+        }
+
+        tracing::debug!(
+            requested = collection_ids.len(),
+            desired_added = missing.len(),
+            transport_installed = newly_installed,
+            "Applied durable collection subscription batch"
+        );
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok(newly_installed)
     }
 
     /// Subscribe to a specific document for sync.
@@ -65,7 +121,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     /// Unsubscribe from a collection.
     pub async fn unsubscribe_collection(&self, collection_id: &str) -> Result<bool> {
-        let mut subscribed_collections = self.subscriptions.subscribed_collections.write().await;
+        let _mutation = self.subscriptions.mutation.lock().await;
 
         // Persist the desired unsubscribe intent first. If the live transport
         // leave fails, the in-process topic may linger until retry or restart,
@@ -75,12 +131,23 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .remove_collection(collection_id)
             .await?;
 
-        let result = self
-            .runtime
-            .broadcaster
-            .unsubscribe_collection(collection_id)
-            .await;
-        subscribed_collections.remove(collection_id);
+        let result = tokio::time::timeout(
+            COLLECTION_SUBSCRIPTION_TIMEOUT,
+            self.runtime
+                .broadcaster
+                .unsubscribe_collection(collection_id),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(crate::error::Error::Transport(format!(
+                "timed out unsubscribing from collection {collection_id}"
+            )))
+        });
+        self.subscriptions
+            .subscribed_collections
+            .write()
+            .await
+            .remove(collection_id);
 
         let result = result?;
 
@@ -108,6 +175,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// subscription is a transport-level operation independent of the base
     /// doc-sync / sync-branchable service topics.
     pub async fn load_p2p_collections(&self) -> Result<usize> {
+        let _mutation = self.subscriptions.mutation.lock().await;
         let collections = self
             .subscriptions
             .collection_store
@@ -122,41 +190,47 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         tracing::info!(count = count, "Loading persisted P2P collections");
 
-        let mut loaded = 0;
-        for collection_id in collections {
-            match self
-                .runtime
-                .broadcaster
-                .subscribe_collection(&collection_id)
-                .await
-            {
-                Ok(true) => {
-                    self.subscriptions
-                        .subscribed_collections
-                        .write()
-                        .await
-                        .insert(collection_id.clone());
-                    loaded += 1;
-                    tracing::debug!(collection_id = %collection_id, "Loaded P2P collection subscription");
+        let broadcaster = self.runtime.broadcaster.clone();
+        let results = stream::iter(collections)
+            .map(move |collection_id| {
+                let broadcaster = broadcaster.clone();
+                async move {
+                    let result = tokio::time::timeout(
+                        COLLECTION_SUBSCRIPTION_TIMEOUT,
+                        broadcaster.subscribe_collection(&collection_id),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(crate::error::Error::Transport(format!(
+                            "timed out restoring collection {collection_id}"
+                        )))
+                    });
+                    (collection_id, result)
                 }
-                Ok(false) => {
-                    self.subscriptions
-                        .subscribed_collections
-                        .write()
-                        .await
-                        .insert(collection_id.clone());
-                    loaded += 1;
-                    tracing::debug!(collection_id = %collection_id, "P2P collection already subscribed");
-                }
-                Err(e) => {
+            })
+            .buffer_unordered(MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS)
+            .collect::<Vec<_>>()
+            .await;
+
+        let mut installed = Vec::new();
+        for (collection_id, result) in results {
+            match result {
+                Ok(_) => installed.push(collection_id),
+                Err(error) => {
                     tracing::warn!(
                         collection_id = %collection_id,
-                        error = %e,
+                        error = %error,
                         "Failed to subscribe to persisted P2P collection"
                     );
                 }
             }
         }
+        let loaded = installed.len();
+        self.subscriptions
+            .subscribed_collections
+            .write()
+            .await
+            .extend(installed);
 
         tracing::info!(loaded = loaded, "Finished loading P2P collections");
         Ok(loaded)
@@ -197,8 +271,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use async_trait::async_trait;
     use blockstore::DefraBlockstore;
@@ -211,13 +286,13 @@ mod tests {
         PushLogReply, PushLogRequest, PushSEArtifactsRequest, QuerySEArtifactsReply,
         QuerySEArtifactsRequest,
     };
-    use crate::sync::collection_store::P2PCollectionStore;
+    use crate::sync::collection_store::{P2PCollectionStorage, P2PCollectionStore};
     use crate::sync::manager::SyncConfig;
     use crate::topics::DefraTopic;
     use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId};
     use crate::{QueryId, ReplicatorInfo};
 
-    use super::SyncCoordinator;
+    use super::{SyncCoordinator, MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS};
 
     type TestBlockstore = DefraBlockstore<RegolithStore>;
 
@@ -227,6 +302,10 @@ mod tests {
         pubkey: Vec<u8>,
         subscribed: Arc<Mutex<HashSet<String>>>,
         fail_subscribe: Arc<Mutex<HashSet<String>>>,
+        subscribe_calls: Arc<AtomicUsize>,
+        subscribe_delay: Duration,
+        subscribe_in_flight: Arc<AtomicUsize>,
+        max_subscribe_in_flight: Arc<AtomicUsize>,
         replicators: Arc<Mutex<HashMap<String, Vec<String>>>>,
     }
 
@@ -237,6 +316,10 @@ mod tests {
                 pubkey: vec![1, 2, 3],
                 subscribed: Arc::new(Mutex::new(HashSet::new())),
                 fail_subscribe: Arc::new(Mutex::new(HashSet::new())),
+                subscribe_calls: Arc::new(AtomicUsize::new(0)),
+                subscribe_delay: Duration::ZERO,
+                subscribe_in_flight: Arc::new(AtomicUsize::new(0)),
+                max_subscribe_in_flight: Arc::new(AtomicUsize::new(0)),
                 replicators: Arc::new(Mutex::new(HashMap::new())),
             }
         }
@@ -247,6 +330,19 @@ mod tests {
                 .unwrap()
                 .insert(topic.to_string());
             self
+        }
+
+        fn with_subscribe_delay(mut self, delay: Duration) -> Self {
+            self.subscribe_delay = delay;
+            self
+        }
+
+        fn subscribe_calls(&self) -> usize {
+            self.subscribe_calls.load(Ordering::Relaxed)
+        }
+
+        fn max_subscribe_in_flight(&self) -> usize {
+            self.max_subscribe_in_flight.load(Ordering::Relaxed)
         }
 
         fn subscribed_topics(&self) -> Vec<String> {
@@ -306,12 +402,23 @@ mod tests {
 
         async fn subscribe(&self, topic: DefraTopic) -> crate::Result<bool> {
             let topic = topic.topic_string();
-            if self.fail_subscribe.lock().unwrap().contains(&topic) {
-                return Err(crate::error::Error::Transport(format!(
-                    "injected subscribe failure for {topic}"
-                )));
+            self.subscribe_calls.fetch_add(1, Ordering::Relaxed);
+            let in_flight = self.subscribe_in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+            self.max_subscribe_in_flight
+                .fetch_max(in_flight, Ordering::Relaxed);
+            if !self.subscribe_delay.is_zero() {
+                tokio::time::sleep(self.subscribe_delay).await;
             }
-            Ok(self.subscribed.lock().unwrap().insert(topic))
+
+            let result = if self.fail_subscribe.lock().unwrap().contains(&topic) {
+                Err(crate::error::Error::Transport(format!(
+                    "injected subscribe failure for {topic}"
+                )))
+            } else {
+                Ok(self.subscribed.lock().unwrap().insert(topic))
+            };
+            self.subscribe_in_flight.fetch_sub(1, Ordering::Relaxed);
+            result
         }
 
         async fn unsubscribe(&self, topic: DefraTopic) -> crate::Result<bool> {
@@ -501,12 +608,70 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingCollectionStore {
+        collections: Mutex<HashSet<String>>,
+        add_batches: AtomicUsize,
+    }
+
+    impl RecordingCollectionStore {
+        fn add_batches(&self) -> usize {
+            self.add_batches.load(Ordering::Relaxed)
+        }
+
+        fn collections(&self) -> HashSet<String> {
+            self.collections.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl P2PCollectionStorage for RecordingCollectionStore {
+        async fn add_collection(&self, collection_id: &str) -> crate::Result<()> {
+            self.add_batches.fetch_add(1, Ordering::Relaxed);
+            self.collections
+                .lock()
+                .unwrap()
+                .insert(collection_id.to_string());
+            Ok(())
+        }
+
+        async fn add_collections(&self, collection_ids: &[String]) -> crate::Result<()> {
+            self.add_batches.fetch_add(1, Ordering::Relaxed);
+            self.collections
+                .lock()
+                .unwrap()
+                .extend(collection_ids.iter().cloned());
+            Ok(())
+        }
+
+        async fn remove_collection(&self, collection_id: &str) -> crate::Result<()> {
+            self.collections.lock().unwrap().remove(collection_id);
+            Ok(())
+        }
+
+        async fn get_all_collections(&self) -> crate::Result<Vec<String>> {
+            Ok(self.collections.lock().unwrap().iter().cloned().collect())
+        }
+
+        async fn is_subscribed(&self, collection_id: &str) -> crate::Result<bool> {
+            Ok(self.collections.lock().unwrap().contains(collection_id))
+        }
+    }
+
     async fn new_test_coordinator(
         store: Arc<RegolithStore>,
         transport: RecordingTransport,
     ) -> SyncCoordinator<TestBlockstore, RecordingTransport> {
         let blockstore = Arc::new(DefraBlockstore::new(store.clone(), true));
         let collection_store = Arc::new(P2PCollectionStore::new(store));
+        new_test_coordinator_with_store(blockstore, transport, collection_store).await
+    }
+
+    async fn new_test_coordinator_with_store(
+        blockstore: Arc<TestBlockstore>,
+        transport: RecordingTransport,
+        collection_store: Arc<dyn P2PCollectionStorage>,
+    ) -> SyncCoordinator<TestBlockstore, RecordingTransport> {
         let (coordinator, _events) = SyncCoordinator::with_collection_store(
             transport,
             blockstore,
@@ -517,6 +682,111 @@ mod tests {
         .await
         .unwrap();
         coordinator
+    }
+
+    #[tokio::test]
+    async fn subscribe_collections_is_bounded_batched_and_idempotent() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport =
+            RecordingTransport::new("batch-peer").with_subscribe_delay(Duration::from_millis(5));
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+        let collections = (0..70)
+            .map(|index| format!("collection-{index}"))
+            .collect::<Vec<_>>();
+
+        let started = Instant::now();
+        let added = coordinator
+            .subscribe_collections(&collections)
+            .await
+            .unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(added, 70);
+        assert_eq!(transport.subscribe_calls(), 70);
+        assert_eq!(collection_store.add_batches(), 1);
+        assert_eq!(collection_store.collections().len(), 70);
+        assert!(
+            transport.max_subscribe_in_flight() > 1,
+            "representative bulk install should overlap transport subscriptions"
+        );
+        assert!(
+            transport.max_subscribe_in_flight() <= MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS,
+            "bulk install must respect its concurrency bound"
+        );
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "70 delayed subscriptions should complete as a bounded batch, elapsed={elapsed:?}"
+        );
+
+        let added_again = coordinator
+            .subscribe_collections(&collections)
+            .await
+            .unwrap();
+        assert_eq!(added_again, 0);
+        assert_eq!(transport.subscribe_calls(), 70);
+        assert_eq!(collection_store.add_batches(), 1);
+    }
+
+    #[tokio::test]
+    async fn subscribe_collections_persists_desired_set_and_restart_heals_partial_failure() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport =
+            RecordingTransport::new("partial-failure-peer").fail_subscribe("collection-1");
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+        let collections = (0..3)
+            .map(|index| format!("collection-{index}"))
+            .collect::<Vec<_>>();
+
+        let error = coordinator
+            .subscribe_collections(&collections)
+            .await
+            .expect_err("one failed transport subscription must fail the batch");
+
+        assert!(error.to_string().contains("injected subscribe failure"));
+        assert_eq!(
+            transport.subscribed_topics(),
+            vec!["collection-0", "collection-2"]
+        );
+        assert_eq!(collection_store.collections().len(), 3);
+        assert_eq!(collection_store.add_batches(), 1);
+        assert_eq!(
+            coordinator
+                .get_subscribed_collections()
+                .await
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from(["collection-0".to_string(), "collection-2".to_string()])
+        );
+
+        let restarted_blockstore = Arc::new(DefraBlockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            true,
+        ));
+        let restarted_transport = RecordingTransport::new("restarted-peer");
+        let restarted = new_test_coordinator_with_store(
+            restarted_blockstore,
+            restarted_transport.clone(),
+            collection_store,
+        )
+        .await;
+
+        assert_eq!(restarted.load_p2p_collections().await.unwrap(), 3);
+        assert_eq!(restarted_transport.subscribed_topics().len(), 3);
     }
 
     #[tokio::test]
@@ -550,7 +820,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscribe_collection_rolls_back_persistence_when_transport_subscribe_fails() {
+    async fn subscribe_collection_keeps_durable_intent_when_transport_subscribe_fails() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let failing_transport = RecordingTransport::new("failing-peer").fail_subscribe("users");
         let failing = new_test_coordinator(store.clone(), failing_transport.clone()).await;
@@ -581,10 +851,7 @@ mod tests {
         let restarted = new_test_coordinator(store, restarted_transport.clone()).await;
         let restored = restarted.load_p2p_collections().await.unwrap();
 
-        assert_eq!(restored, 0, "rolled-back subscription must not reload");
-        assert!(
-            restarted_transport.subscribed_topics().is_empty(),
-            "rolled-back subscription must not persist"
-        );
+        assert_eq!(restored, 1, "restart should retry durable desired state");
+        assert_eq!(restarted_transport.subscribed_topics(), vec!["users"]);
     }
 }

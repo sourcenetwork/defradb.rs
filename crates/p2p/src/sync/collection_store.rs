@@ -19,6 +19,9 @@ pub trait P2PCollectionStorage: Send + Sync {
     /// Add a collection subscription to persistent storage.
     async fn add_collection(&self, collection_id: &str) -> Result<()>;
 
+    /// Add multiple collection subscriptions atomically.
+    async fn add_collections(&self, collection_ids: &[String]) -> Result<()>;
+
     /// Remove a collection subscription from persistent storage.
     async fn remove_collection(&self, collection_id: &str) -> Result<()>;
 
@@ -56,6 +59,31 @@ impl<S: Store + 'static> P2PCollectionStorage for P2PCollectionStore<S> {
         txn.set(&key.bytes(), &[COLLECTION_MARKER])
             .await
             .map_err(|e| Error::Storage(e.to_string()))?;
+
+        txn.commit()
+            .await
+            .map_err(|e| Error::Storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn add_collections(&self, collection_ids: &[String]) -> Result<()> {
+        if collection_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut txn = self
+            .systemstore
+            .new_txn(false)
+            .await
+            .map_err(|e| Error::Storage(e.to_string()))?;
+
+        for collection_id in collection_ids {
+            let key = P2PCollectionKey::new(collection_id);
+            txn.set(&key.bytes(), &[COLLECTION_MARKER])
+                .await
+                .map_err(|e| Error::Storage(e.to_string()))?;
+        }
 
         txn.commit()
             .await
@@ -149,6 +177,10 @@ impl P2PCollectionStorage for NoOpCollectionStorage {
         Ok(())
     }
 
+    async fn add_collections(&self, _collection_ids: &[String]) -> Result<()> {
+        Ok(())
+    }
+
     async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
@@ -211,6 +243,29 @@ mod tests {
             None,
             "Go-compatible P2P collection state must live in Systemstore, not the raw root store"
         );
+    }
+
+    #[tokio::test]
+    async fn stores_collection_batch_in_systemstore_namespace() {
+        use storage::RegolithStore;
+
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let p2p_store = P2PCollectionStore::new(store);
+        let collections = vec![
+            "users".to_string(),
+            "messages".to_string(),
+            "sessions".to_string(),
+        ];
+
+        p2p_store.add_collections(&collections).await.unwrap();
+
+        let stored = p2p_store
+            .get_all_collections()
+            .await
+            .unwrap()
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(stored, collections.into_iter().collect());
     }
 
     #[tokio::test]

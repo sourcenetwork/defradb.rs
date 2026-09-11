@@ -361,6 +361,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
             gossip_direction_filtered: std::sync::atomic::AtomicU64::new(0),
         },
         subscriptions: SyncSubscriptionState {
+            mutation: tokio::sync::Mutex::new(()),
             subscribed_collections: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashSet::new(),
             )),
