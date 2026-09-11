@@ -62,6 +62,7 @@ async fn collection_add_get_single() {
     let cols = node.p2p_collection_list().expect("list");
     let arr = cols.as_array().expect("not array");
     assert_eq!(arr.len(), 1, "should have 1 collection");
+    assert_eq!(arr[0], "Users", "list should return the collection name");
 }
 
 #[tokio::test]
@@ -104,9 +105,9 @@ async fn collection_subscription_persists_after_restart() {
         .p2p_collection_list()
         .expect("list after restart");
     assert_eq!(
-        after.as_array().expect("not array").len(),
-        1,
-        "collection subscription should persist across restart"
+        after,
+        serde_json::json!(["Users"]),
+        "collection name should persist across restart"
     );
 }
 
@@ -214,8 +215,7 @@ async fn collection_add_erroneous_id() {
     );
 }
 
-/// A mixed batch returns an error after preserving subscriptions completed
-/// before the invalid collection was encountered.
+/// A mixed batch is validated before any subscription is committed.
 #[tokio::test]
 #[serial]
 async fn collection_add_mixed_batch_preserves_prior_subscription() {
@@ -227,10 +227,9 @@ async fn collection_add_mixed_batch_preserves_prior_subscription() {
 
     let cols = node.p2p_collection_list().expect("list");
     let arr = cols.as_array().expect("not array");
-    assert_eq!(
-        arr.len(),
-        1,
-        "the valid collection subscribed before the error should remain"
+    assert!(
+        arr.is_empty(),
+        "an invalid collection should reject the whole batch before commit"
     );
 }
 

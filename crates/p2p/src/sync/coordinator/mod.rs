@@ -688,10 +688,13 @@ pub(super) struct SyncAccessState {
 pub(super) struct SyncSubscriptionState {
     /// Serializes durable subscription mutations without blocking readers of
     /// the live installed-topic set while transport I/O is in flight.
-    pub(super) mutation: tokio::sync::Mutex<()>,
+    pub(super) mutation: Arc<tokio::sync::Mutex<()>>,
 
     /// Set of subscribed collection IDs for P2P sync (in-memory cache).
     pub(super) subscribed_collections: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+
+    /// Undesired live topics with one background removal retry owner.
+    pub(super) retrying_unsubscribes: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
 
     /// Persistent storage for P2P collection subscriptions.
     pub(super) collection_store: Arc<dyn P2PCollectionStorage>,

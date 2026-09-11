@@ -3,6 +3,7 @@
 use blockstore::Blockstore;
 use cid::Cid;
 use futures::{stream, StreamExt};
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::SyncCoordinator;
@@ -11,6 +12,8 @@ use crate::transport::P2PTransport;
 
 const MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS: usize = 16;
 const COLLECTION_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(5);
+const COLLECTION_UNSUBSCRIBE_RETRY_MIN: Duration = Duration::from_millis(100);
+const COLLECTION_UNSUBSCRIBE_RETRY_MAX: Duration = Duration::from_secs(5);
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Subscribe to a collection for sync.
@@ -31,14 +34,39 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let _mutation = self.subscriptions.mutation.lock().await;
 
         let mut seen = std::collections::HashSet::new();
+        let requested = collection_ids
+            .iter()
+            .filter(|collection_id| seen.insert((*collection_id).clone()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if requested.is_empty() {
+            return Ok(0);
+        }
+
+        let desired = self
+            .subscriptions
+            .collection_store
+            .get_all_collections()
+            .await?
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        let desired_missing = requested
+            .iter()
+            .filter(|collection_id| !desired.contains(collection_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !desired_missing.is_empty() {
+            self.subscriptions
+                .collection_store
+                .add_collections(&desired_missing)
+                .await?;
+        }
+
         let missing = {
             let subscribed_collections = self.subscriptions.subscribed_collections.read().await;
-            collection_ids
+            requested
                 .iter()
-                .filter(|collection_id| {
-                    !subscribed_collections.contains(collection_id.as_str())
-                        && seen.insert((*collection_id).clone())
-                })
+                .filter(|collection_id| !subscribed_collections.contains(collection_id.as_str()))
                 .cloned()
                 .collect::<Vec<_>>()
         };
@@ -46,11 +74,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if missing.is_empty() {
             return Ok(0);
         }
-
-        self.subscriptions
-            .collection_store
-            .add_collections(&missing)
-            .await?;
 
         let broadcaster = self.runtime.broadcaster.clone();
         let results = stream::iter(missing.iter().cloned())
@@ -104,7 +127,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         tracing::debug!(
             requested = collection_ids.len(),
-            desired_added = missing.len(),
+            desired_added = desired_missing.len(),
             transport_installed = newly_installed,
             "Applied durable collection subscription batch"
         );
@@ -121,41 +144,102 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     /// Unsubscribe from a collection.
     pub async fn unsubscribe_collection(&self, collection_id: &str) -> Result<bool> {
+        let removed = self
+            .unsubscribe_collections(&[collection_id.to_string()])
+            .await?;
+        Ok(removed == 1)
+    }
+
+    /// Unsubscribe from collection topics as one durable, bounded batch.
+    pub async fn unsubscribe_collections(&self, collection_ids: &[String]) -> Result<usize> {
         let _mutation = self.subscriptions.mutation.lock().await;
 
-        // Persist the desired unsubscribe intent first. If the live transport
-        // leave fails, the in-process topic may linger until retry or restart,
-        // but durable restore must not re-install it.
-        self.subscriptions
-            .collection_store
-            .remove_collection(collection_id)
-            .await?;
-
-        let result = tokio::time::timeout(
-            COLLECTION_SUBSCRIPTION_TIMEOUT,
-            self.runtime
-                .broadcaster
-                .unsubscribe_collection(collection_id),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(crate::error::Error::Transport(format!(
-                "timed out unsubscribing from collection {collection_id}"
-            )))
-        });
-        let result = result?;
-
-        self.subscriptions
-            .subscribed_collections
-            .write()
-            .await
-            .remove(collection_id);
-
-        if result {
-            tracing::debug!(collection_id = %collection_id, "Unsubscribed from collection (persisted)");
+        let mut seen = std::collections::HashSet::new();
+        let requested = collection_ids
+            .iter()
+            .filter(|collection_id| seen.insert((*collection_id).clone()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if requested.is_empty() {
+            return Ok(0);
         }
 
-        Ok(result)
+        // Match Go DefraDB's commit-first semantics: all durable removals
+        // succeed atomically before any transport topic is touched.
+        self.subscriptions
+            .collection_store
+            .remove_collections(&requested)
+            .await?;
+
+        let live = self.subscriptions.subscribed_collections.read().await;
+        let installed = requested
+            .iter()
+            .filter(|collection_id| live.contains(collection_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        drop(live);
+
+        let broadcaster = self.runtime.broadcaster.clone();
+        let results = stream::iter(installed)
+            .map(move |collection_id| {
+                let broadcaster = broadcaster.clone();
+                async move {
+                    let result = tokio::time::timeout(
+                        COLLECTION_SUBSCRIPTION_TIMEOUT,
+                        broadcaster.unsubscribe_collection(&collection_id),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(crate::error::Error::Transport(format!(
+                            "timed out unsubscribing from collection {collection_id}"
+                        )))
+                    });
+                    (collection_id, result)
+                }
+            })
+            .buffer_unordered(MAX_CONCURRENT_COLLECTION_SUBSCRIPTIONS)
+            .collect::<Vec<_>>()
+            .await;
+
+        let mut removed = Vec::new();
+        let mut newly_removed = 0;
+        let mut failures = Vec::new();
+        for (collection_id, result) in results {
+            match result {
+                Ok(was_removed) => {
+                    newly_removed += usize::from(was_removed);
+                    removed.push(collection_id);
+                }
+                Err(error) => failures.push((collection_id, error)),
+            }
+        }
+
+        let mut live = self.subscriptions.subscribed_collections.write().await;
+        for collection_id in removed {
+            live.remove(&collection_id);
+        }
+        drop(live);
+
+        for (collection_id, _) in &failures {
+            self.schedule_collection_unsubscribe_retry(collection_id.clone())
+                .await;
+        }
+
+        if let Some((collection_id, error)) = failures.into_iter().next() {
+            tracing::warn!(
+                collection_id = %collection_id,
+                error = %error,
+                "Failed to remove durable collection subscription from live transport; retry scheduled"
+            );
+            return Err(error);
+        }
+
+        tracing::debug!(
+            requested = requested.len(),
+            transport_removed = newly_removed,
+            "Removed durable collection subscription batch"
+        );
+        Ok(newly_removed)
     }
 
     /// Unsubscribe from a document.
@@ -165,8 +249,93 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     /// Get the list of subscribed collection IDs.
     pub async fn get_subscribed_collections(&self) -> Result<Vec<String>> {
-        let collections = self.subscriptions.subscribed_collections.read().await;
-        Ok(collections.iter().cloned().collect())
+        let mut collections = self
+            .subscriptions
+            .collection_store
+            .get_all_collections()
+            .await?;
+        collections.sort();
+        Ok(collections)
+    }
+
+    async fn schedule_collection_unsubscribe_retry(&self, collection_id: String) {
+        let mut retrying = self.subscriptions.retrying_unsubscribes.lock().await;
+        if !retrying.insert(collection_id.clone()) {
+            return;
+        }
+        drop(retrying);
+
+        let broadcaster = self.runtime.broadcaster.clone();
+        let mutation = Arc::clone(&self.subscriptions.mutation);
+        let collection_store = Arc::clone(&self.subscriptions.collection_store);
+        let subscribed = Arc::clone(&self.subscriptions.subscribed_collections);
+        let retrying = Arc::clone(&self.subscriptions.retrying_unsubscribes);
+        let shutdown = self.runtime.shutdown.clone();
+        let task_shutdown = shutdown.clone();
+        let retry_id = collection_id.clone();
+        let spawned = shutdown.spawn_task(async move {
+            let mut delay = COLLECTION_UNSUBSCRIBE_RETRY_MIN;
+            loop {
+                tokio::select! {
+                    _ = task_shutdown.cancelled() => break,
+                    _ = tokio::time::sleep(delay) => {}
+                }
+
+                // Serialize the durable check and transport cleanup with
+                // foreground subscription mutations. Either a re-subscribe
+                // wins first and cancels cleanup, or cleanup wins and the
+                // following re-subscribe reinstalls the topic.
+                let _mutation = mutation.lock().await;
+                match collection_store.is_subscribed(&retry_id).await {
+                    Ok(true) => {
+                        retrying.lock().await.remove(&retry_id);
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            collection_id = %retry_id,
+                            error = %error,
+                            "Failed to read durable subscription state before unsubscribe retry"
+                        );
+                        delay = (delay * 2).min(COLLECTION_UNSUBSCRIBE_RETRY_MAX);
+                        continue;
+                    }
+                }
+
+                let result = tokio::time::timeout(
+                    COLLECTION_SUBSCRIPTION_TIMEOUT,
+                    broadcaster.unsubscribe_collection(&retry_id),
+                )
+                .await;
+                match result {
+                    Ok(Ok(_)) => {
+                        subscribed.write().await.remove(&retry_id);
+                        retrying.lock().await.remove(&retry_id);
+                        return;
+                    }
+                    Ok(Err(error)) => tracing::warn!(
+                        collection_id = %retry_id,
+                        error = %error,
+                        "Collection unsubscribe retry failed"
+                    ),
+                    Err(_) => tracing::warn!(
+                        collection_id = %retry_id,
+                        "Collection unsubscribe retry timed out"
+                    ),
+                }
+                delay = (delay * 2).min(COLLECTION_UNSUBSCRIBE_RETRY_MAX);
+            }
+            retrying.lock().await.remove(&retry_id);
+        });
+
+        if !spawned {
+            self.subscriptions
+                .retrying_unsubscribes
+                .lock()
+                .await
+                .remove(&collection_id);
+        }
     }
 
     /// Load and subscribe to all persisted P2P collections.
@@ -302,7 +471,9 @@ mod tests {
         pubkey: Vec<u8>,
         subscribed: Arc<Mutex<HashSet<String>>>,
         fail_subscribe: Arc<Mutex<HashSet<String>>>,
-        fail_unsubscribe_once: Arc<Mutex<HashSet<String>>>,
+        fail_unsubscribe_remaining: Arc<Mutex<HashMap<String, usize>>>,
+        unsubscribe_started: Option<Arc<tokio::sync::Notify>>,
+        unsubscribe_release: Option<Arc<tokio::sync::Notify>>,
         subscribe_calls: Arc<AtomicUsize>,
         subscribe_delay: Duration,
         subscribe_in_flight: Arc<AtomicUsize>,
@@ -317,7 +488,9 @@ mod tests {
                 pubkey: vec![1, 2, 3],
                 subscribed: Arc::new(Mutex::new(HashSet::new())),
                 fail_subscribe: Arc::new(Mutex::new(HashSet::new())),
-                fail_unsubscribe_once: Arc::new(Mutex::new(HashSet::new())),
+                fail_unsubscribe_remaining: Arc::new(Mutex::new(HashMap::new())),
+                unsubscribe_started: None,
+                unsubscribe_release: None,
                 subscribe_calls: Arc::new(AtomicUsize::new(0)),
                 subscribe_delay: Duration::ZERO,
                 subscribe_in_flight: Arc::new(AtomicUsize::new(0)),
@@ -340,10 +513,24 @@ mod tests {
         }
 
         fn fail_unsubscribe_once(self, topic: &str) -> Self {
-            self.fail_unsubscribe_once
+            self.fail_unsubscribe_times(topic, 1)
+        }
+
+        fn fail_unsubscribe_times(self, topic: &str, times: usize) -> Self {
+            self.fail_unsubscribe_remaining
                 .lock()
                 .unwrap()
-                .insert(topic.to_string());
+                .insert(topic.to_string(), times);
+            self
+        }
+
+        fn with_unsubscribe_gate(
+            mut self,
+            started: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+        ) -> Self {
+            self.unsubscribe_started = Some(started);
+            self.unsubscribe_release = Some(release);
             self
         }
 
@@ -433,10 +620,26 @@ mod tests {
 
         async fn unsubscribe(&self, topic: DefraTopic) -> crate::Result<bool> {
             let topic = topic.topic_string();
-            if self.fail_unsubscribe_once.lock().unwrap().remove(&topic) {
+            let should_fail = {
+                let mut remaining = self.fail_unsubscribe_remaining.lock().unwrap();
+                match remaining.get_mut(&topic) {
+                    Some(count) if *count > 0 => {
+                        *count -= 1;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if should_fail {
                 return Err(crate::error::Error::Transport(format!(
                     "injected unsubscribe failure for {topic}"
                 )));
+            }
+            if let Some(started) = &self.unsubscribe_started {
+                started.notify_one();
+            }
+            if let Some(release) = &self.unsubscribe_release {
+                release.notified().await;
             }
             Ok(self.subscribed.lock().unwrap().remove(&topic))
         }
@@ -624,6 +827,7 @@ mod tests {
     struct RecordingCollectionStore {
         collections: Mutex<HashSet<String>>,
         add_batches: AtomicUsize,
+        remove_batches: AtomicUsize,
     }
 
     impl RecordingCollectionStore {
@@ -633,6 +837,10 @@ mod tests {
 
         fn collections(&self) -> HashSet<String> {
             self.collections.lock().unwrap().clone()
+        }
+
+        fn remove_batches(&self) -> usize {
+            self.remove_batches.load(Ordering::Relaxed)
         }
     }
 
@@ -657,7 +865,15 @@ mod tests {
         }
 
         async fn remove_collection(&self, collection_id: &str) -> crate::Result<()> {
-            self.collections.lock().unwrap().remove(collection_id);
+            self.remove_collections(&[collection_id.to_string()]).await
+        }
+
+        async fn remove_collections(&self, collection_ids: &[String]) -> crate::Result<()> {
+            self.remove_batches.fetch_add(1, Ordering::Relaxed);
+            let mut collections = self.collections.lock().unwrap();
+            for collection_id in collection_ids {
+                collections.remove(collection_id);
+            }
             Ok(())
         }
 
@@ -782,7 +998,8 @@ mod tests {
                 .unwrap()
                 .into_iter()
                 .collect::<HashSet<_>>(),
-            HashSet::from(["collection-0".to_string(), "collection-2".to_string()])
+            collections.iter().cloned().collect(),
+            "list reports durable desired state even while one live install needs healing"
         );
 
         let restarted_blockstore = Arc::new(DefraBlockstore::new(
@@ -812,13 +1029,10 @@ mod tests {
 
         let restarted_transport = RecordingTransport::new("restarted-peer");
         let restarted = new_test_coordinator(store, restarted_transport.clone()).await;
-        assert!(
-            restarted
-                .get_subscribed_collections()
-                .await
-                .unwrap()
-                .is_empty(),
-            "a fresh coordinator starts with an empty in-memory subscription cache"
+        assert_eq!(
+            restarted.get_subscribed_collections().await.unwrap(),
+            vec!["users".to_string()],
+            "a fresh coordinator reports durable desired state before live restoration"
         );
 
         let restored = restarted.load_p2p_collections().await.unwrap();
@@ -846,13 +1060,10 @@ mod tests {
             error.to_string().contains("injected subscribe failure"),
             "unexpected error: {error}"
         );
-        assert!(
-            failing
-                .get_subscribed_collections()
-                .await
-                .unwrap()
-                .is_empty(),
-            "failed subscription should not remain in memory"
+        assert_eq!(
+            failing.get_subscribed_collections().await.unwrap(),
+            vec!["users".to_string()],
+            "failed live installation must remain durable desired state"
         );
         assert!(
             failing_transport.subscribed_topics().is_empty(),
@@ -892,21 +1103,246 @@ mod tests {
             "durable desired state must record the unsubscribe before transport work"
         );
         assert_eq!(transport.subscribed_topics(), vec!["users"]);
-        assert_eq!(
-            coordinator.get_subscribed_collections().await.unwrap(),
-            vec!["users"],
-            "failed live removal must remain visible for retry"
+        assert!(coordinator
+            .get_subscribed_collections()
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(
+            coordinator
+                .subscriptions
+                .subscribed_collections
+                .read()
+                .await
+                .contains("users"),
+            "failed live removal must remain cached for retry"
         );
 
-        assert!(coordinator.unsubscribe_collection("users").await.unwrap());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if transport.subscribed_topics().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("background unsubscribe retry should converge");
         assert!(transport.subscribed_topics().is_empty());
         assert!(
             coordinator
-                .get_subscribed_collections()
+                .subscriptions
+                .subscribed_collections
+                .read()
                 .await
-                .unwrap()
                 .is_empty(),
-            "successful retry must retire the live topic"
+            "successful background retry must retire the live topic"
         );
+        assert_eq!(collection_store.remove_batches(), 1);
+    }
+
+    #[tokio::test]
+    async fn resubscribe_after_failed_unsubscribe_restores_durable_intent() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport = RecordingTransport::new("resubscribe-peer").fail_unsubscribe_once("users");
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+
+        assert!(coordinator.subscribe_collection("users").await.unwrap());
+        coordinator
+            .unsubscribe_collection("users")
+            .await
+            .expect_err("injected transport failure should be returned");
+        assert!(
+            !coordinator.subscribe_collection("users").await.unwrap(),
+            "already-live topic does not need a second transport install"
+        );
+
+        assert_eq!(collection_store.add_batches(), 2);
+        assert_eq!(collection_store.remove_batches(), 1);
+        assert_eq!(
+            coordinator.get_subscribed_collections().await.unwrap(),
+            vec!["users".to_string()]
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            transport.subscribed_topics(),
+            vec!["users"],
+            "unsubscribe retry must stop when the topic becomes desired again"
+        );
+
+        let restarted_blockstore = Arc::new(DefraBlockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            true,
+        ));
+        let restarted_transport = RecordingTransport::new("restarted-peer");
+        let restarted = new_test_coordinator_with_store(
+            restarted_blockstore,
+            restarted_transport.clone(),
+            collection_store,
+        )
+        .await;
+        assert_eq!(restarted.load_p2p_collections().await.unwrap(), 1);
+        assert_eq!(restarted_transport.subscribed_topics(), vec!["users"]);
+    }
+
+    #[tokio::test]
+    async fn resubscribe_serializes_with_in_flight_unsubscribe_retry() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let retry_started = Arc::new(tokio::sync::Notify::new());
+        let retry_release = Arc::new(tokio::sync::Notify::new());
+        let transport = RecordingTransport::new("resubscribe-race-peer")
+            .fail_unsubscribe_once("users")
+            .with_unsubscribe_gate(Arc::clone(&retry_started), Arc::clone(&retry_release));
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = Arc::new(
+            new_test_coordinator_with_store(
+                blockstore,
+                transport.clone(),
+                collection_store.clone(),
+            )
+            .await,
+        );
+
+        assert!(coordinator.subscribe_collection("users").await.unwrap());
+        coordinator
+            .unsubscribe_collection("users")
+            .await
+            .expect_err("injected transport failure should be returned");
+
+        retry_started.notified().await;
+        let retrying_coordinator = Arc::clone(&coordinator);
+        let mut resubscribe =
+            tokio::spawn(async move { retrying_coordinator.subscribe_collection("users").await });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut resubscribe)
+                .await
+                .is_err(),
+            "foreground re-subscribe must wait for in-flight cleanup"
+        );
+
+        retry_release.notify_one();
+        assert!(resubscribe.await.unwrap().unwrap());
+        assert_eq!(
+            coordinator.get_subscribed_collections().await.unwrap(),
+            vec!["users".to_string()]
+        );
+        assert_eq!(transport.subscribed_topics(), vec!["users"]);
+        assert_eq!(collection_store.add_batches(), 2);
+        assert_eq!(collection_store.remove_batches(), 1);
+    }
+
+    #[tokio::test]
+    async fn terminated_retry_releases_ownership_for_a_later_unsubscribe() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport =
+            RecordingTransport::new("retry-handoff-peer").fail_unsubscribe_times("users", 2);
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+
+        assert!(coordinator.subscribe_collection("users").await.unwrap());
+        coordinator
+            .unsubscribe_collection("users")
+            .await
+            .expect_err("first unsubscribe should fail");
+        assert!(!coordinator.subscribe_collection("users").await.unwrap());
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if coordinator
+                    .subscriptions
+                    .retrying_unsubscribes
+                    .lock()
+                    .await
+                    .is_empty()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("retry owner should retire after observing restored intent");
+
+        coordinator
+            .unsubscribe_collection("users")
+            .await
+            .expect_err("second unsubscribe should exercise a fresh retry owner");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if transport.subscribed_topics().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("fresh retry owner should remove the undesired live topic");
+
+        assert!(coordinator
+            .get_subscribed_collections()
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(collection_store.add_batches(), 2);
+        assert_eq!(collection_store.remove_batches(), 2);
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_collections_commits_one_durable_batch_before_live_cleanup() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let transport =
+            RecordingTransport::new("remove-batch-peer").fail_unsubscribe_once("collection-1");
+        let collection_store = Arc::new(RecordingCollectionStore::default());
+        let coordinator = new_test_coordinator_with_store(
+            blockstore,
+            transport.clone(),
+            collection_store.clone(),
+        )
+        .await;
+        let collections = (0..3)
+            .map(|index| format!("collection-{index}"))
+            .collect::<Vec<_>>();
+        coordinator
+            .subscribe_collections(&collections)
+            .await
+            .unwrap();
+
+        coordinator
+            .unsubscribe_collections(&collections)
+            .await
+            .expect_err("one failed live removal should report the transport error");
+
+        assert!(collection_store.collections().is_empty());
+        assert_eq!(collection_store.remove_batches(), 1);
+        assert!(coordinator
+            .get_subscribed_collections()
+            .await
+            .unwrap()
+            .is_empty());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if transport.subscribed_topics().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("failed live removal should converge in the background");
     }
 }

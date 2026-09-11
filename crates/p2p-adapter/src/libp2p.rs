@@ -686,10 +686,24 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await?;
 
         if let Some(ref coordinator) = self.sync_coordinator {
-            coordinator
+            let collection_ids = coordinator
                 .get_subscribed_collections()
                 .await
-                .map_err(|error| P2PError::transport(error.to_string()))
+                .map_err(|error| P2PError::transport(error.to_string()))?;
+            if let Some(ref pusher) = self.doc_pusher {
+                collection_ids
+                    .into_iter()
+                    .map(|collection_id| {
+                        pusher.get_collection_name(&collection_id)?.ok_or_else(|| {
+                            P2PError::not_found(format!(
+                                "collection with ID '{collection_id}' not found"
+                            ))
+                        })
+                    })
+                    .collect()
+            } else {
+                Ok(collection_ids)
+            }
         } else {
             Ok(Vec::new())
         }
@@ -750,12 +764,10 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 })
                 .collect::<P2PResult<Vec<_>>>()?;
 
-            for topic_id in topic_ids {
-                coordinator
-                    .unsubscribe_collection(&topic_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-            }
+            coordinator
+                .unsubscribe_collections(&topic_ids)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
 
             Ok(())
         } else {

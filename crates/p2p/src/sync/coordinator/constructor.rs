@@ -260,8 +260,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     gossip_direction_filtered: AtomicU64::new(0),
                 },
                 subscriptions: SyncSubscriptionState {
-                    mutation: tokio::sync::Mutex::new(()),
+                    mutation: Arc::new(tokio::sync::Mutex::new(())),
                     subscribed_collections,
+                    retrying_unsubscribes: Arc::new(tokio::sync::Mutex::new(
+                        std::collections::HashSet::new(),
+                    )),
                     collection_store,
                     head_provider,
                 },
