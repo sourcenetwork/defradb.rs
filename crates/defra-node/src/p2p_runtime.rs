@@ -463,8 +463,14 @@ where
                     }
                 };
                 let peer_id = p2p::transport::PeerId::new(replicator.peer_id_str().to_string());
+                // Restore the complete durable record. Reconstructing it from
+                // collection IDs silently discarded filters and addresses,
+                // so an idempotent post-restart AddReplicator looked like a
+                // filter change and launched a full existing-document replay.
+                // This matches Go's loadAndPublishReplicators behavior: the
+                // persisted replicator is the startup source of truth.
                 if let Err(error) = coordinator
-                    .create_replicator(&peer_id, replicator.collections.clone(), false)
+                    .create_replicator_info(&peer_id, replicator, false)
                     .await
                 {
                     tracing::warn!(target: "defra_node",
