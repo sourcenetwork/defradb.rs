@@ -500,8 +500,9 @@ jobs:
         run: >-
           cargo test --profile super-dev -p conformance --test tla_conformance
           -- --ignored --test-threads=1
-          parity_counter_3node parity_counter_storm_go_go parity_indexed_lww
-          parity_mixed_fields_3node parity_lww_tie_partition
+          parity_counter_3node parity_counter_storm_go_go parity_delete_update
+          parity_indexed_lww parity_mixed_fields_3node parity_lww_tie_partition
+          parity_samedoc_mixed_restart
           parity_unique_twins_rust_rust parity_unique_twins_go_go parity_unique_twins_mixed
       - name: Run iroh integration tests
         if: matrix.suite == 'iroh'
