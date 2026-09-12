@@ -8,10 +8,12 @@
 //!   PATH=<go-repo>/build:$PATH cargo test -p conformance --test tla_conformance \
 //!     parity:: -- --ignored --test-threads=1 --nocapture
 //!
-//! The `parity_counter_3node_*`, `parity_mixed_fields_3node_*`,
-//! `parity_lww_tie_partition_*`, and `parity_indexed_lww_*` tests assert that
-//! Rust converges to the same value as Go. They stay `#[ignore]` so the default
-//! no-Go conformance run skips them; go-compat CI opts into them explicitly.
+//! The `parity_counter_3node_*`, `parity_delete_update_*`,
+//! `parity_indexed_lww_*`, `parity_lww_tie_partition_*`,
+//! `parity_mixed_fields_3node_*`, and `parity_samedoc_mixed_restart_*` tests
+//! assert that Rust resolves concurrent merges the same way Go does. They stay
+//! `#[ignore]` so the default no-Go conformance run skips them; go-compat CI
+//! opts into them explicitly.
 //!
 //! `parity_unique_twins_*` (#1134) is a KNOWN-DIVERGENCE pin, not a
 //! convergence contract: `parity_unique_twins_rust_rust` asserts #1126's
@@ -175,7 +177,9 @@ fn has_active_peer(node: &DefraClient, peer_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-async fn wire_user_bidirectional(cluster: &TestCluster) {
+/// Poll-dial both directions until each node lists the other as an active
+/// peer — one best-effort dial races the peer's listener.
+async fn await_user_peers_connected(cluster: &TestCluster) {
     let (a0, a1) = (node_addr(cluster, 0), node_addr(cluster, 1));
     let (peer0, peer1) = (peer_id_from_addr(&a0), peer_id_from_addr(&a1));
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -187,7 +191,7 @@ async fn wire_user_bidirectional(cluster: &TestCluster) {
             has_active_peer(&cluster.client(1), peer0),
         );
         if node0_connected && node1_connected {
-            break;
+            return;
         }
 
         if !node0_connected {
@@ -207,10 +211,15 @@ async fn wire_user_bidirectional(cluster: &TestCluster) {
 
         assert!(
             Instant::now() < deadline,
-            "P2P heal timed out: node0->{peer1} last dial={last_dial0}; node1->{peer0} last dial={last_dial1}"
+            "P2P connect timed out: node0->{peer1} last dial={last_dial0}; node1->{peer0} last dial={last_dial1}"
         );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
+}
+
+async fn wire_user_bidirectional(cluster: &TestCluster) {
+    await_user_peers_connected(cluster).await;
+    let (a0, a1) = (node_addr(cluster, 0), node_addr(cluster, 1));
 
     cluster
         .client(0)
@@ -220,6 +229,37 @@ async fn wire_user_bidirectional(cluster: &TestCluster) {
         .client(1)
         .p2p_collection_add(&["User"])
         .expect("subscribe node1");
+    cluster
+        .client(0)
+        .p2p_replicator_set(&["User"], &a1)
+        .expect("replicator node0");
+    cluster
+        .client(1)
+        .p2p_replicator_set(&["User"], &a0)
+        .expect("replicator node1");
+}
+
+/// Re-establish the wiring severed by a node restart: reconnect, re-subscribe,
+/// and re-target the replicators. Clearing each replicator first makes the
+/// re-set idempotent on a node whose replicator config persisted across the
+/// restart; when it did not, the delete finds nothing and the set stands
+/// alone. The re-subscribe is equally best-effort (a persisted subscription
+/// may reject the duplicate) — a failure there resurfaces as the convergence
+/// deadline in `poll_user_dags_converged_after_heal`, which prints the dial
+/// and sync state.
+async fn rewire_user_bidirectional(cluster: &TestCluster) {
+    await_user_peers_connected(cluster).await;
+    let (a0, a1) = (node_addr(cluster, 0), node_addr(cluster, 1));
+    cluster.client(0).p2p_collection_add(&["User"]).ok();
+    cluster.client(1).p2p_collection_add(&["User"]).ok();
+    cluster
+        .client(0)
+        .p2p_replicator_delete(&["User"], Some(&a1))
+        .ok();
+    cluster
+        .client(1)
+        .p2p_replicator_delete(&["User"], Some(&a0))
+        .ok();
     cluster
         .client(0)
         .p2p_replicator_set(&["User"], &a1)
@@ -388,6 +428,248 @@ async fn parity_lww_tie_partition_mixed() {
         .await
         .expect("mixed cluster");
     run_lww_tie_partition_probe(cluster, "lww_tie_partition_mixed(rust0,go1)", "alice").await;
+}
+
+/// Mixed Rust(node0)/Go(node1) cluster with per-node native disk stores
+/// (`with_node_store`: Rust=regolith, Go=badger) so EACH node persists across a
+/// restart — the only way to make a mixed cluster restartable at all, since a
+/// cluster-wide store cannot satisfy both implementations. The persistent
+/// keyring is load-bearing: under `--no-keyring` both implementations derive
+/// an EPHEMERAL libp2p peer-id, so a restart silently changes it and the
+/// peer's replicator can never re-target the new id (observed as the restarted
+/// node never re-receiving the concurrent write — a test-mode artifact, not a
+/// product bug: a production node persists its keyring, keeps a stable
+/// peer-id across the process boundary, and the connection simply reconnects,
+/// which is the behavior under test here).
+async fn mixed_disk_cluster() -> TestCluster {
+    TestCluster::builder()
+        .rust_nodes(1)
+        .go_nodes(1)
+        .with_p2p()
+        .with_keyring()
+        .with_node_store(0, "regolith") // node0 = Rust
+        .with_node_store(1, "badger") // node1 = Go
+        .with_rust_binary(support::release_binary())
+        .build()
+        .await
+        .expect("mixed disk cluster")
+}
+
+fn user_age_city(node: &DefraClient) -> (i64, String) {
+    let r = node
+        .query("query { User { age city } }")
+        .expect("query User");
+    r["User"]
+        .as_array()
+        .and_then(|rows| rows.first())
+        .map(|doc| {
+            (
+                doc["age"].as_i64().unwrap_or(-1),
+                doc["city"].as_str().unwrap_or("<none>").to_string(),
+            )
+        })
+        .unwrap_or((-1, "<missing>".to_string()))
+}
+
+async fn poll_all_user_age_city(
+    cluster: &TestCluster,
+    nodes: usize,
+    want: (i64, &str),
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if (0..nodes).all(|n| user_age_city(&cluster.client(n)) == (want.0, want.1.to_string())) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+/// Same-doc concurrent edits across a restart partition (ASSERTING): seed one
+/// document, restart `restart` to sever the link, then node0 updates `age`
+/// while node1 updates `city`, heal, and require BOTH fields on BOTH nodes.
+/// Each node's final state can only materialize by merging the other node's
+/// write — node0 never sees `city` locally, node1 never sees `age` — so the
+/// assertion cannot pass vacuously.
+async fn run_samedoc_restart_parity(mut cluster: TestCluster, label: &str, restart: usize) {
+    let schema = "type User { name: String  age: Int  city: String }";
+    cluster.client(0).schema_add(schema).expect("schema node0");
+    cluster.client(1).schema_add(schema).expect("schema node1");
+
+    wire_user_bidirectional(&cluster).await;
+
+    let id = create_user_seed(&cluster.client(0), label);
+    assert!(
+        poll_all_user_name(&cluster, 2, "seed", Duration::from_secs(30)).await,
+        "[{label}] seed did not reach both nodes before the restart partition"
+    );
+
+    cluster
+        .restart_node(restart, Duration::from_secs(30))
+        .await
+        .expect("restart node");
+
+    cluster
+        .client(0)
+        .query(&format!(
+            r#"mutation {{ update_User(docID: "{id}", input: {{age: 31}}) {{ _docID }} }}"#
+        ))
+        .expect("node0 age=31");
+    cluster
+        .client(1)
+        .query(&format!(
+            r#"mutation {{ update_User(docID: "{id}", input: {{city: "LA"}}) {{ _docID }} }}"#
+        ))
+        .expect("node1 city=LA");
+
+    rewire_user_bidirectional(&cluster).await;
+    assert!(
+        poll_user_dags_converged_after_heal(&cluster, &id, Duration::from_secs(45)).await,
+        "[{label}] same-doc DAGs did not converge after the restart heal"
+    );
+
+    assert!(
+        poll_all_user_age_city(&cluster, 2, (31, "LA"), Duration::from_secs(30)).await,
+        "[{label}] did not materialize age=31 AND city=LA on both nodes; node0={:?} node1={:?}",
+        user_age_city(&cluster.client(0)),
+        user_age_city(&cluster.client(1)),
+    );
+}
+
+/// Mixed Rust(node0)<->Go(node1) same-doc concurrent edits with the RUST node
+/// (node0) restarted mid-flight — the only restart coverage on a mixed
+/// cluster: both sides must survive the process boundary (persisted DAG
+/// reload, replicator re-target, stable peer-id) and still converge
+/// cross-impl. The mixed twin of the restart-partition convergence tests in
+/// `partition.rs`, which run Rust-only.
+#[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
+#[tokio::test]
+async fn parity_samedoc_mixed_restart_rust() {
+    run_samedoc_restart_parity(
+        mixed_disk_cluster().await,
+        "samedoc_mixed_restart_rust(rust0,go1)",
+        0,
+    )
+    .await;
+}
+
+fn user_doc_ids(node: &DefraClient) -> BTreeSet<String> {
+    node.query("query { User { _docID } }").unwrap_or_default()["User"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|doc| doc["_docID"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn poll_user_doc_absent(node: &DefraClient, doc_id: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !user_doc_ids(node).contains(doc_id) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+/// Concurrent DELETE vs UPDATE on the same document (ASSERTING): node0 deletes
+/// while node1 updates `age`, then the cluster heals, and BOTH nodes must
+/// resolve the race as tombstone-wins. Go is the parity target: its composite
+/// merge writes the `DeletedObjectMarker` for an incoming tombstone, and a
+/// P2P-synced update explicitly does not undelete a locally-tombstoned
+/// document (`internal/core/crdt/composite.go`); Rust pins the same outcome
+/// Rust-only in `partition::convergence_delete_update_race_preserves_tombstone`.
+/// Holding the two implementations to it TOGETHER is the point — if either
+/// revived the document, a mixed cluster would keep permanently divergent
+/// views of it.
+///
+/// The link is severed by a restart rather than by racing the two mutations
+/// over a live connection: a live race can deliver the tombstone before the
+/// peer's update commits, both implementations reject an update of a locally
+/// deleted document, and the merge under test would never happen.
+async fn run_delete_update_parity(mut cluster: TestCluster, label: &str) {
+    let schema = "type User { name: String  age: Int }";
+    cluster.client(0).schema_add(schema).expect("schema node0");
+    cluster.client(1).schema_add(schema).expect("schema node1");
+
+    wire_user_bidirectional(&cluster).await;
+
+    let id = create_user_seed(&cluster.client(0), label);
+    assert!(
+        poll_all_user_name(&cluster, 2, "seed", Duration::from_secs(30)).await,
+        "[{label}] seed did not reach both nodes before the delete/update race"
+    );
+
+    cluster
+        .restart_node(1, Duration::from_secs(30))
+        .await
+        .expect("restart node1");
+
+    cluster
+        .client(0)
+        .query(&format!(
+            r#"mutation {{ delete_User(docID: "{id}") {{ _docID }} }}"#
+        ))
+        .expect("node0 deletes");
+    cluster
+        .client(1)
+        .query(&format!(
+            r#"mutation {{ update_User(docID: "{id}", input: {{age: 99}}) {{ _docID }} }}"#
+        ))
+        .expect("node1 age=99");
+
+    rewire_user_bidirectional(&cluster).await;
+    assert!(
+        poll_user_dags_converged_after_heal(&cluster, &id, Duration::from_secs(45)).await,
+        "[{label}] delete/update DAGs did not converge after the heal"
+    );
+
+    // Identical DAGs prove node0 holds the update and node1 the tombstone, so
+    // an absent document on either side is the merged outcome — not a document
+    // that never arrived.
+    for n in [0usize, 1] {
+        assert!(
+            poll_user_doc_absent(&cluster.client(n), &id, Duration::from_secs(30)).await,
+            "[{label}] node{n} resolved delete-vs-update as update-revives; visible docs: {:?}",
+            user_doc_ids(&cluster.client(n))
+        );
+    }
+}
+
+/// Go<->Go delete-vs-update (badger) — the parity target.
+#[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
+#[tokio::test]
+async fn parity_delete_update_go_go() {
+    let cluster = TestCluster::builder()
+        .go_nodes(2)
+        .with_p2p()
+        .with_store("badger")
+        .with_keyring()
+        .with_development()
+        .build()
+        .await
+        .expect("go-go cluster");
+    run_delete_update_parity(cluster, "delete_update_go_go").await;
+}
+
+/// Mixed Rust(node0, deletes)<->Go(node1, updates) delete-vs-update resolution.
+#[ignore = "parity (asserting); needs Go binary on PATH; run with --ignored"]
+#[tokio::test]
+async fn parity_delete_update_mixed() {
+    run_delete_update_parity(
+        mixed_disk_cluster().await,
+        "delete_update_mixed(rust0_del,go1_upd)",
+    )
+    .await;
 }
 
 fn tally_hits(node: &DefraClient) -> i64 {
