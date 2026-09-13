@@ -49,9 +49,9 @@ keyring = { path = "../keyring" }
 events = { path = "../events" }
 rand.workspace = true
 tempfile = "3"
-hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "5b162d4a4420e5d843805d14e04d409e4f07ec8d" }
-hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "5b162d4a4420e5d843805d14e04d409e4f07ec8d" }
-hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "5b162d4a4420e5d843805d14e04d409e4f07ec8d" }
+hub-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "96fa3ea67f45582bdd607e2ba9c9e464171ade48" }
+hub-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "96fa3ea67f45582bdd607e2ba9c9e464171ade48" }
+hub-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "96fa3ea67f45582bdd607e2ba9c9e464171ade48" }
 commonware-codec = "2026.9.0"
 
 # Logging
