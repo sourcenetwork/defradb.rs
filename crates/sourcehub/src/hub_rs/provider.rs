@@ -12,13 +12,13 @@ use alloy_sol_types::{SolCall, SolEvent};
 use async_trait::async_trait;
 use commonware_codec::DecodeExt as _;
 use events::{AcpCacheInvalidatedData, AcpHeightAdvancedData, Bus, Message};
-use hub_domain::ConsensusPublicKey;
-use hub_modules::acp::types::PolicyRecord;
 use k256::ecdsa::SigningKey;
+use vera_domain::ConsensusPublicKey;
+use vera_modules::acp::types::PolicyRecord;
 
 use super::abi::{IAcp, ACP_ADDRESS};
 use super::bearer;
-use super::client::HubRsClient;
+use super::client::VeraRsClient;
 use super::provider_commands::{
     encode_archive_object_cmd, encode_delete_relationship_cmd, encode_register_object_cmd,
     encode_set_relationship_cmd, resolve_registered_or_passthrough_bearer_token,
@@ -27,9 +27,9 @@ use super::worker::NativeWorker;
 
 mod submission;
 
-pub struct HubRsProvider {
+pub struct VeraRsProvider {
     light_client: Arc<AcpLightClient>,
-    client: HubRsClient,
+    client: VeraRsClient,
     worker: Arc<tokio::sync::Mutex<NativeWorker>>,
     worker_did: String,
     actor_did: String,
@@ -47,7 +47,7 @@ fn derive_ws_url(rpc_url: &str) -> String {
         .replacen("https://", "wss://", 1)
 }
 
-impl HubRsProvider {
+impl VeraRsProvider {
     pub async fn new(
         rpc_url: String,
         trusted_consensus_key: &str,
@@ -76,7 +76,7 @@ impl HubRsProvider {
             .map_err(|e| ProviderError::Config(format!("initial verified state: {e}")))?;
         let light_client_observability = Arc::new(AtomicU64::new(0));
 
-        let client = HubRsClient::new(rpc_url, tuning.request_timeout)
+        let client = VeraRsClient::new(rpc_url, tuning.request_timeout)
             .map_err(|e| ProviderError::Config(format!("HTTP client: {e}")))?;
         let signing_key = SigningKey::from_slice(private_key)
             .map_err(|e| ProviderError::Config(format!("actor key: {e}")))?;
@@ -108,7 +108,7 @@ impl HubRsProvider {
     }
 
     fn policy_id_to_bytes32(policy_id: &str) -> Result<FixedBytes<32>, ProviderError> {
-        hub_client::parse_policy_id(policy_id).map_err(|e| ProviderError::Query(e.to_string()))
+        vera_client::parse_policy_id(policy_id).map_err(|e| ProviderError::Query(e.to_string()))
     }
 }
 
@@ -133,7 +133,7 @@ fn access_request(
     })
 }
 
-impl Drop for HubRsProvider {
+impl Drop for VeraRsProvider {
     fn drop(&mut self) {
         self.light_client_observer_handle.abort();
     }
@@ -200,7 +200,7 @@ async fn run_light_client_observer(
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl SourceHubProvider for HubRsProvider {
+impl SourceHubProvider for VeraRsProvider {
     fn authorized_account(&self) -> String {
         self.worker_did.clone()
     }
@@ -244,14 +244,14 @@ impl SourceHubProvider for HubRsProvider {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| ProviderError::Config(e.to_string()))?
             .as_secs();
-        let token = hub_client::create_scoped_bearer_token(
+        let token = vera_client::create_scoped_bearer_token(
             &self.signing_key,
             &self.worker_did,
             self.deployment,
             now,
             now.checked_add(300)
                 .ok_or_else(|| ProviderError::Config("invalid clock".into()))?,
-            hub_client::DelegationScope::CreatePolicy,
+            vera_client::DelegationScope::CreatePolicy,
         )
         .map_err(|e| ProviderError::Config(e.to_string()))?;
         let call = IAcp::bearerCreatePolicyCall {
@@ -573,7 +573,7 @@ mod tests {
         for (index, key) in ["", "not-hex", "00"].into_iter().enumerate() {
             let worker =
                 NativeWorker::open(&root.path().join(index.to_string()), &keys, 9001).unwrap();
-            let error = HubRsProvider::new(
+            let error = VeraRsProvider::new(
                 "http://127.0.0.1:1".into(),
                 key,
                 &[],

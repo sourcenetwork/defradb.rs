@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use alloy_primitives::{Address, Bytes};
-use hub_domain::{ConsensusPublicKey, ExecutionReceipt, ReceiptResponse};
+use vera_domain::{ConsensusPublicKey, ExecutionReceipt, ReceiptResponse};
 
 use crate::provider::ProviderError;
 
 /// Native submission journal backed by DefraDB's configured keyring.
-pub struct NativeWorker(hub_client::NativeWorker);
+pub struct NativeWorker(vera_client::NativeWorker);
 
 fn failure(cause: impl std::fmt::Display) -> ProviderError {
     ProviderError::Unavailable(cause.to_string())
@@ -18,7 +18,7 @@ impl NativeWorker {
         keyring: &dyn keyring::Keyring,
         deployment: u64,
     ) -> Result<Self, ProviderError> {
-        hub_client::NativeWorker::open(
+        vera_client::NativeWorker::open(
             directory,
             deployment,
             |name| keyring.get(name),

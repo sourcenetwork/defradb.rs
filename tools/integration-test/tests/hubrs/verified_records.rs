@@ -3,7 +3,7 @@ use std::sync::Arc;
 use acp::{DocumentACP as _, DocumentPermission, Identity};
 use commonware_codec::Encode as _;
 use integration_test::USER_ACP_POLICY;
-use sourcehub::{AcpTuning, HubRsProvider, SourceHubDocumentACP, SourceHubProvider};
+use sourcehub::{AcpTuning, SourceHubDocumentACP, SourceHubProvider, VeraRsProvider};
 
 use super::helpers;
 
@@ -11,7 +11,7 @@ use super::helpers;
 #[serial_test::serial]
 async fn archived_owner_record_does_not_authorize_access() {
     let hub = helpers::start_hub_cluster().await;
-    let keys = hub_harness::cluster::KeySet::builder()
+    let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
         .build()
@@ -26,7 +26,7 @@ async fn archived_owner_record_does_not_authorize_access() {
     let owner = helpers::funded_identity();
     let private_key = hex::decode(&owner.private_key_hex).expect("owner key");
     let provider = Arc::new(
-        HubRsProvider::new(
+        VeraRsProvider::new(
             hub.node(0).rpc_url(),
             &consensus_key,
             &private_key,
@@ -132,7 +132,7 @@ async fn archived_owner_record_does_not_authorize_access() {
 async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
     use sourcehub::SubjectRef;
     let mut hub = helpers::start_hub_cluster().await;
-    let keys = hub_harness::cluster::KeySet::builder()
+    let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
         .build()
@@ -146,7 +146,7 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
             .unwrap();
     let owner = helpers::funded_identity();
     let provider = Arc::new(
-        HubRsProvider::new(
+        VeraRsProvider::new(
             hub.node(0).rpc_url(),
             &consensus_key,
             &hex::decode(&owner.private_key_hex).unwrap(),

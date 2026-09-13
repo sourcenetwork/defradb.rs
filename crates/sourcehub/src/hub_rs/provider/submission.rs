@@ -1,9 +1,9 @@
 use crate::hub_rs::client::ClientError;
 use alloy_primitives::Bytes;
-use hub_domain::{ExecutionReceipt, NativeTx};
 use tokio::sync::OwnedMutexGuard;
+use vera_domain::{ExecutionReceipt, NativeTx};
 
-use super::{HubRsProvider, NativeWorker, ProviderError, ACP_ADDRESS};
+use super::{NativeWorker, ProviderError, VeraRsProvider, ACP_ADDRESS};
 
 pub(super) struct ConfirmedSubmission {
     pub receipt: ExecutionReceipt,
@@ -26,7 +26,7 @@ fn successful(result: ConfirmedSubmission) -> Result<ConfirmedSubmission, Provid
     }
 }
 
-impl HubRsProvider {
+impl VeraRsProvider {
     pub(super) async fn recover_pending(&self) -> Result<(), ProviderError> {
         let worker = self.worker.clone().lock_owned().await;
         if let Some(wire) = worker.pending().map(<[u8]>::to_vec) {

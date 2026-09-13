@@ -1,7 +1,7 @@
 use super::*;
 use crate::proto::{
-    StartSignResponse,
     sign_service_server::{SignService, SignServiceServer},
+    StartSignResponse,
 };
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -50,27 +50,25 @@ impl SignService for Service {
         let parts: Vec<_> = token.split('.').collect();
         let claims: serde_json::Value =
             serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
-        assert!(
-            self.identity
-                .pub_key()
-                .verify(
-                    format!("{}.{}", parts[0], parts[1]).as_bytes(),
-                    &URL_SAFE_NO_PAD.decode(parts[2]).unwrap(),
-                )
-                .unwrap()
-        );
+        assert!(self
+            .identity
+            .pub_key()
+            .verify(
+                format!("{}.{}", parts[0], parts[1]).as_bytes(),
+                &URL_SAFE_NO_PAD.decode(parts[2]).unwrap(),
+            )
+            .unwrap());
         assert_eq!(claims["iss"], self.identity.did().unwrap().to_string());
         assert!(claims.get("sub").is_none());
         assert_eq!(
             claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap(),
             300
         );
-        assert!(
-            self.tokens
-                .lock()
-                .unwrap()
-                .insert(claims["jti"].as_str().unwrap().to_owned())
-        );
+        assert!(self
+            .tokens
+            .lock()
+            .unwrap()
+            .insert(claims["jti"].as_str().unwrap().to_owned()));
         let request = request.into_inner();
         assert_eq!(request.derivation_id, DERIVATION);
         assert_eq!(claims["derivation_id"], DERIVATION);
@@ -142,18 +140,14 @@ async fn current_protocol_signs_with_distinct_message_bound_tokens() {
     let authorization = SigningAuthorization::Decision {
         decision_id: "decision".into(),
     };
-    assert!(
-        client
-            .sign_sync(b"message", Some(&authorization))
-            .unwrap_err()
-            .contains("overrides")
-    );
-    assert!(
-        client
-            .sign_sync(&vec![0; 1024 * 1024 + 1], None)
-            .unwrap_err()
-            .contains("1 MiB")
-    );
+    assert!(client
+        .sign_sync(b"message", Some(&authorization))
+        .unwrap_err()
+        .contains("overrides"));
+    assert!(client
+        .sign_sync(&vec![0; 1024 * 1024 + 1], None)
+        .unwrap_err()
+        .contains("1 MiB"));
     assert_eq!(tokens.lock().unwrap().len(), 2);
     drop(client);
     task.abort();

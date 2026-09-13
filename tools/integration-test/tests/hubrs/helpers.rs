@@ -24,8 +24,8 @@ pub fn funded_identity() -> TestIdentity {
 }
 
 /// Start a 1-node hub.rs devnet cluster and wait for it to be healthy.
-pub async fn start_hub_cluster() -> hub_harness::cluster::TestCluster {
-    let cluster = hub_harness::cluster::TestCluster::builder()
+pub async fn start_hub_cluster() -> vera_harness::cluster::TestCluster {
+    let cluster = vera_harness::cluster::TestCluster::builder()
         .nodes(1)
         .seed(0)
         .build()
@@ -50,7 +50,7 @@ pub async fn build_defra_with_hub_rs(
     p2p: bool,
 ) -> TestCluster {
     let previous_address = std::env::var_os("DEFRA_HUB_RS_ADDRESS");
-    let keys = hub_harness::cluster::KeySet::builder()
+    let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
         .build()
@@ -95,18 +95,18 @@ pub async fn build_defra_with_hub_rs(
 }
 
 pub async fn policy_exists(hub_rpc_url: &str, policy_id: &str) -> bool {
-    let keys = hub_harness::cluster::KeySet::builder()
+    let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
         .build()
         .expect("bootstrap keys");
-    let response = hub_client::HubClient::new(hub_rpc_url)
+    let response = vera_client::VeraClient::new(hub_rpc_url)
         .read_current_record(
-            hub_domain::ModuleId::Acp,
-            &hub_modules::acp::keys::policy_key(policy_id),
+            vera_domain::ModuleId::Acp,
+            &vera_modules::acp::keys::policy_key(policy_id),
             1,
             keys.epoch_info().output.public().public(),
-            hub_client::RECORD_PROOF_BYTES,
+            vera_client::RECORD_PROOF_BYTES,
         )
         .await
         .expect("verified policy record");

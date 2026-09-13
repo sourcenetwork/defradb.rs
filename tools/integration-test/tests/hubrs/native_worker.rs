@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use alloy_sol_types::SolCall;
-use hub_client::{HubClient, ACP_ADDRESS};
-use hub_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse};
-use hub_modules::acp::abi::IAcp;
 use keyring::{FileKeyring, Keyring};
 use sourcehub::hub_rs::NativeWorker;
+use vera_client::{VeraClient, ACP_ADDRESS};
+use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse};
+use vera_modules::acp::abi::IAcp;
 
 async fn confirmed(
-    client: &HubClient,
+    client: &VeraClient,
     wire: &[u8],
     trusted: &ConsensusPublicKey,
 ) -> ReceiptResponse {
@@ -29,7 +29,7 @@ async fn confirmed(
 #[serial_test::serial]
 async fn native_worker_recovers_pending_and_rejected_submissions() {
     let mut hub = super::helpers::start_hub_cluster().await;
-    let trusted = *hub_harness::cluster::KeySet::builder()
+    let trusted = *vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
         .build()
@@ -38,7 +38,7 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
         .output
         .public()
         .public();
-    let client = HubClient::new(hub.node(0).rpc_url());
+    let client = VeraClient::new(hub.node(0).rpc_url());
     let root = tempfile::tempdir().unwrap();
     let keyring = FileKeyring::open(root.path().join("keys"), b"test-password").unwrap();
     let directory = root.path().join("worker");
@@ -120,11 +120,11 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
     for worker in [&worker, &other] {
         let proof = client
             .read_current_record(
-                hub_domain::ModuleId::NativeNonce,
-                &hub_modules::native_account::keys::native_nonce_key(worker.did()),
+                vera_domain::ModuleId::NativeNonce,
+                &vera_modules::native_account::keys::native_nonce_key(worker.did()),
                 failed.revision.height.max(succeeded.revision.height),
                 &trusted,
-                hub_client::RECORD_PROOF_BYTES,
+                vera_client::RECORD_PROOF_BYTES,
             )
             .await
             .unwrap();
@@ -140,10 +140,10 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
 #[serial_test::serial]
 async fn native_provider_recovers_pending_before_concurrent_requests() {
     use commonware_codec::Encode as _;
-    use sourcehub::{AcpTuning, HubRsProvider, SourceHubProvider};
+    use sourcehub::{AcpTuning, SourceHubProvider, VeraRsProvider};
 
     let hub = super::helpers::start_hub_cluster().await;
-    let trusted = *hub_harness::cluster::KeySet::builder()
+    let trusted = *vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
         .build()
@@ -162,13 +162,13 @@ async fn native_provider_recovers_pending_before_concurrent_requests() {
         .prepare(ACP_ADDRESS, vec![1, 2, 3, 4].into())
         .unwrap()
         .to_vec();
-    let client = HubClient::new(hub.node(0).rpc_url());
+    let client = VeraClient::new(hub.node(0).rpc_url());
     client.send_native_tx(&rejected).await.unwrap();
     drop(worker);
 
     let actor = super::helpers::funded_identity();
     let private_key = hex::decode(actor.private_key_hex).unwrap();
-    let provider = HubRsProvider::new(
+    let provider = VeraRsProvider::new(
         hub.node(0).rpc_url(),
         &consensus_key,
         &private_key,
@@ -192,7 +192,7 @@ async fn native_provider_recovers_pending_before_concurrent_requests() {
     assert_eq!(worker.did(), did);
     assert_eq!(worker.next_sequence(), 3);
     assert!(worker.pending().is_none());
-    let provider = HubRsProvider::new(
+    let provider = VeraRsProvider::new(
         hub.node(0).rpc_url(),
         &consensus_key,
         &private_key,

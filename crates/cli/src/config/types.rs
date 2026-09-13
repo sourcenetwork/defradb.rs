@@ -192,7 +192,7 @@ impl std::str::FromStr for TransportType {
 /// - `None`: No document-level access control (default)
 /// - `Local`: Local Zanzibar-based ACP
 /// - `SourceHub`: Remote SourceHub ACP (Cosmos SDK / Go sourcehubd)
-/// - `HubRs`: Remote hub.rs ACP (EVM precompile / hub.rs node)
+/// - `VeraRs`: Remote hub.rs ACP (EVM precompile / hub.rs node)
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
@@ -203,7 +203,7 @@ pub enum AcpDocumentType {
     #[cfg(feature = "sourcehub")]
     SourceHub,
     #[cfg(feature = "sourcehub")]
-    HubRs,
+    VeraRs,
 }
 
 impl std::fmt::Display for AcpDocumentType {
@@ -214,7 +214,7 @@ impl std::fmt::Display for AcpDocumentType {
             #[cfg(feature = "sourcehub")]
             AcpDocumentType::SourceHub => write!(f, "source-hub"),
             #[cfg(feature = "sourcehub")]
-            AcpDocumentType::HubRs => write!(f, "hub-rs"),
+            AcpDocumentType::VeraRs => write!(f, "hub-rs"),
         }
     }
 }
@@ -229,7 +229,7 @@ impl std::str::FromStr for AcpDocumentType {
             #[cfg(feature = "sourcehub")]
             "sourcehub" => Ok(AcpDocumentType::SourceHub),
             #[cfg(feature = "sourcehub")]
-            "hubrs" => Ok(AcpDocumentType::HubRs),
+            "hubrs" => Ok(AcpDocumentType::VeraRs),
             _ => Err(Error::InvalidAcpType(s.to_string())),
         }
     }

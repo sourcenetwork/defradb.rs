@@ -2,16 +2,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use alloy_primitives::{Bytes, B256};
-use hub_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse, RECEIPT_RESPONSE_BYTES};
 use serde::de::DeserializeOwned;
+use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse, RECEIPT_RESPONSE_BYTES};
 
-pub struct HubRsClient {
+pub struct VeraRsClient {
     url: String,
     http: reqwest::Client,
     next_id: AtomicU64,
 }
 
-impl HubRsClient {
+impl VeraRsClient {
     pub fn new(url: String, request_timeout: Duration) -> Result<Self, ClientError> {
         Ok(Self {
             url,
@@ -80,7 +80,7 @@ impl HubRsClient {
             .0;
         let returned: B256 = self
             .rpc(
-                "hub_sendNativeTx",
+                "vera_sendNativeTx",
                 serde_json::json!([Bytes::copy_from_slice(wire)]),
                 4096,
             )
@@ -98,7 +98,7 @@ impl HubRsClient {
     ) -> Result<Option<ReceiptResponse>, ClientError> {
         let response: Option<ReceiptResponse> = self
             .rpc(
-                "hub_getReceiptProof",
+                "vera_getReceiptProof",
                 serde_json::json!([hash]),
                 RECEIPT_RESPONSE_BYTES,
             )
@@ -121,7 +121,7 @@ pub enum ClientError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
-    Receipt(#[from] hub_domain::ReceiptResponseError),
+    Receipt(#[from] vera_domain::ReceiptResponseError),
 }
 
 impl ClientError {

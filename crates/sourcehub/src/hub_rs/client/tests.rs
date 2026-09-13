@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
-async fn server(response: String) -> (HubRsClient, tokio::task::JoinHandle<Value>) {
+async fn server(response: String) -> (VeraRsClient, tokio::task::JoinHandle<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -31,7 +31,10 @@ async fn server(response: String) -> (HubRsClient, tokio::task::JoinHandle<Value
             .unwrap();
         serde_json::from_slice(&body).unwrap()
     });
-    (HubRsClient::new(url, Duration::from_secs(2)).unwrap(), task)
+    (
+        VeraRsClient::new(url, Duration::from_secs(2)).unwrap(),
+        task,
+    )
 }
 
 fn http(body: &str) -> String {
@@ -79,7 +82,7 @@ async fn rpc_enforces_declared_and_streamed_byte_limits() {
 
 #[tokio::test]
 async fn submission_id_must_match_locally_signed_bytes() {
-    let signer = hub_client::BlsSigner::random(9001).unwrap();
+    let signer = vera_client::BlsSigner::random(9001).unwrap();
     let wire = signer
         .sign_native_tx_with_sequence(Address::ZERO, Bytes::new(), 0)
         .unwrap();
@@ -97,7 +100,7 @@ async fn submission_id_must_match_locally_signed_bytes() {
             ));
         }
         let request = task.await.unwrap();
-        assert_eq!(request["method"], "hub_sendNativeTx");
+        assert_eq!(request["method"], "vera_sendNativeTx");
         assert_eq!(request["params"], json!([Bytes::copy_from_slice(&wire)]));
     }
 }
@@ -105,7 +108,7 @@ async fn submission_id_must_match_locally_signed_bytes() {
 #[tokio::test]
 async fn stalled_transport_times_out_and_transient_rpc_errors_are_retryable() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let client = HubRsClient::new(
+    let client = VeraRsClient::new(
         format!("http://{}", listener.local_addr().unwrap()),
         Duration::from_millis(100),
     )

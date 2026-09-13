@@ -711,7 +711,7 @@ async fn outbound_push_storm_matches_fleet_shape() {
         measure_healthy_convergence(&cluster, &healthy_indices, &doc_ids, config.updates - 1).await;
 
     let result = serde_json::json!({
-        "hub_pid": hub_pid,
+        "vera_pid": hub_pid,
         "peers": config.peers,
         "docs": config.docs,
         "update_cycles": config.updates,

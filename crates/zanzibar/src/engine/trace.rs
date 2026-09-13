@@ -465,7 +465,13 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
 
                     let (subtract_result, _) = self
                         .evaluate_expr_inner(
-                            policy_id, resource, object_id, relation, subject, subtract, trail,
+                            policy_id,
+                            resource,
+                            object_id,
+                            relation,
+                            subject,
+                            subtract,
+                            trail,
                             cache.clone(),
                         )
                         .await?;

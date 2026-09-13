@@ -5,5 +5,5 @@ mod provider;
 mod provider_commands;
 mod worker;
 
-pub use provider::HubRsProvider;
+pub use provider::VeraRsProvider;
 pub use worker::NativeWorker;

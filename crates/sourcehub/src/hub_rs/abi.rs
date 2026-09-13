@@ -1,5 +1,5 @@
-pub use hub_client::ACP_ADDRESS;
-pub use hub_modules::acp::abi::IAcp;
+pub use vera_client::ACP_ADDRESS;
+pub use vera_modules::acp::abi::IAcp;
 
 #[cfg(test)]
 mod tests {

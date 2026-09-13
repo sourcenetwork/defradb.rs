@@ -32,7 +32,7 @@ pub(super) fn sanitized_node_options(
     let document_signer_present = _user_identity_present
         && matches!(
             config.acp.document_type,
-            AcpDocumentType::SourceHub | AcpDocumentType::HubRs
+            AcpDocumentType::SourceHub | AcpDocumentType::VeraRs
         );
     #[cfg(not(feature = "sourcehub"))]
     let document_signer_present = false;

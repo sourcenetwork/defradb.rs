@@ -100,10 +100,10 @@ impl Node {
         }
 
         #[cfg(feature = "sourcehub")]
-        if config.acp.document_type == AcpDocumentType::HubRs {
+        if config.acp.document_type == AcpDocumentType::VeraRs {
             if config.acp.hub_rs_address.is_empty() {
                 return Err(Error::InvalidConfig(
-                    "hub_rs_address required when document_type is hub-rs".into(),
+                    "vera_rs_address required when document_type is hub-rs".into(),
                 ));
             }
 
@@ -149,7 +149,7 @@ impl Node {
             .await
             .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
             let provider = Arc::new(
-                sourcehub::HubRsProvider::new(
+                sourcehub::VeraRsProvider::new(
                     config.acp.hub_rs_address.clone(),
                     &config.acp.vera_consensus_key,
                     signer_key_bytes,
