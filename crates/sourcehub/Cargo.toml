@@ -49,9 +49,9 @@ keyring = { path = "../keyring" }
 events = { path = "../events" }
 rand.workspace = true
 tempfile = "3"
-vera-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "2d915305bce7895ca15108557e10d2ea527e8469" }
-vera-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "2d915305bce7895ca15108557e10d2ea527e8469" }
-vera-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "2d915305bce7895ca15108557e10d2ea527e8469" }
+vera-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "b0021e7892eeda7ad6f76744a2a39c05b242307d" }
+vera-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "b0021e7892eeda7ad6f76744a2a39c05b242307d" }
+vera-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "b0021e7892eeda7ad6f76744a2a39c05b242307d" }
 commonware-codec = "2026.9.0"
 
 # Logging

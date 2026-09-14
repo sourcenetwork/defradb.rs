@@ -114,7 +114,7 @@ name = "client_authored"
 path = "tests/client_authored.rs"
 
 [dependencies]
-vera-harness = { git = "https://github.com/sourcenetwork/hub.rs", rev = "2d915305bce7895ca15108557e10d2ea527e8469" }
+vera-harness = { git = "https://github.com/sourcenetwork/hub.rs", rev = "b0021e7892eeda7ad6f76744a2a39c05b242307d" }
 commonware-codec = "2026.9.0"
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "f612fea0fcea1885057fea4f741afef8f8512fb1" }
 document = { path = "../../crates/document" }
@@ -136,9 +136,9 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 keyring = { path = "../../crates/keyring" }
-vera-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "2d915305bce7895ca15108557e10d2ea527e8469" }
-vera-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "2d915305bce7895ca15108557e10d2ea527e8469" }
-vera-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "2d915305bce7895ca15108557e10d2ea527e8469" }
+vera-client = { git = "https://github.com/sourcenetwork/hub.rs", rev = "b0021e7892eeda7ad6f76744a2a39c05b242307d" }
+vera-domain = { git = "https://github.com/sourcenetwork/hub.rs", rev = "b0021e7892eeda7ad6f76744a2a39c05b242307d" }
+vera-modules = { git = "https://github.com/sourcenetwork/hub.rs", rev = "b0021e7892eeda7ad6f76744a2a39c05b242307d" }
 alloy-sol-types.workspace = true
 acp = { path = "../../crates/acp" }
 sourcehub = { path = "../../crates/sourcehub" }
