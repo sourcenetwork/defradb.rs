@@ -1190,3 +1190,133 @@ async fn resync_restore_leaves_root_due_for_receiver_clock() {
         .claim_due_pending_dag_retries(n0_future::time::Instant::now())
         .is_empty());
 }
+
+fn broadcast(doc_id: &str, cid: Cid, block: Vec<u8>) -> crate::message::PushLogBroadcast {
+    crate::message::PushLogBroadcast::new(
+        doc_id.to_string(),
+        bytes::Bytes::from(cid.to_bytes()),
+        "collection".to_string(),
+        "creator".to_string(),
+        bytes::Bytes::from(block),
+    )
+}
+
+/// A single-slot manager whose slot is held by `peer-1`'s priority-2 head for
+/// `doc123`, so every further head arrival meets the global cap.
+fn manager_at_global_cap() -> SyncManager<DefraBlockstore<RegolithStore>> {
+    let manager = test_manager_with_config(SyncConfig {
+        max_pending_dags: 1,
+        ..Default::default()
+    });
+    let mut current = pending_dag_from("doc123", Some("peer-1"), Instant::now());
+    current.head_priority = Some(2);
+    assert!(manager.insert_pending_dag(test_cid(900), current));
+    manager
+}
+
+#[tokio::test]
+async fn at_global_cap_a_head_covered_by_the_current_scope_head_is_acked() {
+    let manager = manager_at_global_cap();
+    let (leaf_cid, _) = lww_leaf("name");
+    let (older_cid, older_bytes) = composite_node("name", leaf_cid, 1);
+
+    manager
+        .process_pushlog(
+            &broadcast("doc123", older_cid, older_bytes),
+            Some("peer-1"),
+            false,
+            None,
+        )
+        .await
+        .expect("a covered head consumes no slot and must not be shed");
+    assert_eq!(manager.pending_dag_count(), 1);
+    assert_eq!(
+        manager.diagnostics().snapshot().pending_dag_capacity_shed,
+        0
+    );
+}
+
+/// A descendant no registered root waits on carries no receiver obligation, so
+/// the cap holds: otherwise a peer could push unlimited unrelated non-head
+/// blocks into storage while the registry is full.
+#[tokio::test]
+async fn at_global_cap_an_unawaited_descendant_is_shed() {
+    let manager = manager_at_global_cap();
+    let (leaf_cid, leaf_bytes) = lww_leaf("name");
+
+    let result = manager
+        .process_pushlog(
+            &broadcast("doc789", leaf_cid, leaf_bytes),
+            Some("peer-2"),
+            false,
+            None,
+        )
+        .await;
+    assert!(matches!(result, Err(Error::PendingDagCapacity { max: 1 })));
+    assert!(!manager
+        .blockstore
+        .has(&leaf_cid)
+        .await
+        .expect("blockstore lookup"));
+    assert_eq!(manager.pending_dag_count(), 1);
+    assert_eq!(
+        manager.diagnostics().snapshot().pending_dag_capacity_shed,
+        1
+    );
+}
+
+/// Malformed DAG-CBOR decodes as a descendant, so a CID-valid block of garbage
+/// would clear block verification. Only the cap keeps it out of storage.
+#[tokio::test]
+async fn at_global_cap_a_cid_valid_malformed_block_is_shed() {
+    let manager = manager_at_global_cap();
+    let garbage = vec![0xff; 4 * 1024 * 1024];
+    let garbage_cid =
+        defra_core::block::generate_cid_from_bytes(&garbage).expect("generate garbage cid");
+
+    let result = manager
+        .process_pushlog(
+            &broadcast("doc789", garbage_cid, garbage),
+            Some("peer-2"),
+            false,
+            None,
+        )
+        .await;
+    assert!(matches!(result, Err(Error::PendingDagCapacity { max: 1 })));
+    assert!(!manager
+        .blockstore
+        .has(&garbage_cid)
+        .await
+        .expect("blockstore lookup"));
+    assert_eq!(
+        manager.diagnostics().snapshot().pending_dag_capacity_shed,
+        1
+    );
+}
+
+#[tokio::test]
+async fn at_global_cap_a_genuinely_new_head_is_shed() {
+    let manager = manager_at_global_cap();
+    let (leaf_cid, _) = lww_leaf("name");
+    let (new_cid, new_bytes) = composite_node("name", leaf_cid, 1);
+
+    let result = manager
+        .process_pushlog(
+            &broadcast("doc456", new_cid, new_bytes),
+            Some("peer-2"),
+            false,
+            None,
+        )
+        .await;
+    assert!(matches!(result, Err(Error::PendingDagCapacity { max: 1 })));
+    assert!(!manager
+        .blockstore
+        .has(&new_cid)
+        .await
+        .expect("blockstore lookup"));
+    assert_eq!(manager.pending_dag_count(), 1);
+    assert_eq!(
+        manager.diagnostics().snapshot().pending_dag_capacity_shed,
+        1
+    );
+}

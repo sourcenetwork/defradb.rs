@@ -1,4 +1,16 @@
 //! PushLog processing and block storage.
+//!
+//! At the pending-DAG cap a push is acked only when it costs no new slot: a
+//! root already registered or persisted, a scope head that refreshes or
+//! supersedes the current root (which it evicts) or is covered by it, and a
+//! descendant a registered root awaits. Everything else is nacked so the
+//! sender retries. Descendants are not exempt as a class: anything that fails
+//! DAG-CBOR decode is reported `Descendant` by `announced_block_kind`, so a
+//! blanket exemption would admit unbounded CID-valid garbage past the cap
+//! into verification and storage. Pinned by
+//! `at_global_cap_a_cid_valid_malformed_block_is_shed`,
+//! `at_global_cap_an_unawaited_descendant_is_shed`, and
+//! `pending_capacity_sheds_unrelated_blocks_but_accepts_missing_dependency`.
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -325,8 +337,23 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
         let announced_block_kind = announced_block_kind(&msg.block);
         let head_priority = announced_block_kind.priority();
+        // Shed only a genuinely new head that would consume a pending-DAG
+        // slot. A durably owned root and a head already superseded or covered
+        // within its sender scope each ack below without registering anything;
+        // a sender that reads the at-capacity nack as success would otherwise
+        // drop them for good. A descendant carries no such obligation of its
+        // own: `can_process_pushlog` admits it only while a registered root
+        // waits on it, so unawaited bytes stay inside the cap.
         if !self.can_process_pushlog(cid)
+            && !self.persisted_roots.read().contains(cid)
             && !self.scope_head_is_refresh_or_newer(
+                *cid,
+                sender_peer,
+                &msg.collection_id,
+                &msg.doc_id,
+                head_priority,
+            )
+            && !self.scope_head_is_covered_by_current(
                 *cid,
                 sender_peer,
                 &msg.collection_id,
