@@ -29,6 +29,9 @@ pub async fn execute(cluster: &TestCluster, node: usize, query: &str) -> Result<
     bail!("mutation aborted after five transaction conflicts: {query}")
 }
 
+/// Go capitalises this message and Rust does not; the wording is otherwise identical.
+const TRANSACTION_CONFLICT: &str = "Transaction Conflict. Please retry";
+
 fn mutation_result(stdout: &str) -> Result<Option<Value>> {
     let start = stdout.find('{').context("mutation returned no JSON")?;
     let response: Value = serde_json::from_str(&stdout[start..])?;
@@ -36,7 +39,9 @@ fn mutation_result(stdout: &str) -> Result<Option<Value>> {
         let errors = errors.as_array().context("invalid GraphQL errors")?;
         if !errors.is_empty() {
             if errors.iter().all(|error| {
-                error["message"].as_str() == Some("Transaction Conflict. Please retry")
+                error["message"]
+                    .as_str()
+                    .is_some_and(|message| message.eq_ignore_ascii_case(TRANSACTION_CONFLICT))
             }) {
                 return Ok(None);
             }
@@ -53,6 +58,12 @@ fn mutation_result(stdout: &str) -> Result<Option<Value>> {
 #[test]
 fn commit_conflict_is_not_success_even_with_mutation_data() {
     let response = r#"{"data":{"update_User":[{"_docID":"doc"}]},"errors":[{"message":"Transaction Conflict. Please retry"}]}"#;
+    assert!(mutation_result(response).unwrap().is_none());
+}
+
+#[test]
+fn lowercase_rust_commit_conflict_is_retried() {
+    let response = r#"{"data":{"update_User":[{"_docID":"doc"}]},"errors":[{"message":"transaction conflict. Please retry"}]}"#;
     assert!(mutation_result(response).unwrap().is_none());
 }
 
