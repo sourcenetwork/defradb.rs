@@ -34,6 +34,8 @@ pub(super) struct ProviderRotation {
     peers: Vec<PeerId>,
     cursor: usize,
     unservable: std::collections::HashMap<PeerId, cid::Cid>,
+    productive: std::collections::HashSet<PeerId>,
+    responsive: std::collections::HashSet<PeerId>,
 }
 
 impl ProviderRotation {
@@ -43,7 +45,31 @@ impl ProviderRotation {
             peers,
             cursor: 0,
             unservable: std::collections::HashMap::new(),
+            productive: std::collections::HashSet::new(),
+            responsive: std::collections::HashSet::new(),
         }
+    }
+
+    /// The current provider delivered at least one block for this root.
+    pub(super) fn record_progress(&mut self) {
+        self.productive.insert(self.current().clone());
+    }
+
+    /// The current provider answered a rooted CAR request during this fetch.
+    ///
+    /// The CAR request and its response are their own libp2p substreams, so a
+    /// reply is positive evidence that the peer is alive on this connection —
+    /// evidence Bitswap block delivery cannot give, because a want that is
+    /// never transmitted and a want the peer cannot satisfy both arrive as
+    /// silence.
+    pub(super) fn record_responsive(&mut self) {
+        self.responsive.insert(self.current().clone());
+    }
+
+    /// The peer answered on a non-Bitswap substream yet delivered no block
+    /// across every window of this fetch.
+    pub(super) fn is_responsive_but_silent(&self, peer: &PeerId) -> bool {
+        self.responsive.contains(peer) && !self.productive.contains(peer)
     }
 
     pub(super) fn current(&self) -> &PeerId {
