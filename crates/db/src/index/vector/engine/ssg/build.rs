@@ -1,6 +1,6 @@
 //! Building the pruned graph from HNSW's layer 0.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use super::codec::{self, BuiltState};
 use super::Ssg;
@@ -234,7 +234,7 @@ impl<S: VectorNodeStore> Ssg<S> {
         ids: &[NodeId],
         max: usize,
     ) -> Result<u64> {
-        let mut visited: HashSet<NodeId> = HashSet::with_capacity(ids.len());
+        let mut visited: RapidHashSet<NodeId> = RapidHashSet::with_capacity(ids.len());
         let mut stack = vec![entry];
         while let Some(id) = stack.pop() {
             if !visited.insert(id) {

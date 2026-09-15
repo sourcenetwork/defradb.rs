@@ -40,6 +40,7 @@ use crate::QueryId;
 use crate::{ReplicationFilter, ReplicationFilters, ReplicatorInfo};
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use rapidhash::{HashMapExt, HashSetExt};
 
 use super::authorizer::RuntimeAuthorizer;
 use super::{
@@ -363,14 +364,12 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         subscriptions: SyncSubscriptionState {
             mutation: Arc::new(tokio::sync::Mutex::new(())),
             subscribed_collections: Arc::new(tokio::sync::RwLock::new(
-                std::collections::HashSet::new(),
+                rapidhash::RapidHashSet::new(),
             )),
-            retrying_subscribes: Arc::new(
-                tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            retrying_subscribes: Arc::new(tokio::sync::Mutex::new(rapidhash::RapidHashSet::new())),
+            retrying_unsubscribes: Arc::new(
+                tokio::sync::Mutex::new(rapidhash::RapidHashSet::new()),
             ),
-            retrying_unsubscribes: Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashSet::new(),
-            )),
             collection_store: Arc::new(NoOpCollectionStorage),
             head_provider,
         },
@@ -634,7 +633,7 @@ impl Blockstore for ConflictOnceBlockstore {
 struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
-    replicators: Arc<RwLock<std::collections::HashMap<String, Vec<String>>>>,
+    replicators: Arc<RwLock<rapidhash::RapidHashMap<String, Vec<String>>>>,
     connected_peers: Arc<RwLock<Vec<PeerId>>>,
     doc_sync_replies: Arc<RwLock<Vec<DocSyncReply>>>,
     car_responses: Arc<RwLock<Vec<Vec<u8>>>>,
@@ -651,7 +650,7 @@ impl NoopTransport {
         Self {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
-            replicators: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            replicators: Arc::new(RwLock::new(rapidhash::RapidHashMap::new())),
             connected_peers: Arc::new(RwLock::new(Vec::new())),
             doc_sync_replies: Arc::new(RwLock::new(Vec::new())),
             car_responses: Arc::new(RwLock::new(Vec::new())),
@@ -2030,7 +2029,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
     });
     let coordinator = Arc::new(coordinator);
 
-    let receiver_blocks = Arc::new(RwLock::new(std::collections::HashSet::new()));
+    let receiver_blocks = Arc::new(RwLock::new(rapidhash::RapidHashSet::new()));
     let root_acked = Arc::new(AtomicBool::new(false));
     transport.set_two_stream_handler(Arc::new({
         let receiver_blocks = Arc::clone(&receiver_blocks);
@@ -4059,11 +4058,11 @@ async fn doc_sync_reply_starts_independent_dag_roots_concurrently() {
     .await
     .expect("a stalled first root must not block the second root");
 
-    let requested: std::collections::HashSet<_> =
+    let requested: rapidhash::RapidHashSet<_> =
         transport_handle.car_requests().into_iter().collect();
     assert_eq!(
         requested,
-        std::collections::HashSet::from([first_root, second_root])
+        rapidhash::RapidHashSet::from_iter([first_root, second_root])
     );
 }
 

@@ -1,6 +1,6 @@
 use db::read::lensed::autocommit::LensedAutoCommitFetcher;
 use lens::TargetedHistoryLink;
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -18,7 +18,7 @@ async fn unknown_document_version_passes_through() {
             schema::FieldKind::string(),
         )],
     ));
-    let history = Some(HashMap::from([
+    let history = Some(RapidHashMap::from_iter([
         (
             "v1".to_string(),
             TargetedHistoryLink::new("v1", "users-collection").with_next("v2"),

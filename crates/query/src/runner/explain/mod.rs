@@ -4,6 +4,7 @@ mod mutation;
 mod select;
 
 use identity::Did;
+use rapidhash::RapidHashMap;
 use serde_json::Value as JsonValue;
 
 use crate::error::Result;
@@ -51,7 +52,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         query: &str,
         caller_identity: Option<Did>,
         explain_type: ExplainType,
-        variables: Option<&std::collections::HashMap<String, JsonValue>>,
+        variables: Option<&RapidHashMap<String, JsonValue>>,
     ) -> Result<JsonValue> {
         match explain_type {
             ExplainType::Simple | ExplainType::Debug => {

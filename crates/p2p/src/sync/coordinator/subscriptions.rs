@@ -6,6 +6,8 @@ use futures::{stream, StreamExt};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rapidhash::HashSetExt;
+
 use super::SyncCoordinator;
 use crate::error::Result;
 use crate::transport::P2PTransport;
@@ -35,7 +37,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn subscribe_collections(&self, collection_ids: &[String]) -> Result<usize> {
         let _mutation = self.subscriptions.mutation.lock().await;
 
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rapidhash::RapidHashSet::new();
         let requested = collection_ids
             .iter()
             .filter(|collection_id| seen.insert((*collection_id).clone()))
@@ -51,7 +53,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .get_all_collections()
             .await?
             .into_iter()
-            .collect::<std::collections::HashSet<_>>();
+            .collect::<rapidhash::RapidHashSet<_>>();
         let desired_missing = requested
             .iter()
             .filter(|collection_id| !desired.contains(collection_id.as_str()))
@@ -158,7 +160,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub async fn unsubscribe_collections(&self, collection_ids: &[String]) -> Result<usize> {
         let _mutation = self.subscriptions.mutation.lock().await;
 
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rapidhash::RapidHashSet::new();
         let requested = collection_ids
             .iter()
             .filter(|collection_id| seen.insert((*collection_id).clone()))
@@ -530,7 +532,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -560,17 +562,17 @@ mod tests {
     struct RecordingTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
-        subscribed: Arc<Mutex<HashSet<String>>>,
-        fail_subscribe: Arc<Mutex<HashSet<String>>>,
-        fail_subscribe_remaining: Arc<Mutex<HashMap<String, usize>>>,
-        fail_unsubscribe_remaining: Arc<Mutex<HashMap<String, usize>>>,
+        subscribed: Arc<Mutex<RapidHashSet<String>>>,
+        fail_subscribe: Arc<Mutex<RapidHashSet<String>>>,
+        fail_subscribe_remaining: Arc<Mutex<RapidHashMap<String, usize>>>,
+        fail_unsubscribe_remaining: Arc<Mutex<RapidHashMap<String, usize>>>,
         unsubscribe_started: Option<Arc<tokio::sync::Notify>>,
         unsubscribe_release: Option<Arc<tokio::sync::Notify>>,
         subscribe_calls: Arc<AtomicUsize>,
         subscribe_delay: Duration,
         subscribe_in_flight: Arc<AtomicUsize>,
         max_subscribe_in_flight: Arc<AtomicUsize>,
-        replicators: Arc<Mutex<HashMap<String, Vec<String>>>>,
+        replicators: Arc<Mutex<RapidHashMap<String, Vec<String>>>>,
     }
 
     impl RecordingTransport {
@@ -578,17 +580,17 @@ mod tests {
             Self {
                 peer_id: PeerId::new(peer_id.to_string()),
                 pubkey: vec![1, 2, 3],
-                subscribed: Arc::new(Mutex::new(HashSet::new())),
-                fail_subscribe: Arc::new(Mutex::new(HashSet::new())),
-                fail_subscribe_remaining: Arc::new(Mutex::new(HashMap::new())),
-                fail_unsubscribe_remaining: Arc::new(Mutex::new(HashMap::new())),
+                subscribed: Arc::new(Mutex::new(RapidHashSet::new())),
+                fail_subscribe: Arc::new(Mutex::new(RapidHashSet::new())),
+                fail_subscribe_remaining: Arc::new(Mutex::new(RapidHashMap::new())),
+                fail_unsubscribe_remaining: Arc::new(Mutex::new(RapidHashMap::new())),
                 unsubscribe_started: None,
                 unsubscribe_release: None,
                 subscribe_calls: Arc::new(AtomicUsize::new(0)),
                 subscribe_delay: Duration::ZERO,
                 subscribe_in_flight: Arc::new(AtomicUsize::new(0)),
                 max_subscribe_in_flight: Arc::new(AtomicUsize::new(0)),
-                replicators: Arc::new(Mutex::new(HashMap::new())),
+                replicators: Arc::new(Mutex::new(RapidHashMap::new())),
             }
         }
 
@@ -938,7 +940,7 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingCollectionStore {
-        collections: Mutex<HashSet<String>>,
+        collections: Mutex<RapidHashSet<String>>,
         add_batches: AtomicUsize,
         remove_batches: AtomicUsize,
     }
@@ -948,7 +950,7 @@ mod tests {
             self.add_batches.load(Ordering::Relaxed)
         }
 
-        fn collections(&self) -> HashSet<String> {
+        fn collections(&self) -> RapidHashSet<String> {
             self.collections.lock().unwrap().clone()
         }
 
@@ -1111,7 +1113,7 @@ mod tests {
                 .await
                 .unwrap()
                 .into_iter()
-                .collect::<HashSet<_>>(),
+                .collect::<RapidHashSet<_>>(),
             collections.iter().cloned().collect(),
             "list reports durable desired state even while one live install needs healing"
         );

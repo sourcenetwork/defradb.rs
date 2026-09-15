@@ -532,7 +532,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
             None => vec![*root_cid],
         };
-        let missing: std::collections::HashSet<_> = missing.into_iter().collect();
+        let missing: rapidhash::RapidHashSet<_> = missing.into_iter().collect();
         // A peer's notice is only meaningful for a CID in our own missing
         // frontier. It must not veto a complete DAG or an unrelated document.
         if let Some((cid, size)) = oversized.iter().find(|(cid, _)| missing.contains(cid)) {

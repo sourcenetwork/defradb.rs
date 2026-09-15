@@ -10,8 +10,8 @@
 //! - `parse_json_vector()` - Parse vector from JSON array
 
 use graphql_parser::query::{Field, Value};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
 
 use crate::error::{QueryError, Result};
 use crate::mapper::{parse_mutation_name, FullTextSearch, Mutation, MutationType, Similarity};
@@ -26,7 +26,7 @@ use super::values::{graphql_value_to_json, parse_doc_ids_value};
 /// Examples: `create_Users`, `update_Posts`, `delete_Comments`
 pub(super) fn parse_field_to_mutation(
     field: &Field<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Mutation> {
     let field_name = &field.name;
 
@@ -233,8 +233,8 @@ pub(super) fn parse_field_to_mutation(
 
     // Parse selection set (fields to return after mutation)
     // For mutations, we don't support fragments in return fields
-    let empty_fragments: FragmentMap<'_> = HashMap::new();
-    let mut empty_visiting = HashSet::new();
+    let empty_fragments: FragmentMap<'_> = RapidHashMap::new();
+    let mut empty_visiting = RapidHashSet::new();
     let (fields, mapping) = parse_selection_set(
         &field.selection_set,
         &collection_name,
@@ -260,9 +260,9 @@ pub(super) fn parse_field_to_mutation(
 /// Parse CREATE mutation input (array of documents).
 fn parse_create_input(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     collection_name: &str,
-) -> Result<Vec<HashMap<String, JsonValue>>> {
+) -> Result<Vec<RapidHashMap<String, JsonValue>>> {
     match value {
         Value::List(items) => {
             let mut docs = Vec::new();
@@ -304,7 +304,7 @@ fn parse_create_input(
                     let mut docs = Vec::new();
                     for item in items {
                         if let JsonValue::Object(obj) = item {
-                            let doc: HashMap<String, JsonValue> =
+                            let doc: RapidHashMap<String, JsonValue> =
                                 obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                             docs.push(doc);
                         } else if item.is_null() {
@@ -319,7 +319,7 @@ fn parse_create_input(
                     Ok(docs)
                 }
                 JsonValue::Object(obj) => {
-                    let doc: HashMap<String, JsonValue> =
+                    let doc: RapidHashMap<String, JsonValue> =
                         obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                     Ok(vec![doc])
                 }
@@ -339,20 +339,20 @@ fn parse_create_input(
 /// Non-object input (e.g., array "patch") is treated as empty/no-op (Go compatibility).
 fn parse_update_input(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
-) -> Result<HashMap<String, JsonValue>> {
+    variables: Option<&RapidHashMap<String, JsonValue>>,
+) -> Result<RapidHashMap<String, JsonValue>> {
     match value {
         Value::Object(obj) => parse_document_input(obj, variables),
-        _ => Ok(HashMap::new()),
+        _ => Ok(RapidHashMap::new()),
     }
 }
 
 /// Parse a document input object into field-value map.
 fn parse_document_input(
     obj: &std::collections::BTreeMap<String, Value<'_, String>>,
-    variables: Option<&HashMap<String, JsonValue>>,
-) -> Result<HashMap<String, JsonValue>> {
-    let mut fields = HashMap::new();
+    variables: Option<&RapidHashMap<String, JsonValue>>,
+) -> Result<RapidHashMap<String, JsonValue>> {
+    let mut fields = RapidHashMap::new();
     for (key, value) in obj {
         let json_value = graphql_value_to_json(value, variables)?;
         fields.insert(key.clone(), json_value);
@@ -365,7 +365,7 @@ fn parse_document_input(
 /// Format: `BM25(query: "search terms", fields: ["title", "body"])`
 pub(super) fn parse_bm25_field(
     field: &Field<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<FullTextSearch> {
     let mut query_str = None;
     let mut fields = Vec::new();
@@ -439,7 +439,7 @@ pub(super) fn parse_bm25_field(
 /// field.
 pub(super) fn parse_similarity_field(
     field: &Field<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Similarity> {
     if field.arguments.is_empty() {
         return Err(QueryError::parse("_similarity requires a field argument"));
@@ -516,7 +516,7 @@ fn parse_json_metric(value: &JsonValue) -> Result<schema::DistanceMetric> {
 /// Parse a vector value from a GraphQL list literal.
 fn parse_vector_value(
     value: &Value<'_, String>,
-    _variables: Option<&HashMap<String, JsonValue>>,
+    _variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Vec<f64>> {
     match value {
         Value::List(items) => {

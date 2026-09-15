@@ -8,7 +8,8 @@
 mod memory;
 mod operations;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use std::collections::VecDeque;
 use std::time::Duration;
 use web_time::Instant;
 
@@ -31,11 +32,11 @@ const DEFAULT_MAX_PEERS: usize = 1_000;
 #[derive(Debug)]
 pub(super) struct PeerInfo {
     /// CIDs this peer has announced or we've sent to them
-    pub(super) known_cids: HashSet<Cid>,
+    pub(super) known_cids: RapidHashSet<Cid>,
     /// Insertion order for LRU eviction (oldest first)
     pub(super) cid_order: VecDeque<Cid>,
     /// Collections this peer is subscribed to
-    pub(super) subscribed_collections: HashSet<String>,
+    pub(super) subscribed_collections: RapidHashSet<String>,
     /// When we last heard from this peer
     pub(super) last_seen: Instant,
     /// Whether peer is currently connected
@@ -45,9 +46,9 @@ pub(super) struct PeerInfo {
 impl PeerInfo {
     pub(super) fn new() -> Self {
         Self {
-            known_cids: HashSet::new(),
+            known_cids: RapidHashSet::new(),
             cid_order: VecDeque::new(),
-            subscribed_collections: HashSet::new(),
+            subscribed_collections: RapidHashSet::new(),
             last_seen: Instant::now(),
             connected: false,
         }
@@ -109,7 +110,7 @@ impl PeerInfo {
 /// - `max_peers`: Maximum number of tracked peers (oldest disconnected peers evicted)
 pub struct PeerStateTracker {
     /// Per-peer state
-    pub(super) peers: RwLock<HashMap<String, PeerInfo>>,
+    pub(super) peers: RwLock<RapidHashMap<String, PeerInfo>>,
     /// How long to keep peer info after disconnect
     pub(super) peer_ttl: Duration,
     /// Maximum CIDs to track per peer (prevents memory exhaustion)
@@ -130,7 +131,7 @@ impl PeerStateTracker {
     /// Create a new peer state tracker with default settings.
     pub fn new() -> Self {
         Self {
-            peers: RwLock::new(HashMap::new()),
+            peers: RwLock::new(RapidHashMap::new()),
             peer_ttl: Duration::from_secs(3600), // 1 hour default
             max_cids_per_peer: DEFAULT_MAX_CIDS_PER_PEER,
             max_total_cids: DEFAULT_MAX_TOTAL_CIDS,
@@ -141,7 +142,7 @@ impl PeerStateTracker {
     /// Create with custom peer TTL.
     pub fn with_ttl(peer_ttl: Duration) -> Self {
         Self {
-            peers: RwLock::new(HashMap::new()),
+            peers: RwLock::new(RapidHashMap::new()),
             peer_ttl,
             max_cids_per_peer: DEFAULT_MAX_CIDS_PER_PEER,
             max_total_cids: DEFAULT_MAX_TOTAL_CIDS,
@@ -170,7 +171,7 @@ impl PeerStateTracker {
             max_cids_per_peer
         };
         Self {
-            peers: RwLock::new(HashMap::new()),
+            peers: RwLock::new(RapidHashMap::new()),
             peer_ttl,
             max_cids_per_peer: max_cids,
             max_total_cids: DEFAULT_MAX_TOTAL_CIDS,
@@ -217,7 +218,7 @@ impl PeerStateTracker {
             max_peers
         };
         Self {
-            peers: RwLock::new(HashMap::new()),
+            peers: RwLock::new(RapidHashMap::new()),
             peer_ttl,
             max_cids_per_peer: max_cids,
             max_total_cids: max_total,

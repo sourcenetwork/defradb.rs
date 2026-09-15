@@ -17,7 +17,7 @@ use lens::TransformStore;
 use lens::UnsupportedTransformStore;
 #[cfg(feature = "wasmtime-runtime")]
 use lens::WasmTransformStore;
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -195,23 +195,23 @@ pub struct DB<S: Store> {
     /// Whether the database has been closed.
     closed: AtomicBool,
     /// In-memory collection cache (name -> Collection).
-    pub(crate) collections: RwLock<HashMap<String, Collection>>,
+    pub(crate) collections: RwLock<RapidHashMap<String, Collection>>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
     pub lens_store: Arc<dyn TransformStore>,
     /// Pending migrations registered before their destination version exists.
     /// Maps dest_version_id -> (source_version_id, transform_id_string).
-    pub(crate) pending_migrations: RwLock<HashMap<String, (String, String)>>,
+    pub(crate) pending_migrations: RwLock<RapidHashMap<String, (String, String)>>,
     /// Schema definition headstore: tracks latest CID and height per collection.
     /// Emulates Go's persistent headstore for CID computation during patching.
     /// Key: collection name, Value: (sorted heads as CIDs, max height)
-    pub(crate) schema_heads: RwLock<HashMap<String, (Vec<Cid>, u64)>>,
+    pub(crate) schema_heads: RwLock<RapidHashMap<String, (Vec<Cid>, u64)>>,
     /// Collection IDs whose last local version has been deleted.
     ///
     /// Go's collection repository forbids these immediately, including for
     /// transactions that started before the deletion committed.
-    pub(crate) forbidden_collection_ids: RwLock<HashSet<String>>,
+    pub(crate) forbidden_collection_ids: RwLock<RapidHashSet<String>>,
     /// Optional KMS service. When set, the document write path generates
     /// encrypted-field DEKs through the KMS (which persists them in its
     /// KeyStore for cross-peer serving) instead of inline-and-blockstore.
@@ -243,7 +243,7 @@ pub struct DB<S: Store> {
     /// operations running in this database instance.
     pub active_actions: Arc<crate::database::action::ActionRegistry>,
     /// Per-collection locks coordinating document writes with schema changes.
-    pub(crate) collection_locks: Mutex<HashMap<String, Arc<async_lock::RwLock<()>>>>,
+    pub(crate) collection_locks: Mutex<RapidHashMap<String, Arc<async_lock::RwLock<()>>>>,
 }
 
 impl<S: Store> DB<S> {
@@ -270,18 +270,18 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: RwLock::new(HashMap::new()),
+            collections: RwLock::new(RapidHashMap::new()),
             event_bus: None,
             lens_store,
-            pending_migrations: RwLock::new(HashMap::new()),
-            schema_heads: RwLock::new(HashMap::new()),
-            forbidden_collection_ids: RwLock::new(HashSet::new()),
+            pending_migrations: RwLock::new(RapidHashMap::new()),
+            schema_heads: RwLock::new(RapidHashMap::new()),
+            forbidden_collection_ids: RwLock::new(RapidHashSet::new()),
             kms: std::sync::OnceLock::new(),
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
-            collection_locks: Mutex::new(HashMap::new()),
+            collection_locks: Mutex::new(RapidHashMap::new()),
         })
     }
 
@@ -333,18 +333,18 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: RwLock::new(HashMap::new()),
+            collections: RwLock::new(RapidHashMap::new()),
             event_bus: None,
             lens_store,
-            pending_migrations: RwLock::new(HashMap::new()),
-            schema_heads: RwLock::new(HashMap::new()),
-            forbidden_collection_ids: RwLock::new(HashSet::new()),
+            pending_migrations: RwLock::new(RapidHashMap::new()),
+            schema_heads: RwLock::new(RapidHashMap::new()),
+            forbidden_collection_ids: RwLock::new(RapidHashSet::new()),
             kms: std::sync::OnceLock::new(),
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
-            collection_locks: Mutex::new(HashMap::new()),
+            collection_locks: Mutex::new(RapidHashMap::new()),
         })
     }
 

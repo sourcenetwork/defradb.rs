@@ -1,6 +1,6 @@
 //! Short-window coalescing for rapid document and collection gossip updates (#1102).
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -35,7 +35,7 @@ struct PendingBroadcast {
 }
 
 pub(crate) struct BroadcastCoalescer {
-    pending: Mutex<HashMap<BroadcastKey, Arc<PendingBroadcast>>>,
+    pending: Mutex<RapidHashMap<BroadcastKey, Arc<PendingBroadcast>>>,
     window: Duration,
     max_delay: Duration,
     coalesced: AtomicU64,
@@ -89,7 +89,7 @@ impl BroadcastCoalescer {
 
     fn with_limits(window: Duration, max_delay: Duration) -> Self {
         Self {
-            pending: Mutex::new(HashMap::new()),
+            pending: Mutex::new(RapidHashMap::new()),
             window,
             max_delay,
             coalesced: AtomicU64::new(0),

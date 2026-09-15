@@ -2,8 +2,9 @@ use super::types::*;
 use crate::error::{Error, Result};
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use document::NormalValue;
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use schema::{CollectionVersion, QuerySource, ScalarKind};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
 pub(super) fn supported_downsample_aggregate_fields() -> [AggregateField; 5] {
     [
@@ -263,7 +264,7 @@ pub(super) fn parse_downsample_source_query(
             Error::Other("downsample source queries must list selected fields".to_string())
         })?;
 
-    let mut selected_fields = HashSet::new();
+    let mut selected_fields = RapidHashSet::new();
     for field in fields {
         if field.get("Fields").is_some() || field.get("Targets").is_some() {
             return Err(Error::Other(
@@ -300,9 +301,9 @@ pub(super) fn parse_downsample_source_query(
 
 pub(super) fn group_commit_values_by_height(
     commits: Vec<document::Document>,
-    fields: &HashSet<&str>,
-) -> BTreeMap<u64, HashMap<String, NormalValue>> {
-    let mut values_by_height: BTreeMap<u64, HashMap<String, NormalValue>> = BTreeMap::new();
+    fields: &RapidHashSet<&str>,
+) -> BTreeMap<u64, RapidHashMap<String, NormalValue>> {
+    let mut values_by_height: BTreeMap<u64, RapidHashMap<String, NormalValue>> = BTreeMap::new();
 
     for commit in commits {
         let Some(field_name) = commit.get("fieldName").and_then(|value| value.as_str()) else {

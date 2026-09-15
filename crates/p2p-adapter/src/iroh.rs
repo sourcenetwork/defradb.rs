@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use crate::transport_doc_pusher::TransportDocPusher;
 use crate::transport_version_syncer::TransportVersionSyncer;
@@ -30,8 +30,8 @@ pub struct IrohP2PAdapter<B: Blockstore + 'static> {
     event_bus: Option<Arc<dyn events::Bus>>,
     version_syncer: Option<Arc<dyn TransportVersionSyncer>>,
     replicator_push_options: ReplicatorPushOptionsState,
-    peer_addresses: Arc<std::sync::RwLock<HashMap<String, String>>>,
-    tracked_documents: Arc<std::sync::RwLock<HashSet<String>>>,
+    peer_addresses: Arc<std::sync::RwLock<RapidHashMap<String, String>>>,
+    tracked_documents: Arc<std::sync::RwLock<RapidHashSet<String>>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
 }
 
@@ -99,8 +99,8 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             event_bus: Some(event_bus),
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
+            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
             nac_checker: Some(nac_checker),
         }
     }
@@ -180,7 +180,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
         ))
     }
 
-    pub fn set_initial_tracked_documents(&self, docs: HashSet<String>) {
+    pub fn set_initial_tracked_documents(&self, docs: RapidHashSet<String>) {
         if let Ok(mut tracked) = self.tracked_documents.write() {
             *tracked = docs;
         }
@@ -198,8 +198,8 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             event_bus: None,
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
+            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
             nac_checker: None,
         }
     }
@@ -455,7 +455,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 .validate_replication_filters(&replication_filters)?;
         }
 
-        let requested_collections: HashSet<String> = collection_cids.iter().cloned().collect();
+        let requested_collections: RapidHashSet<String> = collection_cids.iter().cloned().collect();
         let validated_capabilities = crate::validate_explicit_replay_capabilities(
             explicit_replay_capabilities,
             expected_authorizer_did,
@@ -486,7 +486,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         // skip the expensive initial replay when the replicator already exists
         // with the same collections (idempotent reconnect path).
         let (existing_collection_ids, existing_filters): (
-            HashSet<String>,
+            RapidHashSet<String>,
             p2p::ReplicationFilters,
         ) = {
             let result = if let Some(ref coordinator) = self.sync_coordinator {
@@ -502,14 +502,14 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             };
             match result {
                 Ok(Some(info)) => (info.collections.into_iter().collect(), info.filters),
-                Ok(None) => (HashSet::new(), p2p::ReplicationFilters::new()),
+                Ok(None) => (RapidHashSet::new(), p2p::ReplicationFilters::new()),
                 Err(e) => {
                     tracing::warn!(
                         peer_id = %peer_id,
                         error = %e,
                         "Failed to check existing replicator state; falling back to full replay"
                     );
-                    (HashSet::new(), p2p::ReplicationFilters::new())
+                    (RapidHashSet::new(), p2p::ReplicationFilters::new())
                 }
             }
         };
@@ -1286,8 +1286,8 @@ mod tests {
             event_bus: Some(Arc::new(events::ChannelBus::default())),
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
+            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
             nac_checker: None,
         };
 

@@ -1,6 +1,6 @@
 //! Public-DocID tie-break for equal index keys (#1602).
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 
 use document::NormalValue;
 use query::planner::index_selection::IndexScanType;
@@ -14,7 +14,7 @@ use storage::index::IndexEntry;
 pub(crate) fn extend_equal_key_groups(
     all: &mut Vec<u64>,
     group_lens: &mut Vec<usize>,
-    seen: &mut HashSet<u64>,
+    seen: &mut RapidHashSet<u64>,
     entries: impl IntoIterator<Item = IndexEntry>,
 ) {
     let mut key: Option<Vec<NormalValue>> = None;
@@ -99,6 +99,7 @@ pub(crate) fn apply_equal_key_doc_id_tie_break(
 mod tests {
     use super::*;
     use query::planner::index_selection::IndexScanType;
+    use rapidhash::HashSetExt;
     use storage::index::Bound;
 
     fn exact() -> IndexScanType {
@@ -167,7 +168,7 @@ mod tests {
     fn a_prefix_scan_splits_into_one_group_per_full_key() {
         let mut all = Vec::new();
         let mut lens = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         extend_equal_key_groups(
             &mut all,
             &mut lens,
@@ -187,7 +188,7 @@ mod tests {
     fn a_deduped_entry_does_not_count_toward_its_group() {
         let mut all = Vec::new();
         let mut lens = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         extend_equal_key_groups(
             &mut all,
             &mut lens,

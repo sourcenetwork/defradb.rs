@@ -10,9 +10,9 @@
 //! - [`ManageQueryCorrelator`] for read-only query operations (typed reply via [`ManageQueryReply`]).
 //!
 //! Both mirror the SE query correlator ([`crate::se_correlator`]) exactly:
-//! a shared `Arc<Mutex<HashMap>>` + Drop-cleanup guard, keyed by message-ID `String`.
+//! a shared `Arc<Mutex<RapidHashMap>>` + Drop-cleanup guard, keyed by message-ID `String`.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -29,7 +29,7 @@ use crate::message::{ManageQueryReply, ManageReply};
 /// event loop that receives replies. Cheap to clone into tasks.
 #[derive(Clone, Default)]
 pub struct ManageCorrelator {
-    ongoing: Arc<Mutex<HashMap<String, oneshot::Sender<ManageReply>>>>,
+    ongoing: Arc<Mutex<RapidHashMap<String, oneshot::Sender<ManageReply>>>>,
 }
 
 /// Handle for a registered manage request. The correlator slot is removed when
@@ -110,7 +110,7 @@ impl ManageCorrelator {
 /// event loop that receives replies. Cheap to clone into tasks.
 #[derive(Clone, Default)]
 pub struct ManageQueryCorrelator {
-    ongoing: Arc<Mutex<HashMap<String, oneshot::Sender<ManageQueryReply>>>>,
+    ongoing: Arc<Mutex<RapidHashMap<String, oneshot::Sender<ManageQueryReply>>>>,
 }
 
 /// Handle for a registered manage-query request. The correlator slot is

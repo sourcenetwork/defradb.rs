@@ -1,5 +1,5 @@
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::document::{DocumentMapping, RenderKey};
@@ -154,7 +154,8 @@ impl GroupByNode {
     ) -> JsonValue {
         // Sub-group documents by the inner groupBy field values
         let mut sub_groups: Vec<Vec<&Doc>> = Vec::new();
-        let mut sub_group_map: HashMap<String, usize> = HashMap::with_capacity(docs.len().min(256));
+        let mut sub_group_map: RapidHashMap<String, usize> =
+            RapidHashMap::with_capacity(docs.len().min(256));
         let mut key_buf = String::with_capacity(self.inner_group_by_fields.len() * 16);
 
         for doc in docs {
@@ -299,7 +300,8 @@ impl GroupByNode {
     ) -> JsonValue {
         // Sub-group documents by the third-level groupBy fields
         let mut sub_groups: Vec<Vec<&Doc>> = Vec::new();
-        let mut sub_group_map: HashMap<String, usize> = HashMap::with_capacity(docs.len().min(256));
+        let mut sub_group_map: RapidHashMap<String, usize> =
+            RapidHashMap::with_capacity(docs.len().min(256));
         let mut key_buf = String::with_capacity(self.third_level_group_by_fields.len() * 16);
 
         for doc in docs {
@@ -373,7 +375,8 @@ impl GroupByNode {
 
         // Sub-group documents by the sub-grouping field values
         let mut sub_groups: Vec<Vec<&Doc>> = Vec::new();
-        let mut sub_group_map: HashMap<String, usize> = HashMap::with_capacity(docs.len().min(256));
+        let mut sub_group_map: RapidHashMap<String, usize> =
+            RapidHashMap::with_capacity(docs.len().min(256));
         let mut key_buf = String::with_capacity(sub_group_fields.len() * 16);
 
         for doc in docs {

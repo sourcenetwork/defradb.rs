@@ -1,8 +1,7 @@
 //! Document type for DefraDB
 
-use std::collections::HashMap;
-
 use cid::Cid;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{CType, CollectionVersion};
 use serde::{Deserialize, Serialize};
 
@@ -31,10 +30,10 @@ pub struct Document {
 
     /// Field definitions (name -> Field)
     #[serde(skip)]
-    fields: HashMap<String, Field>,
+    fields: RapidHashMap<String, Field>,
 
     /// Field values (field name -> FieldValue)
-    values: HashMap<String, FieldValue>,
+    values: RapidHashMap<String, FieldValue>,
 
     /// Current head CID (after save)
     #[serde(skip)]
@@ -66,7 +65,7 @@ pub struct Document {
     /// For counter CRDT fields, the block builder needs the raw increment
     /// (not the accumulated value). Populated during UpdateInput::apply_to.
     #[serde(skip)]
-    counter_deltas: HashMap<String, NormalValue>,
+    counter_deltas: RapidHashMap<String, NormalValue>,
 }
 
 impl Document {
@@ -74,14 +73,14 @@ impl Document {
     pub fn new() -> Self {
         Self {
             id: None,
-            fields: HashMap::new(),
-            values: HashMap::new(),
+            fields: RapidHashMap::new(),
+            values: RapidHashMap::new(),
             head: None,
             is_dirty: true,
             collection: None,
             schema_version_id: None,
             deleted: false,
-            counter_deltas: HashMap::new(),
+            counter_deltas: RapidHashMap::new(),
         }
     }
 
@@ -90,14 +89,14 @@ impl Document {
         let version_id = collection.version_id.clone();
         Self {
             id: None,
-            fields: HashMap::new(),
-            values: HashMap::new(),
+            fields: RapidHashMap::new(),
+            values: RapidHashMap::new(),
             head: None,
             is_dirty: true,
             collection: Some(collection),
             schema_version_id: Some(version_id),
             deleted: false,
-            counter_deltas: HashMap::new(),
+            counter_deltas: RapidHashMap::new(),
         }
     }
 
@@ -105,20 +104,20 @@ impl Document {
     pub fn with_id(id: DocID) -> Self {
         Self {
             id: Some(id),
-            fields: HashMap::new(),
-            values: HashMap::new(),
+            fields: RapidHashMap::new(),
+            values: RapidHashMap::new(),
             head: None,
             is_dirty: true,
             collection: None,
             schema_version_id: None,
             deleted: false,
-            counter_deltas: HashMap::new(),
+            counter_deltas: RapidHashMap::new(),
         }
     }
 
     /// Create a document from a JSON byte slice.
     pub fn from_json(json: &[u8]) -> Result<Self> {
-        let map: HashMap<String, serde_json::Value> = serde_json::from_slice(json)?;
+        let map: RapidHashMap<String, serde_json::Value> = serde_json::from_slice(json)?;
         Self::from_map(map)
     }
 
@@ -128,7 +127,7 @@ impl Document {
     }
 
     /// Create a document from a map of values.
-    pub fn from_map(mut map: HashMap<String, serde_json::Value>) -> Result<Self> {
+    pub fn from_map(mut map: RapidHashMap<String, serde_json::Value>) -> Result<Self> {
         let mut doc = Document::new();
 
         // Check for special _docID field
@@ -324,12 +323,12 @@ impl Document {
     }
 
     /// Get all fields.
-    pub fn fields(&self) -> &HashMap<String, Field> {
+    pub fn fields(&self) -> &RapidHashMap<String, Field> {
         &self.fields
     }
 
     /// Get all values.
-    pub fn values(&self) -> &HashMap<String, FieldValue> {
+    pub fn values(&self) -> &RapidHashMap<String, FieldValue> {
         &self.values
     }
 
@@ -355,8 +354,8 @@ impl Document {
     ///
     /// Returns an error if any field contains non-finite floats (NaN, Infinity),
     /// matching Go's encoding/json behavior.
-    pub fn to_map(&self) -> Result<HashMap<String, serde_json::Value>> {
-        let mut map = HashMap::new();
+    pub fn to_map(&self) -> Result<RapidHashMap<String, serde_json::Value>> {
+        let mut map = RapidHashMap::new();
 
         if let Some(ref id) = self.id {
             map.insert(

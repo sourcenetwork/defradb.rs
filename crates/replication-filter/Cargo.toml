@@ -16,6 +16,7 @@ p2p = { path = "../p2p" }
 query = { path = "../query" }
 schema = { path = "../schema" }
 
+rapidhash.workspace = true
 serde_json.workspace = true
 
 [lints]

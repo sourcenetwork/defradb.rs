@@ -1,8 +1,8 @@
 //! QueryExecutor trait implementation for QueryRunner.
 
 use async_trait::async_trait;
+use rapidhash::RapidHashMap;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 use std::future::Future;
 use tracing::{instrument, warn};
 
@@ -91,8 +91,8 @@ async fn check_nac<F: DocFetcher + 'static, R: crate::txn::TransactionRegistry>(
 
 /// Convert JSON variables from request format to parser format.
 /// Variables in requests are `Option<JsonValue>` (a JSON object), but the
-/// parser expects `Option<HashMap<String, JsonValue>>`.
-fn convert_variables(variables: &Option<JsonValue>) -> Option<HashMap<String, JsonValue>> {
+/// parser expects `Option<RapidHashMap<String, JsonValue>>`.
+fn convert_variables(variables: &Option<JsonValue>) -> Option<RapidHashMap<String, JsonValue>> {
     variables.as_ref().and_then(|v| {
         if let JsonValue::Object(map) = v {
             Some(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -111,7 +111,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         fields(query_len = request.query.len())
     )]
     async fn execute(&self, request: QueryRequest) -> QueryResponse {
-        // Convert variables from JSON to HashMap format for the parser
+        // Convert variables from JSON to RapidHashMap format for the parser
         let variables = convert_variables(&request.variables);
 
         // First, parse the request to determine if it's a query or mutation
@@ -339,7 +339,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
             None => None,
         };
 
-        // Convert variables from JSON to HashMap format for the parser
+        // Convert variables from JSON to RapidHashMap format for the parser
         let variables = convert_variables(&request.variables);
 
         // Parse the request to determine if it's a query or mutation

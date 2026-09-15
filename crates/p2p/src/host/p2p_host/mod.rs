@@ -8,7 +8,7 @@ mod protocols;
 mod swarm;
 mod two_stream;
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -244,7 +244,7 @@ pub struct P2PHost<S: Store> {
     pub(super) command_rx: mpsc::Receiver<HostCommand>,
     pub(super) event_tx: mpsc::Sender<HostEvent>,
     shutdown_requested: bool,
-    pub(super) pending_requests: HashMap<
+    pub(super) pending_requests: RapidHashMap<
         request_response::OutboundRequestId,
         tokio::sync::oneshot::Sender<Result<PushLogReply>>,
     >,
@@ -257,10 +257,10 @@ pub struct P2PHost<S: Store> {
     /// Tracked spawned tasks for graceful shutdown
     pub(super) spawned_tasks: tokio::task::JoinSet<()>,
     /// Bitswap query abort handles for cancellation support
-    pub(super) bitswap_queries: HashMap<QueryId, tokio::task::AbortHandle>,
+    pub(super) bitswap_queries: RapidHashMap<QueryId, tokio::task::AbortHandle>,
     /// Per-peer addresses learned from connections and identify protocol.
     /// Used by ActivePeers to return full multiaddrs (Go-compatible).
-    pub(super) peer_addrs: HashMap<PeerId, Multiaddr>,
+    pub(super) peer_addrs: RapidHashMap<PeerId, Multiaddr>,
     /// Optional local DEFRA identity used for Go-compatible identity exchange.
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     /// Tracks established connections and actively prunes them after the
@@ -270,7 +270,7 @@ pub struct P2PHost<S: Store> {
     /// and flow through `HostEvent::GossipRawMessage` instead. Populated
     /// by `HostCommand::RegisterPubsubRpcTopic` when the coordinator wires
     /// up a `pubsub_rpc::TopicHandler` (#828).
-    pub(super) pubsub_rpc_topics: HashSet<String>,
+    pub(super) pubsub_rpc_topics: RapidHashSet<String>,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
@@ -584,20 +584,20 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             command_rx,
             event_tx,
             shutdown_requested: false,
-            pending_requests: HashMap::new(),
+            pending_requests: RapidHashMap::new(),
             replicators: Arc::clone(&replicators),
             two_stream_handler,
             two_stream_event_rx,
             spawned_tasks: tokio::task::JoinSet::new(),
-            bitswap_queries: HashMap::new(),
-            peer_addrs: HashMap::new(),
+            bitswap_queries: RapidHashMap::new(),
+            peer_addrs: RapidHashMap::new(),
             node_identity,
             connection_manager: ActiveConnectionManager::new(
                 config.connection_manager_low_water,
                 config.connection_manager_high_water,
                 config.connection_manager_grace_period,
             ),
-            pubsub_rpc_topics: HashSet::new(),
+            pubsub_rpc_topics: RapidHashSet::new(),
         };
 
         Ok((host, handle, event_rx, replicators))

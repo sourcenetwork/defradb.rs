@@ -8,8 +8,7 @@ pub(crate) mod set_ops;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
-
+use rapidhash::RapidHashMap;
 use schema::ScalarKind;
 use sqlparser::ast::{ObjectName, Statement, TableFactor};
 use sqlparser::dialect::PostgreSqlDialect;
@@ -24,7 +23,7 @@ pub use params::{
 };
 
 /// Map of field name → scalar kind, used for schema-aware type coercion.
-pub type FieldTypeMap = HashMap<String, ScalarKind>;
+pub type FieldTypeMap = RapidHashMap<String, ScalarKind>;
 
 #[derive(Debug, PartialEq)]
 #[non_exhaustive]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -52,7 +52,7 @@ impl TransformStore for TxnLensStore {
         self.local.add_with_id(id, config).await
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, lens::LensModule>> {
+    async fn list(&self) -> lens::Result<RapidHashMap<String, lens::LensModule>> {
         let mut result = self.base.list().await?;
         result.extend(self.local.list().await?);
         Ok(result)

@@ -4,6 +4,8 @@
 //! ALPN is negotiated once per TLS handshake and so cannot vary per stream.
 
 use iroh::endpoint::{RecvStream, SendStream};
+#[cfg(test)]
+use rapidhash::HashSetExt;
 
 /// The single ALPN every Defra protocol is multiplexed over.
 pub const ALPN_MUX: &[u8] = b"/defra-iroh/mux/0.1";
@@ -223,7 +225,7 @@ mod tests {
 
     #[test]
     fn tags_are_distinct() {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rapidhash::RapidHashSet::new();
         for tag in ALL_STREAM_TAGS {
             assert!(
                 seen.insert(*tag),

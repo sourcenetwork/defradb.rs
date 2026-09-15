@@ -2,14 +2,13 @@
 //!
 //! Route pattern: /api/v0/collections/{name}/indexes (collection in path).
 
-use std::collections::HashMap;
-
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
 use defra_core::{ActionExecution, ActionStatus};
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{http_error_from_backend_message, HttpError};
@@ -263,7 +262,7 @@ pub async fn go_delete_index(
 pub async fn go_list_all_indexes(
     State(state): State<AppState>,
     identity: ExtractIdentity,
-) -> Result<Json<HashMap<String, Vec<GoListIndexesResult>>>, HttpError> {
+) -> Result<Json<RapidHashMap<String, Vec<GoListIndexesResult>>>, HttpError> {
     require_permission(&state, &identity, NodePermission::IndexList).await?;
 
     let index_ops = state.require_index()?;
@@ -273,7 +272,7 @@ pub async fn go_list_all_indexes(
         .await
         .map_err(HttpError::Internal)?;
 
-    let mut grouped: HashMap<String, Vec<GoListIndexesResult>> = HashMap::new();
+    let mut grouped: RapidHashMap<String, Vec<GoListIndexesResult>> = RapidHashMap::new();
     for idx in indexes {
         let collection = idx.collection.clone();
         grouped

@@ -14,7 +14,7 @@
 //! default so the measurement is of the walk itself rather than the guard.
 
 use bytes::Bytes;
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::hint::black_box;
 use std::sync::Arc;
 
@@ -101,7 +101,7 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
     let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
     let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
     let identity = db::block::builder::DocStorageIdentity::new(1, 1);
-    let modified: HashSet<String> = field_names(field_count).into_iter().collect();
+    let modified: RapidHashSet<String> = field_names(field_count).into_iter().collect();
 
     let mut doc = make_document(field_count, 0);
     let mut result = db::block::builder::write_document_blocks(

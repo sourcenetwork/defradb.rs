@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use parking_lot::RwLock;
 
 /// In-memory cache of DAC policy documents, keyed by policy ID.
 pub struct PolicyStore {
-    policies: RwLock<HashMap<String, String>>,
+    policies: RwLock<RapidHashMap<String, String>>,
 }
 
 impl Default for PolicyStore {
@@ -17,7 +17,7 @@ impl PolicyStore {
     /// Create a new empty policy store.
     pub fn new() -> Self {
         Self {
-            policies: RwLock::new(HashMap::new()),
+            policies: RwLock::new(RapidHashMap::new()),
         }
     }
 

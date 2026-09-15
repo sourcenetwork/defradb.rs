@@ -44,8 +44,8 @@ pub(crate) async fn restore_libp2p_replicators<S: storage::corekv::Store + 'stat
 pub(crate) async fn restore_libp2p_documents<S: storage::corekv::Store + 'static>(
     handle: &p2p::P2PHostHandle,
     peerstore: &storage::stores::Peerstore<S>,
-) -> std::collections::HashSet<String> {
-    let mut restored = std::collections::HashSet::new();
+) -> rapidhash::RapidHashSet<String> {
+    let mut restored = rapidhash::RapidHashSet::default();
     if let Ok(doc_ids) = peerstore.load_documents().await {
         for doc_id in &doc_ids {
             let _ = handle.subscribe(DefraTopic::document(doc_id)).await;

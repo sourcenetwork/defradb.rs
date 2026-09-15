@@ -22,8 +22,8 @@ use query::mutator::{
     BroadcastStatus, CreateResult, DeleteResult, DocMutator, MutationBatch,
     MutationBatchController, UpdateResult,
 };
+use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 use storage::corekv::Store;
@@ -152,7 +152,7 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, 
             }
             None => crate::merge::se::SECoordinator::with_key(se_key.to_vec()),
         };
-        let field_values: HashMap<String, document::NormalValue> = doc
+        let field_values: RapidHashMap<String, document::NormalValue> = doc
             .values()
             .iter()
             .map(|(key, value)| (key.clone(), value.value().clone()))
@@ -802,7 +802,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         &self,
         collection_name: &str,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         let se_fields: Vec<String> = modified_fields.iter().cloned().collect();
         let result = self
@@ -818,7 +818,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         collection_name: &str,
         expected: Document,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         let se_fields: Vec<String> = modified_fields.iter().cloned().collect();
         let result = self

@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::transport::PeerId;
+use rapidhash::HashMapExt;
 
 /// Total fetch attempts per root before the failure is escalated to ERROR.
 ///
@@ -33,7 +34,7 @@ pub(super) fn retry_backoff(attempt: u32) -> Duration {
 pub(super) struct ProviderRotation {
     peers: Vec<PeerId>,
     cursor: usize,
-    unservable: std::collections::HashMap<PeerId, cid::Cid>,
+    unservable: rapidhash::RapidHashMap<PeerId, cid::Cid>,
 }
 
 impl ProviderRotation {
@@ -42,7 +43,7 @@ impl ProviderRotation {
         Self {
             peers,
             cursor: 0,
-            unservable: std::collections::HashMap::new(),
+            unservable: rapidhash::RapidHashMap::new(),
         }
     }
 

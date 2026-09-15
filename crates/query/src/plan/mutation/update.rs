@@ -3,6 +3,7 @@
 //! This node updates documents in storage during query execution, following
 //! the Go DefraDB pattern where persistence happens within the plan node.
 
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -25,14 +26,14 @@ use chrono::{DateTime, FixedOffset};
 #[derive(Debug, Clone)]
 pub struct UpdateInput {
     /// Field values to update, keyed by field name
-    pub fields: std::collections::HashMap<String, JsonValue>,
+    pub fields: RapidHashMap<String, JsonValue>,
 }
 
 impl UpdateInput {
     /// Create a new empty input.
     pub fn new() -> Self {
         Self {
-            fields: std::collections::HashMap::new(),
+            fields: RapidHashMap::new(),
         }
     }
 
@@ -416,7 +417,7 @@ impl PlanNode for UpdateNode {
                     )?;
 
                     // Collect the modified field names for block creation
-                    let modified_fields: std::collections::HashSet<String> =
+                    let modified_fields: RapidHashSet<String> =
                         self.input.fields.keys().cloned().collect();
 
                     // Persist update with modified field tracking

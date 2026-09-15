@@ -2,7 +2,7 @@
 //!
 //! Matches Go's internal/lens/history.go types and functions.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 /// Link in the collection schema history.
 ///
@@ -116,12 +116,12 @@ impl TargetedHistoryLink {
 /// Returns a map of version IDs to their targeted links, representing paths to the target version.
 /// Matches Go's getTargetedCollectionHistory.
 pub fn build_targeted_history(
-    history: &HashMap<String, CollectionHistoryLink>,
+    history: &RapidHashMap<String, CollectionHistoryLink>,
     target_version_id: &str,
-) -> Option<HashMap<String, TargetedHistoryLink>> {
+) -> Option<RapidHashMap<String, TargetedHistoryLink>> {
     let target_item = history.get(target_version_id)?;
 
-    let mut result = HashMap::new();
+    let mut result = RapidHashMap::new();
 
     // Create the target link
     let target_link = TargetedHistoryLink::new(&target_item.version_id, &target_item.collection_id)
@@ -139,9 +139,9 @@ pub fn build_targeted_history(
 
 /// Traverse and link history forwards from the current item.
 fn link_forwards(
-    history: &HashMap<String, CollectionHistoryLink>,
+    history: &RapidHashMap<String, CollectionHistoryLink>,
     current_item: &CollectionHistoryLink,
-    result: &mut HashMap<String, TargetedHistoryLink>,
+    result: &mut RapidHashMap<String, TargetedHistoryLink>,
 ) {
     for next_version_id in &current_item.next {
         if result.contains_key(next_version_id) {
@@ -175,9 +175,9 @@ fn link_forwards(
 
 /// Traverse and link history backwards from the current item.
 fn link_backwards(
-    history: &HashMap<String, CollectionHistoryLink>,
+    history: &RapidHashMap<String, CollectionHistoryLink>,
     current_item: &CollectionHistoryLink,
-    result: &mut HashMap<String, TargetedHistoryLink>,
+    result: &mut RapidHashMap<String, TargetedHistoryLink>,
 ) {
     for prev_version_id in &current_item.previous {
         if result.contains_key(prev_version_id) {
@@ -213,9 +213,9 @@ fn link_backwards(
 mod tests {
     use super::*;
 
-    fn create_linear_history() -> HashMap<String, CollectionHistoryLink> {
+    fn create_linear_history() -> RapidHashMap<String, CollectionHistoryLink> {
         // v1 -> v2 -> v3 (linear history)
-        let mut history = HashMap::new();
+        let mut history = RapidHashMap::new();
 
         let v1 = CollectionHistoryLink::new("v1", "collection_1").with_next("v2");
         let v2 = CollectionHistoryLink::new("v2", "collection_1")

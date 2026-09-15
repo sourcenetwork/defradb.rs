@@ -2,6 +2,7 @@
 
 use crate::index::error::{Error, Result};
 use document::NormalValue;
+use rapidhash::HashSetExt;
 use schema::{CollectionVersion, IndexDescription};
 
 use super::IndexManager;
@@ -11,8 +12,8 @@ impl IndexManager {
         &self,
         doc: &document::Document,
         schema: &CollectionVersion,
-    ) -> Result<std::collections::HashSet<Vec<u8>>> {
-        let mut keys = std::collections::HashSet::new();
+    ) -> Result<rapidhash::RapidHashSet<Vec<u8>>> {
+        let mut keys = rapidhash::RapidHashSet::new();
         for index in self.indexes.values() {
             if !matches!(index, super::IndexType::Unique(_)) {
                 continue;
@@ -70,7 +71,7 @@ impl IndexManager {
         index_desc: &IndexDescription,
         schema: &CollectionVersion,
     ) -> Result<Vec<Vec<NormalValue>>> {
-        let schema_fields: std::collections::HashSet<&str> =
+        let schema_fields: rapidhash::RapidHashSet<&str> =
             schema.fields.iter().map(|f| f.name.as_str()).collect();
 
         let mut field_value_sets: Vec<Vec<NormalValue>> =

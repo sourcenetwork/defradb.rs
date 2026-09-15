@@ -344,7 +344,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 for doc_id in artifacts
                     .iter()
                     .map(|artifact| artifact.doc_id.clone())
-                    .collect::<std::collections::HashSet<_>>()
+                    .collect::<rapidhash::RapidHashSet<_>>()
                 {
                     let _ = report_push_failure(
                         &self.runtime.failure_tx,
@@ -410,7 +410,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 for doc_id in artifacts
                     .iter()
                     .map(|artifact| artifact.doc_id.clone())
-                    .collect::<std::collections::HashSet<_>>()
+                    .collect::<rapidhash::RapidHashSet<_>>()
                 {
                     let _ = report_push_failure(
                         &self.runtime.failure_tx,

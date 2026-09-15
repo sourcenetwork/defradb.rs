@@ -12,10 +12,10 @@ use db::DB;
 use document::Document;
 use document::NormalValue;
 use query::mutator::DocMutator;
+use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
-use std::collections::HashSet;
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -74,7 +74,7 @@ async fn identical_field_writes_to_distinct_documents_do_not_conflict() {
         // The same field, the same value, in two different documents.
         doc.set("status", NormalValue::String("streaming".to_string()));
         mutator
-            .update("Snap", doc, HashSet::from(["status".to_string()]))
+            .update("Snap", doc, RapidHashSet::from_iter(["status".to_string()]))
             .await
             .expect("update");
     }

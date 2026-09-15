@@ -9,6 +9,7 @@ mod select;
 mod simple;
 
 use identity::Did;
+use rapidhash::RapidHashMap;
 use serde_json::{Map, Value as JsonValue};
 use tracing::instrument;
 
@@ -42,7 +43,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         query: &str,
         caller_identity: Option<Did>,
-        variables: Option<&std::collections::HashMap<String, JsonValue>>,
+        variables: Option<&RapidHashMap<String, JsonValue>>,
     ) -> Result<JsonValue> {
         self.execute_query_internal_with_vars(
             query,
@@ -73,7 +74,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         query: &str,
         fetcher: &dyn DocFetcher,
         caller_identity: Option<Did>,
-        variables: Option<&std::collections::HashMap<String, JsonValue>>,
+        variables: Option<&RapidHashMap<String, JsonValue>>,
     ) -> Result<JsonValue> {
         let selects = parse_query_with_limits(query, variables, self.query_limits)?;
 

@@ -15,8 +15,8 @@ use async_trait::async_trait;
 use blockstore::{Blockstore, DefraBlockstore};
 use ipld_core::{codec::Codec, ipld, ipld::Ipld};
 use multihash_codetable::{Code, MultihashDigest};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_ipld_dagcbor::codec::DagCborCodec;
-use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -45,12 +45,12 @@ struct TestTransport {
     blockstore: Arc<DefraBlockstore<RegolithStore>>,
     root_cid: Cid,
     root_data: Vec<u8>,
-    car_blocks: Arc<HashMap<Cid, Vec<u8>>>,
-    selective_blocks: Arc<HashMap<Cid, Vec<u8>>>,
+    car_blocks: Arc<RapidHashMap<Cid, Vec<u8>>>,
+    selective_blocks: Arc<RapidHashMap<Cid, Vec<u8>>>,
     car_requests: Arc<AtomicUsize>,
     sync_batches: Arc<Mutex<Vec<Vec<Cid>>>>,
     sync_providers: Arc<Mutex<Vec<String>>>,
-    dead_providers: Arc<Mutex<HashSet<String>>>,
+    dead_providers: Arc<Mutex<RapidHashSet<String>>>,
     skip_serving_syncs: Arc<AtomicUsize>,
     fail_connected_peers: Arc<AtomicBool>,
     connected_peers: Arc<Mutex<Vec<PeerId>>>,
@@ -64,7 +64,7 @@ struct TestTransport {
     stream_completed: Arc<AtomicBool>,
     cancelled_before_stream_complete: Arc<AtomicBool>,
     size_limited_providers:
-        Arc<Mutex<HashMap<String, (Cid, crate::sync::manager::BlockSyncCompletionTracker)>>>,
+        Arc<Mutex<RapidHashMap<String, (Cid, crate::sync::manager::BlockSyncCompletionTracker)>>>,
 }
 
 impl TestTransport {
@@ -72,8 +72,8 @@ impl TestTransport {
         blockstore: Arc<DefraBlockstore<RegolithStore>>,
         root_cid: Cid,
         root_data: Vec<u8>,
-        car_blocks: HashMap<Cid, Vec<u8>>,
-        selective_blocks: HashMap<Cid, Vec<u8>>,
+        car_blocks: RapidHashMap<Cid, Vec<u8>>,
+        selective_blocks: RapidHashMap<Cid, Vec<u8>>,
     ) -> Self {
         Self {
             peer_id: PeerId::new("local-peer".to_string()),
@@ -86,7 +86,7 @@ impl TestTransport {
             car_requests: Arc::new(AtomicUsize::new(0)),
             sync_batches: Arc::new(Mutex::new(Vec::new())),
             sync_providers: Arc::new(Mutex::new(Vec::new())),
-            dead_providers: Arc::new(Mutex::new(HashSet::new())),
+            dead_providers: Arc::new(Mutex::new(RapidHashSet::new())),
             skip_serving_syncs: Arc::new(AtomicUsize::new(0)),
             fail_connected_peers: Arc::new(AtomicBool::new(false)),
             connected_peers: Arc::new(Mutex::new(vec![
@@ -104,7 +104,7 @@ impl TestTransport {
             stream_block_delay: Arc::new(Mutex::new(Duration::from_millis(10))),
             stream_completed: Arc::new(AtomicBool::new(false)),
             cancelled_before_stream_complete: Arc::new(AtomicBool::new(false)),
-            size_limited_providers: Arc::new(Mutex::new(HashMap::new())),
+            size_limited_providers: Arc::new(Mutex::new(RapidHashMap::new())),
         }
     }
 
@@ -487,7 +487,7 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
     let root_data = encode_ipld(ipld!({ "children": [child_one_cid, child_two_cid] }));
     let root_cid = make_cid(&root_data);
 
-    let selective_blocks = HashMap::from([
+    let selective_blocks = RapidHashMap::from_iter([
         (child_one_cid, child_one_data.clone()),
         (child_two_cid, child_two_data.clone()),
     ]);
@@ -495,7 +495,7 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
+        RapidHashMap::new(),
         selective_blocks,
     );
 
@@ -546,8 +546,11 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
     assert_eq!(batches.len(), 1);
     assert_eq!(batches[0].len(), 2);
 
-    let requested: HashSet<_> = batches[0].iter().copied().collect();
-    assert_eq!(requested, HashSet::from([child_one_cid, child_two_cid]));
+    let requested: RapidHashSet<_> = batches[0].iter().copied().collect();
+    assert_eq!(
+        requested,
+        RapidHashSet::from_iter([child_one_cid, child_two_cid])
+    );
 }
 
 #[tokio::test]
@@ -566,8 +569,8 @@ async fn poll_fetch_dag_uses_known_missing_frontier_without_recursive_car() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data.clone())]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data.clone())]),
     );
 
     let (event_tx, mut event_rx) = mpsc::channel(1);
@@ -615,8 +618,8 @@ async fn rooted_selective_response_drains_before_query_is_reaped() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(leaf_cid, leaf_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(leaf_cid, leaf_data)]),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport.set_streamed_rooted_blocks(vec![(child_cid, child_data)], completion.clone());
@@ -672,8 +675,8 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     let context = DagFetchContext::new(
@@ -713,8 +716,8 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::new(),
+        RapidHashMap::new(),
+        RapidHashMap::new(),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport.set_early_failure_completion(completion.clone());
@@ -757,8 +760,8 @@ async fn contended_car_ingest_defers_to_root_clock_without_fetch_exhaustion() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport.set_early_deferred_completion(completion.clone());
@@ -808,7 +811,7 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
     let root_data = encode_ipld(ipld!({ "children": [mid_one_cid, mid_two_cid] }));
     let root_cid = make_cid(&root_data);
 
-    let selective_blocks = HashMap::from([
+    let selective_blocks = RapidHashMap::from_iter([
         (mid_one_cid, mid_one_data.clone()),
         (mid_two_cid, mid_two_data.clone()),
         (leaf_one_cid, leaf_one_data.clone()),
@@ -818,7 +821,7 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
+        RapidHashMap::new(),
         selective_blocks,
     );
 
@@ -849,12 +852,12 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
     let batches = transport.sync_batches();
     assert_eq!(batches.len(), 2);
     assert_eq!(
-        batches[0].iter().copied().collect::<HashSet<_>>(),
-        HashSet::from([mid_one_cid, mid_two_cid])
+        batches[0].iter().copied().collect::<RapidHashSet<_>>(),
+        RapidHashSet::from_iter([mid_one_cid, mid_two_cid])
     );
     assert_eq!(
-        batches[1].iter().copied().collect::<HashSet<_>>(),
-        HashSet::from([leaf_one_cid, leaf_two_cid])
+        batches[1].iter().copied().collect::<RapidHashSet<_>>(),
+        RapidHashSet::from_iter([leaf_one_cid, leaf_two_cid])
     );
 }
 
@@ -886,7 +889,7 @@ async fn poll_fetch_dag_completes_dag_deeper_than_legacy_iteration_cap() {
     let (root_cid, root_data) = nodes.last().unwrap().clone();
 
     // Root arrives via CAR; every ancestor is fetched one layer per iteration.
-    let selective_blocks: HashMap<Cid, Vec<u8>> = nodes[..DEPTH - 1]
+    let selective_blocks: RapidHashMap<Cid, Vec<u8>> = nodes[..DEPTH - 1]
         .iter()
         .map(|(cid, data)| (*cid, data.clone()))
         .collect();
@@ -894,7 +897,7 @@ async fn poll_fetch_dag_completes_dag_deeper_than_legacy_iteration_cap() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
+        RapidHashMap::new(),
         selective_blocks,
     );
 
@@ -951,8 +954,8 @@ async fn poll_fetch_dag_rotates_to_alternate_provider_on_no_progress() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -998,8 +1001,8 @@ async fn poll_fetch_dag_retries_incomplete_fetch_and_succeeds() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.set_skip_serving_syncs(1);
 
@@ -1043,8 +1046,8 @@ async fn poll_fetch_dag_exhausted_retries_do_not_emit_dag_ready() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -1091,8 +1094,8 @@ async fn disconnected_provider_defers_until_reconnect_without_exhaustion() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.set_connected_peers(Vec::new());
     let diagnostics = diagnostics();
@@ -1157,8 +1160,8 @@ async fn poll_fetch_dag_cancels_every_issued_query() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -1213,8 +1216,8 @@ async fn poll_fetch_dag_stall_budget_caps_stalled_batches_per_attempt() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::new(),
+        RapidHashMap::new(),
+        RapidHashMap::new(),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -1264,8 +1267,8 @@ async fn poll_fetch_dag_bounds_hung_car_request() {
         blockstore.clone(),
         root_cid,
         root_data.clone(),
-        HashMap::new(),
-        HashMap::from([(root_cid, root_data), (child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(root_cid, root_data), (child_cid, child_data)]),
     );
     transport.set_hang_car_requests();
 
@@ -1314,8 +1317,8 @@ async fn poll_fetch_dag_completes_from_source_when_peer_listing_fails() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.set_fail_connected_peers();
 
@@ -1364,8 +1367,8 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 

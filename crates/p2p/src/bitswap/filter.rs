@@ -157,12 +157,12 @@ mod tests {
     use async_trait::async_trait;
     use defra_core::Block as DefraBlock;
     use iroh_bitswap::{Block, Store};
-    use std::collections::HashMap;
+    use rapidhash::RapidHashMap;
     use std::sync::Mutex;
 
     #[derive(Debug, Default, Clone)]
     struct InMemoryStore {
-        inner: Arc<Mutex<HashMap<Cid, Vec<u8>>>>,
+        inner: Arc<Mutex<RapidHashMap<Cid, Vec<u8>>>>,
     }
 
     impl InMemoryStore {

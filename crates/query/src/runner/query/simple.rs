@@ -2,9 +2,9 @@
 
 use acp::Identity;
 use identity::Did;
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -41,7 +41,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             ScanSource::Fetcher(Arc::new(FetcherWrapper::new(fetcher)))
         } else if let Some(ref doc_ids) = select.doc_ids {
             // Deduplicate doc_ids while preserving order (Go compatibility)
-            let mut seen = HashSet::new();
+            let mut seen = RapidHashSet::new();
             let unique_ids: Vec<String> = doc_ids
                 .iter()
                 .filter(|id| seen.insert((*id).clone()))

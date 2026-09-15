@@ -3,6 +3,7 @@
 //! Does not touch the production `plan/type_join/type_join_one.rs` node
 //! implementation — only planner-side construction of that node.
 
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CollectionVersion;
 use tracing::{debug, warn};
 
@@ -189,9 +190,8 @@ impl Planner {
                     join = join.with_parent_residual_filter(filter);
                 }
                 if select.exhaustive {
-                    let shared_ids: crate::plan::SharedYieldedIds = std::sync::Arc::new(
-                        async_lock::RwLock::new(std::collections::HashSet::new()),
-                    );
+                    let shared_ids: crate::plan::SharedYieldedIds =
+                        std::sync::Arc::new(async_lock::RwLock::new(RapidHashSet::new()));
                     let child_fk_field_name = target_relation_field
                         .as_ref()
                         .map(|f| schema::CollectionVersion::relation_id_field_name(&f.name))
@@ -310,9 +310,8 @@ impl Planner {
                             .and_then(|o| o.conditions.first())
                             .map(|c| c.direction)
                             .unwrap_or(OrderDirection::Asc);
-                        let shared_ids: crate::plan::SharedYieldedIds = std::sync::Arc::new(
-                            async_lock::RwLock::new(std::collections::HashSet::new()),
-                        );
+                        let shared_ids: crate::plan::SharedYieldedIds =
+                            std::sync::Arc::new(async_lock::RwLock::new(RapidHashSet::new()));
                         let join =
                             join.with_orphan_config(orphan, direction, shared_ids, child_has_fk);
                         join_provides_ordering = Some(parent_order_for_child.is_some());

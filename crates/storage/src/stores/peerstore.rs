@@ -10,7 +10,7 @@ use async_trait::async_trait;
 /// The Peerstore handles storage of replicator configuration, replication
 /// retry tracking, and search engine retry tracking for P2P operations.
 use bytes::Bytes;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tracing;
@@ -35,10 +35,10 @@ fn legacy_retry_commit_key(peer_id: &str, collection_id: &str, cid: &str) -> Vec
 type RetryPeerLock = RwLock<()>;
 
 fn retry_peer_lock(peer_id: &str) -> Arc<RetryPeerLock> {
-    static LOCKS: OnceLock<Mutex<HashMap<String, Weak<RetryPeerLock>>>> = OnceLock::new();
+    static LOCKS: OnceLock<Mutex<RapidHashMap<String, Weak<RetryPeerLock>>>> = OnceLock::new();
 
     let mut locks = LOCKS
-        .get_or_init(|| Mutex::new(HashMap::new()))
+        .get_or_init(|| Mutex::new(RapidHashMap::new()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     locks.retain(|_, lock| lock.upgrade().is_some());

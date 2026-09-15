@@ -9,7 +9,7 @@
 //! by exhaustion or by [`DocStream::close`], which a consumer that stops early
 //! must call.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use async_trait::async_trait;
 use document::Document;
@@ -44,7 +44,7 @@ pub struct LensedAutoCommitDocStream<S: Store + 'static> {
     collection: Collection,
     migration_generation: u64,
     has_migrations: bool,
-    preloaded_history: Option<HashMap<String, TargetedHistoryLink>>,
+    preloaded_history: Option<RapidHashMap<String, TargetedHistoryLink>>,
     write_backs: Vec<MigrationWriteBack>,
 }
 
@@ -58,7 +58,7 @@ impl<S: Store + 'static> LensedAutoCommitDocStream<S> {
         collection: Collection,
         migration_generation: u64,
         has_migrations: bool,
-        preloaded_history: Option<HashMap<String, TargetedHistoryLink>>,
+        preloaded_history: Option<RapidHashMap<String, TargetedHistoryLink>>,
         write_backs: Vec<MigrationWriteBack>,
     ) -> Self {
         Self {

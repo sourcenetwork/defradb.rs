@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::path::Path;
 use wasmtime::{Config, Engine, Module, StoreLimits, StoreLimitsBuilder};
 
@@ -49,8 +49,8 @@ impl WasmSandboxConfig {
 /// Manages WASM module instances and executes transforms.
 pub struct WasmTransformStore {
     engine: Engine,
-    modules: RwLock<HashMap<TransformId, Vec<CompiledModule>>>,
-    configs: RwLock<HashMap<TransformId, LensConfig>>,
+    modules: RwLock<RapidHashMap<TransformId, Vec<CompiledModule>>>,
+    configs: RwLock<RapidHashMap<TransformId, LensConfig>>,
     sandbox: Option<WasmSandboxConfig>,
 }
 
@@ -92,8 +92,8 @@ impl WasmTransformStore {
 
         Ok(Self {
             engine,
-            modules: RwLock::new(HashMap::new()),
-            configs: RwLock::new(HashMap::new()),
+            modules: RwLock::new(RapidHashMap::new()),
+            configs: RwLock::new(RapidHashMap::new()),
             sandbox,
         })
     }
@@ -277,7 +277,7 @@ impl TransformStore for WasmTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> Result<std::collections::HashMap<String, crate::LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
         let configs = self.configs.read();
         let result = configs
             .iter()

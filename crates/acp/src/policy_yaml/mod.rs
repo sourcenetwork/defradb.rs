@@ -4,8 +4,7 @@ mod validate;
 pub use parse::{check_duplicate_yaml_keys, parse_policy_yaml};
 pub use validate::validate_policy_expressions;
 
-use std::collections::HashMap;
-
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use zanzibar::{Policy, Relation, RelationExpression, Resource, SubjectRestriction};
@@ -174,7 +173,7 @@ impl PolicyResource {
 pub fn build_policy(parsed: &ParsedPolicy, counter: u64) -> crate::error::Result<Policy> {
     let id = generate_policy_id(parsed, counter);
 
-    let mut attributes = HashMap::new();
+    let mut attributes = RapidHashMap::new();
     if !parsed.description.is_empty() {
         attributes.insert("description".to_string(), parsed.description.clone());
     }

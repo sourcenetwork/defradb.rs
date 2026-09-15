@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
@@ -300,7 +300,7 @@ async fn concurrent_two_stream_fan_in_replies_on_request_streams() {
         senders.push((sender, send_task));
     }
 
-    let mut peers = HashSet::with_capacity(SENDERS);
+    let mut peers = RapidHashSet::with_capacity(SENDERS);
     for _ in 0..SENDERS {
         let (peer_id, request, token) = next_two_stream_request(&mut receiver.events).await;
         peers.insert(peer_id);

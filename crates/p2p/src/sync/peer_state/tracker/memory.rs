@@ -1,6 +1,6 @@
 //! Global memory limit enforcement for the peer state tracker.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use super::{PeerInfo, PeerStateTracker};
 
@@ -8,7 +8,7 @@ impl PeerStateTracker {
     /// Enforce global limits by evicting oldest disconnected peers and their CIDs.
     ///
     /// Called internally when adding peers or CIDs.
-    pub(super) fn enforce_global_limits(&self, peers: &mut HashMap<String, PeerInfo>) {
+    pub(super) fn enforce_global_limits(&self, peers: &mut RapidHashMap<String, PeerInfo>) {
         // Check peer count limit - evict oldest disconnected peers first
         while peers.len() > self.max_peers {
             // Find the oldest disconnected peer

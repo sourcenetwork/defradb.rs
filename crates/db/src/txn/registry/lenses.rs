@@ -99,7 +99,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     pub async fn list_lenses_in_txn(
         &self,
         txn_id: &str,
-    ) -> Result<std::collections::HashMap<String, LensModule>> {
+    ) -> Result<rapidhash::RapidHashMap<String, LensModule>> {
         let ctx = self
             .get_ctx(txn_id)?
             .ok_or_else(|| Error::TransactionNotFound(txn_id.to_string()))?;

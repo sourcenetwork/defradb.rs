@@ -41,6 +41,7 @@ sourcehub = { path = "../sourcehub", optional = true }
 
 async-trait.workspace = true
 async-lock.workspace = true
+rapidhash.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde = { workspace = true, features = ["derive"] }

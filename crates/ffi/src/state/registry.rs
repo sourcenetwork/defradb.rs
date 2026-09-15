@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
@@ -12,7 +12,7 @@ use super::{
 ///
 /// Uses RwLock for safe concurrent access from multiple threads.
 pub struct NodeRegistry {
-    nodes: RwLock<HashMap<NodeHandle, NodeState>>,
+    nodes: RwLock<RapidHashMap<NodeHandle, NodeState>>,
     next_handle: AtomicUsize,
 }
 
@@ -20,7 +20,7 @@ impl NodeRegistry {
     /// Create a new empty registry.
     fn new() -> Self {
         Self {
-            nodes: RwLock::new(HashMap::new()),
+            nodes: RwLock::new(RapidHashMap::new()),
             next_handle: AtomicUsize::new(1), // Start at 1, 0 is invalid
         }
     }
@@ -102,14 +102,14 @@ pub fn nodes() -> &'static NodeRegistry {
 
 /// Global registry of active subscriptions.
 pub struct SubscriptionRegistry {
-    subscriptions: RwLock<HashMap<SubscriptionHandle, SubscriptionState>>,
+    subscriptions: RwLock<RapidHashMap<SubscriptionHandle, SubscriptionState>>,
     next_handle: AtomicUsize,
 }
 
 impl SubscriptionRegistry {
     fn new() -> Self {
         Self {
-            subscriptions: RwLock::new(HashMap::new()),
+            subscriptions: RwLock::new(RapidHashMap::new()),
             next_handle: AtomicUsize::new(1),
         }
     }
@@ -163,14 +163,14 @@ pub fn subscriptions() -> &'static SubscriptionRegistry {
 
 /// Global registry of active GraphQL subscriptions.
 pub struct GraphQLSubscriptionRegistry {
-    subscriptions: RwLock<HashMap<SubscriptionHandle, GraphQLSubscriptionState>>,
+    subscriptions: RwLock<RapidHashMap<SubscriptionHandle, GraphQLSubscriptionState>>,
     next_handle: AtomicUsize,
 }
 
 impl GraphQLSubscriptionRegistry {
     fn new() -> Self {
         Self {
-            subscriptions: RwLock::new(HashMap::new()),
+            subscriptions: RwLock::new(RapidHashMap::new()),
             next_handle: AtomicUsize::new(1),
         }
     }

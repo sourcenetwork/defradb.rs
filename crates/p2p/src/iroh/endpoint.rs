@@ -5,7 +5,7 @@
 //! - Gossip events from iroh-gossip
 //! - Commands from the `IrohTransport` facade
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -58,7 +58,7 @@ pub(super) struct EndpointResources {
 pub(super) struct TopicSubscription {
     pub(super) sender: iroh_gossip::api::GossipSender,
     pub(super) reader_task: JoinHandle<()>,
-    pub(super) neighbors: Arc<parking_lot::Mutex<HashSet<EndpointId>>>,
+    pub(super) neighbors: Arc<parking_lot::Mutex<RapidHashSet<EndpointId>>>,
 }
 
 pub(super) type SubscriptionSenders = Vec<(String, iroh_gossip::api::GossipSender)>;
@@ -70,7 +70,7 @@ pub(super) struct ActiveSync {
 
 pub(super) type SpawnedTasks = Arc<parking_lot::Mutex<Option<TrackedTaskSet>>>;
 pub(super) type PendingPushLogReplies =
-    Arc<parking_lot::Mutex<HashMap<String, oneshot::Sender<PushLogReply>>>>;
+    Arc<parking_lot::Mutex<RapidHashMap<String, oneshot::Sender<PushLogReply>>>>;
 
 pub(super) fn spawn_task(
     spawned_tasks: &SpawnedTasks,
@@ -188,15 +188,15 @@ async fn run_event_loop(
 ) {
     let shutdown_started = web_time::Instant::now();
     let peer_map = Arc::new(parking_lot::Mutex::new(PeerMap::new()));
-    let pending_pushlog_replies = Arc::new(parking_lot::Mutex::new(HashMap::<
+    let pending_pushlog_replies = Arc::new(parking_lot::Mutex::new(RapidHashMap::<
         String,
         oneshot::Sender<PushLogReply>,
     >::new()));
     let connection_cache = new_connection_cache();
-    let mut subscriptions: HashMap<String, TopicSubscription> = HashMap::new();
-    let raw_topics: Arc<parking_lot::Mutex<std::collections::HashSet<String>>> =
-        Arc::new(parking_lot::Mutex::new(std::collections::HashSet::new()));
-    let mut active_syncs: HashMap<u64, ActiveSync> = HashMap::new();
+    let mut subscriptions: RapidHashMap<String, TopicSubscription> = RapidHashMap::new();
+    let raw_topics: Arc<parking_lot::Mutex<rapidhash::RapidHashSet<String>>> =
+        Arc::new(parking_lot::Mutex::new(rapidhash::RapidHashSet::new()));
+    let mut active_syncs: RapidHashMap<u64, ActiveSync> = RapidHashMap::new();
     let spawned_tasks: SpawnedTasks =
         Arc::new(parking_lot::Mutex::new(Some(TrackedTaskSet::default())));
     let mut next_query_id: u64 = 1;
@@ -340,7 +340,7 @@ async fn run_event_loop(
 }
 
 pub(super) fn snapshot_subscription_senders(
-    subscriptions: &HashMap<String, TopicSubscription>,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
 ) -> SubscriptionSenders {
     subscriptions
         .iter()

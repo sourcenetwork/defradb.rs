@@ -1,4 +1,5 @@
 use super::*;
+use rapidhash::HashMapExt;
 
 impl<S: Store> crate::database::DB<S> {
     /// Create a collection within an existing transaction.
@@ -381,8 +382,7 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Build old_collection_id -> new_collection_id mapping
-        let mut id_remap: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let mut id_remap: rapidhash::RapidHashMap<String, String> = rapidhash::RapidHashMap::new();
         for (name, old_id) in &old_ids {
             if let Some(finalized) = finalized_schemas.iter().find(|s| &s.name == name) {
                 if *old_id != finalized.collection_id {
@@ -392,8 +392,8 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Also map by name -> new collection_id for Named field kinds
-        let mut name_to_id: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let mut name_to_id: rapidhash::RapidHashMap<String, String> =
+            rapidhash::RapidHashMap::new();
         for schema in &finalized_schemas {
             name_to_id.insert(schema.name.clone(), schema.collection_id.clone());
         }

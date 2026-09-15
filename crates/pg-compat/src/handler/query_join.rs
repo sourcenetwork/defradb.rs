@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures::stream;
 use pgwire::api::results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response};
 use pgwire::api::Type;
 use pgwire::error::PgWireResult;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use tracing::debug;
 
 use crate::bridge::{AggFunc, AggregateExpr, JoinClause, JoinType};
@@ -83,7 +82,7 @@ impl DefraQueryHandler {
         // 2. For each join, query the joined table.
         //    Track all fetched docs by table so chained joins can source
         //    join keys from a previously-joined table (not just the primary).
-        let mut table_docs: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+        let mut table_docs: RapidHashMap<String, Vec<serde_json::Value>> = RapidHashMap::new();
         table_docs.insert(primary_table.to_string(), primary_docs.clone());
 
         let mut join_results: Vec<(String, JoinType, String, String, Vec<serde_json::Value>)> =
@@ -161,7 +160,7 @@ impl DefraQueryHandler {
             .iter()
             .map(|doc| {
                 let cols = project_columns(primary_table, doc, all_select_columns);
-                let mut docs = HashMap::new();
+                let mut docs = RapidHashMap::new();
                 docs.insert(primary_table.to_string(), doc.clone());
                 RowContext {
                     table_docs: docs,
@@ -238,7 +237,7 @@ impl DefraQueryHandler {
 
 #[derive(Clone)]
 struct RowContext {
-    table_docs: HashMap<String, serde_json::Value>,
+    table_docs: RapidHashMap<String, serde_json::Value>,
     columns: Vec<(String, Option<serde_json::Value>)>,
 }
 
@@ -251,7 +250,7 @@ fn build_field_list(
     joins: &[JoinClause],
     is_primary: bool,
 ) -> String {
-    let mut fields: HashSet<String> = HashSet::new();
+    let mut fields: RapidHashSet<String> = RapidHashSet::new();
 
     // Add selected fields for this table
     for (tbl, field, _alias) in all_select_columns {

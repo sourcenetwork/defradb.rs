@@ -1,6 +1,6 @@
 //! Block-to-document conversion and nested link/head building.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use base64::Engine;
 use cid::Cid;
@@ -75,7 +75,7 @@ impl<S: Store> CommitsFetcher<S> {
             encryption = ?block.encryption,
             "Converting block to commit document"
         );
-        let mut map = HashMap::new();
+        let mut map = RapidHashMap::new();
 
         map.insert("cid".to_string(), json!(cid.to_string()));
         map.insert("height".to_string(), json!(block.delta.priority() as i64));

@@ -1,9 +1,9 @@
 //! Document types and operations
 
 use crate::types::DocId;
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 /// A document in DefraDB - a collection of key-value pairs
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -14,7 +14,7 @@ pub struct Document {
 
     /// Document fields as key-value pairs
     #[serde(flatten)]
-    pub fields: HashMap<String, JsonValue>,
+    pub fields: RapidHashMap<String, JsonValue>,
 }
 
 impl Document {
@@ -22,7 +22,7 @@ impl Document {
     pub fn new() -> Self {
         Self {
             id: None,
-            fields: HashMap::new(),
+            fields: RapidHashMap::new(),
         }
     }
 
@@ -30,12 +30,12 @@ impl Document {
     pub fn with_id(id: DocId) -> Self {
         Self {
             id: Some(id),
-            fields: HashMap::new(),
+            fields: RapidHashMap::new(),
         }
     }
 
     /// Create a document from fields
-    pub fn from_fields(fields: HashMap<String, JsonValue>) -> Self {
+    pub fn from_fields(fields: RapidHashMap<String, JsonValue>) -> Self {
         Self { id: None, fields }
     }
 
@@ -73,7 +73,7 @@ pub struct DocumentUpdate {
     pub id: DocId,
 
     /// Fields to update
-    pub fields: HashMap<String, JsonValue>,
+    pub fields: RapidHashMap<String, JsonValue>,
 }
 
 impl DocumentUpdate {
@@ -81,7 +81,7 @@ impl DocumentUpdate {
     pub fn new(id: DocId) -> Self {
         Self {
             id,
-            fields: HashMap::new(),
+            fields: RapidHashMap::new(),
         }
     }
 

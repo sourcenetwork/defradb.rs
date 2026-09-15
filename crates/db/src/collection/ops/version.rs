@@ -286,7 +286,7 @@ impl<S: Store> crate::database::DB<S> {
                 }
             }
         }
-        let mut deleting_versions: std::collections::HashSet<&str> =
+        let mut deleting_versions: rapidhash::RapidHashSet<&str> =
             also_deleting.iter().map(String::as_str).collect();
         deleting_versions.insert(version_id);
         let is_deleting_last_local_version = all_versions.iter().all(|version| {
@@ -386,11 +386,11 @@ impl<S: Store> crate::database::DB<S> {
         // Sort topologically: children before parents
         // A child has a PreviousVersion pointing to a parent in the batch
         let all_versions = self.get_all_collection_versions().await?;
-        let version_map: std::collections::HashMap<&str, &CollectionVersion> = all_versions
+        let version_map: rapidhash::RapidHashMap<&str, &CollectionVersion> = all_versions
             .iter()
             .map(|v| (v.version_id.as_str(), v))
             .collect();
-        let deleting_versions: std::collections::HashSet<&str> =
+        let deleting_versions: rapidhash::RapidHashSet<&str> =
             version_ids.iter().map(String::as_str).collect();
 
         for version_id in &version_ids {
@@ -426,7 +426,7 @@ impl<S: Store> crate::database::DB<S> {
             }
         }
 
-        let removed_collection_ids: std::collections::HashSet<&str> = all_versions
+        let removed_collection_ids: rapidhash::RapidHashSet<&str> = all_versions
             .iter()
             .filter(|version| {
                 deleting_versions.contains(version.version_id.as_str())
@@ -453,8 +453,7 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         let mut sorted = Vec::with_capacity(version_ids.len());
-        let mut remaining: std::collections::HashSet<String> =
-            version_ids.iter().cloned().collect();
+        let mut remaining: rapidhash::RapidHashSet<String> = version_ids.iter().cloned().collect();
 
         // Simple topological sort: repeatedly find versions whose children
         // (within the batch) have already been added to sorted

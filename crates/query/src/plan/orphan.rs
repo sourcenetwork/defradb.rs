@@ -1,6 +1,6 @@
 //! OrphanNode scans for documents without a matching relation (orphans)
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::sync::Arc;
 
 use async_lock::RwLock;
@@ -15,7 +15,7 @@ use crate::planner::{IndexScanParams, IndexScanType};
 
 /// Shared set of parent docIDs yielded by the main join.
 /// TypeJoinOne writes to this during iteration; OrphanNode reads it to skip non-orphans.
-pub type SharedYieldedIds = Arc<RwLock<HashSet<String>>>;
+pub type SharedYieldedIds = Arc<RwLock<RapidHashSet<String>>>;
 
 enum Inner {
     /// Parent stores FK: wraps a scan with FK IS NULL filter, just delegates.

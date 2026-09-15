@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use cosmrs::crypto::secp256k1::SigningKey;
 use cosmrs::tx::{Body, Fee, SignDoc, SignerInfo};
 use cosmrs::{AccountId, Any, Coin};
+use rapidhash::{HashMapExt, RapidHashMap};
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::client::SourceHubClient;
@@ -231,10 +231,10 @@ fn is_sequence_mismatch(message: &str) -> bool {
 }
 
 fn sequence_state(client: &SourceHubClient, address: &str) -> Arc<AsyncMutex<SequenceState>> {
-    static STATES: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<SequenceState>>>>> =
+    static STATES: OnceLock<Mutex<RapidHashMap<String, Arc<AsyncMutex<SequenceState>>>>> =
         OnceLock::new();
 
-    let states = STATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let states = STATES.get_or_init(|| Mutex::new(RapidHashMap::new()));
     let mut guard = states.lock().expect("sequence state map poisoned");
     guard
         .entry(client.sequence_cache_key(address))

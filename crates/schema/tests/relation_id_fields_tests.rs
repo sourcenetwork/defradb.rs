@@ -201,9 +201,9 @@ fn test_add_relation_id_fields_rejects_duplicate_id() {
 
 #[test]
 fn test_finalize_relations_hashmap() {
-    use std::collections::HashMap;
+    use rapidhash::{HashMapExt, RapidHashMap};
 
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert(
         "users".to_string(),
         CollectionVersion::new(

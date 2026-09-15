@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 
 use crate::error::Result;
 use crate::planner::ExecInfo;
@@ -19,7 +19,7 @@ impl TypeJoinMany {
 
     pub(super) async fn build_filter_child_cache(
         &mut self,
-        parent_scope: Option<&HashSet<String>>,
+        parent_scope: Option<&RapidHashSet<String>>,
     ) -> Result<Option<ExecInfo>> {
         let Some(filter_plan) = self.filter_child_plan.as_mut() else {
             return Ok(None);

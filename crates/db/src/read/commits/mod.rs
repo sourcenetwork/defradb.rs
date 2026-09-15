@@ -9,7 +9,8 @@ mod delta;
 use async_lock::Mutex as TokioMutex;
 use cid::Cid;
 use document::Document;
-use std::collections::{BTreeSet, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashSet};
+use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage::corekv::{IterOptions, Store};
@@ -139,7 +140,7 @@ impl<S: Store> CommitsFetcher<S> {
         let head_cids = self.get_head_cids(txn, options).await?;
 
         let mut commits = Vec::new();
-        let mut visited: HashSet<(Cid, Option<String>)> = HashSet::new();
+        let mut visited: RapidHashSet<(Cid, Option<String>)> = RapidHashSet::new();
 
         for (cid, doc_id) in head_cids {
             if visited.contains(&(cid, doc_id.clone())) {
@@ -227,7 +228,7 @@ impl<S: Store> CommitsFetcher<S> {
         let cid_offset = HeadstorePriorityKey::cid_offset(doc_short_id);
         let mut iter = headstore.iterator(opts).await.map_err(Error::Storage)?;
         let mut commits = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = RapidHashSet::new();
 
         while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
             let Some(cid_bytes) = pair.key.get(cid_offset..) else {
@@ -271,7 +272,7 @@ impl<S: Store> CommitsFetcher<S> {
     /// 2. Within each document, sort by field ID: regular fields first (by name),
     ///    composite field (_C) last
     pub fn sort_commits_go_order(&self, commits: &mut [Document]) {
-        let mut doc_order = std::collections::HashMap::new();
+        let mut doc_order = rapidhash::RapidHashMap::new();
         for commit in commits.iter() {
             let doc_id = commit
                 .get("docID")

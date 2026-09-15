@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet};
-
 use async_lock::RwLock;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use crate::did::Did;
 
@@ -15,13 +14,13 @@ impl NodeId {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NodeTrail {
-    visited: HashSet<NodeId>,
+    visited: RapidHashSet<NodeId>,
 }
 
 impl NodeTrail {
     pub(crate) fn new() -> Self {
         Self {
-            visited: HashSet::new(),
+            visited: RapidHashSet::new(),
         }
     }
 
@@ -42,13 +41,13 @@ impl NodeTrail {
 
 #[derive(Debug, Default)]
 pub(crate) struct CheckCache {
-    results: RwLock<HashMap<String, bool>>,
+    results: RwLock<RapidHashMap<String, bool>>,
 }
 
 impl CheckCache {
     pub(crate) fn new() -> Self {
         Self {
-            results: RwLock::new(HashMap::new()),
+            results: RwLock::new(RapidHashMap::new()),
         }
     }
 

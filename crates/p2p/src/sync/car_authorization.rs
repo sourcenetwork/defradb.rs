@@ -1,6 +1,7 @@
 //! Exact rooted CAR authorization, independent of response pagination.
 
-use std::collections::{HashSet, VecDeque};
+use rapidhash::{HashSetExt, RapidHashSet};
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use blockstore::Blockstore;
@@ -15,21 +16,21 @@ const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) async fn requested_descendants<B: Blockstore>(
     blockstore: &B,
     root: Cid,
-    requested: HashSet<Cid>,
-) -> Result<HashSet<Cid>> {
+    requested: RapidHashSet<Cid>,
+) -> Result<RapidHashSet<Cid>> {
     requested_descendants_with_budget(blockstore, root, requested, AUTHORIZATION_TIMEOUT).await
 }
 
 async fn requested_descendants_with_budget<B: Blockstore>(
     blockstore: &B,
     root: Cid,
-    requested: HashSet<Cid>,
+    requested: RapidHashSet<Cid>,
     budget: Duration,
-) -> Result<HashSet<Cid>> {
+) -> Result<RapidHashSet<Cid>> {
     n0_future::time::timeout(budget, async {
         let mut remaining = requested;
-        let mut authorized = HashSet::new();
-        let mut visited = HashSet::new();
+        let mut authorized = RapidHashSet::new();
+        let mut visited = RapidHashSet::new();
         let mut queue = VecDeque::from([root]);
         while !remaining.is_empty() {
             let Some(cid) = queue.pop_front() else {
@@ -100,7 +101,7 @@ mod tests {
         let authorized = requested_descendants(&store, root, cids.iter().copied().collect())
             .await
             .unwrap();
-        assert_eq!(authorized, HashSet::from([cids[0]]));
+        assert_eq!(authorized, RapidHashSet::from_iter([cids[0]]));
     }
 
     #[tokio::test(start_paused = true)]
@@ -118,7 +119,7 @@ mod tests {
         let result = requested_descendants_with_budget(
             &store,
             root,
-            HashSet::from([root, leaf]),
+            RapidHashSet::from_iter([root, leaf]),
             Duration::ZERO,
         )
         .await;
@@ -126,9 +127,9 @@ mod tests {
             result.expect_err("a partial grant must not look like a complete authorization result");
         assert!(matches!(error, Error::ResponseTimeout));
         assert!(error.is_connection_like());
-        let authorized = requested_descendants(&store, root, HashSet::from([leaf]))
+        let authorized = requested_descendants(&store, root, RapidHashSet::from_iter([leaf]))
             .await
             .unwrap();
-        assert_eq!(authorized, HashSet::from([leaf]));
+        assert_eq!(authorized, RapidHashSet::from_iter([leaf]));
     }
 }

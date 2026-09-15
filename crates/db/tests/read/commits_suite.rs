@@ -82,7 +82,7 @@ mod additional_tests {
 
 mod shared_owner_tests {
 
-    use std::collections::HashSet;
+    use rapidhash::RapidHashSet;
     use std::sync::Arc;
     use storage::RegolithStore;
 
@@ -213,7 +213,7 @@ mod shared_owner_tests {
             })
             .await
             .unwrap();
-        let commit_owners: HashSet<_> = commits
+        let commit_owners: RapidHashSet<_> = commits
             .iter()
             .filter_map(|commit| commit.get("docID").and_then(|value| value.as_str()))
             .collect();
@@ -224,7 +224,7 @@ mod shared_owner_tests {
             .get_documents_at_cid(&cid.to_string(), None, None)
             .await
             .unwrap();
-        let document_owners: HashSet<_> = documents
+        let document_owners: RapidHashSet<_> = documents
             .iter()
             .filter_map(|document| document.id().map(ToString::to_string))
             .collect();

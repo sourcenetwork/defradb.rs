@@ -18,6 +18,7 @@ use crate::{QueryId, ReplicatorInfo};
 
 use super::super::push_worker::send_head_hint_via_transport;
 use super::*;
+use rapidhash::HashSetExt;
 
 #[derive(Clone)]
 pub(in crate::sync::coordinator) struct SentPush {
@@ -34,7 +35,7 @@ pub(in crate::sync::coordinator) struct TestTransport {
     pubkey: Vec<u8>,
     replies: Arc<Mutex<VecDeque<PushLogReply>>>,
     sent: Arc<Mutex<SentLog>>,
-    stalled_peers: Arc<Mutex<std::collections::HashSet<String>>>,
+    stalled_peers: Arc<Mutex<rapidhash::RapidHashSet<String>>>,
     send_delay: Duration,
     signs: Arc<AtomicUsize>,
     sign_failures_remaining: Arc<AtomicUsize>,
@@ -47,7 +48,7 @@ impl TestTransport {
             pubkey: vec![1, 2, 3],
             replies: Arc::new(Mutex::new(VecDeque::from(replies))),
             sent: Arc::new(Mutex::new(Vec::new())),
-            stalled_peers: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            stalled_peers: Arc::new(Mutex::new(rapidhash::RapidHashSet::new())),
             send_delay: Duration::ZERO,
             signs: Arc::new(AtomicUsize::new(0)),
             sign_failures_remaining: Arc::new(AtomicUsize::new(0)),

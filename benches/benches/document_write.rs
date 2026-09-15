@@ -15,7 +15,7 @@
 //! index is present, because index maintenance is paid per write and per
 //! indexed field and is invisible in a bench that has no index.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -267,7 +267,7 @@ fn update(c: &mut Criterion) {
                                 "field_0",
                                 NormalValue::String(format!("updated-{}", next_seq())),
                             );
-                            let modified: HashSet<String> =
+                            let modified: RapidHashSet<String> =
                                 ["field_0".to_string()].into_iter().collect();
                             black_box(
                                 mutator

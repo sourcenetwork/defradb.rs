@@ -2,7 +2,7 @@
 //!
 //! Mirrors Go's `internal/request/graphql/parser/cursor.go` semantics.
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{RapidHashMap, RapidHashSet};
 
 use graphql_parser::query::{Field, Selection, Value};
 use serde_json::Value as JsonValue;
@@ -19,9 +19,9 @@ use super::values::{parse_int_value, resolve_string_value};
 /// a `_pageInfo { ... }` sibling. Returns the inner `Select` populated with cursor metadata.
 pub(super) fn parse_cursor_wrapper<'a>(
     field: &'a Field<'a, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'a>,
-    visiting: &mut HashSet<String>,
+    visiting: &mut RapidHashSet<String>,
 ) -> Result<Select> {
     let mut inner_field: Option<&'a Field<'a, String>> = None;
     let mut page_info_fields = CursorPageInfoFields::default();
@@ -91,7 +91,7 @@ pub(super) fn parse_cursor_wrapper<'a>(
 /// are left untouched (they remain in the field for downstream parsing).
 fn extract_cursor_params<'a>(
     field: &'a Field<'a, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<CursorParams> {
     let mut params = CursorParams::default();
     for (name, value) in &field.arguments {
@@ -200,7 +200,7 @@ fn collect_fields<'a>(
 /// Returns true if a GraphQL argument value is `null`, or a variable that resolves to null.
 fn is_null_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> bool {
     match value {
         Value::Null => true,

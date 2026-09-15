@@ -6,6 +6,7 @@
 //! Matches Go's internal/se/se.go storeArtifacts and fetchDocIDs.
 
 use crypto::se::Artifact;
+use rapidhash::HashSetExt;
 use storage::corekv::{IterOptions, Iterator, Key, Reader, Result, Writer};
 use storage::keys::DatastoreSE;
 
@@ -83,7 +84,7 @@ pub async fn fetch_doc_ids<S: Reader>(
         return Ok(Vec::new());
     }
 
-    let mut doc_id_set: Option<std::collections::HashSet<String>> = None;
+    let mut doc_id_set: Option<rapidhash::RapidHashSet<String>> = None;
 
     for query in queries {
         // Build prefix key for this query
@@ -96,7 +97,7 @@ pub async fn fetch_doc_ids<S: Reader>(
         let prefix = prefix_key.bytes();
 
         // Iterate over matching keys
-        let mut query_set = std::collections::HashSet::new();
+        let mut query_set = rapidhash::RapidHashSet::new();
 
         let opts = IterOptions::new().with_prefix(prefix);
 

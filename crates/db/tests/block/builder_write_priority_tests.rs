@@ -5,7 +5,7 @@ use db::block::builder::*;
 use defra_core::block::Block;
 use document::Document;
 use document::NormalValue;
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use storage::corekv::Store;
 use storage::namespace::Namespace;
 use storage::RegolithStore;
@@ -53,7 +53,7 @@ async fn field_priority_is_independent_of_sibling_updates() {
         &doc,
         "schema-v1",
         identity,
-        Some(&HashSet::from(["a".to_string()])),
+        Some(&RapidHashSet::from_iter(["a".to_string()])),
         None,
         None,
         None,
@@ -68,7 +68,7 @@ async fn field_priority_is_independent_of_sibling_updates() {
         &doc,
         "schema-v1",
         identity,
-        Some(&HashSet::from(["b".to_string()])),
+        Some(&RapidHashSet::from_iter(["b".to_string()])),
         None,
         None,
         None,

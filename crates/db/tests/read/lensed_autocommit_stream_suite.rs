@@ -19,8 +19,8 @@ use lens::TransformId;
 use lens::TransformStore;
 use query::doc_stream::DocStream;
 use query::runner::DocFetcher;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -91,7 +91,7 @@ async fn explicit_close_closes_the_inner_stream() {
 /// inside `persist_migrated_document_batch` fails deterministically.
 #[derive(Default)]
 struct AlwaysFailingTransformStore {
-    transforms: RwLock<HashSet<TransformId>>,
+    transforms: RwLock<RapidHashSet<TransformId>>,
 }
 
 #[async_trait]
@@ -107,8 +107,8 @@ impl TransformStore for AlwaysFailingTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(

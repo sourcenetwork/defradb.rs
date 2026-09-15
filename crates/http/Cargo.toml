@@ -62,6 +62,9 @@ async-stream = { version = "0.3", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 
+# Hashing
+rapidhash.workspace = true
+
 # HTTP server
 axum = { workspace = true, optional = true }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"], optional = true }

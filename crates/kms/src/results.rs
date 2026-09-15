@@ -5,7 +5,7 @@
 //! either drain the receiver as keys arrive (preferred for large fetches)
 //! or `wait_all()` for a HashMap once the producer side closes.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::channel;
 use crate::error::Result;
@@ -40,8 +40,8 @@ impl KeyResults {
 
     /// Drain to completion and return the resolved (CID → key) map.
     /// Propagates the first error encountered in the stream.
-    pub async fn wait_all(mut self) -> Result<HashMap<EncryptionCid, [u8; 32]>> {
-        let mut out = HashMap::new();
+    pub async fn wait_all(mut self) -> Result<RapidHashMap<EncryptionCid, [u8; 32]>> {
+        let mut out = RapidHashMap::new();
         while let Some(item) = self.rx.recv().await {
             let (cid, key) = item?;
             out.insert(cid, key);

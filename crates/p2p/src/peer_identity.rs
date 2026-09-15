@@ -3,6 +3,8 @@
 use async_trait::async_trait;
 
 use crate::transport::PeerId;
+#[cfg(feature = "iroh-transport")]
+use rapidhash::HashMapExt;
 
 #[cfg(feature = "iroh-transport")]
 const IROH_IDENTITY_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
@@ -61,7 +63,7 @@ type IrohIdentityFlight = std::sync::Arc<tokio::sync::OnceCell<Option<identity::
 
 #[cfg(feature = "iroh-transport")]
 type IrohIdentityFlights =
-    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<PeerId, IrohIdentityFlight>>>;
+    std::sync::Arc<tokio::sync::Mutex<rapidhash::RapidHashMap<PeerId, IrohIdentityFlight>>>;
 
 /// Bounded positive cache matching the established libp2p peer-identity
 /// behavior without retaining stale endpoint-to-DID bindings indefinitely.
@@ -86,9 +88,7 @@ impl IrohPeerIdentityState {
                 IROH_IDENTITY_CACHE_TTL,
                 IROH_IDENTITY_CACHE_CAPACITY,
             ))),
-            in_flight: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
+            in_flight: std::sync::Arc::new(tokio::sync::Mutex::new(rapidhash::RapidHashMap::new())),
         }
     }
 

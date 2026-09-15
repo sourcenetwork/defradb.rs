@@ -121,12 +121,12 @@ impl KeyStore for BlockstoreKeyStore {
 mod tests {
     use super::*;
     use async_lock::RwLock;
-    use std::collections::HashMap;
+    use rapidhash::RapidHashMap;
     use std::sync::Arc;
 
     #[derive(Default)]
     struct FakeEncBlockStore {
-        inner: RwLock<HashMap<EncryptionCid, Bytes>>,
+        inner: RwLock<RapidHashMap<EncryptionCid, Bytes>>,
     }
 
     #[async_trait]

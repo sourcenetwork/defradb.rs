@@ -2,6 +2,7 @@
 
 use acp::{DocumentPermission, Identity};
 use identity::Did;
+use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ fn distinct_group_count<'a>(
             .collect::<Vec<_>>()
             .join("\u{1}")
     })
-    .collect::<std::collections::HashSet<_>>()
+    .collect::<RapidHashSet<_>>()
     .len() as i64
 }
 

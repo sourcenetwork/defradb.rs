@@ -285,7 +285,7 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .collect::<std::collections::HashSet<_>>();
+            .collect::<rapidhash::RapidHashSet<_>>();
         assert_eq!(stored, collections.into_iter().collect());
     }
 

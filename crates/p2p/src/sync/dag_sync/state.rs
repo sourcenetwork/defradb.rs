@@ -1,6 +1,7 @@
 //! DAG sync state tracking.
 
-use std::collections::{HashSet, VecDeque};
+use rapidhash::{HashSetExt, RapidHashSet};
+use std::collections::VecDeque;
 
 use cid::Cid;
 use tokio::sync::RwLock;
@@ -12,9 +13,9 @@ const DEFAULT_MAX_SYNCED_CIDS: usize = 100_000;
 /// Internal state for DagSyncState, protected by a single lock.
 struct SyncStateInner {
     /// CIDs currently being synced
-    syncing: HashSet<Cid>,
+    syncing: RapidHashSet<Cid>,
     /// CIDs that have been synced in this session
-    synced: HashSet<Cid>,
+    synced: RapidHashSet<Cid>,
     /// Order of synced CIDs for FIFO eviction (oldest first)
     synced_order: VecDeque<Cid>,
     /// Maximum number of synced CIDs before eviction
@@ -24,8 +25,8 @@ struct SyncStateInner {
 impl Default for SyncStateInner {
     fn default() -> Self {
         Self {
-            syncing: HashSet::new(),
-            synced: HashSet::new(),
+            syncing: RapidHashSet::new(),
+            synced: RapidHashSet::new(),
             synced_order: VecDeque::new(),
             max_synced: DEFAULT_MAX_SYNCED_CIDS,
         }

@@ -8,8 +8,8 @@
 //! - `parse_top_level_aggregate()` - Parse a top-level aggregate query
 
 use graphql_parser::query::{Field, Value};
+use rapidhash::RapidHashMap;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 use crate::error::{QueryError, Result};
 use crate::mapper::{
@@ -37,7 +37,7 @@ fn parse_group_by_json_array(arr: &[JsonValue]) -> Result<GroupBy> {
 /// Parse groupBy argument into GroupBy.
 pub(super) fn parse_group_by_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<GroupBy> {
     match value {
         Value::List(items) => {
@@ -90,7 +90,7 @@ pub(super) fn parse_group_by_value(
 pub(super) fn parse_aggregate_target_obj(
     arg_name: &str,
     obj: &std::collections::BTreeMap<String, Value<'_, String>>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<AggregateTarget> {
     let mut target = AggregateTarget::new(arg_name.to_string());
     for (key, val) in obj {
@@ -151,7 +151,7 @@ pub(super) fn parse_aggregate_target_obj(
 pub(super) fn parse_aggregate_target_from_json(
     arg_name: &str,
     json: &JsonValue,
-    _variables: Option<&HashMap<String, JsonValue>>,
+    _variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<AggregateTarget> {
     let mut target = AggregateTarget::new(arg_name.to_string());
     if let JsonValue::Object(obj) = json {
@@ -205,7 +205,7 @@ pub(super) fn parse_aggregate_target_from_json(
 pub(super) fn parse_aggregate_field(
     field: &Field<'_, String>,
     agg_type: AggregateType,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Aggregate> {
     let mut target_field: Option<String> = None;
     let mut relation_targets: Vec<AggregateTarget> = Vec::new();
@@ -334,7 +334,7 @@ pub(super) fn parse_aggregate_field(
 pub(super) fn parse_top_level_aggregate(
     field: &Field<'_, String>,
     agg_type: AggregateType,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Select> {
     let mut aggregate = parse_aggregate_field(field, agg_type, variables)?;
 

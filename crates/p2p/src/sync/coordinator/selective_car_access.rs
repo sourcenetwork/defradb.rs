@@ -4,7 +4,7 @@
 //! on its lifetime: the CAR serve path re-derives exact-root authority from the
 //! durable replicator configuration and DB-backed root classification.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,7 +33,7 @@ struct PushGrant {
 pub(in crate::sync) struct SelectiveCarAccess {
     next_id: AtomicU64,
     recovery_window: Duration,
-    grants: Mutex<HashMap<PeerId, HashMap<u64, PushGrant>>>,
+    grants: Mutex<RapidHashMap<PeerId, RapidHashMap<u64, PushGrant>>>,
 }
 
 impl Default for SelectiveCarAccess {
@@ -41,7 +41,7 @@ impl Default for SelectiveCarAccess {
         Self {
             next_id: AtomicU64::new(0),
             recovery_window: POST_ACK_RECOVERY_WINDOW,
-            grants: Mutex::new(HashMap::new()),
+            grants: Mutex::new(RapidHashMap::new()),
         }
     }
 }
@@ -56,8 +56,8 @@ impl SelectiveCarAccess {
 
         let mut grants = self.grants.lock();
         Self::remove_expired(&mut grants, Instant::now());
-        let peer_grants = grants.get(&peer_id).map_or(0, HashMap::len);
-        let total_grants: usize = grants.values().map(HashMap::len).sum();
+        let peer_grants = grants.get(&peer_id).map_or(0, RapidHashMap::len);
+        let total_grants: usize = grants.values().map(RapidHashMap::len).sum();
         if peer_grants >= MAX_SELECTIVE_CAR_GRANTS_PER_PEER
             || total_grants >= MAX_SELECTIVE_CAR_GRANTS
         {
@@ -107,7 +107,10 @@ impl SelectiveCarAccess {
         Self::remove_expired(&mut grants, Instant::now());
     }
 
-    fn remove_expired(grants: &mut HashMap<PeerId, HashMap<u64, PushGrant>>, now: Instant) {
+    fn remove_expired(
+        grants: &mut RapidHashMap<PeerId, RapidHashMap<u64, PushGrant>>,
+        now: Instant,
+    ) {
         grants.retain(|_, peer_grants| {
             peer_grants.retain(|_, grant| grant.expires_at.is_none_or(|expiry| expiry > now));
             !peer_grants.is_empty()
@@ -119,7 +122,7 @@ impl SelectiveCarAccess {
         Self {
             next_id: AtomicU64::new(0),
             recovery_window,
-            grants: Mutex::new(HashMap::new()),
+            grants: Mutex::new(RapidHashMap::new()),
         }
     }
 }

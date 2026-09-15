@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use acp::DocumentACP;
@@ -54,9 +54,11 @@ async fn document_matches_filter<R: Reader + ?Sized>(
 /// Index an optional `(collection_name, doc_id)` allowlist.
 ///
 /// `None` means every document in the scanned collections should be considered.
-fn allowlist_index(allowlist: Option<&[(String, String)]>) -> Option<HashMap<&str, HashSet<&str>>> {
+fn allowlist_index(
+    allowlist: Option<&[(String, String)]>,
+) -> Option<RapidHashMap<&str, RapidHashSet<&str>>> {
     let docs = allowlist?;
-    let mut index: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut index: RapidHashMap<&str, RapidHashSet<&str>> = RapidHashMap::new();
     for (collection, doc_id) in docs {
         index
             .entry(collection.as_str())
@@ -68,7 +70,7 @@ fn allowlist_index(allowlist: Option<&[(String, String)]>) -> Option<HashMap<&st
 
 fn unique_collection_names(docs: &[(String, String)]) -> Vec<String> {
     let mut names = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = RapidHashSet::new();
     for (collection, _) in docs {
         if seen.insert(collection.as_str()) {
             names.push(collection.clone());
@@ -80,7 +82,7 @@ fn unique_collection_names(docs: &[(String, String)]) -> Vec<String> {
 fn document_is_allowlisted(
     collection_name: &str,
     doc_id: &str,
-    allowlist: Option<&HashMap<&str, HashSet<&str>>>,
+    allowlist: Option<&RapidHashMap<&str, RapidHashSet<&str>>>,
 ) -> bool {
     match allowlist {
         None => true,
@@ -642,7 +644,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     }
                 };
 
-                let field_values: std::collections::HashMap<String, document::NormalValue> = doc
+                let field_values: rapidhash::RapidHashMap<String, document::NormalValue> = doc
                     .values()
                     .iter()
                     .map(|(k, v)| (k.clone(), v.value().clone()))

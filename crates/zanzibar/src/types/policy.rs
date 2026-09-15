@@ -1,5 +1,5 @@
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use super::relationship::Relationship;
 use super::resource::{Relation, Resource};
@@ -12,7 +12,7 @@ pub struct Policy {
     pub name: String,
     pub resources: Vec<Resource>,
     #[serde(default)]
-    pub attributes: HashMap<String, String>,
+    pub attributes: RapidHashMap<String, String>,
 }
 
 impl Policy {
@@ -21,7 +21,7 @@ impl Policy {
             id: id.into(),
             name: name.into(),
             resources: Vec::new(),
-            attributes: HashMap::new(),
+            attributes: RapidHashMap::new(),
         }
     }
 

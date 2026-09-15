@@ -5,7 +5,7 @@
 //! with a full bucket of tokens; one token is consumed per allowed event.
 //! Tokens refill at a constant rate up to the bucket capacity.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
 use web_time::Instant;
 
@@ -126,7 +126,7 @@ pub(crate) enum RateLimitDecision {
 ///
 /// Uses string-based peer IDs to support both libp2p and iroh transports.
 pub struct PeerRateLimiter {
-    buckets: Mutex<HashMap<String, Bucket>>,
+    buckets: Mutex<RapidHashMap<String, Bucket>>,
     capacity: u32,
     refill_rate: f64,
     backoff_steps: Vec<Duration>,
@@ -178,7 +178,7 @@ impl PeerRateLimiter {
         backoff_steps: Vec<Duration>,
     ) -> Self {
         Self {
-            buckets: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(RapidHashMap::new()),
             capacity,
             refill_rate,
             backoff_steps,

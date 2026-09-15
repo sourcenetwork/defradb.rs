@@ -28,6 +28,7 @@ use crate::sync::manager::{
 use crate::sync::peer_state::PeerStateTracker;
 use crate::sync::rate_limiter::PeerRateLimiter;
 use crate::transport::P2PTransport;
+use rapidhash::HashSetExt;
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Create a new sync coordinator with default Open access mode.
@@ -198,7 +199,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             config.push_send_timeout.max(Duration::from_millis(1))
         };
         let subscribed_collections =
-            Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new()));
+            Arc::new(tokio::sync::RwLock::new(rapidhash::RapidHashSet::new()));
         let (manager, events) =
             SyncManager::new(Arc::clone(&blockstore), peer_state.clone(), config);
 
@@ -265,10 +266,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     mutation: Arc::new(tokio::sync::Mutex::new(())),
                     subscribed_collections,
                     retrying_subscribes: Arc::new(tokio::sync::Mutex::new(
-                        std::collections::HashSet::new(),
+                        rapidhash::RapidHashSet::new(),
                     )),
                     retrying_unsubscribes: Arc::new(tokio::sync::Mutex::new(
-                        std::collections::HashSet::new(),
+                        rapidhash::RapidHashSet::new(),
                     )),
                     collection_store,
                     head_provider,

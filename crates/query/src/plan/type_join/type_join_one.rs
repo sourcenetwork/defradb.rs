@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use document::NormalValue;
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -54,7 +54,7 @@ struct IndexedInvertedChildFetch {
 /// # Optimization
 ///
 /// Child documents are pre-loaded and indexed during `init()` to avoid
-/// O(N * M) nested loop scans. Lookups are O(1) via HashMap.
+/// O(N * M) nested loop scans. Lookups are O(1) via RapidHashMap.
 ///
 /// # Memory Considerations
 ///
@@ -83,7 +83,7 @@ pub struct TypeJoinOne {
     /// Cached child documents indexed by lookup key.
     /// For Primary joins: key is child's _docID
     /// For Inverted joins: key is child's FK field value
-    child_cache: HashMap<String, Doc>,
+    child_cache: RapidHashMap<String, Doc>,
     /// Optional relation filter to apply during join.
     /// This filter is evaluated against the child document and determines
     /// whether the parent document should be included in results.
@@ -228,7 +228,7 @@ impl TypeJoinOne {
             current_doc: Doc::default(),
             direction,
             initialized: false,
-            child_cache: HashMap::new(),
+            child_cache: RapidHashMap::new(),
             relation_filter: None,
             exec_info: ExecInfo::default(),
             child_exec_info: ExecInfo::default(),

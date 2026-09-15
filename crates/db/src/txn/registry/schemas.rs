@@ -137,7 +137,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         let mut txn_guard = shared_txn.lock().await;
         let txn = txn_guard.as_mut().ok_or(Error::TxnNotActive)?;
 
-        let known_types: std::collections::HashSet<String> = self
+        let known_types: rapidhash::RapidHashSet<String> = self
             .db
             .list_collections()
             .map_err(|e| Error::Other(format!("failed to list collections: {}", e)))?

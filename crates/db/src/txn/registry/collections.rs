@@ -1,6 +1,7 @@
 //! Collection listing, activation and deletion inside a transaction.
 
 use super::*;
+use rapidhash::HashSetExt;
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
     /// Get all collection versions visible within a transaction.
@@ -253,7 +254,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             versions.push(version);
         }
 
-        let mut deleting = std::collections::HashSet::new();
+        let mut deleting = rapidhash::RapidHashSet::new();
         for target in &targets {
             let selected: Vec<&schema::CollectionVersion> = if let Some(version) = versions
                 .iter()
@@ -299,7 +300,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             }
         }
 
-        let removed_collection_ids: std::collections::HashSet<String> = versions
+        let removed_collection_ids: rapidhash::RapidHashSet<String> = versions
             .iter()
             .filter(|version| deleting.contains(&version.version_id))
             .filter(|version| {
@@ -361,7 +362,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         }
         drop(datastore);
 
-        let mut removed_names = std::collections::HashSet::new();
+        let mut removed_names = rapidhash::RapidHashSet::new();
         for version in versions
             .iter()
             .filter(|version| deleting.contains(&version.version_id))

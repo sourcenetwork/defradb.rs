@@ -16,11 +16,11 @@ use query::DocFetcher;
 use query::DocMutator;
 use query::QueryExecutor;
 use query::QueryRequest;
+use rapidhash::RapidHashSet;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -35,7 +35,7 @@ mod unique_conflicts;
 
 #[derive(Default)]
 struct SetVerifiedStore {
-    transforms: RwLock<HashSet<TransformId>>,
+    transforms: RwLock<RapidHashSet<TransformId>>,
     transform_calls: AtomicUsize,
     verified_value: Option<serde_json::Value>,
 }
@@ -53,8 +53,8 @@ impl TransformStore for SetVerifiedStore {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(
@@ -92,7 +92,7 @@ impl TransformStore for SetVerifiedStore {
 
 #[derive(Default)]
 struct BlockingVerifiedStore {
-    transforms: RwLock<HashSet<TransformId>>,
+    transforms: RwLock<RapidHashSet<TransformId>>,
     transform_calls: AtomicUsize,
     block_on_call: AtomicUsize,
     entered: Arc<Notify>,
@@ -122,8 +122,8 @@ impl TransformStore for BlockingVerifiedStore {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(
@@ -169,7 +169,7 @@ impl TransformStore for BlockingVerifiedStore {
 #[derive(Default)]
 struct StepTransformStore {
     next_id: AtomicUsize,
-    fields: RwLock<HashMap<TransformId, String>>,
+    fields: RwLock<RapidHashMap<TransformId, String>>,
 }
 
 #[async_trait]
@@ -193,8 +193,8 @@ impl TransformStore for StepTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(
@@ -964,7 +964,11 @@ async fn concurrent_update_wins_over_stale_lazy_write_back() {
     update.set_id(doc_id.clone());
     update.set("name", document::NormalValue::String("Bob".to_string()));
     AutoCommitMutator::new(db.clone())
-        .update("Users", update, HashSet::from(["name".to_string()]))
+        .update(
+            "Users",
+            update,
+            RapidHashSet::from_iter(["name".to_string()]),
+        )
         .await
         .unwrap();
 

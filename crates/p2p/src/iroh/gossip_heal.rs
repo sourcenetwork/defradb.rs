@@ -23,7 +23,7 @@
 //! closes the peer's RPC connections so `PeerDisconnected` fires and the peer
 //! is dropped until the next discovery/dial recreates it through the 0→1 path.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
 use web_time::Instant;
 
@@ -123,14 +123,14 @@ struct PeerHeal {
 /// so the state machine is deterministic under test.
 struct HealSchedule {
     config: GossipHealConfig,
-    peers: HashMap<EndpointId, PeerHeal>,
+    peers: RapidHashMap<EndpointId, PeerHeal>,
 }
 
 impl HealSchedule {
     fn new(config: GossipHealConfig) -> Self {
         Self {
             config,
-            peers: HashMap::new(),
+            peers: RapidHashMap::new(),
         }
     }
 
@@ -218,14 +218,14 @@ impl HealSchedule {
 pub(super) struct GossipHealer {
     config: GossipHealConfig,
     schedule: parking_lot::Mutex<HealSchedule>,
-    conns: parking_lot::Mutex<HashMap<EndpointId, Connection>>,
+    conns: parking_lot::Mutex<RapidHashMap<EndpointId, Connection>>,
 }
 
 impl GossipHealer {
     pub(super) fn new(config: GossipHealConfig) -> Self {
         Self {
             schedule: parking_lot::Mutex::new(HealSchedule::new(config.clone())),
-            conns: parking_lot::Mutex::new(HashMap::new()),
+            conns: parking_lot::Mutex::new(RapidHashMap::new()),
             config,
         }
     }
@@ -312,7 +312,10 @@ pub(super) fn spawn_peer_connected_heal(
 
 /// Periodic sweep: refresh due peers and drop injected connections to
 /// departed peers.
-pub(super) fn sweep(res: &EndpointResources, subscriptions: &HashMap<String, TopicSubscription>) {
+pub(super) fn sweep(
+    res: &EndpointResources,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
+) {
     let connected: Vec<EndpointId> = res.peer_map.lock().endpoint_ids().collect();
     for conn in res.healer.take_departed_conns(&connected) {
         conn.close(0u32.into(), b"gossip-heal");

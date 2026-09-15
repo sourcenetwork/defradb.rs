@@ -3,10 +3,10 @@ use db::DB;
 use document::Document;
 use document::NormalValue;
 use query::mutator::DocMutator;
+use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
-use std::collections::HashSet;
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -48,13 +48,21 @@ async fn stale_disjoint_field_update_without_precondition_preserves_committed_fi
 
     stale_left.set("left", NormalValue::Int(1));
     mutator
-        .update("Patch", stale_left, HashSet::from(["left".to_string()]))
+        .update(
+            "Patch",
+            stale_left,
+            RapidHashSet::from_iter(["left".to_string()]),
+        )
         .await
         .expect("update left");
 
     stale_right.set("right", NormalValue::Int(1));
     mutator
-        .update("Patch", stale_right, HashSet::from(["right".to_string()]))
+        .update(
+            "Patch",
+            stale_right,
+            RapidHashSet::from_iter(["right".to_string()]),
+        )
         .await
         .expect("update right");
 
@@ -92,7 +100,11 @@ async fn stale_conditional_update_returns_conflict() {
 
     first.set("left", NormalValue::Int(1));
     mutator
-        .update("Patch", first, HashSet::from(["left".to_string()]))
+        .update(
+            "Patch",
+            first,
+            RapidHashSet::from_iter(["left".to_string()]),
+        )
         .await
         .expect("update left");
 
@@ -102,7 +114,7 @@ async fn stale_conditional_update_returns_conflict() {
             "Patch",
             expected_second,
             second,
-            HashSet::from(["right".to_string()]),
+            RapidHashSet::from_iter(["right".to_string()]),
         )
         .await
         .expect_err("stale conditional update must conflict");

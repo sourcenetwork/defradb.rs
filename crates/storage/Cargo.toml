@@ -36,6 +36,9 @@ cid.workspace = true
 # Error handling
 thiserror.workspace = true
 
+# Hashing
+rapidhash.workspace = true
+
 # Logging
 tracing.workspace = true
 telemetry = { path = "../telemetry" }

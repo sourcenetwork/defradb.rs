@@ -51,10 +51,10 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
 
 #[derive(Default)]
 pub struct CompositeMergeState {
-    pub(crate) field_values: HashMap<String, NormalValue>,
+    pub(crate) field_values: RapidHashMap<String, NormalValue>,
     pub(crate) any_field_applied: bool,
     pub(crate) encrypted_policy_checked: bool,
-    pub(crate) field_block_heads: HashMap<String, Vec<Cid>>,
+    pub(crate) field_block_heads: RapidHashMap<String, Vec<Cid>>,
     pub(crate) owned_field_cids: Vec<Cid>,
     pub(crate) linked_field_cids: Vec<Cid>,
     pub(crate) linked_encryption_cids: Vec<Cid>,
@@ -162,7 +162,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     }
 
     fn has_batch_merged_composite(
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
+        batch_merged: &std::sync::Mutex<RapidHashSet<Cid>>,
         cid: &Cid,
     ) -> bool {
         batch_merged
@@ -662,8 +662,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &defra_core::block::CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
         from_collection: bool,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        _batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
+        batch_merged: &std::sync::Mutex<RapidHashSet<Cid>>,
+        _batch_merged_collections: &std::sync::Mutex<RapidHashSet<Cid>>,
         pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
         pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
         pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
@@ -833,7 +833,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &defra_core::block::CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
         from_collection: bool,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
+        batch_merged: &std::sync::Mutex<RapidHashSet<Cid>>,
         pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
         pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
         pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,

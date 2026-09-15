@@ -6,8 +6,8 @@ use graphql_parser::query::{
     Definition, Directive, Document, Field, FragmentDefinition, OperationDefinition, Selection,
     SelectionSet, TypeCondition, Value,
 };
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
 use tracing::instrument;
 
 use crate::document::DocumentMapping;
@@ -85,15 +85,15 @@ pub enum ParsedOperation {
 }
 
 /// Type alias for fragment definitions map
-pub(super) type FragmentMap<'a> = HashMap<String, &'a FragmentDefinition<'a, String>>;
+pub(super) type FragmentMap<'a> = RapidHashMap<String, &'a FragmentDefinition<'a, String>>;
 
 /// Parse a selection into Select operations, handling fragments.
 fn parse_selection_to_selects<'a>(
     selection: &'a Selection<'a, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'a>,
     selects: &mut Vec<Select>,
-    visiting: &mut HashSet<String>,
+    visiting: &mut RapidHashSet<String>,
 ) -> Result<()> {
     match selection {
         Selection::Field(field) => {
@@ -172,7 +172,7 @@ fn parse_selection_to_selects<'a>(
 
 fn should_include_selection(
     directives: &[Directive<'_, String>],
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<bool> {
     for directive in directives {
         let excludes = match directive.name.as_str() {
@@ -210,11 +210,11 @@ fn matches_mutation_type(condition: Option<&TypeCondition<'_, String>>) -> bool 
 
 fn parse_selection_to_mutations<'a>(
     selection: &'a Selection<'a, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'a>,
     mutations: &mut Vec<Mutation>,
-    visiting: &mut HashSet<String>,
-    visited: &mut HashSet<String>,
+    visiting: &mut RapidHashSet<String>,
+    visited: &mut RapidHashSet<String>,
 ) -> Result<()> {
     match selection {
         Selection::Field(field) => {
@@ -289,7 +289,7 @@ pub fn parse_query(query: &str) -> Result<Vec<Select>> {
 /// For mutations, use `parse_mutations_with_variables` instead.
 pub fn parse_query_with_variables(
     query: &str,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Vec<Select>> {
     parse_query_with_limits(query, variables, QueryLimits::default())
 }
@@ -297,7 +297,7 @@ pub fn parse_query_with_variables(
 /// Parse a GraphQL query string with variable substitution and custom limits.
 pub fn parse_query_with_limits(
     query: &str,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     limits: QueryLimits,
 ) -> Result<Vec<Select>> {
     match parse_request_with_limits(query, variables, None, limits)? {
@@ -326,7 +326,7 @@ pub fn parse_mutations(query: &str) -> Result<Vec<Mutation>> {
 /// Returns a vector of Mutation operations, one for each top-level field in the mutation.
 pub fn parse_mutations_with_variables(
     query: &str,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Vec<Mutation>> {
     parse_mutations_with_limits(query, variables, QueryLimits::default())
 }
@@ -334,7 +334,7 @@ pub fn parse_mutations_with_variables(
 /// Parse a GraphQL mutation string with variable substitution and custom limits.
 pub fn parse_mutations_with_limits(
     query: &str,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     limits: QueryLimits,
 ) -> Result<Vec<Mutation>> {
     match parse_request_with_limits(query, variables, None, limits)? {
@@ -364,7 +364,7 @@ pub fn parse_request(query: &str) -> Result<ParsedOperation> {
 ///
 /// # Example
 /// ```ignore
-/// let variables = HashMap::from([
+/// let variables = RapidHashMap::from_iter([
 ///     ("userId".to_string(), json!("bae-123")),
 /// ]);
 /// let result = parse_request_with_variables(
@@ -407,7 +407,7 @@ fn is_introspection_query(doc: &Document<'_, String>) -> bool {
 
 pub fn parse_request_with_variables(
     query: &str,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     operation_name: Option<&str>,
 ) -> Result<ParsedOperation> {
     parse_request_with_limits(query, variables, operation_name, QueryLimits::default())
@@ -417,7 +417,7 @@ pub fn parse_request_with_variables(
 #[instrument(name = "query.parse", skip(query, variables, limits), fields(query_len = query.len()))]
 pub fn parse_request_with_limits(
     query: &str,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     operation_name: Option<&str>,
     limits: QueryLimits,
 ) -> Result<ParsedOperation> {
@@ -440,7 +440,7 @@ pub fn parse_request_with_limits(
     }
 
     // First pass: collect all fragment definitions
-    let mut fragments: HashMap<String, &FragmentDefinition<'_, String>> = HashMap::new();
+    let mut fragments: RapidHashMap<String, &FragmentDefinition<'_, String>> = RapidHashMap::new();
     for def in &doc.definitions {
         if let Definition::Fragment(frag) = def {
             fragments.insert(frag.name.clone(), frag);
@@ -509,7 +509,7 @@ pub fn parse_request_with_limits(
                             None
                         };
 
-                        let mut visiting = HashSet::new();
+                        let mut visiting = RapidHashSet::new();
                         for selection in &q.selection_set.items {
                             parse_selection_to_selects(
                                 selection,
@@ -523,7 +523,7 @@ pub fn parse_request_with_limits(
                     OperationDefinition::SelectionSet(ss) => {
                         // Bare selection set is treated as query
                         has_query = true;
-                        let mut visiting = HashSet::new();
+                        let mut visiting = RapidHashSet::new();
                         for selection in &ss.items {
                             parse_selection_to_selects(
                                 selection,
@@ -553,8 +553,8 @@ pub fn parse_request_with_limits(
                             None
                         };
 
-                        let mut visiting = HashSet::new();
-                        let mut visited = HashSet::new();
+                        let mut visiting = RapidHashSet::new();
+                        let mut visited = RapidHashSet::new();
                         for selection in &m.selection_set.items {
                             parse_selection_to_mutations(
                                 selection,
@@ -580,7 +580,7 @@ pub fn parse_request_with_limits(
                         };
 
                         // Parse selections (same as Query)
-                        let mut visiting = HashSet::new();
+                        let mut visiting = RapidHashSet::new();
                         for selection in &s.selection_set.items {
                             parse_selection_to_selects(
                                 selection,
@@ -695,9 +695,9 @@ fn apply_limit_to_filter(filter: &mut crate::mapper::Filter, limits: QueryLimits
 /// Parse a single GraphQL field into a Select operation.
 pub(super) fn parse_field_to_select(
     field: &Field<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'_>,
-    visiting: &mut HashSet<String>,
+    visiting: &mut RapidHashSet<String>,
 ) -> Result<Select> {
     let (collection_name, is_encrypted) = if field.name.starts_with("encrypted_") {
         (field.name["encrypted_".len()..].to_string(), true)
@@ -928,9 +928,9 @@ fn push_unique(
 pub(super) fn parse_selection_set(
     selection_set: &SelectionSet<'_, String>,
     _collection_name: &str,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     fragments: &FragmentMap<'_>,
-    visiting: &mut HashSet<String>,
+    visiting: &mut RapidHashSet<String>,
 ) -> Result<(Vec<Requestable>, DocumentMapping)> {
     let mut fields = Vec::new();
     let mut mapping = DocumentMapping::new();

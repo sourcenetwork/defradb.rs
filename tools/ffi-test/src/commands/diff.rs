@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::path::PathBuf;
 
 use colored::Colorize;
@@ -44,13 +44,13 @@ pub async fn execute(package: &str, go_path: Option<PathBuf>) -> Result<()> {
     println!();
 
     // Build maps for comparison
-    let older_tests: HashMap<&str, &TestStatus> = older
+    let older_tests: RapidHashMap<&str, &TestStatus> = older
         .tests
         .iter()
         .map(|t| (t.name.as_str(), &t.status))
         .collect();
 
-    let newer_tests: HashMap<&str, &TestStatus> = newer
+    let newer_tests: RapidHashMap<&str, &TestStatus> = newer
         .tests
         .iter()
         .map(|t| (t.name.as_str(), &t.status))

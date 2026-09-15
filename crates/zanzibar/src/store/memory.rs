@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::did::Did;
@@ -10,16 +10,16 @@ use crate::error::Result;
 use crate::types::{ObjectRef, Policy, Relationship, Subject};
 
 pub struct MemoryZanzibarStore {
-    policies: RwLock<HashMap<String, Policy>>,
-    relationships: RwLock<HashMap<String, HashMap<String, Relationship>>>,
+    policies: RwLock<RapidHashMap<String, Policy>>,
+    relationships: RwLock<RapidHashMap<String, RapidHashMap<String, Relationship>>>,
     policy_counter: AtomicU64,
 }
 
 impl MemoryZanzibarStore {
     pub fn new() -> Self {
         Self {
-            policies: RwLock::new(HashMap::new()),
-            relationships: RwLock::new(HashMap::new()),
+            policies: RwLock::new(RapidHashMap::new()),
+            relationships: RwLock::new(RapidHashMap::new()),
             policy_counter: AtomicU64::new(0),
         }
     }

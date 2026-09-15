@@ -1,7 +1,7 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use defra_http::P2PResult;
+use rapidhash::RapidHashSet;
 
 use crate::doc_sync::dispatch::DocSyncDispatch;
 use crate::{P2PError, P2PErrorExt as _};
@@ -38,7 +38,7 @@ where
     let mut dispatched = false;
     let idle_timeout = std::time::Duration::from_secs(3);
     let start = web_time::Instant::now();
-    let doc_set: HashSet<String> = doc_ids.iter().cloned().collect();
+    let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
 
     for _attempt in 0..3 {
         // Completion first: an empty `doc_ids` makes `total_expected` zero, and

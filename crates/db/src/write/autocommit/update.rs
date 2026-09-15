@@ -13,7 +13,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         collection_name: &str,
         expected: Option<Document>,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)

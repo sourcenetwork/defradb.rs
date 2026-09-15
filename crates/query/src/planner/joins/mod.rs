@@ -27,7 +27,7 @@ mod sub_joins;
 
 pub(super) use shared::{JoinResult, SelectionJoinInfo};
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 
 use schema::CollectionVersion;
 
@@ -58,7 +58,8 @@ impl Planner {
         scope_path: &[String],
     ) -> JoinResult {
         // Internal keys for aggregate relation data when there's a collision with a relation selection.
-        let mut aggregate_internal_keys: HashMap<String, (String, String)> = HashMap::new();
+        let mut aggregate_internal_keys: RapidHashMap<String, (String, String)> =
+            RapidHashMap::new();
         let mut join_provides_ordering = false;
 
         // Check recursion depth to prevent stack overflow
@@ -81,7 +82,7 @@ impl Planner {
             parent_collection,
             &already_selected,
         );
-        let synthetic_order_relations: std::collections::HashSet<&str> = synthetic_order_selects
+        let synthetic_order_relations: RapidHashSet<&str> = synthetic_order_selects
             .iter()
             .map(|s| s.field.name.as_str())
             .collect();

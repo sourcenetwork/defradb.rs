@@ -195,7 +195,7 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         &self,
         collection_name: &str,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.update_impl(collection_name, None, doc, modified_fields)
             .await
@@ -206,7 +206,7 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         collection_name: &str,
         expected: Document,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.update_impl(collection_name, Some(expected), doc, modified_fields)
             .await

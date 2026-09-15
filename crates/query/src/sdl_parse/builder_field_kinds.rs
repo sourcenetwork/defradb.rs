@@ -1,6 +1,7 @@
 //! Field kind resolution for SDL builder.
 
 use crate::error::{QueryError, Result};
+use rapidhash::{RapidHashMap, RapidHashSet};
 use schema::FieldKind;
 
 use super::helpers::graphql_to_scalar_kind;
@@ -11,10 +12,10 @@ impl<'a> SdlParser<'a> {
         &self,
         parsed_type: &ParsedType,
         field_name: &str,
-        type_names: &std::collections::HashSet<String>,
+        type_names: &RapidHashSet<String>,
         current_type: &str,
-        collection_set: &std::collections::HashMap<String, (i32, usize)>,
-        known_collection_ids: &std::collections::HashMap<String, String>,
+        collection_set: &RapidHashMap<String, (i32, usize)>,
+        known_collection_ids: &RapidHashMap<String, String>,
     ) -> Result<FieldKind> {
         let base = &parsed_type.base_type;
 

@@ -9,7 +9,8 @@ use async_lock::Mutex as TokioMutex;
 use cid::Cid;
 use defra_core::block::{Block, CrdtDelta, Encryption};
 use document::{Document, NormalValue};
-use std::collections::{HashMap, HashSet, VecDeque};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use std::collections::VecDeque;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage::corekv::Store;
@@ -194,8 +195,8 @@ impl<S: Store> VersionedFetcher<S> {
         // Walk the collection DAG backwards to find all document composite CIDs.
         // Each collection block links to one document composite block.
         // We track doc_id → (priority, composite_cid) keeping highest priority per doc.
-        let mut doc_composites: HashMap<String, (u64, Cid)> = HashMap::new();
-        let mut visited: HashSet<Cid> = HashSet::new();
+        let mut doc_composites: RapidHashMap<String, (u64, Cid)> = RapidHashMap::new();
+        let mut visited: RapidHashSet<Cid> = RapidHashSet::new();
         let mut queue: VecDeque<(Cid, Block)> = VecDeque::new();
 
         visited.insert(*start_cid);
@@ -344,9 +345,9 @@ impl<S: Store> VersionedFetcher<S> {
         txn: &mut DbTxn<S>,
         start_cid: &Cid,
         start_block: &Block,
-    ) -> Result<HashMap<Cid, Block>> {
-        let mut blocks = HashMap::new();
-        let mut visited: HashSet<Cid> = HashSet::new();
+    ) -> Result<RapidHashMap<Cid, Block>> {
+        let mut blocks = RapidHashMap::new();
+        let mut visited: RapidHashSet<Cid> = RapidHashSet::new();
         let mut queue: VecDeque<Cid> = VecDeque::new();
 
         // Start with the target block
@@ -517,7 +518,7 @@ impl<S: Store> VersionedFetcher<S> {
     ///
     /// Blocks should be sorted by priority (ascending) before calling this method.
     fn replay_deltas(&self, blocks: &[(Cid, Block)], doc_id: &str) -> Result<Document> {
-        let mut field_values: HashMap<String, (u64, NormalValue)> = HashMap::new();
+        let mut field_values: RapidHashMap<String, (u64, NormalValue)> = RapidHashMap::new();
         let mut is_deleted = false;
         let mut max_composite_priority: u64 = 0;
 

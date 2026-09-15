@@ -1,6 +1,6 @@
 //! Network commands: Listen, Dial, PeerAddresses.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 
 use iroh_bitswap::Store;
 use libp2p::{Multiaddr, PeerId};
@@ -71,7 +71,7 @@ impl<S: Store> P2PHost<S> {
         response: tokio::sync::oneshot::Sender<Vec<String>>,
     ) {
         // Build full multiaddrs for connected peers (matches Go's ActivePeers).
-        let connected: HashSet<PeerId> = self.swarm.connected_peers().cloned().collect();
+        let connected: RapidHashSet<PeerId> = self.swarm.connected_peers().cloned().collect();
         let addrs: Vec<String> = connected
             .iter()
             .filter_map(|pid| {

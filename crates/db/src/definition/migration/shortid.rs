@@ -1,7 +1,8 @@
 //! v0.15 document-storage migration to the v0.16 short-ID layout.
 
 use bytes::Bytes;
-use std::collections::{HashMap, HashSet, VecDeque};
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
+use std::collections::VecDeque;
 
 use acp::{RelationTuple, Relationship, Subject};
 use cid::Cid;
@@ -30,7 +31,7 @@ struct LegacyDocument {
     deleted: Option<Bytes>,
     canonical_doc_id: String,
     doc_short_id: u64,
-    owned_block_cids: HashSet<Cid>,
+    owned_block_cids: RapidHashSet<Cid>,
 }
 
 impl<S: Store> DB<S> {
@@ -142,7 +143,7 @@ async fn collect_legacy_documents(
                 deleted,
                 canonical_doc_id: String::new(),
                 doc_short_id: 0,
-                owned_block_cids: HashSet::new(),
+                owned_block_cids: RapidHashSet::new(),
             });
         }
         iter.close().await.map_err(Error::Storage)?;
@@ -232,7 +233,7 @@ async fn resolve_legacy_block_graph(
     headstore: &NamespaceView,
     blockstore: &NamespaceView,
     old_doc_id: &str,
-) -> Result<(String, HashSet<Cid>)> {
+) -> Result<(String, RapidHashSet<Cid>)> {
     let prefix = legacy_head_field_prefix(old_doc_id, "C");
     let mut iter = headstore
         .iterator(IterOptions::new().with_prefix(prefix.clone()))
@@ -253,8 +254,8 @@ async fn resolve_legacy_block_graph(
         )));
     }
 
-    let mut visited = HashSet::new();
-    let mut genesis = HashSet::new();
+    let mut visited = RapidHashSet::new();
+    let mut genesis = RapidHashSet::new();
     while let Some(cid) = queue.pop_front() {
         if !visited.insert(cid) {
             continue;
@@ -390,7 +391,7 @@ async fn move_crdt_keys(datastore: &NamespaceView, documents: &[LegacyDocument])
                 encode_doc_short_id(document.doc_short_id),
             )
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<RapidHashMap<_, _>>();
     let mut iter = datastore
         .iterator(IterOptions::new().with_prefix(b"/data/".to_vec()))
         .await
@@ -472,7 +473,7 @@ async fn migrate_acp_keys(acpstore: &NamespaceView, documents: &[LegacyDocument]
                 document.canonical_doc_id.clone(),
             )
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<RapidHashMap<_, _>>();
     migrate_local_acp(acpstore, &replacements).await?;
     migrate_zanzibar_acp(acpstore, &replacements).await
 }
@@ -491,7 +492,7 @@ async fn migrate_auxiliary_doc_id_keys(
                 document.canonical_doc_id.clone(),
             )
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<RapidHashMap<_, _>>();
 
     move_terminal_doc_ids(datastore, b"/se/", &replacements, false).await?;
     move_terminal_doc_ids(systemstore, b"/p2p/document/", &replacements, false).await?;
@@ -502,7 +503,7 @@ async fn migrate_auxiliary_doc_id_keys(
 async fn move_terminal_doc_ids(
     store: &NamespaceView,
     prefix: &[u8],
-    replacements: &HashMap<String, String>,
+    replacements: &RapidHashMap<String, String>,
     rewrite_push_retry: bool,
 ) -> Result<()> {
     let mut iter = store
@@ -539,7 +540,7 @@ async fn move_terminal_doc_ids(
 
 async fn migrate_local_acp(
     acpstore: &NamespaceView,
-    replacements: &HashMap<String, String>,
+    replacements: &RapidHashMap<String, String>,
 ) -> Result<()> {
     let mut iter = acpstore
         .iterator(IterOptions::new().with_prefix(b"/acp/".to_vec()))
@@ -594,7 +595,7 @@ async fn migrate_local_acp(
 
 async fn migrate_zanzibar_acp(
     acpstore: &NamespaceView,
-    replacements: &HashMap<String, String>,
+    replacements: &RapidHashMap<String, String>,
 ) -> Result<()> {
     let mut iter = acpstore
         .iterator(IterOptions::new().with_prefix(b"/zanzibar/".to_vec()))

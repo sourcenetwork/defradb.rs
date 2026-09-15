@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use rapidhash::{HashMapExt, RapidHashMap};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use colored::Colorize;
@@ -78,7 +79,7 @@ async fn show_current_worktree(
     }
 
     // Group reports by package (keep only latest per package)
-    let mut latest_by_package: HashMap<String, Report> = HashMap::new();
+    let mut latest_by_package: RapidHashMap<String, Report> = RapidHashMap::new();
     for report in reports {
         latest_by_package
             .entry(report.package.clone())
@@ -302,7 +303,7 @@ async fn show_all_worktrees() -> Result<()> {
             println!("  {}", "No test reports".dimmed());
         } else {
             // Group by package
-            let mut latest_by_package: HashMap<String, &Report> = HashMap::new();
+            let mut latest_by_package: RapidHashMap<String, &Report> = RapidHashMap::new();
             for report in &reports {
                 latest_by_package
                     .entry(report.package.clone())

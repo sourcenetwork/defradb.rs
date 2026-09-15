@@ -8,6 +8,7 @@ use bytes::Bytes;
 use cid::Cid;
 use document::{DocID, Document};
 use identity::Did;
+use rapidhash::RapidHashSet;
 use std::sync::Arc;
 use storage::corekv::MaybeSendSync;
 
@@ -446,7 +447,7 @@ pub trait DocMutator: MaybeSendSync {
         &self,
         collection_name: &str,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: RapidHashSet<String>,
     ) -> Result<UpdateResult>;
 
     /// Update a document only if its persisted state still matches the
@@ -461,7 +462,7 @@ pub trait DocMutator: MaybeSendSync {
         collection_name: &str,
         expected: Document,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: RapidHashSet<String>,
     ) -> Result<UpdateResult> {
         let _ = expected;
         self.update(collection_name, doc, modified_fields).await

@@ -4,7 +4,7 @@
 //! (collections with a QuerySource). Instead of scanning storage, views
 //! parse their stored query, build a plan for it, and remap fields.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
@@ -255,7 +255,7 @@ impl Planner {
             plan,
             index_scan: None,
             ordering_only_fields: Vec::new(),
-            aggregate_internal_keys: HashMap::new(),
+            aggregate_internal_keys: RapidHashMap::new(),
             warnings: source_plan_result.warnings,
         })
     }

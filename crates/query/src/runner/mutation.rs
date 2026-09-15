@@ -3,6 +3,7 @@
 use acp::DocumentPermission;
 use chrono::{DateTime, FixedOffset, Utc};
 use identity::Did;
+use rapidhash::RapidHashMap;
 use serde_json::{Map, Value as JsonValue};
 use std::sync::Arc;
 use web_time::Instant;
@@ -84,7 +85,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         mutation_str: &str,
         caller_identity: Option<Did>,
-        variables: Option<&std::collections::HashMap<String, JsonValue>>,
+        variables: Option<&RapidHashMap<String, JsonValue>>,
     ) -> Result<JsonValue> {
         let mutator = self.mutator.as_ref().ok_or_else(|| {
             QueryError::execution("mutations require a mutator; call with_mutator() first")
@@ -106,7 +107,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         mutation_str: &str,
         mutator: Arc<dyn DocMutator>,
         caller_identity: Option<Did>,
-        variables: Option<&std::collections::HashMap<String, JsonValue>>,
+        variables: Option<&RapidHashMap<String, JsonValue>>,
         fetcher_override: Option<Arc<dyn crate::fetcher::DocFetcher>>,
     ) -> Result<JsonValue> {
         let mutations = parse_mutations_with_limits(mutation_str, variables, self.query_limits)?;
@@ -986,8 +987,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use document::{DocID, Document};
+    use rapidhash::RapidHashSet;
     use schema::{CollectionVersion, FieldDescription, FieldKind};
-    use std::collections::HashSet;
     use std::sync::Mutex;
 
     use crate::mutator::{CollectionTruncator, CreateResult, DeleteResult, UpdateResult};
@@ -1121,7 +1122,7 @@ mod tests {
             &self,
             _collection_name: &str,
             doc: Document,
-            modified_fields: HashSet<String>,
+            modified_fields: RapidHashSet<String>,
         ) -> Result<UpdateResult> {
             Ok(UpdateResult::new(doc, modified_fields.len()))
         }

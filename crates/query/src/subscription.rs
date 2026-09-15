@@ -2,7 +2,7 @@
 //!
 //! Used by both FFI and HTTP code paths to process subscription events.
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 
 use graphql_parser::query::{
     Definition, Field, FragmentDefinition, OperationDefinition, Query as GqlQuery, Selection,
@@ -14,7 +14,7 @@ use crate::error::{QueryError, Result};
 use crate::query_parse::{parse_request_with_limits, ParsedOperation};
 use crate::{QueryLimits, QueryResponse};
 
-type FragmentMap<'a> = HashMap<String, &'a FragmentDefinition<'static, String>>;
+type FragmentMap<'a> = RapidHashMap<String, &'a FragmentDefinition<'static, String>>;
 
 /// How deep a chain of fragment spreads may be at a subscription root.
 ///
@@ -186,7 +186,7 @@ fn matching_subscription(
     selected.ok_or_else(|| QueryError::parse("subscription operation not found"))
 }
 
-fn variables_to_map(variables: Option<&JsonValue>) -> Option<HashMap<String, JsonValue>> {
+fn variables_to_map(variables: Option<&JsonValue>) -> Option<RapidHashMap<String, JsonValue>> {
     variables.and_then(|value| {
         value.as_object().map(|map| {
             map.iter()
@@ -250,7 +250,7 @@ fn single_root_field(
     collect_root_fields(
         &selection_set.items,
         fragments,
-        &mut HashSet::new(),
+        &mut RapidHashSet::new(),
         0,
         &mut fields,
     )?;
@@ -267,7 +267,7 @@ fn single_root_field(
 fn collect_root_fields(
     items: &[Selection<'static, String>],
     fragments: &FragmentMap<'_>,
-    visiting: &mut HashSet<String>,
+    visiting: &mut RapidHashSet<String>,
     depth: usize,
     out: &mut Vec<Field<'static, String>>,
 ) -> Result<()> {

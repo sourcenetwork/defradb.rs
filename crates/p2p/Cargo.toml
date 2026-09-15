@@ -70,6 +70,9 @@ sysinfo = { version = "0.33", optional = true }
 # Bytes
 bytes = { workspace = true }
 
+# Hashing
+rapidhash = { workspace = true }
+
 # Varint encoding for CARv1 format
 unsigned-varint = "0.8"
 

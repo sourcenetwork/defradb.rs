@@ -15,6 +15,7 @@ ignored = ["bytes", "document", "lens", "serde", "serde_bytes", "serde_ipld_dagc
 bench = false
 
 [dependencies]
+rapidhash.workspace = true
 acp = { path = "../acp" }
 blockstore = { path = "../blockstore" }
 crypto = { path = "../crypto" }

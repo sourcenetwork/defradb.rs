@@ -1,10 +1,10 @@
 //! Channel-based event bus implementation.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_channel::{Sender, TrySendError};
 use parking_lot::RwLock;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::bus::Bus;
 use crate::document_changes::{ChangePublisher, DocumentChangeSubscription};
@@ -67,8 +67,8 @@ pub struct ChannelBus {
     /// Counter for generating unique subscription IDs.
     next_id: AtomicU64,
     /// Active subscribers indexed by ID.
-    subscribers: RwLock<HashMap<u64, Subscriber>>,
-    document_observers: RwLock<HashMap<u64, ChangePublisher>>,
+    subscribers: RwLock<RapidHashMap<u64, Subscriber>>,
+    document_observers: RwLock<RapidHashMap<u64, ChangePublisher>>,
     /// Whether the bus is closed.
     closed: AtomicBool,
     /// Configuration for the bus.
@@ -85,8 +85,8 @@ impl ChannelBus {
     pub fn with_config(config: ChannelBusConfig) -> Self {
         Self {
             next_id: AtomicU64::new(1),
-            subscribers: RwLock::new(HashMap::new()),
-            document_observers: RwLock::new(HashMap::new()),
+            subscribers: RwLock::new(RapidHashMap::new()),
+            document_observers: RwLock::new(RapidHashMap::new()),
             closed: AtomicBool::new(false),
             config,
         }

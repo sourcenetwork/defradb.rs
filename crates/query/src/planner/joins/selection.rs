@@ -1,6 +1,6 @@
 //! Collect nested selects and synthetic ORDER BY joins for planning.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use schema::CollectionVersion;
 
@@ -82,7 +82,9 @@ pub(super) fn collect_synthetic_order_selects(
 /// Collect info about selection joins so aggregates can share when compatible.
 ///
 /// Go shares joins when: same relation, same filter, no limit on selection.
-pub(super) fn build_selection_join_info<'a, I>(selects: I) -> HashMap<String, SelectionJoinInfo>
+pub(super) fn build_selection_join_info<'a, I>(
+    selects: I,
+) -> RapidHashMap<String, SelectionJoinInfo>
 where
     I: IntoIterator<Item = &'a Select>,
 {

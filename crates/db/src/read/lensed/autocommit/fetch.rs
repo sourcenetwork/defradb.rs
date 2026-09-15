@@ -1,7 +1,7 @@
 //! DocFetcher trait method implementations (non-index-scan).
 
 use bytes::Bytes;
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use async_lock::Mutex as TokioMutex;
 use document::Document;
@@ -26,7 +26,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         collection: &Collection,
         migration_generation: u64,
         has_migrations: bool,
-        preloaded_history: &Option<HashMap<String, TargetedHistoryLink>>,
+        preloaded_history: &Option<RapidHashMap<String, TargetedHistoryLink>>,
         write_backs: &mut Vec<MigrationWriteBack>,
     ) -> query::error::Result<Document> {
         let outcome = self

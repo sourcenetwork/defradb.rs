@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 mod branchable_sync;
 
@@ -42,8 +42,8 @@ pub struct P2PAdapter<B: Blockstore + 'static> {
     event_bus: Option<Arc<dyn events::Bus>>,
     version_syncer: Option<Arc<dyn VersionSyncer>>,
     replicator_push_options: ReplicatorPushOptionsState,
-    peer_addresses: Arc<std::sync::RwLock<HashMap<String, String>>>,
-    tracked_documents: Arc<std::sync::RwLock<HashSet<String>>>,
+    peer_addresses: Arc<std::sync::RwLock<RapidHashMap<String, String>>>,
+    tracked_documents: Arc<std::sync::RwLock<RapidHashSet<String>>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
 }
 
@@ -81,12 +81,12 @@ async fn wait_for_branchable_merges(
     }
 }
 
-async fn unmerged_heads<B, I>(blockstore: &B, heads: I) -> HashSet<cid::Cid>
+async fn unmerged_heads<B, I>(blockstore: &B, heads: I) -> RapidHashSet<cid::Cid>
 where
     B: Blockstore,
     I: IntoIterator<Item = cid::Cid>,
 {
-    let mut pending = HashSet::new();
+    let mut pending = RapidHashSet::new();
     for cid in heads {
         if !matches!(blockstore.is_merged(&cid).await, Ok(true)) {
             pending.insert(cid);
@@ -140,8 +140,8 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
             event_bus: Some(event_bus),
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
+            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
             nac_checker: Some(nac_checker),
         }
     }
@@ -221,7 +221,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
         ))
     }
 
-    pub fn set_initial_tracked_documents(&self, docs: HashSet<String>) {
+    pub fn set_initial_tracked_documents(&self, docs: RapidHashSet<String>) {
         if let Ok(mut tracked) = self.tracked_documents.write() {
             *tracked = docs;
         }
@@ -447,7 +447,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         }
 
         let peer_id = parsed.peer_id;
-        let requested_collections: HashSet<String> = collection_cids.iter().cloned().collect();
+        let requested_collections: RapidHashSet<String> = collection_cids.iter().cloned().collect();
         let local_peer_id = self.handle.local_peer_id_cached().to_string();
         let target_peer_id = peer_id.to_string();
         let validated_capabilities = crate::validate_explicit_replay_capabilities(
@@ -481,7 +481,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         // skip the expensive initial replay when the replicator already exists
         // with the same collections and replay capability.
         let (existing_collection_ids, existing_filters): (
-            HashSet<String>,
+            RapidHashSet<String>,
             p2p::ReplicationFilters,
         ) = {
             let result = if let Some(ref coordinator) = self.sync_coordinator {
@@ -498,14 +498,14 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             };
             match result {
                 Ok(Some(info)) => (info.collections.into_iter().collect(), info.filters),
-                Ok(None) => (HashSet::new(), p2p::ReplicationFilters::new()),
+                Ok(None) => (RapidHashSet::new(), p2p::ReplicationFilters::new()),
                 Err(e) => {
                     tracing::warn!(
                         peer_id = %peer_id,
                         error = %e,
                         "Failed to check existing replicator state; falling back to full replay"
                     );
-                    (HashSet::new(), p2p::ReplicationFilters::new())
+                    (RapidHashSet::new(), p2p::ReplicationFilters::new())
                 }
             }
         };
@@ -917,7 +917,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         // budget.
         let overall_timeout = timeout.unwrap_or(crate::doc_sync::DEFAULT_DOC_SYNC_TIMEOUT);
         let start = web_time::Instant::now();
-        let doc_set: HashSet<String> = doc_ids.iter().cloned().collect();
+        let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
 
         let coord = self
             .sync_coordinator
@@ -1163,7 +1163,7 @@ mod tests {
 
         let pending = unmerged_heads(&blockstore, [merged, unmerged, unmerged]).await;
 
-        assert_eq!(pending, HashSet::from([unmerged]));
+        assert_eq!(pending, RapidHashSet::from_iter([unmerged]));
     }
 
     /// #1299 regression guard for the ordering of the two steps the pubsub
@@ -1179,7 +1179,7 @@ mod tests {
         blockstore.put(&merged, b"merged").await.unwrap();
         blockstore.mark_as_merged(&merged).await.unwrap();
 
-        let doc_set = HashSet::from(["bae-doc-1".to_string()]);
+        let doc_set = RapidHashSet::from_iter(["bae-doc-1".to_string()]);
         let replies = [(
             "peer-a".to_string(),
             p2p::message::pubsub::DocSyncReply {
@@ -1305,8 +1305,8 @@ mod tests {
             event_bus: None,
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
+            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
             nac_checker: None,
         }
     }
@@ -1449,8 +1449,8 @@ mod tests {
             event_bus: Some(Arc::new(events::ChannelBus::default())),
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
+            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
             nac_checker: None,
         };
 

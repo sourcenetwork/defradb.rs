@@ -1,10 +1,11 @@
 use super::*;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 #[tokio::test(start_paused = true)]
 async fn unservable_batch_does_not_hide_later_servable_blocks() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
-    let blocks: HashMap<_, _> = (0..2050)
+    let blocks: RapidHashMap<_, _> = (0..2050)
         .map(|i| {
             let data = encode_ipld(ipld!({ "value": i }));
             (make_cid(&data), data)
@@ -24,8 +25,8 @@ async fn unservable_batch_does_not_hide_later_servable_blocks() {
         blockstore.clone(),
         root,
         root_data,
-        HashMap::new(),
-        HashMap::from([(last, blocks[&last].clone())]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(last, blocks[&last].clone())]),
     );
     let completions = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport
@@ -73,8 +74,8 @@ async fn size_limited_provider_is_not_retried_but_alternate_can_finish() {
             blockstore.clone(),
             root,
             root_data,
-            HashMap::new(),
-            HashMap::from([(child, child_data)]),
+            RapidHashMap::new(),
+            RapidHashMap::from_iter([(child, child_data)]),
         );
         let completions = crate::sync::manager::BlockSyncCompletionTracker::default();
         transport

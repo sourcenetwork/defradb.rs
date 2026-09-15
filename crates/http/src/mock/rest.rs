@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use identity::Did;
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::{json, Value as JsonValue};
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use query::rest::{RestError, RestOperations, RestResult};
@@ -33,7 +33,7 @@ fn matches_filter(data: &JsonValue, filter: &JsonValue) -> RestResult<bool> {
 #[derive(Debug)]
 pub struct MockRestOperations {
     /// Collections with their documents.
-    collections: Arc<RwLock<HashMap<String, Vec<MockDocument>>>>,
+    collections: Arc<RwLock<RapidHashMap<String, Vec<MockDocument>>>>,
     /// Counter for generating unique document IDs.
     next_id: Arc<RwLock<u64>>,
 }
@@ -56,7 +56,7 @@ impl Default for MockRestOperations {
 impl MockRestOperations {
     /// Create a new mock REST operations instance with default collections.
     pub fn new() -> Self {
-        let mut collections = HashMap::new();
+        let mut collections = RapidHashMap::new();
 
         // Add default Users collection with sample data
         collections.insert(
@@ -85,7 +85,7 @@ impl MockRestOperations {
     /// Create an empty mock REST operations instance.
     pub fn empty() -> Self {
         Self {
-            collections: Arc::new(RwLock::new(HashMap::new())),
+            collections: Arc::new(RwLock::new(RapidHashMap::new())),
             next_id: Arc::new(RwLock::new(1)),
         }
     }

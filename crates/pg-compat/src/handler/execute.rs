@@ -5,6 +5,7 @@ use pgwire::api::results::Response;
 use pgwire::api::ClientInfo;
 use pgwire::error::PgWireResult;
 use pgwire::messages::PgWireBackendMessage;
+use rapidhash::HashMapExt;
 use tracing::{debug, warn};
 
 use crate::bridge::{

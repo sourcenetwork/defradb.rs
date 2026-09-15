@@ -42,11 +42,11 @@ use events::Bus;
 use events::ChannelBus;
 use events::EventName;
 use query::txn::TransactionRegistry;
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CType;
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
-use std::collections::HashSet;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -1093,7 +1093,7 @@ async fn interactive_counter_increment_conflicts_with_concurrent_same_doc_merge(
     let mut update_doc = Document::from_json_str(r#"{"score": 13}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("score".to_string(), NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("score".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -1159,7 +1159,7 @@ async fn interactive_counter_increment_conflicts_with_concurrent_same_doc_merge(
     let mut retry_doc = Document::from_json_str(r#"{"score": 18}"#).unwrap();
     retry_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     retry_doc.set_counter_delta("score".to_string(), NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("score".to_string());
     mutator
         .update("Counters", retry_doc, modified)
@@ -2126,7 +2126,7 @@ async fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
     let doc_id_str = doc_id.to_string();
 
     doc.set("age", NormalValue::Int(60));
-    let mut modified_fields = HashSet::new();
+    let mut modified_fields = RapidHashSet::new();
     modified_fields.insert("age".to_string());
     {
         let txn = handler.db().new_txn(false).await.unwrap();

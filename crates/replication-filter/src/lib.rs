@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use p2p::{ReplicationFilter, ReplicationFilterMatcher};
 use query::Filter;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{CType, FieldDescription, FieldKind};
 use serde_json::Value as JsonValue;
 
@@ -127,13 +127,13 @@ fn validate_op(
 /// Parsed [`Filter`] objects are cached by the canonical JSON of the conditions
 /// so re-parsing is avoided when the same predicate is applied to many documents.
 pub struct QueryReplicationFilterMatcher {
-    cache: Mutex<HashMap<String, Filter>>,
+    cache: Mutex<RapidHashMap<String, Filter>>,
 }
 
 impl QueryReplicationFilterMatcher {
     pub fn new() -> Self {
         Self {
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(RapidHashMap::new()),
         }
     }
 

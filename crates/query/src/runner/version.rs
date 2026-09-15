@@ -7,9 +7,9 @@
 
 use acp::{DocumentPermission, Identity};
 use identity::Did;
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
 
 use crate::error::{QueryError, Result};
 use crate::executor::GqlWarning;
@@ -55,7 +55,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Fetch document(s) at the specified CIDs.
         // For collection-level CIDs (branchable), this returns multiple documents.
         // For document-level CIDs, this returns a single document.
-        let mut seen_cids = HashSet::new();
+        let mut seen_cids = RapidHashSet::new();
         let mut documents = Vec::new();
         for cid in cids {
             if !seen_cids.insert(cid.clone()) {

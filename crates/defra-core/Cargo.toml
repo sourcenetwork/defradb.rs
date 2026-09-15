@@ -31,6 +31,9 @@ multihash.workspace = true
 serde_ipld_dagcbor.workspace = true
 ipld-core.workspace = true
 
+# Hashing
+rapidhash.workspace = true
+
 # Cryptography (for CID generation)
 sha2.workspace = true
 rand.workspace = true

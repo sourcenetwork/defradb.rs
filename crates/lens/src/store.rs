@@ -6,6 +6,7 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use futures::Stream;
+use rapidhash::RapidHashMap;
 
 use crate::{Error, LensConfig, LensDoc, Result};
 
@@ -62,7 +63,7 @@ pub trait TransformStore: Send + Sync {
     /// List all registered transforms.
     ///
     /// Returns a map of transform IDs to their lens modules.
-    async fn list(&self) -> Result<std::collections::HashMap<String, crate::LensModule>>;
+    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>>;
 
     /// Transform documents using a registered lens.
     ///
@@ -84,7 +85,7 @@ pub trait TransformStore: Send + Sync {
 /// In-memory transform store for testing.
 #[derive(Default)]
 pub struct MemoryTransformStore {
-    transforms: std::sync::RwLock<std::collections::HashMap<TransformId, LensConfig>>,
+    transforms: std::sync::RwLock<RapidHashMap<TransformId, LensConfig>>,
 }
 
 impl MemoryTransformStore {
@@ -134,7 +135,7 @@ impl TransformStore for MemoryTransformStore {
         Ok(())
     }
 
-    async fn list(&self) -> Result<std::collections::HashMap<String, crate::LensModule>> {
+    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
         let transforms = self
             .transforms
             .read()

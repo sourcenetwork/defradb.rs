@@ -1,6 +1,6 @@
 //! Mapping between iroh `EndpointId` and transport `PeerId`, plus connection tracking.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::net::SocketAddr;
 
 use iroh::endpoint::Connection;
@@ -38,7 +38,7 @@ pub struct ConnectionInfo {
 /// Tracks connected peers and their connection info.
 #[derive(Debug, Default)]
 pub struct PeerMap {
-    connections: HashMap<EndpointId, ConnectionInfo>,
+    connections: RapidHashMap<EndpointId, ConnectionInfo>,
 }
 
 impl PeerMap {

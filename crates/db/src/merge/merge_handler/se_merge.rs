@@ -5,7 +5,7 @@
 //! SE encryption key configured. This ensures replicated documents are
 //! searchable on the receiving node.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use document::NormalValue;
 use schema::CollectionVersion;
@@ -22,7 +22,7 @@ pub(crate) async fn generate_merge_artifacts<S: Writer>(
     store: &mut S,
     schema: &CollectionVersion,
     doc_id: &str,
-    field_values: &HashMap<String, NormalValue>,
+    field_values: &RapidHashMap<String, NormalValue>,
     enc_key: &[u8],
     identity_pubkey: Option<&[u8]>,
 ) -> Result<usize> {

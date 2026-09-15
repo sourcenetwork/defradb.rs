@@ -3,6 +3,7 @@
 //! This node deletes documents from storage during query execution, following
 //! the Go DefraDB pattern where persistence happens within the plan node.
 
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -188,8 +189,7 @@ impl PlanNode for DeleteNode {
                     .await?;
 
                 // Build a map from doc_id -> Document for lookup
-                let mut doc_map: std::collections::HashMap<String, document::Document> =
-                    std::collections::HashMap::new();
+                let mut doc_map: RapidHashMap<String, document::Document> = RapidHashMap::new();
                 for doc in fetch_result.into_docs() {
                     if let Some(id) = doc.id() {
                         doc_map.insert(id.to_string(), doc);

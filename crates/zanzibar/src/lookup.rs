@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::error::{Error, Result};
 use crate::expression::RelationExpression;
@@ -10,21 +10,21 @@ use crate::types::Policy;
 /// by (policy_id, resource, relation) tuple.
 #[derive(Debug, Default)]
 pub struct PolicyLookupTable {
-    policies: HashMap<String, HashMap<String, HashMap<String, RelationExpression>>>,
+    policies: RapidHashMap<String, RapidHashMap<String, RapidHashMap<String, RelationExpression>>>,
 }
 
 impl PolicyLookupTable {
     pub fn new() -> Self {
         Self {
-            policies: HashMap::new(),
+            policies: RapidHashMap::new(),
         }
     }
 
     pub fn add_policy(&mut self, policy: &Policy) {
-        let mut resources = HashMap::new();
+        let mut resources = RapidHashMap::new();
 
         for resource in &policy.resources {
-            let mut relations = HashMap::new();
+            let mut relations = RapidHashMap::new();
 
             for relation in &resource.relations {
                 relations.insert(relation.name.clone(), relation.expression.clone());

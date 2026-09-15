@@ -21,7 +21,7 @@ use query::txn::{
     DeferredAcpMutations, GetTransactionResult, TransactionContext, TransactionHandle,
     TransactionRegistry,
 };
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -96,7 +96,7 @@ impl CleanupResult {
 /// poison or attempting to commit, so cancellation can release resources.
 pub struct DbTransactionRegistry<S: Store> {
     db: Arc<DB<S>>,
-    transactions: RwLock<HashMap<String, Arc<DbTransactionContext<S>>>>,
+    transactions: RwLock<RapidHashMap<String, Arc<DbTransactionContext<S>>>>,
     id_counter: AtomicU64,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
 }
@@ -109,7 +109,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     pub fn new(db: Arc<DB<S>>) -> Self {
         Self {
             db,
-            transactions: RwLock::new(HashMap::new()),
+            transactions: RwLock::new(RapidHashMap::new()),
             id_counter: AtomicU64::new(0),
             broadcaster: None,
         }
@@ -125,7 +125,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     ) -> Self {
         Self {
             db,
-            transactions: RwLock::new(HashMap::new()),
+            transactions: RwLock::new(RapidHashMap::new()),
             id_counter: AtomicU64::new(0),
             broadcaster: Some(broadcaster),
         }

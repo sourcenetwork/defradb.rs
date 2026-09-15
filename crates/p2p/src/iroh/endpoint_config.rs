@@ -1,6 +1,6 @@
 //! Configuration helpers for the iroh endpoint.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 
 use iroh::{EndpointId, SecretKey};
@@ -62,7 +62,7 @@ impl Default for IrohEndpointConfig {
 /// a newly authorized peer while the endpoint is running, without a restart.
 pub(super) enum AllowlistState {
     AcceptAll,
-    Explicit(parking_lot::Mutex<HashSet<EndpointId>>),
+    Explicit(parking_lot::Mutex<RapidHashSet<EndpointId>>),
 }
 
 impl AllowlistState {
@@ -89,7 +89,7 @@ pub(super) fn allowlist_state_from_config(
     match config {
         IrohAllowlistConfig::AcceptAll => Ok(AllowlistState::AcceptAll),
         IrohAllowlistConfig::Explicit(ids) => {
-            let mut parsed = HashSet::with_capacity(ids.len());
+            let mut parsed = RapidHashSet::with_capacity(ids.len());
             for id in ids {
                 let endpoint_id: EndpointId = id.parse().map_err(|e: iroh::KeyParsingError| {
                     crate::error::Error::Transport(format!(
@@ -334,7 +334,8 @@ mod tests {
     fn allow_adds_a_peer_to_an_explicit_allowlist() {
         let newly_allowed = iroh::SecretKey::generate().public();
         let state =
-            allowlist_state_from_config(&IrohAllowlistConfig::Explicit(HashSet::new())).unwrap();
+            allowlist_state_from_config(&IrohAllowlistConfig::Explicit(RapidHashSet::new()))
+                .unwrap();
 
         assert!(!state.is_allowed(&newly_allowed));
         state.allow(newly_allowed);

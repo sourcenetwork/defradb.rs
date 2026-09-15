@@ -23,7 +23,7 @@ mod scan;
 pub mod stream;
 
 use bytes::Bytes;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
 use async_lock::Mutex as TokioMutex;
@@ -44,7 +44,7 @@ pub struct PendingMigrationWriteBack {
 #[derive(Default)]
 pub struct PendingMigrationWriteBacks {
     pub documents: Vec<PendingMigrationWriteBack>,
-    pub full_scans: HashMap<String, bool>,
+    pub full_scans: RapidHashMap<String, bool>,
 }
 
 /// Document fetcher that applies lens migrations to documents.
@@ -61,12 +61,17 @@ pub struct LensedDocFetcher<S: Store> {
     lens_store: Arc<dyn TransformStore>,
     /// Cache of collection version histories keyed by collection name.
     #[allow(dead_code)]
-    pub history_cache: async_lock::RwLock<HashMap<String, HashMap<String, TargetedHistoryLink>>>,
+    pub history_cache:
+        async_lock::RwLock<RapidHashMap<String, RapidHashMap<String, TargetedHistoryLink>>>,
 }
 
 impl<S: Store> LensedDocFetcher<S> {
     /// Seed the per-version history cache directly.
-    pub async fn insert_history(&self, key: String, history: HashMap<String, TargetedHistoryLink>) {
+    pub async fn insert_history(
+        &self,
+        key: String,
+        history: RapidHashMap<String, TargetedHistoryLink>,
+    ) {
         self.history_cache.write().await.insert(key, history);
     }
 
@@ -89,7 +94,7 @@ impl<S: Store> LensedDocFetcher<S> {
             defer_readonly_write_back,
             pending_write_backs: Arc::new(TokioMutex::new(PendingMigrationWriteBacks::default())),
             lens_store,
-            history_cache: async_lock::RwLock::new(HashMap::new()),
+            history_cache: async_lock::RwLock::new(RapidHashMap::new()),
         }
     }
 
@@ -104,7 +109,7 @@ impl<S: Store> LensedDocFetcher<S> {
             defer_readonly_write_back: self.defer_readonly_write_back,
             pending_write_backs: self.pending_write_backs.clone(),
             lens_store: self.lens_store.clone(),
-            history_cache: async_lock::RwLock::new(HashMap::new()),
+            history_cache: async_lock::RwLock::new(RapidHashMap::new()),
         }
     }
 
@@ -252,7 +257,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         collection_name: &str,
         field_name: &str,
         query: &str,
-    ) -> query::error::Result<std::collections::HashMap<String, f64>> {
+    ) -> query::error::Result<rapidhash::RapidHashMap<String, f64>> {
         use crate::collection::loader::get_collection_with_lazy_load;
         use crate::index::IndexManager;
 

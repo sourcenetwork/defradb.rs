@@ -70,7 +70,7 @@ impl<S: Store + 'static> ViewOperations for ViewAdapter<S> {
             .await
             .map_err(|e| format!("{}", e))?;
 
-        let known_types: std::collections::HashSet<String> = self
+        let known_types: rapidhash::RapidHashSet<String> = self
             .database
             .list_collections()
             .unwrap_or_default()

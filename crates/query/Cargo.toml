@@ -13,6 +13,10 @@ bench = false
 [dependencies]
 bytes.workspace = true
 web-time.workspace = true
+
+# Hashing
+rapidhash.workspace = true
+
 # Internal crates
 cursor = { path = "../cursor" }
 defra-core = { path = "../defra-core" }

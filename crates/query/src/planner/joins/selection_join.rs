@@ -3,7 +3,7 @@
 //! Orchestrates mapping setup, child plan construction, sub-joins, and
 //! TypeJoinMany/TypeJoinOne assembly for a single nested select.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use schema::CollectionVersion;
 
@@ -30,7 +30,7 @@ impl Planner {
         select: &Select,
         parent_collection: &CollectionVersion,
         mapping: &mut DocumentMapping,
-        aggregate_internal_keys: &mut HashMap<String, (String, String)>,
+        aggregate_internal_keys: &mut RapidHashMap<String, (String, String)>,
         join_provides_ordering: &mut bool,
         depth: usize,
         ancestor_exhaustive: bool,

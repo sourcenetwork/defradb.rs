@@ -1,5 +1,5 @@
 mod runner {
-    use std::collections::HashSet;
+    use rapidhash::RapidHashSet;
     use std::path::PathBuf;
     use std::process::ExitCode;
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -229,7 +229,7 @@ mod runner {
             return Ok(());
         }
 
-        let requested = requested.iter().cloned().collect::<HashSet<_>>();
+        let requested = requested.iter().cloned().collect::<RapidHashSet<_>>();
         cases.retain(|case| requested.contains(&case.name));
 
         if cases.is_empty() {

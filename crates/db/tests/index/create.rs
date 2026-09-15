@@ -4,7 +4,7 @@
 //! a document that changed underneath aborts, and a restart resumes an
 //! interrupted backfill.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::sync::Arc;
 
 use db::index::backfill::{encode_progress, BACKFILL_BATCH_DOCS};
@@ -308,7 +308,7 @@ async fn create_index_keeps_pace_with_concurrent_writers() {
                     doc.set_id(ids[i].clone());
                     doc.set("name", NormalValue::String(format!("upd-{i}")));
                     mutator
-                        .update("Racing", doc, HashSet::from(["name".to_string()]))
+                        .update("Racing", doc, RapidHashSet::from_iter(["name".to_string()]))
                         .await
                 })
                 .await;
@@ -434,7 +434,11 @@ async fn backfill_batch_aborts_when_a_document_it_read_changes() {
     doc.set_id(ids[1].clone());
     doc.set("name", NormalValue::String("grace-hopper".to_string()));
     mutator
-        .update("Observed", doc, HashSet::from(["name".to_string()]))
+        .update(
+            "Observed",
+            doc,
+            RapidHashSet::from_iter(["name".to_string()]),
+        )
         .await
         .unwrap();
 

@@ -92,7 +92,7 @@ pub struct PubsubKeyTransport<T: P2PTransport> {
     /// before the KMS itself exists, and a requester's retries give up after
     /// a few seconds — dropping that window's requests turns into
     /// `KeyUnavailable` on the requester for no lasting reason.
-    pending_requests: HopscotchMap<Cid, (String, Vec<u8>)>,
+    pending_requests: HopscotchMap<Cid, (String, Vec<u8>), rapidhash::fast::RandomState>,
     /// Back-reference so `install_handler` can replay the buffer through the
     /// normal dispatch path.
     self_ref: OnceLock<Weak<Self>>,
@@ -142,7 +142,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
             correlator: Correlator::new(),
             local_peer_id,
             self_response_topic,
-            pending_requests: HopscotchMap::new(),
+            pending_requests: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             self_ref: OnceLock::new(),
         });
         let _ = transport.self_ref.set(Arc::downgrade(&transport));

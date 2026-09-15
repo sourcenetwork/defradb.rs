@@ -14,7 +14,7 @@ pub(in crate::planner) use cursor::expand_cursor_plan;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
 use acp::DocumentACP;
@@ -51,7 +51,7 @@ pub struct PlanResult {
     /// Internal render keys for aggregate relation data when there's a collision
     /// with a relation selection (e.g., both `_count(published: {})` and `published(limit: 2)`).
     /// Maps: aggregate_output_name -> (relation_field_name, internal_key)
-    pub aggregate_internal_keys: HashMap<String, (String, String)>,
+    pub aggregate_internal_keys: RapidHashMap<String, (String, String)>,
     /// Warnings raised while planning, for the response's `extensions` member.
     pub warnings: Vec<GqlWarning>,
 }
@@ -70,10 +70,10 @@ impl PlanResult {
 /// ScanNodes must have their data pre-loaded via `with_docs()`.
 pub struct Planner {
     /// Available collection schemas by name
-    pub(super) collections: HashMap<String, Arc<CollectionVersion>>,
+    pub(super) collections: RapidHashMap<String, Arc<CollectionVersion>>,
     /// Available collection schemas by CollectionID (CID)
     /// This is needed because FieldKind::Relation stores the CollectionID, not the name
-    pub(super) collections_by_id: HashMap<String, Arc<CollectionVersion>>,
+    pub(super) collections_by_id: RapidHashMap<String, Arc<CollectionVersion>>,
     /// Optional fetcher for ScanNodes to load data on-demand
     pub(super) fetcher: Option<Arc<dyn DocFetcher>>,
     /// Optional lens transform store for view queries with transforms
@@ -83,7 +83,7 @@ pub struct Planner {
     /// Identity for ACP permission checks
     identity_did: Option<Did>,
     /// Pre-computed FTS scores: output_name → (doc_id → score)
-    pub(crate) fts_scores: HashMap<String, HashMap<String, f64>>,
+    pub(crate) fts_scores: RapidHashMap<String, RapidHashMap<String, f64>>,
     /// Query parsing and filter evaluation guardrails.
     pub(crate) query_limits: QueryLimits,
 }
@@ -99,14 +99,15 @@ impl Planner {
 
     /// Create a new planner with the given collection schemas.
     pub fn new(collections: Vec<CollectionVersion>) -> Self {
-        let collections: HashMap<String, Arc<CollectionVersion>> = collections
+        let collections: RapidHashMap<String, Arc<CollectionVersion>> = collections
             .into_iter()
             .map(|c| (c.name.clone(), Arc::new(c)))
             .collect();
         // Build a second map by CollectionID and VersionID for relation field resolution.
         // FieldKind::Relation stores the schema version CID (version_id), so we need
         // to look up by both collection_id and version_id.
-        let mut collections_by_id: HashMap<String, Arc<CollectionVersion>> = HashMap::new();
+        let mut collections_by_id: RapidHashMap<String, Arc<CollectionVersion>> =
+            RapidHashMap::new();
         for c in collections.values() {
             if !c.collection_id.is_empty() {
                 collections_by_id.insert(c.collection_id.clone(), c.clone());
@@ -122,7 +123,7 @@ impl Planner {
             lens_store: None,
             acp: None,
             identity_did: None,
-            fts_scores: HashMap::new(),
+            fts_scores: RapidHashMap::new(),
             query_limits: QueryLimits::default(),
         }
     }
@@ -143,7 +144,10 @@ impl Planner {
     }
 
     /// Set pre-computed FTS scores for BM25 nodes.
-    pub fn with_fts_scores(mut self, scores: HashMap<String, HashMap<String, f64>>) -> Self {
+    pub fn with_fts_scores(
+        mut self,
+        scores: RapidHashMap<String, RapidHashMap<String, f64>>,
+    ) -> Self {
         self.fts_scores = scores;
         self
     }

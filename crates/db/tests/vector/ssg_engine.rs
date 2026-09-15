@@ -11,7 +11,7 @@ use db::index::vector::params::DEFAULT_M;
 use db::index::vector::store::MemoryNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::vector::Metric;
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 const SEED: u64 = 0x0559_6EED;
 const DIMENSIONS: usize = 16;
@@ -141,7 +141,7 @@ async fn every_node_is_reachable_from_the_entry_point() {
     let mut index = filled(SsgParams::default(), &vectors).await;
     let report = index.build().await.unwrap();
 
-    let mut visited: HashSet<NodeId> = HashSet::new();
+    let mut visited: RapidHashSet<NodeId> = RapidHashSet::new();
     let mut stack = vec![report.state.entry_point];
     while let Some(id) = stack.pop() {
         if !visited.insert(id) {

@@ -1,6 +1,7 @@
 //! The single-layer greedy walk.
 
-use std::collections::{BinaryHeap, HashSet};
+use rapidhash::{HashSetExt, RapidHashSet};
+use std::collections::BinaryHeap;
 
 use super::codec::BuiltState;
 use super::Ssg;
@@ -34,7 +35,7 @@ impl<S: VectorNodeStore> Ssg<S> {
             return Ok(Vec::new());
         };
 
-        let mut seen: HashSet<NodeId> = HashSet::with_capacity(pool * 2);
+        let mut seen: RapidHashSet<NodeId> = RapidHashSet::with_capacity(pool * 2);
         seen.insert(entry.id);
 
         // Nearest-first frontier, farthest-first results: the same pairing the

@@ -1,8 +1,7 @@
 //! Transform store used when the `wasmtime-runtime` feature is off.
 
-use std::collections::HashMap;
-
 use async_trait::async_trait;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::{
     Error, LensConfig, LensDocResultStream, LensDocStream, LensModule, Result, TransformId,
@@ -25,8 +24,8 @@ impl TransformStore for UnsupportedTransformStore {
         Err(Error::RuntimeUnavailable)
     }
 
-    async fn list(&self) -> Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(&self, _id: &TransformId, _docs: LensDocStream) -> Result<LensDocResultStream> {

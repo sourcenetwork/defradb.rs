@@ -10,7 +10,7 @@
 //! (see `crate::host::p2p_host::protocols`), so this module stays
 //! transport-agnostic for unit testing.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use cid::Cid;
@@ -76,7 +76,7 @@ impl Default for PublishOptions {
 /// subscription listener. Safe to clone into tasks.
 #[derive(Clone, Default)]
 pub struct Correlator {
-    ongoing: Arc<Mutex<HashMap<Cid, Entry>>>,
+    ongoing: Arc<Mutex<RapidHashMap<Cid, Entry>>>,
 }
 
 struct Entry {

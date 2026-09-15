@@ -333,7 +333,7 @@ mod tests {
         }
 
         // All handles must be unique.
-        let unique: std::collections::HashSet<usize> = handles.iter().copied().collect();
+        let unique: rapidhash::RapidHashSet<usize> = handles.iter().copied().collect();
         assert_eq!(unique.len(), handles.len(), "all handles must be unique");
 
         // Destroy all nodes in reverse order.
@@ -350,7 +350,7 @@ mod tests {
         init();
         let node = new_in_memory_node();
 
-        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut seen: rapidhash::RapidHashSet<usize> = rapidhash::RapidHashSet::default();
         for _ in 0..30 {
             let r = unsafe { create_subscription(node, ptr::null()) };
             assert_eq!(r.status, 0, "create must succeed");

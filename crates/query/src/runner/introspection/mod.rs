@@ -12,9 +12,9 @@ mod mutations;
 mod operators;
 
 use async_graphql::{dynamic::*, Value as GqlValue};
+use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 use crate::error::{QueryError, Result};
 
@@ -48,7 +48,7 @@ pub fn build_introspection_schema(
     collections: &[CollectionVersion],
 ) -> std::result::Result<Schema, SchemaError> {
     // Build a mapping from collection ID to collection name for relation resolution
-    let mut id_to_name: HashMap<String, String> = collections
+    let mut id_to_name: RapidHashMap<String, String> = collections
         .iter()
         .map(|c| (c.collection_id.clone(), c.name.clone()))
         .collect();

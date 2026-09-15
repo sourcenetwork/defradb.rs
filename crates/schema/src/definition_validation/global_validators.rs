@@ -1,5 +1,7 @@
 //! Validators that run on both create and update.
 
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+
 use super::helpers::*;
 use super::DefinitionState;
 use crate::{FieldKind, ScalarKind, ORPHAN_COLLECTION_ID};
@@ -164,7 +166,7 @@ pub(super) fn validate_collection_name_unique(
     _old_state: &DefinitionState,
 ) -> Vec<String> {
     let mut errs = Vec::new();
-    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut seen: RapidHashSet<&str> = RapidHashSet::new();
     for col in &new_state.collections {
         if !col.is_active || col.name.is_empty() {
             continue;
@@ -242,7 +244,7 @@ pub(super) fn validate_field_not_duplicated(
 ) -> Vec<String> {
     let mut errs = Vec::new();
     for col in &new_state.collections {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = RapidHashSet::new();
         for field in &col.fields {
             if !seen.insert(&field.name) {
                 errs.push(format!("duplicate field. Name: {}", field.name));
@@ -259,8 +261,7 @@ pub(super) fn validate_relation_name_unique(
 ) -> Vec<String> {
     let mut errs = Vec::new();
     for col in &new_state.collections {
-        let mut relation_fields: std::collections::HashMap<&str, Vec<(&str, bool)>> =
-            std::collections::HashMap::new();
+        let mut relation_fields: RapidHashMap<&str, Vec<(&str, bool)>> = RapidHashMap::new();
 
         for field in &col.fields {
             let Some(relation_name) = field.relation_name.as_deref() else {
@@ -421,7 +422,7 @@ pub(super) fn validate_embedding_fields_for_generation(
 ) -> Vec<String> {
     let mut errs = Vec::new();
     for col in &new_state.collections {
-        let embedding_field_names: std::collections::HashSet<&str> = col
+        let embedding_field_names: RapidHashSet<&str> = col
             .vector_embeddings
             .iter()
             .map(|e| e.field_name.as_str())

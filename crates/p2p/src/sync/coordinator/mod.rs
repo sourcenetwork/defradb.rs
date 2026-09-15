@@ -62,7 +62,7 @@ mod subscriptions;
 pub use result_types::{CreateReplicatorResult, LoadReplicatorsResult};
 pub use selective_car_access::{HeadHintCarAuthority, HeadHintCarGrant};
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -120,7 +120,7 @@ pub struct PushFailure {
 /// the presence marker alone is the conservative source of truth.
 #[derive(Default)]
 pub struct HeadAckFence {
-    current: std::collections::HashMap<(String, String, String), (u64, String)>,
+    current: rapidhash::RapidHashMap<(String, String, String), (u64, String)>,
 }
 
 impl HeadAckFence {
@@ -276,7 +276,7 @@ struct SyncShutdownState {
     /// registry bounds the event handoff and the retained task, so there is no
     /// hidden pre-semaphore task queue (#1159).
     pending_dag_fetch_task_limit: usize,
-    pending_dag_fetch_tasks: Mutex<HashMap<Cid, PendingDagFetchTask>>,
+    pending_dag_fetch_tasks: Mutex<RapidHashMap<Cid, PendingDagFetchTask>>,
 }
 
 enum PendingDagFetchTask {
@@ -296,7 +296,7 @@ const NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT: usize = 32;
 #[derive(Clone)]
 pub(crate) struct DagFetchLimiter {
     global: Arc<Semaphore>,
-    per_peer: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+    per_peer: Arc<Mutex<RapidHashMap<String, Arc<Semaphore>>>>,
     peer_limit: usize,
 }
 
@@ -310,7 +310,7 @@ impl DagFetchLimiter {
         let global_limit = global_limit.max(1);
         Self {
             global: Arc::new(Semaphore::new(global_limit)),
-            per_peer: Arc::new(Mutex::new(HashMap::new())),
+            per_peer: Arc::new(Mutex::new(RapidHashMap::new())),
             peer_limit: global_limit.saturating_sub(1).max(1),
         }
     }
@@ -368,7 +368,7 @@ impl SyncShutdownHandle {
                 non_authoritative_broadcast_high_water: AtomicUsize::new(0),
                 non_authoritative_broadcast_rejected: AtomicU64::new(0),
                 pending_dag_fetch_task_limit: pending_dag_fetch_task_limit.max(1),
-                pending_dag_fetch_tasks: Mutex::new(HashMap::new()),
+                pending_dag_fetch_tasks: Mutex::new(RapidHashMap::new()),
             }),
         }
     }
@@ -487,7 +487,7 @@ impl SyncShutdownHandle {
         )
     }
 
-    fn prune_pending_dag_fetches(tasks: &mut HashMap<Cid, PendingDagFetchTask>) {
+    fn prune_pending_dag_fetches(tasks: &mut RapidHashMap<Cid, PendingDagFetchTask>) {
         tasks.retain(|_, task| match task {
             PendingDagFetchTask::Scheduled => true,
             PendingDagFetchTask::Running(task) => !task.is_finished(),
@@ -700,13 +700,13 @@ pub(super) struct SyncSubscriptionState {
     pub(super) mutation: Arc<tokio::sync::Mutex<()>>,
 
     /// Set of subscribed collection IDs for P2P sync (in-memory cache).
-    pub(super) subscribed_collections: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+    pub(super) subscribed_collections: Arc<tokio::sync::RwLock<rapidhash::RapidHashSet<String>>>,
 
     /// Desired topics with one background installation retry owner.
-    pub(super) retrying_subscribes: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    pub(super) retrying_subscribes: Arc<tokio::sync::Mutex<rapidhash::RapidHashSet<String>>>,
 
     /// Undesired live topics with one background removal retry owner.
-    pub(super) retrying_unsubscribes: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    pub(super) retrying_unsubscribes: Arc<tokio::sync::Mutex<rapidhash::RapidHashSet<String>>>,
 
     /// Persistent storage for P2P collection subscriptions.
     pub(super) collection_store: Arc<dyn P2PCollectionStorage>,

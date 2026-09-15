@@ -2,6 +2,7 @@ use super::hook::CompositePostCommitAction;
 use super::*;
 
 use defra_core::merge::MergeBlock;
+use rapidhash::HashSetExt;
 
 /// Event collected during batch processing, emitted after commit.
 pub(crate) struct PendingMergeEvent {
@@ -162,9 +163,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
 
         let txn = self.db.new_txn(false).await?;
-        let batch_merged: std::sync::Mutex<HashSet<Cid>> = std::sync::Mutex::new(HashSet::new());
-        let batch_merged_collections: std::sync::Mutex<HashSet<Cid>> =
-            std::sync::Mutex::new(HashSet::new());
+        let batch_merged: std::sync::Mutex<RapidHashSet<Cid>> =
+            std::sync::Mutex::new(RapidHashSet::new());
+        let batch_merged_collections: std::sync::Mutex<RapidHashSet<Cid>> =
+            std::sync::Mutex::new(RapidHashSet::new());
         let pending_events: std::sync::Mutex<Vec<PendingMergeEvent>> =
             std::sync::Mutex::new(Vec::new());
         let pending_post_commit_actions: std::sync::Mutex<Vec<PendingPostCommitAction>> =
@@ -302,8 +304,8 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         cid: &Cid,
         block_data: &[u8],
         metadata: &BlockMetadata<'_>,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
+        batch_merged: &std::sync::Mutex<RapidHashSet<Cid>>,
+        batch_merged_collections: &std::sync::Mutex<RapidHashSet<Cid>>,
         pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
         pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
         pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,

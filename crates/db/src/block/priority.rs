@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use cid::Cid;
 use defra_core::block::Block;
@@ -50,7 +50,7 @@ impl<S: Store> DB<S> {
             // recovered from the head key ("/d/{short_id uvarint}/...") and
             // inherited by every ancestor reached through that head.
             let mut root_heads: Vec<(Cid, u64)> = Vec::new();
-            let mut seen_root_heads = HashSet::new();
+            let mut seen_root_heads = RapidHashSet::new();
             while let Some(pair) = head_iter.next().await.map_err(Error::Storage)? {
                 let Some(head_key) = HeadstoreDocKey::parse(&pair.key) else {
                     continue;
@@ -62,7 +62,7 @@ impl<S: Store> DB<S> {
             head_iter.close().await.map_err(Error::Storage)?;
 
             let mut stack = root_heads;
-            let mut visited = HashSet::new();
+            let mut visited = RapidHashSet::new();
             let mut indexed_count = 0u64;
 
             while let Some((cid, doc_short_id)) = stack.pop() {

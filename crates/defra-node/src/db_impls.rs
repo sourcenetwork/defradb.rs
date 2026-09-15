@@ -195,11 +195,10 @@ impl<S: storage::corekv::Store + 'static> SchemaOps for DbSchemaOps<S> {
             .await
             .map_err(anyhow::Error::new)?;
 
-        let known_types: std::collections::HashSet<String> =
-            db::DB::list_collections(&self.database)
-                .unwrap_or_default()
-                .into_iter()
-                .collect();
+        let known_types: rapidhash::RapidHashSet<String> = db::DB::list_collections(&self.database)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
 
         let mut collections = query::parse_sdl_with_known_types(target_sdl, known_types)
             .map_err(|e| anyhow::anyhow!("view SDL parse error: {}", e))?;

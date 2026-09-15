@@ -7,6 +7,7 @@
 
 use async_trait::async_trait;
 use identity::Did;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::{Arc, RwLock};
 
 use crate::context::RequestContext;
@@ -272,8 +273,7 @@ impl KmsService for DefraKms {
                     payload,
                     request_id: uuid::Uuid::new_v4().to_string(),
                 };
-                let remote_set: std::collections::HashSet<EncryptionCid> =
-                    remote.iter().copied().collect();
+                let remote_set: RapidHashSet<EncryptionCid> = remote.iter().copied().collect();
 
                 let (transport_tx, mut transport_rx) =
                     crate::channel::bounded(self.transports.len().max(1) * 16);
@@ -302,7 +302,7 @@ impl KmsService for DefraKms {
                 let store = self.store.clone();
                 let our_eph_pub = x25519_dalek::PublicKey::from(&eph).as_bytes().to_vec();
                 spawn_task(async move {
-                    let mut returned = std::collections::HashSet::new();
+                    let mut returned = RapidHashSet::new();
                     let mut denied = None;
                     let mut unavailable = None;
                     while let Some(transport_result) = transport_rx.recv().await {

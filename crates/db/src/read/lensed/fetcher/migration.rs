@@ -1,6 +1,6 @@
 //! Migration context loading and document migration logic.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use datastore::NamespaceView;
 use document::Document;
@@ -61,12 +61,12 @@ impl<S: Store> LensedDocFetcher<S> {
     fn build_collection_history_from_versions(
         versions: &[CollectionVersion],
         target_version_id: &str,
-    ) -> Option<HashMap<String, TargetedHistoryLink>> {
+    ) -> Option<RapidHashMap<String, TargetedHistoryLink>> {
         if versions.is_empty() {
             return None;
         }
 
-        let mut full_history: HashMap<String, CollectionHistoryLink> = HashMap::new();
+        let mut full_history: RapidHashMap<String, CollectionHistoryLink> = RapidHashMap::new();
 
         // First pass: build links with `previous` and `transform` from each
         // version's stored `previous_version` pointer.
@@ -151,7 +151,7 @@ impl<S: Store> LensedDocFetcher<S> {
     async fn load_collection_history(
         &self,
         collection: &Collection,
-    ) -> query::error::Result<HashMap<String, TargetedHistoryLink>> {
+    ) -> query::error::Result<RapidHashMap<String, TargetedHistoryLink>> {
         let collection_id = &collection.schema().collection_id;
         let target_version_id = &collection.schema().version_id;
         let cache_key = format!("{}:{}", collection_id, target_version_id);
@@ -197,7 +197,7 @@ impl<S: Store> LensedDocFetcher<S> {
         // Use Document's to_map which handles all field conversions properly
         let map = doc.to_map().ok()?;
 
-        // Convert HashMap to serde_json::Map
+        // Convert RapidHashMap to serde_json::Map
         let mut lens_doc = LensDoc::new();
         for (key, value) in map {
             lens_doc.insert(key, value);

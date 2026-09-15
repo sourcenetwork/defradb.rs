@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_bitswap::{Block, Store};
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
@@ -17,14 +17,14 @@ use std::sync::{Arc, Mutex};
 /// in unit and integration tests without requiring a real blockstore.
 #[derive(Clone, Debug)]
 pub struct MockBitswapStore {
-    blocks: Arc<Mutex<HashMap<Cid, Vec<u8>>>>,
+    blocks: Arc<Mutex<RapidHashMap<Cid, Vec<u8>>>>,
 }
 
 impl MockBitswapStore {
     /// Create a new empty mock store.
     pub fn new() -> Self {
         Self {
-            blocks: Arc::new(Mutex::new(HashMap::new())),
+            blocks: Arc::new(Mutex::new(RapidHashMap::new())),
         }
     }
 

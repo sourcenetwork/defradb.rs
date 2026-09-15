@@ -1,5 +1,6 @@
 use db::merge::se::artifact_gen::*;
 use document::NormalValue;
+use rapidhash::HashMapExt;
 use schema::EncryptedIndexDescription;
 
 #[test]
@@ -67,7 +68,7 @@ fn test_generate_doc_artifacts() {
         EncryptedIndexDescription::new("city"),
     ];
 
-    let mut field_values = std::collections::HashMap::new();
+    let mut field_values = rapidhash::RapidHashMap::new();
     field_values.insert("age".to_string(), NormalValue::Int(30));
     field_values.insert("city".to_string(), NormalValue::String("NYC".to_string()));
     field_values.insert("name".to_string(), NormalValue::String("Bob".to_string()));
@@ -111,7 +112,7 @@ fn test_generate_doc_artifacts_no_encrypted_indexes() {
         "doc",
         &[],
         &[],
-        &std::collections::HashMap::new(),
+        &rapidhash::RapidHashMap::new(),
         None,
         &[0u8; 32],
     )

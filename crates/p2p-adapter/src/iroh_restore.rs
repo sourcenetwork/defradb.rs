@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use p2p::P2PTransport;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 /// Restore persisted replicators into the coordinator and resubscribe persisted
 /// document topics, returning the document ids that were resubscribed.
@@ -11,7 +12,7 @@ pub async fn restore_iroh_p2p_state<S, B>(
     store: Arc<S>,
     transport: &p2p::iroh::IrohTransport,
     coordinator: &Arc<p2p::sync::IrohSyncCoordinator<B>>,
-) -> std::collections::HashSet<String>
+) -> RapidHashSet<String>
 where
     S: storage::corekv::Store + 'static,
     B: blockstore::Blockstore + 'static,
@@ -55,7 +56,7 @@ where
         }
     }
 
-    let mut restored_doc_ids = std::collections::HashSet::new();
+    let mut restored_doc_ids = RapidHashSet::new();
     match peerstore.load_documents().await {
         Ok(doc_ids) => {
             for doc_id in doc_ids {

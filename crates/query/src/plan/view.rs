@@ -4,6 +4,7 @@
 //! to the view's own document mapping.
 
 use async_trait::async_trait;
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
 
 use crate::document::DocumentMapping;
@@ -43,7 +44,7 @@ fn convert_between_maps(src_map: &DocumentMapping, dst_map: &DocumentMapping, sr
     let mut dst = Doc::new(dst_map.next_index());
 
     // Build a lookup from source index to render key name
-    let mut src_render_keys_by_index = std::collections::HashMap::new();
+    let mut src_render_keys_by_index = RapidHashMap::new();
     for rk in &src_map.render_keys {
         src_render_keys_by_index.insert(rk.index, rk.key.as_str());
     }
@@ -82,10 +83,8 @@ fn convert_between_maps(src_map: &DocumentMapping, dst_map: &DocumentMapping, sr
 /// The child mapping stores both the underlying field name (in indexes_by_name)
 /// and the render key name (which may be an alias). For example, a field with
 /// `fullName: name` has underlying name "name" and render key "fullName".
-fn build_field_rename_map(
-    child_mapping: &DocumentMapping,
-) -> std::collections::HashMap<String, String> {
-    let mut rename_map = std::collections::HashMap::new();
+fn build_field_rename_map(child_mapping: &DocumentMapping) -> RapidHashMap<String, String> {
+    let mut rename_map = RapidHashMap::new();
     for rk in &child_mapping.render_keys {
         // Find the underlying field name for this render key's index
         for (name, indexes) in child_mapping.indexes_by_name_iter() {
@@ -135,7 +134,7 @@ fn filter_nested_json(
 /// Filter a JSON object: keep only mapped fields, rename aliased ones, recurse into nested.
 fn filter_json_object(
     value: &JsonValue,
-    rename_map: &std::collections::HashMap<String, String>,
+    rename_map: &RapidHashMap<String, String>,
     child_mapping: &DocumentMapping,
 ) -> JsonValue {
     match value {

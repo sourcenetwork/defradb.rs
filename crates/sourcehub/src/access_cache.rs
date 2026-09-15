@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -24,7 +24,7 @@ struct CachedDecision {
 /// all entries for their policy so indirect grants cannot remain cached.
 pub(crate) struct AccessCache {
     ttl: Duration,
-    entries: Mutex<HashMap<CacheKey, CachedDecision>>,
+    entries: Mutex<RapidHashMap<CacheKey, CachedDecision>>,
 }
 
 fn cache_key(
@@ -47,7 +47,7 @@ impl AccessCache {
     pub(crate) fn new(ttl: Duration) -> Self {
         Self {
             ttl,
-            entries: Mutex::new(HashMap::new()),
+            entries: Mutex::new(RapidHashMap::new()),
         }
     }
 

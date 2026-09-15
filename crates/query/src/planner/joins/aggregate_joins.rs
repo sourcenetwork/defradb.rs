@@ -3,7 +3,7 @@
 //! Handles relation-based and inline-array aggregates — creates TypeJoinMany
 //! for aggregate data fetch, manages internal keys for collision handling.
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use schema::CollectionVersion;
@@ -27,12 +27,12 @@ impl Planner {
         &self,
         mut plan: Box<dyn PlanNode>,
         mapping: &mut DocumentMapping,
-        aggregate_internal_keys: &mut HashMap<String, (String, String)>,
+        aggregate_internal_keys: &mut RapidHashMap<String, (String, String)>,
         select: &Select,
         parent_collection: &CollectionVersion,
-        selection_join_info: &HashMap<String, SelectionJoinInfo>,
+        selection_join_info: &RapidHashMap<String, SelectionJoinInfo>,
     ) -> Result<Box<dyn PlanNode>> {
-        let mut aggregate_joined_relations: HashSet<String> = HashSet::new();
+        let mut aggregate_joined_relations: RapidHashSet<String> = RapidHashSet::new();
         for requestable in &select.fields {
             if let Requestable::Aggregate(agg) = requestable {
                 for target in &agg.targets {

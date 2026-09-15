@@ -5,10 +5,11 @@
 //! Mirrors the pattern used by encryption.rs for EncryptionConfig.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+
+use rapidhash::{HashMapExt, RapidHashMap};
 use zeroize::Zeroize;
 
 /// Remote signing delegate (e.g. Orbis, Secure Enclave host callbacks).
@@ -215,11 +216,11 @@ pub fn get_signing_config() -> Option<SigningConfig> {
 /// Global identity store mapping DID → SigningConfig.
 /// When create_identity() generates a keypair, we store it here so that
 /// exec_request() can look up the signing key from just a DID string.
-static IDENTITY_STORE: std::sync::OnceLock<Mutex<HashMap<String, SigningConfig>>> =
+static IDENTITY_STORE: std::sync::OnceLock<Mutex<RapidHashMap<String, SigningConfig>>> =
     std::sync::OnceLock::new();
 
-fn identity_store() -> &'static Mutex<HashMap<String, SigningConfig>> {
-    IDENTITY_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+fn identity_store() -> &'static Mutex<RapidHashMap<String, SigningConfig>> {
+    IDENTITY_STORE.get_or_init(|| Mutex::new(RapidHashMap::new()))
 }
 
 /// Store a signing config for a DID.
@@ -316,9 +317,9 @@ use std::sync::OnceLock;
 /// `thread_local!` doesn't work here because tokio can migrate async tasks
 /// between OS threads at `.await` points. A global map keyed by DID ensures
 /// the token is available regardless of which thread reads it.
-fn request_token_store() -> &'static Mutex<HashMap<String, String>> {
-    static STORE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+fn request_token_store() -> &'static Mutex<RapidHashMap<String, String>> {
+    static STORE: OnceLock<Mutex<RapidHashMap<String, String>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(RapidHashMap::new()))
 }
 
 /// Store the raw JWT from the HTTP Authorization header, keyed by the caller's DID.

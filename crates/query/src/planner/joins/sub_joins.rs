@@ -4,7 +4,7 @@
 //! multi-level filter path sub-joins, nested filter relation sub-joins,
 //! BM25 nodes, SelectNode filter wrapping, and ACP.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use crate::document::DocumentMapping;
 use crate::error::Result;
@@ -30,7 +30,7 @@ impl Planner {
         nested_select: &Select,
         select: &Select,
         mapping: &mut DocumentMapping,
-        aggregate_internal_keys: &mut HashMap<String, (String, String)>,
+        aggregate_internal_keys: &mut RapidHashMap<String, (String, String)>,
         depth: usize,
         ancestor_exhaustive: bool,
         scope_path: &[String],

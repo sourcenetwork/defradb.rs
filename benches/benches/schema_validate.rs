@@ -14,7 +14,7 @@
 //! once per field per document on the read path, where the width of the
 //! collection is the multiplier nobody had a number for.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -68,7 +68,7 @@ fn one_collection(c: &mut Criterion) {
 fn whole_schema(c: &mut Criterion) {
     let mut group = c.benchmark_group("schema_validate_all");
     for count in COUNTS {
-        let collections: HashMap<String, CollectionVersion> = (0..count)
+        let collections: RapidHashMap<String, CollectionVersion> = (0..count)
             .map(|i| {
                 let version = collection(i, 16);
                 (version.name.clone(), version)

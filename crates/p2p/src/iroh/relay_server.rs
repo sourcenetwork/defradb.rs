@@ -4,7 +4,7 @@
 //! datagrams through a relay they are both connected to. Running one next to
 //! a publicly reachable node removes the dependency on n0's public relays.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
@@ -153,7 +153,7 @@ async fn load_cert(tls: &IrohRelayTlsConfig) -> Result<CertConfig> {
 
 #[derive(Debug)]
 struct EndpointAllowlist {
-    ids: HashSet<EndpointId>,
+    ids: RapidHashSet<EndpointId>,
 }
 
 impl EndpointAllowlist {

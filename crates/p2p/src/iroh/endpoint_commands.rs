@@ -1,6 +1,6 @@
 //! Command handlers for the iroh endpoint event loop.
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -88,10 +88,10 @@ pub(super) async fn handle_command(
     cmd: IrohCommand,
     resources: &EndpointResources,
     pending_pushlog_replies: &PendingPushLogReplies,
-    subscriptions: &mut HashMap<String, TopicSubscription>,
-    raw_topics: &Arc<parking_lot::Mutex<HashSet<String>>>,
+    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
+    raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
     replicators: &Arc<ReplicatorRegistry>,
-    active_syncs: &mut HashMap<u64, ActiveSync>,
+    active_syncs: &mut RapidHashMap<u64, ActiveSync>,
     next_query_id: &mut u64,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> bool {
@@ -837,9 +837,9 @@ fn handle_disconnect(peer_id: PeerId, resources: &EndpointResources) -> crate::e
 /// libp2p-gossipsub which discovers them automatically.
 pub(super) async fn handle_subscribe(
     gossip: &Gossip,
-    subscriptions: &mut HashMap<String, TopicSubscription>,
+    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
-    raw_topics: &Arc<parking_lot::Mutex<HashSet<String>>>,
+    raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
     topic: crate::topics::DefraTopic,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
@@ -865,9 +865,9 @@ pub(super) async fn handle_subscribe(
 /// and a decoded [`TransportEvent::GossipMessage`] otherwise.
 pub(super) async fn subscribe_topic_str(
     gossip: &Gossip,
-    subscriptions: &mut HashMap<String, TopicSubscription>,
+    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
-    raw_topics: &Arc<parking_lot::Mutex<HashSet<String>>>,
+    raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
     topic_str: String,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
@@ -886,7 +886,7 @@ pub(super) async fn subscribe_topic_str(
 
     let (sender, mut receiver) = gossip_topic.split();
     let neighbors = Arc::new(parking_lot::Mutex::new(
-        receiver.neighbors().collect::<HashSet<_>>(),
+        receiver.neighbors().collect::<RapidHashSet<_>>(),
     ));
 
     let event_tx = event_tx.clone();
@@ -1070,7 +1070,7 @@ pub(super) async fn subscribe_topic_str(
 
 fn handle_publish(
     gossip: &Gossip,
-    subscriptions: &HashMap<String, TopicSubscription>,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
     topic: crate::topics::DefraTopic,
     msg: PushLogBroadcast,
@@ -1124,7 +1124,7 @@ fn handle_publish(
 /// `data` directly instead of encoding a `PushLogBroadcast`.
 fn handle_publish_raw(
     gossip: &Gossip,
-    subscriptions: &HashMap<String, TopicSubscription>,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
     topic_str: String,
     data: Vec<u8>,

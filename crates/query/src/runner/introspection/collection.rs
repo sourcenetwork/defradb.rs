@@ -1,7 +1,7 @@
 use async_graphql::dynamic::*;
 use async_graphql::Value as GqlValue;
+use rapidhash::RapidHashMap;
 use schema::{CollectionVersion, FieldKind, ScalarArrayKind, ScalarKind};
-use std::collections::HashMap;
 
 /// Build the object type for a collection.
 ///
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 /// selector input types, matching Go's schema generation.
 pub(super) fn build_collection_type(
     collection: &CollectionVersion,
-    id_to_name: &HashMap<String, String>,
+    id_to_name: &RapidHashMap<String, String>,
 ) -> Object {
     let mut obj = Object::new(&collection.name);
     let coll_name = &collection.name;
@@ -312,7 +312,7 @@ pub(super) fn build_commit_type() -> Object {
 /// `current_name` is the name of the collection being built (for self-reference resolution).
 pub(super) fn field_kind_to_type_ref(
     kind: &FieldKind,
-    id_to_name: &HashMap<String, String>,
+    id_to_name: &RapidHashMap<String, String>,
     current_name: &str,
 ) -> TypeRef {
     match kind {

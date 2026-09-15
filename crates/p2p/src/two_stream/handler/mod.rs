@@ -16,7 +16,7 @@ mod manage;
 mod pushlog;
 mod se_query;
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -75,15 +75,16 @@ pub(super) fn ensure_transport_sender<M: Message>(peer_id: &PeerId, msg: &M) -> 
 #[derive(Default)]
 pub(crate) struct PendingResponses {
     /// Map of expected peer + MessageID to response channel.
-    pub(crate) channels: HashMap<PendingResponseKey, oneshot::Sender<PushLogReply>>,
+    pub(crate) channels: RapidHashMap<PendingResponseKey, oneshot::Sender<PushLogReply>>,
     /// Map of expected peer + MessageID to identity response channel.
-    pub(crate) identity_channels: HashMap<PendingResponseKey, oneshot::Sender<IdentityResponse>>,
+    pub(crate) identity_channels:
+        RapidHashMap<PendingResponseKey, oneshot::Sender<IdentityResponse>>,
     /// Map of expected peer + MessageID to DocSync response channel.
-    pub(crate) doc_sync_channels: HashMap<PendingResponseKey, oneshot::Sender<DocSyncReply>>,
+    pub(crate) doc_sync_channels: RapidHashMap<PendingResponseKey, oneshot::Sender<DocSyncReply>>,
     /// Fire-and-forget DocSync requests awaiting an async response event.
-    pub(crate) doc_sync_requests: HashMap<PendingResponseKey, Instant>,
+    pub(crate) doc_sync_requests: RapidHashMap<PendingResponseKey, Instant>,
     /// Fire-and-forget BranchableSync requests awaiting an async response event.
-    pub(crate) branchable_sync_requests: HashMap<PendingResponseKey, Instant>,
+    pub(crate) branchable_sync_requests: RapidHashMap<PendingResponseKey, Instant>,
 }
 
 impl PendingResponses {

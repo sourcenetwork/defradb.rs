@@ -1,6 +1,6 @@
 //! Request-response and fire-and-forget RPC helpers for the iroh endpoint.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use iroh::{Endpoint, EndpointAddr};
@@ -18,8 +18,8 @@ use super::protocols;
 /// multiplexed over [`protocols::ALPN_MUX`], so identity is the whole key.
 #[derive(Default)]
 pub(super) struct ConnectionCacheState {
-    connections: parking_lot::Mutex<HashMap<iroh::EndpointId, iroh::endpoint::Connection>>,
-    dial_guards: parking_lot::Mutex<HashMap<iroh::EndpointId, Arc<tokio::sync::Mutex<()>>>>,
+    connections: parking_lot::Mutex<RapidHashMap<iroh::EndpointId, iroh::endpoint::Connection>>,
+    dial_guards: parking_lot::Mutex<RapidHashMap<iroh::EndpointId, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 pub(super) type ConnectionCache = Arc<ConnectionCacheState>;

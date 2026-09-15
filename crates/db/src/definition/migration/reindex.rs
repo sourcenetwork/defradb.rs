@@ -1,6 +1,7 @@
 //! Datastore materialization and reindexing after schema migration.
 
 use lens::Lens;
+use rapidhash::HashMapExt;
 use storage::corekv::Store;
 use tracing::{instrument, warn};
 
@@ -147,7 +148,7 @@ impl<S: Store> DB<S> {
                 collection.write_indexes(),
             )
             .map_err(|e| Error::Other(format!("failed to create index manager: {}", e)))?;
-            let mut original_keys = std::collections::HashMap::new();
+            let mut original_keys = rapidhash::RapidHashMap::new();
             for (doc_short_id, doc, _) in raw_docs {
                 let Some(doc_version) = doc.schema_version_id().map(str::to_string) else {
                     if materialize_identity_paths {

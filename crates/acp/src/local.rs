@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use identity::Did;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
 use crate::dac::DocumentACP;
@@ -409,14 +409,14 @@ impl DocumentACP for LocalDocumentACP {
 
 /// In-memory ACP store for local use and testing.
 pub struct MemoryAcpStore {
-    tuples: RwLock<HashMap<String, RelationTuple>>,
+    tuples: RwLock<RapidHashMap<String, RelationTuple>>,
 }
 
 impl MemoryAcpStore {
     /// Create a new in-memory ACP store.
     pub fn new() -> Self {
         Self {
-            tuples: RwLock::new(HashMap::new()),
+            tuples: RwLock::new(RapidHashMap::new()),
         }
     }
 }

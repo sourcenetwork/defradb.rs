@@ -31,7 +31,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     }
 
     fn has_batch_merged_collection(
-        batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
+        batch_merged_collections: &std::sync::Mutex<RapidHashSet<Cid>>,
         cid: &Cid,
     ) -> bool {
         batch_merged_collections
@@ -462,8 +462,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         block: &Block,
         payload: &defra_core::block::CollectionDeltaPayload,
         metadata: &BlockMetadata<'_>,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
+        batch_merged: &std::sync::Mutex<RapidHashSet<Cid>>,
+        batch_merged_collections: &std::sync::Mutex<RapidHashSet<Cid>>,
         pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
         pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
         pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
@@ -630,8 +630,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         block: &Block,
         payload: &defra_core::block::CollectionDeltaPayload,
         metadata: &BlockMetadata<'_>,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
+        batch_merged: &std::sync::Mutex<RapidHashSet<Cid>>,
+        batch_merged_collections: &std::sync::Mutex<RapidHashSet<Cid>>,
         pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
         pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
         pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,

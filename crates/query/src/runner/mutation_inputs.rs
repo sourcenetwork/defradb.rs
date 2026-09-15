@@ -1,7 +1,7 @@
 //! Input construction helpers for mutation operations.
 
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 use crate::document::{document_to_plan_doc, DocumentMapping};
 use crate::error::Result;
@@ -57,9 +57,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     fn normalize_mutation_input_fields(
         &self,
         collection: &schema::CollectionVersion,
-        input: &HashMap<String, JsonValue>,
-    ) -> HashMap<String, JsonValue> {
-        let mut normalized = HashMap::with_capacity(input.len());
+        input: &RapidHashMap<String, JsonValue>,
+    ) -> RapidHashMap<String, JsonValue> {
+        let mut normalized = RapidHashMap::with_capacity(input.len());
 
         for (field_name, value) in input {
             let mapped_name = collection
@@ -205,7 +205,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     pub(crate) fn build_upsert_input_from_map(
         &self,
         collection: &schema::CollectionVersion,
-        input: &std::collections::HashMap<String, JsonValue>,
+        input: &RapidHashMap<String, JsonValue>,
     ) -> Result<UpsertInput> {
         let mut upsert_input = UpsertInput::new();
 

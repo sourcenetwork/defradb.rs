@@ -82,10 +82,10 @@ pub unsafe extern "C" fn list_all_encrypted_indexes(
                 .list_collections()
                 .map_err(|e| format!("failed to list collections: {}", e))?;
 
-            let mut all_encrypted_indexes: std::collections::HashMap<
+            let mut all_encrypted_indexes: rapidhash::RapidHashMap<
                 String,
                 Vec<schema::EncryptedIndexDescription>,
-            > = std::collections::HashMap::new();
+            > = rapidhash::RapidHashMap::default();
 
             for name in names {
                 match database.get_collection(&name) {

@@ -3,7 +3,7 @@
 use async_lock::RwLock;
 use async_trait::async_trait;
 use rand::RngCore;
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use defra_core::block::generate_cid_from_bytes;
@@ -17,7 +17,7 @@ use crate::types::{EncryptionCid, KeyScope};
 /// Ephemeral — process restart loses all keys.
 #[derive(Default)]
 pub struct MemoryKeyStore {
-    inner: Arc<RwLock<HashMap<EncryptionCid, StoredKey>>>,
+    inner: Arc<RwLock<RapidHashMap<EncryptionCid, StoredKey>>>,
 }
 
 impl MemoryKeyStore {

@@ -8,9 +8,9 @@ use crate::priority::{decode_priority, encode_priority};
 use crate::traits::{Context, Delta, MergeResult, ReplicatedData};
 use async_trait::async_trait;
 use defra_core::{types::DocId, Error, Result};
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde::{Deserialize, Serialize};
 use std::any::Any;
-use std::collections::HashMap;
 use storage::{corekv::Key, keys::CRDTValueKey, Reader, ReaderWriter};
 
 /// Document status matching Go's `client.DocumentStatus`.
@@ -33,7 +33,7 @@ pub struct CompositeDelta {
     /// Matches Go's `DocCompositeDelta.Status` (`client.DocumentStatus`).
     status: u8,
     /// Field-level deltas
-    field_deltas: HashMap<String, FieldDelta>,
+    field_deltas: RapidHashMap<String, FieldDelta>,
 }
 
 impl CompositeDelta {
@@ -62,7 +62,7 @@ impl CompositeDelta {
             schema_version_id,
             priority,
             status,
-            field_deltas: HashMap::new(),
+            field_deltas: RapidHashMap::new(),
         })
     }
 
@@ -106,7 +106,7 @@ impl CompositeDelta {
     }
 
     /// Get the field deltas
-    pub fn field_deltas(&self) -> &HashMap<String, FieldDelta> {
+    pub fn field_deltas(&self) -> &RapidHashMap<String, FieldDelta> {
         &self.field_deltas
     }
 }
@@ -161,7 +161,7 @@ pub struct CompositeDAG {
     schema_version_id: String,
     /// Field-level CRDT managers
     /// Maps field_name -> CRDT instance
-    field_managers: HashMap<String, FieldCrdtType>,
+    field_managers: RapidHashMap<String, FieldCrdtType>,
 }
 
 /// Types of field-level CRDTs
@@ -180,7 +180,7 @@ impl CompositeDAG {
         Self {
             doc_id,
             schema_version_id: schema_version_id.into(),
-            field_managers: HashMap::new(),
+            field_managers: RapidHashMap::new(),
         }
     }
 

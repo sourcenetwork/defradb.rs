@@ -10,11 +10,11 @@ pub mod value_extraction;
 use crate::index::error::{Error, Result};
 use datastore::NamespaceView;
 use document::Document;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{
     CollectionVersion, FieldDescription, IndexDescription, IndexKind, IndexedFieldDescription,
     OrderedIndexDescription, VectorIndexDescription,
 };
-use std::collections::HashMap;
 use storage::corekv::Key;
 use storage::index::FullTextIndex;
 
@@ -130,7 +130,7 @@ pub struct IndexManager {
     /// schema, in which case stale-entry healing is disabled.
     collection_id: String,
     /// Active index instances keyed by index name
-    indexes: HashMap<String, IndexType>,
+    indexes: RapidHashMap<String, IndexType>,
 }
 
 impl IndexManager {
@@ -160,7 +160,7 @@ impl IndexManager {
         Self {
             collection_short_id,
             collection_id: String::new(),
-            indexes: HashMap::new(),
+            indexes: RapidHashMap::new(),
         }
     }
 
@@ -555,7 +555,7 @@ impl IndexManager {
         index_name: &str,
         documents: &[(u64, Document)],
         schema: &CollectionVersion,
-        original_keys: &HashMap<u64, std::collections::HashSet<Vec<u8>>>,
+        original_keys: &RapidHashMap<u64, rapidhash::RapidHashSet<Vec<u8>>>,
     ) -> Result<()> {
         let index = self.index_named(index_name)?;
 

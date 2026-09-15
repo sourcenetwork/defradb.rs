@@ -1,10 +1,10 @@
 //! Lossless invalidation of current document state, not a revision stream.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
 use parking_lot::Mutex;
+use rapidhash::RapidHashMap;
 
 use crate::{TryRecvError, Update};
 
@@ -30,7 +30,7 @@ pub struct DocumentChangeBatch {
 
 #[derive(Default)]
 struct Pending {
-    documents: HashMap<(String, String), bool>,
+    documents: RapidHashMap<(String, String), bool>,
     resync_required: bool,
     updates: u64,
 }

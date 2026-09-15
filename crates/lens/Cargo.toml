@@ -20,6 +20,9 @@ bench = false
 async-trait.workspace = true
 futures.workspace = true
 
+# Hash maps
+rapidhash.workspace = true
+
 # Serialization
 serde.workspace = true
 serde_json.workspace = true

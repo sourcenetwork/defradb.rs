@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -248,7 +248,7 @@ impl ReplayPushGate {
 
 #[derive(Debug)]
 struct ReplayPeerPacer {
-    buckets: parking_lot::Mutex<HashMap<String, ReplayPeerBucket>>,
+    buckets: parking_lot::Mutex<RapidHashMap<String, ReplayPeerBucket>>,
     capacity: u32,
     refill_rate: f64,
 }
@@ -256,7 +256,7 @@ struct ReplayPeerPacer {
 impl ReplayPeerPacer {
     fn new(capacity: u32, refill_rate: f64) -> Self {
         Self {
-            buckets: parking_lot::Mutex::new(HashMap::new()),
+            buckets: parking_lot::Mutex::new(RapidHashMap::new()),
             capacity,
             refill_rate,
         }

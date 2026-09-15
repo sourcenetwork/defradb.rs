@@ -88,7 +88,7 @@ pub unsafe extern "C" fn add_schema(
         ffi_async!(rt, {
             // Get existing collection names so the SDL parser can resolve external type references
             // (e.g., relations to already-created collections)
-            let known_types: std::collections::HashSet<String> = database
+            let known_types: rapidhash::RapidHashSet<String> = database
                 .list_collections()
                 .unwrap_or_default()
                 .into_iter()
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn add_schema_in_txn(
         let _identity_guard = defra_core::current_identity::scoped_current_identity(identity_str);
 
         ffi_async!(rt, {
-            let known_types: std::collections::HashSet<String> = registry
+            let known_types: rapidhash::RapidHashSet<String> = registry
                 .get_collections_in_txn(&txn_str)
                 .await
                 .map_err(|e| format!("failed to get collections in txn: {}", e))?

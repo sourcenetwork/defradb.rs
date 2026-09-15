@@ -20,6 +20,7 @@ name = "defra"
 path = "src/main.rs"
 
 [dependencies]
+rapidhash.workspace = true
 # Internal crates
 acp = { path = "../acp" }
 bytes.workspace = true

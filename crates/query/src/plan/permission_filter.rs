@@ -238,7 +238,7 @@ impl PlanNode for PermissionFilterNode {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use rapidhash::{HashMapExt, RapidHashMap};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
@@ -321,13 +321,13 @@ mod tests {
 
     struct MockAcp {
         barrier: Option<Arc<Barrier>>,
-        delays: HashMap<String, Duration>,
+        delays: RapidHashMap<String, Duration>,
         active: AtomicUsize,
         max_active: AtomicUsize,
     }
 
     impl MockAcp {
-        fn new(barrier: Option<Arc<Barrier>>, delays: HashMap<String, Duration>) -> Self {
+        fn new(barrier: Option<Arc<Barrier>>, delays: RapidHashMap<String, Duration>) -> Self {
             Self {
                 barrier,
                 delays,
@@ -442,7 +442,7 @@ mod tests {
         let yielded = Arc::new(AtomicUsize::new(0));
         let acp = Arc::new(MockAcp::new(
             Some(Arc::new(Barrier::new(MAX_IN_FLIGHT_PERMISSION_CHECKS))),
-            HashMap::new(),
+            RapidHashMap::new(),
         ));
         let mut node = permission_filter(&doc_ids, Arc::clone(&yielded), Arc::clone(&acp));
 
@@ -468,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn preserves_source_order_when_checks_finish_out_of_order() {
         let doc_ids = vec!["slow".to_string(), "fast".to_string(), "medium".to_string()];
-        let delays = HashMap::from([
+        let delays = RapidHashMap::from_iter([
             ("slow".to_string(), Duration::from_millis(30)),
             ("fast".to_string(), Duration::from_millis(1)),
             ("medium".to_string(), Duration::from_millis(10)),
@@ -492,7 +492,7 @@ mod tests {
     #[tokio::test]
     async fn permission_errors_fail_closed_without_stopping_the_scan() {
         let doc_ids = vec!["error".to_string(), "allowed".to_string()];
-        let acp = Arc::new(MockAcp::new(None, HashMap::new()));
+        let acp = Arc::new(MockAcp::new(None, RapidHashMap::new()));
         let mut node = permission_filter(&doc_ids, Arc::new(AtomicUsize::new(0)), acp);
 
         node.init().await.unwrap();

@@ -1,6 +1,6 @@
 use async_lock::{Mutex as AsyncMutex, MutexGuardArc};
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
 const PRUNE_THRESHOLD: usize = 10_000;
@@ -20,7 +20,7 @@ const PRUNE_THRESHOLD: usize = 10_000;
 /// Different documents proceed in parallel. Mirrors Go DefraDB's per-doc merge
 /// queue, extended to also cover local writes.
 pub struct DocWriteQueue {
-    locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    locks: Mutex<RapidHashMap<String, Arc<AsyncMutex<()>>>>,
     /// Serializes the guard-ACQUISITION phase of multi-document writers (local
     /// mutation batches, batch merges) against one another. A caller that will
     /// hold more than one per-doc guard at once must hold this gate while
@@ -42,7 +42,7 @@ pub struct DocWriteQueue {
 impl Default for DocWriteQueue {
     fn default() -> Self {
         Self {
-            locks: Mutex::new(HashMap::new()),
+            locks: Mutex::new(RapidHashMap::new()),
             batch_gate: Arc::new(AsyncMutex::new(())),
         }
     }

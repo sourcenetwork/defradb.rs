@@ -1,6 +1,6 @@
 //! Pending DAG tracking for Bitswap synchronization.
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{RapidHashMap, RapidHashSet};
 use std::ops::Deref;
 use std::time::Duration;
 use web_time::Instant;
@@ -29,7 +29,7 @@ pub struct PendingDag {
     pub creator: String,
     /// CIDs still missing (gets smaller as blocks arrive via Bitswap)
     #[allow(dead_code)] // Used for tracking Bitswap progress
-    pub missing: HashSet<Cid>,
+    pub missing: RapidHashSet<Cid>,
     /// The peer that originally provided this DAG (e.g. DocSync reply sender).
     /// Always included in the Bitswap provider list during retries so the
     /// blocks can be fetched even if the peer isn't in connected_peers().
@@ -70,10 +70,10 @@ pub struct PendingDag {
 /// roots that are waiting for them.
 #[derive(Debug, Default)]
 pub(super) struct PendingDagRegistry {
-    roots: HashMap<Cid, PendingDag>,
-    waiters: HashMap<Cid, HashSet<Cid>>,
-    roots_by_source: HashMap<String, usize>,
-    current_by_source_scope: HashMap<PendingScopeKey, (HeadVersion, Cid)>,
+    roots: RapidHashMap<Cid, PendingDag>,
+    waiters: RapidHashMap<Cid, RapidHashSet<Cid>>,
+    roots_by_source: RapidHashMap<String, usize>,
+    current_by_source_scope: RapidHashMap<PendingScopeKey, (HeadVersion, Cid)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -98,7 +98,7 @@ pub(super) enum ScopeHeadDecision {
 }
 
 impl Deref for PendingDagRegistry {
-    type Target = HashMap<Cid, PendingDag>;
+    type Target = RapidHashMap<Cid, PendingDag>;
 
     fn deref(&self) -> &Self::Target {
         &self.roots
@@ -253,7 +253,7 @@ impl PendingDagRegistry {
             .unwrap_or_default()
     }
 
-    pub(super) fn replace_missing(&mut self, root_cid: &Cid, missing: HashSet<Cid>) -> bool {
+    pub(super) fn replace_missing(&mut self, root_cid: &Cid, missing: RapidHashSet<Cid>) -> bool {
         let Some(previous) = self.roots.get(root_cid).map(|dag| dag.missing.clone()) else {
             return false;
         };

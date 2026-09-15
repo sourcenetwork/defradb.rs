@@ -26,7 +26,7 @@ use db::index::vector::store::NodeId;
 use db::index::vector::store::VectorNodeStore;
 use defra_core::thread_bounds::MaybeSend;
 use defra_core::vector::Metric;
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
@@ -42,7 +42,7 @@ struct Counting<S> {
     writes: AtomicUsize,
     /// Distinct keys read, so a repeat read of the same node is visible
     /// separately from a genuinely new one.
-    distinct: Mutex<HashSet<u64>>,
+    distinct: Mutex<RapidHashSet<u64>>,
     /// Entries handed to an `iterate_aux` visitor: what a list scan actually
     /// touches, as opposed to the number of `iterate_aux` calls (one per
     /// probed list) or the corpus size.
@@ -58,7 +58,7 @@ impl<S> Counting<S> {
             inner,
             reads: AtomicUsize::new(0),
             writes: AtomicUsize::new(0),
-            distinct: Mutex::new(HashSet::new()),
+            distinct: Mutex::new(RapidHashSet::new()),
             aux_entries_visited: AtomicUsize::new(0),
             max_aux_write_bytes: AtomicUsize::new(0),
         }

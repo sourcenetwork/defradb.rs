@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -17,14 +17,14 @@ pub(crate) struct CachedPolicy {
 /// never silently denies or allows access incorrectly.
 pub(crate) struct PolicyCache {
     ttl: Duration,
-    entries: Mutex<HashMap<String, CachedPolicy>>,
+    entries: Mutex<RapidHashMap<String, CachedPolicy>>,
 }
 
 impl PolicyCache {
     pub(crate) fn new(ttl: Duration) -> Self {
         Self {
             ttl,
-            entries: Mutex::new(HashMap::new()),
+            entries: Mutex::new(RapidHashMap::new()),
         }
     }
 

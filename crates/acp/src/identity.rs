@@ -171,10 +171,10 @@ mod tests {
 
     #[test]
     fn test_identity_hash() {
-        use std::collections::HashSet;
+        use rapidhash::{HashSetExt, RapidHashSet};
 
         let did = test_did();
-        let mut set = HashSet::new();
+        let mut set = RapidHashSet::new();
 
         set.insert(Identity::Anonymous);
         set.insert(Identity::Authenticated(did.clone()));

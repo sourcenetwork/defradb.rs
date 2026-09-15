@@ -1,7 +1,7 @@
 //! ScanNode for scanning collection documents
 
 use async_trait::async_trait;
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 
 use schema::CollectionVersion;
@@ -59,7 +59,7 @@ pub struct ScanNode {
     /// planner, so a narrowing done anywhere else never runs.
     vector_route: Option<VectorRoute>,
     /// Candidate short ids already streamed, so widening never re-reads one.
-    vector_seen: HashSet<u64>,
+    vector_seen: RapidHashSet<u64>,
     /// Set once the index returned fewer candidates than asked for.
     vector_exhausted: bool,
     /// Documents this scan produced, which is what a page of `k` counts.
@@ -68,7 +68,7 @@ pub struct ScanNode {
     vector_k: usize,
     /// Document ids the routed phase already returned, so the fallback scan
     /// does not emit them twice.
-    vector_returned: HashSet<String>,
+    vector_returned: RapidHashSet<String>,
     /// Whether the exhaustive fallback has been opened.
     vector_fell_back: bool,
     /// Whether to show deleted documents
@@ -113,11 +113,11 @@ impl ScanNode {
             doc_short_ids: None,
             vector_indexed: false,
             vector_route: None,
-            vector_seen: HashSet::new(),
+            vector_seen: RapidHashSet::new(),
             vector_exhausted: false,
             emitted: 0,
             vector_k: 0,
-            vector_returned: HashSet::new(),
+            vector_returned: RapidHashSet::new(),
             vector_fell_back: false,
             show_deleted: false,
             current_doc: Doc::default(),

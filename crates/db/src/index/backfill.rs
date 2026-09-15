@@ -10,7 +10,7 @@
 //! after the last durable batch. No guard is held: writers keep the index
 //! current for their own documents from the moment the definition commits.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -36,7 +36,7 @@ use crate::index::manager::DocumentSource;
 use crate::index::{BatchIndexResult, IndexManager};
 use crate::{BackfillSource, DB};
 
-type History = HashMap<String, TargetedHistoryLink>;
+type History = RapidHashMap<String, TargetedHistoryLink>;
 
 /// Documents per backfill transaction at most. Each adds a handful of index
 /// keys to the write set, so a batch, and with it the window in which a

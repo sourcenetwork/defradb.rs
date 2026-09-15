@@ -6,7 +6,8 @@
 
 use cid::Cid;
 use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use rapidhash::{HashMapExt, RapidHashMap};
+use std::sync::Arc;
 use tokio::sync::oneshot;
 
 /// A queue that serializes processing of the same CID.
@@ -33,7 +34,7 @@ impl std::fmt::Debug for ProcessQueue {
 struct ProcessQueueInner {
     released: tokio::sync::Notify,
     /// Map of CID -> list of waiters
-    waiters: Mutex<HashMap<Cid, Vec<oneshot::Sender<()>>>>,
+    waiters: Mutex<RapidHashMap<Cid, Vec<oneshot::Sender<()>>>>,
 }
 
 impl ProcessQueue {
@@ -42,7 +43,7 @@ impl ProcessQueue {
         Self {
             inner: Arc::new(ProcessQueueInner {
                 released: tokio::sync::Notify::new(),
-                waiters: Mutex::new(HashMap::new()),
+                waiters: Mutex::new(RapidHashMap::new()),
             }),
         }
     }

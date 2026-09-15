@@ -1,16 +1,16 @@
 use super::parse::*;
 use super::types::*;
 use crate::error::{Error, Result};
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use schema::{CollectionVersion, ScalarKind};
-use std::collections::{HashMap, HashSet};
 use storage::corekv::Store;
 
 impl<S: Store> crate::database::DB<S> {
     pub(super) fn downsample_depth(
         &self,
         collection_name: &str,
-        memo: &mut HashMap<String, usize>,
-        visiting: &mut HashSet<String>,
+        memo: &mut RapidHashMap<String, usize>,
+        visiting: &mut RapidHashSet<String>,
     ) -> Result<usize> {
         if let Some(depth) = memo.get(collection_name) {
             return Ok(*depth);
@@ -39,7 +39,7 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     fn validate_downsample_cycle(&self, target_name: &str, source_name: &str) -> Result<()> {
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         let mut current_name = source_name.to_string();
 
         while seen.insert(current_name.clone()) {
@@ -238,7 +238,7 @@ impl<S: Store> crate::database::DB<S> {
 
             SourceKind::Downsample
         } else {
-            let passthrough_set: HashSet<&str> =
+            let passthrough_set: RapidHashSet<&str> =
                 passthrough_fields.iter().map(String::as_str).collect();
             let mut numeric_candidates: Vec<String> = parsed_source
                 .selected_fields
@@ -291,7 +291,7 @@ impl<S: Store> crate::database::DB<S> {
 
     pub(super) fn downsample_plans(
         &self,
-        names_filter: Option<&HashSet<String>>,
+        names_filter: Option<&RapidHashSet<String>>,
         source_name_filter: Option<&str>,
     ) -> Result<Vec<DownsamplePlan>> {
         let collections: Vec<CollectionVersion> = {

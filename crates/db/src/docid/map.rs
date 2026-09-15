@@ -8,6 +8,7 @@
 use async_lock::Mutex;
 use bytes::Bytes;
 use datastore::NamespaceView;
+use rapidhash::HashMapExt;
 use std::sync::Arc;
 use storage::corekv::{Key, Store};
 use storage::keys::doc_id_index::{
@@ -228,9 +229,9 @@ pub async fn resolve_doc_ids(
 /// IDs with no mapping (full-text search read path).
 pub async fn resolve_doc_id_scores(
     systemstore: &NamespaceView,
-    scores: std::collections::HashMap<u64, f64>,
-) -> Result<std::collections::HashMap<String, f64>> {
-    let mut resolved = std::collections::HashMap::with_capacity(scores.len());
+    scores: rapidhash::RapidHashMap<u64, f64>,
+) -> Result<rapidhash::RapidHashMap<String, f64>> {
+    let mut resolved = rapidhash::RapidHashMap::with_capacity(scores.len());
     for (doc_short_id, score) in scores {
         if let Some(doc_id) = get_doc_id(systemstore, doc_short_id).await? {
             resolved.insert(doc_id, score);

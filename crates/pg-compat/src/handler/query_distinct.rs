@@ -1,10 +1,9 @@
-use std::collections::HashSet;
-
 use futures::Sink;
 use pgwire::api::results::Response;
 use pgwire::api::ClientInfo;
 use pgwire::error::{PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use crate::bridge::SqlStatement;
 use crate::encode;
@@ -52,7 +51,7 @@ impl DefraQueryHandler {
         };
 
         // Deduplicate documents
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         let deduped: Vec<serde_json::Value> = docs
             .iter()
             .filter(|doc| {

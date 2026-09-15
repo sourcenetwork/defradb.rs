@@ -95,7 +95,7 @@ impl<S: Store + 'static> SchemaAdapter<S> {
             }
             None => None,
         };
-        let known_types: std::collections::HashSet<String> = self
+        let known_types: rapidhash::RapidHashSet<String> = self
             .database
             .list_collections()
             .unwrap_or_default()

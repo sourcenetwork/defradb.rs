@@ -1,6 +1,6 @@
 //! Public configuration types for Defra's iroh transport.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 
 /// Inbound-connection authorization for an iroh endpoint.
 ///
@@ -19,7 +19,7 @@ pub enum IrohAllowlistConfig {
     AcceptAll,
     /// Accept an inbound connection only from the listed iroh endpoint ids
     /// (each the string form of an `iroh::EndpointId`).
-    Explicit(HashSet<String>),
+    Explicit(RapidHashSet<String>),
 }
 
 /// Relay configuration for an iroh endpoint.

@@ -9,7 +9,7 @@ use p2p::transport::P2PTransport;
 use query::mutator::{
     BroadcastStatus, CreateResult, DeleteResult, DocMutator, MutationBatchController, UpdateResult,
 };
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::sync::Arc;
 use storage::corekv::Store;
 use tracing::{error, warn};
@@ -259,7 +259,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         &self,
         collection_name: &str,
         doc: Document,
-        modified_fields: HashSet<String>,
+        modified_fields: RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         let result = self
             .inner

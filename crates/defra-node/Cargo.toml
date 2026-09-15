@@ -51,6 +51,7 @@ otel = ["telemetry/otlp"]
 bench = false
 
 [dependencies]
+rapidhash.workspace = true
 db = { path = "../db", default-features = false }
 storage = { path = "../storage" }
 query = { path = "../query" }

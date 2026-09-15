@@ -282,7 +282,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         collection_name: &str,
         params: &IndexScanParams,
     ) -> query::error::Result<query::fetcher::IndexScanResult> {
-        use std::collections::HashSet;
+        use rapidhash::{HashSetExt, RapidHashSet};
         use storage::index::IndexIterator;
 
         let (collection, datastore, systemstore, index_manager) =
@@ -378,7 +378,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
                         && suffix_values.len() == index.description().fields.len() - 1;
                     let mut all_doc_short_ids = Vec::new();
                     let mut group_lens = Vec::new();
-                    let mut seen_short_ids = HashSet::new();
+                    let mut seen_short_ids = RapidHashSet::new();
                     let mut raw_count = 0u64;
                     for value in values {
                         let entries = if has_full_key {
@@ -509,7 +509,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
                         total_raw_fetches += branch_result.raw_fetches();
                         all_doc_ids.extend(branch_result.doc_ids().iter().cloned());
                     }
-                    let mut seen = HashSet::new();
+                    let mut seen = RapidHashSet::new();
                     let doc_ids: Vec<String> = all_doc_ids
                         .into_iter()
                         .filter(|id| seen.insert(id.clone()))
@@ -525,7 +525,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         // Deduplicate doc short IDs while preserving order.
         // Array indexes can return the same document multiple times (once per array
         // element). The public DocIDs are then resolved at this (db) layer.
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         let doc_short_ids: Vec<u64> = raw_doc_short_ids
             .into_iter()
             .filter(|id| seen.insert(*id))
@@ -586,7 +586,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         collection_name: &str,
         field_name: &str,
         query: &str,
-    ) -> query::error::Result<std::collections::HashMap<String, f64>> {
+    ) -> query::error::Result<rapidhash::RapidHashMap<String, f64>> {
         let (_collection, datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&self.txn, collection_name).await?;
 

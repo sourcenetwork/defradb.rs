@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use bm25::{DefaultTokenizer, Language, Tokenizer};
 use bytes::Bytes;
 use document::NormalValue;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{FullTextIndexDescription, IndexDescription};
-use std::collections::HashMap;
 
 use super::validate_doc_short_id;
 use super::CollectionIndex;
@@ -127,9 +127,9 @@ impl FullTextIndex {
     }
 
     /// Tokenize text and return term frequencies.
-    fn tokenize_with_freqs(&self, text: &str) -> HashMap<String, u32> {
+    fn tokenize_with_freqs(&self, text: &str) -> RapidHashMap<String, u32> {
         let tokens = self.tokenizer.tokenize(text);
-        let mut freqs = HashMap::new();
+        let mut freqs = RapidHashMap::new();
         for token in tokens {
             *freqs.entry(token).or_insert(0u32) += 1;
         }
@@ -259,7 +259,7 @@ impl FullTextIndex {
         query: &str,
     ) -> Result<Vec<(u64, Vec<(String, u32, u64)>)>> {
         let query_terms = self.tokenizer.tokenize(query);
-        let mut doc_postings: HashMap<u64, Vec<(String, u32, u64)>> = HashMap::new();
+        let mut doc_postings: RapidHashMap<u64, Vec<(String, u32, u64)>> = RapidHashMap::new();
 
         for term in &query_terms {
             let mut key_prefix = self.index_prefix();
@@ -320,15 +320,15 @@ impl FullTextIndex {
         &self,
         txn: &R,
         query: &str,
-    ) -> Result<HashMap<u64, f64>> {
+    ) -> Result<RapidHashMap<u64, f64>> {
         let query_terms = self.tokenizer.tokenize(query);
         if query_terms.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(RapidHashMap::new());
         }
 
         let (total_docs, avg_field_len) = self.stats(txn).await?;
         if total_docs == 0 {
-            return Ok(HashMap::new());
+            return Ok(RapidHashMap::new());
         }
 
         let n = total_docs as f64;
@@ -336,7 +336,7 @@ impl FullTextIndex {
         let k1 = self.k1();
         let b = self.b();
 
-        let mut scores: HashMap<u64, f64> = HashMap::new();
+        let mut scores: RapidHashMap<u64, f64> = RapidHashMap::new();
 
         for term in &query_terms {
             let mut key_prefix = self.index_prefix();

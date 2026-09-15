@@ -26,6 +26,9 @@ async-trait.workspace = true
 async-channel = { version = "2", optional = true }
 parking_lot = { workspace = true, optional = true }
 
+# Hash maps
+rapidhash.workspace = true
+
 # Bytes
 bytes.workspace = true
 

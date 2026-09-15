@@ -210,7 +210,7 @@ async fn multi_response_collects_until_dropped() {
     let second = rx.recv().await.expect("second");
     assert_eq!(
         {
-            let s: std::collections::HashSet<String> =
+            let s: rapidhash::RapidHashSet<String> =
                 [first.from, second.from].into_iter().collect();
             s.len()
         },

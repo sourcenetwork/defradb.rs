@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use document::Document;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -16,14 +16,14 @@ use crate::txn::{
 
 /// Mock fetcher for testing that stores documents in memory.
 pub struct MockFetcher {
-    docs: Mutex<HashMap<String, Vec<Document>>>,
+    docs: Mutex<RapidHashMap<String, Vec<Document>>>,
 }
 
 impl MockFetcher {
     /// Create a new empty mock fetcher.
     pub fn new() -> Self {
         Self {
-            docs: Mutex::new(HashMap::new()),
+            docs: Mutex::new(RapidHashMap::new()),
         }
     }
 
@@ -172,7 +172,7 @@ impl TransactionContext for MockTxnContext {
 /// Mock transaction registry for testing.
 pub struct MockTxnRegistry {
     counter: AtomicU64,
-    transactions: Mutex<HashMap<String, Arc<dyn TransactionContext>>>,
+    transactions: Mutex<RapidHashMap<String, Arc<dyn TransactionContext>>>,
     fetcher: Arc<MockFetcher>,
 }
 
@@ -181,7 +181,7 @@ impl MockTxnRegistry {
     pub fn new(fetcher: MockFetcher) -> Self {
         Self {
             counter: AtomicU64::new(0),
-            transactions: Mutex::new(HashMap::new()),
+            transactions: Mutex::new(RapidHashMap::new()),
             fetcher: Arc::new(fetcher),
         }
     }

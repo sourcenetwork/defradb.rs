@@ -4,11 +4,11 @@
 //! across a wide range of randomly generated inputs.
 
 use proptest::prelude::*;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{
     validate_schema, CType, CollectionBuilder, CollectionVersion, FieldDescription, FieldKind,
     ScalarArrayKind, ScalarKind,
 };
-use std::collections::HashMap;
 
 // ============================================================================
 // Arbitrary implementations for schema types
@@ -221,7 +221,7 @@ proptest! {
             .scalar("2", &field_name, FieldKind::string())
             .build();
 
-        let mut collections = HashMap::new();
+        let mut collections = RapidHashMap::new();
         collections.insert(name.clone(), coll);
         let result = validate_schema(&collections);
         prop_assert!(result.is_ok());
@@ -278,7 +278,7 @@ proptest! {
             .build();
         coll2.collection_id = "coll-2".to_string();
 
-        let mut collections = HashMap::new();
+        let mut collections = RapidHashMap::new();
         collections.insert("key1".to_string(), coll1);
         collections.insert("key2".to_string(), coll2);
         let result = validate_schema(&collections);
@@ -288,7 +288,7 @@ proptest! {
     /// Property: Empty schemas are always valid
     #[test]
     fn empty_schema_is_valid(_dummy: u8) {
-        let collections: HashMap<String, CollectionVersion> = HashMap::new();
+        let collections: RapidHashMap<String, CollectionVersion> = RapidHashMap::new();
         let result = validate_schema(&collections);
         prop_assert!(result.is_ok());
     }
@@ -607,7 +607,7 @@ proptest! {
             field2,
         ]);
 
-        let mut collections = HashMap::new();
+        let mut collections = RapidHashMap::new();
         collections.insert(col1_name.to_lowercase(), coll1);
         collections.insert(col2_name.to_lowercase(), coll2);
 
@@ -641,7 +641,7 @@ proptest! {
             field2,
         ]);
 
-        let mut collections = HashMap::new();
+        let mut collections = RapidHashMap::new();
         collections.insert(col1_name.to_lowercase(), coll1);
         collections.insert(col2_name.to_lowercase(), coll2);
 

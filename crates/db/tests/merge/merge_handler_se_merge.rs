@@ -1,8 +1,8 @@
 use db::merge::se::generate_doc_artifacts;
 use document::NormalValue;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 use schema::EncryptedIndexDescription;
-use std::collections::HashMap;
 
 fn test_schema(encrypted_fields: Vec<&str>) -> CollectionVersion {
     let mut col = CollectionVersion::new("test", "col_v1", "col_v1", vec![]);
@@ -16,7 +16,7 @@ fn test_schema(encrypted_fields: Vec<&str>) -> CollectionVersion {
 #[test]
 fn test_no_encrypted_indexes_generates_nothing() {
     let schema = test_schema(vec![]);
-    let fields = HashMap::new();
+    let fields = RapidHashMap::new();
     let artifacts = generate_doc_artifacts(
         &schema.collection_id,
         "doc1",
@@ -33,7 +33,7 @@ fn test_no_encrypted_indexes_generates_nothing() {
 #[test]
 fn test_no_matching_values_generates_nothing() {
     let schema = test_schema(vec!["age"]);
-    let fields = HashMap::new(); // no "age" field value
+    let fields = RapidHashMap::new(); // no "age" field value
     let artifacts = generate_doc_artifacts(
         &schema.collection_id,
         "doc1",
@@ -50,7 +50,7 @@ fn test_no_matching_values_generates_nothing() {
 #[test]
 fn test_matching_encrypted_field_generates_artifact() {
     let schema = test_schema(vec!["age"]);
-    let mut fields = HashMap::new();
+    let mut fields = RapidHashMap::new();
     fields.insert("age".to_string(), NormalValue::Int(25));
     let artifacts = generate_doc_artifacts(
         &schema.collection_id,
@@ -71,7 +71,7 @@ fn test_matching_encrypted_field_generates_artifact() {
 #[test]
 fn test_multiple_encrypted_fields() {
     let schema = test_schema(vec!["age", "city"]);
-    let mut fields = HashMap::new();
+    let mut fields = RapidHashMap::new();
     fields.insert("age".to_string(), NormalValue::Int(30));
     fields.insert("city".to_string(), NormalValue::String("NYC".to_string()));
     let artifacts = generate_doc_artifacts(

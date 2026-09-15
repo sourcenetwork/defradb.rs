@@ -1,8 +1,8 @@
 use crate::search::EmbeddingClientConfig;
 use anyhow::{anyhow, bail, Result as AnyhowResult};
 use document::{Document, NormalValue};
+use rapidhash::RapidHashSet;
 use schema::VectorEmbeddingDescription;
-use std::collections::HashSet;
 use std::sync::OnceLock;
 use tracing::warn;
 
@@ -30,7 +30,7 @@ pub async fn set_embedding(
     embeddings: &[VectorEmbeddingDescription],
     doc: &mut Document,
     is_create: bool,
-    modified_fields: Option<&HashSet<String>>,
+    modified_fields: Option<&RapidHashSet<String>>,
     embedding_config: &EmbeddingClientConfig,
 ) -> Result<Vec<String>, EmbeddingError> {
     let mut generated = Vec::new();

@@ -9,6 +9,7 @@ use crate::sync::manager::events::SyncEvent;
 use crate::QueryId;
 
 use super::SyncManager;
+use rapidhash::HashMapExt;
 
 /// Terminal observation for one transport fetch query.
 ///
@@ -44,8 +45,8 @@ pub(crate) struct BlockSyncCompletionTracker {
 
 #[derive(Debug)]
 struct BlockSyncCompletionState {
-    waiters: std::collections::HashMap<QueryId, tokio::sync::oneshot::Sender<FetchCompletion>>,
-    early: std::collections::HashMap<QueryId, FetchCompletion>,
+    waiters: rapidhash::RapidHashMap<QueryId, tokio::sync::oneshot::Sender<FetchCompletion>>,
+    early: rapidhash::RapidHashMap<QueryId, FetchCompletion>,
     early_order: std::collections::VecDeque<QueryId>,
     capacity: usize,
 }
@@ -59,8 +60,8 @@ impl Default for BlockSyncCompletionState {
 impl BlockSyncCompletionState {
     fn new(capacity: usize) -> Self {
         Self {
-            waiters: std::collections::HashMap::new(),
-            early: std::collections::HashMap::new(),
+            waiters: rapidhash::RapidHashMap::new(),
+            early: rapidhash::RapidHashMap::new(),
             early_order: std::collections::VecDeque::new(),
             capacity: capacity.max(1),
         }
@@ -102,7 +103,7 @@ impl BlockSyncCompletionState {
 /// alone adds avoidable ownership latency at small admission capacities.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RootedCarCompletionTracker {
-    waiters: std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<Cid, RootedCarWaiter>>>,
+    waiters: std::sync::Arc<parking_lot::Mutex<rapidhash::RapidHashMap<Cid, RootedCarWaiter>>>,
 }
 
 #[derive(Debug)]

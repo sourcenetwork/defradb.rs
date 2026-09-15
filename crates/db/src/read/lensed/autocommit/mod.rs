@@ -10,7 +10,7 @@ pub mod stream;
 mod vector;
 
 use bytes::Bytes;
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -24,12 +24,12 @@ use storage::corekv::Store;
 use crate::database::DB;
 
 /// Cached migration context for a collection.
-type MigrationContext = (bool, Option<HashMap<String, TargetedHistoryLink>>);
+type MigrationContext = (bool, Option<RapidHashMap<String, TargetedHistoryLink>>);
 
 #[derive(Default)]
 struct MigrationCache {
     generation: u64,
-    contexts: HashMap<String, MigrationContext>,
+    contexts: RapidHashMap<String, MigrationContext>,
 }
 
 /// Document fetcher that auto-commits and applies lens migrations.
@@ -196,7 +196,7 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         collection_name: &str,
         field_name: &str,
         query: &str,
-    ) -> query::error::Result<std::collections::HashMap<String, f64>> {
+    ) -> query::error::Result<rapidhash::RapidHashMap<String, f64>> {
         let collection = self
             .db
             .get_collection(collection_name)

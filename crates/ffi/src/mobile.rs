@@ -1,6 +1,6 @@
 //! Thin mobile-oriented FFI wrappers for Swift/Xcode embedding.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::ffi::{c_char, CString};
 use std::ptr;
 
@@ -407,7 +407,7 @@ pub extern "C" fn defra_mobile_ensure_schema(
             defra_core::current_identity::scoped_current_identity(node_identity_did);
 
         ffi_async!(rt, {
-            let existing_collections: HashSet<String> =
+            let existing_collections: RapidHashSet<String> =
                 database.list_collections().unwrap_or_default().into_iter().collect();
             let known_types = existing_collections.clone();
             let collections = query::parse_sdl_with_known_types(&schema_str, known_types)

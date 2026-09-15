@@ -19,6 +19,7 @@ use crate::collection::{populate_collection_root_id, Collection};
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
 use datastore::NamespaceView;
+use rapidhash::HashMapExt;
 use schema::CollectionVersion;
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::systemstore::{
@@ -57,9 +58,9 @@ impl<S: Store> crate::database::DB<S> {
     pub async fn load_collections(&self) -> Result<()> {
         let txn = self.new_txn(true).await?;
         let prefix = CollectionNameKey::name_prefix();
-        let mut schemas: std::collections::HashMap<String, CollectionVersion> =
-            std::collections::HashMap::new();
-        let mut index_actions = std::collections::HashMap::new();
+        let mut schemas: rapidhash::RapidHashMap<String, CollectionVersion> =
+            rapidhash::RapidHashMap::new();
+        let mut index_actions = rapidhash::RapidHashMap::new();
 
         // Block ensures systemstore reference is dropped before discard
         {
@@ -226,10 +227,8 @@ impl<S: Store> crate::database::DB<S> {
         {
             let all_versions = self.get_all_collection_versions().await?;
             // Group versions by collection_id
-            let mut versions_by_collection: std::collections::HashMap<
-                &str,
-                Vec<&CollectionVersion>,
-            > = std::collections::HashMap::new();
+            let mut versions_by_collection: rapidhash::RapidHashMap<&str, Vec<&CollectionVersion>> =
+                rapidhash::RapidHashMap::new();
             for v in &all_versions {
                 versions_by_collection
                     .entry(v.collection_id.as_str())

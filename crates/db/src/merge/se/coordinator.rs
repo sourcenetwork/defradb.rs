@@ -127,7 +127,7 @@ impl SECoordinator {
         doc_id: &str,
         encrypted_indexes: &[EncryptedIndexDescription],
         field_names: &[String],
-        field_values: &std::collections::HashMap<String, NormalValue>,
+        field_values: &rapidhash::RapidHashMap<String, NormalValue>,
     ) -> Result<Vec<Artifact>> {
         super::artifact_gen::generate_doc_artifacts(
             collection_id,

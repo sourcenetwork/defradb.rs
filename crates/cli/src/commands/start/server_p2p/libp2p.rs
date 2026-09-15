@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 
 use tracing::{error, info, warn};
@@ -406,7 +406,7 @@ impl Node {
             }
         }
 
-        let mut restored_doc_ids = HashSet::new();
+        let mut restored_doc_ids = RapidHashSet::new();
         if let Ok(doc_ids) = restore_peerstore.load_documents().await {
             for doc_id in &doc_ids {
                 let _ = handle

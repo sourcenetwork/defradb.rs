@@ -9,6 +9,7 @@ use storage::RegolithStore;
 
 use crate::sync::manager::DEFAULT_MAX_PENDING_DAGS;
 use crate::sync::{PeerStateTracker, SyncConfig};
+use rapidhash::{HashSetExt, RapidHashSet};
 
 fn test_cid(label: usize) -> Cid {
     Cid::new_v1(
@@ -35,7 +36,7 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         collection_id: "collection".to_string(),
         head_priority: None,
         creator: "creator".to_string(),
-        missing: HashSet::new(),
+        missing: RapidHashSet::new(),
         source_peer: source_peer.map(str::to_owned),
         alternate_providers: Vec::new(),
         is_explicit_replicator: false,
@@ -518,7 +519,7 @@ fn pending_dag_reverse_index_tracks_frontier_lifecycle() {
     assert!(manager.insert_pending_dag(root_a, dag_a));
     assert!(manager.insert_pending_dag(root_b, dag_b));
 
-    let waiting: HashSet<_> = manager
+    let waiting: RapidHashSet<_> = manager
         .pending_dags
         .read()
         .waiting_roots(&shared)
@@ -542,7 +543,7 @@ fn pending_dag_reverse_index_tracks_frontier_lifecycle() {
             .read()
             .waiting_roots(&next)
             .into_iter()
-            .collect::<HashSet<_>>(),
+            .collect::<RapidHashSet<_>>(),
         [root_a, root_b].into_iter().collect()
     );
 

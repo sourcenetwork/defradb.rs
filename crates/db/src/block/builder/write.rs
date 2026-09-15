@@ -202,7 +202,7 @@ pub async fn write_document_blocks(
     doc: &Document,
     schema_version_id: &str,
     identity: DocStorageIdentity,
-    modified_fields: Option<&std::collections::HashSet<String>>,
+    modified_fields: Option<&rapidhash::RapidHashSet<String>>,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
     kms: Option<&std::sync::Arc<dyn kms::KmsService>>,

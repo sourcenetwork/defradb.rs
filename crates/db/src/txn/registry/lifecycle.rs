@@ -97,11 +97,11 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     ) -> query::error::Result<()> {
         use crate::collection::loader::load_collection_from_systemstore;
         use crate::write::autocommit::helpers::apply_pending_counter_op;
-        use std::collections::HashMap;
+        use rapidhash::{HashMapExt, RapidHashMap};
 
         // Load each touched collection once (keyed by name) and build its index manager.
-        let mut collections: HashMap<String, (Collection, crate::index::IndexManager)> =
-            HashMap::new();
+        let mut collections: RapidHashMap<String, (Collection, crate::index::IndexManager)> =
+            RapidHashMap::new();
         for op in ops {
             if collections.contains_key(&op.collection_name) {
                 continue;
@@ -132,8 +132,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         // share a doc_id — key the corrections by (collection_name, doc_id) so each
         // (collection, doc) is corrected against its own collection.
         // (collection_name, doc_id) -> (field -> post-RMW value)
-        let mut corrections: HashMap<(String, String), Vec<(String, document::NormalValue)>> =
-            HashMap::new();
+        let mut corrections: RapidHashMap<(String, String), Vec<(String, document::NormalValue)>> =
+            RapidHashMap::new();
         for op in ops {
             let (collection, _) = collections
                 .get(&op.collection_name)

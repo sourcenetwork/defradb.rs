@@ -12,7 +12,7 @@ use defra_core::block::CrdtDelta;
 use defra_core::encryption::EncryptionConfig;
 use document::Document;
 use document::NormalValue;
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use storage::corekv::Store;
 use storage::namespace::Namespace;
 use storage::RegolithStore;
@@ -85,7 +85,7 @@ async fn update_without_config_inherits_encryption_from_previous_block() {
         "secret",
         NormalValue::String("still classified".to_string()),
     );
-    let modified: HashSet<String> = ["secret".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -146,7 +146,7 @@ async fn update_without_config_inherits_composite_encryption() {
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
     doc.set("name", NormalValue::String("Alicia".to_string()));
-    let modified: HashSet<String> = ["name".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["name".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -209,7 +209,7 @@ async fn inherited_encryption_writes_no_new_encryption_block() {
         "secret",
         NormalValue::String("still classified".to_string()),
     );
-    let modified: HashSet<String> = ["secret".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -269,7 +269,7 @@ async fn explicit_config_on_update_overrides_inheritance() {
         "secret",
         NormalValue::String("still classified".to_string()),
     );
-    let modified: HashSet<String> = ["secret".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -336,7 +336,7 @@ async fn inheritance_is_per_field() {
         NormalValue::String("still classified".to_string()),
     );
     doc.set("public", NormalValue::String("still open".to_string()));
-    let modified: HashSet<String> = ["secret".to_string(), "public".to_string()]
+    let modified: RapidHashSet<String> = ["secret".to_string(), "public".to_string()]
         .into_iter()
         .collect();
 
@@ -407,7 +407,7 @@ async fn field_added_by_update_inherits_document_encryption() {
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
     doc.set("bio", NormalValue::String("ssn 123-45-6789".to_string()));
-    let modified: HashSet<String> = ["bio".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -463,7 +463,7 @@ async fn update_of_unencrypted_document_stays_plaintext() {
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
     doc.set("name", NormalValue::String("Bobby".to_string()));
-    let modified: HashSet<String> = ["name".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["name".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -580,7 +580,7 @@ async fn field_added_to_field_encrypted_document_stays_plaintext() {
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
     doc.set("bio", NormalValue::String("public".to_string()));
-    let modified: HashSet<String> = ["bio".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -631,7 +631,7 @@ async fn field_added_to_unencrypted_document_stays_plaintext() {
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
     doc.set("bio", NormalValue::String("public".to_string()));
-    let modified: HashSet<String> = ["bio".to_string()].into_iter().collect();
+    let modified: RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,

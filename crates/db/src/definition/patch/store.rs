@@ -24,7 +24,7 @@ impl<S: Store> crate::database::DB<S> {
         // Go's patchCollection does this in collection_define.go for new fields that
         // don't have an explicit CRDT type. This must happen before CID generation.
         {
-            let old_field_names: std::collections::HashSet<&str> =
+            let old_field_names: rapidhash::RapidHashSet<&str> =
                 old_schema.fields.iter().map(|f| f.name.as_str()).collect();
             for field in &mut new_schema.fields {
                 if !old_field_names.contains(field.name.as_str())
@@ -140,7 +140,7 @@ impl<S: Store> crate::database::DB<S> {
                 Some((heads, h)) => (heads.clone(), *h + 1),
                 None => {
                     // Fallback: compute from version chain (for databases loaded from storage)
-                    let versions_map: std::collections::HashMap<&str, &CollectionVersion> =
+                    let versions_map: rapidhash::RapidHashMap<&str, &CollectionVersion> =
                         all_existing
                             .iter()
                             .map(|v| (v.version_id.as_str(), v))
@@ -164,7 +164,7 @@ impl<S: Store> crate::database::DB<S> {
         };
 
         // Build collection name → collection_id map for resolving FieldKind::Named
-        let collection_id_map: std::collections::HashMap<String, String> = all_existing
+        let collection_id_map: rapidhash::RapidHashMap<String, String> = all_existing
             .iter()
             .filter(|c| c.is_active)
             .map(|c| (c.name.clone(), c.collection_id.clone()))
@@ -379,7 +379,7 @@ impl<S: Store> crate::database::DB<S> {
             let blockstore = txn.blockstore()?;
 
             // Identify new fields (same logic as generate_patch_version_id_with_heads)
-            let old_field_names: std::collections::HashSet<&str> = old_schema
+            let old_field_names: rapidhash::RapidHashSet<&str> = old_schema
                 .fields
                 .iter()
                 .filter(|f| !f.id.is_empty())

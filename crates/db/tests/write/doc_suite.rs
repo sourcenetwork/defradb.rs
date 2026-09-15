@@ -18,6 +18,7 @@ use events::EventName;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use query::txn::TransactionRegistry;
+use rapidhash::HashSetExt;
 use schema::CType;
 use schema::CollectionVersion;
 use schema::FieldDescription;
@@ -349,7 +350,7 @@ async fn explicit_txn_counter_increment_advances_accumulation_store() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -422,7 +423,7 @@ async fn explicit_txn_pcounter_increment_no_double_apply() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("PCounters", update_doc, modified)
@@ -484,7 +485,7 @@ async fn explicit_txn_multi_doc_counter_finalize_advances_both_stores() {
     let mut up_a = Document::from_json_str(r#"{"count": 11}"#).unwrap();
     up_a.set_id(document::DocID::from_string(&doc_a).unwrap());
     up_a.set_counter_delta("count".to_string(), document::NormalValue::Int(1));
-    let mut mod_a = std::collections::HashSet::new();
+    let mut mod_a = rapidhash::RapidHashSet::new();
     mod_a.insert("count".to_string());
     mutator
         .update("Counters", up_a, mod_a)
@@ -494,7 +495,7 @@ async fn explicit_txn_multi_doc_counter_finalize_advances_both_stores() {
     let mut up_b = Document::from_json_str(r#"{"count": 25}"#).unwrap();
     up_b.set_id(document::DocID::from_string(&doc_b).unwrap());
     up_b.set_counter_delta("count".to_string(), document::NormalValue::Int(5));
-    let mut mod_b = std::collections::HashSet::new();
+    let mut mod_b = rapidhash::RapidHashSet::new();
     mod_b.insert("count".to_string());
     mutator
         .update("Counters", up_b, mod_b)
@@ -604,7 +605,7 @@ async fn explicit_txn_pcounter_create_then_update_same_txn() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("PCounters", update_doc, modified)
@@ -706,7 +707,7 @@ async fn update_seeds_absent_store_from_committed_base_load_bearing() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -753,7 +754,7 @@ async fn explicit_txn_pncounter_create_then_decrement_same_txn() {
     let mut update_doc = Document::from_json_str(r#"{"count": -2}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(-5));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -799,7 +800,7 @@ async fn explicit_txn_discard_drops_pending_counter_ops() {
     let mut update_doc = Document::from_json_str(r#"{"count": 9}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -856,14 +857,14 @@ async fn explicit_txn_multiple_updates_same_field_sum_once() {
     let mut up1 = Document::from_json_str(r#"{"count": 3}"#).unwrap();
     up1.set_id(document::DocID::from_string(&doc_id).unwrap());
     up1.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut m1 = std::collections::HashSet::new();
+    let mut m1 = rapidhash::RapidHashSet::new();
     m1.insert("count".to_string());
     mutator.update("Counters", up1, m1).await.expect("update 1");
 
     let mut up2 = Document::from_json_str(r#"{"count": 5}"#).unwrap();
     up2.set_id(document::DocID::from_string(&doc_id).unwrap());
     up2.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
-    let mut m2 = std::collections::HashSet::new();
+    let mut m2 = rapidhash::RapidHashSet::new();
     m2.insert("count".to_string());
     mutator.update("Counters", up2, m2).await.expect("update 2");
 
@@ -929,7 +930,7 @@ async fn explicit_txn_indexed_counter_index_reflects_post_rmw_value() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("IdxCounters", update_doc, modified)

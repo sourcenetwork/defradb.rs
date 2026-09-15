@@ -1,10 +1,11 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use crate::{P2PError, P2PErrorExt as _, P2PResult};
 
@@ -256,7 +257,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
             };
 
             let mut fetch_queue: VecDeque<cid::Cid> = linked_cids.into_iter().collect();
-            let mut fetched: HashSet<String> = HashSet::new();
+            let mut fetched: RapidHashSet<String> = RapidHashSet::new();
             fetched.insert(version_cid.to_string());
             while let Some(link_cid) = fetch_queue.pop_front() {
                 if fetched.contains(&link_cid.to_string()) {

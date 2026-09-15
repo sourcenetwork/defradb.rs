@@ -22,7 +22,7 @@ pub(crate) use pending_dag::PendingDagLease;
 use crate::QueryId;
 use cid::Cid;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -107,7 +107,7 @@ pub struct SyncManager<B: Blockstore> {
     pub(super) pending_dag_ready: tokio::sync::Notify,
 
     /// Maps Bitswap QueryId → root CID for tracking completions.
-    pub(super) query_to_root: Arc<RwLock<HashMap<QueryId, Cid>>>,
+    pub(super) query_to_root: Arc<RwLock<RapidHashMap<QueryId, Cid>>>,
 
     /// Completion waiters for poll-owned exact-CID queries.
     pub(super) block_sync_completions: BlockSyncCompletionTracker,
@@ -135,12 +135,13 @@ pub struct SyncManager<B: Blockstore> {
     /// Roots with a durable registration. Superset guard so the merge path
     /// only pays a delete transaction for roots that actually have records,
     /// and admission can bound durable growth without hitting storage.
-    pub(super) persisted_roots: Arc<RwLock<std::collections::HashSet<Cid>>>,
+    pub(super) persisted_roots: Arc<RwLock<rapidhash::RapidHashSet<Cid>>>,
 
     /// Current durable root for each sender/document-or-collection scope.
     /// This survives pending TTL eviction and is hydrated before the first
     /// post-restart PushLog.
-    pub(super) persisted_scope_heads: Arc<RwLock<HashMap<PersistedScopeKey, PersistedHeadVersion>>>,
+    pub(super) persisted_scope_heads:
+        Arc<RwLock<RapidHashMap<PersistedScopeKey, PersistedHeadVersion>>>,
 
     /// Single-flight guard for the durable resync sweep.
     pub(super) pending_resync_in_flight: std::sync::atomic::AtomicBool,
@@ -326,7 +327,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             peer_state,
             pending_dags: Arc::new(RwLock::new(PendingDagRegistry::default())),
             pending_dag_ready: tokio::sync::Notify::new(),
-            query_to_root: Arc::new(RwLock::new(HashMap::new())),
+            query_to_root: Arc::new(RwLock::new(RapidHashMap::new())),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),
             ),
@@ -337,8 +338,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             max_pending_dags: config.max_pending_dags.max(1),
             pending_store: std::sync::OnceLock::new(),
             pending_metadata_writer: tokio::sync::Mutex::new(()),
-            persisted_roots: Arc::new(RwLock::new(std::collections::HashSet::new())),
-            persisted_scope_heads: Arc::new(RwLock::new(HashMap::new())),
+            persisted_roots: Arc::new(RwLock::new(rapidhash::RapidHashSet::new())),
+            persisted_scope_heads: Arc::new(RwLock::new(RapidHashMap::new())),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
             pending_resync_tick: std::sync::atomic::AtomicUsize::new(0),
             quarantined_pending_count: std::sync::atomic::AtomicUsize::new(0),

@@ -1,6 +1,6 @@
 //! Pending DAG registration and retry logic.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 use web_time::Instant;
 
@@ -368,7 +368,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         &self,
         root_cid: &Cid,
         inserted_at: Instant,
-        missing: HashSet<Cid>,
+        missing: RapidHashSet<Cid>,
     ) -> bool {
         let mut pending = self.pending_dags.write();
         let Some(dag) = pending.get_mut(root_cid) else {
@@ -596,7 +596,11 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // Keep the live registration until merge/mark or quarantine reaches a
         // durable terminal outcome. The receiver clock can then re-drive a
         // transient merge failure without waiting for restart reconciliation.
-        if !self.update_pending_dag_missing_if_current(root_cid, info.inserted_at, HashSet::new()) {
+        if !self.update_pending_dag_missing_if_current(
+            root_cid,
+            info.inserted_at,
+            RapidHashSet::new(),
+        ) {
             tracing::debug!(
                 root_cid = %root_cid,
                 "Pending DAG changed before ready event; skipping stale completion"
@@ -703,7 +707,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     return 0;
                 }
             };
-            let record_roots: std::collections::HashSet<Cid> =
+            let record_roots: rapidhash::RapidHashSet<Cid> =
                 records.iter().map(|(cid, _)| *cid).collect();
             *self.persisted_roots.write() = record_roots.clone();
             self.persisted_scope_heads

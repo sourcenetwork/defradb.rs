@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::str::FromStr;
 
 use cid::Cid;
@@ -13,7 +13,7 @@ pub async fn load_push_dag_blocks<R: Reader + ?Sized, E: Reader + ?Sized>(
     root_data: Bytes,
 ) -> Vec<(Cid, Bytes)> {
     let mut ordered = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = RapidHashSet::new();
     let mut stack = vec![(root_cid, root_data, false)];
 
     while let Some((cid, data, expanded)) = stack.pop() {

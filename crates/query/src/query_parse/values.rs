@@ -1,6 +1,6 @@
 //! GraphQL value conversion utilities
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use graphql_parser::query::Value;
 use serde_json::Value as JsonValue;
@@ -45,7 +45,7 @@ pub(crate) fn graphql_value_to_json_no_vars(value: &Value<'_, String>) -> Result
 /// Convert GraphQL Value to JSON Value, resolving variables if present.
 pub(crate) fn graphql_value_to_json(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<JsonValue> {
     match value {
         Value::Null => Ok(JsonValue::Null),
@@ -87,7 +87,7 @@ pub(crate) fn graphql_value_to_json(
 /// Parse an integer value from GraphQL Value, resolving variables if present.
 pub(crate) fn parse_int_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<i64> {
     match value {
         Value::Int(n) => n
@@ -112,7 +112,7 @@ pub(crate) fn parse_int_value(
 /// This matches Go DefraDB's behavior where null is treated as "not provided".
 pub(crate) fn parse_optional_int_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Option<i64>> {
     match value {
         Value::Null => Ok(None),
@@ -143,7 +143,7 @@ pub(crate) fn parse_optional_int_value(
 #[allow(dead_code)]
 pub(crate) fn resolve_string_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     arg_name: &str,
 ) -> Result<String> {
     match value {
@@ -169,7 +169,7 @@ pub(crate) fn resolve_string_value(
 /// Parse docIDs argument into vector of strings.
 pub(crate) fn parse_doc_ids_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Vec<String>> {
     match value {
         Value::List(items) => {
@@ -230,7 +230,7 @@ pub(crate) fn parse_doc_ids_value(
 /// Accepts `[String!]` (array) or a single `String` (wrapped into a vec).
 pub(crate) fn parse_cid_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Vec<String>> {
     match value {
         Value::List(items) => {
@@ -289,7 +289,7 @@ pub(crate) fn parse_cid_value(
 /// Resolve a boolean value from GraphQL Value, supporting variable substitution.
 pub(crate) fn resolve_bool_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
     arg_name: &str,
 ) -> Result<bool> {
     match value {

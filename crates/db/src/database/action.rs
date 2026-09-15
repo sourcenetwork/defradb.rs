@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use defra_core::{Action, ActionExecution, ActionStatus};
@@ -45,7 +45,7 @@ pub struct ActionKey {
 
 #[derive(Debug, Default)]
 pub struct ActionRegistry {
-    pub active: Mutex<HashSet<ActionKey>>,
+    pub active: Mutex<RapidHashSet<ActionKey>>,
 }
 
 impl ActionRegistry {
@@ -283,7 +283,7 @@ impl<S: Store> crate::database::DB<S> {
     pub async fn list_index_actions(
         &self,
         collection_id: &str,
-    ) -> Result<HashMap<u32, ActionExecution>> {
+    ) -> Result<RapidHashMap<u32, ActionExecution>> {
         self.check_node_access(None, acp::nac::NodePermission::IndexList)
             .await?;
 
@@ -347,7 +347,7 @@ pub(crate) async fn action_executions(
 pub(crate) async fn index_action_statuses(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
-) -> Result<HashMap<u32, ActionStatus>> {
+) -> Result<RapidHashMap<u32, ActionStatus>> {
     Ok(index_action_executions(systemstore, collection_id)
         .await?
         .into_iter()
@@ -358,7 +358,7 @@ pub(crate) async fn index_action_statuses(
 async fn index_action_executions(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
-) -> Result<HashMap<u32, ActionExecution>> {
+) -> Result<RapidHashMap<u32, ActionExecution>> {
     let mut iter = systemstore
         .iterator(IterOptions::new().with_prefix(ActionStatusKey::collection_prefix(collection_id)))
         .await
@@ -366,7 +366,7 @@ async fn index_action_executions(
     let pairs = iter.collect_all().await.map_err(Error::Storage)?;
     iter.close().await.map_err(Error::Storage)?;
 
-    let mut executions = HashMap::new();
+    let mut executions = RapidHashMap::new();
     for pair in pairs {
         let Some(key) = ActionStatusKey::parse(&pair.key) else {
             continue;

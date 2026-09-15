@@ -5,7 +5,8 @@ use super::types::*;
 use crate::error::{Error, Result};
 use chrono::{DateTime, FixedOffset};
 use document::Document;
-use std::collections::{BTreeMap, HashSet};
+use rapidhash::RapidHashSet;
+use std::collections::BTreeMap;
 use storage::corekv::Store;
 
 impl<S: Store + 'static> crate::database::DB<S> {
@@ -15,7 +16,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         measure_field: &str,
         commits: Vec<Document>,
     ) -> Result<Vec<SourceSample>> {
-        let needed = HashSet::from([plan.time_field.as_str(), measure_field]);
+        let needed = RapidHashSet::from_iter([plan.time_field.as_str(), measure_field]);
         let grouped = group_commit_values_by_height(commits, &needed);
         let mut samples = Vec::new();
 
@@ -58,7 +59,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         plan: &DownsamplePlan,
         commits: Vec<Document>,
     ) -> Result<Vec<SourceSample>> {
-        let mut needed = HashSet::from([plan.time_field.as_str(), "window_end"]);
+        let mut needed = RapidHashSet::from_iter([plan.time_field.as_str(), "window_end"]);
         for field in &plan.aggregate_fields {
             match field {
                 AggregateField::Count => {

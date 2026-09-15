@@ -1,7 +1,8 @@
 //! Layer descent and the ef-bounded greedy search of one layer.
 
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::BinaryHeap;
 
 use super::{Candidate, Hnsw};
 use crate::index::error::{Error, Result};
@@ -120,7 +121,7 @@ impl<S: VectorNodeStore> Hnsw<S> {
         layer: usize,
         admit: &A,
     ) -> Result<Vec<Candidate>> {
-        let mut visited: HashSet<NodeId> = HashSet::new();
+        let mut visited: RapidHashSet<NodeId> = RapidHashSet::new();
         // Nearest pops first: the frontier explores closest-first.
         let mut frontier: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
         // Farthest pops first: the worst result is cheap to drop past `ef`.

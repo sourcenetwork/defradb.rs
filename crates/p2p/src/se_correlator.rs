@@ -5,10 +5,10 @@
 //! SE query response two-stream protocol) can be routed back to the requester.
 //!
 //! Mirrors the KMS [`crate::pubsub_rpc::correlator::Correlator`] state machine
-//! (shared `Arc<Mutex<HashMap>>` + Drop-cleanup), but is keyed by the message-ID
+//! (shared `Arc<Mutex<RapidHashMap>>` + Drop-cleanup), but is keyed by the message-ID
 //! `String` rather than a `Cid`, since SE query message IDs are UUID strings.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -21,7 +21,7 @@ use crate::message::QuerySEArtifactsReply;
 /// loop that receives replies. Cheap to clone into tasks.
 #[derive(Clone, Default)]
 pub struct SeQueryCorrelator {
-    ongoing: Arc<Mutex<HashMap<String, oneshot::Sender<QuerySEArtifactsReply>>>>,
+    ongoing: Arc<Mutex<RapidHashMap<String, oneshot::Sender<QuerySEArtifactsReply>>>>,
 }
 
 /// Handle for a registered SE query. The correlator slot is removed when this

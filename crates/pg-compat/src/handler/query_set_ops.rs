@@ -1,7 +1,6 @@
-use std::collections::HashSet;
-
 use pgwire::api::results::Response;
 use pgwire::error::PgWireResult;
+use rapidhash::RapidHashSet;
 use tracing::debug;
 
 use crate::bridge::{self, SetOp, SqlStatement};
@@ -159,7 +158,7 @@ fn apply_set_op(
     match op {
         SetOp::Union => {
             let mut result = left.to_vec();
-            let mut seen: HashSet<String> = left.iter().map(|v| v.to_string()).collect();
+            let mut seen: RapidHashSet<String> = left.iter().map(|v| v.to_string()).collect();
             for doc in right {
                 let key = doc.to_string();
                 if seen.insert(key) {
@@ -174,14 +173,14 @@ fn apply_set_op(
             result
         }
         SetOp::Intersect => {
-            let right_set: HashSet<String> = right.iter().map(|v| v.to_string()).collect();
+            let right_set: RapidHashSet<String> = right.iter().map(|v| v.to_string()).collect();
             left.iter()
                 .filter(|doc| right_set.contains(&doc.to_string()))
                 .cloned()
                 .collect()
         }
         SetOp::Except => {
-            let right_set: HashSet<String> = right.iter().map(|v| v.to_string()).collect();
+            let right_set: RapidHashSet<String> = right.iter().map(|v| v.to_string()).collect();
             left.iter()
                 .filter(|doc| !right_set.contains(&doc.to_string()))
                 .cloned()

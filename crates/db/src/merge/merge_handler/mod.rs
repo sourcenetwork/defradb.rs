@@ -26,7 +26,7 @@ mod signature;
 pub use error::MergeError;
 pub(crate) use error::{CounterMergeResult, LwwMergeResult};
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use cid::Cid;
@@ -88,10 +88,10 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// Tracks composite CIDs that have already been merged, preventing
     /// duplicate processing from concurrent dual-broadcast paths (doc topic
     /// + collection topic). Matches Go's `loadComposites` dedup guard.
-    pub(crate) merged_composites: std::sync::Mutex<HashSet<Cid>>,
+    pub(crate) merged_composites: std::sync::Mutex<RapidHashSet<Cid>>,
     /// Tracks collection CIDs that have already been merged, preventing
     /// replayed collection blocks from re-adding obsolete collection heads.
-    pub(crate) merged_collections: std::sync::Mutex<HashSet<Cid>>,
+    pub(crate) merged_collections: std::sync::Mutex<RapidHashSet<Cid>>,
     /// Optional SE encryption key for generating search artifacts on replicated documents.
     /// When set, the merge handler generates SE artifacts after merging documents
     /// that belong to collections with encrypted indexes.
@@ -110,7 +110,7 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// repeated deliveries of the same deferred field block
     /// (pushlog + gossip + retries) don't fan out duplicate cross-peer
     /// fetches.
-    prefetched_dek_cids: Arc<std::sync::Mutex<HashSet<Cid>>>,
+    prefetched_dek_cids: Arc<std::sync::Mutex<RapidHashSet<Cid>>>,
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
@@ -155,12 +155,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     }
 
     /// Collection-definition blocks already merged in this process.
-    pub fn merged_collections(&self) -> &std::sync::Mutex<HashSet<Cid>> {
+    pub fn merged_collections(&self) -> &std::sync::Mutex<RapidHashSet<Cid>> {
         &self.merged_collections
     }
 
     /// DEK block CIDs whose prefetch has already been spawned.
-    pub fn prefetched_dek_cids(&self) -> &Arc<std::sync::Mutex<HashSet<Cid>>> {
+    pub fn prefetched_dek_cids(&self) -> &Arc<std::sync::Mutex<RapidHashSet<Cid>>> {
         &self.prefetched_dek_cids
     }
 
@@ -181,12 +181,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             blockstore,
             max_merge_depth,
             composite_merge_hook: std::sync::OnceLock::new(),
-            merged_composites: std::sync::Mutex::new(HashSet::new()),
-            merged_collections: std::sync::Mutex::new(HashSet::new()),
+            merged_composites: std::sync::Mutex::new(RapidHashSet::new()),
+            merged_collections: std::sync::Mutex::new(RapidHashSet::new()),
             se_enc_key: std::sync::OnceLock::new(),
             kms: std::sync::OnceLock::new(),
             merge_queue,
-            prefetched_dek_cids: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            prefetched_dek_cids: Arc::new(std::sync::Mutex::new(RapidHashSet::new())),
         }
     }
 

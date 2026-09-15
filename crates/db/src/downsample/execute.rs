@@ -9,8 +9,8 @@ use document::{DocID, Document, NormalValue};
 use query::fetcher::CommitsQueryOptions;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use storage::corekv::{IterOptions, Store};
 use storage::keys::headstore::HeadstoreDocKey;
@@ -115,7 +115,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
     fn set_field(
         &self,
         doc: &mut Document,
-        modified_fields: &mut HashSet<String>,
+        modified_fields: &mut RapidHashSet<String>,
         field_name: &str,
         value: NormalValue,
         force_write: bool,
@@ -133,8 +133,8 @@ impl<S: Store + 'static> crate::database::DB<S> {
         doc: &mut Document,
         aggregate: &WindowAggregate,
         series_doc_id: &str,
-    ) -> Result<HashSet<String>> {
-        let mut modified_fields = HashSet::new();
+    ) -> Result<RapidHashSet<String>> {
+        let mut modified_fields = RapidHashSet::new();
 
         self.set_field(
             doc,
@@ -417,11 +417,11 @@ impl<S: Store + 'static> crate::database::DB<S> {
     }
 
     pub async fn bootstrap_downsamples(self: &Arc<Self>, names: Option<&[String]>) -> Result<()> {
-        let name_set = names.map(|names| names.iter().cloned().collect::<HashSet<_>>());
+        let name_set = names.map(|names| names.iter().cloned().collect::<RapidHashSet<_>>());
         let mut plans = self.downsample_plans(name_set.as_ref(), None)?;
 
-        let mut memo = HashMap::new();
-        let mut visiting = HashSet::new();
+        let mut memo = RapidHashMap::new();
+        let mut visiting = RapidHashSet::new();
         plans.sort_by_key(|plan| {
             self.downsample_depth(&plan.target.name, &mut memo, &mut visiting)
                 .unwrap_or(usize::MAX)

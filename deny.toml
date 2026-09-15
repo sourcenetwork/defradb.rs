@@ -73,7 +73,11 @@ allow = [
 [bans]
 multiple-versions = "warn"
 allow = []
-deny = []
+# dashmap is banned in this codebase: the concurrent map is
+# kovan_map::HopscotchMap, plain maps are rapidhash's. The one copy in the
+# graph is governor's, pulled by commonware through backbone's
+# acp-light-client, and stays allowed only behind that wrapper.
+deny = [{ name = "dashmap", wrappers = ["governor"] }]
 highlight = "lowest-version"
 
 # ------------------------------------------------------------------

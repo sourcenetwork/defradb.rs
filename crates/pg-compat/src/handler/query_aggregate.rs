@@ -1,10 +1,10 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures::stream;
 use pgwire::api::results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response};
 use pgwire::api::Type;
 use pgwire::error::PgWireResult;
+use rapidhash::{HashSetExt, RapidHashSet};
 use tracing::debug;
 
 use crate::bridge::{AggFunc, AggregateExpr};
@@ -101,7 +101,7 @@ impl DefraQueryHandler {
 
         let count = match docs {
             Some(arr) => {
-                let mut unique = HashSet::new();
+                let mut unique = RapidHashSet::new();
                 for doc in arr {
                     let val = doc
                         .get(field)

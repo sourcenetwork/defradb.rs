@@ -5,10 +5,10 @@
 //! used to compute a Merkle root which is then signed as a single batch.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use cid::Cid;
+use rapidhash::{HashMapExt, RapidHashMap};
 use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
@@ -63,11 +63,11 @@ pub fn compute_merkle_root(cids: &[Cid]) -> Option<[u8; 32]> {
 // Global batch collector  (same pattern as IDENTITY_STORE in signing.rs)
 // ---------------------------------------------------------------------------
 
-static BATCH_COLLECTORS: std::sync::OnceLock<Mutex<HashMap<String, Vec<Cid>>>> =
+static BATCH_COLLECTORS: std::sync::OnceLock<Mutex<RapidHashMap<String, Vec<Cid>>>> =
     std::sync::OnceLock::new();
 
-fn collectors() -> &'static Mutex<HashMap<String, Vec<Cid>>> {
-    BATCH_COLLECTORS.get_or_init(|| Mutex::new(HashMap::new()))
+fn collectors() -> &'static Mutex<RapidHashMap<String, Vec<Cid>>> {
+    BATCH_COLLECTORS.get_or_init(|| Mutex::new(RapidHashMap::new()))
 }
 
 /// Start (or reset) a batch collection session for `session_key`.

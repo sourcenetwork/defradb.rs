@@ -54,6 +54,7 @@ multihash.workspace = true
 
 # Hashing
 sha2.workspace = true
+rapidhash.workspace = true
 
 # Random number generation (for Counter CRDT nonces)
 rand.workspace = true

@@ -5,7 +5,7 @@
 //! keeps a single connection to each peer. Both mark their victims `closing` in
 //! the same map, so neither re-selects what the other already gave up.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
 
 use libp2p::{swarm::ConnectionId, PeerId};
@@ -26,7 +26,7 @@ pub(super) struct ActiveConnectionManager {
     low_water: usize,
     high_water: usize,
     grace_period: Duration,
-    connections: HashMap<ConnectionId, ManagedConnection>,
+    connections: RapidHashMap<ConnectionId, ManagedConnection>,
 }
 
 #[derive(Debug)]
@@ -54,7 +54,7 @@ impl ActiveConnectionManager {
             low_water,
             high_water,
             grace_period,
-            connections: HashMap::new(),
+            connections: RapidHashMap::new(),
         }
     }
 
@@ -150,7 +150,7 @@ impl ActiveConnectionManager {
             return Vec::new();
         }
 
-        let mut peers = HashMap::<PeerId, (Instant, Vec<ConnectionId>)>::new();
+        let mut peers = RapidHashMap::<PeerId, (Instant, Vec<ConnectionId>)>::new();
         for (connection_id, connection) in &self.connections {
             let peer = peers
                 .entry(connection.peer_id)

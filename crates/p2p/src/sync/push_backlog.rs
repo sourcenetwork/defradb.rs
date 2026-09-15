@@ -24,7 +24,8 @@
 //! Failed jobs leave volatile state immediately and are redriven only by the
 //! durable scope-marker ladder.
 
-use std::collections::{HashMap, VecDeque};
+use rapidhash::RapidHashMap;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -189,19 +190,19 @@ struct PeerCooldown {
 struct Inner {
     /// Per-peer FIFO of queued jobs. A peer key is present in `ready` iff its
     /// deque is non-empty.
-    queues: HashMap<String, VecDeque<PushJobSpec>>,
+    queues: RapidHashMap<String, VecDeque<PushJobSpec>>,
     ready: VecDeque<String>,
-    active: HashMap<String, usize>,
+    active: RapidHashMap<String, usize>,
     /// Greatest live version per `(document, peer)` across queued and active
     /// work. Absence or a newer version makes an active job stale.
-    latest: HashMap<JobKey, LiveHead>,
+    latest: RapidHashMap<JobKey, LiveHead>,
     /// PEER-WIDE cooldown for a receiver that reported its pending-DAG registry
     /// full. Unlike `retries`, this parks every CID for the peer: a saturated
     /// receiver rejects the next root for the same reason, so letting other CIDs
     /// through just manufactures more guaranteed-failing work. Without this, a
     /// per-CID cooldown gave each distinct CID its own fresh burst and provided
     /// essentially no protection (defradb#1112).
-    peer_cooldowns: HashMap<String, PeerCooldown>,
+    peer_cooldowns: RapidHashMap<String, PeerCooldown>,
     queued_items: usize,
     queued_bytes: usize,
     active_jobs: usize,
@@ -684,7 +685,7 @@ impl PushBacklog {
     pub fn snapshot(&self) -> PushBacklogSnapshot {
         let inner = self.inner.lock();
         let now = Instant::now();
-        let mut peers: std::collections::HashSet<&String> = inner.queues.keys().collect();
+        let mut peers: rapidhash::RapidHashSet<&String> = inner.queues.keys().collect();
         peers.extend(inner.active.keys());
         peers.extend(inner.peer_cooldowns.keys());
         let mut per_peer: Vec<PeerBacklogSnapshot> = peers

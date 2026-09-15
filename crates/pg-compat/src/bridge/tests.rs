@@ -1,3 +1,4 @@
+use rapidhash::HashMapExt;
 use schema::ScalarKind;
 
 use super::*;

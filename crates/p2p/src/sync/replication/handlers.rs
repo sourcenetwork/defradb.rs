@@ -13,6 +13,7 @@ use crate::sync::merge::{
     RecoveredBlockMetadata,
 };
 use crate::transport::P2PTransport;
+use rapidhash::HashSetExt;
 
 pub(super) struct DagFetchRequest {
     root_cid: Cid,
@@ -997,7 +998,7 @@ where
 }
 
 pub(super) fn has_duplicate_merge_cids(events: &[SyncEvent]) -> bool {
-    let mut seen = std::collections::HashSet::with_capacity(events.len());
+    let mut seen = rapidhash::RapidHashSet::with_capacity(events.len());
     events
         .iter()
         .filter_map(event_merge_cid)
