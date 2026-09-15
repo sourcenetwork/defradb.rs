@@ -47,3 +47,10 @@ bench-out/
 /perf-loadguard.json
 /perf-criterion/
 /perf-site/
+
+# Spike scratch: memory-growth harness, the node binary it drives, and the
+# per-run RSS/heap/vmmap captures it writes. Machine-local evidence, never
+# part of a change set.
+/runs-h3/
+/bin-h3/
+/tools/spike-h3/

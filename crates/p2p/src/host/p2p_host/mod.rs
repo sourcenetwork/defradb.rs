@@ -237,6 +237,10 @@ impl Default for P2PHostConfig {
     }
 }
 
+/// Join handle and session id per in-flight Bitswap query.
+pub(super) type BitswapQueries =
+    Arc<parking_lot::Mutex<HashMap<QueryId, (tokio::task::JoinHandle<()>, u64)>>>;
+
 /// P2P Host that manages the libp2p swarm.
 pub struct P2PHost<S: Store> {
     pub(super) swarm: Swarm<DefraBehaviour<S>>,
@@ -256,8 +260,12 @@ pub struct P2PHost<S: Store> {
     pub(super) two_stream_event_rx: mpsc::Receiver<crate::two_stream::TwoStreamEvent>,
     /// Tracked spawned tasks for graceful shutdown
     pub(super) spawned_tasks: tokio::task::JoinSet<()>,
-    /// Bitswap query abort handles for cancellation support
-    pub(super) bitswap_queries: HashMap<QueryId, tokio::task::AbortHandle>,
+    /// Bitswap query join handles and session ids, for cancellation and
+    /// session teardown. Shared with each fetch task, which removes its own
+    /// entry when it completes. The join handle, rather than a bare abort
+    /// handle, because stopping a cancelled query's session has to wait for
+    /// the aborted task to be dropped.
+    pub(super) bitswap_queries: BitswapQueries,
     /// Per-peer addresses learned from connections and identify protocol.
     /// Used by ActivePeers to return full multiaddrs (Go-compatible).
     pub(super) peer_addrs: HashMap<PeerId, Multiaddr>,
@@ -589,7 +597,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             two_stream_handler,
             two_stream_event_rx,
             spawned_tasks: tokio::task::JoinSet::new(),
-            bitswap_queries: HashMap::new(),
+            bitswap_queries: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             peer_addrs: HashMap::new(),
             node_identity,
             connection_manager: ActiveConnectionManager::new(
