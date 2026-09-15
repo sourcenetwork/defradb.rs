@@ -60,6 +60,7 @@ struct TestTransport {
     stream_completion: Arc<Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
     early_failure_completion: Arc<Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
     early_deferred_completion: Arc<Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
+    early_success_completion: Arc<Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
     stream_block_delay: Arc<Mutex<Duration>>,
     stream_completed: Arc<AtomicBool>,
     cancelled_before_stream_complete: Arc<AtomicBool>,
@@ -101,6 +102,7 @@ impl TestTransport {
             stream_completion: Arc::new(Mutex::new(None)),
             early_failure_completion: Arc::new(Mutex::new(None)),
             early_deferred_completion: Arc::new(Mutex::new(None)),
+            early_success_completion: Arc::new(Mutex::new(None)),
             stream_block_delay: Arc::new(Mutex::new(Duration::from_millis(10))),
             stream_completed: Arc::new(AtomicBool::new(false)),
             cancelled_before_stream_complete: Arc::new(AtomicBool::new(false)),
@@ -165,6 +167,13 @@ impl TestTransport {
         completion: crate::sync::manager::BlockSyncCompletionTracker,
     ) {
         *self.early_deferred_completion.lock().unwrap() = Some(completion);
+    }
+
+    fn set_early_success_completion(
+        &self,
+        completion: crate::sync::manager::BlockSyncCompletionTracker,
+    ) {
+        *self.early_success_completion.lock().unwrap() = Some(completion);
     }
 
     fn cancelled_before_stream_complete(&self) -> bool {
@@ -390,6 +399,30 @@ impl P2PTransport for TestTransport {
         }
         if let Some(completion) = self.early_deferred_completion.lock().unwrap().clone() {
             completion.defer(query_id);
+            return Ok(query_id);
+        }
+        if let Some(completion) = self.early_success_completion.lock().unwrap().clone() {
+            // Production ordering on libp2p: the host reports success once it
+            // has forwarded every block *event*; the coordinator dispatches
+            // those events and the completion as independent tasks, so the
+            // poll owner can observe Success while the puts are still landing.
+            completion.complete(query_id, true);
+            let blockstore = Arc::clone(&self.blockstore);
+            let delay = *self.stream_block_delay.lock().unwrap();
+            let blocks: Vec<(Cid, Vec<u8>)> = missing
+                .iter()
+                .filter_map(|cid| {
+                    self.selective_blocks
+                        .get(cid)
+                        .map(|data| (*cid, data.clone()))
+                })
+                .collect();
+            n0_future::task::spawn(async move {
+                n0_future::time::sleep(delay).await;
+                for (cid, data) in blocks {
+                    blockstore.put(&cid, &data).await.unwrap();
+                }
+            });
             return Ok(query_id);
         }
         let streamed_blocks = self.streamed_rooted_blocks.lock().unwrap().take();
@@ -1410,4 +1443,161 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
 
     assert!(event_rx.recv().await.is_none());
     assert_eq!(transport.sync_batches().len(), MAX_FETCH_ATTEMPTS as usize);
+}
+
+/// B0 rust-0 16:25:10.256-10.294: `Bitswap fetch complete success=true` is
+/// processed 4 ms before the three `Stored Bitswap block` puts land, the poll
+/// owner reports `Timeout fetching selective block batch` after a 13 ms window,
+/// and the DAG then completes through the manager path 25 ms later. A Success
+/// completion means every block has already been handed to this node; it must
+/// not be read as a stall.
+#[tokio::test(start_paused = true)]
+async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        HashMap::new(),
+        HashMap::from([(child_cid, child_data)]),
+    );
+    let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
+    transport.set_early_success_completion(completion.clone());
+    let context = DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        PeerId::new("remote-peer".to_string()),
+    )
+    .with_block_sync_completions(completion);
+    let started = n0_future::time::Instant::now();
+
+    let outcome = poll_fetch_blocks(
+        &root_cid,
+        &[child_cid],
+        &transport,
+        &blockstore,
+        &PeerId::new("remote-peer".to_string()),
+        &context,
+    )
+    .await;
+
+    assert_eq!(
+        outcome,
+        ProviderWindowOutcome::Complete,
+        "a successful completion whose blocks are still being stored is not a stall"
+    );
+    assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
+    assert!(
+        n0_future::time::Instant::now().duration_since(started) < Duration::from_secs(1),
+        "the landing blocks are local; waiting for them must not cost a fetch window"
+    );
+}
+
+/// The same ordering, one level up: the spurious stall costs the whole
+/// dispatch a 2 s in-task backoff (`retry_backoff(2)`) while it holds one of
+/// the four fetch slots, and the root is usually resolved by the manager path
+/// before the retry even runs. At B0 saturation that sleep was ~70% of all
+/// fetch-slot time.
+#[tokio::test(start_paused = true)]
+async fn success_completion_racing_block_storage_does_not_burn_a_retry_backoff() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        HashMap::new(),
+        HashMap::from([(child_cid, child_data)]),
+    );
+    let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
+    transport.set_early_success_completion(completion.clone());
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    let started = n0_future::time::Instant::now();
+
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        DagFetchContext::new(
+            "doc-id".to_string(),
+            "collection-id".to_string(),
+            "creator-id".to_string(),
+            PeerId::new("remote-peer".to_string()),
+        )
+        .with_block_sync_completions(completion),
+        DagFetchLimiter::new(2),
+        diagnostics(),
+    )
+    .await;
+
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
+    ));
+    let elapsed = n0_future::time::Instant::now().duration_since(started);
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "fetch slot held {elapsed:?}: the first attempt slept through retry_backoff(2) \
+         for blocks that had already been delivered"
+    );
+}
+
+/// The same race, but the completion arrives in the watchdog's final moments:
+/// its blocks then land after `BLOCK_SYNC_COMPLETION_WATCHDOG` would have
+/// expired. The grace has to outlive the watchdog, or a Success arriving late
+/// in the window gets no grace at all and burns the retry backoff anyway.
+#[tokio::test(start_paused = true)]
+async fn late_success_completion_keeps_the_full_landing_grace() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    // The transport serves nothing: this test drives the completion and the
+    // block landing itself, on the production ordering.
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        HashMap::new(),
+        HashMap::new(),
+    );
+    let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
+    let context = DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        PeerId::new("remote-peer".to_string()),
+    )
+    .with_block_sync_completions(completion.clone());
+
+    let landing_store = blockstore.clone();
+    n0_future::task::spawn(async move {
+        n0_future::time::sleep(BLOCK_SYNC_COMPLETION_WATCHDOG - Duration::from_millis(150)).await;
+        // First (and only) sync_blocks call of this poll window.
+        completion.complete(QueryId(1), true);
+        n0_future::time::sleep(SUCCESS_LANDING_GRACE / 2).await;
+        landing_store.put(&child_cid, &child_data).await.unwrap();
+    });
+
+    let outcome = poll_fetch_blocks(
+        &root_cid,
+        &[child_cid],
+        &transport,
+        &blockstore,
+        &PeerId::new("remote-peer".to_string()),
+        &context,
+    )
+    .await;
+
+    assert_eq!(
+        outcome,
+        ProviderWindowOutcome::Complete,
+        "a Success in the watchdog's last moments must still wait out the landing grace"
+    );
+    assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
 }

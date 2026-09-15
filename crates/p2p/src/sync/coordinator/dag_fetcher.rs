@@ -31,6 +31,14 @@ const SELECTIVE_FETCH_BATCH_SIZE: usize = 2048;
 /// outlive that bound so the transport completion event, rather than a racing
 /// shorter poll window, decides when a productive CAR stream is reaped.
 const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
+
+/// How long a successful transport completion may wait for its blocks to
+/// become durable locally. The libp2p host reports success once it has
+/// forwarded every block event, and the coordinator stores those events on
+/// independent tasks, so the completion regularly overtakes the puts (B0
+/// rust-0: 4 ms lead, ~25 ms per put). Reading that as a stall cost the
+/// dispatch a 2 s retry backoff while it held a fetch slot.
+const SUCCESS_LANDING_GRACE: Duration = Duration::from_secs(1);
 /// Defensive ceiling on selective-fetch DAG-walk iterations.
 ///
 /// Each iteration reveals and fetches the next frontier of missing blocks
@@ -863,14 +871,17 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
     };
     let mut completion = context.track_block_sync(query_id);
     let completion_is_observable = completion.is_some();
-    let mut transport_complete = false;
+    let mut landing_deadline: Option<Instant> = None;
     let mut deferred = false;
     let mut size_limit = None;
 
     let timeout = BLOCK_SYNC_COMPLETION_WATCHDOG;
     let start = Instant::now();
     let mut outcome = ProviderWindowOutcome::Stalled;
-    while start.elapsed() < timeout {
+    // Once Success has been seen the landing deadline, not the watchdog,
+    // bounds the loop: a completion that arrives in the watchdog's last
+    // moments must still get the whole grace for its blocks to land.
+    while landing_deadline.is_some() || start.elapsed() < timeout {
         if !context.is_current() {
             break;
         }
@@ -895,7 +906,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                 break;
             }
         }
-        if transport_complete {
+        if landing_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             break;
         }
         if let Some(receiver) = completion.as_mut() {
@@ -903,9 +914,11 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                 result = receiver => {
                     let fetch_completion = result.unwrap_or(FetchCompletion::Failure);
                     completion = None;
-                    transport_complete = true;
                     match fetch_completion {
-                        FetchCompletion::Success => {}
+                        FetchCompletion::Success => {
+                            landing_deadline =
+                                Some(Instant::now() + SUCCESS_LANDING_GRACE);
+                        }
                         FetchCompletion::Failure => break,
                         FetchCompletion::Deferred => {
                             deferred = true;
