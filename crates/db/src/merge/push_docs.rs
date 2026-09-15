@@ -831,7 +831,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 }
                 Err(error) => {
                     let prefix = if error.is_connection_like() {
-                        "transport became unavailable"
+                        p2p::error::TRANSPORT_UNAVAILABLE_PREFIX
                     } else {
                         "replay push failed"
                     };

@@ -27,6 +27,16 @@ pub const RATE_LIMITED_MESSAGE: &str = "rate limited: too many requests, retry l
 /// older peers.
 pub const AT_CAPACITY_MESSAGE: &str = "at capacity: receiver is saturated, back off";
 
+/// Message prefix for a replay whose transport went away mid-push.
+///
+/// The replay path already classifies the typed transport error
+/// ([`Error::is_connection_like`]) and stringifies the result, so this prefix is
+/// the only surviving evidence that the failure was the peer rather than the
+/// document. A durable sender sweeping one peer's markers matches it exactly to
+/// stop that peer's pass instead of paying a replay timeout per remaining
+/// marker.
+pub const TRANSPORT_UNAVAILABLE_PREFIX: &str = "transport became unavailable";
+
 /// P2P error types.
 #[derive(Debug, Error)]
 #[non_exhaustive]

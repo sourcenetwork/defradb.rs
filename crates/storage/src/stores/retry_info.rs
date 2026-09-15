@@ -192,8 +192,8 @@ impl RetryInfo {
     }
 
     /// Move the next bounded pass to a different lexical marker prefix.
-    pub fn advance_dispatch_cursor(&mut self) {
-        self.dispatch_cursor = self.dispatch_cursor.wrapping_add(1);
+    pub fn advance_dispatch_cursor(&mut self, by: u64) {
+        self.dispatch_cursor = self.dispatch_cursor.wrapping_add(by);
     }
 
     /// Schedule another attempt without recording a delivery failure.

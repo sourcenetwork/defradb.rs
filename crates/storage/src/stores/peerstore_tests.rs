@@ -606,7 +606,10 @@ async fn peer_retry_cursor_rotates_bounded_marker_prefix_after_failure() {
 
     let first = peerstore.get_retry_documents("peer").await.unwrap();
     assert_eq!(first[0].doc_id, "a");
-    assert!(peerstore.reschedule_retry_peer("peer", None).await.unwrap());
+    assert!(peerstore
+        .reschedule_retry_peer("peer", None, 1)
+        .await
+        .unwrap());
 
     let second = peerstore.get_retry_documents("peer").await.unwrap();
     assert_eq!(second[0].doc_id, "b");
@@ -640,7 +643,7 @@ async fn capacity_reschedule_rotates_without_advancing_failure_ladder() {
         .unwrap()
         .as_secs();
     assert!(peerstore
-        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)))
+        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), 1)
         .await
         .unwrap());
 
