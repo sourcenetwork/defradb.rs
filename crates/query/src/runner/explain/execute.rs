@@ -264,7 +264,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let mut planner = Planner::new(collections)
                 .with_query_limits(self.query_limits)
                 .with_fetcher(Arc::new(fetcher_arc))
-                .with_acp(self.acp.clone(), caller_identity.clone());
+                .with_acp(self.acp.clone(), caller_identity.clone())
+                .with_read_validator(self.read_validator.clone());
             if let Some(ref lens_store) = self.lens_store {
                 planner = planner.with_lens_store(lens_store.clone());
             }
@@ -272,15 +273,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             let mut plan = plan_result.plan;
 
             // Wrap with permission filter if needed (explain path)
-            if let Some(ref policy) = collection.policy {
-                plan = Box::new(PermissionFilterNode::new(
-                    plan,
-                    self.acp.clone(),
-                    Identity::from(caller_identity),
-                    &policy.id,
-                    &policy.resource_name,
-                ));
-            }
+            let app_read = self.app_read_check(caller_identity.clone(), &collection);
+            plan = PermissionFilterNode::wrap(
+                plan,
+                collection.policy.as_ref().map(|policy| {
+                    (
+                        self.acp.clone(),
+                        Identity::from(caller_identity),
+                        policy.id.clone(),
+                        policy.resource_name.clone(),
+                    )
+                }),
+                app_read,
+            );
 
             // Execute the plan and count iterations
             let outcome = async {
@@ -337,6 +342,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             };
 
             // Build ACP filter config if collection has policy and ACP is configured
+            let app_read = self.app_read_check(caller_identity.clone(), &collection);
             let acp_filter = collection.policy.as_ref().map(|policy| plan::AcpFilter {
                 acp: self.acp.clone(),
                 identity: Identity::from(caller_identity),
@@ -351,6 +357,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 mapping.clone(),
                 &collection,
                 acp_filter,
+                app_read,
                 self.query_limits,
             )?;
 
