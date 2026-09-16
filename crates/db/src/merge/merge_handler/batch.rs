@@ -244,6 +244,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // Move batch-merged CIDs into the permanent dedup set
         self.merged_composites
             .extend(batch_merged.keys().map(|cid| (cid, ())));
+        self.deferred.release(batch_merged.keys());
         self.merged_collections
             .extend(batch_merged_collections.keys().map(|cid| (cid, ())));
 
