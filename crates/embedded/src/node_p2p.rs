@@ -462,6 +462,7 @@ pub(crate) async fn setup_iroh<S>(
     node_identity: Option<Arc<identity::RawIdentity>>,
     document_acp: Arc<dyn acp::DocumentACP>,
     strict_replicated_doc_access: bool,
+    replication_policy: Option<Arc<dyn p2p::replication_policy::ReplicationPolicy>>,
 ) -> Result<P2PSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -487,6 +488,7 @@ where
     );
     peer_config.strict_replicated_doc_access = strict_replicated_doc_access;
     peer_config.sync = sync_config;
+    peer_config.replication_policy = replication_policy;
     let replicator_push_options = ReplicatorPushOptionsState::default();
     peer_config.replicator_push_options = Some(replicator_push_options.clone());
     let peer = IrohPeer::start(store.clone(), database, event_bus, peer_config)
