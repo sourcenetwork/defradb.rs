@@ -5,7 +5,7 @@ use crate::thread_bounds::MaybeBoxFuture;
 
 use super::cache::{CheckCache, CheckKey, NodeId, NodeTrail};
 use super::PermissionEngine;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::expression::RelationExpression;
 use crate::store::ZanzibarStore;
 use crate::types::Subject;
@@ -346,7 +346,12 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         )
                         .await?;
 
-                    Ok((!subtract_granted, base_tainted || subtract_tainted))
+                    // A truncated cycle is not proof of absence. Negating it
+                    // could grant the very permission being excluded.
+                    if subtract_tainted {
+                        return Err(Error::IndeterminateExclusion);
+                    }
+                    Ok((!subtract_granted, base_tainted))
                 }
             }
         })

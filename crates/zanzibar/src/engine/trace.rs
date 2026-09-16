@@ -5,7 +5,7 @@ use crate::thread_bounds::MaybeBoxFuture;
 
 use super::cache::{CheckCache, NodeId, NodeTrail};
 use super::{EvaluationStep, EvaluationTrace, PermissionEngine, StepResult};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::expression::RelationExpression;
 use crate::store::ZanzibarStore;
 use crate::types::Subject;
@@ -463,7 +463,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         return Ok(false);
                     }
 
-                    let (subtract_result, _) = self
+                    let (subtract_result, subtract_tainted) = self
                         .evaluate_expr_inner(
                             policy_id,
                             resource,
@@ -476,6 +476,9 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         )
                         .await?;
 
+                    if subtract_tainted {
+                        return Err(Error::IndeterminateExclusion);
+                    }
                     let final_result = !subtract_result;
                     trace.add_step(EvaluationStep {
                         expression_type: "Difference (result)".to_string(),

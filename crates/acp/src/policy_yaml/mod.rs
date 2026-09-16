@@ -1,3 +1,4 @@
+mod bounded_yaml;
 mod parse;
 mod schema;
 mod validate;

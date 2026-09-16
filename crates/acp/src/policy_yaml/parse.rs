@@ -8,7 +8,7 @@ pub fn parse_policy_yaml(yaml: &str) -> Result<ParsedPolicy, String> {
         return Err("policy definition exceeds 64 KiB".into());
     }
     let value: serde_yaml::Value =
-        serde_yaml::from_str(yaml).map_err(|e| format!("invalid policy YAML: {e}"))?;
+        super::bounded_yaml::parse(yaml).map_err(|e| format!("invalid policy YAML: {e}"))?;
     serde_yaml::from_value(value).map_err(|e| format!("invalid policy YAML: {e}"))
 }
 
@@ -35,7 +35,7 @@ where
 /// duplicates but with a different error format, so we re-format
 /// the error to match Go.
 pub fn check_duplicate_yaml_keys(yaml_text: &str) -> Result<(), String> {
-    let result: Result<serde_yaml::Value, _> = serde_yaml::from_str(yaml_text);
+    let result: Result<serde_yaml::Value, _> = super::bounded_yaml::parse(yaml_text);
     match result {
         Ok(_) => {
             // serde_yaml didn't find duplicates; also run raw text scan as fallback
@@ -285,5 +285,45 @@ resources:
     fn test_no_duplicate_keys() {
         let result = check_duplicate_yaml_keys(TEST_POLICY);
         assert!(result.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod expansion_tests {
+    use super::parse_policy_yaml;
+
+    #[test]
+    fn policy_alias_expansion_is_bounded_before_schema_conversion() {
+        let yaml = format!(
+            "name: aliases\nresources:\n  - &item\n    name: file\n    description: {}\n{}",
+            "x".repeat(16 * 1024),
+            "  - *item\n".repeat(128),
+        );
+        assert!(yaml.len() < 64 * 1024);
+        let error = parse_policy_yaml(&yaml)
+            .err()
+            .expect("expanded policy must fail");
+        assert!(error.contains("expansion exceeds byte limit"), "{error}");
+    }
+
+    #[test]
+    fn ordinary_aliases_remain_supported() {
+        let parsed = parse_policy_yaml("name: aliases\ndescription: &text shared\nresources:\n  - name: file\n    description: *text\n").unwrap();
+        assert_eq!(parsed.description, "shared");
+        assert_eq!(parsed.resources[0].description, "shared");
+    }
+
+    #[test]
+    fn expanded_collections_are_bounded_even_without_large_strings() {
+        let yaml = format!(
+            "name: aliases\nunknown: &row [{}]\nother: [{}]\n",
+            "0,".repeat(100),
+            "*row,".repeat(1000)
+        );
+        assert!(yaml.len() < 64 * 1024);
+        let error = parse_policy_yaml(&yaml)
+            .err()
+            .expect("expanded collection must fail");
+        assert!(error.contains("expansion exceeds node limit"), "{error}");
     }
 }
