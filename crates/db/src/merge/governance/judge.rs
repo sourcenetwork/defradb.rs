@@ -104,6 +104,68 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         );
     }
 
+    /// An update whose document cannot be identified because an ancestor is
+    /// not held. In a governed collection, resolved from the block's own
+    /// schema version, that is a missing input: defer on the first ancestor
+    /// not held, so its arrival re-drives the update. Otherwise the error
+    /// stands.
+    pub(crate) async fn defer_unresolved_document(
+        &self,
+        cid: &Cid,
+        block: &Block,
+        payload: &CompositeDeltaPayload,
+        metadata: &BlockMetadata<'_>,
+        error: MergeError,
+    ) -> Result<MergeOutcome, MergeError> {
+        let governed = self
+            .block_collection(&payload.schema_version_id, None)
+            .await?
+            .is_some_and(|collection| self.is_governed(collection.schema()));
+        if !governed {
+            return Err(error);
+        }
+        let Some(missing) = self.first_missing_ancestor(cid, block).await? else {
+            return Err(error);
+        };
+        self.index_deferred(
+            cid,
+            metadata.doc_id.unwrap_or_default(),
+            payload,
+            metadata,
+            vec![missing],
+        );
+        Ok(MergeOutcome::retryable_skip("document genesis not held"))
+    }
+
+    async fn first_missing_ancestor(
+        &self,
+        cid: &Cid,
+        block: &Block,
+    ) -> Result<Option<Cid>, MergeError> {
+        let mut pending: Vec<(Cid, usize)> = block
+            .heads
+            .iter()
+            .flatten()
+            .map(|head| (*head, 1))
+            .collect();
+        let mut visited = rapidhash::RapidHashSet::default();
+        while let Some((ancestor, depth)) = pending.pop() {
+            self.ensure_merge_depth(cid, depth)?;
+            if !visited.insert(ancestor) {
+                continue;
+            }
+            let data = match self.blockstore.get(&ancestor).await {
+                Ok(Some(data)) => data,
+                Ok(None) => return Ok(Some(ancestor)),
+                Err(error) => return Err(MergeError::Storage(error.to_string())),
+            };
+            let parent = Block::from_dag_cbor(&data)
+                .map_err(|error| MergeError::BlockDecode(error.to_string()))?;
+            pending.extend(parent.heads.iter().flatten().map(|head| (*head, depth + 1)));
+        }
+        Ok(None)
+    }
+
     /// Deferred composites currently indexed for re-drive.
     pub fn deferred_composites(&self) -> usize {
         self.deferred.len()

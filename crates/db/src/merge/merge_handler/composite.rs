@@ -125,7 +125,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        let doc_id_str = self.resolve_composite_doc_id(cid, block, depth).await?;
+        let doc_id_str = match self.resolve_composite_doc_id(cid, block, depth).await {
+            Ok(doc_id) => doc_id,
+            Err(error) => {
+                return self
+                    .defer_unresolved_document(cid, block, payload, metadata, error)
+                    .await
+            }
+        };
 
         let collection = self
             .block_collection(&payload.schema_version_id, metadata.collection_id)
@@ -237,6 +244,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await?;
 
         if let Some(collection) = collection.as_ref() {
+            // A governed collection is resolved from the block alone: were the
+            // carrier's collection id honoured, a sender would pick the validator.
+            if metadata.collection_id.is_some()
+                && self.is_governed(collection.schema())
+                && !self
+                    .block_collection(&payload.schema_version_id, None)
+                    .await?
+                    .is_some_and(|own| own.collection_id() == collection.collection_id())
+            {
+                return Ok(CompositeMergePreparation::Complete(
+                    MergeOutcome::retryable_skip(format!(
+                        "schema version {} is not held; a governed collection is resolved only from the block",
+                        payload.schema_version_id
+                    )),
+                ));
+            }
+
             if let Some(reason) = self
                 .db
                 .replicated_downsample_source_skip_reason(collection.schema())?
@@ -716,9 +740,17 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // frames. Resolve it against the shared transaction so mappings staged
         // earlier in the batch are visible. Resolving every Enter frame afresh
         // turns a depth-N replay into O(N^2) ancestry reads.
-        let doc_id = self
+        let doc_id = match self
             .resolve_composite_doc_id_in_txn(systemstore, cid, block, depth)
-            .await?;
+            .await
+        {
+            Ok(doc_id) => doc_id,
+            Err(error) => {
+                return self
+                    .defer_unresolved_document(cid, block, payload, metadata, error)
+                    .await
+            }
+        };
         let root_cid = *cid;
         let root_payload = payload;
         let doc_id_for_index = doc_id.clone();
