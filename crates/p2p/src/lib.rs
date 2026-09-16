@@ -72,6 +72,7 @@ pub mod peer_identity;
 pub mod protocol;
 #[cfg(any(feature = "kms", feature = "libp2p-transport"))]
 pub mod pubsub_rpc;
+pub mod replication_policy;
 pub mod replicator;
 pub mod se_correlator;
 pub mod signing;
