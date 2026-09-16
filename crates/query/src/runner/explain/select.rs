@@ -194,6 +194,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             mapping,
             collection,
             None,
+            None,
             self.query_limits,
         )?;
 

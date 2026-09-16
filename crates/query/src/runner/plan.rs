@@ -217,6 +217,7 @@ pub(crate) fn build_plan(
     mapping: DocumentMapping,
     collection: &CollectionVersion,
     acp_filter: Option<AcpFilter>,
+    app_read: Option<crate::access_hooks::AppReadCheck>,
     query_limits: QueryLimits,
 ) -> Result<Box<dyn PlanNode>> {
     // Materialized ID lookups have already resolved aliases to canonical IDs.
@@ -312,15 +313,11 @@ pub(crate) fn build_plan(
 
     // Insert ACP permission filter after Select, before OrderBy/Limit/Aggregates.
     // This ensures aggregates (count, average, etc.) operate on filtered documents.
-    if let Some(acf) = acp_filter {
-        plan = Box::new(PermissionFilterNode::new(
-            plan,
-            acf.acp,
-            acf.identity,
-            acf.policy_id,
-            acf.resource_name,
-        ));
-    }
+    plan = PermissionFilterNode::wrap(
+        plan,
+        acp_filter.map(|acf| (acf.acp, acf.identity, acf.policy_id, acf.resource_name)),
+        app_read,
+    );
 
     // Check if we have GROUP BY
     let has_group_by = select.group_by.is_some();

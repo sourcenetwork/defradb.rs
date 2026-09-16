@@ -12,6 +12,8 @@ use futures::{stream::FuturesOrdered, FutureExt, StreamExt};
 use identity::Did;
 use sync_wrapper::SyncWrapper;
 
+use crate::access_hooks::read::app_allows;
+use crate::access_hooks::AppReadCheck;
 use crate::document::DocumentMapping;
 use crate::error::Result;
 use crate::planner::{index_selection::CursorSeek, Doc, PlanNode};
@@ -23,6 +25,14 @@ const MAX_IN_FLIGHT_PERMISSION_CHECKS: usize = 16;
 
 type PermissionCheck = MaybeBoxFuture<'static, (Doc, bool)>;
 
+#[derive(Clone)]
+struct AcpReadCheck {
+    acp: Arc<dyn DocumentACP>,
+    identity: Arc<Identity>,
+    policy_id: Arc<str>,
+    resource_name: Arc<str>,
+}
+
 /// PermissionFilterNode filters documents based on ACP permissions.
 ///
 /// This node wraps a source node and only yields documents that the
@@ -32,17 +42,11 @@ pub struct PermissionFilterNode {
     /// Source node to filter
     source: Box<dyn PlanNode>,
 
-    /// Document ACP for permission checks
-    acp: Arc<dyn DocumentACP>,
+    /// ACP read check, when the collection has a policy.
+    acp: Option<AcpReadCheck>,
 
-    /// Identity requesting access
-    identity: Arc<Identity>,
-
-    /// Policy ID from the collection
-    policy_id: Arc<str>,
-
-    /// Resource name from the policy
-    resource_name: Arc<str>,
+    /// App read check, when an app read validator governs the collection.
+    app: Option<AppReadCheck>,
 
     /// Current document
     current_doc: Doc,
@@ -78,10 +82,13 @@ impl PermissionFilterNode {
         let document_mapping = source.document_map().clone();
         Self {
             source,
-            acp,
-            identity: Arc::new(identity),
-            policy_id: Arc::from(policy_id.into()),
-            resource_name: Arc::from(resource_name.into()),
+            acp: Some(AcpReadCheck {
+                acp,
+                identity: Arc::new(identity),
+                policy_id: Arc::from(policy_id.into()),
+                resource_name: Arc::from(resource_name.into()),
+            }),
+            app: None,
             current_doc: Doc::default(),
             document_mapping,
             pending: SyncWrapper::new(FuturesOrdered::new()),
@@ -100,13 +107,57 @@ impl PermissionFilterNode {
         Self::new(source, acp, Identity::from(did), policy_id, resource_name)
     }
 
+    /// A filter that applies only an app read check.
+    pub fn app_only(source: Box<dyn PlanNode>, app: AppReadCheck) -> Self {
+        let document_mapping = source.document_map().clone();
+        Self {
+            source,
+            acp: None,
+            app: Some(app),
+            current_doc: Doc::default(),
+            document_mapping,
+            pending: SyncWrapper::new(FuturesOrdered::new()),
+            source_exhausted: false,
+        }
+    }
+
+    /// Also require the app read check, when there is one.
+    pub fn with_app_check(mut self, app: Option<AppReadCheck>) -> Self {
+        self.app = app;
+        self
+    }
+
+    /// Wrap `source` in whichever of the ACP and app checks apply, or return
+    /// it unchanged when neither does.
+    pub fn wrap(
+        source: Box<dyn PlanNode>,
+        acp: Option<(Arc<dyn DocumentACP>, Identity, String, String)>,
+        app: Option<AppReadCheck>,
+    ) -> Box<dyn PlanNode> {
+        match (acp, app) {
+            (Some((acp, identity, policy_id, resource_name)), app) => Box::new(
+                Self::new(source, acp, identity, policy_id, resource_name).with_app_check(app),
+            ),
+            (None, Some(app)) => Box::new(Self::app_only(source, app)),
+            (None, None) => source,
+        }
+    }
+
     fn permission_check(&self, doc_id: String, doc: Doc) -> PermissionCheck {
-        let acp = Arc::clone(&self.acp);
-        let identity = Arc::clone(&self.identity);
-        let policy_id = Arc::clone(&self.policy_id);
-        let resource_name = Arc::clone(&self.resource_name);
+        let acp = self.acp.clone();
+        let app = self.app.clone();
 
         Box::pin(async move {
+            let Some(AcpReadCheck {
+                acp,
+                identity,
+                policy_id,
+                resource_name,
+            }) = acp
+            else {
+                let allowed = app_allows(app.as_ref(), &doc_id).await;
+                return (doc, allowed);
+            };
             let allowed = if identity.is_authenticated() && defra_core::dac_bypass::get_dac_bypass()
             {
                 true
@@ -132,6 +183,7 @@ impl PermissionFilterNode {
                     false
                 })
             };
+            let allowed = allowed && app_allows(app.as_ref(), &doc_id).await;
 
             (doc, allowed)
         })
