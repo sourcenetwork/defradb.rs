@@ -11,8 +11,10 @@ pub enum MergeVerdict {
     Reject { reason: String },
     /// The verdict depends on content this node does not hold yet. The host
     /// leaves the composite unmerged and re-drives it through the normal merge
-    /// path when a block named in `awaiting` merges. A document is named by its
-    /// genesis composite's CID.
+    /// path as soon as a composite named in `awaiting` merges; a document is
+    /// named by its genesis composite's CID. Only composite CIDs trigger
+    /// re-drive: a composite awaiting any other CID, such as a signature or
+    /// field block, is retried by the replication retry clock instead.
     Defer { reason: String, awaiting: Vec<Cid> },
 }
 

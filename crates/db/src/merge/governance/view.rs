@@ -4,6 +4,7 @@ use cid::Cid;
 use defra_core::block::{Block, CrdtDelta};
 use defra_core::thread_bounds::MaybeSendSync;
 use document::NormalValue;
+use schema::CType;
 use storage::corekv::Store;
 
 use crate::merge::merge_handler::DbMergeHandler;
@@ -44,8 +45,12 @@ pub trait MergeView: MaybeSendSync {
     /// Document IDs in `collection` whose merged `field` equals `value`, read
     /// from one snapshot shared by every call during this verdict.
     ///
-    /// Merged state grows as blocks arrive, so a validator may only treat a
-    /// match as evidence and must defer, never reject, when nothing matches.
+    /// Only an `@immutable` scalar LWW field may be looked up; any other field
+    /// is an `Err`. An immutable field is set once, so a document that matches
+    /// on one replica matches on every replica holding it, whatever order its
+    /// updates merged in. A mutable field could match on one replica and not
+    /// another. Documents still arrive over time, so an empty result must
+    /// defer, never reject.
     async fn find_documents(
         &self,
         collection: &str,
@@ -148,6 +153,19 @@ where
         else {
             return Ok(Vec::new());
         };
+        let lookup_field = collection
+            .schema()
+            .fields
+            .iter()
+            .find(|candidate| candidate.name == field);
+        if !lookup_field.is_some_and(|field| {
+            field.immutable && field.crdt_type == CType::LwwRegister && field.kind.is_scalar()
+        }) {
+            return Err(format!(
+                "find_documents field '{field}' in collection '{}' must be an @immutable scalar LWW field",
+                collection.name()
+            ));
+        }
         let mut snapshot = self.snapshot.lock().await;
         if snapshot.is_none() {
             *snapshot = Some(db.new_txn(true).await.map_err(|error| error.to_string())?);
