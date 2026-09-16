@@ -4,25 +4,25 @@
 //! accepts, rejects and defers replicated notes, and node-local read and
 //! write validators.
 
-use std::net::{IpAddr, Ipv4Addr};
+mod iroh_peers;
+
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use cid::Cid;
 use db::merge::governance::{
     FieldValue, MergeCandidate, MergeValidator, MergeVerdict, MergeView, SignatureStatus,
 };
 use document::NormalValue;
-use embedded::{AccessHooks, EmbeddedNode, EmbeddedStore, IrohConfig, NodeBuilder};
+use embedded::{AccessHooks, NodeBuilder};
+use iroh_peers::{connect, create, doc_ids, iroh_config, sync, wait_for_docs};
 use query::access_hooks::{ReadRequest, ReadValidator, WriteRequest, WriteValidator};
 use serde_json::Value as JsonValue;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{sleep, Duration};
 
 const SDL: &str =
     "type Grant { writer: String label: String } type Note { grant: String body: String }";
-
-type Node = EmbeddedNode<EmbeddedStore>;
 
 /// A note merges when the grant it names is held and names the note's signer.
 struct GrantValidator;
@@ -149,13 +149,13 @@ async fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result
     )
     .await?;
 
-    wait_for_notes(&receiver, &[accepted.as_str()]).await?;
+    wait_for_docs(&receiver, "Note", &[accepted.as_str()]).await?;
     sleep(Duration::from_secs(1)).await;
-    assert_eq!(note_ids(&receiver).await?, vec![accepted.clone()]);
+    assert_eq!(doc_ids(&receiver, "Note").await?, vec![accepted.clone()]);
 
     sync(&receiver, "Grant", vec![late_grant]).await?;
-    wait_for_notes(&receiver, &[accepted.as_str(), deferred.as_str()]).await?;
-    assert!(!note_ids(&receiver).await?.contains(&rejected));
+    wait_for_docs(&receiver, "Note", &[accepted.as_str(), deferred.as_str()]).await?;
+    assert!(!doc_ids(&receiver, "Note").await?.contains(&rejected));
 
     author.shutdown().await;
     receiver.shutdown().await;
@@ -226,135 +226,4 @@ async fn access_hooks_require_iroh() {
         .err()
         .expect("a node without iroh refuses access hooks");
     assert!(error.to_string().contains("iroh"), "{error}");
-}
-
-fn iroh_config() -> IrohConfig {
-    IrohConfig {
-        bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        bind_port: Some(0),
-        relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-        discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-        ..Default::default()
-    }
-}
-
-/// Create a document and return its ID and its genesis composite's CID.
-async fn create(node: &Node, collection: &str, input: &str) -> Result<(String, String)> {
-    let response = node
-        .execute(&format!(
-            "mutation {{ add_{collection}(input: {{{input}}}) {{ _docID _version {{ cid }} }} }}"
-        ))
-        .await;
-    if response.has_errors() {
-        bail!("add_{collection} failed: {:?}", response.errors);
-    }
-    let created = response
-        .data
-        .as_ref()
-        .and_then(|data| data.get(format!("add_{collection}")))
-        .and_then(JsonValue::as_array)
-        .and_then(|items| items.first())
-        .context("created document")?;
-    let doc_id = created
-        .get("_docID")
-        .and_then(JsonValue::as_str)
-        .context("_docID")?;
-    let cid = created
-        .get("_version")
-        .and_then(JsonValue::as_array)
-        .and_then(|versions| versions.first())
-        .and_then(|version| version.get("cid"))
-        .and_then(JsonValue::as_str)
-        .context("_version cid")?;
-    Ok((doc_id.to_string(), cid.to_string()))
-}
-
-async fn connect(from: &Node, to: &Node) -> Result<()> {
-    let from = from.p2p().context("p2p")?;
-    let to = to.p2p().context("p2p")?;
-    let peer = to
-        .ops()
-        .local_peer_id()
-        .await
-        .map_err(|error| anyhow!(error))?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let addr = loop {
-        let addrs = to
-            .ops()
-            .listen_addresses()
-            .await
-            .map_err(|error| anyhow!(error))?;
-        if let Some(addr) = addrs
-            .into_iter()
-            .find(|addr| addr.contains("/p2p/") || addr.starts_with("endpoint"))
-        {
-            break addr;
-        }
-        if Instant::now() >= deadline {
-            bail!("no iroh listen address");
-        }
-        sleep(Duration::from_millis(100)).await;
-    };
-    from.ops()
-        .connect_peer(&addr)
-        .await
-        .map_err(|error| anyhow!(error))?;
-    loop {
-        let peers = from
-            .ops()
-            .connected_peers()
-            .await
-            .map_err(|error| anyhow!(error))?;
-        if peers.iter().any(|connected| connected.contains(&peer)) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!("peer {peer} never connected");
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn sync(node: &Node, collection: &str, doc_ids: Vec<String>) -> Result<()> {
-    node.p2p()
-        .context("p2p")?
-        .ops()
-        .sync_documents(collection, doc_ids, None)
-        .await
-        .map_err(|error| anyhow!(error))
-}
-
-async fn note_ids(node: &Node) -> Result<Vec<String>> {
-    let response = node.execute("query { Note { _docID } }").await;
-    if response.has_errors() {
-        bail!("Note query failed: {:?}", response.errors);
-    }
-    let mut ids: Vec<String> = response
-        .data
-        .as_ref()
-        .and_then(|data| data.get("Note"))
-        .and_then(JsonValue::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|note| note.get("_docID").and_then(JsonValue::as_str))
-        .map(str::to_string)
-        .collect();
-    ids.sort();
-    Ok(ids)
-}
-
-async fn wait_for_notes(node: &Node, expected: &[&str]) -> Result<()> {
-    let mut expected: Vec<String> = expected.iter().map(|id| id.to_string()).collect();
-    expected.sort();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let ids = note_ids(node).await?;
-        if ids == expected {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!("notes {ids:?}, expected {expected:?}");
-        }
-        sleep(Duration::from_millis(200)).await;
-    }
 }

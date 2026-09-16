@@ -270,6 +270,25 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     continue;
                 }
             }
+            let doc_ids: Vec<String> = (!push.doc_id.is_empty())
+                .then(|| push.doc_id.clone())
+                .into_iter()
+                .collect();
+            if !self
+                .replication_policy
+                .may_send(
+                    &peer_id.to_string(),
+                    crate::replication_policy::OutboundPath::Push,
+                    &crate::replication_policy::OutboundBlock {
+                        cid: &push.cid,
+                        collection_id: &push.collection_id,
+                        doc_ids: &doc_ids,
+                    },
+                )
+                .await
+            {
+                continue;
+            }
             jobs.push(PushJobSpec::new(
                 peer_id,
                 push.doc_id.clone(),

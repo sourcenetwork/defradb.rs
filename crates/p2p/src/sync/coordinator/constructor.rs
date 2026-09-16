@@ -269,6 +269,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 },
                 authorizer,
                 classifier,
+                replication_policy: Arc::new(
+                    crate::replication_policy::ReplicationPolicyGate::new(Arc::clone(&serve_acp)),
+                ),
                 serve_acp,
                 document_acp: std::sync::OnceLock::new(),
                 #[cfg(feature = "kms")]

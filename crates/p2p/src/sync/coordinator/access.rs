@@ -34,11 +34,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         peer_id_str: &str,
         collection_id: &str,
     ) -> Result<()> {
-        if self
+        if (self
             .authorizer
             .peer_authorized_for_collection(peer_id_str, collection_id)
             .await
-            || self.is_locally_subscribed_collection(collection_id)
+            || self.is_locally_subscribed_collection(collection_id))
+            && self
+                .replication_policy
+                .may_accept(
+                    peer_id_str,
+                    crate::replication_policy::InboundRequest::Push,
+                    collection_id,
+                )
+                .await
         {
             return Ok(());
         }
@@ -77,7 +85,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         peer_id_str: &str,
         collection_id: &str,
     ) -> Result<()> {
-        if self.access.peer_state.is_connected(peer_id_str) {
+        let policy_accepts = || {
+            self.replication_policy.may_accept(
+                peer_id_str,
+                crate::replication_policy::InboundRequest::SyncRequest,
+                collection_id,
+            )
+        };
+        if self.access.peer_state.is_connected(peer_id_str) && policy_accepts().await {
             return Ok(());
         }
 
@@ -85,6 +100,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .authorizer
             .peer_authorized_for_collection(peer_id_str, collection_id)
             .await
+            && policy_accepts().await
         {
             return Ok(());
         }

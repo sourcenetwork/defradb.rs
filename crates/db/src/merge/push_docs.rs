@@ -349,6 +349,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 doc_blocks.push((head_cid, block_data));
             }
 
+            let mut withheld = false;
+            for (head_cid, _) in &doc_blocks {
+                withheld |= !car_authority
+                    .may_push(peer_id, collection.collection_id(), doc_id, head_cid)
+                    .await;
+            }
+            if withheld {
+                continue;
+            }
+
             let mut replay_head_cids: Vec<_> = doc_blocks.iter().map(|(cid, _)| *cid).collect();
             replay_head_cids.sort_unstable();
 
@@ -771,6 +781,12 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
             _ => continue,
         };
 
+        if !car_authority
+            .may_push(peer_id, collection_id, doc_id, &head_cid)
+            .await
+        {
+            continue;
+        }
         {
             let block_cid = head_cid;
             let _car_grant = car_authority
@@ -859,6 +875,12 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
             .await
             .map_err(|error| format!("collection head read: {error}"))?
             .ok_or_else(|| format!("current collection head {cid} is missing"))?;
+        if !car_authority
+            .may_push(peer_id, collection_id, "", &cid)
+            .await
+        {
+            continue;
+        }
         let _car_grant = car_authority
             .register(peer_id.clone(), cid)
             .ok_or_else(|| format!("selective CAR authority full for collection head {cid}"))?;
