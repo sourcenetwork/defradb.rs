@@ -2,6 +2,7 @@
 
 pub mod acp_merge_handler;
 pub mod broadcast_mutator;
+pub mod governance;
 pub mod head_provider;
 pub mod merge_handler;
 #[cfg(all(not(target_arch = "wasm32"), feature = "p2p"))]

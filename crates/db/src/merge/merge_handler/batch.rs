@@ -253,6 +253,8 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             let mut merged = self.merged_composites.lock().unwrap();
             merged.extend(batch.iter());
         }
+        self.deferred
+            .release(batch_merged.lock().unwrap().iter().copied());
         {
             let batch = batch_merged_collections.lock().unwrap();
             let mut merged = self.merged_collections.lock().unwrap();
