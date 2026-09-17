@@ -4,6 +4,8 @@
 mod awaited;
 mod deferred;
 mod judge;
+mod local_commit;
+mod redriven;
 mod signature;
 mod validator;
 mod verdict;
@@ -16,6 +18,8 @@ pub use deferred::{
     MAX_AWAITED_PER_COMPOSITE, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, REDRIVE_BUDGET,
 };
 pub(crate) use judge::Judgement;
+pub use local_commit::LocalCommitRelease;
+pub use redriven::{RedrivenMerge, RedrivenMergeSink};
 pub use signature::SignatureStatus;
 pub use validator::{MergeCandidate, MergeGovernance, MergeValidator};
 pub use verdict::MergeVerdict;

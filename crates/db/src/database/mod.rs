@@ -232,6 +232,10 @@ pub struct DB<S: Store> {
     /// Collections an app has claimed and the validator governing their
     /// replicated composites. Set once, before replication starts.
     merge_governance: std::sync::OnceLock<Arc<crate::merge::governance::MergeGovernance>>,
+    /// Told about each composite a local write commits, so composites deferred
+    /// awaiting what the write created are released.
+    local_commit_release:
+        std::sync::OnceLock<Arc<dyn crate::merge::governance::LocalCommitRelease>>,
     /// Per-document write serialization queue. Shared with the merge handler so
     /// local writes and P2P merges that touch the same document never interleave
     /// their CRDT read-modify-write (#1021 counter convergence).
@@ -283,6 +287,7 @@ impl<S: Store> DB<S> {
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
             merge_governance: std::sync::OnceLock::new(),
+            local_commit_release: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: Mutex::new(RapidHashMap::new()),
@@ -347,6 +352,7 @@ impl<S: Store> DB<S> {
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
             merge_governance: std::sync::OnceLock::new(),
+            local_commit_release: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: Mutex::new(RapidHashMap::new()),
@@ -486,6 +492,21 @@ impl<S: Store> DB<S> {
 
     pub fn merge_governance(&self) -> Option<&Arc<crate::merge::governance::MergeGovernance>> {
         self.merge_governance.get()
+    }
+
+    /// Install the hook that releases deferred composites awaiting what a
+    /// local write creates. First call wins.
+    pub fn set_local_commit_release(
+        &self,
+        release: Arc<dyn crate::merge::governance::LocalCommitRelease>,
+    ) {
+        let _ = self.local_commit_release.set(release);
+    }
+
+    pub(crate) fn local_commit_release(
+        &self,
+    ) -> Option<&Arc<dyn crate::merge::governance::LocalCommitRelease>> {
+        self.local_commit_release.get()
     }
 
     /// Get the NAC manager, if one has been installed.

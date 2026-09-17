@@ -19,6 +19,7 @@ use crate::merge::acp_merge_handler::AcpMergeHandler;
 use crate::merge::broadcast_mutator::BroadcastMutator;
 use crate::merge::head_provider::DbHeadProvider;
 use crate::merge::merge_handler::DbMergeHandler;
+use crate::merge::redriven_sink::SyncRedrivenSink;
 use crate::merge::txn_broadcaster::SyncTxnBroadcaster;
 
 pub struct ReplicationStack<
@@ -63,7 +64,7 @@ pub fn create_broadcast_mutator<S: Store, B: Blockstore + 'static, T: P2PTranspo
 }
 
 pub fn create_replication_stack<
-    S: Store,
+    S: Store + 'static,
     B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 >(
@@ -80,7 +81,7 @@ pub fn create_replication_stack<
 }
 
 pub fn create_replication_stack_with_max_merge_depth<
-    S: Store,
+    S: Store + 'static,
     B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 >(
@@ -94,6 +95,8 @@ pub fn create_replication_stack_with_max_merge_depth<
         blockstore,
         max_merge_depth,
     ));
+    merge_handler_inner.set_redriven_merge_sink(Arc::new(SyncRedrivenSink::new(sync.clone())));
+    merge_handler_inner.install_local_commit_release();
     let merge_handler = Arc::new(create_acp_merge_handler(merge_handler_inner.clone()));
     let broadcast_mutator = Arc::new(create_broadcast_mutator(db, sync.clone()));
     let txn_broadcaster: Arc<dyn TxnBroadcaster> = Arc::new(SyncTxnBroadcaster::new(sync));

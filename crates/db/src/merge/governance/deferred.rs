@@ -103,6 +103,12 @@ impl DeferredMerges {
         Some(block)
     }
 
+    /// Whether anything is waiting at all, so a path that could release a
+    /// waiter pays nothing when nothing is deferred.
+    pub(crate) fn has_waiters(&self) -> bool {
+        !self.lock().waiters.is_empty()
+    }
+
     /// Whether any deferred composite awaits an immutable field value, so a
     /// merge needs to read its field values to release waiters.
     pub(crate) fn awaits_fields(&self) -> bool {
