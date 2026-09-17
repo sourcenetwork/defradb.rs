@@ -122,7 +122,12 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
 
 /// Push an explicit `(collection_name, doc_id)` set through the existing
 /// replay path (connection wait, retry guard, ACP creator resolution,
-/// bounded PushLog, marker registration).
+/// replication policy, bounded PushLog, marker registration).
+///
+/// The peer must be a registered replicator: without one there is no retry
+/// scope to register markers in, so the call sends nothing and returns `Ok`.
+/// A document the replication policy withholds also returns `Ok`, keeping its
+/// durable retry marker for a later, more permissive answer.
 #[allow(clippy::too_many_arguments)]
 pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     transport: &T,
