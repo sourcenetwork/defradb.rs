@@ -842,12 +842,14 @@ async fn awaiting_a_mutable_field_is_refused() {
     assert_eq!(node.handler.deferred_composites(), 0);
 }
 
+type ImmutableRead = Option<Vec<(String, NormalValue)>>;
+
 /// Accepts when the immutable fields of the merged document `doc_id` in
 /// `collection` can be read; records what was read.
 struct ReadImmutable {
     collection: &'static str,
     doc_id: Mutex<String>,
-    read: Mutex<Option<Option<Vec<(String, NormalValue)>>>>,
+    read: Mutex<Option<ImmutableRead>>,
 }
 
 #[async_trait]
