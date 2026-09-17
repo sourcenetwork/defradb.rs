@@ -1,9 +1,9 @@
-use async_lock::Mutex;
+use async_lock::{Mutex, MutexGuard};
 use async_trait::async_trait;
 use cid::Cid;
 use defra_core::block::{Block, CrdtDelta};
 use defra_core::thread_bounds::MaybeSendSync;
-use document::NormalValue;
+use document::{DocID, NormalValue};
 use storage::corekv::Store;
 
 use crate::merge::merge_handler::DbMergeHandler;
@@ -181,32 +181,67 @@ where
         collection: &str,
         doc_id: &str,
     ) -> Result<Option<Vec<(String, NormalValue)>>, String> {
-        let Some((collection, documents)) = self.documents(collection).await? else {
+        let Some((collection, document)) = self.document(collection, doc_id).await? else {
             return Ok(None);
         };
         let schema = collection.schema();
-        Ok(documents
-            .into_iter()
-            .find(|document| document.id().is_some_and(|id| id.to_string() == doc_id))
-            .map(|document| {
-                let mut fields: Vec<(String, NormalValue)> = document
-                    .field_names()
-                    .filter(|name| super::is_immutable_scalar_field(schema, name))
-                    .filter_map(|name| {
-                        document
-                            .get(name)
-                            .map(|value| (name.to_string(), value.clone()))
-                    })
-                    .collect();
-                fields.sort_by(|a, b| a.0.cmp(&b.0));
-                fields
-            }))
+        let mut fields: Vec<(String, NormalValue)> = document
+            .field_names()
+            .filter(|name| super::is_immutable_scalar_field(schema, name))
+            .filter_map(|name| {
+                document
+                    .get(name)
+                    .map(|value| (name.to_string(), value.clone()))
+            })
+            .collect();
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(Some(fields))
     }
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
+    /// The verdict's snapshot, opened on first use.
+    async fn snapshot(&self) -> Result<MutexGuard<'_, Option<DbTxn<S>>>, String> {
+        let mut snapshot = self.snapshot.lock().await;
+        if snapshot.is_none() {
+            let txn = self.handler.db.new_txn(true).await;
+            *snapshot = Some(txn.map_err(|error| error.to_string())?);
+        }
+        Ok(snapshot)
+    }
+
+    /// The merged, undeleted document `doc_id` of `collection`, read by id.
+    /// `None` when the collection or the document is unknown.
+    async fn document(
+        &self,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Option<(crate::collection::Collection, document::Document)>, String> {
+        let db = &self.handler.db;
+        let Some(collection) = db
+            .get_collection(collection)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        let Ok(parsed) = doc_id.parse::<DocID>() else {
+            return Ok(None);
+        };
+        let snapshot = self.snapshot().await?;
+        let txn = snapshot.as_ref().expect("snapshot opened above");
+        let datastore = txn.datastore().map_err(|error| error.to_string())?;
+        let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
+        let document = collection
+            .get_by_doc_id(&datastore, &systemstore, &parsed)
+            .await
+            .map_err(|error| error.to_string())?
+            // An alias resolves to its document; only the canonical id names it here.
+            .filter(|document| document.id().is_some_and(|id| id.to_string() == doc_id));
+        Ok(document.map(|document| (collection, document)))
+    }
+
     /// Every merged, undeleted document of `collection` on this verdict's
-    /// snapshot, opened on first use. `None` when the collection is unknown.
+    /// snapshot. `None` when the collection is unknown.
     async fn documents(
         &self,
         collection: &str,
@@ -218,10 +253,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
         else {
             return Ok(None);
         };
-        let mut snapshot = self.snapshot.lock().await;
-        if snapshot.is_none() {
-            *snapshot = Some(db.new_txn(true).await.map_err(|error| error.to_string())?);
-        }
+        let snapshot = self.snapshot().await?;
         let txn = snapshot.as_ref().expect("snapshot opened above");
         let datastore = txn.datastore().map_err(|error| error.to_string())?;
         let systemstore = txn.systemstore().map_err(|error| error.to_string())?;

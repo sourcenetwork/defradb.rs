@@ -27,6 +27,8 @@ use query::runner::DocFetcher;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
+mod lookup;
+
 type Blocks = DefraBlockstore<RegolithStore>;
 
 struct Signer {
