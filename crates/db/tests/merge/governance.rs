@@ -10,7 +10,7 @@ use cid::Cid;
 use crypto::PrivateKey as _;
 use db::database::{DbOptions, DB};
 use db::merge::governance::{
-    FieldValue, MergeCandidate, MergeGovernance, MergeValidator, MergeVerdict, MergeView,
+    Awaited, FieldValue, MergeCandidate, MergeGovernance, MergeValidator, MergeVerdict, MergeView,
     SignatureStatus,
 };
 use db::merge::merge_handler::DbMergeHandler;
@@ -655,10 +655,12 @@ async fn governed_collection_is_not_resolved_from_the_carrier() {
     assert!(node.doc_ids("Notes").await.is_empty());
 }
 
-/// Accepts when `field` of `collection` has a merged document equal to "held".
+/// Accepts when `field` of `collection` has a merged document equal to
+/// `value`; otherwise defers on that field value.
 struct LookupValidator {
     collection: &'static str,
     field: &'static str,
+    value: String,
 }
 
 #[async_trait]
@@ -672,11 +674,18 @@ impl MergeValidator for LookupValidator {
             .find_documents(
                 self.collection,
                 self.field,
-                &NormalValue::String("held".to_string()),
+                &NormalValue::String(self.value.clone()),
             )
             .await?;
         Ok(if matches.is_empty() {
-            MergeVerdict::defer("nothing matches", [])
+            MergeVerdict::defer(
+                "nothing matches",
+                [Awaited::immutable_field(
+                    self.collection,
+                    self.field,
+                    NormalValue::String(self.value.clone()),
+                )],
+            )
         } else {
             MergeVerdict::Accept
         })
@@ -690,6 +699,7 @@ async fn find_documents_refuses_a_mutable_field() {
         MergeGovernance::new(["Notes"]).with_validator(Arc::new(LookupValidator {
             collection: "Grants",
             field: "writer",
+            value: "anyone".to_string(),
         })),
         true,
     )
@@ -717,7 +727,7 @@ async fn find_documents_refuses_a_mutable_field() {
 }
 
 #[tokio::test]
-async fn find_documents_matches_an_immutable_field() {
+async fn composite_deferred_on_an_immutable_field_merges_when_a_match_merges() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(
         DB::open_from_arc_with_options(store.clone(), DbOptions::default())
@@ -748,10 +758,12 @@ async fn find_documents_matches_an_immutable_field() {
     ))
     .await
     .unwrap();
+    let writer = signer();
     db.set_merge_governance(MergeGovernance::new(["Notes"]).with_validator(Arc::new(
         LookupValidator {
             collection: "Grants",
             field: "writer",
+            value: writer.did.clone(),
         },
     )));
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -760,14 +772,72 @@ async fn find_documents_matches_an_immutable_field() {
         db,
         blockstore,
     };
-    let writer = signer();
     let note = genesis("col-notes", "grant", "anything", &writer);
 
     assert_eq!(
         note.merge(&node, &writer.did).await,
         MergeOutcome::retryable_skip("nothing matches")
     );
-    let grant = genesis("col-grants", "writer", "held", &writer);
+    assert_eq!(node.handler.deferred_composites(), 1);
+
+    let other = genesis("col-grants", "writer", "someone else", &writer);
+    assert_eq!(other.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    assert!(node.doc_ids("Notes").await.is_empty());
+
+    let grant = genesis("col-grants", "writer", &writer.did, &writer);
     assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
-    assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
+
+    assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
+    assert_eq!(node.handler.deferred_composites(), 0);
+}
+
+/// Defers on a field the host must refuse to index.
+struct AwaitMutableField;
+
+#[async_trait]
+impl MergeValidator for AwaitMutableField {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::defer(
+            "grant not merged",
+            [Awaited::immutable_field(
+                "Grants",
+                "writer",
+                NormalValue::String("anyone".to_string()),
+            )],
+        ))
+    }
+}
+
+#[tokio::test]
+async fn awaiting_a_mutable_field_is_refused() {
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        MergeGovernance::new(["Notes"]).with_validator(Arc::new(AwaitMutableField)),
+        true,
+    )
+    .await;
+    let writer = signer();
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    note.store(&node).await;
+
+    let error = node
+        .handler
+        .handle_block(
+            &note.cid,
+            note.bytes(),
+            BlockMetadata::normal(&note.doc_id, note.collection_id, &writer.did, None, false),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("must be an @immutable scalar LWW field"),
+        "{error}"
+    );
+    assert_eq!(node.handler.deferred_composites(), 0);
 }
