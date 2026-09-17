@@ -11,16 +11,18 @@ use crypto::PrivateKey as _;
 use db::database::{DbOptions, DB};
 use db::merge::governance::{
     Awaited, FieldValue, MergeCandidate, MergeGovernance, MergeValidator, MergeVerdict, MergeView,
-    SignatureStatus,
+    RedrivenMerge, RedrivenMergeSink, SignatureStatus,
 };
 use db::merge::merge_handler::DbMergeHandler;
+use db::write::autocommit::batch::BatchMutator;
 use db::AutoCommitFetcher;
 use defra_core::block::{
     Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload, Signature, SignatureHeader,
     SignatureType,
 };
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
-use document::NormalValue;
+use document::{Document, NormalValue};
+use query::mutator::{DocMutator, MutationBatchController};
 use query::runner::DocFetcher;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
@@ -102,10 +104,25 @@ impl MergeValidator for GrantValidator {
     }
 }
 
+/// Stands in for the replication layer's post-merge path, which a composite
+/// merged by re-drive never reaches through `handle_block`'s return value.
+#[derive(Default)]
+struct RecordingSink {
+    forwarded: Mutex<Vec<Cid>>,
+}
+
+#[async_trait]
+impl RedrivenMergeSink for RecordingSink {
+    async fn forward(&self, merged: RedrivenMerge) {
+        self.forwarded.lock().unwrap().push(merged.cid);
+    }
+}
+
 struct Node {
     db: Arc<DB<RegolithStore>>,
     blockstore: Arc<Blocks>,
-    handler: DbMergeHandler<RegolithStore, Blocks>,
+    handler: Arc<DbMergeHandler<RegolithStore, Blocks>>,
+    sink: Arc<RecordingSink>,
 }
 
 impl Node {
@@ -135,13 +152,89 @@ impl Node {
             }
         }
         db.set_merge_governance(governance);
+        Self::assemble(db, store)
+    }
+
+    /// Grants with an `@immutable` `writer` and a mutable `label`, and Notes
+    /// governed by `validator`.
+    async fn with_immutable_grants(validator: Arc<dyn MergeValidator>) -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(
+            DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+                .await
+                .unwrap(),
+        );
+        let mut writer_field = FieldDescription::new("2", "writer", FieldKind::string());
+        writer_field.immutable = true;
+        db.create_collection(CollectionVersion::new(
+            "Grants",
+            "col-grants",
+            "col-grants",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                writer_field,
+                FieldDescription::new("3", "label", FieldKind::string()),
+            ],
+        ))
+        .await
+        .unwrap();
+        db.create_collection(CollectionVersion::new(
+            "Notes",
+            "col-notes",
+            "col-notes",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new("2", "grant", FieldKind::string()),
+            ],
+        ))
+        .await
+        .unwrap();
+        db.set_merge_governance(MergeGovernance::new(["Notes"]).with_validator(validator));
+        Self::assemble(db, store)
+    }
+
+    fn assemble(db: Arc<DB<RegolithStore>>, store: Arc<RegolithStore>) -> Self {
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
-        let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
+        let handler = Arc::new(DbMergeHandler::new(db.clone(), blockstore.clone()));
+        handler.install_local_commit_release();
+        let sink = Arc::new(RecordingSink::default());
+        handler.set_redriven_merge_sink(sink.clone());
         Self {
             db,
             blockstore,
             handler,
+            sink,
         }
+    }
+
+    fn forwarded(&self) -> Vec<Cid> {
+        self.sink.forwarded.lock().unwrap().clone()
+    }
+
+    /// Create a document the way a client mutation does, and return its
+    /// composite's CID.
+    async fn create_locally(&self, collection: &str, json: &str) -> Cid {
+        let txn = self.db.new_txn(false).await.unwrap();
+        let mutator =
+            BatchMutator::new(self.db.clone(), Arc::new(async_lock::Mutex::new(Some(txn))));
+        let created = mutator
+            .create(collection, Document::from_json_str(json).unwrap())
+            .await
+            .unwrap();
+        mutator.commit().await.unwrap();
+        created.commit_cid.unwrap()
+    }
+
+    /// A local write releases waiters off the writing task, so the re-driven
+    /// merge lands shortly after the write returns.
+    async fn wait_for_doc(&self, collection: &str, doc_id: &str) {
+        for _ in 0..200 {
+            if self.doc_ids(collection).await.iter().any(|id| id == doc_id) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("{collection} never merged {doc_id}");
     }
 
     async fn doc_ids(&self, collection: &str) -> Vec<String> {
@@ -318,6 +411,7 @@ async fn deferred_composite_merges_when_its_dependency_merges() {
 
     assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
     assert_eq!(node.handler.deferred_composites(), 0);
+    assert_eq!(node.forwarded(), vec![note.cid]);
     assert_eq!(
         validator.seen(&note.cid),
         vec![
@@ -728,50 +822,13 @@ async fn find_documents_refuses_a_mutable_field() {
 
 #[tokio::test]
 async fn composite_deferred_on_an_immutable_field_merges_when_a_match_merges() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(
-        DB::open_from_arc_with_options(store.clone(), DbOptions::default())
-            .await
-            .unwrap(),
-    );
-    let mut writer_field = FieldDescription::new("2", "writer", FieldKind::string());
-    writer_field.immutable = true;
-    db.create_collection(CollectionVersion::new(
-        "Grants",
-        "col-grants",
-        "col-grants",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            writer_field,
-        ],
-    ))
-    .await
-    .unwrap();
-    db.create_collection(CollectionVersion::new(
-        "Notes",
-        "col-notes",
-        "col-notes",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "grant", FieldKind::string()),
-        ],
-    ))
-    .await
-    .unwrap();
     let writer = signer();
-    db.set_merge_governance(MergeGovernance::new(["Notes"]).with_validator(Arc::new(
-        LookupValidator {
-            collection: "Grants",
-            field: "writer",
-            value: writer.did.clone(),
-        },
-    )));
-    let blockstore = Arc::new(DefraBlockstore::new(store, true));
-    let node = Node {
-        handler: DbMergeHandler::new(db.clone(), blockstore.clone()),
-        db,
-        blockstore,
-    };
+    let node = Node::with_immutable_grants(Arc::new(LookupValidator {
+        collection: "Grants",
+        field: "writer",
+        value: writer.did.clone(),
+    }))
+    .await;
     let note = genesis("col-notes", "grant", "anything", &writer);
 
     assert_eq!(
@@ -789,6 +846,7 @@ async fn composite_deferred_on_an_immutable_field_merges_when_a_match_merges() {
 
     assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
     assert_eq!(node.handler.deferred_composites(), 0);
+    assert_eq!(node.forwarded(), vec![note.cid]);
 }
 
 /// Defers on a field the host must refuse to index.
@@ -868,49 +926,12 @@ impl MergeValidator for ReadImmutable {
 
 #[tokio::test]
 async fn immutable_fields_reads_only_immutable_scalar_fields_of_a_merged_document() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(
-        DB::open_from_arc_with_options(store.clone(), DbOptions::default())
-            .await
-            .unwrap(),
-    );
-    let mut writer_field = FieldDescription::new("2", "writer", FieldKind::string());
-    writer_field.immutable = true;
-    db.create_collection(CollectionVersion::new(
-        "Grants",
-        "col-grants",
-        "col-grants",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            writer_field,
-            FieldDescription::new("3", "label", FieldKind::string()),
-        ],
-    ))
-    .await
-    .unwrap();
-    db.create_collection(CollectionVersion::new(
-        "Notes",
-        "col-notes",
-        "col-notes",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "grant", FieldKind::string()),
-        ],
-    ))
-    .await
-    .unwrap();
     let validator = Arc::new(ReadImmutable {
         collection: "Grants",
         doc_id: Mutex::new(String::new()),
         read: Mutex::new(None),
     });
-    db.set_merge_governance(MergeGovernance::new(["Notes"]).with_validator(validator.clone()));
-    let blockstore = Arc::new(DefraBlockstore::new(store, true));
-    let node = Node {
-        handler: DbMergeHandler::new(db.clone(), blockstore.clone()),
-        db,
-        blockstore,
-    };
+    let node = Node::with_immutable_grants(validator.clone()).await;
     let writer = signer();
     let grant = genesis("col-grants", "writer", &writer.did, &writer);
     assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
@@ -936,4 +957,73 @@ async fn immutable_fields_reads_only_immutable_scalar_fields_of_a_merged_documen
     let other = genesis("col-notes", "grant", "other", &writer);
     assert_eq!(other.merge(&node, &writer.did).await, MergeOutcome::Merged);
     assert_eq!(validator.read.lock().unwrap().clone().unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_local_write_releases_a_composite_awaiting_an_immutable_field() {
+    let writer = signer();
+    let node = Node::with_immutable_grants(Arc::new(LookupValidator {
+        collection: "Grants",
+        field: "writer",
+        value: writer.did.clone(),
+    }))
+    .await;
+    let note = genesis("col-notes", "grant", "anything", &writer);
+
+    assert_eq!(
+        note.merge(&node, &writer.did).await,
+        MergeOutcome::retryable_skip("nothing matches")
+    );
+    assert_eq!(node.handler.deferred_composites(), 1);
+
+    node.create_locally("Grants", &format!(r#"{{"writer": "{}"}}"#, writer.did))
+        .await;
+
+    node.wait_for_doc("Notes", &note.doc_id).await;
+    assert_eq!(node.handler.deferred_composites(), 0);
+    assert_eq!(node.forwarded(), vec![note.cid]);
+}
+
+/// Defers until the composite `0` is held.
+struct AwaitComposite(Cid);
+
+#[async_trait]
+impl MergeValidator for AwaitComposite {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(if view.composite_fields(&self.0).await?.is_some() {
+            MergeVerdict::Accept
+        } else {
+            MergeVerdict::defer("grant not held", [self.0])
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_local_write_releases_a_composite_awaiting_its_genesis() {
+    let writer = signer();
+    let grant = format!(r#"{{"writer": "{}"}}"#, writer.did);
+
+    // A document is named by its genesis composite's CID, which is a function
+    // of its content, so another node writing the same grant names the same
+    // composite this node has yet to write.
+    let elsewhere = Node::with_immutable_grants(Arc::new(AwaitComposite(Cid::default()))).await;
+    let awaited = elsewhere.create_locally("Grants", &grant).await;
+
+    let node = Node::with_immutable_grants(Arc::new(AwaitComposite(awaited))).await;
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    assert_eq!(
+        note.merge(&node, &writer.did).await,
+        MergeOutcome::retryable_skip("grant not held")
+    );
+    assert_eq!(node.handler.deferred_composites(), 1);
+
+    assert_eq!(node.create_locally("Grants", &grant).await, awaited);
+
+    node.wait_for_doc("Notes", &note.doc_id).await;
+    assert_eq!(node.handler.deferred_composites(), 0);
+    assert_eq!(node.forwarded(), vec![note.cid]);
 }

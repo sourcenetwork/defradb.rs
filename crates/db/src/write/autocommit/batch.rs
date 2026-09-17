@@ -132,6 +132,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             // BatchMutator is the auto-commit-batch path; broadcast is handled
             // by the BroadcastMutator wrapper at the per-mutation layer.
             None,
+            self.db.local_commit_release(),
             collection_name,
             collection_id,
             doc_id,
