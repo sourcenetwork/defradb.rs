@@ -70,5 +70,7 @@ pub use push_backlog::{
 pub use queue::ProcessQueue;
 pub use replication::{recover_unmerged, ReplicationConfig, ReplicationLoop, ReplicationResult};
 
-/// Cadence for draining persisted push retries.
+/// Cadence for draining persisted push retries, and the tick the replicator
+/// reconnect probe runs on, whose `RECONNECT_BACKOFF_MIN` floor derives from
+/// this value.
 pub const PERSISTED_RETRY_SWEEP_INTERVAL: Duration = Duration::from_secs(2);

@@ -83,6 +83,9 @@ struct TestTransport {
             rapidhash::fast::RandomState,
         >,
     >,
+    disconnected_peers: Arc<Atom<Vec<String>>>,
+    empty_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
+    force_rooted_sync: Arc<AtomicBool>,
 }
 
 impl TestTransport {
@@ -126,7 +129,25 @@ impl TestTransport {
             stream_completed: Arc::new(AtomicBool::new(false)),
             cancelled_before_stream_complete: Arc::new(AtomicBool::new(false)),
             size_limited_providers: Arc::new(rapid_map()),
+            disconnected_peers: Arc::new(Atom::new(Vec::new())),
+            empty_car_answer: Arc::new(AtomOption::none()),
+            force_rooted_sync: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn disconnected_peers(&self) -> Vec<String> {
+        self.disconnected_peers.load_clone()
+    }
+
+    /// Answer every rooted CAR request with an empty CAR: the peer replies on
+    /// its own substreams and hands back no block, which is how a live peer
+    /// with a dead Bitswap queue looks from the fetcher.
+    fn set_empty_car_answer(&self, tracker: crate::sync::manager::RootedCarCompletionTracker) {
+        self.empty_car_answer.store_some(tracker);
+    }
+
+    fn set_force_rooted_sync(&self) {
+        self.force_rooted_sync.store(true, Ordering::SeqCst);
     }
 
     fn car_request_count(&self) -> usize {
@@ -218,7 +239,7 @@ impl P2PTransport for TestTransport {
     }
 
     fn supports_cancellable_rooted_sync(&self) -> bool {
-        self.streamed_rooted_blocks.is_some()
+        self.force_rooted_sync.load(Ordering::SeqCst) || self.streamed_rooted_blocks.is_some()
     }
 
     fn local_public_key_proto(&self) -> &[u8] {
@@ -233,7 +254,12 @@ impl P2PTransport for TestTransport {
         Ok(())
     }
 
-    async fn disconnect(&self, _peer_id: &PeerId) -> P2PResult<()> {
+    async fn disconnect(&self, peer_id: &PeerId) -> P2PResult<()> {
+        self.disconnected_peers.rcu(|peers| {
+            let mut next = peers.clone();
+            next.push(peer_id.to_string());
+            next
+        });
         Ok(())
     }
 
@@ -334,9 +360,13 @@ impl P2PTransport for TestTransport {
         Ok(())
     }
 
-    async fn send_car_request(&self, _peer_id: &PeerId, root_cid: Cid) -> P2PResult<()> {
+    async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> P2PResult<()> {
         assert_eq!(root_cid, self.root_cid);
         self.car_requests.fetch_add(1, Ordering::SeqCst);
+        if let Some(tracker) = self.empty_car_answer.load().map(|t| t.clone()) {
+            tracker.complete(root_cid, peer_id, false);
+            return Ok(());
+        }
         if self.hang_car_requests.load(Ordering::SeqCst) {
             n0_future::time::sleep(Duration::from_secs(600)).await;
             return Ok(());
@@ -1132,6 +1162,141 @@ async fn poll_fetch_dag_exhausted_retries_do_not_emit_dag_ready() {
     // remaining attempts retry the exact missing-CID frontier.
     assert_eq!(transport.car_request_count(), 1);
     assert_eq!(transport.sync_batches().len(), MAX_FETCH_ATTEMPTS as usize);
+}
+
+/// Set up a fetch whose publisher answers rooted CAR requests with an empty
+/// CAR and serves no Bitswap block: a live connection whose per-peer queue is
+/// dead. `alt-peer` is an alternate provider that is equally silent because
+/// it simply does not hold this DAG.
+async fn dead_bitswap_publisher_fetch(
+    blockstore: &Arc<DefraBlockstore<RegolithStore>>,
+) -> (TestTransport, Cid, DagFetchContext) {
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
+    );
+    transport.mark_provider_dead("dead-peer");
+    transport.mark_provider_dead("alt-peer");
+    let rooted_car = crate::sync::manager::RootedCarCompletionTracker::default();
+    transport.set_empty_car_answer(rooted_car.clone());
+    let context = DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        PeerId::new("dead-peer".to_string()),
+    )
+    .with_alternate_providers(vec![PeerId::new("alt-peer".to_string())])
+    .with_rooted_car_completions(rooted_car)
+    .with_rooted_provider_discovery();
+    (transport, root_cid, context)
+}
+
+/// A connection the transport still reports as connected can be dead for
+/// Bitswap: a partition that never closes the socket leaves the per-peer
+/// queue stopped, and only a fresh connection rebuilds it. The publisher
+/// answering the rooted CAR request while serving no block for the root it
+/// announced is what separates that from a peer that has nothing to serve,
+/// so the fetcher hangs up on the publisher — and only on the publisher.
+#[tokio::test(start_paused = true)]
+async fn dead_bitswap_publisher_is_disconnected_after_exhaustion() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (transport, root_cid, context) = dead_bitswap_publisher_fetch(&blockstore).await;
+    let diagnostics = diagnostics();
+
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        context,
+        DagFetchLimiter::new(2),
+        diagnostics.clone(),
+    )
+    .await;
+
+    assert!(event_rx.recv().await.is_none());
+    assert_eq!(diagnostics.snapshot().pending_dag_fetch_exhausted, 1);
+    assert_eq!(
+        transport.disconnected_peers(),
+        vec!["dead-peer".to_string()],
+        "only the publisher that answered yet served nothing may be hung up on"
+    );
+}
+
+/// The same fetch on a transport that owns its own connection retirement.
+/// The beetle message queue does not exist there, so the generic path must
+/// not hang up on an Iroh peer.
+#[tokio::test(start_paused = true)]
+async fn rooted_sync_transports_keep_their_connection_after_exhaustion() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (transport, root_cid, context) = dead_bitswap_publisher_fetch(&blockstore).await;
+    transport.set_force_rooted_sync();
+
+    let (event_tx, _event_rx) = mpsc::channel(1);
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        context,
+        DagFetchLimiter::new(2),
+        diagnostics(),
+    )
+    .await;
+
+    assert!(
+        transport.disconnected_peers().is_empty(),
+        "a transport that retires its own connections must not be hung up on here"
+    );
+}
+
+/// Without the CAR answer there is no evidence about the peer at all: the
+/// publisher may be unreachable, or busy, or simply slower than the budget.
+/// Silence is not grounds to discard a connection.
+#[tokio::test(start_paused = true)]
+async fn unanswered_publisher_keeps_its_connection_after_exhaustion() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
+    );
+    transport.mark_provider_dead("dead-peer");
+
+    let (event_tx, _event_rx) = mpsc::channel(1);
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        DagFetchContext::new(
+            "doc-id".to_string(),
+            "collection-id".to_string(),
+            "creator-id".to_string(),
+            PeerId::new("dead-peer".to_string()),
+        ),
+        DagFetchLimiter::new(2),
+        diagnostics(),
+    )
+    .await;
+
+    assert!(
+        transport.disconnected_peers().is_empty(),
+        "a peer that never answered gives no evidence its Bitswap queue is the fault"
+    );
 }
 
 /// A success-acked durable root can outlive its provider's live connection.

@@ -627,7 +627,7 @@ impl Blockstore for ConflictOnceBlockstore {
 }
 
 #[derive(Clone)]
-struct NoopTransport {
+pub(super) struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
     replicators: Arc<Atom<rapidhash::RapidHashMap<String, Vec<String>>>>,
@@ -652,7 +652,7 @@ fn record<T: Clone + Send + Sync + 'static>(log: &Atom<Vec<T>>, item: T) {
 }
 
 impl NoopTransport {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],

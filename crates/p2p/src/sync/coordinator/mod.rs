@@ -1153,6 +1153,45 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         });
     }
 
+    /// Like `spawn_non_authoritative_broadcast_task`, but a full pool runs the
+    /// future inline instead of dropping it. For work that no durable marker
+    /// would replay if it were shed, such as an SE artifact push after a merge.
+    pub async fn spawn_or_run_non_authoritative_broadcast<F>(
+        &self,
+        task_name: &'static str,
+        future: F,
+    ) where
+        F: std::future::Future<Output = ()> + MaybeSend + 'static,
+    {
+        if self.runtime.shutdown.is_shutting_down() {
+            tracing::debug!(
+                task = task_name,
+                "Skipping background broadcast during shutdown"
+            );
+            return;
+        }
+        match self
+            .runtime
+            .shutdown
+            .try_acquire_non_authoritative_broadcast_slot()
+        {
+            Some(permit) => {
+                self.runtime.shutdown.spawn_task(async move {
+                    future.await;
+                    drop(permit);
+                });
+            }
+            None => {
+                tracing::warn!(
+                    task = task_name,
+                    limit = NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
+                    "Non-authoritative background broadcast pool full; running inline"
+                );
+                future.await;
+            }
+        }
+    }
+
     pub(crate) fn spawn_pending_dag_fetch_task<F>(
         &self,
         root_cid: Cid,
@@ -1207,6 +1246,8 @@ pub type IrohSyncCoordinator<B> = SyncCoordinator<B, crate::iroh::IrohTransport>
 
 #[cfg(test)]
 mod access_tests;
+#[cfg(test)]
+mod broadcast_pool_tests;
 
 #[cfg(test)]
 mod dag_fetch_limiter_tests {

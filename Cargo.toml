@@ -103,7 +103,7 @@ n0-future = "0.3"
 # P2P networking
 # Keep these on the same libp2p-swarm release line.
 libp2p = { version = "0.56", features = ["tcp", "noise", "yamux", "gossipsub", "kad", "identify", "relay", "dns", "quic", "websocket", "secp256k1"] }
-iroh-bitswap = { git = "https://github.com/sourcenetwork/beetle", rev = "255e4cfee016697c77ec92136dbe5d57225eb2d5" }
+iroh-bitswap = { git = "https://github.com/sourcenetwork/beetle", rev = "7317b52707dfcbb1e8408d79ec571df5af5b2f99" }
 libp2p-stream = "0.4.0-alpha"
 multiaddr = "0.18"
 

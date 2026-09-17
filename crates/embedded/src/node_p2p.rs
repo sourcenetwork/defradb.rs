@@ -282,6 +282,9 @@ where
         database.clone(),
     ));
     let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> = replication.broadcast_mutator.clone();
+    replication
+        .merge_handler_inner
+        .set_se_repusher(se_repusher.clone());
     let retry_store = store.clone();
     let retry_transport = p2p::Libp2pTransport::new(handle.clone());
     let retry_doc_pusher = doc_pusher.clone();

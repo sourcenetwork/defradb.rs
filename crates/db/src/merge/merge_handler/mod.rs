@@ -107,6 +107,11 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// When set, the merge handler generates SE artifacts after merging documents
     /// that belong to collections with encrypted indexes.
     se_enc_key: std::sync::OnceLock<Zeroizing<Vec<u8>>>,
+    /// Optional repusher for fanning SE artifacts to this node's replicators
+    /// after a merge commits. Mirrors Go, where a merging node re-enters
+    /// `SendUpdate` and runs the SE push handler (`internal/db/p2p/p2p.go:709`).
+    #[cfg(not(target_arch = "wasm32"))]
+    se_repusher: std::sync::OnceLock<Arc<dyn crate::merge::SeArtifactRepusher>>,
     /// Optional KMS service. When set, `decrypt_block_data` routes DEK
     /// retrieval through the KMS (NAC/DAC-gated, cross-peer fetch) instead
     /// of reading the raw key directly from the Encryption block.
@@ -195,6 +200,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             merged_composites: cid_set(),
             merged_collections: cid_set(),
             se_enc_key: std::sync::OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            se_repusher: std::sync::OnceLock::new(),
             kms: std::sync::OnceLock::new(),
             merge_queue,
             prefetched_dek_cids: Arc::new(cid_set()),
@@ -230,6 +237,39 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// Get the SE encryption key, if configured.
     pub(crate) fn se_enc_key(&self) -> Option<&[u8]> {
         self.se_enc_key.get().map(|k| k.as_slice())
+    }
+
+    /// Set the SE artifact repusher used to fan artifacts to replicators after a merge commits.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_se_repusher(&self, repusher: Arc<dyn crate::merge::SeArtifactRepusher>) {
+        let _ = self.se_repusher.set(repusher);
+    }
+
+    /// Post-commit action that regenerates this document's SE artifacts and pushes
+    /// them to the collection's replicators. `None` when no repusher is wired or the
+    /// collection has no encrypted indexes.
+    pub(crate) fn se_post_commit_action(
+        &self,
+        doc_id: &str,
+        collection: &CollectionVersion,
+    ) -> Option<Box<dyn hook::CompositePostCommitAction>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if collection.encrypted_indexes.is_empty() {
+                return None;
+            }
+            let repusher = self.se_repusher.get()?.clone();
+            Some(Box::new(se_merge::SeRepushAction::new(
+                repusher,
+                collection.collection_id.clone(),
+                doc_id.to_string(),
+            )))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (doc_id, collection);
+            None
+        }
     }
 
     /// Set the KMS service. Routes `decrypt_block_data` through the KMS once set.

@@ -230,8 +230,62 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         remaining_count = remaining_count,
         attempts = MAX_FETCH_ATTEMPTS,
         providers = ?providers.peers(),
-        "DAG fetch failed after exhausting retries and providers; document will not converge until the root is re-announced"
+        "DAG fetch failed after exhausting retries and providers; the per-root retry clock owns convergence from here, and any provider reconnect expedites it"
     );
+    drop_dead_bitswap_connection(&transport, &providers, &context, &root_cid).await;
+}
+
+/// Hang up on a connection whose Bitswap is dead while the connection lives.
+///
+/// A partition that never closes the socket leaves the libp2p per-peer
+/// message queue stopped on the outbound substream timeout
+/// (`iroh-bitswap/src/client/message_queue.rs`: a failed send ends the queue
+/// actor). Every later want is dropped before it is transmitted, and only a
+/// fresh connection rebuilds the queue, so the per-root clock would refetch
+/// over the same dead connection forever.
+///
+/// This is defence in depth for the half of the mesh the beetle fix cannot
+/// reach — Go peers, and send failures on transports that keep their own
+/// queues — so it is deliberately narrow. Every gate must hold:
+///
+/// - **libp2p only.** Iroh has no Bitswap message queue and retires its own
+///   unresponsive connections (#1751).
+/// - **The announcing publisher only.** It advertised this root, so it holds
+///   the DAG; an alternate provider is any connected peer and serves nothing
+///   simply because it has nothing to serve.
+/// - **Positive transport-level liveness.** The peer answered a rooted CAR
+///   request on its own substreams during this fetch. Bitswap silence alone
+///   is not evidence: a want that never left and a want the peer cannot
+///   satisfy are indistinguishable from here.
+/// - **Still connected**, so the hang-up is the repair and not a race with a
+///   connection that is already going away.
+async fn drop_dead_bitswap_connection<T: P2PTransport>(
+    transport: &T,
+    providers: &ProviderRotation,
+    context: &DagFetchContext,
+    root_cid: &Cid,
+) {
+    if transport.supports_cancellable_rooted_sync() {
+        return;
+    }
+    let provider = &context.source_peer;
+    if !providers.is_responsive_but_silent(provider) {
+        return;
+    }
+    let Ok(connected) = transport.connected_peers().await else {
+        return;
+    };
+    if !connected.contains(provider) {
+        return;
+    }
+    warn!(
+        root_cid = %root_cid,
+        provider = %provider,
+        "Publisher answered on its own substreams but served no block for the root it announced; dropping the connection so Bitswap is rebuilt"
+    );
+    if let Err(error) = transport.disconnect(provider).await {
+        debug!(root_cid = %root_cid, provider = %provider, error = %error, "Failed to drop the dead Bitswap connection");
+    }
 }
 
 /// Return true only when the transport positively reports that none of the
@@ -314,6 +368,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     let rooted_wants = car_missing_watch
         .as_deref()
         .unwrap_or(std::slice::from_ref(&root_cid));
+    let mut car_answered = false;
     let rooted_outcome = if providers.cannot_serve(rooted_wants) {
         ProviderWindowOutcome::SendFailed
     } else if let Some(rooted_watch) = car_missing_watch.as_deref() {
@@ -336,6 +391,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                     blockstore,
                     providers.current(),
                     context,
+                    &mut car_answered,
                 )
                 .await
             }
@@ -350,9 +406,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             blockstore,
             providers.current(),
             context,
+            &mut car_answered,
         )
         .await
     };
+    if car_answered {
+        providers.record_responsive();
+    }
     if let ProviderWindowOutcome::SizeLimit(cid) = rooted_outcome {
         // libp2p can fall back to Bitswap, whose limits are independent of CAR.
         if transport.supports_cancellable_rooted_sync() {
@@ -366,6 +426,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         rooted_outcome,
         ProviderWindowOutcome::Complete | ProviderWindowOutcome::Partial
     ) {
+        providers.record_progress();
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
             let missing = find_all_missing_links(blockstore.as_ref(), &root_data)
                 .await
@@ -529,6 +590,10 @@ async fn emit_dag_ready(
 /// block-sync primitive cannot express a recursive root request.  Sending the
 /// request and receiving its CAR response are separate streams on libp2p, so
 /// completion is established from the bounded rooted frontier in blockstore.
+///
+/// `answered` is set when the peer's CAR response reaches this node, with or
+/// without blocks in it. That round trip is the only transport-level liveness
+/// evidence this fetch collects.
 async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
     root_cid: &Cid,
     watch_cids: &[Cid],
@@ -536,6 +601,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
     blockstore: &Arc<B>,
     source_peer: &PeerId,
     context: &DagFetchContext,
+    answered: &mut bool,
 ) -> ProviderWindowOutcome {
     let mut initially_missing = 0usize;
     for cid in watch_cids {
@@ -591,6 +657,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
             }
             tokio::select! {
                 result = &mut *receiver => {
+                    *answered = result.is_ok();
                     if matches!(result, Ok(FetchCompletion::Deferred)) {
                         context.cancel_rooted_car_tracking(*root_cid);
                         return ProviderWindowOutcome::Deferred;
@@ -787,8 +854,14 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
         }
         let provider = state.providers.current().clone();
         match poll_fetch_blocks(root_cid, cids, transport, blockstore, &provider, context).await {
-            ProviderWindowOutcome::Complete => return FetchBatchOutcome::Complete,
-            ProviderWindowOutcome::Partial => return FetchBatchOutcome::Partial,
+            ProviderWindowOutcome::Complete => {
+                state.providers.record_progress();
+                return FetchBatchOutcome::Complete;
+            }
+            ProviderWindowOutcome::Partial => {
+                state.providers.record_progress();
+                return FetchBatchOutcome::Partial;
+            }
             ProviderWindowOutcome::Stalled => {
                 *state.stall_budget -= 1;
                 state.providers.advance();

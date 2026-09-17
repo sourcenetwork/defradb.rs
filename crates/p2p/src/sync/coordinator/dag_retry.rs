@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use crate::transport::PeerId;
-use rapidhash::HashMapExt;
+use rapidhash::{HashMapExt, HashSetExt};
 
 /// Total fetch attempts per root before the failure is escalated to ERROR.
 ///
@@ -35,6 +35,8 @@ pub(super) struct ProviderRotation {
     peers: Vec<PeerId>,
     cursor: usize,
     unservable: rapidhash::RapidHashMap<PeerId, cid::Cid>,
+    productive: rapidhash::RapidHashSet<PeerId>,
+    responsive: rapidhash::RapidHashSet<PeerId>,
 }
 
 impl ProviderRotation {
@@ -44,7 +46,31 @@ impl ProviderRotation {
             peers,
             cursor: 0,
             unservable: rapidhash::RapidHashMap::new(),
+            productive: rapidhash::RapidHashSet::new(),
+            responsive: rapidhash::RapidHashSet::new(),
         }
+    }
+
+    /// The current provider delivered at least one block for this root.
+    pub(super) fn record_progress(&mut self) {
+        self.productive.insert(self.current().clone());
+    }
+
+    /// The current provider answered a rooted CAR request during this fetch.
+    ///
+    /// The CAR request and its response are their own libp2p substreams, so a
+    /// reply is positive evidence that the peer is alive on this connection —
+    /// evidence Bitswap block delivery cannot give, because a want that is
+    /// never transmitted and a want the peer cannot satisfy both arrive as
+    /// silence.
+    pub(super) fn record_responsive(&mut self) {
+        self.responsive.insert(self.current().clone());
+    }
+
+    /// The peer answered on a non-Bitswap substream yet delivered no block
+    /// across every window of this fetch.
+    pub(super) fn is_responsive_but_silent(&self, peer: &PeerId) -> bool {
+        self.responsive.contains(peer) && !self.productive.contains(peer)
     }
 
     pub(super) fn current(&self) -> &PeerId {

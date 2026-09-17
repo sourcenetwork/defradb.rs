@@ -243,6 +243,10 @@ impl<S: Store + 'static> IrohPeer<S> {
         );
         let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> =
             replication.broadcast_mutator.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        replication
+            .merge_handler_inner
+            .set_se_repusher(se_repusher.clone());
         let retry_loop_task = crate::spawn_retry_loop(
             Peerstore::new(Arc::clone(&store)).with_retry_schedule(retry_schedule),
             transport.clone(),

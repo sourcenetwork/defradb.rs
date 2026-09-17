@@ -262,7 +262,6 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
     let mut push_handles = Vec::new();
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config));
-    let mut skipped_creator_docs = 0usize;
     let allowlist_by_collection = allowlist_index(allowlist);
 
     for col_name in collections {
@@ -335,27 +334,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 }
             }
 
-            let creator = match resolve_push_creator(
-                document_acp,
-                &collection,
-                doc_id,
-                &local_peer_id,
-            )
-            .await
-            {
-                Ok(creator) => creator,
-                Err(error) => {
-                    skipped_creator_docs += 1;
-                    tracing::warn!(
-                        collection = %collection.name(),
-                        collection_id = %collection.collection_id(),
-                        doc_id = %doc_id,
-                        error = %error,
-                        "Skipping existing document replay because ACP creator could not be resolved"
-                    );
-                    continue;
-                }
-            };
+            let creator =
+                resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
             let mut doc_blocks = Vec::new();
             for head_cid in
                 load_latest_composite_head_cids(&headstore, &blockstore_view, *doc_short_id).await
@@ -539,12 +519,6 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     }
     tracing::debug!("all push tasks completed");
     persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
-
-    if skipped_creator_docs > 0 {
-        return Err(format!(
-            "skipped {skipped_creator_docs} existing document replay(s) because ACP creator could not be resolved"
-        ));
-    }
 
     if let Some(se_key) = se_options.encryption_key {
         let coordinator = match se_options.identity_pubkey {
@@ -774,9 +748,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         }
         drop(filter_guard);
     }
-    let creator = resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let creator = resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
 
     let headstore = storage::stores::Headstore::new(db.store().clone());
     let head_txn = headstore
