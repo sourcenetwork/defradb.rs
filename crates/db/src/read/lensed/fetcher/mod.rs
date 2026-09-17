@@ -23,14 +23,18 @@ mod scan;
 pub mod stream;
 
 use bytes::Bytes;
-use rapidhash::{HashMapExt, RapidHashMap};
+use rapidhash::RapidHashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_lock::Mutex as TokioMutex;
 use async_trait::async_trait;
 use document::Document;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use lens::{TargetedHistoryLink, TransformStore};
 use query::runner::{DocFetcher, FetchByIdsResult};
+use rapidhash::fast::RandomState;
 use storage::corekv::Store;
 
 use crate::txn::DbTxn;
@@ -47,6 +51,21 @@ pub struct PendingMigrationWriteBacks {
     pub full_scans: RapidHashMap<String, bool>,
 }
 
+/// Write-backs a read-only transaction deferred to its commit.
+pub(crate) struct DeferredWriteBacks {
+    documents: SegQueue<PendingMigrationWriteBack>,
+    full_scans: HopscotchMap<String, Arc<AtomicBool>, RandomState>,
+}
+
+impl Default for DeferredWriteBacks {
+    fn default() -> Self {
+        Self {
+            documents: SegQueue::new(),
+            full_scans: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
+}
+
 /// Document fetcher that applies lens migrations to documents.
 ///
 /// When documents are fetched from older schema versions, they are
@@ -56,13 +75,12 @@ pub struct LensedDocFetcher<S: Store> {
     db: Arc<DB<S>>,
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
     defer_readonly_write_back: bool,
-    pending_write_backs: Arc<TokioMutex<PendingMigrationWriteBacks>>,
+    pending_write_backs: Arc<DeferredWriteBacks>,
     #[allow(dead_code)]
     lens_store: Arc<dyn TransformStore>,
     /// Cache of collection version histories keyed by collection name.
     #[allow(dead_code)]
-    pub history_cache:
-        async_lock::RwLock<RapidHashMap<String, RapidHashMap<String, TargetedHistoryLink>>>,
+    pub history_cache: HopscotchMap<String, RapidHashMap<String, TargetedHistoryLink>, RandomState>,
 }
 
 impl<S: Store> LensedDocFetcher<S> {
@@ -72,7 +90,7 @@ impl<S: Store> LensedDocFetcher<S> {
         key: String,
         history: RapidHashMap<String, TargetedHistoryLink>,
     ) {
-        self.history_cache.write().await.insert(key, history);
+        self.history_cache.insert(key, history);
     }
 
     /// Create a new lensed document fetcher.
@@ -92,9 +110,9 @@ impl<S: Store> LensedDocFetcher<S> {
             db,
             txn: Arc::new(TokioMutex::new(Some(txn))),
             defer_readonly_write_back,
-            pending_write_backs: Arc::new(TokioMutex::new(PendingMigrationWriteBacks::default())),
+            pending_write_backs: Arc::new(DeferredWriteBacks::default()),
             lens_store,
-            history_cache: async_lock::RwLock::new(RapidHashMap::new()),
+            history_cache: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
@@ -109,7 +127,7 @@ impl<S: Store> LensedDocFetcher<S> {
             defer_readonly_write_back: self.defer_readonly_write_back,
             pending_write_backs: self.pending_write_backs.clone(),
             lens_store: self.lens_store.clone(),
-            history_cache: async_lock::RwLock::new(RapidHashMap::new()),
+            history_cache: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
@@ -117,6 +135,12 @@ impl<S: Store> LensedDocFetcher<S> {
     #[allow(dead_code)]
     pub async fn take_txn(&self) -> Option<DbTxn<S>> {
         self.txn.lock().await.take()
+    }
+
+    /// Take the transaction without waiting. `None` when it is already taken,
+    /// or another task is holding it.
+    pub(crate) fn try_take_txn(&self) -> Option<DbTxn<S>> {
+        self.txn.try_lock()?.take()
     }
 
     /// Check if the transaction has been consumed.
@@ -135,7 +159,7 @@ impl<S: Store> LensedDocFetcher<S> {
     }
 
     pub(crate) async fn invalidate_migration_cache(&self) {
-        self.history_cache.write().await.clear();
+        self.history_cache.clear();
     }
 
     pub(super) async fn defer_document_write_back(
@@ -143,12 +167,17 @@ impl<S: Store> LensedDocFetcher<S> {
         collection_name: &str,
         write_back: MigrationWriteBack,
     ) {
-        let mut pending = self.pending_write_backs.lock().await;
-        if !pending.full_scans.contains_key(collection_name) {
-            pending.documents.push(PendingMigrationWriteBack {
-                collection_name: collection_name.to_string(),
-                write_back,
-            });
+        if !self
+            .pending_write_backs
+            .full_scans
+            .contains_key(collection_name)
+        {
+            self.pending_write_backs
+                .documents
+                .push(PendingMigrationWriteBack {
+                    collection_name: collection_name.to_string(),
+                    write_back,
+                });
         }
     }
 
@@ -161,19 +190,36 @@ impl<S: Store> LensedDocFetcher<S> {
             return;
         }
 
-        let mut pending = self.pending_write_backs.lock().await;
-        pending
+        self.pending_write_backs
             .full_scans
-            .entry(collection_name.to_string())
-            .and_modify(|current| *current |= include_deleted)
-            .or_insert(include_deleted);
-        pending
-            .documents
-            .retain(|candidate| candidate.collection_name != collection_name);
+            .get_or_insert(
+                collection_name.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .fetch_or(include_deleted, Ordering::AcqRel);
     }
 
+    /// Drain the deferred write-backs. Full scans are taken first so a document
+    /// deferred for a collection this transaction also scanned is still
+    /// superseded by that scan.
     pub async fn take_pending_write_backs(&self) -> PendingMigrationWriteBacks {
-        std::mem::take(&mut *self.pending_write_backs.lock().await)
+        let full_scans: RapidHashMap<String, bool> = self
+            .pending_write_backs
+            .full_scans
+            .iter()
+            .map(|(name, include_deleted)| (name, include_deleted.load(Ordering::Acquire)))
+            .collect();
+        self.pending_write_backs.full_scans.clear();
+
+        let mut documents = Vec::with_capacity(self.pending_write_backs.documents.len());
+        while let Some(candidate) = self.pending_write_backs.documents.pop() {
+            documents.push(candidate);
+        }
+
+        PendingMigrationWriteBacks {
+            documents,
+            full_scans,
+        }
     }
 }
 

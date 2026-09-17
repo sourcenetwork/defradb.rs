@@ -987,22 +987,26 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use document::{DocID, Document};
+    use kovan_queue::seg_queue::SegQueue;
     use rapidhash::RapidHashSet;
     use schema::{CollectionVersion, FieldDescription, FieldKind};
-    use std::sync::Mutex;
 
     use crate::mutator::{CollectionTruncator, CreateResult, DeleteResult, UpdateResult};
     use crate::test_utils::MockFetcher;
     use crate::{QueryExecutor, QueryRequest};
 
     struct CapturingMutator {
-        created_docs: Mutex<Vec<Document>>,
-        broadcast_creators: Mutex<Vec<Option<String>>>,
+        created_docs: SegQueue<Document>,
+        broadcast_creators: SegQueue<Option<String>>,
     }
 
     #[derive(Default)]
     struct CapturingTruncator {
-        calls: Mutex<Vec<(String, bool)>>,
+        calls: SegQueue<(String, bool)>,
+    }
+
+    fn drain<T: 'static>(queue: &SegQueue<T>) -> Vec<T> {
+        std::iter::from_fn(|| queue.pop()).collect()
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -1015,8 +1019,6 @@ mod tests {
             _identity: Option<&Did>,
         ) -> Result<()> {
             self.calls
-                .lock()
-                .unwrap()
                 .push((collection_name.to_string(), filter.is_some()));
             Ok(())
         }
@@ -1025,17 +1027,17 @@ mod tests {
     impl CapturingMutator {
         fn new() -> Self {
             Self {
-                created_docs: Mutex::new(Vec::new()),
-                broadcast_creators: Mutex::new(Vec::new()),
+                created_docs: SegQueue::new(),
+                broadcast_creators: SegQueue::new(),
             }
         }
 
         fn created_docs(&self) -> Vec<Document> {
-            self.created_docs.lock().unwrap().clone()
+            drain(&self.created_docs)
         }
 
         fn broadcast_creators(&self) -> Vec<Option<String>> {
-            self.broadcast_creators.lock().unwrap().clone()
+            drain(&self.broadcast_creators)
         }
     }
 
@@ -1058,7 +1060,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, serde_json::json!({"truncate_User": true}));
-        let calls = truncator.calls.lock().unwrap();
+        let calls = drain(&truncator.calls);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "User");
         assert!(calls[0].1);
@@ -1103,18 +1105,16 @@ mod tests {
     impl crate::mutator::DocMutator for CapturingMutator {
         async fn create(&self, _collection_name: &str, mut doc: Document) -> Result<CreateResult> {
             self.broadcast_creators
-                .lock()
-                .unwrap()
                 .push(defra_core::signing::get_broadcast_creator_did());
             if doc.id().is_none() {
                 // Stand in for the genesis-CID identity a real create would
                 // derive: seed a valid DocID from the capture order.
-                let seq = self.created_docs.lock().unwrap().len();
+                let seq = self.created_docs.len();
                 doc.set_id(document::DocID::new_v0_from_seed(&format!(
                     "test-doc-{seq}"
                 )));
             }
-            self.created_docs.lock().unwrap().push(doc.clone());
+            self.created_docs.push(doc.clone());
             Ok(CreateResult::new(doc.id().unwrap().clone(), doc))
         }
 

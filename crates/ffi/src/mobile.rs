@@ -26,7 +26,7 @@ use crate::types::{c_str_to_string, defra_free_string, FfiResult, NewNodeResult,
 use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 
 fn default_identity_cstring(node_ptr: usize) -> Result<Option<CString>, String> {
-    let Some(identity_did) = NODES.get(node_ptr, |state| state.node_identity_did.clone()) else {
+    let Some(identity_did) = NODES.get(node_ptr, |state| state.identity_did()) else {
         return Err(ERR_INVALID_NODE_HANDLE.to_string());
     };
     maybe_cstring(identity_did.as_deref(), "default identity")
@@ -383,7 +383,7 @@ pub extern "C" fn defra_mobile_ensure_schema(
                 state.database.clone(),
                 state.policy_store.clone(),
                 state.document_acp.clone(),
-                state.node_identity_did.clone(),
+                state.identity_did(),
             )
         }) {
             Some(value) => value,

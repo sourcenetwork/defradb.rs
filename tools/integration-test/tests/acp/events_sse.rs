@@ -1,7 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use integration_test::{generate_identity, users_schema_with_policy, TestCluster, USER_ACP_POLICY};
+use kovan::Atom;
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
@@ -32,9 +33,9 @@ async fn open_events_sse_with_auth(
     api_url: &str,
     event_filter: &str,
     identity_hex: &str,
-) -> (JoinHandle<()>, Arc<Mutex<Vec<Value>>>) {
+) -> (JoinHandle<()>, Arc<Atom<Vec<Value>>>) {
     let url = format!("{api_url}/api/v0/events?event={event_filter}");
-    let events: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let events: Arc<Atom<Vec<Value>>> = Arc::new(Atom::new(Vec::new()));
     let events_clone = Arc::clone(&events);
     let token = auth_token(identity_hex, api_url);
     let (connected_tx, connected_rx) = tokio::sync::oneshot::channel::<()>();
@@ -80,7 +81,11 @@ async fn open_events_sse_with_auth(
 
                 if event_type == "next" {
                     if let Ok(value) = serde_json::from_str::<Value>(&data) {
-                        events_clone.lock().unwrap().push(value);
+                        events_clone.rcu(|items| {
+                            let mut next = items.clone();
+                            next.push(value.clone());
+                            next
+                        });
                     }
                 }
             }
@@ -148,14 +153,14 @@ async fn acp_events_sse_filters_unauthorized_subscribers_test(cluster: TestClust
     bob_handle.abort();
     alice_handle.abort();
 
-    let bob_events = bob_events.lock().unwrap().clone();
+    let bob_events = bob_events.load_clone();
     assert!(
         bob_events.is_empty(),
         "unauthorized subscriber should receive no update events, got: {:?}",
         bob_events
     );
 
-    let alice_events = alice_events.lock().unwrap().clone();
+    let alice_events = alice_events.load_clone();
     assert!(
         !alice_events.is_empty(),
         "authorized subscriber should receive at least one update event"
@@ -233,7 +238,7 @@ async fn rust_acp_events_sse_preserves_authorized_branchable_collection_updates(
 
     alice_handle.abort();
 
-    let alice_events = alice_events.lock().unwrap().clone();
+    let alice_events = alice_events.load_clone();
     assert!(
         alice_events.iter().any(|event| {
             event.pointer("/data/doc_id").and_then(Value::as_str) == Some(doc_id.as_str())

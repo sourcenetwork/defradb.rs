@@ -1,8 +1,8 @@
-use rapidhash::{HashMapExt, RapidHashMap};
-use std::sync::Mutex;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::time::{Duration, Instant};
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     actor_did: String,
     policy_id: String,
@@ -11,6 +11,7 @@ struct CacheKey {
     permission: String,
 }
 
+#[derive(Clone)]
 struct CachedDecision {
     allowed: bool,
     cached_at: Instant,
@@ -24,7 +25,7 @@ struct CachedDecision {
 /// all entries for their policy so indirect grants cannot remain cached.
 pub(crate) struct AccessCache {
     ttl: Duration,
-    entries: Mutex<RapidHashMap<CacheKey, CachedDecision>>,
+    entries: HopscotchMap<CacheKey, CachedDecision, RandomState>,
 }
 
 fn cache_key(
@@ -47,7 +48,7 @@ impl AccessCache {
     pub(crate) fn new(ttl: Duration) -> Self {
         Self {
             ttl,
-            entries: Mutex::new(RapidHashMap::new()),
+            entries: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
@@ -60,8 +61,7 @@ impl AccessCache {
         permission: &str,
     ) -> Option<bool> {
         let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
-        let entries = self.entries.lock().ok()?;
-        let entry = entries.get(&key)?;
+        let entry = self.entries.get(&key)?;
         if entry.cached_at.elapsed() > self.ttl {
             None
         } else {
@@ -79,15 +79,13 @@ impl AccessCache {
         allowed: bool,
     ) {
         let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.insert(
-                key,
-                CachedDecision {
-                    allowed,
-                    cached_at: Instant::now(),
-                },
-            );
-        }
+        self.entries.insert(
+            key,
+            CachedDecision {
+                allowed,
+                cached_at: Instant::now(),
+            },
+        );
     }
 
     /// Invalidate ALL cached decisions for a specific document.
@@ -95,35 +93,37 @@ impl AccessCache {
     /// Called on document registration and archival mutations. Invalidates all
     /// actors and permissions for the affected document.
     pub(crate) fn invalidate_object(&self, policy_id: &str, resource: &str, doc_id: &str) -> usize {
-        if let Ok(mut entries) = self.entries.lock() {
-            let previous_len = entries.len();
-            entries.retain(|key, _| {
-                key.policy_id != policy_id || key.resource != resource || key.doc_id != doc_id
-            });
-            previous_len - entries.len()
-        } else {
-            0
+        let stale: Vec<CacheKey> = self
+            .entries
+            .keys()
+            .filter(|key| {
+                key.policy_id == policy_id && key.resource == resource && key.doc_id == doc_id
+            })
+            .collect();
+        let count = stale.len();
+        for key in &stale {
+            self.entries.force_remove(key);
         }
+        count
     }
 
     pub(crate) fn invalidate_policy(&self, policy_id: &str) -> usize {
-        if let Ok(mut entries) = self.entries.lock() {
-            let previous_len = entries.len();
-            entries.retain(|key, _| key.policy_id != policy_id);
-            previous_len - entries.len()
-        } else {
-            0
+        let stale: Vec<CacheKey> = self
+            .entries
+            .keys()
+            .filter(|key| key.policy_id == policy_id)
+            .collect();
+        let count = stale.len();
+        for key in &stale {
+            self.entries.force_remove(key);
         }
+        count
     }
 
     pub(crate) fn clear(&self) -> usize {
-        if let Ok(mut entries) = self.entries.lock() {
-            let previous_len = entries.len();
-            entries.clear();
-            previous_len
-        } else {
-            0
-        }
+        let count = self.entries.len();
+        self.entries.clear();
+        count
     }
 }
 

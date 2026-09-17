@@ -12,12 +12,12 @@ use std::sync::Arc;
 
 use futures::Sink;
 use identity::Did;
+use kovan::Atom;
 use pgwire::api::results::{Response, Tag};
 use pgwire::api::ClientInfo;
 use pgwire::error::{PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
 use query::{CollectionProvider, QueryExecutor, QueryRequest, TransactionHandle};
-use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::bridge::MutationKind;
@@ -45,7 +45,7 @@ pub struct DefraQueryHandler {
     collections: Arc<dyn CollectionProvider>,
     parser: Arc<DefraQueryParser>,
     schema_manager: Option<Arc<dyn SchemaManager>>,
-    ddl_metadata: Arc<RwLock<DdlMetadata>>,
+    ddl_metadata: Atom<DdlMetadata>,
 }
 
 impl DefraQueryHandler {
@@ -60,7 +60,7 @@ impl DefraQueryHandler {
             collections,
             parser,
             schema_manager,
-            ddl_metadata: Arc::new(RwLock::new(DdlMetadata::default())),
+            ddl_metadata: Atom::new(DdlMetadata::default()),
         }
     }
 

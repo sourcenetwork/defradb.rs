@@ -31,8 +31,6 @@ async fn unservable_batch_does_not_hide_later_servable_blocks() {
     let completions = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport
         .size_limited_providers
-        .lock()
-        .unwrap()
         .insert("remote-peer".into(), (oversized, completions.clone()));
     let context = DagFetchContext::new(
         "doc".into(),
@@ -80,8 +78,6 @@ async fn size_limited_provider_is_not_retried_but_alternate_can_finish() {
         let completions = crate::sync::manager::BlockSyncCompletionTracker::default();
         transport
             .size_limited_providers
-            .lock()
-            .unwrap()
             .insert("remote-peer".to_owned(), (child, completions.clone()));
         let mut context = DagFetchContext::new(
             "doc".to_owned(),

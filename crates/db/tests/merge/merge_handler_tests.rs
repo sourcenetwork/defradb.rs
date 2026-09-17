@@ -2541,14 +2541,7 @@ async fn deep_collection_parent_chain_merges_on_worker_stack() {
     .expect("collection merge task should not overflow its worker stack");
 
     assert!(outcome.is_terminal_skip());
-    assert_eq!(
-        handler
-            .merged_collections()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .len(),
-        256
-    );
+    assert_eq!(handler.merged_collections().len(), 256);
 }
 
 #[tokio::test]
@@ -2873,11 +2866,7 @@ async fn dek_prefetch_can_restart_after_completion() {
         timeout(Duration::from_secs(1), async {
             loop {
                 let calls = kms.calls.load(std::sync::atomic::Ordering::SeqCst);
-                let finished = !handler
-                    .prefetched_dek_cids()
-                    .lock()
-                    .unwrap()
-                    .contains(&enc_cid);
+                let finished = !handler.prefetched_dek_cids().contains_key(&enc_cid);
                 if calls == expected_calls && finished {
                     break;
                 }

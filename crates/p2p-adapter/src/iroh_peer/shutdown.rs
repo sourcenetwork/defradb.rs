@@ -1,8 +1,9 @@
 //! Stopping a peer, in one order for every node.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
+use kovan_queue::seg_queue::SegQueue;
 use n0_future::task::JoinHandle;
 use p2p::iroh::IrohTransport;
 use p2p::P2PTransport;
@@ -13,7 +14,9 @@ const ENDPOINT_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Stops the peer once; later calls, from any clone, return immediately.
 #[derive(Clone)]
 pub struct IrohPeerShutdown {
-    parts: Arc<Mutex<Option<Parts>>>,
+    /// One slot: popping hands back an owned `Parts`, so every handle is
+    /// stopped here instead of at a deferred drop.
+    parts: Arc<SegQueue<Parts>>,
 }
 
 struct Parts {
@@ -32,32 +35,29 @@ impl IrohPeerShutdown {
         retry_loop_task: JoinHandle<()>,
         tasks: Vec<JoinHandle<()>>,
     ) -> Self {
+        let parts = SegQueue::new();
+        parts.push(Parts {
+            transport,
+            coordinator,
+            endpoint_task,
+            retry_loop_task,
+            tasks,
+        });
         Self {
-            parts: Arc::new(Mutex::new(Some(Parts {
-                transport,
-                coordinator,
-                endpoint_task,
-                retry_loop_task,
-                tasks,
-            }))),
+            parts: Arc::new(parts),
         }
     }
 
     /// No new retries, then the coordinator's own work, then the endpoint,
     /// then the tasks that only consumed what those produced.
     pub async fn shutdown(&self) {
-        let parts = self
-            .parts
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
         let Some(Parts {
             transport,
             coordinator,
             mut endpoint_task,
             retry_loop_task,
             tasks,
-        }) = parts
+        }) = self.parts.pop()
         else {
             return;
         };

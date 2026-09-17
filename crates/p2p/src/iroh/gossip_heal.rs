@@ -23,12 +23,15 @@
 //! closes the peer's RPC connections so `PeerDisconnected` fires and the peer
 //! is dropped until the next discovery/dial recreates it through the 0→1 path.
 
+use rapidhash::fast::RandomState;
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
 use web_time::Instant;
 
 use iroh::endpoint::Connection;
 use iroh::EndpointId;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
 use tracing::{debug, warn};
 
 use super::endpoint::{
@@ -113,6 +116,7 @@ impl GossipHealConfig {
 /// refresh to well under this), so a stuck flag cannot block healing forever.
 const IN_FLIGHT_STALE: Duration = Duration::from_secs(60);
 
+#[derive(Clone, Copy)]
 struct PeerHeal {
     attempts: u32,
     next_due: Instant,
@@ -121,6 +125,7 @@ struct PeerHeal {
 
 /// Pure per-peer refresh schedule with exponential backoff. Time is injected
 /// so the state machine is deterministic under test.
+#[derive(Clone)]
 struct HealSchedule {
     config: GossipHealConfig,
     peers: RapidHashMap<EndpointId, PeerHeal>,
@@ -215,17 +220,20 @@ impl HealSchedule {
 
 /// Shared healer: refresh schedule plus the gossip connections we injected,
 /// retained so each refresh can close the connection it supersedes.
+///
+/// A sweep prunes departed peers, admits new ones and marks due ones in
+/// flight in one pass, so the schedule is replaced as a unit on every write.
 pub(super) struct GossipHealer {
     config: GossipHealConfig,
-    schedule: parking_lot::Mutex<HealSchedule>,
-    conns: parking_lot::Mutex<RapidHashMap<EndpointId, Connection>>,
+    schedule: Atom<HealSchedule>,
+    conns: HopscotchMap<EndpointId, Connection, RandomState>,
 }
 
 impl GossipHealer {
     pub(super) fn new(config: GossipHealConfig) -> Self {
         Self {
-            schedule: parking_lot::Mutex::new(HealSchedule::new(config.clone())),
-            conns: parking_lot::Mutex::new(RapidHashMap::new()),
+            schedule: Atom::new(HealSchedule::new(config.clone())),
+            conns: HopscotchMap::with_hasher(RandomState::default()),
             config,
         }
     }
@@ -234,41 +242,51 @@ impl GossipHealer {
         &self.config
     }
 
+    fn update_schedule<R>(&self, mut f: impl FnMut(&mut HealSchedule) -> R) -> R {
+        loop {
+            let current = self.schedule.load();
+            let mut next = HealSchedule::clone(&current);
+            let result = f(&mut next);
+            if self.schedule.compare_and_swap(&current, next).is_ok() {
+                return result;
+            }
+        }
+    }
+
     fn due_peers(&self, connected: &[EndpointId], now: Instant) -> Vec<EndpointId> {
-        self.schedule.lock().due_peers(connected, now)
+        self.update_schedule(|schedule| schedule.due_peers(connected, now))
     }
 
     fn note_connected(&self, id: EndpointId, now: Instant) {
-        self.schedule.lock().note_connected(id, now);
+        self.update_schedule(|schedule| schedule.note_connected(id, now));
     }
 
     fn record_success(&self, id: EndpointId, now: Instant) {
-        self.schedule.lock().record_success(id, now);
+        self.update_schedule(|schedule| schedule.record_success(id, now));
     }
 
     fn record_failure(&self, id: EndpointId, now: Instant) -> bool {
-        self.schedule.lock().record_failure(id, now)
+        self.update_schedule(|schedule| schedule.record_failure(id, now))
     }
 
     fn store_conn(&self, id: EndpointId, conn: Connection) -> Option<Connection> {
-        self.conns.lock().insert(id, conn)
+        self.conns.insert(id, conn)
     }
 
     pub(super) fn take_conn(&self, id: &EndpointId) -> Option<Connection> {
-        self.conns.lock().remove(id)
+        self.conns.remove(id)
     }
 
     /// Injected gossip connections whose peer is no longer connected.
     fn take_departed_conns(&self, connected: &[EndpointId]) -> Vec<Connection> {
-        let mut conns = self.conns.lock();
-        let departed: Vec<EndpointId> = conns
+        let departed: Vec<EndpointId> = self
+            .conns
             .keys()
             .filter(|id| !connected.contains(id))
-            .copied()
             .collect();
         departed
             .into_iter()
-            .filter_map(|id| conns.remove(&id))
+            .filter_map(|id| self.conns.remove(&id))
             .collect()
     }
 }
@@ -316,7 +334,7 @@ pub(super) fn sweep(
     res: &EndpointResources,
     subscriptions: &RapidHashMap<String, TopicSubscription>,
 ) {
-    let connected: Vec<EndpointId> = res.peer_map.lock().endpoint_ids().collect();
+    let connected = res.peer_map.endpoint_ids();
     for conn in res.healer.take_departed_conns(&connected) {
         conn.close(0u32.into(), b"gossip-heal");
     }
@@ -396,10 +414,7 @@ async fn dial_and_inject(
     endpoint_id: EndpointId,
 ) -> crate::error::Result<()> {
     let peer_id = endpoint_id_to_peer_id(&endpoint_id);
-    let direct_addr = {
-        let map = res.peer_map.lock();
-        map.get(&endpoint_id).and_then(|info| info.remote_addr)
-    };
+    let direct_addr = res.peer_map.remote_addr(&endpoint_id);
     let conn = connect_with_direct_addr_fallback(
         &res.endpoint,
         &peer_id,

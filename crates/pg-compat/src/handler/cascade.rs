@@ -45,13 +45,12 @@ impl DefraQueryHandler {
         txn_id: Option<&str>,
         identity_did: Option<&str>,
     ) -> PgWireResult<()> {
-        let children = {
-            let meta = self.ddl_metadata.read().await;
+        let children = self.ddl_metadata.peek(|meta| {
             meta.cascade_children_of(parent_table)
                 .into_iter()
                 .cloned()
                 .collect::<Vec<_>>()
-        };
+        });
 
         for fk in &children {
             let child_filter_value = if fk.to_column == filter_field {

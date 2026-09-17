@@ -345,7 +345,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         // own: `can_process_pushlog` admits it only while a registered root
         // waits on it, so unawaited bytes stay inside the cap.
         if !self.can_process_pushlog(cid)
-            && !self.persisted_roots.read().contains(cid)
+            && !self.persisted_roots.contains_key(cid)
             && !self.scope_head_is_refresh_or_newer(
                 *cid,
                 sender_peer,
@@ -547,14 +547,16 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         };
                         store.replace_scope_head(None, cid, &record).await?;
                     }
-                    if let Some(current) = self.pending_dags.write().get_mut(cid) {
-                        current.alternate_providers = existing.alternate_providers.clone();
-                        if upgrades_authorization {
-                            current.is_explicit_replicator = true;
-                            current.explicit_replay_authorization =
-                                explicit_replay_authorization.clone();
+                    self.pending_dags.update(|pending| {
+                        if let Some(current) = pending.get_mut(cid) {
+                            current.alternate_providers = existing.alternate_providers.clone();
+                            if upgrades_authorization {
+                                current.is_explicit_replicator = true;
+                                current.explicit_replay_authorization =
+                                    explicit_replay_authorization.clone();
+                            }
                         }
-                    }
+                    });
                     tracing::debug!(
                         cid = %cid,
                         source_peer = ?sender_peer,
@@ -573,7 +575,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 return Ok(());
             }
-            if self.persisted_roots.read().contains(cid) {
+            if self.persisted_roots.contains_key(cid) {
                 tracing::debug!(
                     cid = %cid,
                     announced_source_peer = ?sender_peer,
@@ -688,37 +690,38 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 let durable_cap = self
                     .max_pending_dags
                     .saturating_mul(super::PERSISTED_PENDING_CAP_FACTOR);
-                // Check-and-reserve atomically under the write lock so the
-                // cap is hard under concurrent PushLogs; a failed put below
-                // releases the reservation. `newly_reserved` is false when
-                // the root already holds a record (re-push refresh).
+                // Check-and-reserve is serialized by the metadata writer held
+                // above, so the cap is hard under concurrent PushLogs; a
+                // failed put below releases the reservation. `newly_reserved`
+                // is false when the root already holds a record (re-push
+                // refresh).
                 enum DurableAdmission {
                     Reserved,
                     AlreadyPresent,
                     AtCapacity,
                 }
-                let admission = {
-                    let mut roots = self.persisted_roots.write();
-                    if roots.contains(cid) {
-                        DurableAdmission::AlreadyPresent
-                    } else if roots.len() >= durable_cap
-                        && superseded_root.is_none_or(|old| !roots.contains(&old))
-                    {
-                        DurableAdmission::AtCapacity
-                    } else {
-                        roots.insert(*cid);
-                        if let Some(old) = superseded_root {
-                            roots.remove(&old);
-                        }
-                        DurableAdmission::Reserved
+                let roots = &self.persisted_roots;
+                let admission = if roots.contains_key(cid) {
+                    DurableAdmission::AlreadyPresent
+                } else if roots.len() >= durable_cap
+                    && superseded_root.is_none_or(|old| !roots.contains_key(&old))
+                {
+                    DurableAdmission::AtCapacity
+                } else {
+                    roots.insert_if_absent(*cid, ());
+                    if let Some(old) = superseded_root {
+                        roots.remove(&old);
                     }
+                    DurableAdmission::Reserved
                 };
                 if matches!(admission, DurableAdmission::AtCapacity) {
                     self.diagnostics.record_pending_dag_capacity_shed();
-                    self.pending_dags.write().remove(cid);
-                    if let Some((old_root, old_dag)) = superseded.clone() {
-                        self.pending_dags.write().insert(old_root, old_dag);
-                    }
+                    self.pending_dags.update(|pending| {
+                        pending.remove(cid);
+                        if let Some((old_root, old_dag)) = superseded.clone() {
+                            pending.insert(old_root, old_dag);
+                        }
+                    });
                     tracing::warn!(
                         cid = %cid,
                         doc_id = %msg.doc_id,
@@ -745,15 +748,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     .await
                 {
                     if newly_reserved {
-                        self.persisted_roots.write().remove(cid);
+                        self.persisted_roots.remove(cid);
                         if let Some(old) = superseded_root {
-                            self.persisted_roots.write().insert(old);
+                            self.persisted_roots.insert_if_absent(old, ());
                         }
                     }
-                    self.pending_dags.write().remove(cid);
-                    if let Some((old_root, old_dag)) = superseded.clone() {
-                        self.pending_dags.write().insert(old_root, old_dag);
-                    }
+                    self.pending_dags.update(|pending| {
+                        pending.remove(cid);
+                        if let Some((old_root, old_dag)) = superseded.clone() {
+                            pending.insert(old_root, old_dag);
+                        }
+                    });
                     tracing::warn!(
                         cid = %cid,
                         doc_id = %msg.doc_id,
@@ -765,7 +770,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     )));
                 }
                 self.diagnostics
-                    .observe_persisted_pending_dag_depth(self.persisted_roots.read().len());
+                    .observe_persisted_pending_dag_depth(self.persisted_roots.len());
                 self.remember_persisted_scope_head(
                     *cid,
                     sender_peer,

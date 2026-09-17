@@ -1,8 +1,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "otlp")]
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
+#[cfg(feature = "otlp")]
+use kovan::Atom;
 #[cfg(feature = "otlp")]
 use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider as _};
 #[cfg(feature = "otlp")]
@@ -256,12 +258,14 @@ struct Instruments {
 #[cfg(feature = "otlp")]
 static NEXT_INSTALLATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "otlp")]
-static INSTRUMENTS: OnceLock<RwLock<Vec<(u64, Instruments)>>> = OnceLock::new();
+type InstrumentRegistry = Atom<Vec<(u64, Arc<Instruments>)>>;
+#[cfg(feature = "otlp")]
+static INSTRUMENTS: OnceLock<InstrumentRegistry> = OnceLock::new();
 
 #[cfg(feature = "otlp")]
 pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -> u64 {
     let meter = provider.meter("defradb");
-    let instruments = Instruments {
+    let instruments = Arc::new(Instruments {
         storage_conflicts: meter
             .u64_counter("defradb.storage.transaction.conflicts")
             .with_description("Storage transaction conflicts")
@@ -291,31 +295,37 @@ pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -
             .u64_gauge("defradb.storage.conflict_tracker.size")
             .with_description("Current conflict tracker entries")
             .build(),
-    };
+    });
 
     let installation = NEXT_INSTALLATION.fetch_add(1, Ordering::Relaxed) + 1;
-    let lock = INSTRUMENTS.get_or_init(|| RwLock::new(Vec::new()));
-    lock.write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .push((installation, instruments));
+    let registry = INSTRUMENTS.get_or_init(|| Atom::new(Vec::new()));
+    registry.rcu(|current| {
+        let mut next = current.clone();
+        next.push((installation, Arc::clone(&instruments)));
+        next
+    });
     installation
 }
 
 #[cfg(feature = "otlp")]
 pub(crate) fn uninstall(installation: u64) {
-    if let Some(lock) = INSTRUMENTS.get() {
-        lock.write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|(id, _)| *id != installation);
+    if let Some(registry) = INSTRUMENTS.get() {
+        registry.rcu(|current| {
+            current
+                .iter()
+                .filter(|(id, _)| *id != installation)
+                .cloned()
+                .collect()
+        });
     }
 }
 
 #[cfg(feature = "otlp")]
 fn with_instruments(record: impl FnOnce(&Instruments)) {
-    let Some(lock) = INSTRUMENTS.get() else {
+    let Some(registry) = INSTRUMENTS.get() else {
         return;
     };
-    let guard = lock.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry.load();
     if let Some((_, metrics)) = guard.last() {
         record(metrics);
     }

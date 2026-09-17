@@ -198,13 +198,15 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         let db = self.db.clone();
         let committed = target.clone();
         txn.on_success(Box::new(move || {
-            if let Ok(mut cache) = db.collections.write() {
+            db.collections.rcu(|old| {
+                let mut cache = old.clone();
                 if committed.is_active {
-                    cache.insert(committed.name.clone(), Collection::new(committed));
+                    cache.insert(committed.name.clone(), Collection::new(committed.clone()));
                 } else if was_active {
                     cache.remove(&committed.name);
                 }
-            }
+                cache
+            });
         }))?;
 
         Ok(target)
@@ -420,11 +422,13 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 
         let db = self.db.clone();
         txn.on_success(Box::new(move || {
-            if let Ok(mut cache) = db.collections.write() {
-                for name in removed_names {
-                    cache.remove(&name);
+            db.collections.rcu(|old| {
+                let mut cache = old.clone();
+                for name in &removed_names {
+                    cache.remove(name);
                 }
-            }
+                cache
+            });
             for collection_id in removed_collection_ids {
                 let _ = db.forbid_collection_id(&collection_id);
             }

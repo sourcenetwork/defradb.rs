@@ -16,6 +16,8 @@ use crate::{
     TransportConfig,
 };
 use anyhow::{anyhow, Context, Result};
+#[cfg(feature = "libp2p")]
+use kovan_queue::seg_queue::SegQueue;
 #[cfg(any(feature = "libp2p", feature = "iroh"))]
 use p2p::sync::SyncConfig;
 use tokio::sync::Notify;
@@ -46,7 +48,7 @@ fn resolve_creator_identity() -> Result<Option<identity::Did>> {
 }
 
 /// Embedded DefraDB node assembled for native/mobile embedding.
-pub struct EmbeddedNode<S: storage::corekv::Store> {
+pub struct EmbeddedNode<S: storage::corekv::Store + 'static> {
     pub database: Arc<db::DB<S>>,
     background_tasks: Arc<BackgroundTasks>,
     pub txn_registry: Arc<EmbeddedTxnRegistry<S>>,
@@ -405,7 +407,7 @@ enum ShutdownKind {
     Libp2p {
         handle: Box<p2p::P2PHostHandle>,
         coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: std::sync::Mutex<Option<Vec<tokio::task::JoinHandle<()>>>>,
+        tasks: SegQueue<tokio::task::JoinHandle<()>>,
     },
     #[cfg(feature = "iroh")]
     Iroh(defra_p2p_adapter::IrohPeerShutdown),
@@ -418,11 +420,15 @@ impl ShutdownHandle {
         coordinator: p2p::sync::SyncShutdownHandle,
         tasks: Vec<tokio::task::JoinHandle<()>>,
     ) -> Self {
+        let pending = SegQueue::new();
+        for task in tasks {
+            pending.push(task);
+        }
         Self {
             inner: ShutdownKind::Libp2p {
                 handle: Box::new(handle),
                 coordinator,
-                tasks: std::sync::Mutex::new(Some(tasks)),
+                tasks: pending,
             },
         }
     }
@@ -456,16 +462,13 @@ impl ShutdownHandle {
 }
 
 #[cfg(feature = "libp2p")]
-async fn abort_and_join(tasks: &std::sync::Mutex<Option<Vec<tokio::task::JoinHandle<()>>>>) {
-    let tasks = tasks
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .take()
-        .unwrap_or_default();
-    for task in &tasks {
+async fn abort_and_join(tasks: &SegQueue<tokio::task::JoinHandle<()>>) {
+    let mut aborted = Vec::with_capacity(tasks.len());
+    while let Some(task) = tasks.pop() {
         task.abort();
+        aborted.push(task);
     }
-    for task in tasks {
+    for task in aborted {
         let _ = task.await;
     }
 }

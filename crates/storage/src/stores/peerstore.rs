@@ -10,9 +10,10 @@ use async_trait::async_trait;
 /// The Peerstore handles storage of replicator configuration, replication
 /// retry tracking, and search engine retry tracking for P2P operations.
 use bytes::Bytes;
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::future::Future;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 use tracing;
 
 const PUSH_RETRY_TXN_MAX_ATTEMPTS: usize = 4;
@@ -35,20 +36,27 @@ fn legacy_retry_commit_key(peer_id: &str, collection_id: &str, cid: &str) -> Vec
 type RetryPeerLock = RwLock<()>;
 
 fn retry_peer_lock(peer_id: &str) -> Arc<RetryPeerLock> {
-    static LOCKS: OnceLock<Mutex<RapidHashMap<String, Weak<RetryPeerLock>>>> = OnceLock::new();
+    static LOCKS: OnceLock<HopscotchMap<String, Weak<RetryPeerLock>, RandomState>> =
+        OnceLock::new();
+    let locks = LOCKS.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()));
 
-    let mut locks = LOCKS
-        .get_or_init(|| Mutex::new(RapidHashMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    locks.retain(|_, lock| lock.upgrade().is_some());
-    if let Some(lock) = locks.get(peer_id).and_then(Weak::upgrade) {
-        return lock;
+    loop {
+        if let Some(lock) = locks.get(peer_id).and_then(|weak| weak.upgrade()) {
+            return lock;
+        }
+        let candidate = Arc::new(RetryPeerLock::new(()));
+        // get_or_insert is the atomic decision point: concurrent callers racing
+        // on an absent key all receive the same freshly inserted Weak.
+        let weak = locks.get_or_insert(peer_id.to_string(), Arc::downgrade(&candidate));
+        if let Some(lock) = weak.upgrade() {
+            return lock;
+        }
+        // vertexia: no table-wide sweep of dead entries for other peers
+        // (HopscotchMap has no retain); each peer's entry self-heals lazily on
+        // its next lookup instead. If per-peer churn grows unbounded, revisit
+        // with a periodic sweep over locks.iter().
+        locks.remove(peer_id);
     }
-
-    let lock = Arc::new(RetryPeerLock::new(()));
-    locks.insert(peer_id.to_string(), Arc::downgrade(&lock));
-    lock
 }
 
 /// Keeps a retry pass or failure-recording operation coordinated with forget.

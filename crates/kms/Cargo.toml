@@ -40,7 +40,8 @@ orbis = { path = "../orbis", optional = true }
 sourcehub = { path = "../sourcehub", optional = true }
 
 async-trait.workspace = true
-async-lock.workspace = true
+kovan.workspace = true
+kovan-map.workspace = true
 rapidhash.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -63,6 +64,7 @@ tokio = { version = "1.35", default-features = false, features = ["rt", "sync", 
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "test-util"] }
+kovan-queue.workspace = true
 
 [lints]
 workspace = true

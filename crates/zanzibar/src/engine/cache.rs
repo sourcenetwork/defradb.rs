@@ -1,5 +1,6 @@
-use async_lock::RwLock;
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use crate::did::Did;
 
@@ -39,23 +40,28 @@ impl NodeTrail {
     }
 }
 
-#[derive(Debug, Default)]
 pub(crate) struct CheckCache {
-    results: RwLock<RapidHashMap<String, bool>>,
+    results: HopscotchMap<String, bool, RandomState>,
+}
+
+impl Default for CheckCache {
+    fn default() -> Self {
+        Self {
+            results: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl CheckCache {
     pub(crate) fn new() -> Self {
-        Self {
-            results: RwLock::new(RapidHashMap::new()),
-        }
+        Self::default()
     }
 
     fn cache_key(resource: &str, object_id: &str, relation: &str, subject: &Did) -> String {
         format!("{resource}/{object_id}#{relation}@{subject}")
     }
 
-    pub(crate) async fn get(
+    pub(crate) fn get(
         &self,
         resource: &str,
         object_id: &str,
@@ -63,10 +69,10 @@ impl CheckCache {
         subject: &Did,
     ) -> Option<bool> {
         let key = Self::cache_key(resource, object_id, relation, subject);
-        self.results.read().await.get(&key).copied()
+        self.results.get(&key)
     }
 
-    pub(crate) async fn set(
+    pub(crate) fn set(
         &self,
         resource: &str,
         object_id: &str,
@@ -75,6 +81,6 @@ impl CheckCache {
         result: bool,
     ) {
         let key = Self::cache_key(resource, object_id, relation, subject);
-        self.results.write().await.insert(key, result);
+        self.results.insert(key, result);
     }
 }

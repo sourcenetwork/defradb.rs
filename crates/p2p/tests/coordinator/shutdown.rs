@@ -39,7 +39,7 @@ async fn abandoned_drain_releases_shutdown_waiters() {
     let shutdown = SyncShutdownHandle::new(1);
     assert!(shutdown.begin_shutdown());
     // Model a drain future dropped before its first poll.
-    drop(shutdown.inner.shutdown_complete_tx.lock().take());
+    drop(shutdown.inner.shutdown_complete_tx.pop());
     tokio::time::timeout(std::time::Duration::from_secs(1), shutdown.shutdown())
         .await
         .expect("shutdown waited forever after losing its drain");

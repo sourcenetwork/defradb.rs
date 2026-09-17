@@ -114,8 +114,8 @@ struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
     publish_calls: Arc<AtomicUsize>,
-    replicators: Arc<parking_lot::Mutex<Vec<ReplicatorInfo>>>,
-    pushlog_requests: Arc<parking_lot::Mutex<Vec<(PeerId, PushLogRequest)>>>,
+    replicators: Arc<kovan::Atom<Vec<ReplicatorInfo>>>,
+    pushlog_requests: Arc<kovan_queue::seg_queue::SegQueue<(PeerId, PushLogRequest)>>,
 }
 
 impl NoopTransport {
@@ -124,8 +124,8 @@ impl NoopTransport {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
             publish_calls: Arc::new(AtomicUsize::new(0)),
-            replicators: Arc::new(parking_lot::Mutex::new(Vec::new())),
-            pushlog_requests: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            replicators: Arc::new(kovan::Atom::new(Vec::new())),
+            pushlog_requests: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
         }
     }
 
@@ -134,11 +134,19 @@ impl NoopTransport {
     }
 
     fn set_replicators(&self, replicators: Vec<ReplicatorInfo>) {
-        *self.replicators.lock() = replicators;
+        self.replicators.store(replicators);
     }
 
-    fn pushlog_requests(&self) -> Vec<(PeerId, PushLogRequest)> {
-        self.pushlog_requests.lock().clone()
+    fn pushlog_request_count(&self) -> usize {
+        self.pushlog_requests.len()
+    }
+
+    fn take_pushlog_requests(&self) -> Vec<(PeerId, PushLogRequest)> {
+        let mut requests = Vec::new();
+        while let Some(request) = self.pushlog_requests.pop() {
+            requests.push(request);
+        }
+        requests
     }
 }
 
@@ -161,8 +169,7 @@ struct PollFetchTransport {
     sync_present_blocks: Arc<AtomicUsize>,
     sync_served_blocks: Arc<AtomicUsize>,
     sync_served_bytes: Arc<AtomicUsize>,
-    sync_completion:
-        Arc<parking_lot::Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
+    sync_completion: Arc<kovan::AtomOption<crate::sync::manager::BlockSyncCompletionTracker>>,
 }
 
 impl PollFetchTransport {
@@ -189,7 +196,7 @@ impl PollFetchTransport {
             sync_present_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_bytes: Arc::new(AtomicUsize::new(0)),
-            sync_completion: Arc::new(parking_lot::Mutex::new(None)),
+            sync_completion: Arc::new(kovan::AtomOption::none()),
         }
     }
 
@@ -215,7 +222,7 @@ impl PollFetchTransport {
             sync_present_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_bytes: Arc::new(AtomicUsize::new(0)),
-            sync_completion: Arc::new(parking_lot::Mutex::new(None)),
+            sync_completion: Arc::new(kovan::AtomOption::none()),
         }
     }
 
@@ -264,11 +271,14 @@ impl PollFetchTransport {
     }
 
     fn set_sync_completion(&self, completion: crate::sync::manager::BlockSyncCompletionTracker) {
-        *self.sync_completion.lock() = Some(completion);
+        self.sync_completion.store_some(completion);
     }
 
     fn signal_sync_complete(&self, query_id: QueryId) {
-        let completion = self.sync_completion.lock().clone();
+        let completion = self
+            .sync_completion
+            .load()
+            .map(|completion| completion.clone());
         n0_future::task::spawn(async move {
             // The real transport emits completion after `sync_blocks` returns
             // and the poll owner registers its waiter.
@@ -649,7 +659,7 @@ impl P2PTransport for NoopTransport {
         peer_id: &PeerId,
         req: PushLogRequest,
     ) -> P2PResult<PushLogReply> {
-        self.pushlog_requests.lock().push((peer_id.clone(), req));
+        self.pushlog_requests.push((peer_id.clone(), req));
         Ok(PushLogReply::success("noop"))
     }
 
@@ -759,7 +769,7 @@ impl P2PTransport for NoopTransport {
     }
 
     async fn list_replicators(&self) -> P2PResult<Vec<ReplicatorInfo>> {
-        Ok(self.replicators.lock().clone())
+        Ok(self.replicators.load_clone())
     }
 
     async fn get_replicator(&self, _peer_id: &PeerId) -> P2PResult<Option<ReplicatorInfo>> {
@@ -1432,7 +1442,7 @@ async fn terminal_merge_error_quarantines_and_releases_pending_slot() {
     );
     assert!(pending_store.load_all().await.unwrap().is_empty());
     assert!(pending_store.is_quarantined(&cid).await.unwrap());
-    let status = coordinator.sync_status();
+    let status = coordinator.sync_status().await;
     assert_eq!(status.pending_dags, 0);
     assert_eq!(status.persisted_pending_dags, 0);
     assert_eq!(status.pending_dag_terminal_quarantined, 1);
@@ -2259,7 +2269,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
 
     let persisted = pending_store.load_all().await.unwrap();
     coordinator.shutdown().await;
-    let status = coordinator.sync_status();
+    let status = coordinator.sync_status().await;
     ReceiverOwnershipArm {
         pushlogs_scheduled: if expand_dag { 4 } else { 1 },
         pushlogs_transmitted,
@@ -2717,14 +2727,14 @@ async fn merged_head_forwards_to_configured_replicator_without_gossip_rebroadcas
         [ReplicationResult::Merged { cid: merged_cid, .. }] if *merged_cid == cid
     ));
     n0_future::time::timeout(Duration::from_secs(1), async {
-        while transport_handle.pushlog_requests().is_empty() {
+        while transport_handle.pushlog_request_count() == 0 {
             tokio::task::yield_now().await;
         }
     })
     .await
     .expect("merged head should be forwarded to the configured downstream replicator");
 
-    let requests = transport_handle.pushlog_requests();
+    let requests = transport_handle.take_pushlog_requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].0, downstream);
     assert_eq!(requests[0].1.cid.as_ref(), cid.to_bytes());
@@ -2784,7 +2794,7 @@ async fn rapid_collection_commits_publish_only_the_current_head() {
         2,
         "one current collection head must be published once to its document and collection topics"
     );
-    assert_eq!(coordinator.sync_status().broadcast_coalesced_total, 2);
+    assert_eq!(coordinator.sync_status().await.broadcast_coalesced_total, 2);
 }
 
 #[tokio::test]

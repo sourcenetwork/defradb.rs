@@ -12,62 +12,41 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     ///
     /// Returns a `CleanupResult` containing both successfully cleaned transactions
     /// and any failures. Check `result.is_complete()` to verify all cleanups succeeded.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the lock is poisoned, indicating a panic elsewhere.
     pub async fn cleanup_stale_transactions(
         &self,
         max_idle_age: Duration,
     ) -> Result<CleanupResult> {
         let now = Instant::now();
 
-        // Collect stale transaction candidates while holding the read lock briefly.
-        // Each candidate is re-checked after acquiring the transaction action lock
-        // so a request that arrives during cleanup can refresh the idle clock.
-        let stale_candidates: Vec<(String, Arc<DbTransactionContext<S>>)> = {
-            let guard = self.transactions.read().map_err(|_| {
-                Error::LockPoisoned("failed to acquire read lock during cleanup".to_string())
-            })?;
-
-            guard
-                .iter()
-                .filter(|(_, ctx)| ctx.idle_for(now) > max_idle_age)
-                .map(|(id, ctx)| (id.clone(), ctx.clone()))
-                .collect()
-        };
+        // Collect stale transaction candidates. Each candidate is re-checked
+        // after acquiring the transaction action lock so a request that arrives
+        // during cleanup can refresh the idle clock.
+        let stale_candidates: Vec<(String, Arc<DbTransactionContext<S>>)> = self
+            .transactions
+            .iter()
+            .filter(|(_, ctx)| ctx.idle_for(now) > max_idle_age)
+            .collect();
 
         let mut result = CleanupResult::default();
         for (txn_id, candidate_ctx) in stale_candidates {
             let action_lock = candidate_ctx.action_lock();
             let _action_guard = action_lock.lock().await;
 
-            let now = Instant::now();
-            if candidate_ctx.idle_for(now) <= max_idle_age {
+            // Claiming the idle clock and removing the entry is what makes this
+            // safe against a concurrent request: a request that touched the
+            // context first wins the claim and keeps its transaction.
+            if !candidate_ctx.try_claim_stale(Instant::now(), max_idle_age) {
                 continue;
             }
-
-            // Remove and rollback each stale transaction. Re-check while holding
-            // the write lock so a concurrent request that touched the context
-            // after candidate collection cannot lose its transaction.
-            let ctx = {
-                let mut guard = self.transactions.write().map_err(|_| {
-                    Error::LockPoisoned("failed to acquire write lock during cleanup".to_string())
-                })?;
-
-                // Holding the registry write lock blocks new get()/get_ctx()
-                // touches while we do the final idle re-check and remove.
-                // The idle timestamp itself is protected by the context mutex,
-                // so a request cannot refresh it between this check and removal.
-                match guard.get(&txn_id) {
-                    Some(current)
-                        if Arc::ptr_eq(current, &candidate_ctx)
-                            && current.idle_for(Instant::now()) > max_idle_age =>
-                    {
-                        guard.remove(&txn_id)
-                    }
-                    _ => None,
+            let ctx = match self.transactions.remove(&txn_id) {
+                Some(current) if Arc::ptr_eq(&current, &candidate_ctx) => {
+                    Some(RemovedTransaction(current))
                 }
+                Some(current) => {
+                    self.transactions.insert(txn_id.clone(), current);
+                    None
+                }
+                None => None,
             };
 
             if let Some(ctx) = ctx {

@@ -1,8 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use integration_test::TestCluster;
+use kovan::Atom;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -26,14 +27,10 @@ fn subscription_settle_timeout() -> Duration {
 fn open_subscription(
     api_url: &str,
     query: &str,
-) -> (
-    JoinHandle<()>,
-    oneshot::Receiver<()>,
-    Arc<Mutex<Vec<Value>>>,
-) {
+) -> (JoinHandle<()>, oneshot::Receiver<()>, Arc<Atom<Vec<Value>>>) {
     let url = format!("{}/api/v0/graphql", api_url);
     let body = serde_json::json!({ "query": query });
-    let events: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let events: Arc<Atom<Vec<Value>>> = Arc::new(Atom::new(Vec::new()));
     let events_clone = events.clone();
     let (ready_tx, ready_rx) = oneshot::channel();
 
@@ -72,7 +69,11 @@ fn open_subscription(
 
                 if event_type == "next" {
                     if let Ok(value) = serde_json::from_str::<Value>(data) {
-                        events_clone.lock().unwrap().push(value);
+                        events_clone.rcu(|items| {
+                            let mut next = items.clone();
+                            next.push(value.clone());
+                            next
+                        });
                     }
                 }
             }
@@ -82,14 +83,14 @@ fn open_subscription(
     (handle, ready_rx, events)
 }
 
-async fn wait_for_exact_subscription_events(events: &Arc<Mutex<Vec<Value>>>, expected_len: usize) {
+async fn wait_for_exact_subscription_events(events: &Arc<Atom<Vec<Value>>>, expected_len: usize) {
     let timeout = subscription_timeout();
     let deadline = Instant::now() + timeout;
     let settle_timeout = subscription_settle_timeout();
     let mut expected_since = None;
 
     loop {
-        let current_len = events.lock().unwrap().len();
+        let current_len = events.peek(Vec::len);
         if current_len == expected_len {
             let since = expected_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= settle_timeout {
@@ -98,12 +99,12 @@ async fn wait_for_exact_subscription_events(events: &Arc<Mutex<Vec<Value>>>, exp
         } else {
             expected_since = None;
             if current_len > expected_len {
-                let collected = events.lock().unwrap();
+                let collected = events.load_clone();
                 panic!("expected {expected_len} subscription events, got {collected:?}");
             }
         }
         if Instant::now() >= deadline {
-            let collected = events.lock().unwrap();
+            let collected = events.load_clone();
             panic!(
                 "timed out after {timeout:?} waiting for {expected_len} subscription events, got {collected:?}"
             );
@@ -149,7 +150,7 @@ async fn subscription_with_indexed_filter_test(cluster: TestCluster) {
     wait_for_exact_subscription_events(&events, 1).await;
     handle.abort();
 
-    let collected = events.lock().unwrap();
+    let collected = events.load_clone();
     assert_eq!(
         collected.len(),
         1,

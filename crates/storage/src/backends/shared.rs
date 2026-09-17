@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use parking_lot::Mutex;
+use kovan_queue::seg_queue::SegQueue;
 use serde::{Deserialize, Serialize};
 
 use crate::corekv::{AsyncTxnCallback, TxnCallback};
@@ -61,52 +61,51 @@ impl CallbackCounts {
 
 /// Callbacks a transaction runs when it resolves.
 ///
-/// Registration takes `&self` because a transaction is shareable, and the
-/// lists are short and touched once per transaction, so a plain mutex is
-/// the right tool: there is no contention to design around.
+/// Registration takes `&self` because a transaction is shareable. Each list
+/// is a FIFO queue so callbacks run in registration order without a lock.
 #[derive(Default)]
 pub(crate) struct CallbackManager {
-    success: Mutex<Vec<TxnCallback>>,
-    success_async: Mutex<Vec<AsyncTxnCallback>>,
-    error: Mutex<Vec<TxnCallback>>,
-    error_async: Mutex<Vec<AsyncTxnCallback>>,
-    discard: Mutex<Vec<TxnCallback>>,
-    discard_async: Mutex<Vec<AsyncTxnCallback>>,
+    success: SegQueue<TxnCallback>,
+    success_async: SegQueue<AsyncTxnCallback>,
+    error: SegQueue<TxnCallback>,
+    error_async: SegQueue<AsyncTxnCallback>,
+    discard: SegQueue<TxnCallback>,
+    discard_async: SegQueue<AsyncTxnCallback>,
 }
 
 impl CallbackManager {
     pub(crate) fn on_success(&self, callback: TxnCallback) {
-        self.success.lock().push(callback);
+        self.success.push(callback);
     }
 
     pub(crate) fn on_success_async(&self, callback: AsyncTxnCallback) {
-        self.success_async.lock().push(callback);
+        self.success_async.push(callback);
     }
 
     pub(crate) fn on_error(&self, callback: TxnCallback) {
-        self.error.lock().push(callback);
+        self.error.push(callback);
     }
 
     pub(crate) fn on_error_async(&self, callback: AsyncTxnCallback) {
-        self.error_async.lock().push(callback);
+        self.error_async.push(callback);
     }
 
     pub(crate) fn on_discard(&self, callback: TxnCallback) {
-        self.discard.lock().push(callback);
+        self.discard.push(callback);
     }
 
     pub(crate) fn on_discard_async(&self, callback: AsyncTxnCallback) {
-        self.discard_async.lock().push(callback);
+        self.discard_async.push(callback);
     }
 
     pub(crate) fn counts(&self) -> CallbackCounts {
         CallbackCounts {
-            success: self.success.lock().len(),
-            success_async: self.success_async.lock().len(),
-            error: self.error.lock().len(),
-            error_async: self.error_async.lock().len(),
-            discard: self.discard.lock().len(),
-            discard_async: self.discard_async.lock().len(),
+            success: self.success.len(),
+            success_async: self.success_async.len(),
+            error: self.error.len(),
+            error_async: self.error_async.len(),
+            discard: self.discard.len(),
+            discard_async: self.discard_async.len(),
         }
     }
 
@@ -116,20 +115,16 @@ impl CallbackManager {
 
     /// Run the success callbacks, synchronous ones first.
     pub(crate) async fn run_success(&self) {
-        Self::run(std::mem::take(&mut *self.success.lock()));
-        // Bound first so the guard is dropped before the await; holding
-        // it across one would make the future non-`Send`.
-        let pending = std::mem::take(&mut *self.success_async.lock());
-        for callback in pending {
+        Self::run(&self.success);
+        while let Some(callback) = self.success_async.pop() {
             callback().await;
         }
     }
 
     /// Run the error callbacks.
     pub(crate) async fn run_error(&self) {
-        Self::run(std::mem::take(&mut *self.error.lock()));
-        let pending = std::mem::take(&mut *self.error_async.lock());
-        for callback in pending {
+        Self::run(&self.error);
+        while let Some(callback) = self.error_async.pop() {
             callback().await;
         }
     }
@@ -142,10 +137,13 @@ impl CallbackManager {
     /// nowhere to run it, and that is said out loud rather than dropped
     /// quietly.
     pub(crate) fn run_discard(&self) {
-        Self::run(std::mem::take(&mut *self.discard.lock()));
-        let pending = std::mem::take(&mut *self.discard_async.lock());
-        if pending.is_empty() {
+        Self::run(&self.discard);
+        if self.discard_async.is_empty() {
             return;
+        }
+        let mut pending = Vec::with_capacity(self.discard_async.len());
+        while let Some(callback) = self.discard_async.pop() {
+            pending.push(callback);
         }
         #[cfg(not(target_arch = "wasm32"))]
         match tokio::runtime::Handle::try_current() {
@@ -168,8 +166,8 @@ impl CallbackManager {
         );
     }
 
-    fn run(callbacks: Vec<TxnCallback>) {
-        for callback in callbacks {
+    fn run(callbacks: &SegQueue<TxnCallback>) {
+        while let Some(callback) = callbacks.pop() {
             callback();
         }
     }

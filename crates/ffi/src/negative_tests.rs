@@ -375,7 +375,8 @@ mod tests {
     /// Concurrent node creation and destruction from multiple threads must not
     /// corrupt the registry or produce duplicate handles.
     ///
-    /// This exercises the RwLock + AtomicUsize handle counter under contention.
+    /// This exercises the lock-free registry map and its AtomicUsize handle
+    /// counter under contention.
     #[test]
     fn concurrent_node_create_destroy_is_safe() {
         init();

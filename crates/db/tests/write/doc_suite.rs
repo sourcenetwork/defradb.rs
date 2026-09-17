@@ -15,6 +15,7 @@ use document::DocID;
 use document::Document;
 use document::NormalValue;
 use events::EventName;
+use kovan_queue::seg_queue::SegQueue;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use query::txn::TransactionRegistry;
@@ -1126,14 +1127,24 @@ async fn delete_missing_doc_publishes_no_event_and_writes_no_block() {
 /// `TxnBroadcaster` test double: captures every event it's asked to
 /// broadcast for inspection.
 struct CapturingBroadcaster {
-    events: Arc<std::sync::Mutex<Vec<db::event::emission::TxnBroadcastEvent>>>,
+    events: Arc<SegQueue<db::event::emission::TxnBroadcastEvent>>,
 }
 
 #[async_trait::async_trait]
 impl db::event::emission::TxnBroadcaster for CapturingBroadcaster {
     async fn broadcast_update(&self, event: db::event::emission::TxnBroadcastEvent) {
-        self.events.lock().unwrap().push(event);
+        self.events.push(event);
     }
+}
+
+fn drain(
+    events: &SegQueue<db::event::emission::TxnBroadcastEvent>,
+) -> Vec<db::event::emission::TxnBroadcastEvent> {
+    let mut drained = Vec::with_capacity(events.len());
+    while let Some(event) = events.pop() {
+        drained.push(event);
+    }
+    drained
 }
 
 #[tokio::test]
@@ -1146,8 +1157,7 @@ async fn create_in_tx_forwards_to_broadcaster_on_commit() {
         .await
         .expect("schema");
 
-    let captured: Arc<std::sync::Mutex<Vec<db::event::emission::TxnBroadcastEvent>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured: Arc<SegQueue<db::event::emission::TxnBroadcastEvent>> = Arc::new(SegQueue::new());
     let broadcaster: Arc<dyn db::event::emission::TxnBroadcaster> =
         Arc::new(CapturingBroadcaster {
             events: Arc::clone(&captured),
@@ -1162,10 +1172,7 @@ async fn create_in_tx_forwards_to_broadcaster_on_commit() {
     let result = mutator.create("TestDoc", doc).await.expect("create");
 
     // Broadcaster must NOT see anything before commit
-    assert!(
-        captured.lock().unwrap().is_empty(),
-        "no broadcast before commit"
-    );
+    assert!(captured.is_empty(), "no broadcast before commit");
 
     let txn = mutator.take_txn().await.expect("take txn");
     txn.commit().await.expect("commit");
@@ -1173,7 +1180,7 @@ async fn create_in_tx_forwards_to_broadcaster_on_commit() {
     // Wait briefly for the on_success_async callback to fire
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let events = captured.lock().unwrap().clone();
+    let events = drain(&captured);
     assert_eq!(events.len(), 1, "exactly one broadcast after commit");
     let event = &events[0];
     assert_eq!(event.doc_id, result.doc_id.to_string());
@@ -1194,8 +1201,7 @@ async fn create_in_tx_does_not_broadcast_on_discard() {
         .await
         .expect("schema");
 
-    let captured: Arc<std::sync::Mutex<Vec<db::event::emission::TxnBroadcastEvent>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured: Arc<SegQueue<db::event::emission::TxnBroadcastEvent>> = Arc::new(SegQueue::new());
     let broadcaster: Arc<dyn db::event::emission::TxnBroadcaster> =
         Arc::new(CapturingBroadcaster {
             events: Arc::clone(&captured),
@@ -1213,8 +1219,5 @@ async fn create_in_tx_does_not_broadcast_on_discard() {
     txn.discard().expect("discard");
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert!(
-        captured.lock().unwrap().is_empty(),
-        "discard should not trigger broadcast"
-    );
+    assert!(captured.is_empty(), "discard should not trigger broadcast");
 }

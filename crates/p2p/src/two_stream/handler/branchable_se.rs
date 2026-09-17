@@ -22,10 +22,7 @@ impl TwoStreamHandler {
         let message_id = request.message_id.clone();
         let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
 
-        {
-            let mut pending = self.pending.lock();
-            pending.register_branchable_sync_request(pending_key);
-        }
+        self.pending.register_branchable_sync_request(pending_key);
 
         let mut stream = self
             .control

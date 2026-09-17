@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 mod branchable_sync;
 
@@ -42,8 +44,8 @@ pub struct P2PAdapter<B: Blockstore + 'static> {
     event_bus: Option<Arc<dyn events::Bus>>,
     version_syncer: Option<Arc<dyn VersionSyncer>>,
     replicator_push_options: ReplicatorPushOptionsState,
-    peer_addresses: Arc<std::sync::RwLock<RapidHashMap<String, String>>>,
-    tracked_documents: Arc<std::sync::RwLock<RapidHashSet<String>>>,
+    peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
+    tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
 }
 
@@ -107,13 +109,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
     }
 
     async fn resubscribe_tracked_document_topics(&self) {
-        let doc_ids: Vec<String> = match self.tracked_documents.read() {
-            Ok(docs) => docs.iter().cloned().collect(),
-            Err(error) => {
-                tracing::warn!(error = %error, "failed to read tracked documents");
-                return;
-            }
-        };
+        let doc_ids: Vec<String> = self.tracked_documents.keys().collect();
         for doc_id in &doc_ids {
             let topic = DefraTopic::document(doc_id);
             if let Err(error) = self.handle.unsubscribe(topic.clone()).await {
@@ -140,8 +136,8 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
             event_bus: Some(event_bus),
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
+            peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
         }
     }
@@ -222,9 +218,9 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
     }
 
     pub fn set_initial_tracked_documents(&self, docs: RapidHashSet<String>) {
-        if let Ok(mut tracked) = self.tracked_documents.write() {
-            *tracked = docs;
-        }
+        self.tracked_documents.clear();
+        self.tracked_documents
+            .extend(docs.into_iter().map(|doc_id| (doc_id, ())));
     }
 
     /// Resolve collection names to CIDs for removal, mirroring `add_replicator`.
@@ -245,7 +241,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
         };
-        let mut status = serde_json::to_value(coordinator.sync_status())
+        let mut status = serde_json::to_value(coordinator.sync_status().await)
             .map_err(|error| P2PError::transport(error.to_string()))?;
         if let (Some(pusher), Some(object)) = (self.doc_pusher.as_ref(), status.as_object_mut()) {
             object.insert(
@@ -283,9 +279,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;
         self.handle
-            .resolve_peer_addresses(&connected, |peer_id| {
-                self.peer_addresses.read().ok()?.get(peer_id).cloned()
-            })
+            .resolve_peer_addresses(&connected, |peer_id| self.peer_addresses.get(peer_id))
             .await
             .map_err(|error| P2PError::transport(error.to_string()))
     }
@@ -321,9 +315,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .map(|peers| peers.contains(&parsed.peer_id))
             .unwrap_or(false);
         if already_connected {
-            if let Ok(mut addrs) = self.peer_addresses.write() {
-                addrs.insert(parsed.peer_id.to_string(), addr.to_string());
-            }
+            self.peer_addresses
+                .insert(parsed.peer_id.to_string(), addr.to_string());
             return Ok(());
         }
         self.handle
@@ -334,9 +327,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .poll_until_connected(parsed.peer_id, std::time::Duration::from_secs(10))
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;
-        if let Ok(mut addrs) = self.peer_addresses.write() {
-            addrs.insert(parsed.peer_id.to_string(), addr.to_string());
-        }
+        self.peer_addresses
+            .insert(parsed.peer_id.to_string(), addr.to_string());
         self.resubscribe_tracked_document_topics().await;
         Ok(())
     }
@@ -351,9 +343,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .disconnect(parsed.peer_id)
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;
-        if let Ok(mut addrs) = self.peer_addresses.write() {
-            addrs.remove(&parsed.peer_id.to_string());
-        }
+        self.peer_addresses.remove(&parsed.peer_id.to_string());
         Ok(())
     }
 
@@ -515,9 +505,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .map_err(|error| {
                 P2PError::transport(format!("failed to connect to replicator peer: {error}"))
             })?;
-        if let Ok(mut addrs) = self.peer_addresses.write() {
-            addrs.insert(peer_id.to_string(), addr_str.to_string());
-        }
+        self.peer_addresses
+            .insert(peer_id.to_string(), addr_str.to_string());
 
         let replicator_info = p2p::ReplicatorInfo::from_raw_with_filters(
             peer_id.to_string(),
@@ -783,10 +772,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         self.check_nac(acp::nac::NodePermission::P2pDocumentList)
             .await?;
 
-        let docs = self.tracked_documents.read().map_err(|error| {
-            P2PError::internal(format!("failed to read tracked documents: {error}"))
-        })?;
-        let mut sorted: Vec<String> = docs.iter().cloned().collect();
+        let mut sorted: Vec<String> = self.tracked_documents.keys().collect();
         sorted.sort();
         Ok(sorted
             .into_iter()
@@ -811,17 +797,11 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             if let Err(error) = self.handle.subscribe(topic).await {
                 tracing::warn!(doc_id = %doc_id, error = %error, "Failed to subscribe to topic for document");
             }
-            if let Ok(mut tracked) = self.tracked_documents.write() {
-                tracked.insert(doc_id.clone());
-            }
+            self.tracked_documents.insert(doc_id.clone(), ());
         }
 
         if let Some(ref pusher) = self.doc_pusher {
-            let all_docs: Vec<String> = self
-                .tracked_documents
-                .read()
-                .map(|docs| docs.iter().cloned().collect())
-                .unwrap_or_default();
+            let all_docs: Vec<String> = self.tracked_documents.keys().collect();
             if let Err(error) = pusher.persist_p2p_documents(&all_docs).await {
                 tracing::warn!(error = %error, "failed to persist P2P documents");
             }
@@ -844,17 +824,11 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             if let Err(error) = self.handle.unsubscribe(topic).await {
                 tracing::warn!(doc_id = %doc_id, error = %error, "Failed to unsubscribe from topic for document");
             }
-            if let Ok(mut tracked) = self.tracked_documents.write() {
-                tracked.remove(doc_id);
-            }
+            self.tracked_documents.remove(doc_id);
         }
 
         if let Some(ref pusher) = self.doc_pusher {
-            let all_docs: Vec<String> = self
-                .tracked_documents
-                .read()
-                .map(|docs| docs.iter().cloned().collect())
-                .unwrap_or_default();
+            let all_docs: Vec<String> = self.tracked_documents.keys().collect();
             if let Err(error) = pusher.persist_p2p_documents(&all_docs).await {
                 tracing::warn!(error = %error, "failed to persist P2P documents after removal");
             }
@@ -1305,8 +1279,8 @@ mod tests {
             event_bus: None,
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
+            peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
         }
     }
@@ -1449,8 +1423,8 @@ mod tests {
             event_bus: Some(Arc::new(events::ChannelBus::default())),
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(RapidHashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(RapidHashSet::new())),
+            peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
         };
 

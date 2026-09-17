@@ -65,6 +65,11 @@ serde_json.workspace = true
 # Hashing
 rapidhash.workspace = true
 
+# Lock-free shared state
+kovan.workspace = true
+kovan-map.workspace = true
+kovan-queue.workspace = true
+
 # HTTP server
 axum = { workspace = true, optional = true }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"], optional = true }

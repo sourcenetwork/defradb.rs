@@ -34,7 +34,7 @@ pub unsafe extern "C" fn batch_start(
         let session_str = c_str_to_string(session_id);
 
         let (node_did, signing_enabled) = NODES
-            .get(node_ptr, |state| (state.node_identity_did.clone(), state.signing_enabled))
+            .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
             .unwrap_or((None, false));
 
         let signing = defra_core::signing::resolve_signing_config_with_flag(
@@ -80,7 +80,7 @@ pub unsafe extern "C" fn batch_sign(
         let session_str = c_str_to_string(session_id);
 
         let (node_did, signing_enabled) = NODES
-            .get(node_ptr, |state| (state.node_identity_did.clone(), state.signing_enabled))
+            .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
             .unwrap_or((None, false));
 
         let signing = defra_core::signing::resolve_signing_config_with_flag(

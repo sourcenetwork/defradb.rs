@@ -1,8 +1,11 @@
 //! DocumentACP trait implementation for ZanzibarDocumentACP.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use identity::Did;
+use zanzibar::engine::PermissionEngine;
 use zanzibar::store::ZanzibarStore;
 use zanzibar::types::{Relationship, Subject};
 
@@ -22,7 +25,7 @@ fn actor_subject(actor: &Did) -> Subject {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S> {
+impl<S: ZanzibarStore + ?Sized + Send + Sync + 'static> DocumentACP for ZanzibarDocumentACP<S> {
     async fn register_doc_object(
         &self,
         identity: &Did,
@@ -121,10 +124,12 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
 
         self.ensure_policy(policy_id, resource_name).await?;
 
+        // The Arc is cloned out of the Atom before any await below: an
+        // AtomGuard must never cross an await point.
+        let engine: Arc<PermissionEngine<S>> = Arc::clone(&*self.engine.load());
         let granted = if permission == DocumentPermission::Read {
             // Read access is granted if the caller has any of the
             // implies-read permissions — matches Go's ImplyDocumentReadPerm.
-            let engine = self.engine.read().await;
             let mut result = false;
             for perm in DocumentPermission::implies_read_permissions() {
                 match engine
@@ -142,7 +147,6 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
             result
         } else {
             let relation = Self::permission_to_relation(permission);
-            let engine = self.engine.read().await;
             engine
                 .check(policy_id, resource_name, doc_id, relation, &subject)
                 .await?

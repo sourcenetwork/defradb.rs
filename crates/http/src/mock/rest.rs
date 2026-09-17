@@ -2,10 +2,14 @@
 
 use async_trait::async_trait;
 use identity::Did;
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use serde_json::{json, Value as JsonValue};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
+use crate::mock::update_vec;
 use query::rest::{RestError, RestOperations, RestResult};
 
 /// Internal document storage for mock REST operations.
@@ -29,13 +33,16 @@ fn matches_filter(data: &JsonValue, filter: &JsonValue) -> RestResult<bool> {
         .map_err(|e| RestError::invalid_input(e.to_string()))
 }
 
+/// A collection's documents, lock-free in their own right so a per-key update
+/// never round-trips through the map.
+type Documents = Arc<Atom<Vec<MockDocument>>>;
+
 /// Mock REST operations for testing collection and document handlers.
-#[derive(Debug)]
 pub struct MockRestOperations {
     /// Collections with their documents.
-    collections: Arc<RwLock<RapidHashMap<String, Vec<MockDocument>>>>,
+    collections: Arc<HopscotchMap<String, Documents, RandomState>>,
     /// Counter for generating unique document IDs.
-    next_id: Arc<RwLock<u64>>,
+    next_id: Arc<AtomicU64>,
 }
 
 impl Clone for MockRestOperations {
@@ -56,12 +63,12 @@ impl Default for MockRestOperations {
 impl MockRestOperations {
     /// Create a new mock REST operations instance with default collections.
     pub fn new() -> Self {
-        let mut collections = RapidHashMap::new();
+        let collections = HopscotchMap::with_hasher(RandomState::default());
 
         // Add default Users collection with sample data
         collections.insert(
             "Users".to_string(),
-            vec![
+            Arc::new(Atom::new(vec![
                 MockDocument {
                     doc_id: "bae-123".to_string(),
                     data: json!({"name": "Alice", "age": 30}),
@@ -70,48 +77,50 @@ impl MockRestOperations {
                     doc_id: "bae-456".to_string(),
                     data: json!({"name": "Bob", "age": 25}),
                 },
-            ],
+            ])),
         );
 
         // Add empty Books collection
-        collections.insert("Books".to_string(), vec![]);
+        collections.insert("Books".to_string(), Arc::new(Atom::new(vec![])));
 
         Self {
-            collections: Arc::new(RwLock::new(collections)),
-            next_id: Arc::new(RwLock::new(1000)),
+            collections: Arc::new(collections),
+            next_id: Arc::new(AtomicU64::new(1000)),
         }
     }
 
     /// Create an empty mock REST operations instance.
     pub fn empty() -> Self {
         Self {
-            collections: Arc::new(RwLock::new(RapidHashMap::new())),
-            next_id: Arc::new(RwLock::new(1)),
+            collections: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            next_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
     /// Add a collection (for test setup).
     pub fn with_collection(self, name: &str) -> Self {
         self.collections
-            .write()
-            .unwrap()
-            .insert(name.to_string(), vec![]);
+            .insert(name.to_string(), Arc::new(Atom::new(vec![])));
         self
     }
 
     /// Generate a new unique document ID.
     fn generate_doc_id(&self) -> String {
-        let mut id = self.next_id.write().unwrap();
-        *id += 1;
-        format!("bae-{:08x}", *id)
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        format!("bae-{:08x}", id)
+    }
+
+    fn documents(&self, collection: &str) -> RestResult<Documents> {
+        self.collections
+            .get(collection)
+            .ok_or_else(|| RestError::collection_not_found(collection))
     }
 }
 
 #[async_trait]
 impl RestOperations for MockRestOperations {
     async fn list_collections(&self) -> RestResult<Vec<String>> {
-        let collections = self.collections.read().unwrap();
-        let mut names: Vec<String> = collections.keys().cloned().collect();
+        let mut names: Vec<String> = self.collections.keys().collect();
         names.sort();
         Ok(names)
     }
@@ -121,11 +130,9 @@ impl RestOperations for MockRestOperations {
         collection: &str,
         _identity: Option<&Did>,
     ) -> RestResult<Vec<String>> {
-        let collections = self.collections.read().unwrap();
-        match collections.get(collection) {
-            Some(docs) => Ok(docs.iter().map(|d| d.doc_id.clone()).collect()),
-            None => Err(RestError::collection_not_found(collection)),
-        }
+        Ok(self
+            .documents(collection)?
+            .peek(|docs| docs.iter().map(|d| d.doc_id.clone()).collect()))
     }
 
     async fn get_document(
@@ -134,23 +141,15 @@ impl RestOperations for MockRestOperations {
         doc_id: &str,
         _identity: Option<&Did>,
     ) -> RestResult<Option<JsonValue>> {
-        let collections = self.collections.read().unwrap();
-        match collections.get(collection) {
-            Some(docs) => {
-                let doc = docs.iter().find(|d| d.doc_id == doc_id);
-                match doc {
-                    Some(d) => {
-                        let mut result = d.data.clone();
-                        if let Some(obj) = result.as_object_mut() {
-                            obj.insert("_docID".to_string(), json!(d.doc_id));
-                        }
-                        Ok(Some(result))
-                    }
-                    None => Ok(None),
+        Ok(self.documents(collection)?.peek(|docs| {
+            docs.iter().find(|d| d.doc_id == doc_id).map(|d| {
+                let mut result = d.data.clone();
+                if let Some(obj) = result.as_object_mut() {
+                    obj.insert("_docID".to_string(), json!(d.doc_id));
                 }
-            }
-            None => Err(RestError::collection_not_found(collection)),
-        }
+                result
+            })
+        }))
     }
 
     async fn create_document(
@@ -159,24 +158,20 @@ impl RestOperations for MockRestOperations {
         data: JsonValue,
         _identity: Option<&Did>,
     ) -> RestResult<JsonValue> {
-        let mut collections = self.collections.write().unwrap();
-        match collections.get_mut(collection) {
-            Some(docs) => {
-                let doc_id = self.generate_doc_id();
-                let doc = MockDocument {
-                    doc_id: doc_id.clone(),
-                    data: data.clone(),
-                };
-                docs.push(doc);
+        let documents = self.documents(collection)?;
+        let doc_id = self.generate_doc_id();
+        update_vec(&documents, |docs| {
+            docs.push(MockDocument {
+                doc_id: doc_id.clone(),
+                data: data.clone(),
+            })
+        });
 
-                let mut result = data;
-                if let Some(obj) = result.as_object_mut() {
-                    obj.insert("_docID".to_string(), json!(doc_id));
-                }
-                Ok(result)
-            }
-            None => Err(RestError::collection_not_found(collection)),
+        let mut result = data;
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("_docID".to_string(), json!(doc_id));
         }
+        Ok(result)
     }
 
     async fn create_documents(
@@ -200,32 +195,24 @@ impl RestOperations for MockRestOperations {
         patch: JsonValue,
         _identity: Option<&Did>,
     ) -> RestResult<JsonValue> {
-        let mut collections = self.collections.write().unwrap();
-        match collections.get_mut(collection) {
-            Some(docs) => {
-                let doc = docs.iter_mut().find(|d| d.doc_id == doc_id);
-                match doc {
-                    Some(d) => {
-                        // Merge patch into existing data
-                        if let (Some(existing), Some(updates)) =
-                            (d.data.as_object_mut(), patch.as_object())
-                        {
-                            for (key, value) in updates {
-                                existing.insert(key.clone(), value.clone());
-                            }
-                        }
-
-                        let mut result = d.data.clone();
-                        if let Some(obj) = result.as_object_mut() {
-                            obj.insert("_docID".to_string(), json!(d.doc_id));
-                        }
-                        Ok(result)
-                    }
-                    None => Err(RestError::document_not_found(doc_id)),
+        let documents = self.documents(collection)?;
+        update_vec(&documents, |docs| {
+            let Some(d) = docs.iter_mut().find(|d| d.doc_id == doc_id) else {
+                return Err(RestError::document_not_found(doc_id));
+            };
+            // Merge patch into existing data
+            if let (Some(existing), Some(updates)) = (d.data.as_object_mut(), patch.as_object()) {
+                for (key, value) in updates {
+                    existing.insert(key.clone(), value.clone());
                 }
             }
-            None => Err(RestError::collection_not_found(collection)),
-        }
+
+            let mut result = d.data.clone();
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("_docID".to_string(), json!(d.doc_id));
+            }
+            Ok(result)
+        })
     }
 
     async fn delete_document(
@@ -234,15 +221,12 @@ impl RestOperations for MockRestOperations {
         doc_id: &str,
         _identity: Option<&Did>,
     ) -> RestResult<bool> {
-        let mut collections = self.collections.write().unwrap();
-        match collections.get_mut(collection) {
-            Some(docs) => {
-                let initial_len = docs.len();
-                docs.retain(|d| d.doc_id != doc_id);
-                Ok(docs.len() < initial_len)
-            }
-            None => Err(RestError::collection_not_found(collection)),
-        }
+        let documents = self.documents(collection)?;
+        Ok(update_vec(&documents, |docs| {
+            let initial_len = docs.len();
+            docs.retain(|d| d.doc_id != doc_id);
+            docs.len() < initial_len
+        }))
     }
 
     /// Matches on equality of each filter key against the stored document,
@@ -253,19 +237,17 @@ impl RestOperations for MockRestOperations {
         filter: &JsonValue,
         _identity: Option<&Did>,
     ) -> RestResult<Vec<String>> {
-        let mut collections = self.collections.write().unwrap();
-        let docs = collections
-            .get_mut(collection)
-            .ok_or_else(|| RestError::collection_not_found(collection))?;
-
-        let mut matched = Vec::new();
-        for doc in docs.iter() {
-            if matches_filter(&doc.data, filter)? {
-                matched.push(doc.doc_id.clone());
+        let documents = self.documents(collection)?;
+        update_vec(&documents, |docs| {
+            let mut matched = Vec::new();
+            for doc in docs.iter() {
+                if matches_filter(&doc.data, filter)? {
+                    matched.push(doc.doc_id.clone());
+                }
             }
-        }
-        docs.retain(|doc| !matched.contains(&doc.doc_id));
-        Ok(matched)
+            docs.retain(|doc| !matched.contains(&doc.doc_id));
+            Ok(matched)
+        })
     }
 
     async fn update_documents_with_filter(
@@ -275,24 +257,22 @@ impl RestOperations for MockRestOperations {
         updater: &JsonValue,
         _identity: Option<&Did>,
     ) -> RestResult<Vec<String>> {
-        let mut collections = self.collections.write().unwrap();
-        let docs = collections
-            .get_mut(collection)
-            .ok_or_else(|| RestError::collection_not_found(collection))?;
-
-        let mut updated = Vec::new();
-        for doc in docs.iter_mut() {
-            if !matches_filter(&doc.data, filter)? {
-                continue;
-            }
-            if let (Some(data), Some(patch)) = (doc.data.as_object_mut(), updater.as_object()) {
-                for (key, value) in patch {
-                    data.insert(key.clone(), value.clone());
+        let documents = self.documents(collection)?;
+        update_vec(&documents, |docs| {
+            let mut updated = Vec::new();
+            for doc in docs.iter_mut() {
+                if !matches_filter(&doc.data, filter)? {
+                    continue;
                 }
+                if let (Some(data), Some(patch)) = (doc.data.as_object_mut(), updater.as_object()) {
+                    for (key, value) in patch {
+                        data.insert(key.clone(), value.clone());
+                    }
+                }
+                updated.push(doc.doc_id.clone());
             }
-            updated.push(doc.doc_id.clone());
-        }
-        Ok(updated)
+            Ok(updated)
+        })
     }
 }
 

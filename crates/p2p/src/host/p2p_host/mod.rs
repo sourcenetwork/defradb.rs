@@ -237,9 +237,19 @@ impl Default for P2PHostConfig {
     }
 }
 
-/// Join handle and session id per in-flight Bitswap query.
+/// One in-flight Bitswap query: its abort handle, a join future the cancel
+/// path awaits so the session stops only once the aborted task is dropped,
+/// and the session id.
+#[derive(Clone)]
+pub(super) struct BitswapQuery {
+    pub(super) abort: tokio::task::AbortHandle,
+    pub(super) joined: futures::future::Shared<futures::future::BoxFuture<'static, ()>>,
+    pub(super) session_id: u64,
+}
+
+/// In-flight Bitswap queries by id.
 pub(super) type BitswapQueries =
-    Arc<parking_lot::Mutex<RapidHashMap<QueryId, (tokio::task::JoinHandle<()>, u64)>>>;
+    Arc<kovan_map::HopscotchMap<QueryId, BitswapQuery, rapidhash::fast::RandomState>>;
 
 /// P2P Host that manages the libp2p swarm.
 pub struct P2PHost<S: Store> {
@@ -254,17 +264,15 @@ pub struct P2PHost<S: Store> {
     >,
     /// Replicator registry for access control
     pub(super) replicators: Arc<ReplicatorRegistry>,
-    /// Two-stream handler for Go compatibility
-    pub(super) two_stream_handler: Arc<tokio::sync::Mutex<TwoStreamHandler>>,
+    /// Two-stream handler for Go compatibility. Cloned per task: each clone
+    /// forks the stream control and shares the pending-response table.
+    pub(super) two_stream_handler: TwoStreamHandler,
     /// Receiver for two-stream events
     pub(super) two_stream_event_rx: mpsc::Receiver<crate::two_stream::TwoStreamEvent>,
     /// Tracked spawned tasks for graceful shutdown
     pub(super) spawned_tasks: tokio::task::JoinSet<()>,
-    /// Bitswap query join handles and session ids, for cancellation and
-    /// session teardown. Shared with each fetch task, which removes its own
-    /// entry when it completes. The join handle, rather than a bare abort
-    /// handle, because stopping a cancelled query's session has to wait for
-    /// the aborted task to be dropped.
+    /// Bitswap queries, for cancellation and session teardown. Shared with
+    /// each fetch task, which removes its own entry when it completes.
     pub(super) bitswap_queries: BitswapQueries,
     /// Per-peer addresses learned from connections and identify protocol.
     /// Used by ActivePeers to return full multiaddrs (Go-compatible).
@@ -556,9 +564,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 Error::Behaviour("Failed to register identity response protocol".into())
             })?;
 
-        let handler = TwoStreamHandler::new(control);
-        let pending = handler.pending_responses();
-        let two_stream_handler = Arc::new(tokio::sync::Mutex::new(handler));
+        let two_stream_handler = TwoStreamHandler::new(control);
+        let pending = two_stream_handler.pending_responses();
         let (two_stream_event_tx, two_stream_event_rx) = mpsc::channel(256);
 
         // Spawn the two-stream runner as a background task
@@ -597,7 +604,9 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             two_stream_handler,
             two_stream_event_rx,
             spawned_tasks: tokio::task::JoinSet::new(),
-            bitswap_queries: Arc::new(parking_lot::Mutex::new(RapidHashMap::new())),
+            bitswap_queries: Arc::new(kovan_map::HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
             peer_addrs: RapidHashMap::new(),
             node_identity,
             connection_manager: ActiveConnectionManager::new(

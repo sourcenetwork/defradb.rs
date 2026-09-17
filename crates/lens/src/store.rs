@@ -6,6 +6,8 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use futures::Stream;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 
 use crate::{Error, LensConfig, LensDoc, Result};
@@ -83,9 +85,16 @@ pub trait TransformStore: Send + Sync {
 }
 
 /// In-memory transform store for testing.
-#[derive(Default)]
 pub struct MemoryTransformStore {
-    transforms: std::sync::RwLock<RapidHashMap<TransformId, LensConfig>>,
+    transforms: HopscotchMap<TransformId, LensConfig, RandomState>,
+}
+
+impl Default for MemoryTransformStore {
+    fn default() -> Self {
+        Self {
+            transforms: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl MemoryTransformStore {
@@ -111,37 +120,20 @@ impl TransformStore for MemoryTransformStore {
         // Use "baf" prefix to mimic CID format, then 16 bytes of hash for uniqueness
         let id = TransformId::new(format!("baf{}", hex::encode(&hash[..16])));
 
-        let mut transforms = self
-            .transforms
-            .write()
-            .map_err(|e| Error::Pipeline(format!("failed to acquire write lock: {}", e)))?;
-
         // Deduplication: if this config already exists, return the existing ID
-        if transforms.contains_key(&id) {
-            return Ok(id);
-        }
-
-        transforms.insert(id.clone(), config);
+        self.transforms.insert_if_absent(id.clone(), config);
 
         Ok(id)
     }
 
     async fn add_with_id(&self, id: TransformId, config: LensConfig) -> Result<()> {
-        let mut transforms = self
-            .transforms
-            .write()
-            .map_err(|e| Error::Pipeline(format!("failed to acquire write lock: {}", e)))?;
-        transforms.insert(id, config);
+        self.transforms.insert(id, config);
         Ok(())
     }
 
     async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
-        let transforms = self
+        let result = self
             .transforms
-            .read()
-            .map_err(|e| Error::Pipeline(format!("failed to acquire read lock: {}", e)))?;
-
-        let result = transforms
             .iter()
             .filter_map(|(id, config)| config.lens().cloned().map(|l| (id.to_string(), l)))
             .collect();
@@ -180,19 +172,11 @@ impl TransformStore for MemoryTransformStore {
     }
 
     fn has_transform(&self, id: &TransformId) -> bool {
-        self.transforms
-            .read()
-            .map(|t| t.contains_key(id))
-            .unwrap_or(false)
+        self.transforms.contains_key(id)
     }
 
     async fn remove(&self, id: &TransformId) -> Result<()> {
-        let mut transforms = self
-            .transforms
-            .write()
-            .map_err(|e| Error::Pipeline(format!("failed to acquire write lock: {}", e)))?;
-
-        if transforms.remove(id).is_none() {
+        if self.transforms.remove(id).is_none() {
             return Err(Error::TransformNotFound(id.to_string()));
         }
 

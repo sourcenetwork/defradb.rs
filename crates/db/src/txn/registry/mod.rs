@@ -15,15 +15,16 @@
 
 use async_trait::async_trait;
 use document::Document;
+use kovan_map::HopscotchMap;
 use lens::{LensConfig, LensModule, TransformId};
 use query::error::TransactionError;
 use query::txn::{
     DeferredAcpMutations, GetTransactionResult, TransactionContext, TransactionHandle,
     TransactionRegistry,
 };
-use rapidhash::{HashMapExt, RapidHashMap};
+use rapidhash::fast::RandomState;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use storage::corekv::{IterOptions, Key, Store};
 use tracing::{error, warn};
@@ -81,22 +82,12 @@ impl CleanupResult {
 ///
 /// # Thread Safety
 ///
-/// Uses `std::sync::RwLock` for the transaction map to allow synchronous
-/// lookups (required by the trait), and `tokio::sync::Mutex` for the
-/// underlying transaction to support async document fetching operations.
-///
-/// # Error Handling
-///
-/// If the internal lock becomes poisoned (due to a panic in another thread),
-/// all operations will fail-fast: `get()` returns `LockPoisoned`, `get_ctx()`
-/// returns an error, and `begin()`, `commit()`, and `rollback()` return errors.
-/// A poisoned lock indicates a panic and potential data corruption - continuing
-/// operation would be unsafe.
-/// Abandonment still removes entries from a poisoned map, without clearing its
-/// poison or attempting to commit, so cancellation can release resources.
-pub struct DbTransactionRegistry<S: Store> {
+/// The transaction map is lock-free so lookups stay synchronous (required by
+/// the trait); the underlying transaction keeps its async mutex to support
+/// async document fetching operations.
+pub struct DbTransactionRegistry<S: Store + 'static> {
     db: Arc<DB<S>>,
-    transactions: RwLock<RapidHashMap<String, Arc<DbTransactionContext<S>>>>,
+    transactions: HopscotchMap<String, Arc<DbTransactionContext<S>>, RandomState>,
     id_counter: AtomicU64,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
 }
@@ -109,7 +100,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     pub fn new(db: Arc<DB<S>>) -> Self {
         Self {
             db,
-            transactions: RwLock::new(RapidHashMap::new()),
+            transactions: HopscotchMap::with_hasher(RandomState::default()),
             id_counter: AtomicU64::new(0),
             broadcaster: None,
         }
@@ -125,7 +116,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     ) -> Self {
         Self {
             db,
-            transactions: RwLock::new(RapidHashMap::new()),
+            transactions: HopscotchMap::with_hasher(RandomState::default()),
             id_counter: AtomicU64::new(0),
             broadcaster: Some(broadcaster),
         }
@@ -154,40 +145,47 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 
     /// Get an existing transaction by ID (for internal use).
     ///
-    /// Returns `Ok(None)` if the transaction doesn't exist.
-    /// Returns `Err(LockPoisoned)` if the lock is poisoned (indicates a panic elsewhere).
+    /// Returns `Ok(None)` if the transaction doesn't exist, or a cleanup sweep
+    /// has already claimed it.
     pub fn get_ctx(&self, txn_id: &str) -> Result<Option<Arc<DbTransactionContext<S>>>> {
-        match self.transactions.read() {
-            Ok(guard) => {
-                let ctx = guard.get(txn_id).cloned();
-                if let Some(ctx) = &ctx {
-                    ctx.touch();
-                }
-                Ok(ctx)
-            }
-            Err(poisoned) => {
-                error!(
-                    txn_id = %txn_id,
-                    error = ?poisoned,
-                    "Transaction registry lock poisoned - system may be in corrupted state"
-                );
-                Err(Error::LockPoisoned(format!(
-                    "failed to acquire read lock for transaction '{}': a panic occurred elsewhere",
-                    txn_id
-                )))
-            }
-        }
+        Ok(self.transactions.get(txn_id).filter(|ctx| ctx.touch()))
     }
 
     /// Get the number of active transactions in the registry.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the lock is poisoned.
     pub fn active_transaction_count(&self) -> Result<usize> {
+        Ok(self.transactions.len())
+    }
+
+    /// Unregister a transaction, taking ownership of releasing it.
+    fn take_registered(&self, handle: &TransactionHandle) -> Option<RemovedTransaction<S>> {
         self.transactions
-            .read()
-            .map(|guard| guard.len())
-            .map_err(|_| Error::LockPoisoned("failed to acquire read lock for count".to_string()))
+            .remove(handle.as_str())
+            .map(RemovedTransaction)
+    }
+}
+
+/// A transaction context the registry no longer holds.
+///
+/// The map retires its own reference instead of dropping it at the removal, so
+/// a caller that never reaches the commit or rollback (an abandoned handle, a
+/// cancelled finalization) would otherwise leave the transaction open and the
+/// store locked. Dropping this releases it.
+struct RemovedTransaction<S: Store + 'static>(Arc<DbTransactionContext<S>>);
+
+impl<S: Store + 'static> std::ops::Deref for RemovedTransaction<S> {
+    type Target = DbTransactionContext<S>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<S: Store + 'static> Drop for RemovedTransaction<S> {
+    fn drop(&mut self) {
+        if let Some(txn) = self.0.try_take_txn() {
+            if let Err(error) = txn.force_discard() {
+                error!(error = %error, "Failed to discard an unfinalized transaction");
+            }
+        }
     }
 }

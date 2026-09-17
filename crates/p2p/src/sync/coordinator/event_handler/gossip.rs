@@ -28,9 +28,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
         let topic_matches_collection = topic == message.collection_id;
         let topic_matches_document = !message.doc_id.is_empty() && topic == message.doc_id;
-        let is_subscribed = self
-            .is_locally_subscribed_collection(&message.collection_id)
-            .await;
+        let is_subscribed = self.is_locally_subscribed_collection(&message.collection_id);
         let is_open_access = self.access.access_mode.is_open();
         let is_outbound_replicator_target =
             self.is_registered_replicator(propagation_source.as_str(), &message.collection_id);

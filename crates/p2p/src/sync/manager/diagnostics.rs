@@ -17,7 +17,7 @@ use std::{
     },
 };
 
-use parking_lot::Mutex;
+use kovan::Atom;
 
 /// Process-global counter of gossip payload decode failures.
 ///
@@ -26,8 +26,10 @@ use parking_lot::Mutex;
 /// `SyncDiagnostics::snapshot()` so tests see the same number across all
 /// managers in the process.
 static GOSSIP_DECODE_FAILURES: AtomicU64 = AtomicU64::new(0);
-static RECENT_GOSSIP_DECODE_FAILURES: LazyLock<Mutex<VecDeque<GossipDecodeFailureSample>>> =
-    LazyLock::new(|| Mutex::new(VecDeque::with_capacity(GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT)));
+/// A bounded, deduplicated ring of at most `GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT`
+/// samples, replaced as a unit on every rare decode failure.
+static RECENT_GOSSIP_DECODE_FAILURES: LazyLock<Atom<VecDeque<GossipDecodeFailureSample>>> =
+    LazyLock::new(|| Atom::new(VecDeque::with_capacity(GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT)));
 
 const GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT: usize = 16;
 
@@ -86,31 +88,36 @@ pub(crate) fn record_gossip_decode_failure() -> u64 {
     not(any(feature = "libp2p-transport", feature = "iroh-transport")),
     allow(dead_code)
 )]
-pub(crate) fn record_gossip_decode_failure_sample(mut sample: GossipDecodeFailureSample) -> u64 {
+pub(crate) fn record_gossip_decode_failure_sample(sample: GossipDecodeFailureSample) -> u64 {
     let total = record_gossip_decode_failure();
-    let mut recent = RECENT_GOSSIP_DECODE_FAILURES.lock();
-
-    if let Some(index) = recent.iter().position(|existing| {
-        existing.transport == sample.transport
-            && existing.peer_id == sample.peer_id
-            && existing.topic == sample.topic
-            && existing.payload_fingerprint == sample.payload_fingerprint
-            && existing.payload_shape_hint == sample.payload_shape_hint
-    }) {
-        let mut existing = recent
-            .remove(index)
-            .expect("matched gossip decode failure sample should exist");
-        existing.message_size = sample.message_size;
-        existing.error = sample.error;
-        existing.occurrences += 1;
-        recent.push_back(existing);
-    } else {
-        sample.occurrences = 1;
-        recent.push_back(sample);
-        while recent.len() > GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT {
-            recent.pop_front();
+    RECENT_GOSSIP_DECODE_FAILURES.rcu(|current| {
+        let mut recent = current.clone();
+        let matched = recent.iter().position(|existing| {
+            existing.transport == sample.transport
+                && existing.peer_id == sample.peer_id
+                && existing.topic == sample.topic
+                && existing.payload_fingerprint == sample.payload_fingerprint
+                && existing.payload_shape_hint == sample.payload_shape_hint
+        });
+        match matched.and_then(|index| recent.remove(index)) {
+            Some(mut existing) => {
+                existing.message_size = sample.message_size;
+                existing.error = sample.error.clone();
+                existing.occurrences += 1;
+                recent.push_back(existing);
+            }
+            None => {
+                recent.push_back(GossipDecodeFailureSample {
+                    occurrences: 1,
+                    ..sample.clone()
+                });
+                while recent.len() > GOSSIP_DECODE_FAILURE_SAMPLE_LIMIT {
+                    recent.pop_front();
+                }
+            }
         }
-    }
+        recent
+    });
 
     total
 }
@@ -212,10 +219,7 @@ impl SyncDiagnostics {
                 .load(Ordering::Relaxed),
             gossip_decode_failures: GOSSIP_DECODE_FAILURES.load(Ordering::Relaxed),
             recent_gossip_decode_failures: RECENT_GOSSIP_DECODE_FAILURES
-                .lock()
-                .iter()
-                .cloned()
-                .collect(),
+                .peek(|recent| recent.iter().cloned().collect()),
         }
     }
 

@@ -1,9 +1,10 @@
 //! Configuration helpers for the iroh endpoint.
 
-use rapidhash::{HashSetExt, RapidHashSet};
+use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
 use iroh::{EndpointId, SecretKey};
+use kovan_map::HopscotchMap;
 
 use super::config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 use super::gossip_heal::GossipHealConfig;
@@ -57,12 +58,12 @@ impl Default for IrohEndpointConfig {
 /// Runtime inbound-allowlist state, held by the endpoint for the life of the
 /// process.
 ///
-/// Mirrors [`IrohAllowlistConfig`] but keeps the explicit set behind a lock so
+/// Mirrors [`IrohAllowlistConfig`] but keeps the explicit set concurrent so
 /// [`IrohCommand::AllowPeer`](super::command::IrohCommand::AllowPeer) can add
 /// a newly authorized peer while the endpoint is running, without a restart.
 pub(super) enum AllowlistState {
     AcceptAll,
-    Explicit(parking_lot::Mutex<RapidHashSet<EndpointId>>),
+    Explicit(HopscotchMap<EndpointId, (), RandomState>),
 }
 
 impl AllowlistState {
@@ -70,7 +71,7 @@ impl AllowlistState {
     pub(super) fn is_allowed(&self, id: &EndpointId) -> bool {
         match self {
             Self::AcceptAll => true,
-            Self::Explicit(ids) => ids.lock().contains(id),
+            Self::Explicit(ids) => ids.contains_key(id),
         }
     }
 
@@ -78,7 +79,7 @@ impl AllowlistState {
     /// already accepted, so there is nothing to widen.
     pub(super) fn allow(&self, id: EndpointId) {
         if let Self::Explicit(ids) = self {
-            ids.lock().insert(id);
+            ids.insert_if_absent(id, ());
         }
     }
 }
@@ -89,7 +90,7 @@ pub(super) fn allowlist_state_from_config(
     match config {
         IrohAllowlistConfig::AcceptAll => Ok(AllowlistState::AcceptAll),
         IrohAllowlistConfig::Explicit(ids) => {
-            let mut parsed = RapidHashSet::with_capacity(ids.len());
+            let parsed = HopscotchMap::with_capacity_and_hasher(ids.len(), RandomState::default());
             for id in ids {
                 let endpoint_id: EndpointId = id.parse().map_err(|e: iroh::KeyParsingError| {
                     crate::error::Error::Transport(format!(
@@ -97,9 +98,9 @@ pub(super) fn allowlist_state_from_config(
                         id, e
                     ))
                 })?;
-                parsed.insert(endpoint_id);
+                parsed.insert_if_absent(endpoint_id, ());
             }
-            Ok(AllowlistState::Explicit(parking_lot::Mutex::new(parsed)))
+            Ok(AllowlistState::Explicit(parsed))
         }
     }
 }
@@ -273,6 +274,7 @@ pub(super) fn apply_bind_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rapidhash::{HashSetExt, RapidHashSet};
 
     #[test]
     fn multipath_limit_rejects_values_iroh_would_ignore() {

@@ -17,10 +17,7 @@ impl TwoStreamHandler {
         let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
         let (tx, rx) = oneshot::channel();
 
-        {
-            let mut pending = self.pending.lock();
-            pending.identity_channels.insert(pending_key.clone(), tx);
-        }
+        self.pending.register_identity(pending_key, tx);
 
         let mut stream = self
             .control

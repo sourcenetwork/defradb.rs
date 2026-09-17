@@ -40,8 +40,8 @@ pub unsafe extern "C" fn set_se_encryption_key(
         // valid for 32 bytes.
         let key = Zeroizing::new(std::slice::from_raw_parts(key_ptr, key_len).to_vec());
 
-        let result = NODES.get_mut(node_ptr, |state| {
-            state.se_encryption_key = Some(key);
+        let result = NODES.get(node_ptr, |state| {
+            state.se_encryption_key.store_some(key);
             state.sync_replicator_push_options()
         });
 

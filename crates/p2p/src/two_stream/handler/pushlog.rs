@@ -28,10 +28,7 @@ impl TwoStreamHandler {
         let (tx, rx) = oneshot::channel();
 
         // Register pending response
-        {
-            let mut pending = self.pending.lock();
-            pending.channels.insert(pending_key.clone(), tx);
-        }
+        self.pending.register_pushlog(pending_key.clone(), tx);
 
         // Open stream and send request
         let mut stream = self
@@ -40,15 +37,13 @@ impl TwoStreamHandler {
             .await
             .map_err(|e| {
                 // Clean up pending on failure
-                let mut pending = self.pending.lock();
-                pending.channels.remove(&pending_key);
+                drop(self.pending.take_pushlog(&pending_key));
                 Error::Transport(format!("failed to open stream: {}", e))
             })?;
 
         write_message(&mut stream, &request).await.map_err(|e| {
             // Clean up pending on failure
-            let mut pending = self.pending.lock();
-            pending.channels.remove(&pending_key);
+            drop(self.pending.take_pushlog(&pending_key));
             Error::CborSerialization(format!("failed to write request: {}", e))
         })?;
 

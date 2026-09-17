@@ -1,18 +1,19 @@
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use integration_test::{for_each_runtime, TestCluster};
+use kovan::Atom;
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
 /// Open an SSE subscription against the node's GraphQL endpoint.
 ///
 /// Returns a background task handle and a shared vec that collects SSE `next` event payloads.
-fn open_subscription(api_url: &str, query: &str) -> (JoinHandle<()>, Arc<Mutex<Vec<Value>>>) {
+fn open_subscription(api_url: &str, query: &str) -> (JoinHandle<()>, Arc<Atom<Vec<Value>>>) {
     let url = format!("{}/api/v0/graphql", api_url);
     let body = serde_json::json!({ "query": query });
-    let events: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let events: Arc<Atom<Vec<Value>>> = Arc::new(Atom::new(Vec::new()));
     let events_clone = events.clone();
 
     let handle = tokio::spawn(async move {
@@ -47,7 +48,11 @@ fn open_subscription(api_url: &str, query: &str) -> (JoinHandle<()>, Arc<Mutex<V
                 }
                 if event_type == "next" {
                     if let Ok(val) = serde_json::from_str::<Value>(&data) {
-                        events_clone.lock().unwrap().push(val);
+                        events_clone.rcu(|items| {
+                            let mut next = items.clone();
+                            next.push(val.clone());
+                            next
+                        });
                     }
                 }
             }
@@ -126,7 +131,7 @@ async fn subscription_docid_filter_test(cluster: TestCluster) {
     tokio::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
-    let collected = events.lock().unwrap();
+    let collected = events.load_clone();
     assert!(
         !collected.is_empty(),
         "expected at least 1 subscription event for Alice, got 0"
@@ -194,7 +199,7 @@ async fn commit_subscription_docid_filter_test(cluster: TestCluster) {
     tokio::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
-    let collected = events.lock().unwrap();
+    let collected = events.load_clone();
     assert!(
         !collected.is_empty(),
         "expected at least 1 commit event for target, got 0"
@@ -269,12 +274,12 @@ async fn subscription_no_filter_test(cluster: TestCluster) {
     tokio::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
-    let collected = events.lock().unwrap();
+    let collected = events.load_clone();
     assert!(
         collected.len() >= 2,
         "expected at least 2 events (one per document), got {}: {:?}",
         collected.len(),
-        *collected
+        collected
     );
 
     let seen_ids: HashSet<String> = collected
@@ -327,7 +332,7 @@ async fn subscription_delete_event_scoped_by_cid_test(cluster: TestCluster) {
     tokio::time::sleep(Duration::from_secs(2)).await;
     handle.abort();
 
-    let collected = events.lock().unwrap();
+    let collected = events.load_clone();
     assert!(
         collected.iter().any(|event| {
             extract_doc_id(event, "User").as_deref() == Some(doc_id.as_str())
@@ -338,7 +343,7 @@ async fn subscription_delete_event_scoped_by_cid_test(cluster: TestCluster) {
                     == Some(true)
         }),
         "expected delete subscription event with _deleted=true for {doc_id}, got: {:?}",
-        *collected
+        collected
     );
 }
 

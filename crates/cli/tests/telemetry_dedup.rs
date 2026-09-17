@@ -14,10 +14,11 @@
 
 #![cfg(feature = "otel")]
 
+use kovan::Atom;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const HINT: &str =
@@ -25,8 +26,8 @@ const HINT: &str =
 
 /// Drain a child's piped stderr into a shared string on a background thread,
 /// so the child never blocks on a full pipe buffer.
-fn drain_stderr(stderr: std::process::ChildStderr) -> Arc<Mutex<String>> {
-    let buf = Arc::new(Mutex::new(String::new()));
+fn drain_stderr(stderr: std::process::ChildStderr) -> Arc<Atom<String>> {
+    let buf = Arc::new(Atom::new(String::new()));
     let buf_thread = Arc::clone(&buf);
     std::thread::spawn(move || {
         let mut rdr = stderr;
@@ -35,9 +36,12 @@ fn drain_stderr(stderr: std::process::ChildStderr) -> Arc<Mutex<String>> {
             match rdr.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if let Ok(mut s) = buf_thread.lock() {
-                        s.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                    }
+                    let text = String::from_utf8_lossy(&chunk[..n]).into_owned();
+                    buf_thread.rcu(|buffered| {
+                        let mut next = buffered.clone();
+                        next.push_str(&text);
+                        next
+                    });
                 }
             }
         }
@@ -123,7 +127,7 @@ fn exporter_unreachable_logs_hint_once_and_suppresses_raw() {
         let _ = child.wait();
         panic!(
             "defra did not start serving on :{http_port}\n--- stderr ---\n{}",
-            stderr.lock().unwrap()
+            stderr.load_clone()
         );
     }
 
@@ -140,7 +144,7 @@ fn exporter_unreachable_logs_hint_once_and_suppresses_raw() {
     // Let the drain thread flush the tail of the pipe.
     std::thread::sleep(Duration::from_millis(200));
 
-    let captured = stderr.lock().unwrap().clone();
+    let captured = stderr.load_clone();
 
     let hint_count = captured.matches(HINT).count();
     assert_eq!(

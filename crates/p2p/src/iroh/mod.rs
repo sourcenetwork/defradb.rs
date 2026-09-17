@@ -29,6 +29,7 @@ mod relay_server;
 #[cfg(all(test, feature = "iroh-relay-server"))]
 mod relay_server_tests;
 mod secret_key;
+mod task_registry;
 mod transport;
 #[cfg(test)]
 mod two_stream_tests;

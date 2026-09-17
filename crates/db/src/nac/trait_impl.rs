@@ -11,7 +11,7 @@ use super::{NacInfo, NacManager, NacManagerApi};
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<S: ZanzibarStore> NacManagerApi for NacManager<S> {
+impl<S: ZanzibarStore + Send + Sync + 'static> NacManagerApi for NacManager<S> {
     async fn initialize(&self, owner_identity: Option<&Did>) -> Result<()> {
         NacManager::initialize(self, owner_identity).await
     }

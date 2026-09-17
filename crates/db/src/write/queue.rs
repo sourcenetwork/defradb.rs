@@ -1,6 +1,6 @@
 use async_lock::{Mutex as AsyncMutex, MutexGuardArc};
-use parking_lot::Mutex;
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
 const PRUNE_THRESHOLD: usize = 10_000;
@@ -20,7 +20,7 @@ const PRUNE_THRESHOLD: usize = 10_000;
 /// Different documents proceed in parallel. Mirrors Go DefraDB's per-doc merge
 /// queue, extended to also cover local writes.
 pub struct DocWriteQueue {
-    locks: Mutex<RapidHashMap<String, Arc<AsyncMutex<()>>>>,
+    locks: HopscotchMap<String, Arc<AsyncMutex<()>>, RandomState>,
     /// Serializes the guard-ACQUISITION phase of multi-document writers (local
     /// mutation batches, batch merges) against one another. A caller that will
     /// hold more than one per-doc guard at once must hold this gate while
@@ -42,7 +42,7 @@ pub struct DocWriteQueue {
 impl Default for DocWriteQueue {
     fn default() -> Self {
         Self {
-            locks: Mutex::new(RapidHashMap::new()),
+            locks: HopscotchMap::with_hasher(RandomState::default()),
             batch_gate: Arc::new(AsyncMutex::new(())),
         }
     }
@@ -59,16 +59,43 @@ impl DocWriteQueue {
     /// proceed in parallel; the same document blocks until the previous holder
     /// drops the guard.
     pub async fn acquire(&self, doc_id: &str) -> MutexGuardArc<()> {
-        let mutex = {
-            let mut map = self.locks.lock();
-            if map.len() > PRUNE_THRESHOLD {
-                map.retain(|_, v| Arc::strong_count(v) > 1);
+        loop {
+            let mutex = self.mutex_for(doc_id);
+            let guard = mutex.lock_arc().await;
+            // A prune that dropped this entry between the lookup and the lock
+            // would let the next acquirer create a second mutex for the same
+            // document, so no work happens under an unpublished guard: release
+            // it and take the entry the map holds now.
+            if self
+                .locks
+                .get(doc_id)
+                .is_some_and(|current| Arc::ptr_eq(&current, &mutex))
+            {
+                return guard;
             }
-            map.entry(doc_id.to_string())
-                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-                .clone()
-        };
-        mutex.lock_arc().await
+        }
+    }
+
+    fn mutex_for(&self, doc_id: &str) -> Arc<AsyncMutex<()>> {
+        if let Some(mutex) = self.locks.get(doc_id) {
+            return mutex;
+        }
+        if self.locks.len() > PRUNE_THRESHOLD {
+            self.prune();
+        }
+        self.locks
+            .get_or_insert(doc_id.to_string(), Arc::new(AsyncMutex::new(())))
+    }
+
+    /// Drop the entries no acquirer references. The map holds one reference and
+    /// the iterator's clone a second; a third means an acquirer holds the guard
+    /// or is taking it, and that entry stays.
+    fn prune(&self) {
+        for (doc_id, mutex) in self.locks.iter() {
+            if Arc::strong_count(&mutex) <= 2 {
+                self.locks.remove(&doc_id);
+            }
+        }
     }
 
     /// Acquire the multi-document batch gate.

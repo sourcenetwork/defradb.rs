@@ -17,12 +17,10 @@ use crate::transport::{P2PTransport, PeerId};
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Returns true when this node has joined the collection's sync topic.
-    pub(super) async fn is_locally_subscribed_collection(&self, collection_id: &str) -> bool {
+    pub(super) fn is_locally_subscribed_collection(&self, collection_id: &str) -> bool {
         self.subscriptions
             .subscribed_collections
-            .read()
-            .await
-            .contains(collection_id)
+            .contains_key(collection_id)
     }
 
     /// Check if a peer (by string ID) has direct PushLog access to sync a collection.
@@ -40,7 +38,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .authorizer
             .peer_authorized_for_collection(peer_id_str, collection_id)
             .await
-            || self.is_locally_subscribed_collection(collection_id).await
+            || self.is_locally_subscribed_collection(collection_id)
         {
             return Ok(());
         }

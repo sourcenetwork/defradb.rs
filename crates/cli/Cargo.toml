@@ -133,6 +133,7 @@ profiling = ["dep:tracing-chrome"]
 otel = ["telemetry/otlp"]
 
 [dev-dependencies]
+kovan.workspace = true
 cid.workspace = true
 tokio = { workspace = true, features = ["process"] }
 rcgen = "0.13"

@@ -2,9 +2,13 @@
 //!
 //! Uses string-based peer IDs so the registry works with both libp2p and iroh transports.
 
-use parking_lot::RwLock;
+use std::collections::BTreeMap;
+
+use kovan::Atom;
 
 use crate::replicator::ReplicatorInfo;
+
+type Replicators = BTreeMap<String, ReplicatorInfo>;
 
 /// Tracks which peers are authorized replicators for which collections.
 ///
@@ -13,100 +17,119 @@ use crate::replicator::ReplicatorInfo;
 ///
 /// Peer IDs are stored as strings to support both libp2p PeerIds and
 /// iroh EndpointIds without coupling to either transport.
+///
+/// Reads take a snapshot; writes rebuild the map under RCU, which keeps every
+/// per-peer read-modify-write atomic. Writes are admin operations, so the copy
+/// per write is not on any hot path.
 #[derive(Debug, Default)]
 pub struct ReplicatorRegistry {
     /// Map of peer ID string -> persisted replicator metadata.
-    replicators: RwLock<std::collections::BTreeMap<String, ReplicatorInfo>>,
+    replicators: Atom<Replicators>,
+}
+
+fn store_info(replicators: &mut Replicators, info: ReplicatorInfo) {
+    let peer_id = info.peer_id_str().to_string();
+    if info.collections.is_empty() {
+        replicators.remove(&peer_id);
+    } else {
+        replicators.insert(peer_id, info);
+    }
 }
 
 impl ReplicatorRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
-        Self {
-            replicators: RwLock::new(std::collections::BTreeMap::new()),
-        }
+        Self::default()
     }
 
     /// Register a peer as a replicator for a collection.
     pub fn add_replicator(&self, collection_id: &str, peer_id: &str) {
-        let mut replicators = self.replicators.write();
-        let info = replicators.entry(peer_id.to_string()).or_insert_with(|| {
-            ReplicatorInfo::from_raw(peer_id.to_string(), Vec::new(), Vec::new())
+        self.replicators.rcu(|current| {
+            let mut replicators = current.clone();
+            let info = replicators.entry(peer_id.to_string()).or_insert_with(|| {
+                ReplicatorInfo::from_raw(peer_id.to_string(), Vec::new(), Vec::new())
+            });
+            if !info.collections.iter().any(|id| id == collection_id) {
+                info.collections.push(collection_id.to_string());
+            }
+            replicators
         });
-        if !info.collections.iter().any(|id| id == collection_id) {
-            info.collections.push(collection_id.to_string());
-        }
     }
 
     /// Replace the full set of collections replicated by a peer.
     pub fn set_peer_collections(&self, peer_id: &str, collections: &[String]) {
-        let mut info =
-            ReplicatorInfo::from_raw(peer_id.to_string(), collections.to_vec(), Vec::new());
-        if let Some(existing) = self.replicators.read().get(peer_id) {
-            info.addresses = existing.addresses.clone();
-            info.status = existing.status;
-            info.last_status_change = existing.last_status_change;
+        if peer_id.is_empty() {
+            return;
         }
-        self.set_replicator_info(info);
+        self.replicators.rcu(|current| {
+            let mut info =
+                ReplicatorInfo::from_raw(peer_id.to_string(), collections.to_vec(), Vec::new());
+            if let Some(existing) = current.get(peer_id) {
+                info.addresses = existing.addresses.clone();
+                info.status = existing.status;
+                info.last_status_change = existing.last_status_change;
+            }
+            let mut replicators = current.clone();
+            store_info(&mut replicators, info);
+            replicators
+        });
     }
 
     /// Replace the full metadata record for a peer.
     pub fn set_replicator_info(&self, info: ReplicatorInfo) {
-        let peer_id = info.peer_id_str().to_string();
-        if peer_id.is_empty() {
+        if info.peer_id_str().is_empty() {
             return;
         }
-        if info.collections.is_empty() {
-            self.replicators.write().remove(&peer_id);
-            return;
-        }
-        self.replicators.write().insert(peer_id, info);
+        self.replicators.rcu(|current| {
+            let mut replicators = current.clone();
+            store_info(&mut replicators, info.clone());
+            replicators
+        });
     }
 
     /// Remove a peer as a replicator for a collection.
     pub fn remove_replicator(&self, collection_id: &str, peer_id: &str) {
-        let mut replicators = self.replicators.write();
-        if let Some(info) = replicators.get_mut(peer_id) {
-            info.collections.retain(|id| id != collection_id);
-            info.filters
-                .retain(|collection, _| collection != collection_id);
-            if info.collections.is_empty() {
-                replicators.remove(peer_id);
-            }
-        }
+        self.remove_peer_collections(peer_id, std::slice::from_ref(&collection_id.to_string()));
     }
 
     /// Remove a peer from all collections.
     pub fn remove_peer(&self, peer_id: &str) {
-        self.replicators.write().remove(peer_id);
+        self.replicators.rcu(|current| {
+            let mut replicators = current.clone();
+            replicators.remove(peer_id);
+            replicators
+        });
     }
 
     /// Remove a peer from specific collections. Returns true if the peer no
     /// longer replicates any collections afterwards.
     pub fn remove_peer_collections(&self, peer_id: &str, collections: &[String]) -> bool {
-        let mut replicators = self.replicators.write();
-        let Some(info) = replicators.get_mut(peer_id) else {
-            return true;
-        };
-
-        for collection_id in collections {
-            info.collections.retain(|id| id != collection_id);
-            info.filters
-                .retain(|collection, _| collection != collection_id);
-        }
-
-        if info.collections.is_empty() {
-            replicators.remove(peer_id);
-            true
-        } else {
-            false
-        }
+        let mut fully_removed = true;
+        self.replicators.rcu(|current| {
+            let mut replicators = current.clone();
+            fully_removed = match replicators.get_mut(peer_id) {
+                None => true,
+                Some(info) => {
+                    for collection_id in collections {
+                        info.collections.retain(|id| id != collection_id);
+                        info.filters
+                            .retain(|collection, _| collection != collection_id);
+                    }
+                    info.collections.is_empty()
+                }
+            };
+            if fully_removed {
+                replicators.remove(peer_id);
+            }
+            replicators
+        });
+        fully_removed
     }
 
     /// Check if a peer is a replicator for a collection.
     pub fn is_replicator(&self, collection_id: &str, peer_id: &str) -> bool {
         self.replicators
-            .read()
+            .load()
             .get(peer_id)
             .map(|info| info.collections.iter().any(|id| id == collection_id))
             .unwrap_or(false)
@@ -115,7 +138,7 @@ impl ReplicatorRegistry {
     /// Check if a peer has a filter for a collection it replicates.
     pub fn is_filtered_replicator(&self, collection_id: &str, peer_id: &str) -> bool {
         self.replicators
-            .read()
+            .load()
             .get(peer_id)
             .map(|info| info.is_filtered_for_collection(collection_id))
             .unwrap_or(false)
@@ -123,13 +146,13 @@ impl ReplicatorRegistry {
 
     /// Check if a peer is a replicator for any collection.
     pub fn is_any_replicator(&self, peer_id: &str) -> bool {
-        self.replicators.read().contains_key(peer_id)
+        self.replicators.load().contains_key(peer_id)
     }
 
     /// Get all replicator peer ID strings for a collection.
     pub fn get_replicators(&self, collection_id: &str) -> Vec<String> {
         self.replicators
-            .read()
+            .load()
             .iter()
             .filter(|(_, info)| info.collections.iter().any(|id| id == collection_id))
             .map(|(peer_id, _)| peer_id.clone())
@@ -139,7 +162,7 @@ impl ReplicatorRegistry {
     /// Get all collections a peer is replicating.
     pub fn get_collections(&self, peer_id: &str) -> Vec<String> {
         self.replicators
-            .read()
+            .load()
             .get(peer_id)
             .map(|info| info.collections.clone())
             .unwrap_or_default()
@@ -147,7 +170,7 @@ impl ReplicatorRegistry {
 
     /// Get all registered replicators as ReplicatorInfo.
     pub fn list_replicator_info(&self) -> Vec<ReplicatorInfo> {
-        self.replicators.read().values().cloned().collect()
+        self.replicators.load().values().cloned().collect()
     }
 
     /// Load replicators from ReplicatorInfo records.
@@ -155,9 +178,7 @@ impl ReplicatorRegistry {
     /// Existing state is cleared before loading. Accepts any peer ID format
     /// (libp2p or iroh) since we store as strings.
     pub fn load_from_infos(&self, infos: &[ReplicatorInfo]) -> (usize, usize) {
-        let mut replicators = self.replicators.write();
-        replicators.clear();
-
+        let mut replicators = Replicators::new();
         let mut loaded = 0;
         let mut skipped = 0;
 
@@ -178,17 +199,18 @@ impl ReplicatorRegistry {
             loaded += 1;
         }
 
+        self.replicators.store(replicators);
         (loaded, skipped)
     }
 
     /// Get replicator info for a specific peer.
     pub fn get_replicator_info(&self, peer_id: &str) -> Option<ReplicatorInfo> {
-        self.replicators.read().get(peer_id).cloned()
+        self.replicators.load().get(peer_id).cloned()
     }
 
     /// Get all unique peer ID strings that are replicators.
     pub fn get_all_peer_ids(&self) -> Vec<String> {
-        self.replicators.read().keys().cloned().collect()
+        self.replicators.load().keys().cloned().collect()
     }
 }
 

@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use kovan::AtomOption;
+
 use crate::ffi_entry;
 use crate::state::{FfiStore, NodeState, P2PState, PolicyStore, NODES};
 use crate::try_ffi;
@@ -57,12 +59,15 @@ pub(crate) async fn build_node_state(
             .p2p
             .clone()
             .map(|system| Arc::new(P2PState::new(system))),
-        node_identity_did: node.node_identity_did.clone(),
+        node_identity_did: node
+            .node_identity_did
+            .clone()
+            .map_or_else(AtomOption::none, AtomOption::some),
         signing_enabled: options.enable_signing != 0,
         #[cfg(feature = "sourcehub")]
         sourcehub_acp: node.sourcehub_acp.clone(),
         query_limits: node.query_limits,
-        se_encryption_key: None,
+        se_encryption_key: AtomOption::none(),
     })
 }
 
@@ -265,8 +270,9 @@ pub extern "C" fn node_close(node_ptr: usize) -> FfiResult {
 
         let removed_subs = SUBSCRIPTIONS.remove_for_node(node_ptr);
         for sub_state in removed_subs {
+            let sub_id = sub_state.subscription.lock().id();
             NODES.get(node_ptr, |state| {
-                state.event_bus.unsubscribe(sub_state.subscription.id());
+                state.event_bus.unsubscribe(sub_id);
             });
         }
 
@@ -278,19 +284,20 @@ pub extern "C" fn node_close(node_ptr: usize) -> FfiResult {
             });
         }
 
-        let mut state = match NODES.remove(node_ptr) {
+        let state = match NODES.remove(node_ptr) {
             Some(state) => state,
             None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         rt.block_on(state.background_tasks.shutdown());
 
-        if let Some(p2p) = state.p2p.take() {
+        if let Some(p2p) = state.p2p.as_ref() {
             rt.block_on(async { p2p.system.shutdown().await });
         }
 
         state.event_bus.close();
         let result = rt.block_on(async { state.database.close().await });
+        drop(state);
 
         match result {
             Ok(()) => FfiResult::ok(),
