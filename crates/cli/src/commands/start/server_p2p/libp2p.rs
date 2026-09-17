@@ -378,6 +378,9 @@ impl Node {
         );
         let se_repusher: Arc<dyn db::merge::SeArtifactRepusher> =
             replication.broadcast_mutator.clone();
+        replication
+            .merge_handler_inner
+            .set_se_repusher(se_repusher.clone());
         let retry_loop_task = defra_p2p_adapter::spawn_retry_loop(
             storage::stores::Peerstore::new(store.clone()).with_retry_schedule(retry_schedule),
             p2p::Libp2pTransport::new(handle.clone()),

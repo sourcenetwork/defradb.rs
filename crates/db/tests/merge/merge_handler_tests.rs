@@ -328,7 +328,7 @@ impl CompositeMergeHook for FailingCompositeHook {
     }
 }
 
-async fn build_merge_block(
+pub(super) async fn build_merge_block(
     blockstore: &Arc<DefraBlockstore<RegolithStore>>,
     name: &str,
     age: i64,

@@ -206,3 +206,17 @@ async fn local_acp_guards_updates_only_once_document_acp_is_wired() {
     assert!(!unwired.guards_protected_updates());
     assert!(hook(false).guards_protected_updates());
 }
+
+#[test]
+fn strict_acp_registers_owner_only_for_a_did_creator() {
+    let hook = hook(true);
+    let collection = protected_collection();
+
+    let peer_id = BlockMetadata::normal("doc1", "col1", "12D3KooWPeer", Some("peer"), false);
+    assert!(hook
+        .post_commit_action("doc1", &collection, &peer_id)
+        .is_none());
+
+    let did = BlockMetadata::normal("doc1", "col1", "did:key:z6MkOwner", Some("peer"), false);
+    assert!(hook.post_commit_action("doc1", &collection, &did).is_some());
+}

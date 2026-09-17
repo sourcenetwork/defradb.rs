@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#e0c42841f212119a385ee6c10465c3afe6fc62d4"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "alloy-primitives",
  "borsh",
@@ -2542,7 +2542,7 @@ name = "conformance"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "defra-harness",
+ "defra-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
  "serde",
  "serde_json",
  "serial_test",
@@ -3488,7 +3488,7 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#e0c42841f212119a385ee6c10465c3afe6fc62d4"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "eyre",
  "futures",
@@ -3499,8 +3499,28 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sourcehub-harness",
- "test-infra",
+ "sourcehub-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
+ "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "defra-harness"
+version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+dependencies = [
+ "eyre",
+ "futures",
+ "libc",
+ "paste",
+ "rand 0.8.5",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sourcehub-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
+ "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
  "tokio",
  "tracing",
 ]
@@ -4210,7 +4230,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5290,7 +5310,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hub-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#e0c42841f212119a385ee6c10465c3afe6fc62d4"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -5309,7 +5329,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "test-infra",
+ "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
  "tokio",
  "tracing",
 ]
@@ -5466,7 +5486,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -5799,7 +5819,7 @@ dependencies = [
  "crypto",
  "ctor",
  "defra-core",
- "defra-harness",
+ "defra-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
  "document",
  "futures",
  "hex",
@@ -7786,7 +7806,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7942,7 +7962,7 @@ version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff32365de1b6743cb203b710788263c44a03de03802daf96092f2da4fe6ba4d7"
 dependencies = [
- "proc-macro-crate 3.5.0",
+ "proc-macro-crate 1.1.3",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -9253,7 +9273,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -9538,7 +9558,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.3",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10311,7 +10331,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10437,7 +10457,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10721,7 +10741,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11289,7 +11309,7 @@ dependencies = [
 [[package]]
 name = "sourcehub-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#e0c42841f212119a385ee6c10465c3afe6fc62d4"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "cosmrs",
  "eyre",
@@ -11297,7 +11317,23 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "serde_json",
- "test-infra",
+ "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sourcehub-harness"
+version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+dependencies = [
+ "cosmrs",
+ "eyre",
+ "hex",
+ "regex",
+ "reqwest 0.12.28",
+ "serde_json",
+ "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
  "tokio",
  "tracing",
 ]
@@ -11716,7 +11752,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11823,7 +11859,23 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#e0c42841f212119a385ee6c10465c3afe6fc62d4"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+dependencies = [
+ "eyre",
+ "futures",
+ "libc",
+ "rand 0.8.5",
+ "regex",
+ "serde",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
+name = "test-infra"
+version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "eyre",
  "futures",
@@ -12563,7 +12615,7 @@ checksum = "51b70b87d15e91f553711b40df3048faf27a7a04e01e0ddc0cf9309f0af7c2ca"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -13310,7 +13362,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
