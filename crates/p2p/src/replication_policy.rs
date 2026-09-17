@@ -38,7 +38,11 @@ pub enum OutboundPath {
 pub struct OutboundBlock<'a> {
     pub cid: &'a Cid,
     pub collection_id: &'a str,
-    /// Documents the block belongs to; empty for a collection-level block.
+    /// The document the block is asked about; empty for a collection-level
+    /// block. Blocks are content-addressed, so one block, such as a field
+    /// value several documents share, can belong to many documents. The host
+    /// asks once per document and sends the block if any of them may go: its
+    /// bytes are then part of a document the peer may have.
     pub doc_ids: &'a [String],
 }
 
@@ -159,11 +163,33 @@ impl ReplicationPolicyGate {
             peer_id,
             identity: identity.as_ref(),
         };
+        if block.doc_ids.len() <= 1 {
+            return Self::ask(policy.as_ref(), &peer, path, block).await;
+        }
+        for doc_id in block.doc_ids {
+            let one = OutboundBlock {
+                cid: block.cid,
+                collection_id: block.collection_id,
+                doc_ids: std::slice::from_ref(doc_id),
+            };
+            if Self::ask(policy.as_ref(), &peer, path, &one).await {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn ask(
+        policy: &dyn ReplicationPolicy,
+        peer: &PolicyPeer<'_>,
+        path: OutboundPath,
+        block: &OutboundBlock<'_>,
+    ) -> bool {
         policy
-            .may_send(&peer, path, block)
+            .may_send(peer, path, block)
             .await
             .unwrap_or_else(|error| {
-                tracing::warn!(%peer_id, cid = %block.cid, %error, "Replication policy failed; withholding block");
+                tracing::warn!(peer_id = %peer.peer_id, cid = %block.cid, %error, "Replication policy failed; withholding block");
                 false
             })
     }

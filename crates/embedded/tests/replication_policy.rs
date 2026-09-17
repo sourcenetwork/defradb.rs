@@ -226,3 +226,73 @@ async fn pushes_from_one_peer_are_refused_for_one_collection() -> Result<()> {
     receiver.shutdown().await;
     Ok(())
 }
+
+/// T writes notes before any link, then replicates both ways with D, which
+/// it restricts to `allowed` of them. Returns the notes D holds after the
+/// allowed ones should have arrived, and the allowed notes.
+async fn restricted_peer_after_link(shared_field: bool) -> Result<(Vec<String>, Vec<String>)> {
+    const SDL: &str = "type Entry { kind: String body: String }";
+    let policy = Arc::new(AllowlistForPeer::default());
+    let tower = NodeBuilder::default()
+        .with_iroh(iroh_config())
+        .with_access_hooks(
+            AccessHooks::new(Vec::<String>::new()).with_replication_policy(policy.clone()),
+        )
+        .build()
+        .await?;
+    tower.add_schema(SDL).await?;
+    let device = NodeBuilder::default()
+        .with_iroh(iroh_config())
+        .build()
+        .await?;
+    device.add_schema(SDL).await?;
+
+    let mut written = Vec::new();
+    for index in 0..6 {
+        let kind = if shared_field {
+            "entry".to_string()
+        } else {
+            format!("entry-{index}")
+        };
+        let (doc_id, _) = create(
+            &tower,
+            "Entry",
+            &format!(r#"kind: "{kind}", body: "body-{index}""#),
+        )
+        .await?;
+        written.push(doc_id);
+    }
+    let allowed: Vec<String> = written[..2].to_vec();
+    *policy.peer.lock().unwrap() = connect(&tower, &device).await?;
+    policy
+        .allowed
+        .lock()
+        .unwrap()
+        .extend(allowed.iter().cloned());
+
+    replicate(&tower, &device, &["Entry"]).await?;
+    replicate(&device, &tower, &["Entry"]).await?;
+
+    let expected: Vec<&str> = allowed.iter().map(String::as_str).collect();
+    let arrived = wait_for_docs(&device, "Entry", &expected).await;
+    let held = doc_ids(&device, "Entry").await?;
+    tower.shutdown().await;
+    device.shutdown().await;
+    arrived.map(|()| (held, allowed))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn allowed_documents_reach_a_restricted_peer() -> Result<()> {
+    let (held, mut allowed) = restricted_peer_after_link(false).await?;
+    allowed.sort();
+    assert_eq!(held, allowed);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn allowed_documents_sharing_a_field_value_reach_a_restricted_peer() -> Result<()> {
+    let (held, mut allowed) = restricted_peer_after_link(true).await?;
+    allowed.sort();
+    assert_eq!(held, allowed);
+    Ok(())
+}
