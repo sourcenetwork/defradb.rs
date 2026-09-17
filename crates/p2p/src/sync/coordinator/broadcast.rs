@@ -236,8 +236,28 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             }
         }
 
+        // A head the replication policy withholds keeps its marker, so the
+        // retry clock offers it again under a later policy.
+        let doc_ids: Vec<String> = (!push.doc_id.is_empty())
+            .then(|| push.doc_id.clone())
+            .into_iter()
+            .collect();
         for job in jobs {
-            self.enqueue_replicator_push(job).await;
+            if self
+                .replication_policy
+                .may_send(
+                    &job.peer_id.to_string(),
+                    crate::replication_policy::OutboundPath::Push,
+                    &crate::replication_policy::OutboundBlock {
+                        cid: &push.cid,
+                        collection_id: &push.collection_id,
+                        doc_ids: &doc_ids,
+                    },
+                )
+                .await
+            {
+                self.enqueue_replicator_push(job).await;
+            }
         }
         Ok(())
     }
@@ -269,25 +289,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     filter_misses += 1;
                     continue;
                 }
-            }
-            let doc_ids: Vec<String> = (!push.doc_id.is_empty())
-                .then(|| push.doc_id.clone())
-                .into_iter()
-                .collect();
-            if !self
-                .replication_policy
-                .may_send(
-                    &peer_id.to_string(),
-                    crate::replication_policy::OutboundPath::Push,
-                    &crate::replication_policy::OutboundBlock {
-                        cid: &push.cid,
-                        collection_id: &push.collection_id,
-                        doc_ids: &doc_ids,
-                    },
-                )
-                .await
-            {
-                continue;
             }
             jobs.push(PushJobSpec::new(
                 peer_id,
