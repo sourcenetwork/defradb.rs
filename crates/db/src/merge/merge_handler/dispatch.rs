@@ -8,7 +8,7 @@ use defra_core::merge::{
 use storage::corekv::Store;
 
 use super::{DbMergeHandler, MergeError};
-use crate::merge::governance::REDRIVE_BUDGET;
+use crate::merge::governance::{RedrivenMerge, REDRIVE_BUDGET};
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -143,6 +143,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             .with_explicit_replay_authorization(entry.explicit_replay_authorization.clone());
             let outcome = self.merge_with_retries(&entry.cid, &data, metadata).await;
             tracing::debug!(cid = %entry.cid, ?outcome, "Re-drove deferred composite");
+            if matches!(outcome, Ok(MergeOutcome::Merged)) {
+                if let Some(sink) = self.redriven_merge_sink() {
+                    sink.forward(RedrivenMerge::new(&entry, data)).await;
+                }
+            }
         }
         if self.deferred.has_ready() {
             tracing::debug!("Re-drive budget spent; remaining composites drain on the next merge");

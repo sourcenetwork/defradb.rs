@@ -130,6 +130,9 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     prefetched_dek_cids: Arc<CidSet>,
     /// Composites a merge validator deferred, by the CIDs they await.
     pub(crate) deferred: crate::merge::governance::DeferredMerges,
+    /// Where composites merged by re-drive are reported, so they take the
+    /// same post-merge path as a first-attempt merge.
+    redriven_sink: std::sync::OnceLock<Arc<dyn crate::merge::governance::RedrivenMergeSink>>,
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
@@ -217,7 +220,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             merge_queue,
             prefetched_dek_cids: Arc::new(cid_set()),
             deferred: Default::default(),
+            redriven_sink: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Report composites merged by re-drive to `sink`, which marks them merged
+    /// and fans them out as the replication layer does a first-attempt merge.
+    pub fn set_redriven_merge_sink(
+        &self,
+        sink: Arc<dyn crate::merge::governance::RedrivenMergeSink>,
+    ) {
+        let _ = self.redriven_sink.set(sink);
+    }
+
+    pub(crate) fn redriven_merge_sink(
+        &self,
+    ) -> Option<&Arc<dyn crate::merge::governance::RedrivenMergeSink>> {
+        self.redriven_sink.get()
     }
 
     /// Enforce the same parent-chain depth policy for every merge traversal.
