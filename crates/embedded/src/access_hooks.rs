@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use db::merge::governance::{MergeGovernance, MergeValidator};
+use p2p::replication_policy::ReplicationPolicy;
 use query::access_hooks::{ReadValidator, WriteValidator};
 
 /// An app's own access control for an iroh embedded node.
@@ -16,6 +17,7 @@ pub struct AccessHooks {
     merge: Option<Arc<dyn MergeValidator>>,
     read: Option<Arc<dyn ReadValidator>>,
     write: Option<Arc<dyn WriteValidator>>,
+    replication: Option<Arc<dyn ReplicationPolicy>>,
 }
 
 impl AccessHooks {
@@ -40,6 +42,24 @@ impl AccessHooks {
     pub fn with_write_validator(mut self, validator: Arc<dyn WriteValidator>) -> Self {
         self.write = Some(validator);
         self
+    }
+
+    /// Decide how this node's data moves over the mesh. The policy's
+    /// collections are joined as topics when `add_schema` creates them.
+    pub fn with_replication_policy(mut self, policy: Arc<dyn ReplicationPolicy>) -> Self {
+        self.replication = Some(policy);
+        self
+    }
+
+    pub(crate) fn replication_policy(&self) -> Option<Arc<dyn ReplicationPolicy>> {
+        self.replication.clone()
+    }
+
+    pub(crate) fn replication_topics(&self) -> Vec<String> {
+        self.replication
+            .as_ref()
+            .map(|policy| policy.collections())
+            .unwrap_or_default()
     }
 
     pub(crate) fn install<S: storage::corekv::Store>(&self, database: &db::DB<S>) {

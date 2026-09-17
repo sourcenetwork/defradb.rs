@@ -199,6 +199,68 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         &self,
         peer_id: &PeerId,
         root_cid: &Cid,
+        blocks: CarCollectOutcome,
+    ) -> CarCollectOutcome {
+        let blocks = self
+            .filter_accessible_car_blocks(peer_id, root_cid, blocks)
+            .await;
+        if !self.replication_policy.is_installed() {
+            return blocks;
+        }
+        self.filter_car_blocks_by_policy(peer_id, blocks).await
+    }
+
+    /// Withhold every block the replication policy does not let this peer
+    /// have. It runs after, and so narrows, every rooted grant and ACP gate.
+    async fn filter_car_blocks_by_policy(
+        &self,
+        peer_id: &PeerId,
+        mut blocks: CarCollectOutcome,
+    ) -> CarCollectOutcome {
+        let mut kept = Vec::with_capacity(blocks.blocks.len());
+        for (cid, data) in std::mem::take(&mut blocks.blocks) {
+            if self.policy_may_serve(peer_id, &cid, &data).await {
+                kept.push((cid, data));
+            }
+        }
+        blocks.blocks = kept;
+        let mut kept_oversized = Vec::with_capacity(blocks.oversized_blocks.len());
+        for (cid, size) in std::mem::take(&mut blocks.oversized_blocks) {
+            let Ok(Some(data)) = self.manager.blockstore().get(&cid).await else {
+                continue;
+            };
+            if self.policy_may_serve(peer_id, &cid, &data).await {
+                kept_oversized.push((cid, size));
+            }
+        }
+        blocks.oversized_blocks = kept_oversized;
+        blocks
+    }
+
+    async fn policy_may_serve(&self, peer_id: &PeerId, cid: &Cid, data: &[u8]) -> bool {
+        match self.classifier.classify(cid, data).await {
+            BlockClass::Allow => true,
+            BlockClass::Deny => false,
+            BlockClass::Data(meta) => {
+                self.replication_policy
+                    .may_send(
+                        peer_id.as_str(),
+                        crate::replication_policy::OutboundPath::Serve,
+                        &crate::replication_policy::OutboundBlock {
+                            cid,
+                            collection_id: &meta.collection_id,
+                            doc_ids: &meta.doc_ids,
+                        },
+                    )
+                    .await
+            }
+        }
+    }
+
+    async fn filter_accessible_car_blocks(
+        &self,
+        peer_id: &PeerId,
+        root_cid: &Cid,
         mut blocks: CarCollectOutcome,
     ) -> CarCollectOutcome {
         if self.access.access_mode.is_open() {

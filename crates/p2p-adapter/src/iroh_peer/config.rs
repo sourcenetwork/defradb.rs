@@ -29,6 +29,8 @@ pub struct IrohPeerConfig {
     pub load_persisted_collections: bool,
     /// Shared replicator push options, for callers that change them at runtime.
     pub replicator_push_options: Option<ReplicatorPushOptionsState>,
+    /// App replication policy, installed before the peer handles traffic.
+    pub replication_policy: Option<Arc<dyn p2p::replication_policy::ReplicationPolicy>>,
 }
 
 impl IrohPeerConfig {
@@ -44,6 +46,7 @@ impl IrohPeerConfig {
             retry_schedule: RetrySchedule::default(),
             load_persisted_collections: true,
             replicator_push_options: None,
+            replication_policy: None,
         }
     }
 }
