@@ -1,11 +1,16 @@
-use async_lock::Mutex;
+use std::sync::Arc;
+
+use async_lock::{Mutex, MutexGuard};
 use async_trait::async_trait;
 use cid::Cid;
 use defra_core::block::{Block, CrdtDelta};
 use defra_core::thread_bounds::MaybeSendSync;
-use document::NormalValue;
+use document::{DocID, Document, NormalValue};
+use rapidhash::RapidHashMap;
 use storage::corekv::Store;
+use storage::index::SimpleIndex;
 
+use crate::collection::Collection;
 use crate::merge::merge_handler::DbMergeHandler;
 use crate::txn::DbTxn;
 
@@ -73,9 +78,14 @@ pub trait MergeView: MaybeSendSync {
     ) -> Result<Option<Vec<(String, NormalValue)>>, String>;
 }
 
+/// By (collection, field); `None` when the field has no index a lookup can use.
+type ChosenIndexes = RapidHashMap<(String, String), Option<Arc<SimpleIndex>>>;
+
 pub(crate) struct DbMergeView<'a, S: Store, B: blockstore::Blockstore> {
     handler: &'a DbMergeHandler<S, B>,
     snapshot: Mutex<Option<DbTxn<S>>>,
+    /// The index chosen for each (collection, field) looked up this verdict.
+    pub(super) indexes: Mutex<ChosenIndexes>,
 }
 
 impl<'a, S: Store, B: blockstore::Blockstore> DbMergeView<'a, S, B> {
@@ -83,6 +93,7 @@ impl<'a, S: Store, B: blockstore::Blockstore> DbMergeView<'a, S, B> {
         Self {
             handler,
             snapshot: Mutex::new(None),
+            indexes: Mutex::new(RapidHashMap::default()),
         }
     }
 
@@ -160,7 +171,7 @@ where
         field: &str,
         value: &NormalValue,
     ) -> Result<Vec<String>, String> {
-        let Some((collection, documents)) = self.documents(collection).await? else {
+        let Some(collection) = self.collection(collection)? else {
             return Ok(Vec::new());
         };
         if !super::is_immutable_scalar_field(collection.schema(), field) {
@@ -169,6 +180,10 @@ where
                 collection.name()
             ));
         }
+        let documents = match self.indexed_documents(&collection, field, value).await? {
+            Some(documents) => documents,
+            None => self.documents(&collection).await?,
+        };
         Ok(documents
             .into_iter()
             .filter(|document| document.get(field) == Some(value))
@@ -181,55 +196,79 @@ where
         collection: &str,
         doc_id: &str,
     ) -> Result<Option<Vec<(String, NormalValue)>>, String> {
-        let Some((collection, documents)) = self.documents(collection).await? else {
+        let Some((collection, document)) = self.document(collection, doc_id).await? else {
             return Ok(None);
         };
         let schema = collection.schema();
-        Ok(documents
-            .into_iter()
-            .find(|document| document.id().is_some_and(|id| id.to_string() == doc_id))
-            .map(|document| {
-                let mut fields: Vec<(String, NormalValue)> = document
-                    .field_names()
-                    .filter(|name| super::is_immutable_scalar_field(schema, name))
-                    .filter_map(|name| {
-                        document
-                            .get(name)
-                            .map(|value| (name.to_string(), value.clone()))
-                    })
-                    .collect();
-                fields.sort_by(|a, b| a.0.cmp(&b.0));
-                fields
-            }))
+        let mut fields: Vec<(String, NormalValue)> = document
+            .field_names()
+            .filter(|name| super::is_immutable_scalar_field(schema, name))
+            .filter_map(|name| {
+                document
+                    .get(name)
+                    .map(|value| (name.to_string(), value.clone()))
+            })
+            .collect();
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(Some(fields))
     }
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
-    /// Every merged, undeleted document of `collection` on this verdict's
-    /// snapshot, opened on first use. `None` when the collection is unknown.
-    async fn documents(
-        &self,
-        collection: &str,
-    ) -> Result<Option<(crate::collection::Collection, Vec<document::Document>)>, String> {
-        let db = &self.handler.db;
-        let Some(collection) = db
-            .get_collection(collection)
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(None);
-        };
+    /// The verdict's snapshot, opened on first use.
+    pub(super) async fn snapshot(&self) -> Result<MutexGuard<'_, Option<DbTxn<S>>>, String> {
         let mut snapshot = self.snapshot.lock().await;
         if snapshot.is_none() {
-            *snapshot = Some(db.new_txn(true).await.map_err(|error| error.to_string())?);
+            let txn = self.handler.db.new_txn(true).await;
+            *snapshot = Some(txn.map_err(|error| error.to_string())?);
         }
+        Ok(snapshot)
+    }
+
+    fn collection(&self, name: &str) -> Result<Option<Collection>, String> {
+        self.handler
+            .db
+            .get_collection(name)
+            .map_err(|error| error.to_string())
+    }
+
+    /// The merged, undeleted document `doc_id` of `collection`, read by id.
+    /// `None` when the collection or the document is unknown.
+    async fn document(
+        &self,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Option<(Collection, Document)>, String> {
+        let Some(collection) = self.collection(collection)? else {
+            return Ok(None);
+        };
+        let Ok(parsed) = doc_id.parse::<DocID>() else {
+            return Ok(None);
+        };
+        let snapshot = self.snapshot().await?;
         let txn = snapshot.as_ref().expect("snapshot opened above");
         let datastore = txn.datastore().map_err(|error| error.to_string())?;
         let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
-        let documents = collection
+        let document = collection
+            .get_by_doc_id(&datastore, &systemstore, &parsed)
+            .await
+            .map_err(|error| error.to_string())?
+            // An alias resolves to its document; only the canonical id names it here.
+            .filter(|document| document.id().is_some_and(|id| id.to_string() == doc_id));
+        Ok(document.map(|document| (collection, document)))
+    }
+
+    /// Every merged, undeleted document of `collection` on this verdict's
+    /// snapshot.
+    async fn documents(&self, collection: &Collection) -> Result<Vec<Document>, String> {
+        let snapshot = self.snapshot().await?;
+        let txn = snapshot.as_ref().expect("snapshot opened above");
+        let datastore = txn.datastore().map_err(|error| error.to_string())?;
+        let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
+        collection
             .get_all_with_datastore(&datastore, &systemstore)
             .await
-            .map_err(|error| error.to_string())?;
-        Ok(Some((collection, documents)))
+            .map_err(|error| error.to_string())
     }
 }
 

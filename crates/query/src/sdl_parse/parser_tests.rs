@@ -117,6 +117,23 @@ fn test_parse_immutable_directive() {
 }
 
 #[test]
+fn test_parse_immutable_field_with_index() {
+    let sdl = r#"
+        type AgentDoc {
+            agent_did: String @immutable @index
+        }
+    "#;
+
+    let collections = parse_sdl(sdl).unwrap();
+    let agent_doc = &collections[0];
+
+    assert!(agent_doc.field_by_name("agent_did").unwrap().immutable);
+    assert_eq!(agent_doc.indexes.len(), 1);
+    assert_eq!(agent_doc.indexes[0].fields[0].name, "agent_did");
+    assert!(!agent_doc.indexes[0].resolved_unique());
+}
+
+#[test]
 fn test_parse_primary_directive() {
     let sdl = r#"
         type Post {
