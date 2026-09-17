@@ -10,6 +10,7 @@ mod signature;
 mod validator;
 mod verdict;
 mod view;
+mod view_index;
 
 pub use awaited::Awaited;
 pub(crate) use awaited::{is_immutable_scalar_field, WaitKey};

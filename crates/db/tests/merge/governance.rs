@@ -270,22 +270,37 @@ fn authored(
     value: &str,
     by: &Signer,
 ) -> Genesis {
+    authored_fields(collection_id, update_of, &[(field, value)], by)
+}
+
+fn authored_fields(
+    collection_id: &'static str,
+    update_of: Option<&Genesis>,
+    fields: &[(&str, &str)],
+    by: &Signer,
+) -> Genesis {
     let priority = if update_of.is_some() { 2 } else { 1 };
     let heads: Vec<Cid> = update_of.map(|genesis| genesis.cid).into_iter().collect();
     let mut blocks = Vec::new();
-    let field_block = Block::new(
-        CrdtDelta::Lww(LwwDeltaPayload {
-            field_name: field.to_string(),
-            priority,
-            schema_version_id: collection_id.to_string(),
-            data: db::block::builder::encode_value_as_cbor(&NormalValue::String(value.to_string()))
+    let mut links = Vec::new();
+    for (field, value) in fields {
+        let field_block = Block::new(
+            CrdtDelta::Lww(LwwDeltaPayload {
+                field_name: field.to_string(),
+                priority,
+                schema_version_id: collection_id.to_string(),
+                data: db::block::builder::encode_value_as_cbor(&NormalValue::String(
+                    value.to_string(),
+                ))
                 .unwrap(),
-        }),
-        vec![],
-        vec![],
-    );
-    let field_cid = field_block.generate_cid().unwrap();
-    blocks.push((field_cid, field_block.to_dag_cbor().unwrap()));
+            }),
+            vec![],
+            vec![],
+        );
+        let field_cid = field_block.generate_cid().unwrap();
+        blocks.push((field_cid, field_block.to_dag_cbor().unwrap()));
+        links.push(DAGLink::new(*field, field_cid));
+    }
 
     let mut composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
@@ -294,7 +309,7 @@ fn authored(
             status: 1,
         }),
         heads,
-        vec![DAGLink::new(field, field_cid)],
+        links,
     );
     let value = by.key.sign(&composite.to_dag_cbor().unwrap()).unwrap();
     let signature = Signature::new(
