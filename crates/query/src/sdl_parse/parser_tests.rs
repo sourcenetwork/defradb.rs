@@ -1973,3 +1973,46 @@ fn test_one_to_many_collection_ids_match_go() {
         Some(book.collection_id.as_str()),
     );
 }
+
+/// The identity an ungoverned collection has today, pinned byte for byte.
+///
+/// A collection ID is a CID over the type name and the CIDs of its field
+/// definitions, and a field definition CID covers a field's name, CRDT type
+/// and kind. Nothing else reaches it, and the version ID equals it for a new
+/// schema. Putting governance into the identities must leave every one of
+/// these unchanged.
+const UNGOVERNED_AGENT_ID: &str = "bafyreibeq6rbxfwgvzuaow4alns74u3f4t6wv7udfheyul4l5ju2vyblfy";
+
+#[test]
+fn ungoverned_collection_identities_are_pinned() {
+    let plain = &parse_sdl(r#"type Agent { did: String, body: String }"#).unwrap()[0];
+    assert_eq!(plain.collection_id, UNGOVERNED_AGENT_ID);
+    assert_eq!(
+        plain.version_id, plain.collection_id,
+        "a new schema's version ID is its collection ID"
+    );
+}
+
+/// Every directive that bears on governance today, and none of them reaches
+/// the identity: a policy, immutability, branchable history and an index all
+/// leave the collection ID exactly where the bare schema left it.
+///
+/// This is the starting point, not an endorsement. It is here so that a
+/// change to what the identity commits to has to rewrite this test and say
+/// which of these it moved.
+#[test]
+fn no_governance_directive_reaches_the_identity_today() {
+    for sdl in [
+        r#"type Agent { did: String @immutable, body: String }"#,
+        r#"type Agent @policy(id: "p1", resource: "agents") { did: String, body: String }"#,
+        r#"type Agent @branchable { did: String, body: String }"#,
+        r#"type Agent { did: String @immutable @index, body: String }"#,
+    ] {
+        let collection = &parse_sdl(sdl).unwrap()[0];
+        assert_eq!(
+            collection.collection_id, UNGOVERNED_AGENT_ID,
+            "identity moved for: {sdl}"
+        );
+        assert_eq!(collection.version_id, collection.collection_id);
+    }
+}
