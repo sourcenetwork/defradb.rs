@@ -169,9 +169,33 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Add to runtime cache so it's visible via list_collections/get_collection.
         // Synced collections are inactive but still need to be in the cache for
         // GetCollections with GetInactive=true to find them.
-        self.db
-            .add_collection_to_cache(schema.clone())
+        //
+        // The cache is keyed by name, so this would displace a collection of
+        // the same name that already exists here. The delta cannot carry what
+        // that record commits to, so displacing it would silently drop those
+        // commitments; the synced version stays stored under its own version
+        // ID either way.
+        let displaced = self
+            .db
+            .get_collection(&collection_name)
             .map_err(MergeError::Database)?;
+        let uncarried = displaced
+            .as_ref()
+            .map(|existing| uncarried_commitments(existing.schema()))
+            .unwrap_or_default();
+        if uncarried.is_empty() {
+            self.db
+                .add_collection_to_cache(schema.clone())
+                .map_err(MergeError::Database)?;
+        } else {
+            tracing::warn!(
+                collection_name = %collection_name,
+                version_id = %version_id,
+                commitments = %uncarried.join(", "),
+                "Synced collection definition kept out of the cache: it cannot carry what the \
+                 collection of that name already commits to"
+            );
+        }
 
         tracing::debug!(
             collection_name = %collection_name,
@@ -227,4 +251,25 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         Ok(FieldDescription::new(field_id.to_string(), name, kind).with_crdt_type(crdt_type))
     }
+}
+
+/// What `stored` commits to that a collection definition delta cannot express.
+///
+/// `CollectionDefinitionDeltaPayload` carries a name, and its linked field
+/// deltas carry a field name, kind and CRDT type. Everything below is part of
+/// the collection's agreement with its writers and survives no round trip
+/// through the wire format, so a record holding any of it must not be rebuilt
+/// from one.
+fn uncarried_commitments(stored: &CollectionVersion) -> Vec<&'static str> {
+    let mut commitments = Vec::new();
+    if stored.policy.is_some() {
+        commitments.push("an access control policy");
+    }
+    if stored.fields.iter().any(|field| field.immutable) {
+        commitments.push("@immutable fields");
+    }
+    if stored.is_branchable {
+        commitments.push("branchable history");
+    }
+    commitments
 }
