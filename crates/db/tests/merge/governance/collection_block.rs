@@ -208,3 +208,17 @@ async fn a_governed_collections_composites_are_judged_as_before() {
     );
     assert!(node.doc_ids("Grants").await.is_empty());
 }
+
+#[tokio::test]
+async fn a_local_write_appends_no_collection_block_to_a_governed_collection() {
+    let node = Node::with_branchable_grants(Arc::new(RejectEverything)).await;
+    let writer = signer();
+    let document = format!(r#"{{"writer": "{}"}}"#, writer.did);
+
+    node.create_locally("Grants", &document).await;
+    node.create_locally("Ledgers", &document).await;
+
+    assert!(node.collection_heads("Grants").await.is_empty());
+    // The ungoverned collection beside it is branchable exactly as before.
+    assert_eq!(node.collection_heads("Ledgers").await.len(), 1);
+}
