@@ -156,6 +156,21 @@ async fn a_document_is_withheld_from_one_peer_on_push_and_serve() -> Result<()> 
         );
     }
 
+    // A withheld push keeps its retry marker, so relaxing the policy lets
+    // the next retry pass deliver what was withheld.
+    policy
+        .allowed
+        .lock()
+        .unwrap()
+        .extend([replayed.clone(), pushed.clone()]);
+    author
+        .p2p()
+        .context("p2p")?
+        .retry_replicators()
+        .await
+        .map_err(|error| anyhow!(error))?;
+    wait_for_docs(&restricted, "Note", &[&public, &replayed, &pushed]).await?;
+
     for node in [author, trusted, restricted] {
         node.shutdown().await;
     }
