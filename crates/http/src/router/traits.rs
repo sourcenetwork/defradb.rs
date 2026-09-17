@@ -229,6 +229,26 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
         ))
     }
 
+    /// Revoke a peer's authorization to hold an inbound connection to this
+    /// node while it is running, without a restart.
+    ///
+    /// Symmetric with [`Self::allow_peer`], and stronger: narrowing who may
+    /// connect in is not enough on its own to count as a revoke, since it
+    /// only stops the NEXT inbound connection attempt. An implementation
+    /// must also close whatever connection that peer currently holds, doing
+    /// so only after the allowlist update lands, so a reconnect racing the
+    /// call cannot be re-admitted under the old, wider allowlist. It does
+    /// not guarantee an in-flight request already being served over that
+    /// connection is aborted mid-exchange. The input is a canonical raw
+    /// transport peer ID, never an address returned by `connected_peers`.
+    /// Transports without an inbound allowlist concept return an
+    /// unsupported error.
+    async fn deny_peer(&self, _peer_id: &TransportPeerId) -> P2PResult<()> {
+        Err(P2PError::unsupported(
+            "inbound peer allowlisting is unavailable",
+        ))
+    }
+
     /// Notify the transport that local network conditions may have changed.
     ///
     /// Some transports, such as iroh, use this to refresh relay/direct

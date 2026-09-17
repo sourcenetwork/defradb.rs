@@ -125,6 +125,26 @@ async fn wait_for_connected_peer(node: &EmbeddedNode) {
     }
 }
 
+async fn wait_for_no_connected_peer(node: &EmbeddedNode) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let peers = node
+            .p2p()
+            .expect("P2P should be enabled")
+            .connected_peers()
+            .await
+            .expect("connected_peers should succeed");
+        if peers.is_empty() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "node still reports a connected peer: {peers:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn collection_len(data: &JsonValue, collection: &str) -> usize {
     data.get(collection)
         .and_then(|v| v.as_array())
@@ -2161,6 +2181,79 @@ async fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
         .expect("connect after authorization");
     wait_for_connected_peer(&node_a).await;
     wait_for_connected_peer(&node_b).await;
+
+    node_a.shutdown().await;
+    node_b.shutdown().await;
+}
+
+/// `EmbeddedNode::deny_p2p_peer` is the reachable way to cut off an
+/// already-admitted device without a restart: this is the shape a customer
+/// logout takes. Mirrors `allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist`
+/// and must actually flow through `p2p-adapter` down to
+/// `IrohTransport::deny_peer`, and it must close the connection node_a
+/// already holds, not just stop the next one.
+#[tokio::test]
+async fn deny_p2p_peer_revokes_an_already_connected_peer() {
+    init_tracing();
+
+    let node_a = EmbeddedNode::builder()
+        .with_p2p(test_p2p_config())
+        .build()
+        .await
+        .expect("build node_a");
+
+    // node_b starts with an explicit allowlist that admits node_a up front,
+    // so the connection this test revokes is established normally rather
+    // than through the runtime `allow_p2p_peer` path already covered above.
+    let p2p_a = node_a.p2p().expect("node_a p2p");
+    let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
+    let mut config_b = test_p2p_config();
+    config_b.allowlist =
+        p2p::iroh::IrohAllowlistConfig::Explicit([peer_a.clone()].into_iter().collect());
+    let node_b = EmbeddedNode::builder()
+        .with_p2p(config_b)
+        .build()
+        .await
+        .expect("build node_b");
+
+    let addr_b = wait_for_listen_addr(&node_b).await;
+    let p2p_b = node_b.p2p().expect("node_b p2p");
+
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("connect while authorized");
+    wait_for_connected_peer(&node_a).await;
+    wait_for_connected_peer(&node_b).await;
+
+    node_b
+        .deny_p2p_peer(&peer_a)
+        .await
+        .expect("revoke node_a at runtime");
+
+    // The revoke must close the connection node_a already holds, not just
+    // refuse the next one: both sides converge on no connected peers.
+    wait_for_no_connected_peer(&node_b).await;
+    wait_for_no_connected_peer(&node_a).await;
+
+    // And the next connection attempt is refused: reconnecting does not
+    // slip back in.
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("dial reaches node_b again");
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        let connected = p2p_b
+            .connected_peers()
+            .await
+            .expect("node_b connected_peers");
+        assert!(
+            connected.is_empty(),
+            "a denied peer must not be able to reconnect"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     node_a.shutdown().await;
     node_b.shutdown().await;

@@ -32,6 +32,14 @@ pub enum IrohCommand {
         peer_id: PeerId,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
+    /// Remove an endpoint id from the inbound allowlist while the endpoint is
+    /// running, and hang up any connection it currently holds. An error when
+    /// the endpoint was configured to accept every peer: there is no
+    /// explicit set to narrow, so denying one id would not cut it off.
+    DenyPeer {
+        peer_id: PeerId,
+        reply: oneshot::Sender<crate::error::Result<()>>,
+    },
     Listen {
         addr: PeerAddr,
         reply: oneshot::Sender<crate::error::Result<()>>,

@@ -18,7 +18,7 @@ use super::{
 };
 use crate::message::PushLogBroadcast;
 use crate::topics::DefraTopic;
-use crate::transport::{P2PTransport, TransportEvent};
+use crate::transport::{P2PTransport, PeerId, TransportEvent};
 
 type Events = Receiver<TransportEvent<iroh::endpoint::SendStream>>;
 
@@ -140,6 +140,23 @@ async fn shutdown_all(
     server.shutdown().await.unwrap();
     dialer_task.await.unwrap();
     server_task.await.unwrap();
+}
+
+/// Poll `transport`'s own view of `connected_peers` until it no longer names
+/// `peer_id`, or panic once `window` has passed without that happening.
+async fn poll_until_not_connected(transport: &IrohTransport, peer_id: &PeerId, window: Duration) {
+    let deadline = tokio::time::Instant::now() + window;
+    loop {
+        let connected = transport.connected_peers().await.unwrap();
+        if !connected.iter().any(|p| p == peer_id) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for {peer_id} to disconnect"
+        );
+        tokio::task::yield_now().await;
+    }
 }
 
 /// How long a refused peer is given to deliver gossip before the test
@@ -298,6 +315,134 @@ async fn allow_peer_authorizes_a_peer_added_at_runtime() {
         .unwrap();
     server
         .poll_until_connected(dialer.local_peer_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+
+    let topic = DefraTopic::collection("collection");
+    dialer.subscribe(topic.clone()).await.unwrap();
+    server.subscribe(topic.clone()).await.unwrap();
+    wait_peer_subscribed(&mut dialer_events, &topic.to_string()).await;
+    wait_peer_subscribed(&mut server_events, &topic.to_string()).await;
+
+    dialer.publish(topic, test_broadcast()).await.unwrap();
+    wait_gossip_message(&mut server_events, &dialer).await;
+
+    shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
+/// The guarantee that makes this a real revoke rather than a half-measure:
+/// denying a peer that is currently connected does not just stop its NEXT
+/// connection attempt, it also closes the connection it already holds.
+///
+/// Proven from both ends, not just by reading the allowlist set: the
+/// denying side's own `connected_peers` drops the peer, AND the denied
+/// peer's `connected_peers` empties too. The second half only happens if the
+/// underlying QUIC connection was actually torn down; a set-only removal on
+/// the server would leave the dialer still believing it is connected.
+#[tokio::test]
+async fn deny_peer_closes_an_already_open_connection() {
+    let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let dialer_id = dialer.local_peer_id().clone();
+    let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::Explicit(
+        [dialer_id.to_string()].into_iter().collect(),
+    ))
+    .await;
+
+    dialer
+        .dial(
+            server.local_peer_id(),
+            server.listen_addresses().await.unwrap(),
+        )
+        .await
+        .unwrap();
+    dialer
+        .poll_until_connected(server.local_peer_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    server
+        .poll_until_connected(&dialer_id, Duration::from_secs(5))
+        .await
+        .unwrap();
+
+    server.deny_peer(&dialer_id).await.unwrap();
+
+    poll_until_not_connected(&server, &dialer_id, Duration::from_secs(5)).await;
+    poll_until_not_connected(&dialer, server.local_peer_id(), Duration::from_secs(5)).await;
+
+    shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
+/// `deny_peer` has no explicit allowlist entry to remove under `AcceptAll`,
+/// so it is refused rather than silently closing the connection while
+/// leaving the peer free to reconnect through the still-open `AcceptAll`
+/// policy. Exercises the full command round trip, not just
+/// `AllowlistState::deny` in isolation.
+#[tokio::test]
+async fn deny_peer_is_an_error_under_accept_all() {
+    let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+
+    let result = server.deny_peer(dialer.local_peer_id()).await;
+    assert!(
+        result.is_err(),
+        "denying a peer under AcceptAll must be refused, not silently succeed"
+    );
+
+    shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
+/// A device may log back in: denying then re-allowing must restore the
+/// ability to connect, exactly as `allow_peer_authorizes_a_peer_added_at_runtime`
+/// proves for a peer that was never connected in the first place.
+#[tokio::test]
+async fn deny_peer_then_allow_peer_again_permits_reconnection() {
+    let (dialer, mut dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let dialer_id = dialer.local_peer_id().clone();
+    let (server, mut server_events, server_task) = spawn_node(IrohAllowlistConfig::Explicit(
+        [dialer_id.to_string()].into_iter().collect(),
+    ))
+    .await;
+
+    dialer
+        .dial(
+            server.local_peer_id(),
+            server.listen_addresses().await.unwrap(),
+        )
+        .await
+        .unwrap();
+    dialer
+        .poll_until_connected(server.local_peer_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    server
+        .poll_until_connected(&dialer_id, Duration::from_secs(5))
+        .await
+        .unwrap();
+
+    server.deny_peer(&dialer_id).await.unwrap();
+    poll_until_not_connected(&server, &dialer_id, Duration::from_secs(5)).await;
+
+    // Refused while denied.
+    dial_and_wait_for_local_handshake(&dialer, &server).await;
+    assert_never_connects(&dialer, &server, Duration::from_millis(300)).await;
+
+    server.allow_peer(&dialer_id).await.unwrap();
+
+    // The refused attempt above was torn down by the server; redial now that
+    // the peer is authorized again.
+    dialer
+        .dial(
+            server.local_peer_id(),
+            server.listen_addresses().await.unwrap(),
+        )
+        .await
+        .unwrap();
+    dialer
+        .poll_until_connected(server.local_peer_id(), Duration::from_secs(5))
+        .await
+        .unwrap();
+    server
+        .poll_until_connected(&dialer_id, Duration::from_secs(5))
         .await
         .unwrap();
 

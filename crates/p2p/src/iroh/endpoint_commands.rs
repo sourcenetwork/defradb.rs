@@ -135,6 +135,10 @@ pub(super) async fn handle_command(
             let result = parse_endpoint_id(&peer_id).map(|id| resources.allowlist.allow(id));
             let _ = reply.send(result);
         }
+        IrohCommand::DenyPeer { peer_id, reply } => {
+            let result = handle_deny_peer(peer_id, resources);
+            let _ = reply.send(result);
+        }
         IrohCommand::Listen { addr: _, reply } => {
             // iroh endpoint is already listening after bind
             let _ = reply.send(Ok(()));
@@ -828,6 +832,28 @@ fn handle_disconnect(peer_id: PeerId, resources: &EndpointResources) -> crate::e
         connection.close(0u32.into(), b"disconnect");
     }
     Ok(())
+}
+
+/// Revoke a peer's inbound authorization and hang up whatever connection it
+/// currently holds.
+///
+/// Order matters: the allowlist entry is removed FIRST (`allowlist.deny`),
+/// and only once that succeeds is the live connection closed
+/// (`handle_disconnect`). `is_allowed` is checked on every accepted inbound
+/// connection (`endpoint_streams::handle_incoming`), so by the time the old
+/// connection goes down the peer can no longer be re-admitted through it; a
+/// reconnect racing this call cannot slip in between the two steps. Doing it
+/// in the other order would leave a window where a reconnect right after the
+/// disconnect, but before the allowlist update, is still authorized under
+/// the old, wider allowlist.
+///
+/// Propagates `allowlist.deny`'s error under an `AcceptAll` allowlist: there
+/// is no explicit set to narrow, so this is refused rather than silently
+/// closing the connection while leaving the peer free to reconnect.
+fn handle_deny_peer(peer_id: PeerId, resources: &EndpointResources) -> crate::error::Result<()> {
+    let endpoint_id = parse_endpoint_id(&peer_id)?;
+    resources.allowlist.deny(&endpoint_id)?;
+    handle_disconnect(peer_id, resources)
 }
 
 /// Subscribe to a gossip topic.

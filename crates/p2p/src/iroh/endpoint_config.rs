@@ -81,6 +81,33 @@ impl AllowlistState {
             ids.lock().insert(id);
         }
     }
+
+    /// Remove `id` from the explicit set, refusing its next inbound
+    /// connection. Returns whether `id` was actually present, so a caller
+    /// can tell a real revoke from denying a peer that was never allowed;
+    /// denying an absent id is not an error.
+    ///
+    /// This only changes what [`Self::is_allowed`] returns for the NEXT
+    /// accepted connection (checked in `handle_incoming`); it does nothing
+    /// to a connection already open. Closing that is a separate step the
+    /// caller must also take (see `IrohTransport::deny_peer`).
+    ///
+    /// Unlike [`Self::allow`], this is NOT a silent no-op under `AcceptAll`.
+    /// Authorization can afford to no-op there because widening an
+    /// already-total set changes nothing observable. Revocation cannot use
+    /// the same excuse: under `AcceptAll` every OTHER peer would stay
+    /// connectable, so silently reporting success would tell a caller a
+    /// peer was cut off when it was not. This returns an error naming the
+    /// situation instead of a false `Ok`.
+    pub(super) fn deny(&self, id: &EndpointId) -> crate::error::Result<bool> {
+        match self {
+            Self::AcceptAll => Err(crate::error::Error::Transport(format!(
+                "cannot deny peer {id}: this endpoint accepts every inbound peer (AcceptAll \
+                 allowlist), so denying one id would not narrow who may connect"
+            ))),
+            Self::Explicit(ids) => Ok(ids.lock().remove(id)),
+        }
+    }
 }
 
 pub(super) fn allowlist_state_from_config(
@@ -349,5 +376,53 @@ mod tests {
 
         state.allow(id);
         assert!(matches!(state, AllowlistState::AcceptAll));
+    }
+
+    #[test]
+    fn deny_removes_a_peer_from_an_explicit_allowlist() {
+        let allowed = iroh::SecretKey::generate().public();
+        let state = allowlist_state_from_config(&IrohAllowlistConfig::Explicit(
+            [allowed.to_string()].into_iter().collect(),
+        ))
+        .unwrap();
+
+        assert!(state.is_allowed(&allowed));
+        assert!(
+            state.deny(&allowed).unwrap(),
+            "the peer was present, so deny must report true"
+        );
+        assert!(!state.is_allowed(&allowed));
+    }
+
+    #[test]
+    fn deny_of_a_never_allowed_peer_is_not_an_error() {
+        let never_allowed = iroh::SecretKey::generate().public();
+        let state =
+            allowlist_state_from_config(&IrohAllowlistConfig::Explicit(RapidHashSet::new()))
+                .unwrap();
+
+        // Not an error: the peer ends up in the desired state (denied)
+        // either way. `Ok(false)` tells a caller nothing was actually
+        // removed, distinct from a real revoke.
+        assert!(
+            !state.deny(&never_allowed).unwrap(),
+            "denying a peer that was never allowed must report false, not error"
+        );
+        assert!(!state.is_allowed(&never_allowed));
+    }
+
+    #[test]
+    fn deny_is_an_error_under_accept_all() {
+        let id = iroh::SecretKey::generate().public();
+        let state = allowlist_state_from_config(&IrohAllowlistConfig::AcceptAll).unwrap();
+
+        let result = state.deny(&id);
+        assert!(
+            matches!(&result, Err(crate::error::Error::Transport(message)) if message.contains("AcceptAll")),
+            "expected an AcceptAll-naming error, got {result:?}"
+        );
+        // Pin the decision: AcceptAll must not silently report a revoke that
+        // did not happen.
+        assert!(state.is_allowed(&id));
     }
 }

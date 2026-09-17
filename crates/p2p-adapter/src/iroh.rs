@@ -363,6 +363,18 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .map_err(|error| P2PError::transport(error.to_string()))
     }
 
+    async fn deny_peer(&self, peer_id: &TransportPeerId) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerDisconnect)
+            .await?;
+
+        let peer_id = parse_canonical_peer_id(peer_id.as_str())
+            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        self.transport
+            .deny_peer(&peer_id)
+            .await
+            .map_err(|error| P2PError::transport(error.to_string()))
+    }
+
     async fn notify_network_change(&self) -> P2PResult<()> {
         self.transport
             .network_change()

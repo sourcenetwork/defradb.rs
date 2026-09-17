@@ -645,6 +645,33 @@ impl EmbeddedNode {
             .map_err(|error| anyhow::anyhow!("failed to authorize peer: {error}"))
     }
 
+    /// Revoke a peer's authorization to hold an inbound P2P connection to
+    /// this node while it is running, without a restart.
+    ///
+    /// Symmetric with [`Self::allow_p2p_peer`], and stronger: it does not
+    /// merely stop the peer's NEXT inbound connection attempt, it also
+    /// closes whatever connection that peer currently holds, so a revoked
+    /// peer cannot keep using a session it already opened. The allowlist is
+    /// updated before the connection is closed, so a reconnect racing this
+    /// call cannot be re-admitted under the old, wider allowlist. This does
+    /// not guarantee that a request already being served over that
+    /// connection is aborted mid-exchange. Returns an error if P2P is not
+    /// enabled, or if the active transport has no concept of an inbound
+    /// allowlist, or if the active transport accepts every inbound peer
+    /// (there is then no explicit allowlist entry to revoke).
+    #[cfg(feature = "p2p")]
+    pub async fn deny_p2p_peer(&self, peer_id: &str) -> anyhow::Result<()> {
+        let ops = self
+            .p2p_ops
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("P2P is not enabled for this node"))?;
+        let peer_id = defra_http::TransportPeerId::new(peer_id)
+            .map_err(|error| anyhow::anyhow!("invalid peer ID: {error}"))?;
+        ops.deny_peer(&peer_id)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to revoke peer: {error}"))
+    }
+
     /// Gracefully stop background services owned by this embedded node.
     ///
     /// **The node should not be used after this call.** When the `otel`
