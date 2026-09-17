@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use blockstore::Blockstore;
 use defra_http::router::P2pDocumentRequest;
 use embedded::{AccessHooks, NodeBuilder};
-use iroh_peers::{connect, create, doc_ids, iroh_config, listen_addr, sync, wait_for_docs, Node};
+use iroh_peers::{connect, create, doc_ids, iroh_config, replicate, sync, wait_for_docs, Node};
 use p2p::replication_policy::{
     InboundRequest, OutboundBlock, OutboundPath, PolicyPeer, ReplicationPolicy,
 };
@@ -90,29 +90,6 @@ async fn plain_node() -> Result<Node> {
         .await?;
     node.add_schema(SDL).await?;
     Ok(node)
-}
-
-async fn replicate(from: &Node, to: &Node, collections: &[&str]) -> Result<()> {
-    let collections: Vec<String> = collections.iter().map(|name| name.to_string()).collect();
-    to.p2p()
-        .context("p2p")?
-        .ops()
-        .add_collections(collections.clone())
-        .await
-        .map_err(|error| anyhow!(error))?;
-    let addr = listen_addr(to).await?;
-    from.p2p()
-        .context("p2p")?
-        .ops()
-        .add_replicator(
-            collections,
-            Some(&addr),
-            Default::default(),
-            Vec::new(),
-            None,
-        )
-        .await
-        .map_err(|error| anyhow!(error))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

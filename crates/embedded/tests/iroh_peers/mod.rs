@@ -1,4 +1,7 @@
 //! Iroh embedded nodes on localhost, and the GraphQL calls peer tests share.
+//!
+//! Each test binary including this module uses its own subset of the helpers.
+#![allow(dead_code)]
 
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -132,6 +135,31 @@ pub async fn doc_ids(node: &Node, collection: &str) -> Result<Vec<String>> {
         .collect();
     ids.sort();
     Ok(ids)
+}
+
+/// Subscribe `to` to `collections` and give `from` a replicator pushing them
+/// to it.
+pub async fn replicate(from: &Node, to: &Node, collections: &[&str]) -> Result<()> {
+    let collections: Vec<String> = collections.iter().map(|name| name.to_string()).collect();
+    to.p2p()
+        .context("p2p")?
+        .ops()
+        .add_collections(collections.clone())
+        .await
+        .map_err(|error| anyhow!(error))?;
+    let addr = listen_addr(to).await?;
+    from.p2p()
+        .context("p2p")?
+        .ops()
+        .add_replicator(
+            collections,
+            Some(&addr),
+            Default::default(),
+            Vec::new(),
+            None,
+        )
+        .await
+        .map_err(|error| anyhow!(error))
 }
 
 pub async fn wait_for_docs(node: &Node, collection: &str, expected: &[&str]) -> Result<()> {
