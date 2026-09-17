@@ -349,16 +349,6 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 doc_blocks.push((head_cid, block_data));
             }
 
-            let mut withheld = false;
-            for (head_cid, _) in &doc_blocks {
-                withheld |= !car_authority
-                    .may_push(peer_id, collection.collection_id(), doc_id, head_cid)
-                    .await;
-            }
-            if withheld {
-                continue;
-            }
-
             let mut replay_head_cids: Vec<_> = doc_blocks.iter().map(|(cid, _)| *cid).collect();
             replay_head_cids.sort_unstable();
 
@@ -382,6 +372,18 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 .await
                 .map_err(|error| format!("failed to register replay marker: {error}"))?;
             drop(marker_guard);
+
+            // A withheld document keeps the marker registered above, so the
+            // retry clock offers it again under a later policy.
+            let mut withheld = false;
+            for (head_cid, _) in &doc_blocks {
+                withheld |= !car_authority
+                    .may_push(peer_id, collection.collection_id(), doc_id, head_cid)
+                    .await;
+            }
+            if withheld {
+                continue;
+            }
 
             let mut requests = Vec::new();
             for (block_cid, block_data) in doc_blocks {
@@ -775,6 +777,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         load_latest_composite_head_cids(&*head_txn, &*block_txn, doc_short_id).await;
     attempted_heads.sort_unstable();
     let mut successful_blocks = 0usize;
+    let mut withheld_heads = 0usize;
     for head_cid in attempted_heads.iter().copied() {
         let block_data = match block_txn.get(&head_cid.to_bytes()).await {
             Ok(Some(data)) => data,
@@ -785,6 +788,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
             .may_push(peer_id, collection_id, doc_id, &head_cid)
             .await
         {
+            withheld_heads += 1;
             continue;
         }
         {
@@ -834,6 +838,11 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
     }
     drop(block_txn);
     drop(head_txn);
+    if withheld_heads > 0 {
+        return Err(format!(
+            "replication policy withheld {withheld_heads} head(s); keeping the retry marker"
+        ));
+    }
     crate::merge::push_docs_common::complete_document_retry_if_current(
         db,
         peer_id.as_str(),
@@ -869,6 +878,7 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
     let mut heads =
         crate::merge::push_docs_common::load_collection_head_cids(&headstore, short_id).await?;
     heads.sort_unstable();
+    let mut withheld_heads = 0usize;
     for cid in heads.iter().copied() {
         let block_data = block_txn
             .get(&cid.to_bytes())
@@ -879,6 +889,7 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
             .may_push(peer_id, collection_id, "", &cid)
             .await
         {
+            withheld_heads += 1;
             continue;
         }
         let _car_grant = car_authority
@@ -909,6 +920,11 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
         }
     }
     drop(txn);
+    if withheld_heads > 0 {
+        return Err(format!(
+            "replication policy withheld {withheld_heads} collection head(s); keeping the retry marker"
+        ));
+    }
     crate::merge::push_docs_common::complete_collection_retry_if_current(
         db,
         peer_id.as_str(),
