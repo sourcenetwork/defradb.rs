@@ -841,3 +841,97 @@ async fn awaiting_a_mutable_field_is_refused() {
     );
     assert_eq!(node.handler.deferred_composites(), 0);
 }
+
+/// Accepts when the immutable fields of the merged document `doc_id` in
+/// `collection` can be read; records what was read.
+struct ReadImmutable {
+    collection: &'static str,
+    doc_id: Mutex<String>,
+    read: Mutex<Option<Option<Vec<(String, NormalValue)>>>>,
+}
+
+#[async_trait]
+impl MergeValidator for ReadImmutable {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        let doc_id = self.doc_id.lock().unwrap().clone();
+        let fields = view.immutable_fields(self.collection, &doc_id).await?;
+        *self.read.lock().unwrap() = Some(fields);
+        Ok(MergeVerdict::Accept)
+    }
+}
+
+#[tokio::test]
+async fn immutable_fields_reads_only_immutable_scalar_fields_of_a_merged_document() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let db = Arc::new(
+        DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+            .await
+            .unwrap(),
+    );
+    let mut writer_field = FieldDescription::new("2", "writer", FieldKind::string());
+    writer_field.immutable = true;
+    db.create_collection(CollectionVersion::new(
+        "Grants",
+        "col-grants",
+        "col-grants",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+            writer_field,
+            FieldDescription::new("3", "label", FieldKind::string()),
+        ],
+    ))
+    .await
+    .unwrap();
+    db.create_collection(CollectionVersion::new(
+        "Notes",
+        "col-notes",
+        "col-notes",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("2", "grant", FieldKind::string()),
+        ],
+    ))
+    .await
+    .unwrap();
+    let validator = Arc::new(ReadImmutable {
+        collection: "Grants",
+        doc_id: Mutex::new(String::new()),
+        read: Mutex::new(None),
+    });
+    db.set_merge_governance(MergeGovernance::new(["Notes"]).with_validator(validator.clone()));
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let node = Node {
+        handler: DbMergeHandler::new(db.clone(), blockstore.clone()),
+        db,
+        blockstore,
+    };
+    let writer = signer();
+    let grant = genesis("col-grants", "writer", &writer.did, &writer);
+    assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    let labelled = authored("col-grants", Some(&grant), "label", "mutable", &writer);
+    assert_eq!(
+        labelled.merge(&node, &writer.did).await,
+        MergeOutcome::Merged
+    );
+    // `label` is set but mutable, so the read leaves it out.
+    *validator.doc_id.lock().unwrap() = grant.doc_id.clone();
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    assert_eq!(
+        validator.read.lock().unwrap().clone().unwrap(),
+        Some(vec![(
+            "writer".to_string(),
+            NormalValue::String(writer.did.clone())
+        )])
+    );
+
+    // An unmerged document reads as `None`.
+    *validator.doc_id.lock().unwrap() = "bae-missing".to_string();
+    let other = genesis("col-notes", "grant", "other", &writer);
+    assert_eq!(other.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    assert_eq!(validator.read.lock().unwrap().clone().unwrap(), None);
+}
