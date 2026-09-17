@@ -27,6 +27,7 @@ use query::runner::DocFetcher;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
+mod collection_block;
 mod lookup;
 
 type Blocks = DefraBlockstore<RegolithStore>;
