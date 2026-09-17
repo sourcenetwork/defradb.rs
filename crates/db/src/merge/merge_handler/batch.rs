@@ -440,6 +440,12 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 .await
             }
             CrdtDelta::Collection(payload) => {
+                if let Some(rejected) = self
+                    .refuse_governed_collection_block(payload, &metadata)
+                    .await?
+                {
+                    return Ok(rejected);
+                }
                 self.process_collection_delta_in_txn(
                     datastore,
                     headstore,

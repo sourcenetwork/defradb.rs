@@ -19,7 +19,12 @@ pub(crate) async fn write_branchable_collection_block<S: storage::corekv::Store 
     doc_cid: Cid,
     signing_config: Option<&defra_core::signing::SigningConfig>,
 ) -> query::error::Result<Option<(Cid, Bytes)>> {
-    if !collection.schema().is_branchable {
+    // A governed collection is not branchable: its history is the composites
+    // the validator judged, and a collection block is never judged.
+    let governed = db
+        .merge_governance()
+        .is_some_and(|governance| governance.governs(collection.schema()));
+    if !collection.schema().is_branchable || governed {
         return Ok(None);
     }
 

@@ -2,6 +2,7 @@
 //! has claimed, and re-drive of the composites it defers.
 
 mod awaited;
+mod collection_block;
 mod deferred;
 mod judge;
 mod local_commit;
