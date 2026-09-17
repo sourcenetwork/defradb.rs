@@ -107,6 +107,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         };
 
         // Build ACP filter config when the collection is policy-backed.
+        let app_read = self.app_read_check(identity.clone(), collection);
         let acp_filter = collection.policy.as_ref().map(|policy| plan::AcpFilter {
             acp: self.acp.clone(),
             identity: Identity::from(identity),
@@ -121,6 +122,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             mapping.clone(),
             collection,
             acp_filter,
+            app_read,
             self.query_limits,
         )?;
 

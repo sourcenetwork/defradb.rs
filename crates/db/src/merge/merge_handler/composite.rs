@@ -1,5 +1,6 @@
 use super::batch::{PendingFieldBlockFinalization, PendingMergeEvent, PendingPostCommitAction};
 use super::*;
+use crate::merge::governance::Judgement;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompositeMergeMode {
@@ -64,6 +65,10 @@ pub struct CompositeMergeState {
 enum CompositeMergePreparation {
     Ready(Option<Box<Collection>>),
     Complete(MergeOutcome),
+    Deferred {
+        outcome: MergeOutcome,
+        awaiting: Vec<crate::merge::governance::WaitKey>,
+    },
 }
 
 enum CompositeMergeFrame {
@@ -120,7 +125,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        let doc_id_str = self.resolve_composite_doc_id(cid, block, depth).await?;
+        let doc_id_str = match self.resolve_composite_doc_id(cid, block, depth).await {
+            Ok(doc_id) => doc_id,
+            Err(error) => {
+                return self
+                    .defer_unresolved_document(cid, block, payload, metadata, error)
+                    .await
+            }
+        };
 
         let collection = self
             .block_collection(&payload.schema_version_id, metadata.collection_id)
@@ -232,6 +244,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await?;
 
         if let Some(collection) = collection.as_ref() {
+            // A governed collection is resolved from the block alone: were the
+            // carrier's collection id honoured, a sender would pick the validator.
+            if metadata.collection_id.is_some()
+                && self.is_governed(collection.schema())
+                && !self
+                    .block_collection(&payload.schema_version_id, None)
+                    .await?
+                    .is_some_and(|own| own.collection_id() == collection.collection_id())
+            {
+                return Ok(CompositeMergePreparation::Complete(
+                    MergeOutcome::retryable_skip(format!(
+                        "schema version {} is not held; a governed collection is resolved only from the block",
+                        payload.schema_version_id
+                    )),
+                ));
+            }
+
             if let Some(reason) = self
                 .db
                 .replicated_downsample_source_skip_reason(collection.schema())?
@@ -247,20 +276,34 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 ));
             }
 
-            if let Some(hook) = self.composite_merge_hook() {
-                if let Some(outcome) = hook
-                    .on_protected_composite(doc_id, collection.schema(), metadata)
-                    .await?
-                {
-                    return Ok(CompositeMergePreparation::Complete(outcome));
-                }
-            }
-
-            if let Some(outcome) = self
-                .check_protected_update(cid, block, payload, doc_id, collection.schema())
+            match self
+                .judge_governed(cid, block, payload, doc_id, collection.schema())
                 .await?
             {
-                return Ok(CompositeMergePreparation::Complete(outcome));
+                Judgement::Ungoverned => {
+                    if let Some(hook) = self.composite_merge_hook() {
+                        if let Some(outcome) = hook
+                            .on_protected_composite(doc_id, collection.schema(), metadata)
+                            .await?
+                        {
+                            return Ok(CompositeMergePreparation::Complete(outcome));
+                        }
+                    }
+
+                    if let Some(outcome) = self
+                        .check_protected_update(cid, block, payload, doc_id, collection.schema())
+                        .await?
+                    {
+                        return Ok(CompositeMergePreparation::Complete(outcome));
+                    }
+                }
+                Judgement::Accept => {}
+                Judgement::Verdict { outcome, awaiting } if !awaiting.is_empty() => {
+                    return Ok(CompositeMergePreparation::Deferred { outcome, awaiting });
+                }
+                Judgement::Verdict { outcome, .. } => {
+                    return Ok(CompositeMergePreparation::Complete(outcome));
+                }
             }
         }
 
@@ -278,6 +321,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         depth: usize,
         doc_id_str: String,
     ) -> std::result::Result<MergeOutcome, MergeError> {
+        let root_cid = *cid;
+        let root_payload = payload;
+        let doc_id_for_index = doc_id_str.clone();
         let mut frames = vec![CompositeMergeFrame::Enter {
             cid: *cid,
             block: Some(block.clone()),
@@ -368,6 +414,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             if is_root || !outcome.is_terminal_skip() {
                                 return Ok(outcome);
                             }
+                        }
+                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
+                            self.index_deferred(
+                                &root_cid,
+                                &doc_id_for_index,
+                                root_payload,
+                                metadata,
+                                awaiting,
+                            );
+                            return Ok(outcome);
                         }
                     }
                 }
@@ -563,6 +619,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     });
                     merged.insert(*cid);
                 }
+                self.release_merged_composite(cid, Some(block)).await;
 
                 tracing::info!(
                     cid = %cid,
@@ -571,9 +628,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     "Composite delta processed and committed successfully"
                 );
 
-                if let (Some(collection), Some(hook)) =
-                    (context.collection.as_ref(), self.composite_merge_hook())
-                {
+                if let (Some(collection), Some(hook)) = (
+                    context
+                        .collection
+                        .as_ref()
+                        .filter(|collection| !self.is_governed(collection.schema())),
+                    self.composite_merge_hook(),
+                ) {
                     if let Some(action) =
                         hook.post_commit_action(doc_id_str, collection.schema(), metadata)
                     {
@@ -679,9 +740,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // frames. Resolve it against the shared transaction so mappings staged
         // earlier in the batch are visible. Resolving every Enter frame afresh
         // turns a depth-N replay into O(N^2) ancestry reads.
-        let doc_id = self
+        let doc_id = match self
             .resolve_composite_doc_id_in_txn(systemstore, cid, block, depth)
-            .await?;
+            .await
+        {
+            Ok(doc_id) => doc_id,
+            Err(error) => {
+                return self
+                    .defer_unresolved_document(cid, block, payload, metadata, error)
+                    .await
+            }
+        };
+        let root_cid = *cid;
+        let root_payload = payload;
+        let doc_id_for_index = doc_id.clone();
         let mut frames = vec![CompositeMergeFrame::Enter {
             cid: *cid,
             block: Some(block.clone()),
@@ -775,6 +847,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             if is_root || !outcome.is_terminal_skip() {
                                 return Ok(outcome);
                             }
+                        }
+                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
+                            self.index_deferred(
+                                &root_cid,
+                                &doc_id_for_index,
+                                root_payload,
+                                metadata,
+                                awaiting,
+                            );
+                            return Ok(outcome);
                         }
                     }
                 }
@@ -962,9 +1044,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         });
                 }
 
-                if let (Some(collection), Some(hook)) =
-                    (context.collection.as_ref(), self.composite_merge_hook())
-                {
+                if let (Some(collection), Some(hook)) = (
+                    context
+                        .collection
+                        .as_ref()
+                        .filter(|collection| !self.is_governed(collection.schema())),
+                    self.composite_merge_hook(),
+                ) {
                     if let Some(action) =
                         hook.post_commit_action(doc_id_str, collection.schema(), metadata)
                     {

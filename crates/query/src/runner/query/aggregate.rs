@@ -70,6 +70,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Convert storage documents to values for aggregation
         let mut plan_docs = documents_to_plan_docs(&docs, &mapping)?;
 
+        let app_identity = identity.clone();
         // Apply ACP filtering when the collection is policy-backed.
         if let Some(ref policy) = collection.policy {
             let acp_identity = Identity::from(identity);
@@ -95,6 +96,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
             plan_docs = filtered;
         }
+        let mut readable = Vec::with_capacity(plan_docs.len());
+        for doc in plan_docs {
+            let doc_id = doc.get(0).and_then(|value| value.as_str()).unwrap_or("");
+            if self
+                .app_may_read(app_identity.as_ref(), collection, doc_id)
+                .await
+            {
+                readable.push(doc);
+            }
+        }
+        plan_docs = readable;
 
         // For each aggregate in the select, compute its value
         // For top-level aggregates, we return a single object with aggregate results
@@ -336,7 +348,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut planner = Planner::new(collections)
             .with_query_limits(self.query_limits)
             .with_fetcher(Arc::new(fetcher_arc))
-            .with_acp(self.acp.clone(), identity);
+            .with_acp(self.acp.clone(), identity)
+            .with_read_validator(self.read_validator.clone());
         if let Some(ref lens_store) = self.lens_store {
             planner = planner.with_lens_store(lens_store.clone());
         }

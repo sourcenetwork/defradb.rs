@@ -229,6 +229,9 @@ pub struct DB<S: Store> {
     /// [`DB::set_nac_manager`]. When unset, all `check_node_access` calls are
     /// no-ops (NAC not configured).
     nac_manager: std::sync::OnceLock<std::sync::Arc<dyn NacManagerApi>>,
+    /// Collections an app has claimed and the validator governing their
+    /// replicated composites. Set once, before replication starts.
+    merge_governance: std::sync::OnceLock<Arc<crate::merge::governance::MergeGovernance>>,
     /// Per-document write serialization queue. Shared with the merge handler so
     /// local writes and P2P merges that touch the same document never interleave
     /// their CRDT read-modify-write (#1021 counter convergence).
@@ -279,6 +282,7 @@ impl<S: Store> DB<S> {
             kms: std::sync::OnceLock::new(),
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
+            merge_governance: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: Mutex::new(RapidHashMap::new()),
@@ -342,6 +346,7 @@ impl<S: Store> DB<S> {
             kms: std::sync::OnceLock::new(),
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
+            merge_governance: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: Mutex::new(RapidHashMap::new()),
@@ -470,6 +475,17 @@ impl<S: Store> DB<S> {
     /// `check_node_access` calls are no-ops (NAC not configured).
     pub fn set_nac_manager(&self, nac: std::sync::Arc<dyn NacManagerApi>) {
         let _ = self.nac_manager.set(nac);
+    }
+
+    /// Install app merge governance. First call wins; install it before any
+    /// replication starts so no composite of a claimed collection merges
+    /// ungoverned.
+    pub fn set_merge_governance(&self, governance: crate::merge::governance::MergeGovernance) {
+        let _ = self.merge_governance.set(Arc::new(governance));
+    }
+
+    pub fn merge_governance(&self) -> Option<&Arc<crate::merge::governance::MergeGovernance>> {
+        self.merge_governance.get()
     }
 
     /// Get the NAC manager, if one has been installed.

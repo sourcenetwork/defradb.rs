@@ -60,7 +60,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 /// Shared by the merge-time verification above (signature loaded from the
 /// blockstore) and browser-sync validation (signature carried in the push
 /// payload).
-fn verify_signature_data(cid: &Cid, block: &Block, sig_data: &[u8]) -> Result<String, MergeError> {
+pub(crate) fn verify_signature_data(
+    cid: &Cid,
+    block: &Block,
+    sig_data: &[u8],
+) -> Result<String, MergeError> {
     let signature = match defra_core::block::Signature::from_dag_cbor(sig_data) {
         Ok(sig) => sig,
         Err(e) => {

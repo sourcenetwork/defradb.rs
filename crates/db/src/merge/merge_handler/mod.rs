@@ -22,6 +22,7 @@ mod protected_update;
 mod recovery;
 pub mod se_merge;
 mod signature;
+pub(crate) use signature::verify_signature_data;
 
 pub use error::MergeError;
 pub(crate) use error::{CounterMergeResult, LwwMergeResult};
@@ -111,6 +112,8 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// (pushlog + gossip + retries) don't fan out duplicate cross-peer
     /// fetches.
     prefetched_dek_cids: Arc<std::sync::Mutex<RapidHashSet<Cid>>>,
+    /// Composites a merge validator deferred, by the CIDs they await.
+    pub(crate) deferred: crate::merge::governance::DeferredMerges,
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
@@ -187,6 +190,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             kms: std::sync::OnceLock::new(),
             merge_queue,
             prefetched_dek_cids: Arc::new(std::sync::Mutex::new(RapidHashSet::new())),
+            deferred: Default::default(),
         }
     }
 

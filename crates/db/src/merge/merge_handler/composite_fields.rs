@@ -217,9 +217,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     ) -> std::result::Result<EffectiveLinkedDelta, MergeError> {
         if linked_block.encryption.is_some() && !*encrypted_policy_checked {
             *encrypted_policy_checked = true;
-            if let (Some(collection), Some(hook)) =
-                (context.collection.as_ref(), self.composite_merge_hook())
-            {
+            if let (Some(collection), Some(hook)) = (
+                context
+                    .collection
+                    .as_ref()
+                    .filter(|collection| !self.is_governed(collection.schema())),
+                self.composite_merge_hook(),
+            ) {
                 if let Some(outcome) = hook
                     .on_encrypted_link(context.doc_id_str, collection.schema(), context.metadata)
                     .await?

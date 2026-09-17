@@ -1,0 +1,22 @@
+//! App-supplied validation of replicated composites in collections the app
+//! has claimed, and re-drive of the composites it defers.
+
+mod awaited;
+mod deferred;
+mod judge;
+mod signature;
+mod validator;
+mod verdict;
+mod view;
+
+pub use awaited::Awaited;
+pub(crate) use awaited::{is_immutable_scalar_field, WaitKey};
+pub(crate) use deferred::DeferredMerges;
+pub use deferred::{
+    MAX_AWAITED_PER_COMPOSITE, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, REDRIVE_BUDGET,
+};
+pub(crate) use judge::Judgement;
+pub use signature::SignatureStatus;
+pub use validator::{MergeCandidate, MergeGovernance, MergeValidator};
+pub use verdict::MergeVerdict;
+pub use view::{FieldValue, MergeView};
