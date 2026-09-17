@@ -4,7 +4,6 @@ use cid::Cid;
 use defra_core::block::{Block, CrdtDelta};
 use defra_core::thread_bounds::MaybeSendSync;
 use document::NormalValue;
-use schema::CType;
 use storage::corekv::Store;
 
 use crate::merge::merge_handler::DbMergeHandler;
@@ -153,14 +152,7 @@ where
         else {
             return Ok(Vec::new());
         };
-        let lookup_field = collection
-            .schema()
-            .fields
-            .iter()
-            .find(|candidate| candidate.name == field);
-        if !lookup_field.is_some_and(|field| {
-            field.immutable && field.crdt_type == CType::LwwRegister && field.kind.is_scalar()
-        }) {
+        if !super::is_immutable_scalar_field(collection.schema(), field) {
             return Err(format!(
                 "find_documents field '{field}' in collection '{}' must be an @immutable scalar LWW field",
                 collection.name()

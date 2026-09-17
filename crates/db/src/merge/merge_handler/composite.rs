@@ -67,7 +67,7 @@ enum CompositeMergePreparation {
     Complete(MergeOutcome),
     Deferred {
         outcome: MergeOutcome,
-        awaiting: Vec<Cid>,
+        awaiting: Vec<crate::merge::governance::WaitKey>,
     },
 }
 
@@ -619,7 +619,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     });
                     merged.insert(*cid);
                 }
-                self.deferred.release([*cid]);
+                self.release_merged_composite(cid, Some(block)).await;
 
                 tracing::info!(
                     cid = %cid,

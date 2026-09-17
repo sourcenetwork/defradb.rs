@@ -1,9 +1,11 @@
 use cid::Cid;
-use defra_core::block::{Block, CompositeDeltaPayload};
+use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta};
 use defra_core::merge::{BlockMetadata, MergeBlock, MergeOutcome};
+use document::NormalValue;
 use schema::CollectionVersion;
 use storage::corekv::Store;
 
+use super::awaited::{is_immutable_scalar_field, Awaited, WaitKey};
 use super::validator::MergeCandidate;
 use super::view::DbMergeView;
 use crate::merge::merge_handler::{DbMergeHandler, MergeError};
@@ -13,7 +15,7 @@ pub(crate) enum Judgement {
     Accept,
     Verdict {
         outcome: MergeOutcome,
-        awaiting: Vec<Cid>,
+        awaiting: Vec<WaitKey>,
     },
 }
 
@@ -70,8 +72,120 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         Ok(match verdict.into_outcome() {
             (None, _) => Judgement::Accept,
-            (Some(outcome), awaiting) => Judgement::Verdict { outcome, awaiting },
+            (Some(outcome), awaiting) => Judgement::Verdict {
+                outcome,
+                awaiting: self.wait_keys(awaiting)?,
+            },
         })
+    }
+
+    /// Index keys for a verdict's awaited inputs. An awaited field that is not
+    /// an `@immutable` scalar LWW field of a local collection is a validator
+    /// error: its value could differ between replicas.
+    fn wait_keys(&self, awaiting: Vec<Awaited>) -> Result<Vec<WaitKey>, MergeError> {
+        awaiting
+            .into_iter()
+            .map(|awaited| match awaited {
+                Awaited::Composite(cid) => Ok(WaitKey::Composite(cid)),
+                Awaited::ImmutableField {
+                    collection,
+                    field,
+                    value,
+                } => {
+                    let immutable = self
+                        .db
+                        .get_collection(&collection)?
+                        .is_some_and(|local| is_immutable_scalar_field(local.schema(), &field));
+                    if !immutable {
+                        return Err(MergeError::MergeFailed(format!(
+                            "awaited field '{field}' in collection '{collection}' must be an @immutable scalar LWW field"
+                        )));
+                    }
+                    WaitKey::immutable_field(&collection, &field, &value)
+                        .map_err(MergeError::MergeFailed)
+                }
+            })
+            .collect()
+    }
+
+    /// Release composites waiting on a composite that just merged: on its CID,
+    /// and, when any deferred composite awaits a field value, on each
+    /// `@immutable` scalar LWW value it sets.
+    pub(crate) async fn release_merged_composite(&self, cid: &Cid, block: Option<&Block>) {
+        let mut keys = vec![WaitKey::Composite(*cid)];
+        if self.deferred.awaits_fields() {
+            match self.immutable_field_keys(cid, block).await {
+                Ok(fields) => keys.extend(fields),
+                Err(error) => {
+                    tracing::debug!(%cid, %error, "Merged composite's immutable fields unreadable for re-drive")
+                }
+            }
+        }
+        self.deferred.release(keys);
+    }
+
+    async fn immutable_field_keys(
+        &self,
+        cid: &Cid,
+        block: Option<&Block>,
+    ) -> Result<Vec<WaitKey>, MergeError> {
+        let loaded;
+        let block = match block {
+            Some(block) => block,
+            None => {
+                let Some(data) = self
+                    .blockstore
+                    .get(cid)
+                    .await
+                    .map_err(|error| MergeError::Storage(error.to_string()))?
+                else {
+                    return Ok(Vec::new());
+                };
+                loaded = Block::from_dag_cbor(&data)
+                    .map_err(|error| MergeError::BlockDecode(error.to_string()))?;
+                &loaded
+            }
+        };
+        let CrdtDelta::Composite(payload) = &block.delta else {
+            return Ok(Vec::new());
+        };
+        let Some(collection) = self
+            .block_collection(&payload.schema_version_id, None)
+            .await?
+        else {
+            return Ok(Vec::new());
+        };
+        let schema = collection.schema();
+        let mut keys = Vec::new();
+        for link in block.links.iter().flatten() {
+            if !is_immutable_scalar_field(schema, &link.name) {
+                continue;
+            }
+            let Some(data) = self
+                .blockstore
+                .get(&link.link)
+                .await
+                .map_err(|error| MergeError::Storage(error.to_string()))?
+            else {
+                continue;
+            };
+            let field = Block::from_dag_cbor(&data)
+                .map_err(|error| MergeError::BlockDecode(error.to_string()))?;
+            let CrdtDelta::Lww(lww) = &field.delta else {
+                continue;
+            };
+            if field.encryption.is_some() || lww.data.is_empty() {
+                continue;
+            }
+            let Ok(value) = ciborium::from_reader::<NormalValue, _>(lww.data.as_slice()) else {
+                continue;
+            };
+            keys.push(
+                WaitKey::immutable_field(&schema.name, &link.name, &value)
+                    .map_err(MergeError::MergeFailed)?,
+            );
+        }
+        Ok(keys)
     }
 
     /// Index the composite being merged under the CIDs a frame of its DAG is
@@ -83,7 +197,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc_id: &str,
         payload: &CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
-        awaiting: Vec<Cid>,
+        awaiting: Vec<WaitKey>,
     ) {
         self.deferred.defer(
             MergeBlock {
@@ -132,7 +246,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             metadata.doc_id.unwrap_or_default(),
             payload,
             metadata,
-            vec![missing],
+            vec![WaitKey::Composite(missing)],
         );
         Ok(MergeOutcome::retryable_skip("document genesis not held"))
     }
