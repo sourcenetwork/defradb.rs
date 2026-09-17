@@ -56,6 +56,21 @@ pub trait MergeView: MaybeSendSync {
         field: &str,
         value: &NormalValue,
     ) -> Result<Vec<String>, String>;
+
+    /// The `@immutable` scalar LWW fields of the merged document `doc_id` in
+    /// `collection`, read from the same snapshot as [`Self::find_documents`].
+    /// Mutable fields are never returned: only a field set once reads the same
+    /// on every replica that holds the document, whatever order its updates
+    /// merged in.
+    ///
+    /// Absence is not stable, so it must defer, never reject: `None` means the
+    /// document is not merged here yet or is deleted, and an immutable field
+    /// missing from the list may still be set by an update not yet merged.
+    async fn immutable_fields(
+        &self,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Option<Vec<(String, NormalValue)>>, String>;
 }
 
 pub(crate) struct DbMergeView<'a, S: Store, B: blockstore::Blockstore> {
@@ -145,11 +160,7 @@ where
         field: &str,
         value: &NormalValue,
     ) -> Result<Vec<String>, String> {
-        let db = &self.handler.db;
-        let Some(collection) = db
-            .get_collection(collection)
-            .map_err(|error| error.to_string())?
-        else {
+        let Some((collection, documents)) = self.documents(collection).await? else {
             return Ok(Vec::new());
         };
         if !super::is_immutable_scalar_field(collection.schema(), field) {
@@ -158,6 +169,55 @@ where
                 collection.name()
             ));
         }
+        Ok(documents
+            .into_iter()
+            .filter(|document| document.get(field) == Some(value))
+            .filter_map(|document| document.id().map(|id| id.to_string()))
+            .collect())
+    }
+
+    async fn immutable_fields(
+        &self,
+        collection: &str,
+        doc_id: &str,
+    ) -> Result<Option<Vec<(String, NormalValue)>>, String> {
+        let Some((collection, documents)) = self.documents(collection).await? else {
+            return Ok(None);
+        };
+        let schema = collection.schema();
+        Ok(documents
+            .into_iter()
+            .find(|document| document.id().is_some_and(|id| id.to_string() == doc_id))
+            .map(|document| {
+                let mut fields: Vec<(String, NormalValue)> = document
+                    .field_names()
+                    .filter(|name| super::is_immutable_scalar_field(schema, name))
+                    .filter_map(|name| {
+                        document
+                            .get(name)
+                            .map(|value| (name.to_string(), value.clone()))
+                    })
+                    .collect();
+                fields.sort_by(|a, b| a.0.cmp(&b.0));
+                fields
+            }))
+    }
+}
+
+impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
+    /// Every merged, undeleted document of `collection` on this verdict's
+    /// snapshot, opened on first use. `None` when the collection is unknown.
+    async fn documents(
+        &self,
+        collection: &str,
+    ) -> Result<Option<(crate::collection::Collection, Vec<document::Document>)>, String> {
+        let db = &self.handler.db;
+        let Some(collection) = db
+            .get_collection(collection)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
         let mut snapshot = self.snapshot.lock().await;
         if snapshot.is_none() {
             *snapshot = Some(db.new_txn(true).await.map_err(|error| error.to_string())?);
@@ -169,11 +229,7 @@ where
             .get_all_with_datastore(&datastore, &systemstore)
             .await
             .map_err(|error| error.to_string())?;
-        Ok(documents
-            .into_iter()
-            .filter(|document| document.get(field) == Some(value))
-            .filter_map(|document| document.id().map(|id| id.to_string()))
-            .collect())
+        Ok(Some((collection, documents)))
     }
 }
 
