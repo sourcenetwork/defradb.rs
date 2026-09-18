@@ -126,7 +126,7 @@ impl<S: Store> crate::database::DB<S> {
                 );
                 Error::CacheUpdateFailedAfterCommit(name.clone())
             })?;
-            cache.insert(name.clone(), Collection::new(target_schema));
+            cache.put(Collection::new(target_schema));
         }
 
         tracing::info!(
@@ -157,10 +157,7 @@ impl<S: Store> crate::database::DB<S> {
                 "collection cache lock poisoned during get_collection_by_version_id".into(),
             )
         })?;
-        Ok(cache
-            .values()
-            .find(|c| c.version_id() == version_id)
-            .cloned())
+        Ok(cache.by_version(version_id).cloned())
     }
 
     /// Get a collection by version ID, searching both cache and KV store.

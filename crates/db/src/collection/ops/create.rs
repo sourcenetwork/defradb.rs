@@ -321,7 +321,7 @@ impl<S: Store> crate::database::DB<S> {
             tracing::error!(error = ?e, collection_name = %name, "Collection cache lock poisoned after create");
             Error::CacheUpdateFailedAfterCommit(name.clone())
         })?;
-        cache.insert(name, Collection::new(finalized_schema.clone()));
+        cache.put(Collection::new(finalized_schema.clone()));
 
         Ok(finalized_schema)
     }
@@ -461,7 +461,7 @@ impl<S: Store> crate::database::DB<S> {
         })?;
 
         for schema in &finalized_schemas {
-            cache.insert(schema.name.clone(), Collection::new(schema.clone()));
+            cache.put(Collection::new(schema.clone()));
         }
 
         Ok(finalized_schemas)

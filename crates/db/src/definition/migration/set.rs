@@ -234,7 +234,7 @@ impl<S: Store> DB<S> {
 
             if let Some(cached) = cache.get(&collection_name) {
                 if cached.schema().version_id == dest_version_id {
-                    cache.insert(collection_name.clone(), Collection::new(dst_col));
+                    cache.put(Collection::new(dst_col));
                 }
             }
         }

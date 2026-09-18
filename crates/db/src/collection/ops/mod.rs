@@ -9,7 +9,6 @@
 mod create;
 mod delete;
 mod lookup;
-pub use lookup::Cached;
 mod resolve;
 mod truncate_filtered;
 mod version;
@@ -216,7 +215,7 @@ impl<S: Store> crate::database::DB<S> {
                     .get(&schema.collection_id)
                     .cloned()
                     .unwrap_or_default();
-                cache.insert(name, Collection::with_index_actions(schema, &actions));
+                cache.put(Collection::with_index_actions(schema, &actions));
             }
 
             tracing::info!(collection_count = cache.len(), "Loaded collections");
