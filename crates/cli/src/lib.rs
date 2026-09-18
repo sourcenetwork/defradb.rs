@@ -24,10 +24,10 @@ pub(crate) mod p2p_adapter;
 #[allow(dead_code)]
 pub(crate) mod p2p_collection_lookup;
 pub(crate) mod schema_adapter;
-#[cfg(feature = "sourcehub")]
-pub(crate) mod sourcehub_acp_adapter;
 #[allow(dead_code)]
 pub(crate) mod transport_doc_pusher;
 pub(crate) mod txn_adapter;
+#[cfg(feature = "vera")]
+pub(crate) mod vera_acp_adapter;
 pub(crate) mod version_syncer;
 pub(crate) mod view_adapter;

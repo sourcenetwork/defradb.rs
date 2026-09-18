@@ -351,11 +351,11 @@ fn build_env(ctx: &WorktreeContext, package: &str) -> RapidHashMap<String, Strin
 
     // Pass through Go test framework configuration from the environment.
     // These control the test matrix: which ACP type, mutation type, etc.
-    // Example: DEFRA_DOCUMENT_ACP_TYPE=source-hub ffi-test run encryption
+    // Example: DEFRA_DOCUMENT_ACP_TYPE=vera ffi-test run encryption
     for key in &[
         "DEFRA_DOCUMENT_ACP_TYPE",
         "DEFRA_MUTATION_TYPE",
-        "DEFRA_SOURCEHUB_IMAGE",
+        "DEFRA_VERA_IMAGE",
     ] {
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), val);

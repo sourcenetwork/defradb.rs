@@ -326,7 +326,7 @@ fn request_token_store() -> &'static Mutex<RapidHashMap<String, String>> {
 ///
 /// When a user authenticates via JWT, the node doesn't have their private key
 /// and can't create new bearer tokens for them. Instead, we pass through the
-/// original JWT — which IS signed by the user's key — to hub.rs/SourceHub
+/// original JWT — which IS signed by the user's key — to hub.rs/Vera
 /// for ACP operations like register_object.
 pub fn set_request_bearer_token(did: &str, token: impl Into<String>) {
     if let Ok(mut store) = request_token_store().lock() {
