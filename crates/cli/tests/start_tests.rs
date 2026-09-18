@@ -293,7 +293,7 @@ fn test_rebroadcast_flag_precedence() {
 }
 
 /// The Orbis ring authenticates a signing request with an EdDSA bearer token,
-/// while a node whose document ACP is SourceHub/Vera must keep a secp256k1
+/// while a node whose document ACP is Vera/Vera must keep a secp256k1
 /// identity to sign chain transactions. `--signer-orbis-identity` is what lets
 /// one node hold both, and it falls back to `--identity` when unset.
 #[cfg(feature = "orbis")]

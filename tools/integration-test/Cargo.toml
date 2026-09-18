@@ -86,8 +86,8 @@ name = "backup"
 path = "tests/backup.rs"
 
 [[test]]
-name = "sourcehub"
-path = "tests/sourcehub.rs"
+name = "vera"
+path = "tests/vera.rs"
 
 [[test]]
 name = "hubrs"

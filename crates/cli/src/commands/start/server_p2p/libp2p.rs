@@ -492,7 +492,7 @@ impl Node {
                 // detached P2P broadcast fires (#976). Without this, the
                 // mutator's pre-broadcast registration is skipped (ACP handle
                 // absent) and an encrypted doc's DEK can leak during the
-                // ~4.5s SourceHub registration window.
+                // ~4.5s Vera registration window.
                 broadcast_mutator_for_acp.set_document_acp(acp.clone());
                 merge_handler_for_acp.set_document_acp(acp);
             })),

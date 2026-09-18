@@ -2,7 +2,7 @@
 # Feature-graph contracts for defra-node (#1398–#1400). Not a size check.
 #
 # Inspect `cargo tree -p <crate> -e normal --locked [features] -i <pkg>` stdout.
-# Present iff a line matches ^<pkg> v (e.g. ^sourcehub v). Absent iff exit 101
+# Present iff a line matches ^<pkg> v (e.g. ^vera v). Absent iff exit 101
 # or exit 0 with empty stdout (cargo prints `warning: nothing to print.` on
 # stderr for unused optional deps). Never treat the -i exit code as the
 # predicate. Never pass --workspace: workspace feature unification would pull
@@ -72,7 +72,7 @@ assert_no_libp2p() {
   echo "ok: ${crate}${*:+ $*} --prefix none has no ^libp2p"
 }
 
-assert_present defra-node sourcehub
+assert_present defra-node vera
 assert_present defra-node wasmtime
 assert_present cli libp2p
 
@@ -83,8 +83,8 @@ assert_no_libp2p defra-node
 # cargo tree -i libp2p often exits 0 with empty stdout — still absent.
 assert_absent db libp2p --no-default-features --features native
 
-# Lean local-ACP + native host. No SourceHub, no Wasmtime, no libp2p.
-assert_absent defra-node sourcehub --no-default-features --features native
+# Lean local-ACP + native host. No Vera, no Wasmtime, no libp2p.
+assert_absent defra-node vera --no-default-features --features native
 assert_absent defra-node acp-light-client --no-default-features --features native
 assert_absent defra-node commonware-cryptography --no-default-features --features native
 assert_absent defra-node aws-lc-rs --no-default-features --features native
@@ -129,12 +129,12 @@ assert_p2p_crate_iroh_only() {
 }
 assert_p2p_crate_iroh_only
 
-# Lean-embedded ffi (#1345): libp2p in, iroh/wasmtime/sourcehub out.
+# Lean-embedded ffi (#1345): libp2p in, iroh/wasmtime/vera out.
 LEAN_FFI=(--no-default-features --features native,libp2p)
 assert_present ffi libp2p "${LEAN_FFI[@]}"
 assert_absent  ffi iroh "${LEAN_FFI[@]}"
 assert_absent  ffi wasmtime "${LEAN_FFI[@]}"
-assert_absent  ffi sourcehub "${LEAN_FFI[@]}"
+assert_absent  ffi vera "${LEAN_FFI[@]}"
 assert_absent  ffi cosmrs "${LEAN_FFI[@]}"
 
 # No-transport ffi (#1653): no libp2p / libp2p-* anywhere in the graph.
@@ -145,7 +145,7 @@ assert_absent ffi iroh "${NO_TRANSPORT_FFI[@]}"
 assert_present ffi libp2p
 
 # Default ffi still carries the full Go-interop capability set.
-assert_present ffi sourcehub
+assert_present ffi vera
 assert_present ffi wasmtime
 
 # Unique crate names. Log only — not a gate and not binary size. Main may move.

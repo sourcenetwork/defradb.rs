@@ -7,7 +7,7 @@
 # claim.rs, transition.rs, watcher.rs   -> Claim slice (proofs/tla/Claim_DESIGN.md)
 # delegate.rs, subagent_request.rs,
 # subscription_source.rs                -> proofs/tla/DESIGN.md worked examples
-# hub.rs                                -> proofs/survey/sourcehub.md
+# hub.rs                                -> proofs/survey/vera.md
 # p2p_doc_pusher.rs                     -> proofs/survey/cli.md
 # push_docs_transport.rs                -> EncryptedLwwReplay slice
 # defradb.rs                            -> the repository name, not a source file

@@ -9,7 +9,7 @@
 //! ## Cargo features
 //!
 //! - `native` — native host (tokio, event channel). Default-on.
-//! - `sourcehub` — on-chain document ACP. Default-on. Omit for local-only ACP.
+//! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
 //!   [`EmbeddedNode::set_migration`] returns an explicit error.
 //! - `p2p` — Iroh/QUIC replication. Implies `native`. Does **not** compile libp2p.
@@ -58,8 +58,8 @@ pub use config::DocumentAcpConfig;
 pub use config::HttpConfig;
 #[cfg(feature = "p2p")]
 pub use config::P2PConfig;
-#[cfg(feature = "sourcehub")]
-pub use config::SourceHubConfig;
+#[cfg(feature = "vera")]
+pub use config::VeraConfig;
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use events::EventName;
 pub use lens::{LensConfig, LensModule, TransformId};
@@ -1015,23 +1015,19 @@ impl NodeBuilder {
         self
     }
 
-    /// Configure the node to use SourceHub-backed document ACP.
+    /// Configure the node to use Vera-backed document ACP.
     ///
-    /// Requires the `sourcehub` feature (on by default).
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub(mut self, config: SourceHubConfig) -> Self {
-        self.document_acp = DocumentAcpConfig::SourceHub(config);
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_vera(mut self, config: VeraConfig) -> Self {
+        self.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
-    /// Configure SourceHub ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub_lcd(
-        mut self,
-        config: SourceHubConfig,
-        lcd_address: impl Into<String>,
-    ) -> Self {
-        self.document_acp = DocumentAcpConfig::SourceHubWithLcd {
+    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
+    #[cfg(feature = "vera")]
+    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
+        self.document_acp = DocumentAcpConfig::VeraWithLcd {
             config,
             lcd_address: lcd_address.into(),
         };
@@ -1467,9 +1463,9 @@ impl NodeBuilder {
         let acp_setup =
             node_acp::create_document_acp(store.clone(), persistence, &document_acp_config).await?;
         let document_acp = acp_setup.document_acp.clone();
-        #[cfg(feature = "sourcehub")]
-        let _strict_replicated_doc_access = acp_setup.sourcehub_acp.is_some();
-        #[cfg(not(feature = "sourcehub"))]
+        #[cfg(feature = "vera")]
+        let _strict_replicated_doc_access = acp_setup.vera_acp.is_some();
+        #[cfg(not(feature = "vera"))]
         let _strict_replicated_doc_access = false;
 
         // P2P setup (affects mutator choice)
@@ -1620,10 +1616,10 @@ impl NodeBuilder {
         };
 
         let runner: Arc<dyn QueryExecutor> = Arc::new(query_runner);
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         let policy_lookup =
-            acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.sourcehub_acp);
-        #[cfg(not(feature = "sourcehub"))]
+            acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);
+        #[cfg(not(feature = "vera"))]
         let policy_lookup = acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store);
         let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
             database.clone(),

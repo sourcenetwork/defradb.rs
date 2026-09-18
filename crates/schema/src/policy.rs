@@ -14,7 +14,7 @@ use crate::error::{Result, SchemaError};
 pub struct PolicyDescription {
     /// The policy ID.
     /// - For local ACP: local policy ID
-    /// - For remote ACP (SourceHub): global policy ID
+    /// - For remote ACP (Vera): global policy ID
     #[serde(rename = "ID", default)]
     pub id: String,
 

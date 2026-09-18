@@ -93,29 +93,29 @@ pub extern "C" fn defra_mobile_open_node(config_json: *const c_char) -> NewNodeR
             .and_then(|signing| signing.enable)
             .unwrap_or(!signing_key_bytes.is_empty());
 
-        let (sourcehub_grpc_address, sourcehub_comet_rpc_address, sourcehub_chain_id, sourcehub_signer_key) =
-            if let Some(sourcehub) = config.sourcehub.as_ref() {
-                let grpc = match maybe_cstring(Some(sourcehub.grpc_address.as_str()), "sourcehub.grpcAddress") {
+        let (vera_grpc_address, vera_comet_rpc_address, vera_chain_id, vera_signer_key) =
+            if let Some(vera) = config.vera.as_ref() {
+                let grpc = match maybe_cstring(Some(vera.grpc_address.as_str()), "vera.grpcAddress") {
                     Ok(Some(value)) => Some(value),
                     Ok(None) => None,
                     Err(error) => return NewNodeResult::error(error),
                 };
                 let comet = match maybe_cstring(
-                    Some(sourcehub.comet_rpc_address.as_str()),
-                    "sourcehub.cometRpcAddress",
+                    Some(vera.comet_rpc_address.as_str()),
+                    "vera.cometRpcAddress",
                 ) {
                     Ok(Some(value)) => Some(value),
                     Ok(None) => None,
                     Err(error) => return NewNodeResult::error(error),
                 };
-                let chain = match maybe_cstring(Some(sourcehub.chain_id.as_str()), "sourcehub.chainId")
+                let chain = match maybe_cstring(Some(vera.chain_id.as_str()), "vera.chainId")
                 {
                     Ok(Some(value)) => Some(value),
                     Ok(None) => None,
                     Err(error) => return NewNodeResult::error(error),
                 };
                 let signer_key =
-                    match decode_hex_field(Some(sourcehub.signer_key_hex.as_str()), "sourcehub.signerKeyHex")
+                    match decode_hex_field(Some(vera.signer_key_hex.as_str()), "vera.signerKeyHex")
                     {
                         Ok(bytes) => bytes,
                         Err(error) => return NewNodeResult::error(error),
@@ -245,15 +245,15 @@ pub extern "C" fn defra_mobile_open_node(config_json: *const c_char) -> NewNodeR
                 signing_key_bytes.as_ptr()
             },
             signing_private_key_len: signing_key_bytes.len(),
-            sourcehub_grpc_address: c_string_ptr(&sourcehub_grpc_address),
-            sourcehub_comet_rpc_address: c_string_ptr(&sourcehub_comet_rpc_address),
-            sourcehub_chain_id: c_string_ptr(&sourcehub_chain_id),
-            sourcehub_signer_key: if sourcehub_signer_key.is_empty() {
+            vera_grpc_address: c_string_ptr(&vera_grpc_address),
+            vera_comet_rpc_address: c_string_ptr(&vera_comet_rpc_address),
+            vera_chain_id: c_string_ptr(&vera_chain_id),
+            vera_signer_key: if vera_signer_key.is_empty() {
                 ptr::null()
             } else {
-                sourcehub_signer_key.as_ptr()
+                vera_signer_key.as_ptr()
             },
-            sourcehub_signer_key_len: sourcehub_signer_key.len(),
+            vera_signer_key_len: vera_signer_key.len(),
             p2p_transport: c_string_ptr(&p2p_transport),
             iroh_relay_url: c_string_ptr(&iroh_relay_url),
             iroh_relay_mode: c_string_ptr(&iroh_relay_mode),

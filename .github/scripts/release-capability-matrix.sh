@@ -31,7 +31,7 @@ rows() {
     has_feature "$features" wasmtime-runtime && lens="yes"
 
     local acp="no"
-    has_feature "$features" sourcehub && acp="yes"
+    has_feature "$features" vera && acp="yes"
 
     printf '%s\t%s\t%s\t%s\t%s\n' "$artifact" "$platform" "$transports" "$lens" "$acp"
   done
@@ -39,7 +39,7 @@ rows() {
 
 echo '## Capability matrix'
 echo
-echo '| Artifact | Platforms | Transports | Lens migrations | SourceHub ACP |'
+echo '| Artifact | Platforms | Transports | Lens migrations | Vera ACP |'
 echo '|---|---|---|---|---|'
 
 rows | awk -F'\t' '

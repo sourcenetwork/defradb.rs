@@ -8,7 +8,7 @@
 //! - M2: Iroh transport adapter, multi-transport composition.
 //! - M3: `KeyringKeyStore` (FileKeyring + SystemKeyring), KEK lifecycle,
 //!   `WrappingHeader` on the `Encryption` block.
-//! - M4: `SourceHubAttestedPolicy`, `CombinedPolicy`, reply attestation.
+//! - M4: `VeraAttestedPolicy`, `CombinedPolicy`, reply attestation.
 //! - M5: `EnclaveKeyStore`, `EnclaveUnwrap` trait, `DefraEnclaveEcdhCallback` FFI.
 //! - M6: `ThresholdKeyStore` (Orbis ring).
 //! - M7: `SeKeyProvider` to subsume the FFI searchable-encryption key path.

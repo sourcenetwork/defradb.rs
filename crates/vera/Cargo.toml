@@ -1,0 +1,92 @@
+[package]
+name = "vera"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vera ACP client for DefraDB"
+
+[package.metadata.cargo-machete]
+ignored = ["alloy-rlp"]
+
+[lib]
+bench = false
+
+[dependencies]
+# HTTP client for REST/LCD and CometBFT JSON-RPC
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "charset",
+    "http2",
+    "system-proxy",
+    "rustls-tls-native-roots",
+] }
+
+# Cosmos SDK transaction building and signing
+cosmrs = "0.22"
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Async
+tokio = { workspace = true, features = ["rt", "sync", "time", "io-util"] }
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Cryptography (secp256k1 signing key)
+k256.workspace = true
+hex.workspace = true
+
+# Internal crates
+acp = { path = "../acp" }
+zanzibar = { path = "../zanzibar" }
+identity = { path = "../identity" }
+defra-core = { path = "../defra-core" }
+crypto = { path = "../crypto" }
+events = { path = "../events" }
+
+# Lock-free shared state
+kovan.workspace = true
+kovan-map.workspace = true
+
+# Logging
+tracing.workspace = true
+sha2.workspace = true
+
+# Hashing
+rapidhash.workspace = true
+
+# Base64 for bearer token
+base64.workspace = true
+
+# EVM / Alloy (hub.rs ACP backend)
+alloy-sol-types.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+alloy-rlp.workspace = true
+bs58.workspace = true
+
+# ACP light client (proof-validated cache)
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "9fe9622a53bb5cc08574788ca370b5fb201868aa" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+futures.workspace = true
+prost.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "net"] }
+kovan-queue.workspace = true
+
+[lints]
+workspace = true

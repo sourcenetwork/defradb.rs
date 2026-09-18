@@ -18,7 +18,7 @@ requests, ACP config plumbing (`node_acp`), and a large benchmark harness
   backoff and calls `db::merge::retry_doc_via_transport`, flipping
   `p2p::ReplicatorStatus`. The replicator backfill/live/resume/backoff state machine
   itself lives in `p2p`/`storage`, not here.
-- **Document ACP selection** (`node_acp.rs`): a two-arm match (Local vs SourceHub);
+- **Document ACP selection** (`node_acp.rs`): a two-arm match (Local vs Vera);
   no transitions.
 All emergent protocol behavior (replication, convergence, ACP gating, KMS, integrity)
 is delegated to other crates and modeled by their own slices.

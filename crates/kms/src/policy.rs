@@ -12,7 +12,7 @@ use crate::types::{KeyScope, PolicyDecision};
 /// `DefraKms` calls `check_release` on the serving peer before ECIES-wrapping
 /// a reply block, and (defense-in-depth) on the requesting peer before
 /// caching a received DEK. `NacDacPolicy` is the M1 default; M4 adds
-/// `SourceHubAttestedPolicy`.
+/// `VeraAttestedPolicy`.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AccessPolicy: MaybeSendSync {

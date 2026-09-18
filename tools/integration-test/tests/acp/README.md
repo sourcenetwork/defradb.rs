@@ -34,7 +34,7 @@ The remaining Go `dac/p2p` relationship-propagation families are not local-ACP p
 - `replicator_with_doc_actor_relationship`
 - `subscribe_with_doc_actor_relationship`
 
-Rust already exercises those semantics in the SourceHub-backed iroh suite at `tools/integration-test/tests/p2p_iroh/acp/dac.rs`. Those tests are the Rust parity home for the final Go `dac/p2p` relationship families and require `sourcehubd` in the test environment, so they are tracked separately from the local-ACP suite.
+Rust already exercises those semantics in the Vera-backed iroh suite at `tools/integration-test/tests/p2p_iroh/acp/dac.rs`. Those tests are the Rust parity home for the final Go `dac/p2p` relationship families and require `verad` in the test environment, so they are tracked separately from the local-ACP suite.
 
 The corresponding local-ACP product gap is tracked in issue `#772`: local ACP does not currently replicate document-actor relationship tuples across peers. That non-replication remains intentionally asserted in `negative_p2p.rs`.
 

@@ -9,8 +9,8 @@ use crate::node_tasks::BackgroundTasks;
 use crate::IrohConfig;
 #[cfg(feature = "libp2p")]
 use crate::Libp2pConfig;
-#[cfg(feature = "sourcehub")]
-use crate::{DocumentAcpConfig, SourceHubConfig};
+#[cfg(feature = "vera")]
+use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{
     EmbeddedNodeConfig, EmbeddedStore, ManagedP2PSystem, Persistence, SigningConfig, SigningKey,
     TransportConfig,
@@ -58,8 +58,8 @@ pub struct EmbeddedNode<S: storage::corekv::Store + 'static> {
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     pub event_bus: Arc<dyn events::Bus>,
     pub node_identity_did: Option<String>,
-    #[cfg(feature = "sourcehub")]
-    pub sourcehub_acp: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+    #[cfg(feature = "vera")]
+    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     pub query_limits: query::QueryLimits,
     pub p2p: Option<Arc<ManagedP2PSystem>>,
     /// Idempotency guard for [`EmbeddedNode::shutdown`]. Set to `true`
@@ -308,20 +308,16 @@ impl NodeBuilder {
         self
     }
 
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub(mut self, config: SourceHubConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::SourceHub(config);
+    #[cfg(feature = "vera")]
+    pub fn with_vera(mut self, config: VeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
-    /// Configure SourceHub ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub_lcd(
-        mut self,
-        config: SourceHubConfig,
-        lcd_address: impl Into<String>,
-    ) -> Self {
-        self.config.document_acp = DocumentAcpConfig::SourceHubWithLcd {
+    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
+    #[cfg(feature = "vera")]
+    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
+        self.config.document_acp = DocumentAcpConfig::VeraWithLcd {
             config,
             lcd_address: lcd_address.into(),
         };
@@ -572,11 +568,11 @@ where
         create_document_acp(store.clone(), config.persistence, &config.document_acp).await?;
     let document_acp = acp_setup.document_acp;
     let local_zanzibar_store = acp_setup.local_zanzibar_store;
-    #[cfg(feature = "sourcehub")]
-    let sourcehub_acp = acp_setup.sourcehub_acp;
-    #[cfg(all(feature = "sourcehub", any(feature = "libp2p", feature = "iroh")))]
-    let strict_replicated_doc_access = sourcehub_acp.is_some();
-    #[cfg(all(not(feature = "sourcehub"), any(feature = "libp2p", feature = "iroh")))]
+    #[cfg(feature = "vera")]
+    let vera_acp = acp_setup.vera_acp;
+    #[cfg(all(feature = "vera", any(feature = "libp2p", feature = "iroh")))]
+    let strict_replicated_doc_access = vera_acp.is_some();
+    #[cfg(all(not(feature = "vera"), any(feature = "libp2p", feature = "iroh")))]
     let strict_replicated_doc_access = false;
 
     let p2p_setup: Result<Option<crate::node_p2p::P2PSetup>> = match &config.transport {
@@ -777,8 +773,8 @@ where
         local_zanzibar_store,
         event_bus,
         node_identity_did,
-        #[cfg(feature = "sourcehub")]
-        sourcehub_acp,
+        #[cfg(feature = "vera")]
+        vera_acp,
         query_limits: config.query_limits,
         p2p: p2p_setup.map(|setup| setup.system),
         shutdown_started: AtomicBool::new(false),

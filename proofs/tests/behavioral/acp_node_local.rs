@@ -5,9 +5,9 @@
 //! PEER is NOT gated on that peer: Local ACP makes no cross-node calls and a
 //! document that is unregistered in a node's ACP store is treated as public
 //! (`LocalDocumentACP::check_doc_access`). Cross-node access control is
-//! SourceHub ACP's role (shared on-chain registry). This matches Go exactly —
+//! Vera ACP's role (shared on-chain registry). This matches Go exactly —
 //! Go never registers replicated docs on the peer for Local ACP, and gates the
-//! "hidden on peer" behaviour to SourceHub only.
+//! "hidden on peer" behaviour to Vera only.
 //!
 //! A Rust-only feature once gated Local-ACP replicas on the peer and propagated
 //! grants/revokes over P2P; it was removed (nothing depended on it) in favour of

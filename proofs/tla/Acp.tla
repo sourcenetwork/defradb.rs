@@ -1,7 +1,7 @@
 ---- MODULE Acp ----
 \* ACP tuple replication and revocation-consistency model.
 \*
-\* The authoritative tuple set represents SourceHub/on-chain ACP or the owner
+\* The authoritative tuple set represents Vera/on-chain ACP or the owner
 \* node's local tuple store.  Each node also has a replicated local tuple view
 \* and, optionally, a positive access-decision cache.  The property of interest
 \* is intentionally post-propagation: once a revocation has reached a node, that
