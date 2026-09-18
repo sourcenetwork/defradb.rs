@@ -748,7 +748,10 @@ impl<'a> SdlParser<'a> {
             &type_def.name,
             &fields,
             headstore,
-            type_def.directives.governance_root.as_deref(),
+            schema::Commitments {
+                governance_root: type_def.directives.governance_root.as_deref(),
+                is_branchable: type_def.directives.is_branchable,
+            },
         );
 
         // Version ID equals collection ID for new schemas (Go behavior)

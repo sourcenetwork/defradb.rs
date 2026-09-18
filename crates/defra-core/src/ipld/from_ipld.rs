@@ -281,6 +281,7 @@ impl TryFrom<&Ipld> for FieldDefinitionDeltaPayload {
             scalar_kind: parse_optional_u8(map, "scalarKind")?,
             collection_id: parse_optional_string(map, "collectionID")?,
             relative_id: parse_optional_i32(map, "relativeID")?,
+            immutable: parse_flag(map, "immutable"),
         })
     }
 }
@@ -305,6 +306,7 @@ impl TryFrom<&Ipld> for CollectionDefinitionDeltaPayload {
             query_select: parse_optional_bytes(map, "querySelect")?,
             query_transform: parse_optional_cid(map, "queryTransform")?,
             governance_root: parse_optional_string(map, "governance")?,
+            is_branchable: parse_flag(map, "branchable"),
         })
     }
 }
@@ -546,6 +548,11 @@ fn parse_u8(map: &BTreeMap<String, Ipld>, key: &str) -> Result<u8> {
 // ============================================================================
 
 /// Parse an optional string field. Returns error if field exists but has wrong type.
+/// A flag whose absence means false, which is how both are serialised.
+fn parse_flag(map: &BTreeMap<String, Ipld>, key: &str) -> bool {
+    matches!(map.get(key), Some(Ipld::Bool(true)))
+}
+
 fn parse_optional_string(map: &BTreeMap<String, Ipld>, key: &str) -> Result<Option<String>> {
     match map.get(key) {
         Some(Ipld::String(s)) => Ok(Some(s.clone())),

@@ -736,11 +736,26 @@ fn test_crdt_validation_fails_for_non_numeric() {
 #[test]
 fn test_collection_ids_are_deterministic() {
     // With empty fields (matches Go's behavior for field-less collections)
-    let id1 = generate_collection_id("User", &[], &RapidHashMap::new(), None);
-    let id2 = generate_collection_id("User", &[], &RapidHashMap::new(), None);
+    let id1 = generate_collection_id(
+        "User",
+        &[],
+        &RapidHashMap::new(),
+        schema::Commitments::default(),
+    );
+    let id2 = generate_collection_id(
+        "User",
+        &[],
+        &RapidHashMap::new(),
+        schema::Commitments::default(),
+    );
     assert_eq!(id1, id2, "same type name should produce same collection ID");
 
-    let id3 = generate_collection_id("Post", &[], &RapidHashMap::new(), None);
+    let id3 = generate_collection_id(
+        "Post",
+        &[],
+        &RapidHashMap::new(),
+        schema::Commitments::default(),
+    );
     assert_ne!(
         id1, id3,
         "different type names should produce different IDs"
@@ -2055,26 +2070,52 @@ fn the_same_governed_schema_derives_the_same_identity() {
     assert_eq!(once.governance_root, twice.governance_root);
 }
 
-/// Every directive that bears on governance today, and none of them reaches
-/// the identity: a policy, immutability, branchable history and an index all
-/// leave the collection ID exactly where the bare schema left it.
+/// Which commitments reach the identity, and which do not.
 ///
-/// This is the starting point, not an endorsement. It is here so that a
-/// change to what the identity commits to has to rewrite this test and say
-/// which of these it moved.
+/// A commitment is a promise to writers — who governs, what may never change,
+/// whether history is verifiable — and moves the collection ID. A
+/// representation or performance choice a node can make and unmake does not:
+/// an index is added to a live collection and backfilled under the same
+/// version ID, so it cannot be part of an identity it would have to change.
 #[test]
-fn no_governance_directive_reaches_the_identity_today() {
+fn commitments_reach_the_identity_and_configuration_does_not() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+
+    // Moved: each of these now mints a different collection.
     for sdl in [
         r#"type Agent { did: String @immutable, body: String }"#,
-        r#"type Agent @policy(id: "p1", resource: "agents") { did: String, body: String }"#,
         r#"type Agent @branchable { did: String, body: String }"#,
-        r#"type Agent { did: String @immutable @index, body: String }"#,
+        r#"type Agent @governed(root: "root-a") { did: String, body: String }"#,
     ] {
-        let collection = &parse_sdl(sdl).unwrap()[0];
-        assert_eq!(
-            collection.collection_id, UNGOVERNED_AGENT_ID,
-            "identity moved for: {sdl}"
-        );
-        assert_eq!(collection.version_id, collection.collection_id);
+        assert_ne!(id_for(sdl), UNGOVERNED_AGENT_ID, "still unmoved: {sdl}");
     }
+
+    // Unmoved: configuration, and a policy, which reaches the version ID only.
+    for sdl in [
+        r#"type Agent { did: String @index, body: String }"#,
+        r#"type Agent @policy(id: "p1", resource: "agents") { did: String, body: String }"#,
+    ] {
+        assert_eq!(id_for(sdl), UNGOVERNED_AGENT_ID, "moved: {sdl}");
+    }
+}
+
+/// The three commitments are independent: each moves the identity on its own,
+/// and no two of them collide.
+#[test]
+fn each_commitment_mints_a_distinct_identity() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+    let mut ids = vec![
+        UNGOVERNED_AGENT_ID.to_string(),
+        id_for(r#"type Agent { did: String @immutable, body: String }"#),
+        id_for(r#"type Agent @branchable { did: String, body: String }"#),
+        id_for(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#),
+    ];
+    let total = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        total,
+        "two commitments share an identity: {ids:?}"
+    );
 }

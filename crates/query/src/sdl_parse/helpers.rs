@@ -324,7 +324,7 @@ pub(super) fn generate_collection_id(
     type_name: &str,
     fields: &[FieldDescription],
     headstore: &RapidHashMap<String, (Cid, u64)>,
-    governance_root: Option<&str>,
+    commitments: schema::Commitments<'_>,
 ) -> String {
     // Sort fields to match Go's order: _docID first, then alphabetically by name
     // Include fields with non-empty FieldID in the CID.
@@ -374,7 +374,7 @@ pub(super) fn generate_collection_id(
         &field_cids,
         priority,
         &head_cids,
-        governance_root,
+        commitments,
     ) {
         Ok(cid) => cid.to_string(),
         Err(_) => {

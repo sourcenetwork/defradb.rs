@@ -200,6 +200,9 @@ impl From<&FieldDefinitionDeltaPayload> for Ipld {
         if let Some(rid) = payload.relative_id {
             map.insert("relativeID".to_string(), Ipld::Integer(rid as i128));
         }
+        if payload.immutable {
+            map.insert("immutable".to_string(), Ipld::Bool(true));
+        }
         Ipld::Map(map)
     }
 }
@@ -227,6 +230,9 @@ impl TryFrom<&CollectionDefinitionDeltaPayload> for Ipld {
                 "governance".to_string(),
                 Ipld::String(governance_root.clone()),
             );
+        }
+        if payload.is_branchable {
+            map.insert("branchable".to_string(), Ipld::Bool(true));
         }
         Ok(Ipld::Map(map))
     }

@@ -24,6 +24,21 @@ pub struct BlockWithCid {
     pub bytes: Vec<u8>,
 }
 
+/// What a collection's identity commits to beyond the shape of its data.
+///
+/// These are promises to writers rather than choices a node makes for itself,
+/// so they belong in the identity: a collection under a different root, or one
+/// whose history is verifiable when another's is not, is a different
+/// collection. A default value leaves the delta, and so the identity,
+/// byte-identical to what it was before any of this existed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Commitments<'a> {
+    /// The governance root claiming the collection, from `@governed`.
+    pub governance_root: Option<&'a str>,
+    /// Whether the collection's history is one verifiable entity.
+    pub is_branchable: bool,
+}
+
 /// Generates a CID for a field definition with priority=1.
 ///
 /// This matches Go's field definition block structure using defra-core's Block type.
@@ -98,7 +113,7 @@ pub fn generate_collection_cid_with_priority_and_heads(
     priority: u64,
     heads: &[Cid],
 ) -> crate::Result<Cid> {
-    generate_collection_cid_governed(name, field_cids, priority, heads, None)
+    generate_collection_cid_governed(name, field_cids, priority, heads, Commitments::default())
 }
 
 /// Generate a collection CID, hashing in the governance root when there is one.
@@ -113,7 +128,7 @@ pub fn generate_collection_cid_governed(
     field_cids: &[Cid],
     priority: u64,
     heads: &[Cid],
-    governance_root: Option<&str>,
+    commitments: Commitments<'_>,
 ) -> crate::Result<Cid> {
     generate_collection_cid_full_with_query(
         Some(name),
@@ -122,7 +137,7 @@ pub fn generate_collection_cid_governed(
         heads,
         None,
         None,
-        governance_root,
+        commitments,
     )
 }
 
@@ -136,7 +151,15 @@ pub fn generate_collection_cid_full(
     priority: u64,
     heads: &[Cid],
 ) -> crate::Result<Cid> {
-    generate_collection_cid_full_with_query(name, field_cids, priority, heads, None, None, None)
+    generate_collection_cid_full_with_query(
+        name,
+        field_cids,
+        priority,
+        heads,
+        None,
+        None,
+        Commitments::default(),
+    )
 }
 
 /// Generate a collection CID with optional name, priority, head CIDs, and query data.
@@ -151,15 +174,9 @@ pub fn generate_collection_cid_full_with_query(
     heads: &[Cid],
     query_select: Option<&[u8]>,
     query_transform: Option<&Cid>,
-    governance_root: Option<&str>,
+    commitments: Commitments<'_>,
 ) -> crate::Result<Cid> {
-    let delta = build_collection_delta(
-        name,
-        priority,
-        query_select,
-        query_transform,
-        governance_root,
-    );
+    let delta = build_collection_delta(name, priority, query_select, query_transform, commitments);
 
     let links: Vec<DAGLink> = field_cids
         .iter()
@@ -180,7 +197,7 @@ fn build_collection_delta(
     priority: u64,
     query_select: Option<&[u8]>,
     query_transform: Option<&Cid>,
-    governance_root: Option<&str>,
+    commitments: Commitments<'_>,
 ) -> CollectionDefinitionDeltaPayload {
     let mut delta = CollectionDefinitionDeltaPayload::new(priority);
     if let Some(n) = name {
@@ -192,9 +209,10 @@ fn build_collection_delta(
     if let Some(qt) = query_transform {
         delta = delta.with_query_transform(*qt);
     }
-    if let Some(root) = governance_root {
+    if let Some(root) = commitments.governance_root {
         delta = delta.with_governance_root(root);
     }
+    delta = delta.with_branchable(commitments.is_branchable);
     delta
 }
 
@@ -255,7 +273,15 @@ pub fn generate_collection_block_full(
     priority: u64,
     heads: &[Cid],
 ) -> crate::Result<BlockWithCid> {
-    generate_collection_block_full_with_query(name, field_cids, priority, heads, None, None, None)
+    generate_collection_block_full_with_query(
+        name,
+        field_cids,
+        priority,
+        heads,
+        None,
+        None,
+        Commitments::default(),
+    )
 }
 
 /// Generate a collection definition block (CID + bytes) with optional query data.
@@ -270,15 +296,9 @@ pub fn generate_collection_block_full_with_query(
     heads: &[Cid],
     query_select: Option<&[u8]>,
     query_transform: Option<&Cid>,
-    governance_root: Option<&str>,
+    commitments: Commitments<'_>,
 ) -> crate::Result<BlockWithCid> {
-    let delta = build_collection_delta(
-        name,
-        priority,
-        query_select,
-        query_transform,
-        governance_root,
-    );
+    let delta = build_collection_delta(name, priority, query_select, query_transform, commitments);
 
     let links: Vec<DAGLink> = field_cids
         .iter()
@@ -318,7 +338,8 @@ fn field_to_delta_with_priority(
 ) -> crate::Result<FieldDefinitionDeltaPayload> {
     let mut delta = FieldDefinitionDeltaPayload::new(priority)
         .with_name(&field.name)
-        .with_crdt(field.crdt_type.to_u8());
+        .with_crdt(field.crdt_type.to_u8())
+        .with_immutable(field.immutable);
 
     match &field.kind {
         FieldKind::Scalar(k) => {

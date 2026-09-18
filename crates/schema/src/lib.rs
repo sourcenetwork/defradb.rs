@@ -28,6 +28,7 @@ pub use cid::{
     generate_collection_cid_with_priority_and_heads, generate_collection_set_cid,
     generate_field_block_with_priority_and_heads, generate_field_cid,
     generate_field_cid_with_priority, generate_field_cid_with_priority_and_heads, BlockWithCid,
+    Commitments,
 };
 pub use collection::{
     legacy_collection_short_id, CollectionBuilder, CollectionVersion, ORPHAN_COLLECTION_ID,
