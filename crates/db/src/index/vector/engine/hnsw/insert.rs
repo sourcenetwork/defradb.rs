@@ -70,7 +70,7 @@ impl<S: VectorNodeStore> Hnsw<S> {
         self.store.put_node(pending).await?;
 
         let mut layers: Vec<Vec<NodeId>> = vec![Vec::new(); top_level + 1];
-        let mut entry_points = vec![current];
+        let mut entry_points = vec![current.clone()];
         for layer in (0..=meta.top_layer.min(top_level)).rev() {
             let found = self
                 .search_layer(
@@ -92,7 +92,13 @@ impl<S: VectorNodeStore> Hnsw<S> {
 
             // Every neighbor found here seeds the next layer down, not just the
             // closest: narrowing to one point too early costs recall.
-            entry_points = found;
+            // The replacement may be alone on an upper layer. It still routes
+            // to lower layers even though it cannot be its own neighbor.
+            entry_points = if found.is_empty() {
+                vec![current.clone()]
+            } else {
+                found
+            };
         }
 
         let isolated = layers[0].is_empty();
