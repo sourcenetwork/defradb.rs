@@ -11,9 +11,11 @@ use cid::Cid;
 use db::database::DB;
 use db::merge::merge_handler::DbMergeHandler;
 use defra_core::block::{
-    Block, CollectionDefinitionDeltaPayload, CrdtDelta, DAGLink, FieldDefinitionDeltaPayload,
+    Block, CollectionDefinitionDeltaPayload, CompositeDeltaPayload, CrdtDelta, DAGLink,
+    FieldDefinitionDeltaPayload, LwwDeltaPayload,
 };
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
+use document::NormalValue;
 use schema::{CType, CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
 use storage::RegolithStore;
 
@@ -133,7 +135,12 @@ async fn a_synced_definition_does_not_displace_a_collection_of_the_same_name() {
         "the local definition holds its policy and its immutable field"
     );
 
-    merge(&handler, &blockstore, "Agent").await;
+    // The version is still stored and still reported merged; only the cache
+    // entry, which can hold one collection per name, is left alone.
+    assert_eq!(
+        merge(&handler, &blockstore, "Agent").await,
+        MergeOutcome::Merged
+    );
 
     assert_eq!(
         commitments(&db),
@@ -159,4 +166,158 @@ async fn a_synced_definition_for_a_free_name_still_registers() {
         .fields
         .iter()
         .any(|field| field.name == "did"));
+}
+
+/// A genesis composite for `collection_version`, with its field block.
+fn document(collection_version: &str, value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>) {
+    let field = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "did".to_string(),
+            priority: 1,
+            schema_version_id: collection_version.to_string(),
+            data: db::block::builder::encode_value_as_cbor(&NormalValue::String(value.to_string()))
+                .unwrap(),
+        }),
+        vec![],
+        vec![],
+    );
+    let field_cid = field.generate_cid().unwrap();
+    let composite = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            schema_version_id: collection_version.to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("did", field_cid)],
+    );
+    let composite_cid = composite.generate_cid().unwrap();
+    (
+        composite_cid,
+        vec![
+            (field_cid, field.to_dag_cbor().unwrap()),
+            (composite_cid, composite.to_dag_cbor().unwrap()),
+        ],
+    )
+}
+
+/// Keeping a peer's same-named collection out of the name-keyed cache must not
+/// make its documents unmergeable: the definition is durably stored under its
+/// own version, and that is what a composite naming it resolves through.
+#[tokio::test]
+async fn a_document_for_a_collection_kept_out_of_the_cache_still_merges() {
+    let (_db, handler, blockstore) = node().await;
+    let (definition_cid, definition_blocks) = definition("Agent", &["_docID", "did"]);
+    for (cid, bytes) in &definition_blocks {
+        blockstore.put(cid, bytes).await.unwrap();
+    }
+    let definition_bytes = &definition_blocks.last().unwrap().1;
+    handler
+        .handle_block(
+            &definition_cid,
+            definition_bytes,
+            BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+        )
+        .await
+        .unwrap();
+
+    // The peer's collection is keyed by its own version id, which is the CID of
+    // the definition block it sent.
+    let peer_version = definition_cid.to_string();
+    let (composite_cid, blocks) = document(&peer_version, "did:key:peer");
+    for (cid, bytes) in &blocks {
+        blockstore.put(cid, bytes).await.unwrap();
+    }
+    let composite_bytes = &blocks.last().unwrap().1;
+
+    let outcome = handler
+        .handle_block(
+            &composite_cid,
+            composite_bytes,
+            BlockMetadata::normal("", &peer_version, "peer-did", Some("peer"), false),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged,
+        "the collection is durably stored, so its documents must resolve it"
+    );
+}
+
+/// A patched definition resolves its collection ID from the version it
+/// supersedes, so it is the *same* collection and the cache takes it. The
+/// delta still cannot express a policy or branchable history, so the rebuild
+/// has to inherit them rather than default them away.
+#[tokio::test]
+async fn a_patched_definition_keeps_what_the_delta_cannot_carry() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+    let defined = query::parse_sdl(
+        r#"type Agent @policy(id: "p1", resource: "agents") @branchable { did: String @immutable }"#,
+    )
+    .unwrap()
+    .remove(0);
+    db.create_collection(defined).await.unwrap();
+    let blockstore = Arc::new(DefraBlockstore::new(store, false));
+    let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
+
+    let held = db.get_collection("Agent").unwrap().unwrap();
+    assert!(held.schema().policy.is_some() && held.schema().is_branchable);
+    let previous: Cid = held.schema().version_id.parse().expect("a CID version id");
+
+    // A patch adding one field: no name, and the superseded version as its head.
+    let field = Block::new(
+        CrdtDelta::FieldDefinition(
+            FieldDefinitionDeltaPayload::new(1)
+                .with_name("body")
+                .with_scalar_kind(STRING_KIND)
+                .with_crdt(CType::LwwRegister.to_u8()),
+        ),
+        vec![],
+        vec![],
+    );
+    let field_cid = field.generate_cid().unwrap();
+    blockstore
+        .put(&field_cid, &field.to_dag_cbor().unwrap())
+        .await
+        .unwrap();
+    let patch = Block::new(
+        CrdtDelta::CollectionDefinition(CollectionDefinitionDeltaPayload::new(2)),
+        vec![previous],
+        vec![DAGLink::new("body", field_cid)],
+    );
+    let patch_cid = patch.generate_cid().unwrap();
+    let patch_bytes = patch.to_dag_cbor().unwrap();
+    blockstore.put(&patch_cid, &patch_bytes).await.unwrap();
+
+    handler
+        .handle_block(
+            &patch_cid,
+            &patch_bytes,
+            BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+        )
+        .await
+        .unwrap();
+
+    let patched = db.get_collection("Agent").unwrap().unwrap();
+    let patched = patched.schema();
+    assert_eq!(
+        patched.policy.as_ref().map(|policy| policy.id.as_str()),
+        Some("p1"),
+        "a patch carries no policy, so it must inherit the one it supersedes"
+    );
+    assert!(
+        patched.is_branchable,
+        "a patch carries no branchable flag either"
+    );
+    assert!(
+        patched
+            .fields
+            .iter()
+            .any(|field| field.name == "did" && field.immutable),
+        "the superseded version's immutable fields carry through"
+    );
+    assert!(patched.fields.iter().any(|field| field.name == "body"));
 }

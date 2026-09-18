@@ -24,13 +24,18 @@ impl<S: Store> crate::database::DB<S> {
     /// This is used by the merge handler to add synced collections received via P2P
     /// to the cache so they're visible to `list_collections` and `get_collection`.
     /// The collection can be inactive (synced collections start inactive until manually activated).
-    pub fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<()> {
+    /// Cache `schema` under its name, returning whether it was taken.
+    ///
+    /// `false` means an entry naming a different collection already holds the
+    /// name and was left alone; the caller's schema is unchanged in the cache.
+    pub fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<bool> {
         let name = schema.name.clone();
         // The cache is keyed by name, but a collection's identity is its
         // collection ID. An entry naming a different collection must not be
         // replaced: whatever that collection knows and the incoming schema
         // does not carry would be dropped silently. A placeholder is a
         // stand-in for a definition that has not arrived, so it always yields.
+        let mut displaced = true;
         self.collections.rcu(|old| {
             if let Some(existing) = old.get(&name) {
                 let existing = existing.schema();
@@ -41,6 +46,7 @@ impl<S: Store> crate::database::DB<S> {
                         offered = %schema.collection_id,
                         "Refusing to displace a cached collection with a different collection ID"
                     );
+                    displaced = false;
                     return old.clone();
                 }
             }
@@ -48,7 +54,7 @@ impl<S: Store> crate::database::DB<S> {
             cache.insert(name.clone(), Collection::new(schema.clone()));
             cache
         });
-        Ok(())
+        Ok(displaced)
     }
 
     /// Get a collection by name using the transaction's cache.

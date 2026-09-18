@@ -20,7 +20,7 @@ use defra_core::block::{
 use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use document::NormalValue;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
-use storage::corekv::{IterOptions, Store};
+use storage::corekv::IterOptions;
 use storage::RegolithStore;
 
 const COLLECTION_ID: &str = "col-ledger";
@@ -28,7 +28,7 @@ const COLLECTION_ID: &str = "col-ledger";
 type Handler = DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>;
 
 async fn node() -> (
-    Arc<RegolithStore>,
+    Arc<DB<RegolithStore>>,
     Handler,
     Arc<DefraBlockstore<RegolithStore>>,
 ) {
@@ -48,9 +48,9 @@ async fn node() -> (
     )
     .await
     .unwrap();
-    let blockstore = Arc::new(DefraBlockstore::new(store.clone(), false));
-    let handler = DbMergeHandler::new(db, blockstore.clone());
-    (store, handler, blockstore)
+    let blockstore = Arc::new(DefraBlockstore::new(store, false));
+    let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
+    (db, handler, blockstore)
 }
 
 /// A genesis composite setting `body`, with its field block.
@@ -88,12 +88,17 @@ fn document(value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>) {
 
 /// A collection block linking `documents`.
 fn collection_block(documents: &[Cid]) -> (Cid, Vec<u8>) {
+    collection_block_over(documents, &[])
+}
+
+/// A collection block linking `documents`, superseding `heads`.
+fn collection_block_over(documents: &[Cid], heads: &[Cid]) -> (Cid, Vec<u8>) {
     let block = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
             schema_version_id: COLLECTION_ID.to_string(),
-            priority: 1,
+            priority: if heads.is_empty() { 1 } else { 2 },
         }),
-        vec![],
+        heads.to_vec(),
         documents
             .iter()
             .map(|cid| DAGLink::new("_head", *cid))
@@ -114,23 +119,33 @@ async fn merge(handler: &Handler, cid: &Cid, bytes: &[u8]) -> MergeOutcome {
         .unwrap()
 }
 
-/// Every collection-head key in the store, so a failure shows what landed.
-async fn collection_heads(store: &Arc<RegolithStore>) -> Vec<String> {
-    let txn = store.new_txn(true).await.unwrap();
-    let mut iter = txn.iterator(IterOptions::new()).await.unwrap();
-    let mut keys = Vec::new();
-    while let Some(pair) = iter.next().await.unwrap() {
-        let key = String::from_utf8_lossy(&pair.key).into_owned();
-        if key.contains("/c/") {
-            keys.push(key);
+/// The collection's head keys, read through the headstore's own prefix rather
+/// than by matching text across every namespace in the store.
+async fn collection_heads(db: &Arc<DB<RegolithStore>>) -> Vec<String> {
+    let collection = db.get_collection("Ledger").unwrap().unwrap();
+    let prefix =
+        storage::keys::headstore::HeadstoreColKey::collection_prefix(collection.resolved_root_id());
+    let txn = db.new_txn(true).await.unwrap();
+    let keys = {
+        let headstore = txn.headstore().unwrap();
+        let mut iter = headstore
+            .iterator(IterOptions::new().with_prefix(prefix).with_keys_only(true))
+            .await
+            .unwrap();
+        let mut keys = Vec::new();
+        while let Some(pair) = iter.next().await.unwrap() {
+            keys.push(String::from_utf8_lossy(&pair.key).into_owned());
         }
-    }
+        iter.close().await.unwrap();
+        keys
+    };
+    let _ = txn.discard();
     keys
 }
 
 #[tokio::test]
 async fn a_collection_block_whose_link_is_not_held_installs_no_head() {
-    let (store, handler, blockstore) = node().await;
+    let (db, handler, blockstore) = node().await;
     // The composite is authored but never delivered, so the link is missing.
     let (composite_cid, _) = document("first");
     let (cid, bytes) = collection_block(&[composite_cid]);
@@ -139,19 +154,25 @@ async fn a_collection_block_whose_link_is_not_held_installs_no_head() {
     let outcome = merge(&handler, &cid, &bytes).await;
 
     assert!(
-        !matches!(outcome, MergeOutcome::Skipped { terminal: true, .. }),
-        "a block whose named document was never merged must not be discharged \
-         as merged: {outcome:?}"
+        matches!(
+            &outcome,
+            MergeOutcome::Skipped {
+                terminal: false,
+                reason
+            } if reason.contains("not held")
+        ),
+        "a block whose named document was never merged must be retryable, not \
+         discharged: {outcome:?}"
     );
     assert!(
-        collection_heads(&store).await.is_empty(),
+        collection_heads(&db).await.is_empty(),
         "no head may be installed for a history this node does not hold"
     );
 }
 
 #[tokio::test]
 async fn a_collection_block_whose_links_are_held_merges_and_installs_its_head() {
-    let (store, handler, blockstore) = node().await;
+    let (db, handler, blockstore) = node().await;
     let (composite_cid, blocks) = document("first");
     for (block_cid, block_bytes) in &blocks {
         blockstore.put(block_cid, block_bytes).await.unwrap();
@@ -162,7 +183,46 @@ async fn a_collection_block_whose_links_are_held_merges_and_installs_its_head() 
     let outcome = merge(&handler, &cid, &bytes).await;
 
     assert_eq!(outcome, MergeOutcome::Merged);
-    let heads = collection_heads(&store).await;
+    let heads = collection_heads(&db).await;
     assert_eq!(heads.len(), 1, "{heads:?}");
     assert!(heads[0].contains(&cid.to_string()), "{heads:?}");
+}
+
+/// A partial DAG is an ordinary condition on the receive path: a CAR is
+/// truncated at its block and byte caps and the receiver is handed whatever
+/// fitted. A historical collection block missing a link must therefore not
+/// abort the root's merge, or deep catch-up over a large branchable collection
+/// never progresses.
+#[tokio::test]
+async fn an_ancestor_missing_a_link_does_not_abort_the_root() {
+    let (db, handler, blockstore) = node().await;
+
+    // The ancestor names a document that never arrived.
+    let (absent, _) = document("historical");
+    let (ancestor_cid, ancestor_bytes) = collection_block(&[absent]);
+    blockstore
+        .put(&ancestor_cid, &ancestor_bytes)
+        .await
+        .unwrap();
+
+    // The root holds everything it names.
+    let (present, blocks) = document("current");
+    for (cid, bytes) in &blocks {
+        blockstore.put(cid, bytes).await.unwrap();
+    }
+    let (root_cid, root_bytes) = collection_block_over(&[present], &[ancestor_cid]);
+    blockstore.put(&root_cid, &root_bytes).await.unwrap();
+
+    let outcome = merge(&handler, &root_cid, &root_bytes).await;
+
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged,
+        "the root's own links were all processed"
+    );
+    let heads = collection_heads(&db).await;
+    assert!(
+        heads.iter().any(|key| key.contains(&root_cid.to_string())),
+        "the root's head must install: {heads:?}"
+    );
 }
