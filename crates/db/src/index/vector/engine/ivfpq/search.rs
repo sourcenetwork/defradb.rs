@@ -101,7 +101,7 @@ impl Ord for Ranked {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.distance
             .total_cmp(&other.distance)
-            .then_with(|| other.id.cmp(&self.id))
+            .then_with(|| self.id.cmp(&other.id))
     }
 }
 
