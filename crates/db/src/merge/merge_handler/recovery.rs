@@ -168,7 +168,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             .db
                             .add_collection_to_cache(prev.clone())
                             .map_err(MergeError::Database)?;
-                        if !cached {
+                        if cached == crate::collection::Cached::NameHeldByAnother {
                             tracing::debug!(
                                 collection_id = %prev.collection_id,
                                 name = %prev.name,

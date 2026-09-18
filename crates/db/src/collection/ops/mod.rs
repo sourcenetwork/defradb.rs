@@ -9,6 +9,7 @@
 mod create;
 mod delete;
 mod lookup;
+pub use lookup::Cached;
 mod resolve;
 mod truncate_filtered;
 mod version;
