@@ -736,11 +736,11 @@ fn test_crdt_validation_fails_for_non_numeric() {
 #[test]
 fn test_collection_ids_are_deterministic() {
     // With empty fields (matches Go's behavior for field-less collections)
-    let id1 = generate_collection_id("User", &[], &RapidHashMap::new());
-    let id2 = generate_collection_id("User", &[], &RapidHashMap::new());
+    let id1 = generate_collection_id("User", &[], &RapidHashMap::new(), None);
+    let id2 = generate_collection_id("User", &[], &RapidHashMap::new(), None);
     assert_eq!(id1, id2, "same type name should produce same collection ID");
 
-    let id3 = generate_collection_id("Post", &[], &RapidHashMap::new());
+    let id3 = generate_collection_id("Post", &[], &RapidHashMap::new(), None);
     assert_ne!(
         id1, id3,
         "different type names should produce different IDs"
@@ -2023,6 +2023,36 @@ fn ungoverned_collection_identities_are_pinned() {
         plain.version_id, plain.collection_id,
         "a new schema's version ID is its collection ID"
     );
+}
+
+/// A governance root is part of the collection's identity: the same schema
+/// under two roots is two collections, and a node that does not know the root
+/// derives neither.
+#[test]
+fn a_governance_root_changes_the_collection_id() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+
+    let ungoverned = id_for(r#"type Agent { did: String, body: String }"#);
+    let root_a = id_for(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#);
+    let root_b = id_for(r#"type Agent @governed(root: "root-b") { did: String, body: String }"#);
+
+    assert_eq!(ungoverned, UNGOVERNED_AGENT_ID);
+    assert_ne!(root_a, ungoverned);
+    assert_ne!(root_b, ungoverned);
+    assert_ne!(root_a, root_b);
+}
+
+/// The derivation stays a function of the schema, so a second node parsing the
+/// same governed SDL reaches the same identity.
+#[test]
+fn the_same_governed_schema_derives_the_same_identity() {
+    let sdl = r#"type Agent @governed(root: "root-a") { did: String, body: String }"#;
+    let once = &parse_sdl(sdl).unwrap()[0];
+    let twice = &parse_sdl(sdl).unwrap()[0];
+
+    assert_eq!(once.collection_id, twice.collection_id);
+    assert_eq!(once.version_id, twice.version_id);
+    assert_eq!(once.governance_root, twice.governance_root);
 }
 
 /// Every directive that bears on governance today, and none of them reaches

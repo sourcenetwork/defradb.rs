@@ -445,6 +445,7 @@ impl<S: Store> crate::database::DB<S> {
                 &collection_heads,
                 query_select.as_deref(),
                 query_transform.as_ref(),
+                new_schema.governance_root.as_deref(),
             ) {
                 Ok(block_with_cid) => {
                     blockstore
