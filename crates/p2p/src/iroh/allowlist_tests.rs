@@ -13,6 +13,7 @@ use n0_future::task::JoinHandle;
 use n0_future::time::{timeout, Instant};
 use tokio::sync::mpsc::Receiver;
 
+use super::endpoint_config::AdmissionAuthority;
 use super::{
     spawn_endpoint, IrohAllowlistConfig, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport,
 };
@@ -298,7 +299,10 @@ async fn allow_peer_authorizes_a_peer_added_at_runtime() {
     dial_and_wait_for_local_handshake(&dialer, &server).await;
     assert_never_connects(&dialer, &server, Duration::from_millis(300)).await;
 
-    server.allow_peer(dialer.local_peer_id()).await.unwrap();
+    server
+        .allow_peer(dialer.local_peer_id(), AdmissionAuthority::full())
+        .await
+        .unwrap();
 
     // The refused attempt above was torn down by the server; redial now that
     // the peer is authorized.
@@ -506,6 +510,61 @@ async fn a_revoked_peer_cannot_be_reached_by_an_outbound_rpc() {
     shutdown_all(dialer, server, dialer_task, server_task).await;
 }
 
+/// A principal that cannot revoke a peer must not be able to un-revoke one.
+///
+/// Exercised through the real command round trip, not just
+/// `PeerAdmission::allow` in isolation, so the authority genuinely survives
+/// being carried across the channel into the endpoint's own state machine.
+/// The peer must stay barred in BOTH directions after the refusal, because a
+/// half-applied transition (allowlist widened, bar left in place) would
+/// restore the peer the moment anyone lifted the bar for an unrelated reason.
+#[tokio::test]
+async fn a_caller_without_revoke_authority_cannot_undo_a_revocation() {
+    let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let dialer_id = dialer.local_peer_id().clone();
+    let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::Explicit(
+        [dialer_id.to_string()].into_iter().collect(),
+    ))
+    .await;
+
+    server.deny_peer(&dialer_id).await.expect("revoke the peer");
+
+    let refused = server
+        .allow_peer(&dialer_id, AdmissionAuthority::admit_only())
+        .await;
+    let message = refused
+        .expect_err("a caller without revoke authority must not lift a revocation")
+        .to_string();
+    assert!(
+        message.contains("revoke"),
+        "the refusal must name the revocation as the reason; got: {message}"
+    );
+
+    // The peer is still barred: it cannot get in.
+    dial_and_wait_for_local_handshake(&dialer, &server).await;
+    assert_never_connects(&dialer, &server, Duration::from_millis(300)).await;
+
+    // And the authority that CAN revoke can still restore it, proving the
+    // refusal above left the state machine intact rather than wedged.
+    server
+        .allow_peer(&dialer_id, AdmissionAuthority::full())
+        .await
+        .expect("the authority that can revoke may restore");
+    dialer
+        .dial(
+            server.local_peer_id(),
+            server.listen_addresses().await.unwrap(),
+        )
+        .await
+        .unwrap();
+    dialer
+        .poll_until_connected(server.local_peer_id(), Duration::from_secs(5))
+        .await
+        .expect("restoring with full authority must re-admit the peer");
+
+    shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
 /// A device may log back in: denying then re-allowing must restore the
 /// ability to connect, exactly as `allow_peer_authorizes_a_peer_added_at_runtime`
 /// proves for a peer that was never connected in the first place.
@@ -541,7 +600,10 @@ async fn deny_peer_then_allow_peer_again_permits_reconnection() {
     dial_and_wait_for_local_handshake(&dialer, &server).await;
     assert_never_connects(&dialer, &server, Duration::from_millis(300)).await;
 
-    server.allow_peer(&dialer_id).await.unwrap();
+    server
+        .allow_peer(&dialer_id, AdmissionAuthority::full())
+        .await
+        .unwrap();
 
     // The refused attempt above was torn down by the server; redial now that
     // the peer is authorized again.

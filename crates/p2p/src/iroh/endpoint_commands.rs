@@ -132,8 +132,13 @@ pub(super) async fn handle_command(
             let result = handle_disconnect(peer_id, resources);
             let _ = reply.send(result);
         }
-        IrohCommand::AllowPeer { peer_id, reply } => {
-            let result = parse_endpoint_id(&peer_id).map(|id| resources.admission.allow(id));
+        IrohCommand::AllowPeer {
+            peer_id,
+            authority,
+            reply,
+        } => {
+            let result =
+                parse_endpoint_id(&peer_id).and_then(|id| resources.admission.allow(id, authority));
             let _ = reply.send(result);
         }
         IrohCommand::DenyPeer { peer_id, reply } => {

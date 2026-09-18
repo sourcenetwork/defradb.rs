@@ -25,6 +25,7 @@ use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId};
 use crate::QueryId;
 
 use super::command::IrohCommand;
+use super::endpoint_config::AdmissionAuthority;
 
 /// Iroh-backed P2P transport.
 ///
@@ -107,12 +108,21 @@ impl IrohTransport {
     /// Authorize an inbound connection from `peer_id` while the endpoint is
     /// running, without a restart.
     ///
-    /// Only meaningful when the endpoint was configured with an explicit
-    /// inbound allowlist (`IrohAllowlistConfig::Explicit`); a no-op when it
-    /// was configured to accept every peer.
-    pub async fn allow_peer(&self, peer_id: &PeerId) -> Result<()> {
+    /// Widening the allowlist is only meaningful when the endpoint was
+    /// configured with an explicit inbound allowlist
+    /// (`IrohAllowlistConfig::Explicit`); it is a no-op when the endpoint
+    /// accepts every peer.
+    ///
+    /// Lifting a REVOCATION is different, and is why `authority` exists. That
+    /// transition reverses a security decision, so it is refused unless the
+    /// caller also holds the authority to revoke. The authority is resolved by
+    /// the caller and applied inside the admission lock rather than checked
+    /// beforehand, so a revoke racing this call cannot be undone by a decision
+    /// made against the state as it was a moment earlier.
+    pub async fn allow_peer(&self, peer_id: &PeerId, authority: AdmissionAuthority) -> Result<()> {
         self.send_command(|reply| IrohCommand::AllowPeer {
             peer_id: peer_id.clone(),
+            authority,
             reply,
         })
         .await

@@ -46,6 +46,20 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
         Ok(())
     }
 
+    /// Whether the caller holds `permission`, as a plain answer rather than an
+    /// error.
+    ///
+    /// Used to resolve an authority that is carried into a state change, not to
+    /// decide whether a call is allowed: a missing permission is a fact about
+    /// the caller here, not a failure. A node with no access control configured
+    /// holds everything, exactly as `check_nac` treats it.
+    async fn holds_nac(&self, permission: acp::nac::NodePermission) -> bool {
+        match self.nac_checker {
+            Some(ref checker) => checker.check_node_access(permission).await.is_ok(),
+            None => true,
+        }
+    }
+
     /// True when the transport already holds a live connection to `peer_id`.
     ///
     /// Comparison is in canonical id form (`canonical_peer_id`), so a base32
@@ -384,14 +398,35 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         Ok(())
     }
 
+    /// Authorize a peer, which for a peer that is currently REVOKED means
+    /// reversing a revocation.
+    ///
+    /// Ordinary admission needs `P2pPeerConnect`, as before. Lifting a
+    /// revocation additionally needs `P2pPeerDisconnect`, the permission that
+    /// could have imposed it: otherwise a principal provisioned only to add
+    /// peers could undo a revocation it was never trusted to make, and the
+    /// revocation would only be as strong as the weakest permission anyone
+    /// holds.
+    ///
+    /// The second permission is resolved into an authority and carried down,
+    /// not checked here. Deciding it here and acting on it in the endpoint
+    /// would be a check against state that a concurrent revoke may already
+    /// have changed; the endpoint applies the authority inside the same lock
+    /// as the transition instead.
     async fn allow_peer(&self, peer_id: &TransportPeerId) -> P2PResult<()> {
         self.check_nac(acp::nac::NodePermission::P2pPeerConnect)
             .await?;
+        let may_revoke = self
+            .holds_nac(acp::nac::NodePermission::P2pPeerDisconnect)
+            .await;
 
         let peer_id = parse_canonical_peer_id(peer_id.as_str())
             .map_err(|error| P2PError::invalid_input(error.to_string()))?;
         self.transport
-            .allow_peer(&peer_id)
+            .allow_peer(
+                &peer_id,
+                p2p::iroh::AdmissionAuthority::new(true, may_revoke),
+            )
             .await
             .map_err(|error| P2PError::transport(error.to_string()))
     }

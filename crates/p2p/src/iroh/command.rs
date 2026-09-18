@@ -30,6 +30,9 @@ pub enum IrohCommand {
     /// peer: nothing is narrowed by adding one more.
     AllowPeer {
         peer_id: PeerId,
+        /// Resolved by the caller and applied inside the admission lock, so a
+        /// principal that cannot revoke a peer cannot lift a revocation.
+        authority: super::endpoint_config::AdmissionAuthority,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
     /// Remove an endpoint id from the inbound allowlist while the endpoint is

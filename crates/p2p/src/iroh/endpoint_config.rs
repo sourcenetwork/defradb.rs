@@ -99,6 +99,47 @@ impl AllowlistState {
     }
 }
 
+/// What a caller is permitted to do to this endpoint's peer admission state.
+///
+/// Carried down to the state change rather than checked before it, on purpose.
+/// Admission is a state machine with exactly one transition that UNDOES a
+/// security decision (revoked -> admitted), and only a caller allowed to make
+/// that decision may reverse it. Resolving the caller's authority up here and
+/// then applying it inside the same lock as the transition is what makes that
+/// a lockstep: a revoke landing concurrently is either entirely before the
+/// transition, in which case the transition sees it and refuses, or entirely
+/// after, in which case it re-bars the peer. There is no window in which an
+/// authority decision made against one state is applied to another.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AdmissionAuthority {
+    may_admit: bool,
+    may_revoke: bool,
+}
+
+impl AdmissionAuthority {
+    /// `may_admit` is the authority to widen who may connect in; `may_revoke`
+    /// is the authority to bar a peer outright. Lifting an existing
+    /// revocation needs BOTH, because it is an admission that reverses a
+    /// revocation.
+    pub fn new(may_admit: bool, may_revoke: bool) -> Self {
+        Self {
+            may_admit,
+            may_revoke,
+        }
+    }
+
+    /// A caller that may admit a peer but may not revoke one, and therefore
+    /// may not lift an existing revocation either.
+    pub fn admit_only() -> Self {
+        Self::new(true, false)
+    }
+
+    /// A caller holding both authorities.
+    pub fn full() -> Self {
+        Self::new(true, true)
+    }
+}
+
 /// Who this endpoint will exchange connections with, in either direction.
 ///
 /// Two gates, deliberately kept separate rather than folded into the one set:
@@ -150,14 +191,40 @@ impl PeerAdmission {
         self.revoked.lock().contains(id)
     }
 
-    /// Authorize `id`, lifting any revocation on it.
+    /// Authorize `id`, lifting any revocation on it, if `authority` allows.
     ///
-    /// The allowlist is widened first and the revocation lifted second, so
-    /// there is no instant in which `id` counts as admissible without
-    /// actually being on the list.
-    pub(super) fn allow(&self, id: EndpointId) {
+    /// Refused when the peer is currently revoked and the caller does not hold
+    /// the authority to revoke: a principal that cannot bar a peer must not be
+    /// able to un-bar one, or the revocation is only as strong as the weakest
+    /// permission anyone holds.
+    ///
+    /// The revoked-set lock is held across the whole transition, not just the
+    /// lookup. That is what makes the check and the state change one step: a
+    /// concurrent [`Self::revoke`] either completes before this takes the lock
+    /// (and is then seen, and this refuses) or after it releases (and re-bars
+    /// the peer). A check-then-act would leave a window in which a peer
+    /// revoked between the two is admitted anyway by a caller that was never
+    /// allowed to lift a revocation.
+    pub(super) fn allow(
+        &self,
+        id: EndpointId,
+        authority: AdmissionAuthority,
+    ) -> crate::error::Result<()> {
+        let mut revoked = self.revoked.lock();
+        if !authority.may_admit {
+            return Err(crate::error::Error::Transport(format!(
+                "cannot admit peer {id}: caller is not authorized to admit peers"
+            )));
+        }
+        if revoked.contains(&id) && !authority.may_revoke {
+            return Err(crate::error::Error::Transport(format!(
+                "cannot admit peer {id}: the peer is revoked, and lifting a revocation \
+                 needs the same authority that can revoke one"
+            )));
+        }
         self.allowlist.allow(id);
-        self.revoked.lock().remove(&id);
+        revoked.remove(&id);
+        Ok(())
     }
 
     /// Bar `id` in both directions. Reports whether this changed anything,
@@ -174,7 +241,11 @@ impl PeerAdmission {
     /// separate step the caller must also take, and the two are ordered:
     /// see `endpoint_commands::handle_deny_peer`.
     pub(super) fn revoke(&self, id: EndpointId) -> bool {
-        let newly_revoked = self.revoked.lock().insert(id);
+        // Same lock order as `allow` (revoked, then allowlist) and held across
+        // both, so the two transitions serialise against each other instead of
+        // interleaving halfway.
+        let mut revoked = self.revoked.lock();
+        let newly_revoked = revoked.insert(id);
         let was_listed = self.allowlist.remove(&id);
         newly_revoked || was_listed
     }
@@ -516,13 +587,99 @@ mod tests {
         admission.revoke(peer);
         assert!(!admission.admits_inbound(&peer));
 
-        admission.allow(peer);
+        admission.allow(peer, AdmissionAuthority::full()).unwrap();
         assert!(
             admission.admits_inbound(&peer),
             "allow must clear the bar, not just re-add the allowlist entry"
         );
         assert!(admission.admits_outbound(&peer));
         assert!(!admission.is_revoked(&peer));
+    }
+
+    #[test]
+    fn a_caller_without_revoke_authority_cannot_lift_a_revocation() {
+        let peer = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(
+            [peer.to_string()].into_iter().collect(),
+        ));
+
+        admission.revoke(peer);
+
+        let refused = admission.allow(peer, AdmissionAuthority::admit_only());
+        assert!(
+            refused.is_err(),
+            "a caller that cannot revoke must not be able to un-revoke"
+        );
+        // And the refusal changed nothing: the peer is still barred, both ways.
+        assert!(!admission.admits_inbound(&peer));
+        assert!(!admission.admits_outbound(&peer));
+        assert!(admission.is_revoked(&peer));
+    }
+
+    #[test]
+    fn a_caller_with_revoke_authority_can_lift_a_revocation() {
+        let peer = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(
+            [peer.to_string()].into_iter().collect(),
+        ));
+
+        admission.revoke(peer);
+        admission
+            .allow(peer, AdmissionAuthority::full())
+            .expect("the authority that revoked may also restore");
+
+        assert!(admission.admits_inbound(&peer));
+        assert!(admission.admits_outbound(&peer));
+        assert!(!admission.is_revoked(&peer));
+    }
+
+    #[test]
+    fn admit_only_authority_still_admits_a_peer_that_was_never_revoked() {
+        let peer = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(RapidHashSet::new()));
+
+        // The gate is on UNDOING a revocation, not on ordinary admission, so
+        // the weaker authority must keep working for the ordinary case.
+        admission
+            .allow(peer, AdmissionAuthority::admit_only())
+            .expect("admitting a peer that was never revoked needs no revoke authority");
+        assert!(admission.admits_inbound(&peer));
+    }
+
+    #[test]
+    fn a_caller_with_no_admit_authority_cannot_admit_at_all() {
+        let peer = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(RapidHashSet::new()));
+
+        let refused = admission.allow(peer, AdmissionAuthority::new(false, false));
+        assert!(
+            refused.is_err(),
+            "admission requires the authority to admit"
+        );
+        assert!(!admission.admits_inbound(&peer));
+    }
+
+    #[test]
+    fn revoke_then_refused_restore_leaves_the_peer_barred_not_half_admitted() {
+        let peer = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(
+            [peer.to_string()].into_iter().collect(),
+        ));
+
+        admission.revoke(peer);
+        let _ = admission.allow(peer, AdmissionAuthority::admit_only());
+
+        // The refused transition must not have half-applied: specifically it
+        // must not have re-added the allowlist entry while leaving the bar,
+        // which would quietly restore the peer the moment anyone lifted the
+        // revocation for an unrelated reason.
+        let restored = admission.allow(peer, AdmissionAuthority::full());
+        assert!(restored.is_ok());
+        assert!(admission.admits_inbound(&peer));
+
+        // Re-revoking still reports a real change, proving the earlier refusal
+        // left the state machine exactly where it was.
+        assert!(admission.revoke(peer));
     }
 
     #[test]
