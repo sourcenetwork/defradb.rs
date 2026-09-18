@@ -659,6 +659,44 @@ async fn reinserting_an_id_replaces_its_vector() {
     );
 }
 
+#[tokio::test]
+async fn repeated_updates_keep_distinct_neighbors_and_entry_connectivity() {
+    let mut index = Hnsw::new(
+        MemoryNodeStore::new(),
+        Metric::Euclidean,
+        Params::new(4),
+        GRAPH_SEED,
+    );
+    for id in 0..8 {
+        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+    }
+    let entry = index.store().get_meta().await.unwrap().unwrap().entry_point;
+    for _ in 0..3 {
+        for id in [NodeId(3), entry] {
+            index.insert(id, &[id.0 as f32, 1.0]).await.unwrap();
+            let hits = index.search_with_ef(&[1.0, 1.0], 8, 32).await.unwrap();
+            assert_eq!(hits.len(), 8, "updating {id:?} disconnected the graph");
+            index
+                .store()
+                .iterate_nodes(|node| {
+                    for links in &node.layers {
+                        assert!(!links.contains(&node.id), "self-link at {:?}", node.id);
+                        let unique: std::collections::BTreeSet<_> = links.iter().collect();
+                        assert_eq!(
+                            unique.len(),
+                            links.len(),
+                            "duplicate links at {:?}",
+                            node.id
+                        );
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+    }
+}
+
 /// A meta pointing at a node that is not stored is corruption. Continuing would
 /// quietly build a second component that no search can reach, so it fails loud.
 #[tokio::test]

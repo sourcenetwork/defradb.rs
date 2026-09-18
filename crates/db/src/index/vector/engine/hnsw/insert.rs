@@ -2,7 +2,6 @@
 
 use super::Hnsw;
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::AdmitAll;
 use crate::index::vector::store::{Meta, Node, NodeId, VectorNodeStore};
 use defra_core::vector::Element;
 
@@ -59,9 +58,16 @@ impl<S: VectorNodeStore> Hnsw<S> {
         // reads each from the store; a node that is not there yet reads as
         // absent and loses the back-link it was just given. The layers are
         // filled in by the second write below.
-        self.store
-            .put_node(Node::new(id, vector.clone(), top_level))
-            .await?;
+        // Replacing an entry point must not erase the routes used to find its
+        // new neighbors. Keep the old links until the replacement is complete.
+        let mut pending = self
+            .store
+            .get_node(id)
+            .await?
+            .unwrap_or_else(|| Node::new(id, vector.clone(), top_level));
+        pending.vector = vector.clone();
+        pending.deleted = false;
+        self.store.put_node(pending).await?;
 
         let mut layers: Vec<Vec<NodeId>> = vec![Vec::new(); top_level + 1];
         let mut entry_points = vec![current];
@@ -72,7 +78,7 @@ impl<S: VectorNodeStore> Hnsw<S> {
                     entry_points,
                     self.params.ef_construction,
                     layer,
-                    &AdmitAll,
+                    &|candidate| candidate != id,
                 )
                 .await?;
 
@@ -130,7 +136,10 @@ impl<S: VectorNodeStore> Hnsw<S> {
         while node.layers.len() <= layer {
             node.layers.push(Vec::new());
         }
-        node.layers[layer].push(to);
+        node.layers[layer].retain(|id| *id != from);
+        if !node.layers[layer].contains(&to) {
+            node.layers[layer].push(to);
+        }
 
         if node.layers[layer].len() > max_links {
             let links = node.layers[layer].clone();
