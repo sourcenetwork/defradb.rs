@@ -565,6 +565,53 @@ async fn a_caller_without_revoke_authority_cannot_undo_a_revocation() {
     shutdown_all(dialer, server, dialer_task, server_task).await;
 }
 
+/// `is_peer_revoked` reports the bar, so a caller that created durable state
+/// for a peer can find out it was revoked mid-flight and undo that state.
+///
+/// The adapter's `add_replicator` relies on this: registering a replicator is
+/// several awaits long, and `deny_peer` bars the peer and then deletes its
+/// replicator records, so a registration that started before the bar could
+/// otherwise finish after the deletion and put the records back. Checking only
+/// before starting is the wrong end of the race; this is the query that makes
+/// the after-check possible.
+#[tokio::test]
+async fn is_peer_revoked_reports_the_bar_a_registration_has_to_undo() {
+    let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let server_id = server.local_peer_id().clone();
+
+    assert!(
+        !dialer
+            .is_peer_revoked(&server_id)
+            .await
+            .expect("query an un-revoked peer"),
+        "a peer nobody revoked must not report as revoked"
+    );
+
+    dialer.deny_peer(&server_id).await.expect("revoke the peer");
+
+    assert!(
+        dialer
+            .is_peer_revoked(&server_id)
+            .await
+            .expect("query a revoked peer"),
+        "a revoked peer must report as revoked, or a registration racing the \
+         revoke can never learn it has to roll back"
+    );
+
+    // And lifting it with the authority that can clears the report again.
+    dialer
+        .allow_peer(&server_id, AdmissionAuthority::full())
+        .await
+        .expect("restore the peer");
+    assert!(!dialer
+        .is_peer_revoked(&server_id)
+        .await
+        .expect("query a restored peer"));
+
+    shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
 /// A device may log back in: denying then re-allowing must restore the
 /// ability to connect, exactly as `allow_peer_authorizes_a_peer_added_at_runtime`
 /// proves for a peer that was never connected in the first place.

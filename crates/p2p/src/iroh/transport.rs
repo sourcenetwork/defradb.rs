@@ -183,6 +183,23 @@ impl IrohTransport {
         .await
     }
 
+    /// Whether `peer_id` is currently barred by [`Self::deny_peer`].
+    ///
+    /// For a caller that creates durable state for a peer and must undo it if
+    /// the peer was revoked while that work was in flight. Checking before
+    /// starting is the wrong end of the race: the bar can land at any point
+    /// during a multi-step registration, and only a check AFTER the state
+    /// exists can see it. Paired with a rollback, that gives the same
+    /// guarantee the accept and dial paths get from re-checking after they
+    /// publish a connection.
+    pub async fn is_peer_revoked(&self, peer_id: &PeerId) -> Result<bool> {
+        self.send_command(|reply| IrohCommand::IsPeerRevoked {
+            peer_id: peer_id.clone(),
+            reply,
+        })
+        .await
+    }
+
     /// Resolve a peer's Defra identity over its authenticated QUIC endpoint.
     ///
     /// The returned token is signed by the remote DID and audience-bound to

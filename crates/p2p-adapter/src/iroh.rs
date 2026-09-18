@@ -648,6 +648,48 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 .map_err(|error| P2PError::transport(error.to_string()))?;
         }
 
+        // Re-check the bar now the records exist, and undo them if the peer was
+        // revoked while this was running.
+        //
+        // Registering a replicator is several awaits long (validation, a dial,
+        // a durable write, then the live record), and `deny_peer` is not one
+        // step either: it bars the peer and then deletes its replicator state.
+        // Checking admission only at the start would let a registration that
+        // began before the bar finish after the deletion and put both records
+        // back, leaving a revoked peer registered and the reconnect sweep
+        // dialling it forever.
+        //
+        // Ordering makes the pair safe without a lock, the same way the accept
+        // and dial paths are made safe. `deny_peer` sets the bar BEFORE it
+        // deletes, so either its deletion runs after these creations and
+        // removes them, or the bar was already set when this check reads it and
+        // this removes them. There is no interleaving in which the records
+        // survive.
+        // A failed check counts as revoked, not as permission. This is the
+        // last gate before a peer keeps durable replication state, so the
+        // safe answer to "we could not find out" is to undo the registration
+        // and make the caller retry, not to assume the peer is fine.
+        let revoked = match self.transport.is_peer_revoked(&peer_id).await {
+            Ok(revoked) => revoked,
+            Err(error) => {
+                tracing::warn!(
+                    peer_id = %peer_id,
+                    error = %error,
+                    "could not confirm peer admission after registering its replicator; \
+                     rolling the registration back"
+                );
+                true
+            }
+        };
+        if revoked {
+            self.deregister_revoked_replicator(&peer_id).await?;
+            return Err(P2PError::invalid_input(format!(
+                "peer {peer_id} is not admitted, or its admission could not be confirmed, \
+                 while its replicator was being registered; the registration has been \
+                 rolled back and can be retried"
+            )));
+        }
+
         let collection_names_requiring_replay = crate::collections_requiring_replay(
             &effective_collections,
             &collection_cids,

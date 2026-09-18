@@ -149,6 +149,10 @@ pub(super) async fn handle_command(
             let result = handle_deny_peer(peer_id, resources);
             let _ = reply.send(result);
         }
+        IrohCommand::IsPeerRevoked { peer_id, reply } => {
+            let result = parse_endpoint_id(&peer_id).map(|id| resources.admission.is_revoked(&id));
+            let _ = reply.send(result);
+        }
         IrohCommand::Listen { addr: _, reply } => {
             // iroh endpoint is already listening after bind
             let _ = reply.send(Ok(()));

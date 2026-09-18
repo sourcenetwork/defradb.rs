@@ -419,6 +419,52 @@ pub(super) fn spawn_peer_connected_heal(
 
 /// Periodic sweep: refresh due peers and drop injected connections to
 /// departed peers.
+/// Hang up any gossip connection this node still holds to a revoked peer, and
+/// say so when a revoked peer is still a topic neighbour.
+///
+/// Belt and braces behind `deny_peer`, which already closes what it can find
+/// at the moment it runs. This exists because gossip is the one subsystem a
+/// revocation cannot fully reach: `Gossip` is built on a clone of the shared
+/// endpoint and maintains its own swarm membership, so it can dial a peer it
+/// learned from a third party without passing any check here, and
+/// iroh-gossip 0.101 offers `join_peers` with no counterpart to evict a
+/// neighbour. Every path by which THIS crate names a peer to gossip is gated
+/// (the subscribe and publish neighbour lists, the per-peer rejoin, the heal),
+/// so what remains is gossip's own discovery.
+///
+/// What this sweep can do, it does: close handles we hold, every sweep, so a
+/// gossip connection to a revoked peer does not simply live on. What it cannot
+/// do is stop gossip re-dialling, so a revoked peer still in a topic is
+/// reported at `warn` rather than passed over in silence. Closing that
+/// properly needs an upstream eviction API or an endpoint-level outbound
+/// filter; recreating every topic on each revoke would discard all gossip
+/// state for every topic and every peer, and would not hold either, because
+/// membership is re-learned.
+fn close_revoked_gossip(
+    res: &EndpointResources,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
+) {
+    for (topic, sub) in subscriptions.iter() {
+        for id in sub.neighbors.keys() {
+            if res.admission.admits_outbound(&id) {
+                continue;
+            }
+            for conn in res.healer.take_accepted(&id) {
+                conn.close(0u32.into(), b"peer revoked");
+            }
+            if let Some(conn) = res.healer.take_conn(&id) {
+                conn.close(0u32.into(), b"peer revoked");
+            }
+            warn!(
+                peer = %id,
+                topic = %topic,
+                "a revoked peer is still a gossip neighbour: its connections have been \
+                 closed, but gossip may re-dial it through its own membership"
+            );
+        }
+    }
+}
+
 pub(super) fn sweep(
     res: &EndpointResources,
     subscriptions: &RapidHashMap<String, TopicSubscription>,
@@ -428,6 +474,7 @@ pub(super) fn sweep(
         conn.close(0u32.into(), b"gossip-heal");
     }
     res.healer.prune_accepted();
+    close_revoked_gossip(res, subscriptions);
 
     // Sweep even with no persistent subscriptions — ephemeral publishers use
     // the same per-peer gossip send path (see spawn_peer_connected_heal).
