@@ -225,6 +225,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Process linked document composites
         let mut any_merged = false;
         let mut retryable_skip: Option<MergeOutcome> = None;
+        // A link this node could not process, where processing it later could
+        // still succeed. The head must not be written and the block must not
+        // be discharged while one is outstanding.
+        let mut unprocessed: Option<String> = None;
         if let Some(links) = &block.links {
             for dag_link in links {
                 let link_cid = &dag_link.link;
@@ -243,6 +247,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             link_cid = %link_cid,
                             "Linked block not found in blockstore"
                         );
+                        unprocessed
+                            .get_or_insert_with(|| format!("linked block {link_cid} not held"));
                         continue;
                     }
                     Err(e) => {
@@ -251,6 +257,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             error = %e,
                             "Failed to load linked block"
                         );
+                        unprocessed.get_or_insert_with(|| {
+                            format!("linked block {link_cid} could not be loaded: {e}")
+                        });
                         continue;
                     }
                 };
@@ -344,6 +353,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             }
                             Err(e) => {
                                 tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed");
+                                if e.disposition() == MergeErrorDisposition::Retryable {
+                                    unprocessed.get_or_insert_with(|| {
+                                        format!("linked composite {link_cid} failed: {e}")
+                                    });
+                                }
                             }
                         }
                     }
@@ -360,6 +374,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         if let Some(outcome) = retryable_skip {
             return Ok(outcome);
+        }
+
+        // A head names this collection's verifiable history. Writing one while
+        // a link is still unprocessed would claim history this node does not
+        // hold, and the terminal skip below would discharge the block so the
+        // document it named is never merged and never retried.
+        if let Some(reason) = unprocessed {
+            return Ok(MergeOutcome::retryable_skip(reason));
         }
 
         // Update collection headstore using proper head merging.
@@ -640,13 +662,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Process linked document composites
         let mut any_merged = false;
         let mut retryable_skip: Option<MergeOutcome> = None;
+        // See the non-batch path: a link that could not be processed, but
+        // might be processable later, blocks both the head and the discharge.
+        let mut unprocessed: Option<String> = None;
         if let Some(links) = &block.links {
             for dag_link in links {
                 let link_cid = &dag_link.link;
 
                 let linked_data = match self.blockstore.get(link_cid).await {
                     Ok(Some(data)) => data,
-                    _ => continue,
+                    _ => {
+                        unprocessed
+                            .get_or_insert_with(|| format!("linked block {link_cid} not held"));
+                        continue;
+                    }
                 };
 
                 let linked_block = match Block::from_dag_cbor(&linked_data) {
@@ -721,6 +750,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                         Err(e) => {
                             tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed in batch");
+                            if e.disposition() == MergeErrorDisposition::Retryable {
+                                unprocessed.get_or_insert_with(|| {
+                                    format!("linked composite {link_cid} failed: {e}")
+                                });
+                            }
                         }
                     }
                 }
@@ -729,6 +763,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         if let Some(outcome) = retryable_skip {
             return Ok(outcome);
+        }
+
+        if let Some(reason) = unprocessed {
+            return Ok(MergeOutcome::retryable_skip(reason));
         }
 
         // Update collection headstore using the shared headstore view

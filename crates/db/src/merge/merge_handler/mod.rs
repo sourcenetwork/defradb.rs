@@ -36,7 +36,7 @@ use datastore::NamespaceView;
 use defra_core::block::{
     Block, CollectionDefinitionDeltaPayload, CrdtDelta, FieldDefinitionDeltaPayload,
 };
-use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
+use defra_core::merge::{BlockMetadata, MergeErrorDisposition, MergeHandler, MergeOutcome};
 use defra_core::types::DocId;
 use document::{DocID, Document, NormalValue};
 use events::{MergeCompleteData, Message, Update};
