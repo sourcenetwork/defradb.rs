@@ -44,6 +44,36 @@ pub struct Commitments<'a> {
     pub governance_root: Option<&'a str>,
     /// Whether the collection's history is one verifiable entity.
     pub is_branchable: bool,
+    /// The collection's policy, as a CID over its reference.
+    ///
+    /// **Version ID only.** The collection ID derivation leaves this unset, so
+    /// attaching or amending a policy mints a new version without changing
+    /// which collection it is. Like the rest, it reaches the delta only for a
+    /// governed collection.
+    pub policy_cid: Option<Cid>,
+}
+
+/// The policy commitment for a collection's optional policy.
+///
+/// `None` when there is no policy, and also when its CID cannot be generated:
+/// a policy that will not hash leaves the version where it was rather than
+/// failing the write.
+pub fn policy_commitment(policy: Option<&crate::PolicyDescription>) -> Option<Cid> {
+    policy.and_then(|policy| generate_policy_cid(policy).ok())
+}
+
+/// A CID over a policy reference, for the version ID.
+///
+/// It commits to the reference — the policy's ID and resource name — and not
+/// to the policy's text, which lives wherever ACP keeps it. Amending a policy
+/// there therefore changes the rules without changing this CID.
+pub fn generate_policy_cid(policy: &crate::PolicyDescription) -> crate::Result<Cid> {
+    let bytes = serde_ipld_dagcbor::to_vec(policy)
+        .map_err(|error| crate::SchemaError::CidGeneration(error.to_string()))?;
+    let digest = Sha256::digest(&bytes);
+    let multihash = Multihash::wrap(SHA2_256_CODE, &digest)
+        .map_err(|error| crate::SchemaError::CidGeneration(error.to_string()))?;
+    Ok(Cid::new_v1(DAG_CBOR_CODEC, multihash))
 }
 
 impl<'a> Commitments<'a> {
@@ -52,6 +82,7 @@ impl<'a> Commitments<'a> {
         Self {
             governance_root: version.governance_root.as_deref(),
             is_branchable: version.is_branchable,
+            policy_cid: policy_commitment(version.policy.as_ref()),
         }
     }
 
@@ -242,6 +273,9 @@ fn build_collection_delta(
     if let Some(root) = commitments.governance_root {
         delta = delta.with_governance_root(root);
         delta = delta.with_branchable(commitments.is_branchable);
+        if let Some(policy) = commitments.policy_cid {
+            delta = delta.with_policy_cid(policy);
+        }
     }
     delta
 }

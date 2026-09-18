@@ -236,3 +236,42 @@ fn each_commitment_mints_a_distinct_governed_identity() {
     ids.dedup();
     assert_eq!(ids.len(), total, "two commitments share an identity");
 }
+
+/// For a governed collection a policy reaches the version and not the
+/// collection: attaching or amending one mints a new version of the same
+/// collection, rather than a different collection whose documents the old
+/// one's no longer belong to.
+#[test]
+fn a_policy_moves_a_governed_version_id_and_not_its_collection_id() {
+    let parse = |sdl: &str| parse_sdl(sdl).unwrap().remove(0);
+
+    let bare = parse(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#);
+    let policied = parse(
+        r#"type Agent @governed(root: "root-a") @policy(id: "p1", resource: "agents") { did: String, body: String }"#,
+    );
+    let other = parse(
+        r#"type Agent @governed(root: "root-a") @policy(id: "p2", resource: "agents") { did: String, body: String }"#,
+    );
+
+    assert_eq!(bare.version_id, bare.collection_id);
+    assert_eq!(policied.collection_id, bare.collection_id);
+    assert_eq!(other.collection_id, bare.collection_id);
+
+    assert_ne!(policied.version_id, policied.collection_id);
+    assert_ne!(policied.version_id, bare.version_id);
+    assert_ne!(policied.version_id, other.version_id);
+}
+
+/// An ungoverned collection commits to no policy: both its identities are
+/// where they were, so a policy on an existing collection changes neither.
+#[test]
+fn an_ungoverned_policy_moves_neither_identity() {
+    let policied = parse_sdl(
+        r#"type Agent @policy(id: "p1", resource: "agents") { did: String, body: String }"#,
+    )
+    .unwrap()
+    .remove(0);
+
+    assert_eq!(policied.collection_id, UNGOVERNED_AGENT_ID);
+    assert_eq!(policied.version_id, UNGOVERNED_AGENT_ID);
+}
