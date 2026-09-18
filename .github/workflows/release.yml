@@ -163,25 +163,25 @@ jobs:
             runner: '["ubuntu-latest"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,sourcehub,libp2p"
+            features: "native,wasmtime-runtime,vera,libp2p"
           - target: aarch64-unknown-linux-gnu
             platform: linux_arm64
             runner: '["self-hosted", "Linux", "ARM64"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,sourcehub,libp2p"
+            features: "native,wasmtime-runtime,vera,libp2p"
           - target: x86_64-apple-darwin
             platform: darwin_amd64
             runner: '["self-hosted", "macOS", "ARM64", "studio"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,sourcehub,libp2p"
+            features: "native,wasmtime-runtime,vera,libp2p"
           - target: aarch64-apple-darwin
             platform: darwin_arm64
             runner: '["self-hosted", "macOS", "ARM64", "studio"]'
             variant: full
             artifact: defra-ffi
-            features: "native,wasmtime-runtime,sourcehub,libp2p"
+            features: "native,wasmtime-runtime,vera,libp2p"
           - target: x86_64-unknown-linux-gnu
             platform: linux_amd64
             runner: '["ubuntu-latest"]'
@@ -318,7 +318,7 @@ jobs:
         include:
           - variant: iroh
             artifact: defra-ffi-iroh
-            features: iroh,native,sourcehub,libp2p
+            features: iroh,native,vera,libp2p
           - variant: lean
             artifact: defra-ffi-lean
             features: native,libp2p

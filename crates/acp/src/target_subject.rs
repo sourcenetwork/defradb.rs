@@ -1,6 +1,6 @@
 //! Parse a relationship-target string from the CLI/HTTP edge into a structured
 //! [`Subject`]. This is the *only* string→`Subject` boundary; everything
-//! downstream (the `DocumentACP` API, the SourceHub provider) carries the
+//! downstream (the `DocumentACP` API, the Vera provider) carries the
 //! structured subject, never a re-stringified form.
 //!
 //! Grammar:

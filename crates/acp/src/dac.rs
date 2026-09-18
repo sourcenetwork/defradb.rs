@@ -104,7 +104,7 @@ pub trait DocumentACP: MaybeSendSync {
 
     /// Create a persisted access decision for a caller/object/permission check.
     ///
-    /// SourceHub-backed ACP can use this to mint a decision that downstream
+    /// Vera-backed ACP can use this to mint a decision that downstream
     /// signers verify via a light client before producing a signature.
     ///
     /// Returns `Ok(Some(decision_id))` when the backend created a reusable

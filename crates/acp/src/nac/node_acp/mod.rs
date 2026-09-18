@@ -69,7 +69,7 @@ impl std::fmt::Display for NacStatus {
 /// Node Access Control implementation.
 ///
 /// Uses a local Zanzibar store to manage node-level permissions.
-/// Unlike DAC, NAC is always local (no SourceHub option).
+/// Unlike DAC, NAC is always local (no Vera option).
 pub struct NodeACP<S: ZanzibarStore> {
     store: Arc<S>,
     engine: RwLock<PermissionEngine<S>>,
