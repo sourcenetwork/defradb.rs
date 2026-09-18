@@ -114,6 +114,16 @@ pub async fn embed_text(
     text: &str,
     model: Option<&str>,
 ) -> AnyhowResult<Vec<f64>> {
+    embed_text_with_provider(embedding_config, "openai", text, model).await
+}
+
+/// Embed query text using the same provider contract as document embeddings.
+pub async fn embed_text_with_provider(
+    embedding_config: &EmbeddingClientConfig,
+    provider: &str,
+    text: &str,
+    model: Option<&str>,
+) -> AnyhowResult<Vec<f64>> {
     let url = embedding_config.url.trim();
     if url.is_empty() {
         bail!("embedding URL is empty");
@@ -129,7 +139,7 @@ pub async fn embed_text(
         .ok_or_else(|| anyhow!("embedding model is empty"))?;
 
     let vector = call_embedding(
-        "openai",
+        provider,
         url,
         resolved_model,
         &embedding_config.api_key,
