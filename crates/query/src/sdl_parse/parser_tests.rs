@@ -134,6 +134,38 @@ fn test_parse_immutable_field_with_index() {
 }
 
 #[test]
+fn test_parse_governed_directive() {
+    let sdl = r#"
+        type Agent @governed(root: "EIaZ9-root-inception-digest") {
+            did: String
+        }
+    "#;
+
+    let collections = parse_sdl(sdl).unwrap();
+    assert_eq!(
+        collections[0].governance_root.as_deref(),
+        Some("EIaZ9-root-inception-digest")
+    );
+}
+
+#[test]
+fn test_ungoverned_collection_has_no_root() {
+    let collections = parse_sdl(r#"type Agent { did: String }"#).unwrap();
+    assert_eq!(collections[0].governance_root, None);
+}
+
+#[test]
+fn test_governed_requires_a_non_empty_root() {
+    for sdl in [
+        r#"type Agent @governed { did: String }"#,
+        r#"type Agent @governed(root: "") { did: String }"#,
+        r#"type Agent @governed(root: 7) { did: String }"#,
+    ] {
+        assert!(parse_sdl(sdl).is_err(), "accepted: {sdl}");
+    }
+}
+
+#[test]
 fn test_parse_primary_directive() {
     let sdl = r#"
         type Post {
