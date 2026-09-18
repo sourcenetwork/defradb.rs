@@ -215,6 +215,17 @@ pub struct CollectionDefinitionDeltaPayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub query_transform: Option<Cid>,
+
+    /// The governance root claiming this collection, when one does.
+    ///
+    /// Skipped when absent, so an ungoverned collection's delta serialises to
+    /// exactly the bytes it did before this field existed and keeps its CID.
+    #[serde(
+        rename = "governance",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub governance_root: Option<String>,
 }
 
 impl CollectionDefinitionDeltaPayload {
@@ -225,6 +236,7 @@ impl CollectionDefinitionDeltaPayload {
             name: None,
             query_select: None,
             query_transform: None,
+            governance_root: None,
         }
     }
 
@@ -243,6 +255,12 @@ impl CollectionDefinitionDeltaPayload {
     /// Set the query transform CID (for view collections with lens transforms)
     pub fn with_query_transform(mut self, transform_cid: Cid) -> Self {
         self.query_transform = Some(transform_cid);
+        self
+    }
+
+    /// Set the governance root claiming this collection.
+    pub fn with_governance_root(mut self, root: impl Into<String>) -> Self {
+        self.governance_root = Some(root.into());
         self
     }
 }

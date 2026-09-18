@@ -222,6 +222,12 @@ impl TryFrom<&CollectionDefinitionDeltaPayload> for Ipld {
         if let Some(ref query_transform) = payload.query_transform {
             map.insert("queryTransform".to_string(), Ipld::Link(*query_transform));
         }
+        if let Some(ref governance_root) = payload.governance_root {
+            map.insert(
+                "governance".to_string(),
+                Ipld::String(governance_root.clone()),
+            );
+        }
         Ok(Ipld::Map(map))
     }
 }
