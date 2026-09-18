@@ -304,6 +304,7 @@ impl TryFrom<&Ipld> for CollectionDefinitionDeltaPayload {
             name: parse_optional_string(map, "name")?,
             query_select: parse_optional_bytes(map, "querySelect")?,
             query_transform: parse_optional_cid(map, "queryTransform")?,
+            governance_root: parse_optional_string(map, "governance")?,
         })
     }
 }
