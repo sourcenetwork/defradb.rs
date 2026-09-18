@@ -349,6 +349,22 @@ async fn connect_with_cache(
         connect_with_direct_addr_fallback(endpoint, peer_id, protocols::ALPN_MUX, direct_addr)
             .await?;
     remember_connection(cache, peer_id, &connection)?;
+
+    // Re-check AFTER caching, not only before the dial. The dial above can run
+    // for many seconds, and a revoke landing inside that window looked at the
+    // connection cache while this connection was still absent from it, so it
+    // closed nothing and the caller would go on to send RPC requests over it.
+    // Caching first and re-checking second means one of the two always sees
+    // the other: either the revoke finds this connection, or this finds the
+    // revoke. Same ordering as the accept and explicit-dial paths.
+    if !admission.admits_outbound(&endpoint_id) {
+        close_cached_connections(cache, &endpoint_id);
+        connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
+        return Err(crate::error::Error::Dial(format!(
+            "dial to {peer_id} raced a revoke: connection closed"
+        )));
+    }
+
     Ok(connection)
 }
 
@@ -1107,6 +1123,54 @@ mod tests {
             .bind()
             .await
             .expect("bind endpoint")
+    }
+
+    /// A revoked peer must not be served a connection this node already has
+    /// cached.
+    ///
+    /// Distinct from the refusal covered in `allowlist_tests`: there the peer
+    /// has no known address, so the dial fails on its own and the refusal is
+    /// only visible in the error message. Here the connection is already in
+    /// the cache, so without the admission check `connect_with_cache` returns
+    /// it happily and the caller sends RPC over a revoked peer's live
+    /// connection. That is the path the check actually has to cover.
+    #[tokio::test]
+    async fn a_revoked_peer_is_not_served_from_the_connection_cache() {
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+        let dial_ep = localhost_endpoint(vec![]).await;
+
+        let accept_task = n0_future::task::spawn({
+            let ep = accept_ep.clone();
+            async move {
+                let mut held = Vec::new();
+                while let Some(incoming) = ep.accept().await {
+                    if let Ok(conn) = incoming.await {
+                        held.push(conn);
+                    }
+                }
+            }
+        });
+
+        let connection = dial_ep
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
+            .await
+            .expect("connect");
+        let peer = PeerId::new(accept_ep.id().to_string());
+        let cache = new_connection_cache();
+        remember_connection(&cache, &peer, &connection).expect("cache connection");
+
+        let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+        admission.revoke(accept_ep.id());
+
+        let refused = connect_with_cache(&dial_ep, &peer, None, &cache, &admission)
+            .await
+            .expect_err("a revoked peer must not be served from the cache");
+        assert!(
+            refused.to_string().contains("revoked"),
+            "the refusal must name the revocation; got: {refused}"
+        );
+
+        accept_task.abort();
     }
 
     /// Regression (#1092 review): a peer can hold several live connections —
