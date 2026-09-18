@@ -372,21 +372,83 @@ async fn deny_peer_closes_an_already_open_connection() {
     shutdown_all(dialer, server, dialer_task, server_task).await;
 }
 
-/// `deny_peer` has no explicit allowlist entry to remove under `AcceptAll`,
-/// so it is refused rather than silently closing the connection while
-/// leaving the peer free to reconnect through the still-open `AcceptAll`
-/// policy. Exercises the full command round trip, not just
-/// `AllowlistState::deny` in isolation.
+/// Revoking under `AcceptAll` bars that one peer and nobody else.
+///
+/// This is why the bar is a set of its own rather than a narrowing of the
+/// allowlist: an endpoint configured to accept everyone has no entry to
+/// remove, but it must still be able to cut off a single peer without
+/// turning into an explicit allowlist for every other peer on the network.
 #[tokio::test]
-async fn deny_peer_is_an_error_under_accept_all() {
+async fn deny_peer_under_accept_all_bars_only_that_peer() {
     let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let dialer_id = dialer.local_peer_id().clone();
+    let (other, _other_events, other_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
     let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
 
-    let result = server.deny_peer(dialer.local_peer_id()).await;
+    server
+        .deny_peer(&dialer_id)
+        .await
+        .expect("an AcceptAll endpoint must still be able to revoke one peer");
+
+    // The revoked peer is refused.
+    dial_and_wait_for_local_handshake(&dialer, &server).await;
+    assert_never_connects(&dialer, &server, Duration::from_millis(300)).await;
+
+    // Everyone else is untouched.
+    other
+        .dial(
+            server.local_peer_id(),
+            server.listen_addresses().await.unwrap(),
+        )
+        .await
+        .unwrap();
+    other
+        .poll_until_connected(server.local_peer_id(), Duration::from_secs(5))
+        .await
+        .expect("revoking one peer must not narrow who else may connect");
+
+    other.shutdown().await.unwrap();
+    other_task.await.unwrap();
+    shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
+/// The half that makes this a revocation rather than an allowlist withdrawal.
+///
+/// Barring only the inbound accept leaves the node free to dial the peer
+/// itself, and it does: the replicator reconnect sweep dials exactly the
+/// registered peers missing from `connected_peers`, and cutting a peer's
+/// connection is precisely what marks it missing. So a peer revoked on the
+/// accept path alone is re-dialled BY US within seconds and regains full
+/// stream service over the connection we opened. This pins the outbound
+/// refusal directly, without waiting on that sweep.
+#[tokio::test]
+async fn deny_peer_refuses_our_own_outbound_dial_to_the_revoked_peer() {
+    let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let server_id = server.local_peer_id().clone();
+
+    // The revoking node here is `dialer`: it revokes `server`, then tries to
+    // dial it. `server` itself would happily accept.
+    dialer
+        .deny_peer(&server_id)
+        .await
+        .expect("revoke the peer we are about to dial");
+
+    let result = dialer
+        .dial(&server_id, server.listen_addresses().await.unwrap())
+        .await;
     assert!(
         result.is_err(),
-        "denying a peer under AcceptAll must be refused, not silently succeed"
+        "dialling a revoked peer must be refused, got {result:?}"
     );
+
+    // And nothing came up behind it.
+    assert!(dialer
+        .connected_peers()
+        .await
+        .unwrap()
+        .iter()
+        .all(|p| p != &server_id));
 
     shutdown_all(dialer, server, dialer_task, server_task).await;
 }

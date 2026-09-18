@@ -229,20 +229,31 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
         ))
     }
 
-    /// Revoke a peer's authorization to hold an inbound connection to this
-    /// node while it is running, without a restart.
+    /// Bar a peer from this node in both directions, while it is running and
+    /// without a restart.
     ///
-    /// Symmetric with [`Self::allow_peer`], and stronger: narrowing who may
-    /// connect in is not enough on its own to count as a revoke, since it
-    /// only stops the NEXT inbound connection attempt. An implementation
-    /// must also close whatever connection that peer currently holds, doing
-    /// so only after the allowlist update lands, so a reconnect racing the
-    /// call cannot be re-admitted under the old, wider allowlist. It does
-    /// not guarantee an in-flight request already being served over that
-    /// connection is aborted mid-exchange. The input is a canonical raw
-    /// transport peer ID, never an address returned by `connected_peers`.
-    /// Transports without an inbound allowlist concept return an
-    /// unsupported error.
+    /// Symmetric with [`Self::allow_peer`] in intent but not in reach, and
+    /// deliberately stronger. Narrowing who may connect IN is not enough to
+    /// count as a revocation: a node dials peers on its own initiative, so an
+    /// implementation must also refuse its OWN outbound connections to the
+    /// peer, or its reconnect logic undoes the revocation on the next sweep.
+    /// It must additionally close every connection the peer currently holds,
+    /// and it must record the bar BEFORE closing anything, so a reconnect
+    /// racing the call cannot be re-admitted in between.
+    ///
+    /// It does not guarantee an in-flight request already being served over
+    /// such a connection is aborted mid-exchange.
+    ///
+    /// Revocation is expected to be durable rather than cosmetic: an
+    /// implementation should also drop state that would make this node reach
+    /// for the peer again on a timer, such as a replicator registration.
+    /// That makes the call destructive, and NOT the inverse of `allow_peer`:
+    /// re-admitting a peer restores its ability to connect, not whatever was
+    /// deregistered.
+    ///
+    /// The input is a canonical raw transport peer ID, never an address
+    /// returned by `connected_peers`. Transports without an inbound
+    /// allowlist concept return an unsupported error.
     async fn deny_peer(&self, _peer_id: &TransportPeerId) -> P2PResult<()> {
         Err(P2PError::unsupported(
             "inbound peer allowlisting is unavailable",

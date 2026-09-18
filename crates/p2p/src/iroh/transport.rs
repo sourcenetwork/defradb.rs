@@ -118,16 +118,29 @@ impl IrohTransport {
         .await
     }
 
-    /// Revoke a peer's authorization to hold an inbound connection to this
-    /// node while it is running, without a restart.
+    /// Bar a peer from this node in both directions, while it is running and
+    /// without a restart.
     ///
-    /// Removing the peer from the allowlist only stops its NEXT inbound
-    /// connection attempt; it does nothing to a connection already open. So
-    /// this also hangs up whatever connection that peer currently holds,
-    /// after the allowlist is updated: the allowlist entry is removed
-    /// FIRST, and only then is the live connection closed, so a reconnect
-    /// racing this call cannot slip back in between the two steps and be
-    /// re-admitted under the old, wider allowlist.
+    /// Three things happen, and all three are needed for this to be a
+    /// revocation rather than a pause:
+    ///
+    /// 1. The peer is recorded as revoked, which refuses its next inbound
+    ///    connection.
+    /// 2. The same record refuses this node's own outbound dials to it.
+    ///    Without that, revocation does not hold: the replicator reconnect
+    ///    sweep dials exactly the registered peers missing from
+    ///    `connected_peers`, and step 3 is what makes the peer missing, so a
+    ///    peer barred inbound-only is re-dialled BY US within seconds and
+    ///    regains full stream service over the connection we opened.
+    /// 3. Every connection it currently holds is closed: those retained in
+    ///    the peer map, the cached outbound ones, the injected gossip
+    ///    connection, and the gossip connections this node accepted.
+    ///
+    /// The bar is recorded before anything is closed, so a reconnect racing
+    /// this call cannot be re-admitted in between. A connection being
+    /// established concurrently is caught the other way round: the accept and
+    /// dial paths re-check the bar after publishing their connection handle,
+    /// so whichever of the two runs second observes the first.
     ///
     /// This closes the transport connection; it does not guarantee that a
     /// request already being served over that connection is aborted mid
@@ -135,11 +148,9 @@ impl IrohTransport {
     /// lands may still complete that one in-flight exchange before it
     /// observes the connection is gone.
     ///
-    /// Only meaningful when the endpoint was configured with an explicit
-    /// inbound allowlist (`IrohAllowlistConfig::Explicit`); an error when it
-    /// was configured to accept every peer, since there is no explicit set
-    /// to narrow and silently succeeding would leave the peer free to
-    /// reconnect.
+    /// Meaningful under every allowlist configuration, including
+    /// `IrohAllowlistConfig::AcceptAll`: the bar is its own set, so revoking
+    /// one peer never narrows who else may connect.
     pub async fn deny_peer(&self, peer_id: &PeerId) -> Result<()> {
         self.send_command(|reply| IrohCommand::DenyPeer {
             peer_id: peer_id.clone(),

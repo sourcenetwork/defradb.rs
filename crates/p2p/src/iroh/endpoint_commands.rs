@@ -132,7 +132,7 @@ pub(super) async fn handle_command(
             let _ = reply.send(result);
         }
         IrohCommand::AllowPeer { peer_id, reply } => {
-            let result = parse_endpoint_id(&peer_id).map(|id| resources.allowlist.allow(id));
+            let result = parse_endpoint_id(&peer_id).map(|id| resources.admission.allow(id));
             let _ = reply.send(result);
         }
         IrohCommand::DenyPeer { peer_id, reply } => {
@@ -743,6 +743,20 @@ async fn handle_dial(
     addrs: Vec<PeerAddr>,
 ) -> crate::error::Result<()> {
     let endpoint_id = parse_endpoint_id(peer_id)?;
+
+    // A revoked peer must not be dialled. Refusing only its inbound
+    // connections is not a revocation: this node dials on its own initiative
+    // (the replicator reconnect sweep dials exactly the registered peers
+    // missing from `connected_peers`, and cutting a peer's connection is what
+    // marks it missing), so without this check a revoked peer is re-dialled
+    // BY US within seconds and regains full stream service over the
+    // connection we opened.
+    if !ctx.resources.admission.admits_outbound(&endpoint_id) {
+        return Err(crate::error::Error::Dial(format!(
+            "refusing to dial {peer_id}: peer is revoked"
+        )));
+    }
+
     let mut endpoint_addr = endpoint_addr_from_parts(peer_id, &addrs)?;
 
     // Fix B (#511 reverse-edge dial): the advertised address may be
@@ -779,7 +793,23 @@ async fn handle_dial(
         connection.clone(),
     );
 
-    if is_new
+    // Re-check AFTER registering. The dial above can run for many seconds, and
+    // a revoke landing inside that window read `peer_map` and the connection
+    // cache before this connection was in either, so it closed nothing.
+    // Registering first and re-checking second means one of the two always
+    // sees the other.
+    let admitted = ctx.resources.admission.admits_outbound(&endpoint_id);
+    if !admitted {
+        close_peer_connections(
+            &ctx.resources.peer_map,
+            &ctx.resources.connection_cache,
+            &endpoint_id,
+        );
+        connection.close(0u32.into(), b"peer revoked");
+    }
+
+    if admitted
+        && is_new
         && ctx
             .event_tx
             .send(TransportEvent::PeerConnected(peer_id.clone()))
@@ -789,7 +819,7 @@ async fn handle_dial(
         warn!("Event channel closed, cannot emit PeerConnected");
     }
 
-    if is_new {
+    if admitted && is_new {
         gossip_heal::spawn_peer_connected_heal(
             &ctx.resources,
             &ctx.subscription_senders,
@@ -798,6 +828,13 @@ async fn handle_dial(
     }
 
     // Keep connection alive by spawning a handler for incoming streams.
+    //
+    // Spawned even when the re-check above refused the peer, and deliberately:
+    // `increment_connections` has already counted this connection, and it is
+    // this task's cleanup that decrements it. Returning early instead would
+    // leave the count stuck above zero, which is worse than the race it was
+    // meant to close: the revoked peer would sit in `connected_peers` forever,
+    // looking connected when it holds nothing.
     let stream_context = ConnectionStreamContext::new(
         &ctx.resources,
         Arc::clone(&ctx.pending_pushlog_replies),
@@ -807,6 +844,12 @@ async fn handle_dial(
         super::endpoint_streams::handle_connection_streams(connection, endpoint_id, stream_context)
             .await;
     });
+
+    if !admitted {
+        return Err(crate::error::Error::Dial(format!(
+            "dial to {peer_id} raced a revoke: connection closed"
+        )));
+    }
 
     Ok(())
 }
@@ -831,28 +874,36 @@ fn handle_disconnect(peer_id: PeerId, resources: &EndpointResources) -> crate::e
     if let Some(connection) = resources.healer.take_conn(&endpoint_id) {
         connection.close(0u32.into(), b"disconnect");
     }
+    // Gossip connections this node accepted live in none of the above: they
+    // are handed to the gossip layer before the peer ever reaches `peer_map`.
+    for connection in resources.healer.take_accepted(&endpoint_id) {
+        connection.close(0u32.into(), b"disconnect");
+    }
     Ok(())
 }
 
-/// Revoke a peer's inbound authorization and hang up whatever connection it
-/// currently holds.
+/// Bar a peer in both directions and hang up every connection it holds.
 ///
-/// Order matters: the allowlist entry is removed FIRST (`allowlist.deny`),
-/// and only once that succeeds is the live connection closed
-/// (`handle_disconnect`). `is_allowed` is checked on every accepted inbound
-/// connection (`endpoint_streams::handle_incoming`), so by the time the old
-/// connection goes down the peer can no longer be re-admitted through it; a
-/// reconnect racing this call cannot slip in between the two steps. Doing it
-/// in the other order would leave a window where a reconnect right after the
-/// disconnect, but before the allowlist update, is still authorized under
-/// the old, wider allowlist.
+/// Order matters, and it is bar-then-close, never close-then-bar. Every
+/// admission check reads the bar, so once it is recorded no accept and no
+/// dial can bring the peer back; only then is it safe to close what is
+/// already open. Closing first would leave a window in which a reconnect,
+/// or this node's own reconnect sweep, re-establishes the peer while it is
+/// still admissible.
 ///
-/// Propagates `allowlist.deny`'s error under an `AcceptAll` allowlist: there
-/// is no explicit set to narrow, so this is refused rather than silently
-/// closing the connection while leaving the peer free to reconnect.
+/// Closing is not enough on its own either, which is why both halves exist:
+/// a connection being established concurrently with this call was not yet
+/// visible to `handle_disconnect` when it looked. The accept and dial paths
+/// therefore re-check the bar after publishing their connection handle, so
+/// that a connection racing this call is closed by whichever side observes
+/// the other. See `endpoint_streams::handle_incoming` and `handle_dial`.
+///
+/// Unlike the old allowlist-only withdrawal this is meaningful under
+/// `AcceptAll`: the bar is a separate set, so one peer can be revoked
+/// without narrowing who else may connect.
 fn handle_deny_peer(peer_id: PeerId, resources: &EndpointResources) -> crate::error::Result<()> {
     let endpoint_id = parse_endpoint_id(&peer_id)?;
-    resources.allowlist.deny(&endpoint_id)?;
+    resources.admission.revoke(endpoint_id);
     handle_disconnect(peer_id, resources)
 }
 

@@ -213,12 +213,29 @@ impl HealSchedule {
     }
 }
 
-/// Shared healer: refresh schedule plus the gossip connections we injected,
-/// retained so each refresh can close the connection it supersedes.
+/// Shared healer: refresh schedule plus every gossip connection to a peer
+/// this node still holds a handle on, retained so each refresh can close the
+/// connection it supersedes and so a revoke can hang up on all of them.
 pub(super) struct GossipHealer {
     config: GossipHealConfig,
     schedule: parking_lot::Mutex<HealSchedule>,
     conns: parking_lot::Mutex<RapidHashMap<EndpointId, Connection>>,
+    /// Gossip connections this node ACCEPTED, as opposed to the one it
+    /// dialled and injected (`conns`).
+    ///
+    /// `handle_incoming` hands an accepted `GOSSIP_ALPN` connection straight
+    /// to `Gossip::handle_connection`, which takes ownership, and returns
+    /// before the peer is ever registered in `peer_map`. Such a connection is
+    /// therefore in none of the three places `disconnect` looks (`peer_map`,
+    /// the outbound connection cache, `conns`), so without a handle retained
+    /// here there is no way to hang up on it at all. iroh `Connection` clones
+    /// share the underlying QUIC connection, so closing the clone kept here
+    /// tears down the connection gossip is using.
+    ///
+    /// A `Vec` rather than one per peer: a peer may hold several accepted
+    /// gossip connections over time, and unlike `conns` these do not
+    /// supersede one another.
+    accepted: parking_lot::Mutex<RapidHashMap<EndpointId, Vec<Connection>>>,
 }
 
 impl GossipHealer {
@@ -226,8 +243,40 @@ impl GossipHealer {
         Self {
             schedule: parking_lot::Mutex::new(HealSchedule::new(config.clone())),
             conns: parking_lot::Mutex::new(RapidHashMap::new()),
+            accepted: parking_lot::Mutex::new(RapidHashMap::new()),
             config,
         }
+    }
+
+    /// Retain a handle on a gossip connection this node accepted, so a later
+    /// revoke can close it. Already-closed handles are dropped on the way in,
+    /// so a long-lived peer whose gossip connections churn does not
+    /// accumulate them.
+    pub(super) fn retain_accepted(&self, id: EndpointId, conn: Connection) {
+        let mut accepted = self.accepted.lock();
+        let handles = accepted.entry(id).or_default();
+        handles.retain(|c| c.close_reason().is_none());
+        handles.push(conn);
+    }
+
+    /// Take every retained accepted-gossip handle for a peer.
+    pub(super) fn take_accepted(&self, id: &EndpointId) -> Vec<Connection> {
+        self.accepted.lock().remove(id).unwrap_or_default()
+    }
+
+    /// Drop accepted-gossip handles whose connection has already closed, and
+    /// the per-peer entries left empty by that.
+    ///
+    /// `retain_accepted` only prunes within the peer it is inserting for, so
+    /// without this the map keeps one entry per peer ever seen on an accepted
+    /// gossip connection. That is unbounded, and on an `AcceptAll` endpoint
+    /// any peer can drive it by reconnecting under fresh endpoint ids.
+    pub(super) fn prune_accepted(&self) {
+        let mut accepted = self.accepted.lock();
+        accepted.retain(|_, handles| {
+            handles.retain(|conn| conn.close_reason().is_none());
+            !handles.is_empty()
+        });
     }
 
     pub(super) fn config(&self) -> &GossipHealConfig {
@@ -320,6 +369,7 @@ pub(super) fn sweep(
     for conn in res.healer.take_departed_conns(&connected) {
         conn.close(0u32.into(), b"gossip-heal");
     }
+    res.healer.prune_accepted();
 
     // Sweep even with no persistent subscriptions — ephemeral publishers use
     // the same per-peer gossip send path (see spawn_peer_connected_heal).
@@ -395,6 +445,15 @@ async fn dial_and_inject(
     res: &EndpointResources,
     endpoint_id: EndpointId,
 ) -> crate::error::Result<()> {
+    // A heal is this node dialling the peer, so a revoked peer must not be
+    // healed: doing so would hand gossip a fresh send path to a peer we just
+    // barred, and re-join it to every topic.
+    if !res.admission.admits_outbound(&endpoint_id) {
+        return Err(crate::error::Error::Transport(format!(
+            "refusing to heal gossip to {endpoint_id}: peer is revoked"
+        )));
+    }
+
     let peer_id = endpoint_id_to_peer_id(&endpoint_id);
     let direct_addr = {
         let map = res.peer_map.lock();
@@ -412,7 +471,30 @@ async fn dial_and_inject(
         .await
         .map_err(|e| crate::error::Error::Transport(format!("gossip handle_connection: {}", e)))?;
 
-    if let Some(previous) = res.healer.store_conn(endpoint_id, conn) {
+    let superseded = res.healer.store_conn(endpoint_id, conn);
+
+    // Re-check AFTER the handle is stored, never only before the dial. The
+    // dial above can run for many seconds, and a revoke landing inside that
+    // window read the healer before this connection was in it, so it closed
+    // nothing. Storing first and re-checking second means one of the two
+    // always sees the other: either the revoke finds this handle, or this
+    // finds the revoke.
+    if !res.admission.admits_outbound(&endpoint_id) {
+        for conn in res.healer.take_accepted(&endpoint_id) {
+            conn.close(0u32.into(), b"peer revoked");
+        }
+        if let Some(conn) = res.healer.take_conn(&endpoint_id) {
+            conn.close(0u32.into(), b"peer revoked");
+        }
+        if let Some(previous) = superseded {
+            previous.close(0u32.into(), b"peer revoked");
+        }
+        return Err(crate::error::Error::Transport(format!(
+            "gossip heal to {endpoint_id} raced a revoke: connection closed"
+        )));
+    }
+
+    if let Some(previous) = superseded {
         let grace = res.healer.config().superseded_close_grace;
         let _ = spawn_task(&res.spawned_tasks, async move {
             n0_future::time::sleep(grace).await;

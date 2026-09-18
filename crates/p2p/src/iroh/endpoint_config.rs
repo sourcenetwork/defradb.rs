@@ -82,31 +82,101 @@ impl AllowlistState {
         }
     }
 
-    /// Remove `id` from the explicit set, refusing its next inbound
-    /// connection. Returns whether `id` was actually present, so a caller
-    /// can tell a real revoke from denying a peer that was never allowed;
-    /// denying an absent id is not an error.
+    /// Drop `id` from the explicit set. Reports whether it was actually
+    /// present, so a caller can tell a real withdrawal from one that changed
+    /// nothing. A no-op under `AcceptAll`, which holds no set to narrow.
     ///
-    /// This only changes what [`Self::is_allowed`] returns for the NEXT
-    /// accepted connection (checked in `handle_incoming`); it does nothing
-    /// to a connection already open. Closing that is a separate step the
-    /// caller must also take (see `IrohTransport::deny_peer`).
-    ///
-    /// Unlike [`Self::allow`], this is NOT a silent no-op under `AcceptAll`.
-    /// Authorization can afford to no-op there because widening an
-    /// already-total set changes nothing observable. Revocation cannot use
-    /// the same excuse: under `AcceptAll` every OTHER peer would stay
-    /// connectable, so silently reporting success would tell a caller a
-    /// peer was cut off when it was not. This returns an error naming the
-    /// situation instead of a false `Ok`.
-    pub(super) fn deny(&self, id: &EndpointId) -> crate::error::Result<bool> {
+    /// On its own this is NOT a revocation, and must never be used as one.
+    /// It only narrows who may open a NEW inbound connection; it does not
+    /// touch a connection already open, and it does not stop this node from
+    /// dialling the peer itself. [`PeerAdmission::revoke`] is the operation
+    /// that actually bars a peer.
+    fn remove(&self, id: &EndpointId) -> bool {
         match self {
-            Self::AcceptAll => Err(crate::error::Error::Transport(format!(
-                "cannot deny peer {id}: this endpoint accepts every inbound peer (AcceptAll \
-                 allowlist), so denying one id would not narrow who may connect"
-            ))),
-            Self::Explicit(ids) => Ok(ids.lock().remove(id)),
+            Self::AcceptAll => false,
+            Self::Explicit(ids) => ids.lock().remove(id),
         }
+    }
+}
+
+/// Who this endpoint will exchange connections with, in either direction.
+///
+/// Two gates, deliberately kept separate rather than folded into the one set:
+///
+/// - the allowlist answers "may this peer open a connection TO us", which is
+///   all [`IrohAllowlistConfig`] has ever meant, and
+/// - `revoked` answers "is this peer barred outright", and unlike the
+///   allowlist it is consulted on the DIAL path as well.
+///
+/// Barring only the accept is not a revocation, and the difference is not
+/// theoretical. This node dials peers on its own initiative: the replicator
+/// reconnect sweep dials exactly those registered peers missing from
+/// `connected_peers`, every `PERSISTED_RETRY_SWEEP_INTERVAL`. Cutting a
+/// peer's connection is itself what marks it missing, so a peer barred on
+/// the accept path alone is re-dialled BY US within seconds and regains full
+/// stream service over the connection we opened. Hence a second set that
+/// both directions consult, rather than a wider allowlist: only peers
+/// someone explicitly revoked change behaviour, and every other peer dials
+/// and is dialled exactly as before.
+pub(super) struct PeerAdmission {
+    allowlist: AllowlistState,
+    revoked: parking_lot::Mutex<RapidHashSet<EndpointId>>,
+}
+
+impl PeerAdmission {
+    pub(super) fn new(allowlist: AllowlistState) -> Self {
+        Self {
+            allowlist,
+            revoked: parking_lot::Mutex::new(RapidHashSet::new()),
+        }
+    }
+
+    /// Whether an inbound connection from `id` may proceed. Checked on every
+    /// accepted connection in `endpoint_streams::handle_incoming`.
+    pub(super) fn admits_inbound(&self, id: &EndpointId) -> bool {
+        !self.is_revoked(id) && self.allowlist.is_allowed(id)
+    }
+
+    /// Whether this node may open a connection TO `id`.
+    ///
+    /// The allowlist deliberately does not participate: it describes who may
+    /// come in, and a node is normally expected to dial peers that were
+    /// never on it. Only an explicit revocation bars an outbound dial.
+    pub(super) fn admits_outbound(&self, id: &EndpointId) -> bool {
+        !self.is_revoked(id)
+    }
+
+    pub(super) fn is_revoked(&self, id: &EndpointId) -> bool {
+        self.revoked.lock().contains(id)
+    }
+
+    /// Authorize `id`, lifting any revocation on it.
+    ///
+    /// The allowlist is widened first and the revocation lifted second, so
+    /// there is no instant in which `id` counts as admissible without
+    /// actually being on the list.
+    pub(super) fn allow(&self, id: EndpointId) {
+        self.allowlist.allow(id);
+        self.revoked.lock().remove(&id);
+    }
+
+    /// Bar `id` in both directions. Reports whether this changed anything,
+    /// so a caller can tell a real revocation from re-revoking a peer that
+    /// was already barred; revoking an unknown peer is not an error.
+    ///
+    /// The revocation is recorded BEFORE the allowlist entry is dropped, so
+    /// every check in between already refuses the peer. Under `AcceptAll`
+    /// the allowlist step does nothing and the revocation alone carries it,
+    /// which is why an `AcceptAll` endpoint can revoke a single peer without
+    /// narrowing anyone else.
+    ///
+    /// This does not close a connection that is already open. That is a
+    /// separate step the caller must also take, and the two are ordered:
+    /// see `endpoint_commands::handle_deny_peer`.
+    pub(super) fn revoke(&self, id: EndpointId) -> bool {
+        let newly_revoked = self.revoked.lock().insert(id);
+        let was_listed = self.allowlist.remove(&id);
+        newly_revoked || was_listed
     }
 }
 
@@ -378,51 +448,97 @@ mod tests {
         assert!(matches!(state, AllowlistState::AcceptAll));
     }
 
-    #[test]
-    fn deny_removes_a_peer_from_an_explicit_allowlist() {
-        let allowed = iroh::SecretKey::generate().public();
-        let state = allowlist_state_from_config(&IrohAllowlistConfig::Explicit(
-            [allowed.to_string()].into_iter().collect(),
-        ))
-        .unwrap();
-
-        assert!(state.is_allowed(&allowed));
-        assert!(
-            state.deny(&allowed).unwrap(),
-            "the peer was present, so deny must report true"
-        );
-        assert!(!state.is_allowed(&allowed));
+    fn admission(config: IrohAllowlistConfig) -> PeerAdmission {
+        PeerAdmission::new(allowlist_state_from_config(&config).unwrap())
     }
 
     #[test]
-    fn deny_of_a_never_allowed_peer_is_not_an_error() {
-        let never_allowed = iroh::SecretKey::generate().public();
-        let state =
-            allowlist_state_from_config(&IrohAllowlistConfig::Explicit(RapidHashSet::new()))
-                .unwrap();
+    fn revoke_bars_a_peer_in_both_directions() {
+        let peer = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(
+            [peer.to_string()].into_iter().collect(),
+        ));
 
-        // Not an error: the peer ends up in the desired state (denied)
-        // either way. `Ok(false)` tells a caller nothing was actually
-        // removed, distinct from a real revoke.
+        assert!(admission.admits_inbound(&peer));
+        assert!(admission.admits_outbound(&peer));
         assert!(
-            !state.deny(&never_allowed).unwrap(),
-            "denying a peer that was never allowed must report false, not error"
+            admission.revoke(peer),
+            "the peer was admitted, so revoke must report a change"
         );
-        assert!(!state.is_allowed(&never_allowed));
+
+        assert!(!admission.admits_inbound(&peer));
+        // The half that makes this a revocation rather than an allowlist
+        // withdrawal: this node must also refuse to DIAL the peer, or its own
+        // reconnect sweep undoes the revocation within seconds.
+        assert!(!admission.admits_outbound(&peer));
     }
 
     #[test]
-    fn deny_is_an_error_under_accept_all() {
-        let id = iroh::SecretKey::generate().public();
-        let state = allowlist_state_from_config(&IrohAllowlistConfig::AcceptAll).unwrap();
+    fn revoke_under_accept_all_bars_only_that_peer() {
+        let revoked = iroh::SecretKey::generate().public();
+        let other = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::AcceptAll);
 
-        let result = state.deny(&id);
+        assert!(admission.revoke(revoked), "revoking must report a change");
+
+        assert!(!admission.admits_inbound(&revoked));
+        assert!(!admission.admits_outbound(&revoked));
+        // The reason the bar is a separate set rather than a narrowing of the
+        // allowlist: an endpoint that accepts everyone can still cut off one
+        // peer without turning into an explicit allowlist for everybody else.
+        assert!(admission.admits_inbound(&other));
+        assert!(admission.admits_outbound(&other));
+    }
+
+    #[test]
+    fn revoking_an_unknown_peer_bars_it_and_reports_the_change() {
+        let never_seen = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(RapidHashSet::new()));
+
         assert!(
-            matches!(&result, Err(crate::error::Error::Transport(message)) if message.contains("AcceptAll")),
-            "expected an AcceptAll-naming error, got {result:?}"
+            admission.revoke(never_seen),
+            "a peer that was never allowed is still newly barred, which is a change"
         );
-        // Pin the decision: AcceptAll must not silently report a revoke that
-        // did not happen.
-        assert!(state.is_allowed(&id));
+        assert!(!admission.admits_inbound(&never_seen));
+        assert!(!admission.admits_outbound(&never_seen));
+
+        // Idempotent: re-revoking changes nothing and says so.
+        assert!(!admission.revoke(never_seen));
+    }
+
+    #[test]
+    fn allow_lifts_a_revocation_so_a_device_can_log_back_in() {
+        let peer = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(
+            [peer.to_string()].into_iter().collect(),
+        ));
+
+        admission.revoke(peer);
+        assert!(!admission.admits_inbound(&peer));
+
+        admission.allow(peer);
+        assert!(
+            admission.admits_inbound(&peer),
+            "allow must clear the bar, not just re-add the allowlist entry"
+        );
+        assert!(admission.admits_outbound(&peer));
+        assert!(!admission.is_revoked(&peer));
+    }
+
+    #[test]
+    fn revoke_does_not_widen_who_else_may_connect() {
+        let revoked = iroh::SecretKey::generate().public();
+        let listed = iroh::SecretKey::generate().public();
+        let unlisted = iroh::SecretKey::generate().public();
+        let admission = admission(IrohAllowlistConfig::Explicit(
+            [revoked.to_string(), listed.to_string()]
+                .into_iter()
+                .collect(),
+        ));
+
+        admission.revoke(revoked);
+
+        assert!(admission.admits_inbound(&listed));
+        assert!(!admission.admits_inbound(&unlisted));
     }
 }

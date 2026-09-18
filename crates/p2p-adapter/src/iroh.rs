@@ -213,6 +213,39 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             None => collections,
         }
     }
+
+    /// Drop every trace of a revoked peer's replication, so nothing dials it
+    /// again on a timer. Mirrors the full-deletion branch of
+    /// `remove_replicator` (all collections, not a subset), plus the durable
+    /// retry record that survives a restart.
+    ///
+    /// Idempotent: a peer that was never a replicator has nothing to delete
+    /// and that is not an error, which matters because revoking a peer that
+    /// never replicated is a perfectly ordinary thing to do.
+    async fn deregister_revoked_replicator(
+        &self,
+        peer_id: &p2p::transport::PeerId,
+    ) -> P2PResult<()> {
+        if let Some(ref coordinator) = self.sync_coordinator {
+            coordinator
+                .delete_replicator(peer_id)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
+        } else {
+            self.transport
+                .delete_replicator(peer_id)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
+        }
+
+        if let Some(ref pusher) = self.doc_pusher {
+            pusher
+                .delete_persisted_replicator(&peer_id.to_string())
+                .await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -363,6 +396,23 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .map_err(|error| P2PError::transport(error.to_string()))
     }
 
+    /// Bar a peer and stop this node reaching for it again.
+    ///
+    /// Two steps, and both are needed. `transport.deny_peer` bars the peer in
+    /// the endpoint and hangs up what it holds, but a peer registered as a
+    /// replicator is also something this node dials on a timer: the reconnect
+    /// sweep dials exactly the registered peers missing from
+    /// `connected_peers`, and hanging up is what makes it missing. Leaving the
+    /// registration in place would mean a barred peer the node keeps trying to
+    /// reach every couple of seconds, forever.
+    ///
+    /// Deregistration is deliberately destructive and is not undone by
+    /// `allow_peer`: re-admitting a device restores its ability to connect,
+    /// not its replication. The replicator has to be added back explicitly.
+    ///
+    /// The bar is applied FIRST so that a failure to deregister still leaves
+    /// the peer barred rather than half-revoked, and the failure is returned
+    /// rather than swallowed.
     async fn deny_peer(&self, peer_id: &TransportPeerId) -> P2PResult<()> {
         self.check_nac(acp::nac::NodePermission::P2pPeerDisconnect)
             .await?;
@@ -372,7 +422,9 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         self.transport
             .deny_peer(&peer_id)
             .await
-            .map_err(|error| P2PError::transport(error.to_string()))
+            .map_err(|error| P2PError::transport(error.to_string()))?;
+
+        self.deregister_revoked_replicator(&peer_id).await
     }
 
     async fn notify_network_change(&self) -> P2PResult<()> {

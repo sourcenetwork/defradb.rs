@@ -2255,6 +2255,20 @@ async fn deny_p2p_peer_revokes_an_already_connected_peer() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
+    // The other half, and the one that decides whether this is a revocation
+    // at all: node_b must also refuse to dial node_a. Barring only the
+    // inbound side leaves node_b's own reconnect sweep free to redial the
+    // peer it just revoked, which would restore node_a's full stream service
+    // over a connection node_b opened itself. node_a would accept happily;
+    // the refusal has to come from node_b.
+    let addr_a = wait_for_listen_addr(&node_a).await;
+    let outbound = p2p_b.connect_peer(&addr_a).await;
+    assert!(
+        outbound.is_err(),
+        "node_b must refuse to dial a peer it revoked, got {outbound:?}"
+    );
+    wait_for_no_connected_peer(&node_b).await;
+
     node_a.shutdown().await;
     node_b.shutdown().await;
 }
