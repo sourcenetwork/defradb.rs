@@ -172,3 +172,67 @@ fn the_same_governed_schema_derives_the_same_identity() {
     assert_eq!(once.version_id, twice.version_id);
     assert_eq!(once.governance_root, twice.governance_root);
 }
+
+/// Which commitments reach the identity, and which do not.
+///
+/// A commitment is a promise to writers — who governs, what may never change,
+/// whether history is verifiable. A representation or performance choice a
+/// node can make and unmake is not: an index is added to a live collection and
+/// backfilled under the same version ID, so it cannot be part of an identity
+/// it would have to change.
+#[test]
+fn a_governed_identity_commits_to_immutability_and_branchability() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+    let governed = id_for(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#);
+
+    for sdl in [
+        r#"type Agent @governed(root: "root-a") { did: String @immutable, body: String }"#,
+        r#"type Agent @governed(root: "root-a") @branchable { did: String, body: String }"#,
+    ] {
+        assert_ne!(id_for(sdl), governed, "commitment did not move: {sdl}");
+    }
+
+    assert_eq!(
+        id_for(r#"type Agent @governed(root: "root-a") { did: String @index, body: String }"#),
+        governed,
+        "an index is configuration and must not move the identity"
+    );
+}
+
+/// The gate is the root. An ungoverned collection derives what it always
+/// derived, whatever it declares about immutability or branchable history, so
+/// nothing anyone has today changes identity. The opt-in is in the schema
+/// because the identity is: an opt-in in node configuration would let two
+/// nodes running the same schema disagree about what the collection is.
+#[test]
+fn an_ungoverned_identity_commits_to_neither() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+
+    for sdl in [
+        r#"type Agent { did: String @immutable, body: String }"#,
+        r#"type Agent @branchable { did: String, body: String }"#,
+        r#"type Agent @branchable { did: String @immutable, body: String }"#,
+    ] {
+        assert_eq!(id_for(sdl), UNGOVERNED_AGENT_ID, "identity moved: {sdl}");
+    }
+}
+
+/// Each commitment moves a governed identity on its own, and no two of them
+/// collide.
+#[test]
+fn each_commitment_mints_a_distinct_governed_identity() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+    let mut ids = vec![
+        id_for(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#),
+        id_for(r#"type Agent @governed(root: "root-b") { did: String, body: String }"#),
+        id_for(r#"type Agent @governed(root: "root-a") { did: String @immutable, body: String }"#),
+        id_for(r#"type Agent @governed(root: "root-a") @branchable { did: String, body: String }"#),
+        id_for(
+            r#"type Agent @governed(root: "root-a") @branchable { did: String @immutable, body: String }"#,
+        ),
+    ];
+    let total = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), total, "two commitments share an identity");
+}

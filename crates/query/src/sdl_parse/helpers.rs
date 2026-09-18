@@ -324,7 +324,7 @@ pub(super) fn generate_collection_id(
     type_name: &str,
     fields: &[FieldDescription],
     headstore: &RapidHashMap<String, (Cid, u64)>,
-    governance_root: Option<&str>,
+    commitments: schema::Commitments<'_>,
 ) -> String {
     // Sort fields to match Go's order: _docID first, then alphabetically by name
     // Include fields with non-empty FieldID in the CID.
@@ -345,9 +345,10 @@ pub(super) fn generate_collection_id(
 
     // Generate CIDs for each field definition with priority=1 (like Go does)
     // All fields use the same priority=1, not incrementing priorities
+    let governed = commitments.is_governed();
     let field_cids: Vec<Cid> = sorted_fields
         .iter()
-        .filter_map(|f| schema::generate_field_cid_with_priority(f, 1).ok())
+        .filter_map(|f| schema::generate_field_cid_with_priority(f, 1, governed).ok())
         .collect();
 
     // Simulate Go's headstore prefix collision:
@@ -374,7 +375,7 @@ pub(super) fn generate_collection_id(
         &field_cids,
         priority,
         &head_cids,
-        governance_root,
+        commitments,
     ) {
         Ok(cid) => cid.to_string(),
         Err(_) => {

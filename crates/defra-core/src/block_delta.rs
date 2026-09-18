@@ -140,6 +140,19 @@ pub struct FieldDefinitionDeltaPayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub relative_id: Option<i32>,
+
+    /// Whether the field is set once and never changed.
+    ///
+    /// A commitment to writers, not a local choice, so it belongs in the
+    /// field's identity. Skipped when false, so a mutable field's delta
+    /// serialises to the bytes it did before this field existed.
+    #[serde(rename = "immutable", default, skip_serializing_if = "is_false")]
+    pub immutable: bool,
+}
+
+/// `skip_serializing_if` for a flag whose absence means false.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl FieldDefinitionDeltaPayload {
@@ -152,6 +165,7 @@ impl FieldDefinitionDeltaPayload {
             scalar_kind: None,
             collection_id: None,
             relative_id: None,
+            immutable: false,
         }
     }
 
@@ -182,6 +196,12 @@ impl FieldDefinitionDeltaPayload {
     /// Set the relative ID
     pub fn with_relative_id(mut self, id: i32) -> Self {
         self.relative_id = Some(id);
+        self
+    }
+
+    /// Mark the field as set once and never changed.
+    pub fn with_immutable(mut self, immutable: bool) -> Self {
+        self.immutable = immutable;
         self
     }
 }
@@ -226,6 +246,13 @@ pub struct CollectionDefinitionDeltaPayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub governance_root: Option<String>,
+
+    /// Whether the collection's history is tracked as one verifiable entity.
+    ///
+    /// Changes what a writer is promised about the collection's history, so
+    /// it belongs in the identity. Skipped when false.
+    #[serde(rename = "branchable", default, skip_serializing_if = "is_false")]
+    pub is_branchable: bool,
 }
 
 impl CollectionDefinitionDeltaPayload {
@@ -237,6 +264,7 @@ impl CollectionDefinitionDeltaPayload {
             query_select: None,
             query_transform: None,
             governance_root: None,
+            is_branchable: false,
         }
     }
 
@@ -261,6 +289,12 @@ impl CollectionDefinitionDeltaPayload {
     /// Set the governance root claiming this collection.
     pub fn with_governance_root(mut self, root: impl Into<String>) -> Self {
         self.governance_root = Some(root.into());
+        self
+    }
+
+    /// Mark the collection's history as one verifiable entity.
+    pub fn with_branchable(mut self, is_branchable: bool) -> Self {
+        self.is_branchable = is_branchable;
         self
     }
 }

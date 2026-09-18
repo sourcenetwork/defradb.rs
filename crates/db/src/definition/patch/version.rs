@@ -73,10 +73,11 @@ impl<S: Store> crate::database::DB<S> {
         };
 
         // Generate CIDs only for NEW fields with priority=1 (matching Go's empty headstore)
+        let governed = schema.governance_root.is_some();
         let mut field_cids: Vec<Cid> = Vec::new();
         for &idx in &new_field_indices {
             let field = &schema.fields[idx];
-            match schema::generate_field_cid_with_priority(field, 1) {
+            match schema::generate_field_cid_with_priority(field, 1, governed) {
                 Ok(cid) => {
                     schema.fields[idx].id = cid.to_string();
                     field_cids.push(cid);
@@ -118,7 +119,7 @@ impl<S: Store> crate::database::DB<S> {
             collection_heads,
             query_select.as_deref(),
             query_transform.as_ref(),
-            schema.governance_root.as_deref(),
+            schema::Commitments::of(&*schema),
         ) {
             Ok(cid) => cid.to_string(),
             Err(_) => {

@@ -62,9 +62,12 @@ impl<S: Store> crate::database::DB<S> {
                     a.name.cmp(&b.name)
                 }
             });
+            let commitments = schema::Commitments::of(&schema);
             let mut fld_cids = Vec::new();
             for field in &sorted {
-                if let Ok(cid) = schema::generate_field_cid_with_priority(field, 1) {
+                if let Ok(cid) =
+                    schema::generate_field_cid_with_priority(field, 1, commitments.is_governed())
+                {
                     fld_cids.push(cid);
                 }
             }
@@ -76,7 +79,7 @@ impl<S: Store> crate::database::DB<S> {
                 &[],
                 qs_bytes.as_deref(),
                 qt_cid.as_ref(),
-                schema.governance_root.as_deref(),
+                commitments,
             ) {
                 let new_version_id = new_cid.to_string();
                 let old_version_id = schema.version_id.clone();
@@ -168,10 +171,16 @@ impl<S: Store> crate::database::DB<S> {
             }
         });
 
+        let commitments = schema::Commitments::of(&schema);
         let mut field_cids = Vec::with_capacity(sorted_fields.len());
         for field in &sorted_fields {
             // Generate field block with priority=1 (matches Go)
-            match schema::generate_field_block_with_priority_and_heads(field, 1, &[]) {
+            match schema::generate_field_block_with_priority_and_heads(
+                field,
+                1,
+                &[],
+                commitments.is_governed(),
+            ) {
                 Ok(block_with_cid) => {
                     blockstore
                         .set(&block_with_cid.cid.to_bytes(), &block_with_cid.bytes)
@@ -209,7 +218,7 @@ impl<S: Store> crate::database::DB<S> {
             &[], // no heads for new collections
             qs_bytes_for_block.as_deref(),
             qt_cid_for_block.as_ref(),
-            schema.governance_root.as_deref(),
+            commitments,
         ) {
             Ok(block_with_cid) => {
                 blockstore
