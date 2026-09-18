@@ -204,7 +204,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
             .database
             .add_collection_to_cache(updated_schema)
             .map_err(|e| format!("{}", e))?;
-        if !cached {
+        if cached == db::Cached::NameHeldByAnother {
             return Err(format!(
                 "index update for collection '{collection_name}' was stored but \
                  another collection holds that name in the cache"
