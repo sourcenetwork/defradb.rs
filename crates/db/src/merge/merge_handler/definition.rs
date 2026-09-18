@@ -100,21 +100,32 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        // Build the CollectionVersion
-        // Synced collections come in as inactive (user must activate manually via SetActiveCollectionVersion)
-        // and materialized (matching Go's behavior)
-        let mut schema =
-            CollectionVersion::new(&collection_name, &version_id, &collection_id, fields);
-        schema.is_active = false;
-
+        // Build the CollectionVersion by overlaying the delta onto the version
+        // it supersedes, rather than by rebuilding from the delta alone.
+        //
         // A delta carries a name, and per field a name, kind and CRDT type. It
-        // carries nothing else the collection commits to, so a version rebuilt
-        // from one alone would drop what the previous version held. Carry those
-        // forward rather than defaulting them away, the way Go merges a synced
-        // definition onto the version it already has.
-        if let Some(previous) = &previous {
-            carry_forward(&mut schema, previous);
-        }
+        // carries none of the rest — the policy, the indexes in all four of
+        // their flavours, the embeddings, the downsample configuration, the
+        // collection set, whether the history is branchable or the collection
+        // embedded-only. Listing what to rescue gets one more entry wrong every
+        // time `CollectionVersion` grows a field, so start from everything the
+        // previous version held and overlay only what this block actually says.
+        //
+        // Synced versions arrive inactive; a user activates one explicitly.
+        let mut schema = match &previous {
+            Some(previous) => {
+                let mut schema = previous.clone();
+                schema.name.clone_from(&collection_name);
+                schema.version_id.clone_from(&version_id);
+                schema.collection_id.clone_from(&collection_id);
+                schema.fields = fields;
+                schema
+            }
+            None => CollectionVersion::new(&collection_name, &version_id, &collection_id, fields),
+        };
+        schema.is_active = false;
+        // This block is a definition, whatever stood in for it before.
+        schema.is_placeholder = false;
 
         // For patched versions, set previous_version to point to the head (previous version CID)
         if let Some(heads) = &block.heads {
@@ -139,7 +150,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     "Failed to decode query_select JSON bytes for view collection"
                 );
             }
-        } else {
+        } else if schema.query.is_none() {
             schema.is_materialized = true;
         }
 
@@ -238,27 +249,5 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let crdt_type = payload.crdt.map(CType::from_u8).unwrap_or_default();
 
         Ok(FieldDescription::new(field_id.to_string(), name, kind).with_crdt_type(crdt_type))
-    }
-}
-
-/// Carry what a definition delta cannot express from `previous` onto `schema`.
-///
-/// The delta has no room for an access control policy, for a field's
-/// immutability, or for branchable history. A patched version rebuilt from one
-/// therefore has to inherit them, or a peer's schema patch silently strips the
-/// collection's commitments from every node that merges it.
-fn carry_forward(schema: &mut CollectionVersion, previous: &CollectionVersion) {
-    if schema.policy.is_none() {
-        schema.policy.clone_from(&previous.policy);
-    }
-    schema.is_branchable |= previous.is_branchable;
-    for field in &mut schema.fields {
-        if previous
-            .fields
-            .iter()
-            .any(|held| held.name == field.name && held.immutable)
-        {
-            field.immutable = true;
-        }
     }
 }

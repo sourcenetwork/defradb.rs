@@ -247,15 +247,18 @@ async fn a_document_for_a_collection_kept_out_of_the_cache_still_merges() {
 }
 
 /// A patched definition resolves its collection ID from the version it
-/// supersedes, so it is the *same* collection and the cache takes it. The
-/// delta still cannot express a policy or branchable history, so the rebuild
-/// has to inherit them rather than default them away.
+/// supersedes, so it is the *same* collection and the cache takes it under the
+/// live name. The delta expresses a name and its fields and nothing else, so
+/// everything the superseded version held has to survive the rebuild — not
+/// just the attributes someone remembered to list.
 #[tokio::test]
 async fn a_patched_definition_keeps_what_the_delta_cannot_carry() {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
     let defined = query::parse_sdl(
-        r#"type Agent @policy(id: "p1", resource: "agents") @branchable { did: String @immutable }"#,
+        r#"type Agent @policy(id: "p1", resource: "agents") @branchable {
+            did: String @immutable @index
+        }"#,
     )
     .unwrap()
     .remove(0);
@@ -265,6 +268,7 @@ async fn a_patched_definition_keeps_what_the_delta_cannot_carry() {
 
     let held = db.get_collection("Agent").unwrap().unwrap();
     assert!(held.schema().policy.is_some() && held.schema().is_branchable);
+    assert!(!held.schema().indexes.is_empty());
     let previous: Cid = held.schema().version_id.parse().expect("a CID version id");
 
     // A patch adding one field: no name, and the superseded version as its head.
@@ -313,11 +317,69 @@ async fn a_patched_definition_keeps_what_the_delta_cannot_carry() {
         "a patch carries no branchable flag either"
     );
     assert!(
+        !patched.indexes.is_empty(),
+        "a patch carries no indexes either, and this is the very entry the \
+         merge path prefers for its index action state"
+    );
+    // The fields of a patched version start as the superseded version's, so an
+    // existing field keeps its flags without anything rescuing them.
+    assert!(
         patched
             .fields
             .iter()
             .any(|field| field.name == "did" && field.immutable),
-        "the superseded version's immutable fields carry through"
+        "the superseded version's fields carry their own flags"
     );
     assert!(patched.fields.iter().any(|field| field.name == "body"));
+}
+
+/// A view is a collection whose rows are computed from a query. A patch that
+/// carries no `query_select` must not quietly turn one back into an ordinary
+/// materialized collection.
+#[tokio::test]
+async fn a_patched_definition_does_not_unmake_a_view() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+    let mut view = CollectionVersion::new(
+        "Tally",
+        "col-tally",
+        "col-tally",
+        vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+    );
+    view.query = Some(schema::QuerySource::new(serde_json::json!({})));
+    view.is_materialized = false;
+    db.create_collection(view).await.unwrap();
+    let blockstore = Arc::new(DefraBlockstore::new(store, false));
+    let handler = DbMergeHandler::new(db.clone(), blockstore.clone());
+
+    let held = db.get_collection("Tally").unwrap().unwrap();
+    assert!(!held.schema().is_materialized && held.schema().query.is_some());
+    let previous: Cid = held.schema().version_id.parse().expect("a CID version id");
+
+    let patch = Block::new(
+        CrdtDelta::CollectionDefinition(CollectionDefinitionDeltaPayload::new(2)),
+        vec![previous],
+        vec![],
+    );
+    let patch_cid = patch.generate_cid().unwrap();
+    let patch_bytes = patch.to_dag_cbor().unwrap();
+    blockstore.put(&patch_cid, &patch_bytes).await.unwrap();
+    handler
+        .handle_block(
+            &patch_cid,
+            &patch_bytes,
+            BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+        )
+        .await
+        .unwrap();
+
+    let patched = db.get_collection("Tally").unwrap().unwrap();
+    assert!(
+        patched.schema().query.is_some(),
+        "the view's query must survive a patch that does not carry one"
+    );
+    assert!(
+        !patched.schema().is_materialized,
+        "and it must still be a view"
+    );
 }
