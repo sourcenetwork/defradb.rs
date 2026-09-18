@@ -16,6 +16,7 @@
 use async_trait::async_trait;
 use document::Document;
 use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use lens::{LensConfig, LensModule, TransformId};
 use query::error::TransactionError;
 use query::txn::{
@@ -24,7 +25,7 @@ use query::txn::{
 };
 use rapidhash::fast::RandomState;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use storage::corekv::{IterOptions, Key, Store};
 use tracing::{error, warn};
@@ -87,9 +88,34 @@ impl CleanupResult {
 /// async document fetching operations.
 pub struct DbTransactionRegistry<S: Store + 'static> {
     db: Arc<DB<S>>,
-    transactions: HopscotchMap<String, Arc<DbTransactionContext<S>>, RandomState>,
+    transactions: HopscotchMap<String, Arc<TransactionSlot<S>>, RandomState>,
     id_counter: AtomicU64,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
+}
+
+/// A registered transaction: the single owning reference plus a borrowing handle.
+///
+/// The map retires a removed entry instead of dropping it, so the owning
+/// reference lives in a queue whose `pop` hands it back by value at the
+/// removal. The context, and with it the `Arc<DB<S>>` holding the store's
+/// on-disk lock, is then released where the transaction leaves the registry
+/// rather than whenever reclamation catches up.
+struct TransactionSlot<S: Store + 'static> {
+    owner: SegQueue<Arc<DbTransactionContext<S>>>,
+    reader: Weak<DbTransactionContext<S>>,
+}
+
+impl<S: Store + 'static> TransactionSlot<S> {
+    fn new(ctx: Arc<DbTransactionContext<S>>) -> Self {
+        let reader = Arc::downgrade(&ctx);
+        let owner = SegQueue::new();
+        owner.push(ctx);
+        Self { owner, reader }
+    }
+
+    fn ctx(&self) -> Option<Arc<DbTransactionContext<S>>> {
+        self.reader.upgrade()
+    }
 }
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
@@ -148,7 +174,11 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     /// Returns `Ok(None)` if the transaction doesn't exist, or a cleanup sweep
     /// has already claimed it.
     pub fn get_ctx(&self, txn_id: &str) -> Result<Option<Arc<DbTransactionContext<S>>>> {
-        Ok(self.transactions.get(txn_id).filter(|ctx| ctx.touch()))
+        Ok(self
+            .transactions
+            .get(txn_id)
+            .and_then(|slot| slot.ctx())
+            .filter(|ctx| ctx.touch()))
     }
 
     /// Get the number of active transactions in the registry.
@@ -159,15 +189,16 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     /// Unregister a transaction, taking ownership of releasing it.
     fn take_registered(&self, handle: &TransactionHandle) -> Option<RemovedTransaction<S>> {
         self.transactions
-            .remove(handle.as_str())
+            .remove(handle.as_str())?
+            .owner
+            .pop()
             .map(RemovedTransaction)
     }
 }
 
 /// A transaction context the registry no longer holds.
 ///
-/// The map retires its own reference instead of dropping it at the removal, so
-/// a caller that never reaches the commit or rollback (an abandoned handle, a
+/// A caller that never reaches the commit or rollback (an abandoned handle, a
 /// cancelled finalization) would otherwise leave the transaction open and the
 /// store locked. Dropping this releases it.
 struct RemovedTransaction<S: Store + 'static>(Arc<DbTransactionContext<S>>);

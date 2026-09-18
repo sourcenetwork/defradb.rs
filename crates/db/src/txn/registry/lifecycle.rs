@@ -256,7 +256,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 
         // Registration and returning the handle must be one poll: cancellation
         // before the caller can construct its guard must not orphan an entry.
-        self.transactions.insert(txn_id.clone(), ctx);
+        self.transactions
+            .insert(txn_id.clone(), Arc::new(TransactionSlot::new(ctx)));
 
         Ok(TransactionHandle::new(txn_id))
     }
@@ -283,7 +284,11 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     }
 
     fn get(&self, handle: &TransactionHandle) -> GetTransactionResult {
-        match self.transactions.get(handle.as_str()) {
+        match self
+            .transactions
+            .get(handle.as_str())
+            .and_then(|slot| slot.ctx())
+        {
             Some(ctx) if ctx.touch() => {
                 GetTransactionResult::Found(ctx as Arc<dyn TransactionContext>)
             }

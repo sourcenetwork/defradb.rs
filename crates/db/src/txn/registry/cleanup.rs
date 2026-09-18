@@ -24,6 +24,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         let stale_candidates: Vec<(String, Arc<DbTransactionContext<S>>)> = self
             .transactions
             .iter()
+            .filter_map(|(txn_id, slot)| slot.ctx().map(|ctx| (txn_id, ctx)))
             .filter(|(_, ctx)| ctx.idle_for(now) > max_idle_age)
             .collect();
 
@@ -39,13 +40,16 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 continue;
             }
             let ctx = match self.transactions.remove(&txn_id) {
-                Some(current) if Arc::ptr_eq(&current, &candidate_ctx) => {
-                    Some(RemovedTransaction(current))
-                }
-                Some(current) => {
-                    self.transactions.insert(txn_id.clone(), current);
-                    None
-                }
+                Some(slot) => match slot.ctx() {
+                    Some(current) if Arc::ptr_eq(&current, &candidate_ctx) => {
+                        slot.owner.pop().map(RemovedTransaction)
+                    }
+                    Some(_) => {
+                        self.transactions.insert(txn_id.clone(), slot);
+                        None
+                    }
+                    None => None,
+                },
                 None => None,
             };
 
