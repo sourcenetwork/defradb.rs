@@ -119,7 +119,7 @@ impl<S: Store> crate::database::DB<S> {
         // Update the process-wide cache (scoped to drop lock before reindex)
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cache.insert(name.clone(), Collection::new(target_schema.clone()));
+            cache.put_named(name.as_str(), Collection::new(target_schema.clone()));
             cache
         });
 
@@ -141,12 +141,9 @@ impl<S: Store> crate::database::DB<S> {
     /// This searches the in-memory cache for a collection with the given version ID.
     /// It only returns active collections that are in the cache.
     pub fn get_collection_by_version_id(&self, version_id: &str) -> Result<Option<Collection>> {
-        Ok(self.collections.peek(|cache| {
-            cache
-                .values()
-                .find(|c| c.version_id() == version_id)
-                .cloned()
-        }))
+        Ok(self
+            .collections
+            .peek(|cache| cache.by_version(version_id).cloned()))
     }
 
     /// Get a collection by version ID, searching both cache and KV store.

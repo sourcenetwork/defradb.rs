@@ -298,7 +298,6 @@ impl<S: Store> crate::database::DB<S> {
         )
         .map_err(Error::Other)?;
 
-        let name = schema.name.clone();
         let mut txn = self.new_txn(false).await?;
 
         let finalized_schema = self.create_collection_with_txn(&mut txn, schema).await?;
@@ -317,7 +316,7 @@ impl<S: Store> crate::database::DB<S> {
         // Update the process-wide cache after successful commit
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cache.insert(name.clone(), Collection::new(finalized_schema.clone()));
+            cache.put(Collection::new(finalized_schema.clone()));
             cache
         });
 
@@ -456,7 +455,7 @@ impl<S: Store> crate::database::DB<S> {
         self.collections.rcu(|old| {
             let mut cache = old.clone();
             for schema in &finalized_schemas {
-                cache.insert(schema.name.clone(), Collection::new(schema.clone()));
+                cache.put(Collection::new(schema.clone()));
             }
             cache
         });
