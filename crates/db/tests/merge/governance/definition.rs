@@ -1,5 +1,7 @@
-//! A definition learned over p2p is rebuilt from the delta alone, which
-//! carries none of what a governed collection commits to.
+//! A definition learned over p2p is rebuilt from the delta alone. It carries
+//! what a governed collection's identity commits to and nothing else, so the
+//! rebuild restores that much and must never displace a local record holding
+//! more.
 
 use defra_core::block::{CollectionDefinitionDeltaPayload, FieldDefinitionDeltaPayload};
 use schema::PolicyDescription;
@@ -16,34 +18,46 @@ struct Definition {
     blocks: Vec<(Cid, Vec<u8>)>,
 }
 
-/// A definition naming `collection` with one string `field`, as the p2p path
-/// rebuilds it: a name, a field kind and a CRDT type, and nothing else.
+/// A definition naming `collection`, as a peer sends it. A field prefixed with
+/// `!` is `@immutable`.
 fn definition(collection: &str, fields: &[&str]) -> Definition {
+    definition_with(collection, fields, None, false)
+}
+
+fn definition_with(
+    collection: &str,
+    fields: &[&str],
+    governance_root: Option<&str>,
+    is_branchable: bool,
+) -> Definition {
     let mut blocks = Vec::new();
     let mut links = Vec::new();
     for field in fields {
+        let immutable = field.starts_with('!');
+        let name = field.trim_start_matches('!');
         let block = Block::new(
             CrdtDelta::FieldDefinition(
                 FieldDefinitionDeltaPayload::new(1)
-                    .with_name(*field)
+                    .with_name(name)
                     .with_scalar_kind(STRING_KIND)
-                    .with_crdt(schema::CType::LwwRegister.to_u8()),
+                    .with_crdt(schema::CType::LwwRegister.to_u8())
+                    .with_immutable(immutable),
             ),
             vec![],
             vec![],
         );
         let cid = block.generate_cid().unwrap();
         blocks.push((cid, block.to_dag_cbor().unwrap()));
-        links.push(DAGLink::new(*field, cid));
+        links.push(DAGLink::new(name, cid));
     }
 
-    let block = Block::new(
-        CrdtDelta::CollectionDefinition(
-            CollectionDefinitionDeltaPayload::new(1).with_name(collection),
-        ),
-        vec![],
-        links,
-    );
+    let mut payload = CollectionDefinitionDeltaPayload::new(1)
+        .with_name(collection)
+        .with_branchable(is_branchable);
+    if let Some(root) = governance_root {
+        payload = payload.with_governance_root(root);
+    }
+    let block = Block::new(CrdtDelta::CollectionDefinition(payload), vec![], links);
     let cid = block.generate_cid().unwrap();
     blocks.push((cid, block.to_dag_cbor().unwrap()));
     Definition { cid, blocks }
@@ -107,6 +121,25 @@ impl Node {
             )
             .await
             .unwrap();
+    }
+
+    /// Define `Grants` locally, ungoverned: branchable, with an `@immutable`
+    /// `writer` and no policy. An ungoverned identity commits to none of it,
+    /// so no delta carries any of it either.
+    async fn define_ungoverned_grants(&self) {
+        let mut writer = FieldDescription::new("2", "writer", FieldKind::string());
+        writer.immutable = true;
+        let mut version = CollectionVersion::new(
+            "Grants",
+            "col-grants",
+            "col-grants",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                writer,
+            ],
+        );
+        version.is_branchable = true;
+        self.db.create_collection(version).await.unwrap();
     }
 
     /// What the collection named `Grants` commits to, as this node reads it.
@@ -183,4 +216,113 @@ async fn a_synced_definition_for_an_unknown_collection_still_registers() {
         .fields
         .iter()
         .any(|field| field.name == "writer"));
+}
+
+#[tokio::test]
+async fn a_synced_definition_restores_the_commitments_it_carries() {
+    let node = Node::bare().await;
+
+    definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), true)
+        .merge(&node)
+        .await;
+
+    let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
+    let schema = collection.schema();
+    assert_eq!(schema.governance_root.as_deref(), Some("root-a"));
+    assert!(schema.is_branchable);
+    assert!(schema
+        .fields
+        .iter()
+        .any(|field| field.name == "writer" && field.immutable));
+}
+
+#[tokio::test]
+async fn a_synced_definition_under_another_root_does_not_displace_a_local_one() {
+    let node = Node::bare().await;
+    node.define_grants().await;
+
+    definition_with("Grants", &["_docID", "!writer"], Some("root-b"), false)
+        .merge(&node)
+        .await;
+
+    assert_eq!(node.grants_commitments(), (Some(governed_policy()), true));
+    assert_eq!(
+        node.db
+            .get_collection("Grants")
+            .unwrap()
+            .unwrap()
+            .schema()
+            .governance_root,
+        None,
+        "the local record keeps its own root"
+    );
+}
+
+/// A definition block reproduces the identity it was built with on a node that
+/// has never seen the collection: the identity is a function of the block, and
+/// the block carries everything the identity commits to.
+#[tokio::test]
+async fn a_definition_block_reproduces_its_identity_on_a_fresh_node() {
+    let author = Node::bare().await;
+    let defined =
+        query::parse_sdl(r#"type Ledgers @governed(root: "root-a") { writer: String @immutable }"#)
+            .unwrap()
+            .remove(0);
+    author.db.create_collection(defined.clone()).await.unwrap();
+    let authored = author.db.get_collection("Ledgers").unwrap().unwrap();
+    let version_id = authored.schema().version_id.clone();
+    let cid: Cid = version_id.parse().expect("the version ID names the block");
+    let bytes = author.blockstore.get(&cid).await.unwrap().expect("block");
+
+    let fresh = Node::bare().await;
+    fresh.blockstore.put(&cid, &bytes).await.unwrap();
+    for link in Block::from_dag_cbor(&bytes).unwrap().links.iter().flatten() {
+        let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
+        fresh.blockstore.put(&link.link, &field).await.unwrap();
+    }
+    fresh
+        .handler
+        .handle_block(
+            &cid,
+            &bytes,
+            BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+        )
+        .await
+        .unwrap();
+
+    let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(synced.schema().version_id, version_id);
+    assert_eq!(synced.schema().collection_id, version_id);
+    assert_eq!(synced.schema().governance_root.as_deref(), Some("root-a"));
+    assert_eq!(synced.schema().collection_id, defined.collection_id);
+    assert!(synced
+        .schema()
+        .fields
+        .iter()
+        .any(|field| field.name == "writer" && field.immutable));
+}
+
+/// The gate cuts both ways: an ungoverned collection's delta carries neither
+/// its immutable flags nor its branchable flag, because its identity commits
+/// to neither, so a synced definition of that name must still be kept out of
+/// the cache even with no policy in sight.
+#[tokio::test]
+async fn a_synced_definition_does_not_strip_an_ungoverned_collection() {
+    let node = Node::bare().await;
+    node.define_ungoverned_grants().await;
+
+    definition("Grants", &["_docID", "writer"])
+        .merge(&node)
+        .await;
+
+    let collection = node.db.get_collection("Grants").unwrap().unwrap();
+    let schema = collection.schema();
+    assert!(schema.is_branchable, "branchable history was stripped");
+    assert!(
+        schema
+            .fields
+            .iter()
+            .any(|field| field.name == "writer" && field.immutable),
+        "the immutable flag was stripped"
+    );
 }

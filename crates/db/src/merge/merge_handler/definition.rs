@@ -126,6 +126,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         schema.is_active = false;
         // This block is a definition, whatever stood in for it before.
         schema.is_placeholder = false;
+        // Both are in the delta and in the identity, so a record rebuilt from
+        // one that dropped them would describe a different collection from the
+        // one the block names. Being in the identity is also why a patch never
+        // restates them: changing either would change the collection ID, so a
+        // patch inherits them from the version it supersedes like everything
+        // else the overlay carries.
+        if previous.is_none() {
+            schema.is_branchable = payload.is_branchable;
+            schema.governance_root.clone_from(&payload.governance_root);
+        }
 
         // For patched versions, set previous_version to point to the head (previous version CID)
         if let Some(heads) = &block.heads {
@@ -200,7 +210,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .get_collection(&collection_name)
             .map_err(MergeError::Database)?
             .as_ref()
-            .map(|existing| uncarried_commitments(existing.schema()))
+            .map(|existing| uncarried_commitments(existing.schema(), &schema))
             .unwrap_or_default();
         let cached = if uncarried.is_empty() {
             self.db
@@ -273,27 +283,50 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Determine CRDT type
         let crdt_type = payload.crdt.map(CType::from_u8).unwrap_or_default();
 
-        Ok(FieldDescription::new(field_id.to_string(), name, kind).with_crdt_type(crdt_type))
+        let mut field =
+            FieldDescription::new(field_id.to_string(), name, kind).with_crdt_type(crdt_type);
+        // Immutability is in the field's own identity, so it round-trips.
+        field.immutable = payload.immutable;
+        Ok(field)
     }
 }
 
-/// What `stored` commits to that a collection definition delta cannot express.
+/// What `stored` commits to that `incoming` does not carry.
 ///
-/// `CollectionDefinitionDeltaPayload` carries a name, and its linked field
-/// deltas carry a field name, kind and CRDT type. Everything below is part of
-/// the collection's agreement with its writers and survives no round trip
-/// through the wire format, so a record holding any of it must not be rebuilt
-/// from one.
-fn uncarried_commitments(stored: &CollectionVersion) -> Vec<&'static str> {
+/// A governed collection's delta carries its root, its branchable flag and its
+/// fields' immutability, so a rebuilt record restores all three and none of
+/// them is a reason to refuse. Three things still are.
+///
+/// A policy survives only as a CID over its reference, which is enough to bind
+/// the version but not to reconstruct the reference itself, so a record
+/// holding one must not be rebuilt from a delta.
+///
+/// A differing governance root means the incoming definition describes a
+/// different collection that merely shares a name — their collection IDs
+/// differ by construction — and the name-keyed cache would otherwise let it
+/// take the local one's place.
+///
+/// An ungoverned collection commits to none of this in its identity, so its
+/// delta carries neither the immutable flags nor the branchable flag and a
+/// rebuild would drop them.
+fn uncarried_commitments(
+    stored: &CollectionVersion,
+    incoming: &CollectionVersion,
+) -> Vec<&'static str> {
     let mut commitments = Vec::new();
     if stored.policy.is_some() {
         commitments.push("an access control policy");
     }
-    if stored.fields.iter().any(|field| field.immutable) {
-        commitments.push("@immutable fields");
+    if stored.governance_root != incoming.governance_root {
+        commitments.push("a different governance root");
     }
-    if stored.is_branchable {
-        commitments.push("branchable history");
+    if stored.governance_root.is_none() {
+        if stored.fields.iter().any(|field| field.immutable) {
+            commitments.push("@immutable fields");
+        }
+        if stored.is_branchable {
+            commitments.push("branchable history");
+        }
     }
     commitments
 }
