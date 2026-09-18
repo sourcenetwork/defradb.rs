@@ -275,6 +275,9 @@ impl Planner {
         // and is therefore always right.
         let rows_rejected_above_the_scan = filter_has_relations
             || is_complex_filter
+            || select.group_by.is_some()
+            // prepare_filter removes computed aliases before classifying the filter.
+            || select.filter.as_ref().is_some_and(|filter| filter.has_alias_filter())
             || (self.acp.is_some() && collection.policy.is_some());
 
         let mut warnings: Vec<GqlWarning> = Vec::new();
