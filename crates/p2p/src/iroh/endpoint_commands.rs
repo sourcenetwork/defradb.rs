@@ -21,6 +21,7 @@ use super::endpoint::{
     peer_direct_addr, snapshot_subscription_senders, spawn_task, ActiveSync, EndpointResources,
     PendingPushLogReplies, SpawnedTasks, SubscriptionSenders, TopicSubscription,
 };
+use super::endpoint_config::PeerAdmission;
 use super::endpoint_rpc::{
     close_peer_connections, handle_block_sync, handle_car_request_response, handle_fire_and_forget,
     handle_request_response, handle_send_only, handle_two_stream_request, remember_connection,
@@ -189,9 +190,16 @@ pub(super) async fn handle_command(
             });
         }
         IrohCommand::Subscribe { topic, reply } => {
-            let result =
-                handle_subscribe(gossip, subscriptions, peer_map, raw_topics, topic, event_tx)
-                    .await;
+            let result = handle_subscribe(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                raw_topics,
+                topic,
+                event_tx,
+            )
+            .await;
             let _ = reply.send(result);
         }
         IrohCommand::Unsubscribe { topic, reply } => {
@@ -204,7 +212,15 @@ pub(super) async fn handle_command(
             }
         }
         IrohCommand::Publish { topic, msg, reply } => {
-            let result = handle_publish(gossip, subscriptions, peer_map, topic, msg, spawned_tasks);
+            let result = handle_publish(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                topic,
+                msg,
+                spawned_tasks,
+            );
             let _ = reply.send(result);
         }
         IrohCommand::RegisterRawTopic { topic, reply } => {
@@ -216,14 +232,28 @@ pub(super) async fn handle_command(
             // GossipRawMessage (not a decoded PushLogBroadcast) for it, then
             // join the gossip mesh with a real reader task.
             raw_topics.lock().insert(topic.clone());
-            let result =
-                subscribe_topic_str(gossip, subscriptions, peer_map, raw_topics, topic, event_tx)
-                    .await;
+            let result = subscribe_topic_str(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                raw_topics,
+                topic,
+                event_tx,
+            )
+            .await;
             let _ = reply.send(result);
         }
         IrohCommand::PublishRaw { topic, data, reply } => {
-            let result =
-                handle_publish_raw(gossip, subscriptions, peer_map, topic, data, spawned_tasks);
+            let result = handle_publish_raw(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                topic,
+                data,
+                spawned_tasks,
+            );
             let _ = reply.send(result);
         }
         IrohCommand::TopicPeers { topic, reply } => {
@@ -907,15 +937,41 @@ fn handle_deny_peer(peer_id: PeerId, resources: &EndpointResources) -> crate::er
     handle_disconnect(peer_id, resources)
 }
 
+/// The connected peers that may be handed to gossip as mesh neighbours.
+///
+/// Filtered, because seeding gossip with a peer id is not passive: iroh-gossip
+/// holds the raw endpoint and dials its own mesh, so a revoked peer named here
+/// is a revoked peer this node asks gossip to go and connect to, over a path
+/// neither `handle_dial` nor the accept check ever sees. `peer_map` alone is
+/// not safe to use for this: `take_connections` deliberately leaves the count
+/// entry behind for the stream tasks to clear, so a peer revoked a moment ago
+/// is still listed there with no live handles.
+///
+/// One function rather than a filter repeated at each call site, so the
+/// subscribe and publish paths cannot drift apart on who counts as a
+/// neighbour.
+fn admitted_neighbours(
+    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    admission: &PeerAdmission,
+) -> Vec<iroh::EndpointId> {
+    let connected: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
+    connected
+        .into_iter()
+        .filter(|id| admission.admits_outbound(id))
+        .collect()
+}
+
 /// Subscribe to a gossip topic.
 ///
 /// Passes all currently connected peers as initial neighbors so gossip messages
 /// are immediately deliverable. iroh-gossip requires explicit neighbors unlike
 /// libp2p-gossipsub which discovers them automatically.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_subscribe(
     gossip: &Gossip,
     subscriptions: &mut RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    admission: &PeerAdmission,
     raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
     topic: crate::topics::DefraTopic,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
@@ -924,6 +980,7 @@ pub(super) async fn handle_subscribe(
         gossip,
         subscriptions,
         peer_map,
+        admission,
         raw_topics,
         topic.to_string(),
         event_tx,
@@ -940,10 +997,12 @@ pub(super) async fn handle_subscribe(
 /// same string topic meet on the same iroh-gossip `TopicId`. The reader emits
 /// [`TransportEvent::GossipRawMessage`] for any topic present in `raw_topics`,
 /// and a decoded [`TransportEvent::GossipMessage`] otherwise.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn subscribe_topic_str(
     gossip: &Gossip,
     subscriptions: &mut RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    admission: &PeerAdmission,
     raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
     topic_str: String,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
@@ -955,7 +1014,7 @@ pub(super) async fn subscribe_topic_str(
     }
 
     let topic_id = topic_to_id(&topic_str);
-    let initial_peers: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
+    let initial_peers = admitted_neighbours(peer_map, admission);
     let gossip_topic = gossip
         .subscribe(topic_id, initial_peers)
         .await
@@ -1149,6 +1208,7 @@ fn handle_publish(
     gossip: &Gossip,
     subscriptions: &RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    admission: &PeerAdmission,
     topic: crate::topics::DefraTopic,
     msg: PushLogBroadcast,
     spawned_tasks: &SpawnedTasks,
@@ -1157,7 +1217,7 @@ fn handle_publish(
     let topic_id = topic_to_id(&topic_str);
     let sender = subscriptions.get(&topic_str).map(|sub| sub.sender.clone());
     let gossip = gossip.clone();
-    let initial_peers: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
+    let initial_peers = admitted_neighbours(peer_map, admission);
     let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
     let payload = msg
         .encode_gossip_payload()
@@ -1203,6 +1263,7 @@ fn handle_publish_raw(
     gossip: &Gossip,
     subscriptions: &RapidHashMap<String, TopicSubscription>,
     peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    admission: &PeerAdmission,
     topic_str: String,
     data: Vec<u8>,
     spawned_tasks: &SpawnedTasks,
@@ -1210,7 +1271,7 @@ fn handle_publish_raw(
     let topic_id = topic_to_id(&topic_str);
     let sender = subscriptions.get(&topic_str).map(|sub| sub.sender.clone());
     let gossip = gossip.clone();
-    let initial_peers: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
+    let initial_peers = admitted_neighbours(peer_map, admission);
     let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
 
     let _ = spawn_task(spawned_tasks, async move {

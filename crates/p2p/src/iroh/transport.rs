@@ -151,6 +151,20 @@ impl IrohTransport {
     /// Meaningful under every allowlist configuration, including
     /// `IrohAllowlistConfig::AcceptAll`: the bar is its own set, so revoking
     /// one peer never narrows who else may connect.
+    ///
+    /// One residual, stated because it is a real limit and not a hypothetical.
+    /// `Gossip` is built on a clone of this endpoint and runs its own mesh
+    /// membership, so it can dial a peer without passing through any check
+    /// here. Every path by which THIS crate names a peer to gossip is gated
+    /// (the subscribe and publish neighbour lists, the per-peer topic rejoin,
+    /// and the heal), and an accepted gossip connection is retained so it can
+    /// be closed. What is not covered is gossip learning a revoked peer from
+    /// a third party through its own membership exchange and dialling it
+    /// itself: iroh-gossip 0.101 offers `join_peers` but no way to evict a
+    /// neighbour, so there is nothing to call. Closing that needs either an
+    /// upstream eviction API or an endpoint-level outbound filter; until then
+    /// a revoked peer can in principle be re-reached over gossip alone,
+    /// carrying gossip traffic but not the mux protocols.
     pub async fn deny_peer(&self, peer_id: &PeerId) -> Result<()> {
         self.send_command(|reply| IrohCommand::DenyPeer {
             peer_id: peer_id.clone(),

@@ -336,6 +336,14 @@ pub(super) fn spawn_peer_connected_heal(
     senders: &SubscriptionSenders,
     endpoint_id: EndpointId,
 ) {
+    // Never heal or rejoin a revoked peer. Both halves of this function hand
+    // the peer id to gossip, and gossip holds the raw endpoint: naming a peer
+    // as a topic neighbour is asking gossip to go and connect to it, over a
+    // path neither the accept check nor `handle_dial` sees.
+    if !res.admission.admits_outbound(&endpoint_id) {
+        return;
+    }
+
     let spawned_tasks = res.spawned_tasks.clone();
     if !res.healer.config().enabled() {
         if senders.is_empty() {
@@ -389,6 +397,14 @@ async fn refresh_peer(
     endpoint_id: EndpointId,
     ctx: HealContext,
 ) {
+    // The failure arm below deliberately rejoins the peer anyway, on the
+    // grounds that gossip's own dialer may still reach it. For a revoked peer
+    // that is precisely the outcome to avoid, and `dial_and_inject` failing
+    // because the peer is revoked is one of the ways to get here.
+    if !res.admission.admits_outbound(&endpoint_id) {
+        return;
+    }
+
     match dial_and_inject(res, endpoint_id).await {
         Ok(()) => {
             join_peer_to_subscription_senders(senders, endpoint_id).await;
