@@ -1,7 +1,7 @@
 //! Local DocumentACP implementation.
 //!
 //! This implementation stores relation tuples locally and evaluates
-//! permission checks against them. SourceHub integration is deferred.
+//! permission checks against them. Vera integration is deferred.
 //!
 //! # Audit Logging
 //!
@@ -29,7 +29,7 @@ use crate::store::AcpStore;
 
 /// Local document ACP implementation using in-memory storage.
 ///
-/// This provides ACP functionality without requiring SourceHub.
+/// This provides ACP functionality without requiring Vera.
 /// Relation tuples are stored locally and permission checks are
 /// evaluated based on the DPI rules (owner + relation unions).
 pub struct LocalDocumentACP {

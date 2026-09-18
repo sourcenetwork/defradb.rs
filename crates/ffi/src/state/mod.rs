@@ -103,10 +103,10 @@ pub struct NodeState {
     /// Whether block signing is enabled on this node.
     /// When true, anonymous requests still sign with node identity (matching Go).
     pub signing_enabled: bool,
-    /// SourceHub ACP (optional - only set when using SourceHub for document ACP).
-    /// Used by add_dac_policy to route policy creation through SourceHub transactions.
-    #[cfg(feature = "sourcehub")]
-    pub sourcehub_acp: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+    /// Vera ACP (optional - only set when using Vera for document ACP).
+    /// Used by add_dac_policy to route policy creation through Vera transactions.
+    #[cfg(feature = "vera")]
+    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     /// Query parsing and filter evaluation limits configured for this node.
     pub query_limits: query::QueryLimits,
     /// Searchable encryption key (32-byte AES-256 key). Zeroized on drop.

@@ -23,7 +23,7 @@ members = [
     "crates/zanzibar",
     "crates/acp",
     "crates/defra-version",
-    "crates/sourcehub",
+    "crates/vera",
     "crates/events",
     "crates/ffi",
     "crates/lens",

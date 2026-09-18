@@ -128,26 +128,26 @@ pub unsafe extern "C" fn add_dac_policy(
             return FfiResult::error(e);
         }
 
-        // Step 5: Store policy - route through SourceHub when configured, else local
-        #[cfg(feature = "sourcehub")]
-        let sh_acp = match NODES.get(node_ptr, |state| state.sourcehub_acp.clone()) {
+        // Step 5: Store policy - route through Vera when configured, else local
+        #[cfg(feature = "vera")]
+        let sh_acp = match NODES.get(node_ptr, |state| state.vera_acp.clone()) {
             Some(opt) => opt,
             None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         if let Some(sh_acp) = sh_acp {
-            // SourceHub mode: submit MsgCreatePolicy transaction
+            // Vera mode: submit MsgCreatePolicy transaction
             let result = rt.block_on(async {
                 let policy_id = sh_acp
                     .add_policy(&identity_str, &policy_str)
                     .await
-                    .map_err(|e| format!("SourceHub create policy failed: {}", e))?;
+                    .map_err(|e| format!("Vera create policy failed: {}", e))?;
                 Ok::<String, String>(policy_id)
             });
             return match result {
                 Ok(policy_id) => {
-                    // Cache policy on all live FFI nodes so multi-node SourceHub tests
+                    // Cache policy on all live FFI nodes so multi-node Vera tests
                     // can validate schemas that reference a policy created by another node.
                     NODES.for_each(|state| {
                         state.policy_store.store_policy(&policy_id, &policy_str);
@@ -417,7 +417,7 @@ pub unsafe extern "C" fn add_dac_actor_relationship(
             }
 
             // Local ACP relationships are node-local (matches Go): a grant is not
-            // propagated to peers. Cross-node access control is SourceHub's role.
+            // propagated to peers. Cross-node access control is Vera's role.
             let json = serde_json::json!({ "added": added }).to_string();
             Ok::<String, String>(json)
         });
@@ -557,7 +557,7 @@ pub unsafe extern "C" fn delete_dac_actor_relationship(
                 .map_err(|e| e.to_string())?;
 
             // Local ACP relationships are node-local (matches Go): a revoke is not
-            // propagated to peers. Cross-node access control is SourceHub's role.
+            // propagated to peers. Cross-node access control is Vera's role.
             let json = serde_json::json!({ "deleted": deleted }).to_string();
             Ok::<String, String>(json)
         });

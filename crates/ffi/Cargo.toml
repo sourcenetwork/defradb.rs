@@ -16,11 +16,12 @@ bench = false
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = ["native", "wasmtime-runtime", "sourcehub", "libp2p"]
+default = ["native", "wasmtime-runtime", "vera", "libp2p"]
 native = ["db/native", "embedded/native"]
 iroh = ["embedded/iroh", "p2p/iroh-transport"]
 libp2p = ["db/p2p", "p2p/libp2p-transport", "embedded/libp2p"]
-sourcehub = ["dep:sourcehub", "embedded/sourcehub"]
+vera = ["dep:vera", "embedded/vera"]
+sourcehub = ["vera"]
 wasmtime-runtime = [
     "db/wasmtime-runtime",
     
@@ -80,7 +81,7 @@ query = { path = "../query" }
 schema = { path = "../schema" }
 identity = { path = "../identity" }
 acp = { path = "../acp" }
-sourcehub = { path = "../sourcehub", optional = true }
+vera = { path = "../vera", optional = true }
 lens = { path = "../lens", default-features = false }
 p2p = { path = "../p2p" }
 blockstore = { path = "../blockstore" }

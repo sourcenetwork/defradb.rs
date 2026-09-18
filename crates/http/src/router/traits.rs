@@ -541,8 +541,8 @@ pub trait AcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// from the caller's perspective.
     ///
     /// The default impl returns `Ok(())` (permissive) so backends that don't
-    /// query a policy store — test mocks, SourceHub light-client placeholders —
-    /// don't break. Production impls (`AcpAdapter`, `SourceHubAcpAdapter`)
+    /// query a policy store — test mocks, Vera light-client placeholders —
+    /// don't break. Production impls (`AcpAdapter`, `VeraAcpAdapter`)
     /// override with real validation.
     async fn validate_resource_interface(
         &self,

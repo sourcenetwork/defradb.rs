@@ -78,38 +78,58 @@ pub struct Cli {
     #[arg(long, global = true, env = "DEFRA_NO_KEYRING", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser())]
     pub no_keyring: Option<bool>,
 
-    /// SourceHub LCD address used for REST queries
-    #[cfg(feature = "sourcehub")]
-    #[arg(long, global = true, env = "DEFRA_SOURCE_HUB_ADDRESS")]
-    pub source_hub_address: Option<String>,
-
-    /// SourceHub gRPC address used for authorization queries
-    #[cfg(feature = "sourcehub")]
-    #[arg(long, global = true, env = "DEFRA_SOURCE_HUB_GRPC_ADDRESS")]
-    pub source_hub_grpc_address: Option<String>,
-
-    /// SourceHub CometBFT RPC address for transaction broadcast
-    #[cfg(feature = "sourcehub")]
-    #[arg(long, global = true, env = "DEFRA_SOURCE_HUB_COMET_ADDRESS")]
-    pub source_hub_comet_address: Option<String>,
-
-    /// SourceHub CometBFT WebSocket endpoint for ACP cache invalidation
-    #[cfg(feature = "sourcehub")]
+    /// Vera LCD address used for REST queries
+    #[cfg(feature = "vera")]
     #[arg(
         long,
-        visible_alias = "sourcehub-events-ws",
+        alias = "source-hub-address",
         global = true,
-        env = "DEFRA_SOURCE_HUB_EVENTS_WS"
+        env = "DEFRA_VERA_ADDRESS"
     )]
-    pub source_hub_events_ws: Option<String>,
+    pub vera_address: Option<String>,
 
-    /// SourceHub chain ID (e.g., "sourcehub-test")
-    #[cfg(feature = "sourcehub")]
-    #[arg(long, global = true, env = "DEFRA_SOURCE_HUB_CHAIN_ID")]
-    pub source_hub_chain_id: Option<String>,
+    /// Vera gRPC address used for authorization queries
+    #[cfg(feature = "vera")]
+    #[arg(
+        long,
+        alias = "source-hub-grpc-address",
+        global = true,
+        env = "DEFRA_VERA_GRPC_ADDRESS"
+    )]
+    pub vera_grpc_address: Option<String>,
+
+    /// Vera CometBFT RPC address for transaction broadcast
+    #[cfg(feature = "vera")]
+    #[arg(
+        long,
+        alias = "source-hub-comet-address",
+        global = true,
+        env = "DEFRA_VERA_COMET_ADDRESS"
+    )]
+    pub vera_comet_address: Option<String>,
+
+    /// Vera CometBFT WebSocket endpoint for ACP cache invalidation
+    #[cfg(feature = "vera")]
+    #[arg(
+        long,
+        aliases = ["source-hub-events-ws", "sourcehub-events-ws"],
+        global = true,
+        env = "DEFRA_VERA_EVENTS_WS"
+    )]
+    pub vera_events_ws: Option<String>,
+
+    /// Vera chain ID (e.g., "vera-test")
+    #[cfg(feature = "vera")]
+    #[arg(
+        long,
+        alias = "source-hub-chain-id",
+        global = true,
+        env = "DEFRA_VERA_CHAIN_ID"
+    )]
+    pub vera_chain_id: Option<String>,
 
     /// hub.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
     #[arg(long, global = true, env = "DEFRA_HUB_RS_ADDRESS")]
     pub hub_rs_address: Option<String>,
 
@@ -132,8 +152,8 @@ pub struct Cli {
     #[arg(long = "node-acp-enable", global = true, env = "DEFRA_ACP_NODE_ENABLE", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser())]
     pub acp_node_enable: Option<bool>,
 
-    /// Document ACP type. Options are none, local, source-hub, or hub-rs
-    #[cfg(feature = "sourcehub")]
+    /// Document ACP type. Options are none, local, vera, or hub-rs
+    #[cfg(feature = "vera")]
     #[arg(
         long = "document-acp-type",
         global = true,
@@ -142,7 +162,7 @@ pub struct Cli {
     pub acp_document_type: Option<String>,
 
     /// Document ACP type. Options are none or local
-    #[cfg(not(feature = "sourcehub"))]
+    #[cfg(not(feature = "vera"))]
     #[arg(
         long = "document-acp-type",
         global = true,
@@ -196,15 +216,15 @@ impl Cli {
     }
 }
 
-#[cfg(all(test, feature = "sourcehub"))]
+#[cfg(all(test, feature = "vera"))]
 mod tests {
     use super::*;
 
     #[test]
-    fn sourcehub_events_endpoint_flows_into_config() {
+    fn vera_events_endpoint_flows_into_config() {
         let cli = Cli::try_parse_from([
             "defra",
-            "--sourcehub-events-ws",
+            "--vera-events-ws",
             "ws://127.0.0.1:26657/websocket",
             "version",
         ])
@@ -213,9 +233,6 @@ mod tests {
 
         config.apply_cli_flags(&cli).unwrap();
 
-        assert_eq!(
-            config.acp.sourcehub_events_ws,
-            "ws://127.0.0.1:26657/websocket"
-        );
+        assert_eq!(config.acp.vera_events_ws, "ws://127.0.0.1:26657/websocket");
     }
 }

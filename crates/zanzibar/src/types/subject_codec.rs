@@ -2,7 +2,7 @@
 //! tuple `(kind: u8, resource, object_id, relation)`.
 //!
 //! This is the single source of truth for the cross-object ACP wire encoding.
-//! Both defradb's SourceHub provider encoder and hub's `decode_subject` consume
+//! Both defradb's Vera provider encoder and hub's `decode_subject` consume
 //! it, so the encode/decode pair must stay an exact inverse on the frozen
 //! grammar.
 //!
