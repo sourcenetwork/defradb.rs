@@ -962,6 +962,9 @@ impl<'a> SdlParser<'a> {
         collection.downsample_time_field = type_def.directives.downsample_time_field.clone();
         collection.downsample_retention = type_def.directives.downsample_retention.clone();
         collection.is_branchable = type_def.directives.is_branchable;
+        collection
+            .governance_root
+            .clone_from(&type_def.directives.governance_root);
         if let Some(ref policy_config) = type_def.directives.policy {
             collection.policy = Some(schema::PolicyDescription::new(
                 &policy_config.id,

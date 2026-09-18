@@ -111,6 +111,19 @@ pub struct CollectionVersion {
     #[serde(rename = "Policy", default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<PolicyDescription>,
 
+    /// The governance root this collection is claimed by, from `@governed`.
+    ///
+    /// A self-addressing identifier rather than a bare public key, so one
+    /// identifier covers key rotation and a later change of signing
+    /// threshold, and the collection identity survives both. Hashed into the
+    /// collection ID when present; absent leaves the identity untouched.
+    #[serde(
+        rename = "GovernanceRoot",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub governance_root: Option<String>,
+
     /// Whether this is the active version
     #[serde(rename = "IsActive", default = "default_active")]
     pub is_active: bool,
@@ -215,6 +228,7 @@ impl CollectionVersion {
             encrypted_indexes: Vec::new(),
             fulltext_indexes: Vec::new(),
             policy: None,
+            governance_root: None,
             is_active: true,
             is_materialized: true,
             downsample_interval: None,
@@ -250,6 +264,12 @@ impl CollectionVersion {
     /// Set the access control policy.
     pub fn with_policy(mut self, policy: PolicyDescription) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// Set the governance root that claims this collection.
+    pub fn with_governance_root(mut self, root: impl Into<String>) -> Self {
+        self.governance_root = Some(root.into());
         self
     }
 

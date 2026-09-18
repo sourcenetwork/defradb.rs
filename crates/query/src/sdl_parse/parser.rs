@@ -53,6 +53,9 @@ pub(super) struct ParsedTypeDirectives {
     pub(super) downsample_retention: Option<String>,
     pub(super) is_branchable: bool,
     pub(super) policy: Option<PolicyConfig>,
+    /// The governance root from `@governed(root:)`, a self-addressing
+    /// identifier rather than a bare public key, so it survives key rotation.
+    pub(super) governance_root: Option<String>,
 }
 
 impl Default for ParsedTypeDirectives {
@@ -66,6 +69,7 @@ impl Default for ParsedTypeDirectives {
             downsample_retention: None,
             is_branchable: false,
             policy: None,
+            governance_root: None,
         }
     }
 }

@@ -157,6 +157,30 @@ pub(super) fn normalize_datetime_string(s: &str) -> String {
 }
 
 /// Parse @policy directive arguments with Go-compatible error messages.
+/// The governance root from `@governed(root: "...")`.
+///
+/// The root is a self-addressing identifier, not a bare public key, so one
+/// identifier covers key rotation and a later change of signing threshold.
+/// The collection identity therefore commits to the identifier and survives
+/// both.
+pub(super) fn parse_governed_directive(directive: &Directive<'_, String>) -> Result<String> {
+    let Some(value) = get_directive_arg(directive, "root") else {
+        return Err(QueryError::parse(
+            "missing @governed argument, must have root",
+        ));
+    };
+    let graphql_parser::schema::Value::String(root) = value else {
+        return Err(QueryError::parse(format!(
+            "Argument \"root\" has invalid value {}",
+            format_graphql_value(value)
+        )));
+    };
+    if root.trim().is_empty() {
+        return Err(QueryError::parse("@governed root must not be empty"));
+    }
+    Ok(root.clone())
+}
+
 pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Result<PolicyConfig> {
     let id_raw = get_directive_arg(directive, "id");
     let resource_raw = get_directive_arg(directive, "resource");
