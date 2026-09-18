@@ -31,7 +31,6 @@ tracing.workspace = true
 sha2.workspace = true
 serde_yaml = "0.9"
 kovan.workspace = true
-kovan-map.workspace = true
 
 [dev-dependencies]
 bytes = { workspace = true }

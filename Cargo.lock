@@ -18,7 +18,6 @@ dependencies = [
  "defra-core",
  "identity",
  "kovan",
- "kovan-map",
  "rapidhash",
  "serde",
  "serde_json",
