@@ -188,7 +188,8 @@ impl Node {
         coordinator.spawn_background_task("pending_dag_retry_clock", async move {
             coordinator_for_retry_clock
                 .run_pending_dag_retry_clock(std::time::Duration::from_secs(2))
-                .await;
+                .await
+                .expect("retry interval is nonzero");
         });
 
         let coordinator_for_events = coordinator.clone();

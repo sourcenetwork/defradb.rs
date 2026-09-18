@@ -885,17 +885,27 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// work or each `interval`, claiming only what the bounded owner can accept.
     /// Registration, partial progress, reconnect, and restart only make roots
     /// due; none of them emits `DagNeedsFetch` independently.
-    pub async fn run_pending_dag_retry_clock(&self, interval: Duration) {
+    /// Returns an invalid-configuration error for a zero interval, including
+    /// after shutdown. A valid clock returns successfully when shutdown begins.
+    pub async fn run_pending_dag_retry_clock(
+        &self,
+        interval: Duration,
+    ) -> crate::error::Result<()> {
+        if interval.is_zero() {
+            return Err(crate::error::Error::InvalidConfig(
+                "pending-DAG retry interval must be greater than zero".into(),
+            ));
+        }
         let mut retry_tick = n0_future::time::interval(interval);
         retry_tick.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
         loop {
             if self.runtime.shutdown.is_shutting_down() {
-                return;
+                return Ok(());
             }
             tokio::select! {
                 _ = retry_tick.tick() => {}
                 _ = self.manager.pending_dag_ready() => {}
-                _ = self.runtime.shutdown.cancelled() => return,
+                _ = self.runtime.shutdown.cancelled() => return Ok(()),
             }
             self.dispatch_due_pending_dag_fetches(n0_future::time::Instant::now());
         }

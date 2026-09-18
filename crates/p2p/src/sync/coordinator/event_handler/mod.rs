@@ -1375,6 +1375,33 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn receiver_clock_rejects_zero_interval_before_and_after_shutdown() {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let blockstore = Arc::new(DefraBlockstore::new(store, true));
+        let (coordinator, _events) =
+            SyncCoordinator::new(TestTransport::new(), blockstore, SyncConfig::default())
+                .await
+                .expect("coordinator");
+        let error = coordinator
+            .run_pending_dag_retry_clock(Duration::ZERO)
+            .await
+            .expect_err("zero interval must be rejected");
+        assert!(matches!(error, crate::error::Error::InvalidConfig(_)));
+        assert_eq!(coordinator.sync_status().pending_dag_retry_dispatched, 0);
+        coordinator.shutdown().await;
+        assert!(matches!(
+            coordinator
+                .run_pending_dag_retry_clock(Duration::ZERO)
+                .await,
+            Err(crate::error::Error::InvalidConfig(_))
+        ));
+        coordinator
+            .run_pending_dag_retry_clock(Duration::from_secs(2))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn receiver_clock_wakes_for_new_work_without_waiting_for_retry_tick() {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
@@ -1387,7 +1414,8 @@ mod tests {
         let clock = n0_future::task::spawn(async move {
             runner
                 .run_pending_dag_retry_clock(Duration::from_secs(60))
-                .await;
+                .await
+                .expect("retry interval is nonzero");
         });
         // Let the initial tick run before admitting work. No virtual time
         // advances until after the assertion below.
