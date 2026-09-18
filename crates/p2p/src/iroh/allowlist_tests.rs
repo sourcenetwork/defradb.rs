@@ -434,12 +434,65 @@ async fn deny_peer_refuses_our_own_outbound_dial_to_the_revoked_peer() {
         .await
         .expect("revoke the peer we are about to dial");
 
-    let result = dialer
+    // Assert on the REASON. `server` would accept this dial happily, so a bare
+    // `is_err` risks passing on an unrelated failure; and two separate checks
+    // enforce this (the pre-dial refusal and the post-registration re-check),
+    // so naming the reason is what proves the refusal came from the
+    // revocation rather than from the harness.
+    let error = dialer
         .dial(&server_id, server.listen_addresses().await.unwrap())
-        .await;
+        .await
+        .expect_err("dialling a revoked peer must be refused");
+    let message = error.to_string();
     assert!(
-        result.is_err(),
-        "dialling a revoked peer must be refused, got {result:?}"
+        message.contains("revoke"),
+        "the dial must be refused BY the revocation; got: {message}"
+    );
+
+    // And nothing came up behind it.
+    assert!(dialer
+        .connected_peers()
+        .await
+        .unwrap()
+        .iter()
+        .all(|p| p != &server_id));
+
+    shutdown_all(dialer, server, dialer_task, server_task).await;
+}
+
+/// `handle_dial` is not the only way this node opens an outbound connection.
+/// Every RPC helper (identity resolution, doc/branchable sync, CAR fetch,
+/// every fire-and-forget send) shares `connect_with_cache` instead of going
+/// through `handle_dial`, and that path dials independently of the explicit
+/// `Dial` command. A revoked peer must be refused there too, or ordinary RPC
+/// traffic quietly re-opens exactly the connection `deny_peer` just closed.
+#[tokio::test]
+async fn a_revoked_peer_cannot_be_reached_by_an_outbound_rpc() {
+    let (dialer, _dialer_events, dialer_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let (server, _server_events, server_task) = spawn_node(IrohAllowlistConfig::AcceptAll).await;
+    let server_id = server.local_peer_id().clone();
+
+    // The revoking node here is `dialer`: it revokes `server`, then reaches
+    // for it over an ordinary RPC rather than the explicit `Dial` command.
+    dialer
+        .deny_peer(&server_id)
+        .await
+        .expect("revoke the peer we are about to reach over RPC");
+
+    // Assert on the REASON, not merely on `is_err`. This node has no address
+    // for `server` (it was never dialled), so the RPC fails either way and a
+    // bare `is_err` passes just as happily with the admission check deleted:
+    // verified by removing the check and watching this test still go green.
+    // Only the refusal message distinguishes "we refused to dial a revoked
+    // peer" from "we tried and could not reach it".
+    let error = dialer
+        .get_peer_identity(&server_id)
+        .await
+        .expect_err("an outbound RPC to a revoked peer must be refused");
+    let message = error.to_string();
+    assert!(
+        message.contains("revoked"),
+        "the RPC must be refused BY the revocation, not merely fail to connect; got: {message}"
     );
 
     // And nothing came up behind it.

@@ -254,9 +254,18 @@ impl GossipHealer {
     /// accumulate them.
     pub(super) fn retain_accepted(&self, id: EndpointId, conn: Connection) {
         let mut accepted = self.accepted.lock();
-        let handles = accepted.entry(id).or_default();
-        handles.retain(|c| c.close_reason().is_none());
-        handles.push(conn);
+        // Prune the whole map, not just this peer's entry. The periodic sweep
+        // also prunes, but it does not run at all when healing is disabled
+        // (a zero refresh interval), and bounding memory must not depend on an
+        // optional feature being switched on. Every accepted gossip connection
+        // passes through here, so this is the one place guaranteed to run.
+        // The map holds at most one entry per peer with a live gossip
+        // connection, so the walk is small.
+        accepted.retain(|_, handles| {
+            handles.retain(|c| c.close_reason().is_none());
+            !handles.is_empty()
+        });
+        accepted.entry(id).or_default().push(conn);
     }
 
     /// Take every retained accepted-gossip handle for a peer.
@@ -267,10 +276,11 @@ impl GossipHealer {
     /// Drop accepted-gossip handles whose connection has already closed, and
     /// the per-peer entries left empty by that.
     ///
-    /// `retain_accepted` only prunes within the peer it is inserting for, so
-    /// without this the map keeps one entry per peer ever seen on an accepted
-    /// gossip connection. That is unbounded, and on an `AcceptAll` endpoint
-    /// any peer can drive it by reconnecting under fresh endpoint ids.
+    /// Belt and braces alongside the same prune in `retain_accepted`: this one
+    /// reclaims entries for peers that have gone quiet, which would otherwise
+    /// wait for the next accepted gossip connection to arrive. Only the prune
+    /// in `retain_accepted` is load bearing for the bound, because this sweep
+    /// does not run when healing is disabled.
     pub(super) fn prune_accepted(&self) {
         let mut accepted = self.accepted.lock();
         accepted.retain(|_, handles| {

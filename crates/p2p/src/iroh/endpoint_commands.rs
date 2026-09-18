@@ -176,6 +176,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_request_response(
                     &endpoint,
@@ -184,6 +185,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -293,6 +295,7 @@ pub(super) async fn handle_command(
             let endpoint = endpoint.clone();
             let pending_pushlog_replies = pending_pushlog_replies.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let message_id = request.message_id.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let request_peer_id = peer_id.clone();
@@ -310,6 +313,7 @@ pub(super) async fn handle_command(
                         direct_addr,
                         &connection_cache,
                         reply_rx,
+                        &admission,
                     )
                     .await;
                     pending_pushlog_replies.lock().remove(&request_message_id);
@@ -329,6 +333,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_send_only(
                     &endpoint,
@@ -337,6 +342,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -350,6 +356,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let result: crate::error::Result<crate::message::DocSyncReply> =
@@ -360,6 +367,7 @@ pub(super) async fn handle_command(
                         &request,
                         direct_addr,
                         &connection_cache,
+                        &admission,
                     )
                     .await;
                 match result {
@@ -386,6 +394,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let result: crate::error::Result<crate::message::BranchableSyncReply> =
@@ -396,6 +405,7 @@ pub(super) async fn handle_command(
                         &request,
                         direct_addr,
                         &connection_cache,
+                        &admission,
                     )
                     .await;
                 match result {
@@ -422,6 +432,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -430,6 +441,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -443,6 +455,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -451,6 +464,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -498,6 +512,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_car_request_response(
@@ -507,6 +522,7 @@ pub(super) async fn handle_command(
                     direct_addr,
                     &connection_cache,
                     &event_tx,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -520,6 +536,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -528,6 +545,7 @@ pub(super) async fn handle_command(
                     &car_data,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -541,6 +559,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -549,6 +568,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -562,6 +582,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -570,6 +591,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -583,6 +605,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -591,6 +614,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -604,6 +628,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -612,6 +637,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -625,6 +651,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -633,6 +660,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -646,6 +674,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -654,6 +683,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -667,6 +697,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -675,6 +706,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -694,6 +726,7 @@ pub(super) async fn handle_command(
                 Arc::clone(peer_map),
                 Arc::clone(connection_cache),
                 event_tx.clone(),
+                Arc::clone(&resources.admission),
             );
             let task = spawn_task(spawned_tasks, async move {
                 handle_block_sync(resources, query_id, root, providers, missing).await;
