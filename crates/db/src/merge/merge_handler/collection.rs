@@ -190,7 +190,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         continue;
                     }
                     let outcome = match self
-                        .process_collection_delta_body(&cid, &block, &payload, metadata, depth)
+                        .process_collection_delta_body(
+                            &cid, &block, &payload, metadata, depth, is_root,
+                        )
                         .await
                     {
                         Ok(outcome) => outcome,
@@ -214,6 +216,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         Ok(MergeOutcome::terminal_skip("collection already merged"))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn process_collection_delta_body(
         &self,
         cid: &Cid,
@@ -221,6 +224,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &defra_core::block::CollectionDeltaPayload,
         metadata: &BlockMetadata<'_>,
         depth: usize,
+        is_root: bool,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         // Process linked document composites
         let mut any_merged = false;
@@ -380,8 +384,23 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // a link is still unprocessed would claim history this node does not
         // hold, and the terminal skip below would discharge the block so the
         // document it named is never merged and never retried.
+        //
+        // Only the root is gated. Replication discharges the root, so the
+        // root's completeness is what the discharge must reflect; an ancestor
+        // is walked as context, and a partial DAG is an ordinary condition on
+        // the receive path, where a CAR is truncated at its block and byte
+        // caps. Aborting a root because a historical block is incomplete would
+        // stall deep catch-up entirely. The walk already tolerates an
+        // ancestor's hard errors for the same reason.
         if let Some(reason) = unprocessed {
-            return Ok(MergeOutcome::retryable_skip(reason));
+            if is_root {
+                return Ok(MergeOutcome::retryable_skip(reason));
+            }
+            tracing::debug!(
+                %cid,
+                reason,
+                "Ancestor collection block has an unprocessed link; continuing the walk"
+            );
         }
 
         // Update collection headstore using proper head merging.
@@ -618,6 +637,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             pending_post_commit_actions,
                             pending_field_block_finalizations,
                             depth,
+                            is_root,
                         )
                         .await
                     {
@@ -658,6 +678,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
         pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
         depth: usize,
+        is_root: bool,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         // Process linked document composites
         let mut any_merged = false;
@@ -671,9 +692,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
                 let linked_data = match self.blockstore.get(link_cid).await {
                     Ok(Some(data)) => data,
-                    _ => {
+                    Ok(None) => {
                         unprocessed
                             .get_or_insert_with(|| format!("linked block {link_cid} not held"));
+                        continue;
+                    }
+                    Err(e) => {
+                        unprocessed.get_or_insert_with(|| {
+                            format!("linked block {link_cid} could not be loaded: {e}")
+                        });
                         continue;
                     }
                 };
@@ -766,7 +793,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         if let Some(reason) = unprocessed {
-            return Ok(MergeOutcome::retryable_skip(reason));
+            if is_root {
+                return Ok(MergeOutcome::retryable_skip(reason));
+            }
+            tracing::debug!(
+                %cid,
+                reason,
+                "Ancestor collection block has an unprocessed link; continuing the walk"
+            );
         }
 
         // Update collection headstore using the shared headstore view

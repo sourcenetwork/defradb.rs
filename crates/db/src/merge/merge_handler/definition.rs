@@ -18,10 +18,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // For patched versions, payload.name is None (name didn't change).
         // Resolve name and collection_id from the previous version via block.heads.
-        let (collection_name, collection_id, prev_fields) = match &payload.name {
+        let (collection_name, collection_id, prev_fields, previous) = match &payload.name {
             Some(name) => {
                 // Initial version: name is explicit, collection_id = version_id
-                (name.clone(), version_id.clone(), Vec::new())
+                (name.clone(), version_id.clone(), Vec::new(), None)
             }
             None => {
                 // Patched version: look up previous version from heads
@@ -31,7 +31,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         let name = prev.name.clone();
                         let col_id = prev.collection_id.clone();
                         let fields = prev.fields.clone();
-                        (name, col_id, fields)
+                        (name, col_id, fields, Some(prev))
                     }
                     None => {
                         tracing::debug!(cid = %cid, "CollectionDefinition has no name and no resolvable previous version - skipping");
@@ -107,6 +107,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             CollectionVersion::new(&collection_name, &version_id, &collection_id, fields);
         schema.is_active = false;
 
+        // A delta carries a name, and per field a name, kind and CRDT type. It
+        // carries nothing else the collection commits to, so a version rebuilt
+        // from one alone would drop what the previous version held. Carry those
+        // forward rather than defaulting them away, the way Go merges a synced
+        // definition onto the version it already has.
+        if let Some(previous) = &previous {
+            carry_forward(&mut schema, previous);
+        }
+
         // For patched versions, set previous_version to point to the head (previous version CID)
         if let Some(heads) = &block.heads {
             if let Some(head_cid) = heads.first() {
@@ -169,7 +178,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Add to runtime cache so it's visible via list_collections/get_collection.
         // Synced collections are inactive but still need to be in the cache for
         // GetCollections with GetInactive=true to find them.
-        self.db
+        let cached = self
+            .db
             .add_collection_to_cache(schema.clone())
             .map_err(MergeError::Database)?;
 
@@ -178,14 +188,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             version_id = %version_id,
             is_active = schema.is_active,
             is_materialized = schema.is_materialized,
-            "Stored synced collection schema in cache"
+            "Stored synced collection schema"
         );
 
         tracing::info!(
             collection_name = %collection_name,
             version_id = %version_id,
             field_count = schema.fields.len(),
-            "Registered synced collection schema in systemstore and cache (inactive, requires manual activation)"
+            cached,
+            "Registered synced collection schema in systemstore (inactive, requires manual \
+             activation); cached unless the name already holds another collection"
         );
 
         Ok(MergeOutcome::Merged)
@@ -226,5 +238,27 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let crdt_type = payload.crdt.map(CType::from_u8).unwrap_or_default();
 
         Ok(FieldDescription::new(field_id.to_string(), name, kind).with_crdt_type(crdt_type))
+    }
+}
+
+/// Carry what a definition delta cannot express from `previous` onto `schema`.
+///
+/// The delta has no room for an access control policy, for a field's
+/// immutability, or for branchable history. A patched version rebuilt from one
+/// therefore has to inherit them, or a peer's schema patch silently strips the
+/// collection's commitments from every node that merges it.
+fn carry_forward(schema: &mut CollectionVersion, previous: &CollectionVersion) {
+    if schema.policy.is_none() {
+        schema.policy.clone_from(&previous.policy);
+    }
+    schema.is_branchable |= previous.is_branchable;
+    for field in &mut schema.fields {
+        if previous
+            .fields
+            .iter()
+            .any(|held| held.name == field.name && held.immutable)
+        {
+            field.immutable = true;
+        }
     }
 }
