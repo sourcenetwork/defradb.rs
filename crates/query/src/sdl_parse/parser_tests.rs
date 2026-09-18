@@ -719,11 +719,11 @@ fn test_crdt_validation_fails_for_non_numeric() {
 #[test]
 fn test_collection_ids_are_deterministic() {
     // With empty fields (matches Go's behavior for field-less collections)
-    let id1 = generate_collection_id("User", &[], &RapidHashMap::new());
-    let id2 = generate_collection_id("User", &[], &RapidHashMap::new());
+    let id1 = generate_collection_id("User", &[], &RapidHashMap::new(), None);
+    let id2 = generate_collection_id("User", &[], &RapidHashMap::new(), None);
     assert_eq!(id1, id2, "same type name should produce same collection ID");
 
-    let id3 = generate_collection_id("Post", &[], &RapidHashMap::new());
+    let id3 = generate_collection_id("Post", &[], &RapidHashMap::new(), None);
     assert_ne!(
         id1, id3,
         "different type names should produce different IDs"

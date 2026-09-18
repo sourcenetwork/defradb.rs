@@ -744,7 +744,12 @@ impl<'a> SdlParser<'a> {
 
         // Generate collection ID from type name and fields (like Go, includes field CIDs as links)
         // The headstore simulates Go's prefix collision behavior for deterministic CIDs
-        let collection_id = generate_collection_id(&type_def.name, &fields, headstore);
+        let collection_id = generate_collection_id(
+            &type_def.name,
+            &fields,
+            headstore,
+            type_def.directives.governance_root.as_deref(),
+        );
 
         // Version ID equals collection ID for new schemas (Go behavior)
         let version_id = collection_id.clone();

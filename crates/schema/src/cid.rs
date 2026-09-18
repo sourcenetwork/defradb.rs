@@ -98,7 +98,32 @@ pub fn generate_collection_cid_with_priority_and_heads(
     priority: u64,
     heads: &[Cid],
 ) -> crate::Result<Cid> {
-    generate_collection_cid_full(Some(name), field_cids, priority, heads)
+    generate_collection_cid_governed(name, field_cids, priority, heads, None)
+}
+
+/// Generate a collection CID, hashing in the governance root when there is one.
+///
+/// `None` builds exactly the delta this function built before governance
+/// existed, so an ungoverned collection keeps its CID byte for byte. A root
+/// changes the delta and so the identity: the same schema under two roots is
+/// two collections, and a node that does not know the root is not a replica
+/// of either.
+pub fn generate_collection_cid_governed(
+    name: &str,
+    field_cids: &[Cid],
+    priority: u64,
+    heads: &[Cid],
+    governance_root: Option<&str>,
+) -> crate::Result<Cid> {
+    generate_collection_cid_full_with_query(
+        Some(name),
+        field_cids,
+        priority,
+        heads,
+        None,
+        None,
+        governance_root,
+    )
 }
 
 /// Generate a collection CID with optional name, priority, and head CIDs.
@@ -111,13 +136,14 @@ pub fn generate_collection_cid_full(
     priority: u64,
     heads: &[Cid],
 ) -> crate::Result<Cid> {
-    generate_collection_cid_full_with_query(name, field_cids, priority, heads, None, None)
+    generate_collection_cid_full_with_query(name, field_cids, priority, heads, None, None, None)
 }
 
 /// Generate a collection CID with optional name, priority, head CIDs, and query data.
 ///
 /// For view collections, `query_select` contains the JSON-encoded query definition
 /// and `query_transform` contains the lens transform CID.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_collection_cid_full_with_query(
     name: Option<&str>,
     field_cids: &[Cid],
@@ -125,8 +151,15 @@ pub fn generate_collection_cid_full_with_query(
     heads: &[Cid],
     query_select: Option<&[u8]>,
     query_transform: Option<&Cid>,
+    governance_root: Option<&str>,
 ) -> crate::Result<Cid> {
-    let delta = build_collection_delta(name, priority, query_select, query_transform);
+    let delta = build_collection_delta(
+        name,
+        priority,
+        query_select,
+        query_transform,
+        governance_root,
+    );
 
     let links: Vec<DAGLink> = field_cids
         .iter()
@@ -147,6 +180,7 @@ fn build_collection_delta(
     priority: u64,
     query_select: Option<&[u8]>,
     query_transform: Option<&Cid>,
+    governance_root: Option<&str>,
 ) -> CollectionDefinitionDeltaPayload {
     let mut delta = CollectionDefinitionDeltaPayload::new(priority);
     if let Some(n) = name {
@@ -157,6 +191,9 @@ fn build_collection_delta(
     }
     if let Some(qt) = query_transform {
         delta = delta.with_query_transform(*qt);
+    }
+    if let Some(root) = governance_root {
+        delta = delta.with_governance_root(root);
     }
     delta
 }
@@ -218,13 +255,14 @@ pub fn generate_collection_block_full(
     priority: u64,
     heads: &[Cid],
 ) -> crate::Result<BlockWithCid> {
-    generate_collection_block_full_with_query(name, field_cids, priority, heads, None, None)
+    generate_collection_block_full_with_query(name, field_cids, priority, heads, None, None, None)
 }
 
 /// Generate a collection definition block (CID + bytes) with optional query data.
 ///
 /// For view collections, includes `query_select` and `query_transform` in the delta
 /// so peers can identify the collection as a view after Bitswap sync.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_collection_block_full_with_query(
     name: Option<&str>,
     field_cids: &[Cid],
@@ -232,8 +270,15 @@ pub fn generate_collection_block_full_with_query(
     heads: &[Cid],
     query_select: Option<&[u8]>,
     query_transform: Option<&Cid>,
+    governance_root: Option<&str>,
 ) -> crate::Result<BlockWithCid> {
-    let delta = build_collection_delta(name, priority, query_select, query_transform);
+    let delta = build_collection_delta(
+        name,
+        priority,
+        query_select,
+        query_transform,
+        governance_root,
+    );
 
     let links: Vec<DAGLink> = field_cids
         .iter()

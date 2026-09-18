@@ -128,3 +128,47 @@ fn ungoverned_identities_are_pinned() {
         }
     }
 }
+
+/// A governance root is part of the collection's identity: the same schema
+/// under two roots is two collections, and a node that does not know the root
+/// derives neither.
+#[test]
+fn a_governance_root_changes_the_collection_id() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+
+    let ungoverned = id_for(r#"type Agent { did: String, body: String }"#);
+    let root_a = id_for(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#);
+    let root_b = id_for(r#"type Agent @governed(root: "root-b") { did: String, body: String }"#);
+
+    assert_eq!(ungoverned, UNGOVERNED_AGENT_ID);
+    assert_ne!(root_a, ungoverned);
+    assert_ne!(root_b, ungoverned);
+    assert_ne!(root_a, root_b);
+}
+
+/// The enforcement is structural rather than a handshake: a node that runs the
+/// same schema without the root derives a different collection ID, so it is a
+/// replica of a different collection and not of the governed one.
+#[test]
+fn a_node_that_does_not_know_the_root_is_not_a_replica() {
+    let governed = r#"type Agent @governed(root: "root-a") { did: String, body: String }"#;
+    let without_the_root = r#"type Agent { did: String, body: String }"#;
+
+    assert_ne!(
+        parse_sdl(governed).unwrap()[0].collection_id,
+        parse_sdl(without_the_root).unwrap()[0].collection_id
+    );
+}
+
+/// The derivation stays a function of the schema, so a second node parsing the
+/// same governed SDL reaches the same identity.
+#[test]
+fn the_same_governed_schema_derives_the_same_identity() {
+    let sdl = r#"type Agent @governed(root: "root-a") { did: String, body: String }"#;
+    let once = &parse_sdl(sdl).unwrap()[0];
+    let twice = &parse_sdl(sdl).unwrap()[0];
+
+    assert_eq!(once.collection_id, twice.collection_id);
+    assert_eq!(once.version_id, twice.version_id);
+    assert_eq!(once.governance_root, twice.governance_root);
+}
