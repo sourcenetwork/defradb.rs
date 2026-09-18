@@ -4,8 +4,9 @@
 //! rung per pass, returning to the first rung once documents land — while
 //! staying bounded, so one unresponsive peer cannot hold the serial sweep.
 
+use kovan::Atom;
 use rapidhash::RapidHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -46,12 +47,12 @@ enum Outcome {
 struct ScriptedPusher {
     peerstore: Peerstore<RegolithStore>,
     script: RapidHashMap<String, Outcome>,
-    attempted: Mutex<Vec<String>>,
+    attempted: Atom<Vec<String>>,
 }
 
 impl ScriptedPusher {
     fn attempted(&self) -> Vec<String> {
-        self.attempted.lock().unwrap().clone()
+        self.attempted.load_clone()
     }
 }
 
@@ -63,7 +64,11 @@ impl TransportDocPusher for ScriptedPusher {
         doc_id: &str,
         _collection_id: &str,
     ) -> P2PResult<()> {
-        self.attempted.lock().unwrap().push(doc_id.to_string());
+        self.attempted.rcu(|attempted| {
+            let mut next = attempted.clone();
+            next.push(doc_id.to_string());
+            next
+        });
         match self
             .script
             .get(doc_id)
@@ -327,7 +332,7 @@ impl Sweep {
         let pusher = Arc::new(ScriptedPusher {
             peerstore: Peerstore::new(Arc::clone(&store)),
             script,
-            attempted: Mutex::new(Vec::new()),
+            attempted: Atom::new(Vec::new()),
         });
         Self {
             peerstore,

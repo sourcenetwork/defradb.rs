@@ -257,9 +257,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         // Registration and returning the handle must be one poll: cancellation
         // before the caller can construct its guard must not orphan an entry.
         self.transactions
-            .write()
-            .map_err(|_| TransactionError::lock_poisoned("failed to acquire write lock for begin"))?
-            .insert(txn_id.clone(), ctx);
+            .insert(txn_id.clone(), Arc::new(TransactionSlot::new(ctx)));
 
         Ok(TransactionHandle::new(txn_id))
     }
@@ -269,15 +267,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     fn abandon(&self, handle: &TransactionHandle) {
-        let ctx = {
-            // A poisoned registry remains closed to queries, but dropping an
-            // uncommitted entry is safe and must still release its resources.
-            let mut transactions = self.transactions.write().unwrap_or_else(|e| e.into_inner());
-            transactions.remove(handle.as_str())
-        };
-        // Do not run destructors while holding the registry lock. Any in-flight
-        // context borrowers release the remaining storage references on drop.
-        drop(ctx);
+        drop(self.take_registered(handle));
     }
 
     async fn begin(
@@ -294,22 +284,15 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     }
 
     fn get(&self, handle: &TransactionHandle) -> GetTransactionResult {
-        match self.transactions.read() {
-            Ok(guard) => match guard.get(handle.as_str()).cloned() {
-                Some(ctx) => {
-                    ctx.touch();
-                    GetTransactionResult::Found(ctx as Arc<dyn TransactionContext>)
-                }
-                None => GetTransactionResult::NotFound,
-            },
-            Err(poisoned) => {
-                error!(
-                    txn_id = %handle,
-                    error = ?poisoned,
-                    "Transaction registry lock poisoned - system may be in corrupted state"
-                );
-                GetTransactionResult::LockPoisoned
+        match self
+            .transactions
+            .get(handle.as_str())
+            .and_then(|slot| slot.ctx())
+        {
+            Some(ctx) if ctx.touch() => {
+                GetTransactionResult::Found(ctx as Arc<dyn TransactionContext>)
             }
+            _ => GetTransactionResult::NotFound,
         }
     }
 
@@ -317,19 +300,9 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self
-            .transactions
-            .write()
-            .map_err(|_| {
-                TransactionError::lock_poisoned(format!(
-                    "failed to acquire write lock during commit of '{}'",
-                    handle
-                ))
-            })?
-            .remove(handle.as_str())
-            .ok_or_else(|| {
-                TransactionError::not_found(format!("transaction '{}' not found", handle))
-            })?;
+        let ctx = self.take_registered(handle).ok_or_else(|| {
+            TransactionError::not_found(format!("transaction '{}' not found", handle))
+        })?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 
@@ -347,19 +320,9 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self
-            .transactions
-            .write()
-            .map_err(|_| {
-                TransactionError::lock_poisoned(format!(
-                    "failed to acquire write lock during rollback of '{}'",
-                    handle
-                ))
-            })?
-            .remove(handle.as_str())
-            .ok_or_else(|| {
-                TransactionError::not_found(format!("transaction '{}' not found", handle))
-            })?;
+        let ctx = self.take_registered(handle).ok_or_else(|| {
+            TransactionError::not_found(format!("transaction '{}' not found", handle))
+        })?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 
@@ -383,19 +346,9 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         handle: &TransactionHandle,
         apply_read_effects: bool,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self
-            .transactions
-            .write()
-            .map_err(|_| {
-                TransactionError::lock_poisoned(format!(
-                    "failed to acquire write lock while finalizing implicit read '{}'",
-                    handle
-                ))
-            })?
-            .remove(handle.as_str())
-            .ok_or_else(|| {
-                TransactionError::not_found(format!("transaction '{}' not found", handle))
-            })?;
+        let ctx = self.take_registered(handle).ok_or_else(|| {
+            TransactionError::not_found(format!("transaction '{}' not found", handle))
+        })?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 

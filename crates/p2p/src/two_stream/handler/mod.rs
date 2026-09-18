@@ -16,16 +16,17 @@ mod manage;
 mod pushlog;
 mod se_query;
 
-use rapidhash::RapidHashMap;
+use rapidhash::fast::RandomState;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::AsyncReadExt;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use libp2p::Stream;
 
 use libp2p::StreamProtocol;
 use libp2p_stream as stream;
-use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
 use libp2p::PeerId;
@@ -71,48 +72,135 @@ pub(super) fn ensure_transport_sender<M: Message>(peer_id: &PeerId, msg: &M) -> 
     }
 }
 
-/// State for tracking pending responses.
-#[derive(Default)]
+/// A reply sender parked in a queue so the responder can take ownership of it.
+type ReplySlot<T> = Arc<SegQueue<oneshot::Sender<T>>>;
+type ReplyTable<T> = HopscotchMap<PendingResponseKey, ReplySlot<T>, RandomState>;
+type RequestTable = HopscotchMap<PendingResponseKey, Instant, RandomState>;
+
+fn reply_slot<T: 'static>(sender: oneshot::Sender<T>) -> ReplySlot<T> {
+    let slot = SegQueue::new();
+    slot.push(sender);
+    Arc::new(slot)
+}
+
+fn register<T: 'static>(
+    table: &ReplyTable<T>,
+    key: PendingResponseKey,
+    sender: oneshot::Sender<T>,
+) {
+    table.insert(key, reply_slot(sender));
+}
+
+fn take<T: 'static>(table: &ReplyTable<T>, key: &PendingResponseKey) -> Option<oneshot::Sender<T>> {
+    table.remove(key).and_then(|slot| slot.pop())
+}
+
+fn prune_expired(table: &RequestTable) {
+    let now = Instant::now();
+    let expired: Vec<_> = table
+        .iter()
+        .filter(|(_, inserted_at)| now.duration_since(*inserted_at) > RESPONSE_TIMEOUT)
+        .map(|(key, _)| key)
+        .collect();
+    for key in expired {
+        table.remove(&key);
+    }
+}
+
+/// State for tracking pending responses. Each table stands alone: no reply
+/// is routed through more than one of them.
 pub(crate) struct PendingResponses {
-    /// Map of expected peer + MessageID to response channel.
-    pub(crate) channels: RapidHashMap<PendingResponseKey, oneshot::Sender<PushLogReply>>,
-    /// Map of expected peer + MessageID to identity response channel.
-    pub(crate) identity_channels:
-        RapidHashMap<PendingResponseKey, oneshot::Sender<IdentityResponse>>,
-    /// Map of expected peer + MessageID to DocSync response channel.
-    pub(crate) doc_sync_channels: RapidHashMap<PendingResponseKey, oneshot::Sender<DocSyncReply>>,
+    /// Expected peer + MessageID to PushLog response channel.
+    channels: ReplyTable<PushLogReply>,
+    /// Expected peer + MessageID to identity response channel.
+    identity_channels: ReplyTable<IdentityResponse>,
+    /// Expected peer + MessageID to DocSync response channel.
+    doc_sync_channels: ReplyTable<DocSyncReply>,
     /// Fire-and-forget DocSync requests awaiting an async response event.
-    pub(crate) doc_sync_requests: RapidHashMap<PendingResponseKey, Instant>,
+    doc_sync_requests: RequestTable,
     /// Fire-and-forget BranchableSync requests awaiting an async response event.
-    pub(crate) branchable_sync_requests: RapidHashMap<PendingResponseKey, Instant>,
+    branchable_sync_requests: RequestTable,
+}
+
+impl Default for PendingResponses {
+    fn default() -> Self {
+        Self {
+            channels: HopscotchMap::with_hasher(RandomState::default()),
+            identity_channels: HopscotchMap::with_hasher(RandomState::default()),
+            doc_sync_channels: HopscotchMap::with_hasher(RandomState::default()),
+            doc_sync_requests: HopscotchMap::with_hasher(RandomState::default()),
+            branchable_sync_requests: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl PendingResponses {
-    fn prune_expired(&mut self) {
-        let now = Instant::now();
-        self.doc_sync_requests
-            .retain(|_, inserted_at| now.duration_since(*inserted_at) <= RESPONSE_TIMEOUT);
-        self.branchable_sync_requests
-            .retain(|_, inserted_at| now.duration_since(*inserted_at) <= RESPONSE_TIMEOUT);
+    pub(crate) fn register_pushlog(
+        &self,
+        key: PendingResponseKey,
+        sender: oneshot::Sender<PushLogReply>,
+    ) {
+        register(&self.channels, key, sender);
     }
 
-    pub(crate) fn register_doc_sync_request(&mut self, key: PendingResponseKey) {
-        self.prune_expired();
+    pub(crate) fn has_pushlog(&self, key: &PendingResponseKey) -> bool {
+        self.channels.contains_key(key)
+    }
+
+    pub(crate) fn take_pushlog(
+        &self,
+        key: &PendingResponseKey,
+    ) -> Option<oneshot::Sender<PushLogReply>> {
+        take(&self.channels, key)
+    }
+
+    pub(crate) fn register_identity(
+        &self,
+        key: PendingResponseKey,
+        sender: oneshot::Sender<IdentityResponse>,
+    ) {
+        register(&self.identity_channels, key, sender);
+    }
+
+    pub(crate) fn take_identity(
+        &self,
+        key: &PendingResponseKey,
+    ) -> Option<oneshot::Sender<IdentityResponse>> {
+        take(&self.identity_channels, key)
+    }
+
+    pub(crate) fn register_doc_sync(
+        &self,
+        key: PendingResponseKey,
+        sender: oneshot::Sender<DocSyncReply>,
+    ) {
+        register(&self.doc_sync_channels, key, sender);
+    }
+
+    pub(crate) fn take_doc_sync(
+        &self,
+        key: &PendingResponseKey,
+    ) -> Option<oneshot::Sender<DocSyncReply>> {
+        take(&self.doc_sync_channels, key)
+    }
+
+    pub(crate) fn register_doc_sync_request(&self, key: PendingResponseKey) {
+        prune_expired(&self.doc_sync_requests);
         self.doc_sync_requests.insert(key, Instant::now());
     }
 
-    pub(crate) fn consume_doc_sync_request(&mut self, key: &PendingResponseKey) -> bool {
-        self.prune_expired();
+    pub(crate) fn consume_doc_sync_request(&self, key: &PendingResponseKey) -> bool {
+        prune_expired(&self.doc_sync_requests);
         self.doc_sync_requests.remove(key).is_some()
     }
 
-    pub(crate) fn register_branchable_sync_request(&mut self, key: PendingResponseKey) {
-        self.prune_expired();
+    pub(crate) fn register_branchable_sync_request(&self, key: PendingResponseKey) {
+        prune_expired(&self.branchable_sync_requests);
         self.branchable_sync_requests.insert(key, Instant::now());
     }
 
-    pub(crate) fn consume_branchable_sync_request(&mut self, key: &PendingResponseKey) -> bool {
-        self.prune_expired();
+    pub(crate) fn consume_branchable_sync_request(&self, key: &PendingResponseKey) -> bool {
+        prune_expired(&self.branchable_sync_requests);
         self.branchable_sync_requests.remove(key).is_some()
     }
 }
@@ -128,7 +216,7 @@ pub struct TwoStreamHandler {
     /// Control for the stream behaviour (for opening streams).
     pub(super) control: stream::Control,
     /// Pending response channels keyed by expected peer and MessageID.
-    pub(super) pending: Arc<Mutex<PendingResponses>>,
+    pub(super) pending: Arc<PendingResponses>,
 }
 
 impl TwoStreamHandler {
@@ -136,12 +224,12 @@ impl TwoStreamHandler {
     pub fn new(control: stream::Control) -> Self {
         Self {
             control,
-            pending: Arc::new(Mutex::new(PendingResponses::default())),
+            pending: Arc::new(PendingResponses::default()),
         }
     }
 
     /// Get a clone of the pending responses Arc for lock-free response processing.
-    pub(crate) fn pending_responses(&self) -> Arc<Mutex<PendingResponses>> {
+    pub(crate) fn pending_responses(&self) -> Arc<PendingResponses> {
         self.pending.clone()
     }
 
@@ -217,32 +305,30 @@ impl TwoStreamHandler {
 
     /// Clean up a pending response channel (used on timeout or cancellation).
     pub fn cleanup_pending(&self, peer_id: PeerId, message_id: &str) {
-        let mut pending = self.pending.lock();
-        pending
-            .channels
-            .remove(&PendingResponseKey::new(peer_id, message_id));
+        drop(
+            self.pending
+                .take_pushlog(&PendingResponseKey::new(peer_id, message_id)),
+        );
     }
 
     /// Clean up a pending identity response channel (used on timeout or cancellation).
     pub fn cleanup_pending_identity(&self, peer_id: PeerId, message_id: &str) {
-        let mut pending = self.pending.lock();
-        pending
-            .identity_channels
-            .remove(&PendingResponseKey::new(peer_id, message_id));
+        drop(
+            self.pending
+                .take_identity(&PendingResponseKey::new(peer_id, message_id)),
+        );
     }
 
     /// Clean up a pending DocSync request.
     pub fn cleanup_pending_doc_sync(&self, peer_id: PeerId, message_id: &str) {
-        let mut pending = self.pending.lock();
         let key = PendingResponseKey::new(peer_id, message_id);
-        pending.doc_sync_channels.remove(&key);
-        pending.doc_sync_requests.remove(&key);
+        drop(self.pending.take_doc_sync(&key));
+        self.pending.doc_sync_requests.remove(&key);
     }
 
     /// Clean up a pending BranchableSync request.
     pub fn cleanup_pending_branchable_sync(&self, peer_id: PeerId, message_id: &str) {
-        let mut pending = self.pending.lock();
-        pending
+        self.pending
             .branchable_sync_requests
             .remove(&PendingResponseKey::new(peer_id, message_id));
     }
@@ -298,7 +384,7 @@ mod tests {
         let other_peer = PeerId::random();
         let key = PendingResponseKey::new(peer, "doc-sync-1");
         let wrong_peer_key = PendingResponseKey::new(other_peer, "doc-sync-1");
-        let mut pending = PendingResponses::default();
+        let pending = PendingResponses::default();
 
         pending.register_doc_sync_request(key.clone());
 
@@ -313,7 +399,7 @@ mod tests {
         let other_peer = PeerId::random();
         let key = PendingResponseKey::new(peer, "branchable-sync-1");
         let wrong_peer_key = PendingResponseKey::new(other_peer, "branchable-sync-1");
-        let mut pending = PendingResponses::default();
+        let pending = PendingResponses::default();
 
         pending.register_branchable_sync_request(key.clone());
 

@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 
 use iroh::endpoint::Connection;
 use iroh::EndpointId;
+use kovan::Atom;
 
 use crate::transport::PeerId;
 
@@ -36,16 +37,12 @@ pub struct ConnectionInfo {
 }
 
 /// Tracks connected peers and their connection info.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PeerMap {
     connections: RapidHashMap<EndpointId, ConnectionInfo>,
 }
 
 impl PeerMap {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Increment connection count for a peer. Returns `true` if this is the
     /// first connection (0 -> 1), meaning PeerConnected should be emitted.
     ///
@@ -108,8 +105,8 @@ impl PeerMap {
         }
     }
 
-    pub fn get(&self, id: &EndpointId) -> Option<&ConnectionInfo> {
-        self.connections.get(id)
+    pub fn remote_addr(&self, id: &EndpointId) -> Option<SocketAddr> {
+        self.connections.get(id).and_then(|info| info.remote_addr)
     }
 
     pub fn connected_peers(&self) -> Vec<PeerId> {
@@ -127,7 +124,63 @@ impl PeerMap {
     }
 
     /// Return all connected endpoint IDs.
-    pub fn endpoint_ids(&self) -> impl Iterator<Item = EndpointId> + '_ {
-        self.connections.keys().copied()
+    pub fn endpoint_ids(&self) -> Vec<EndpointId> {
+        self.connections.keys().copied().collect()
+    }
+}
+
+/// The peer map shared by every endpoint task, replaced as one unit on each
+/// write: a count reaching zero removes the entry and a first count emits
+/// `PeerConnected`, so the count and the entry's presence must change together.
+#[derive(Debug, Default)]
+pub struct SharedPeerMap(Atom<PeerMap>);
+
+impl SharedPeerMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn update<R>(&self, mut f: impl FnMut(&mut PeerMap) -> R) -> R {
+        loop {
+            let current = self.0.load();
+            let mut next = PeerMap::clone(&current);
+            let result = f(&mut next);
+            if self.0.compare_and_swap(&current, next).is_ok() {
+                return result;
+            }
+        }
+    }
+
+    pub fn increment_connections(
+        &self,
+        id: EndpointId,
+        remote_addr: Option<SocketAddr>,
+        connection: Connection,
+    ) -> bool {
+        self.update(|map| map.increment_connections(id, remote_addr, connection.clone()))
+    }
+
+    pub fn take_connections(&self, id: &EndpointId) -> Vec<Connection> {
+        self.update(|map| map.take_connections(id))
+    }
+
+    pub fn decrement_connections(&self, id: &EndpointId) -> bool {
+        self.update(|map| map.decrement_connections(id))
+    }
+
+    pub fn remote_addr(&self, id: &EndpointId) -> Option<SocketAddr> {
+        self.0.peek(|map| map.remote_addr(id))
+    }
+
+    pub fn connected_peers(&self) -> Vec<PeerId> {
+        self.0.peek(PeerMap::connected_peers)
+    }
+
+    pub fn peer_addresses(&self) -> Vec<String> {
+        self.0.peek(PeerMap::peer_addresses)
+    }
+
+    pub fn endpoint_ids(&self) -> Vec<EndpointId> {
+        self.0.peek(PeerMap::endpoint_ids)
     }
 }

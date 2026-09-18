@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use cid::Cid;
+use futures::FutureExt;
 use iroh_bitswap::Store;
 use libp2p::PeerId;
 use tracing::{debug, info, warn};
@@ -11,7 +12,7 @@ use crate::error::Result;
 use crate::host::event::HostEvent;
 use crate::QueryId;
 
-use super::super::p2p_host::P2PHost;
+use super::super::p2p_host::{BitswapQuery, P2PHost};
 
 impl<S: Store> P2PHost<S> {
     /// Handle a Bitswap sync command.
@@ -188,16 +189,22 @@ impl<S: Store> P2PHost<S> {
                         .await;
                 }
             }
-            queries.lock().remove(&query_id);
+            queries.remove(&query_id);
         });
 
         #[cfg(feature = "test-utils")]
         crate::testutil::stall_before_query_registration().await;
 
-        // Store the join handle for cancellation support
-        self.bitswap_queries
-            .lock()
-            .insert(query_id, (task_handle, session_id));
+        let abort = task_handle.abort_handle();
+        let joined = task_handle.map(|_| ()).boxed().shared();
+        self.bitswap_queries.insert(
+            query_id,
+            BitswapQuery {
+                abort,
+                joined,
+                session_id,
+            },
+        );
         let _ = registered_tx.send(());
 
         if response.send(Ok(query_id)).is_err() {
@@ -210,20 +217,16 @@ impl<S: Store> P2PHost<S> {
         query_id: QueryId,
         response: tokio::sync::oneshot::Sender<bool>,
     ) {
-        let cancelled = if let Some((task_handle, session_id)) =
-            self.bitswap_queries.lock().remove(&query_id)
-        {
+        let cancelled = if let Some(query) = self.bitswap_queries.remove(&query_id) {
             debug!(query_id = ?query_id, "Cancelling Bitswap query");
-            task_handle.abort();
+            query.abort.abort();
             let client = self.swarm.behaviour().bitswap.client().clone();
             tokio::spawn(async move {
                 // `abort` only schedules cancellation, and `Session::stop`
                 // refuses to run while any other handle to the session is
-                // alive. Joining the aborted task is what drops its clone;
-                // it resolves with a cancelled `JoinError` rather than
-                // hanging.
-                let _ = task_handle.await;
-                if let Err(e) = client.stop_session(session_id).await {
+                // alive. Joining the aborted task is what drops its clone.
+                query.joined.await;
+                if let Err(e) = client.stop_session(query.session_id).await {
                     warn!(query_id = ?query_id, error = %e, "Failed to stop cancelled Bitswap session");
                 }
             });

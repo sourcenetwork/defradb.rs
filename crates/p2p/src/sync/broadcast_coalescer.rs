@@ -1,13 +1,14 @@
 //! Short-window coalescing for rapid document and collection gossip updates (#1102).
 
-use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use cid::Cid;
-use parking_lot::Mutex;
+use kovan::{Atom, AtomOption};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use tokio::sync::Notify;
 
 use super::BroadcastResult;
@@ -24,18 +25,88 @@ struct BroadcastKey {
     doc_id: String,
 }
 
+#[derive(Clone)]
+struct Latest {
+    version: (u64, Cid),
+    broadcast: PushLogBroadcast,
+    updated_at: n0_future::time::Instant,
+    sealed: bool,
+}
+
 struct PendingBroadcast {
-    broadcast: Mutex<PushLogBroadcast>,
-    version: Mutex<(u64, Cid)>,
+    latest: Atom<Latest>,
     started_at: n0_future::time::Instant,
-    last_update: Mutex<n0_future::time::Instant>,
-    result: Mutex<Option<SharedResult>>,
+    result: AtomOption<SharedResult>,
     cancelled: AtomicBool,
     notify: Notify,
 }
 
+impl PendingBroadcast {
+    fn new(
+        broadcast: PushLogBroadcast,
+        version: (u64, Cid),
+        now: n0_future::time::Instant,
+    ) -> Self {
+        Self {
+            latest: Atom::new(Latest {
+                version,
+                broadcast,
+                updated_at: now,
+                sealed: false,
+            }),
+            started_at: now,
+            result: AtomOption::none(),
+            cancelled: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    /// Buffers `candidate` when it is newer than the window's head. Once the
+    /// leader has sealed the window a newer candidate comes back as `Some`,
+    /// so the caller re-elects instead of silently losing the update.
+    fn offer(
+        &self,
+        candidate: PushLogBroadcast,
+        version: (u64, Cid),
+        now: n0_future::time::Instant,
+    ) -> Option<PushLogBroadcast> {
+        let mut candidate = candidate;
+        loop {
+            let current = self.latest.load();
+            if version <= current.version {
+                return None;
+            }
+            if current.sealed {
+                return Some(candidate);
+            }
+            let next = Latest {
+                version,
+                broadcast: candidate,
+                updated_at: now,
+                sealed: false,
+            };
+            match self.latest.compare_and_swap(&current, next) {
+                Ok(_) => return None,
+                Err(next) => candidate = next.broadcast,
+            }
+        }
+    }
+
+    fn seal(&self) -> PushLogBroadcast {
+        self.latest.rcu(|current| Latest {
+            sealed: true,
+            ..current.clone()
+        });
+        self.latest.peek(|current| current.broadcast.clone())
+    }
+
+    fn updated_at(&self) -> n0_future::time::Instant {
+        self.latest.peek(|current| current.updated_at)
+    }
+}
+
 pub(crate) struct BroadcastCoalescer {
-    pending: Mutex<RapidHashMap<BroadcastKey, Arc<PendingBroadcast>>>,
+    pending: HopscotchMap<BroadcastKey, Arc<PendingBroadcast>, RandomState>,
     window: Duration,
     max_delay: Duration,
     coalesced: AtomicU64,
@@ -45,10 +116,17 @@ struct BroadcastLeaderGuard<'a> {
     coalescer: &'a BroadcastCoalescer,
     key: BroadcastKey,
     pending: Arc<PendingBroadcast>,
+    listed: bool,
     armed: bool,
 }
 
 impl BroadcastLeaderGuard<'_> {
+    fn unlist(&mut self) {
+        if std::mem::take(&mut self.listed) {
+            self.coalescer.pending.force_remove(&self.key);
+        }
+    }
+
     fn complete(&mut self) {
         self.armed = false;
     }
@@ -59,14 +137,7 @@ impl Drop for BroadcastLeaderGuard<'_> {
         if !self.armed {
             return;
         }
-        let mut all = self.coalescer.pending.lock();
-        if all
-            .get(&self.key)
-            .is_some_and(|current| Arc::ptr_eq(current, &self.pending))
-        {
-            all.remove(&self.key);
-        }
-        drop(all);
+        self.unlist();
         self.pending.cancelled.store(true, Ordering::Release);
         self.pending.notify.notify_waiters();
     }
@@ -89,7 +160,7 @@ impl BroadcastCoalescer {
 
     fn with_limits(window: Duration, max_delay: Duration) -> Self {
         Self {
-            pending: Mutex::new(RapidHashMap::new()),
+            pending: HopscotchMap::with_hasher(RandomState::default()),
             window,
             max_delay,
             coalesced: AtomicU64::new(0),
@@ -119,63 +190,48 @@ impl BroadcastCoalescer {
                 collection_id: candidate.collection_id.clone(),
                 doc_id: candidate.doc_id.clone(),
             };
-            let (pending, leader) = {
-                let mut all = self.pending.lock();
-                if let Some(pending) = all.get(&key) {
-                    let mut current_version = pending.version.lock();
-                    if incoming_version > *current_version {
-                        *pending.broadcast.lock() = candidate;
-                        *current_version = incoming_version;
-                        *pending.last_update.lock() = n0_future::time::Instant::now();
+            let now = n0_future::time::Instant::now();
+            let (pending, leader) = match self.pending.get(&key) {
+                Some(pending) => (pending, false),
+                None => {
+                    let fresh = Arc::new(PendingBroadcast::new(
+                        candidate.clone(),
+                        incoming_version,
+                        now,
+                    ));
+                    match self
+                        .pending
+                        .insert_if_absent(key.clone(), Arc::clone(&fresh))
+                    {
+                        None => (fresh, true),
+                        Some(existing) => (existing, false),
                     }
-                    self.coalesced.fetch_add(1, Ordering::Relaxed);
-                    (Arc::clone(pending), false)
-                } else {
-                    let now = n0_future::time::Instant::now();
-                    let pending = Arc::new(PendingBroadcast {
-                        broadcast: Mutex::new(candidate),
-                        version: Mutex::new(incoming_version),
-                        started_at: now,
-                        last_update: Mutex::new(now),
-                        result: Mutex::new(None),
-                        cancelled: AtomicBool::new(false),
-                        notify: Notify::new(),
-                    });
-                    all.insert(key.clone(), Arc::clone(&pending));
-                    (pending, true)
                 }
             };
 
             if leader {
                 let mut guard = BroadcastLeaderGuard {
                     coalescer: self,
-                    key: key.clone(),
+                    key,
                     pending: Arc::clone(&pending),
+                    listed: true,
                     armed: true,
                 };
-                wait_for_quiet(
-                    &pending.last_update,
-                    pending.started_at,
-                    self.window,
-                    self.max_delay,
-                )
-                .await;
-                {
-                    let mut all = self.pending.lock();
-                    if all
-                        .get(&key)
-                        .is_some_and(|current| Arc::ptr_eq(current, &pending))
-                    {
-                        all.remove(&key);
-                    }
-                }
-                let latest = pending.broadcast.lock().clone();
+                wait_for_quiet(&pending, self.window, self.max_delay).await;
+                guard.unlist();
+                let latest = pending.seal();
                 let result = send.take().expect("send closure available")(latest).await;
-                *pending.result.lock() = Some(result.clone());
+                pending.result.store_some(result.clone());
                 pending.notify.notify_waiters();
                 guard.complete();
                 return result;
             }
+
+            if let Some(sealed_out) = pending.offer(candidate, incoming_version, now) {
+                candidate = sealed_out;
+                continue;
+            }
+            self.coalesced.fetch_add(1, Ordering::Relaxed);
 
             loop {
                 let notified = pending.notify.notified();
@@ -184,11 +240,12 @@ impl BroadcastCoalescer {
                 // not retain a permit, so polling only after the check can
                 // miss the leader's one completion notification forever.
                 notified.as_mut().enable();
-                if let Some(result) = pending.result.lock().clone() {
+                let result = pending.result.load().map(|result| (*result).clone());
+                if let Some(result) = result {
                     return result;
                 }
                 if pending.cancelled.load(Ordering::Acquire) {
-                    candidate = pending.broadcast.lock().clone();
+                    candidate = pending.latest.peek(|current| current.broadcast.clone());
                     break;
                 }
                 notified.await;
@@ -197,18 +254,13 @@ impl BroadcastCoalescer {
     }
 }
 
-pub(super) async fn wait_for_quiet(
-    last_update: &Mutex<n0_future::time::Instant>,
-    started_at: n0_future::time::Instant,
-    window: Duration,
-    max_delay: Duration,
-) {
-    let max_deadline = started_at + max_delay;
+async fn wait_for_quiet(pending: &PendingBroadcast, window: Duration, max_delay: Duration) {
+    let max_deadline = pending.started_at + max_delay;
     loop {
-        let deadline = (*last_update.lock() + window).min(max_deadline);
+        let deadline = (pending.updated_at() + window).min(max_deadline);
         n0_future::time::sleep_until(deadline).await;
         let now = n0_future::time::Instant::now();
-        if now >= max_deadline || now >= *last_update.lock() + window {
+        if now >= max_deadline || now >= pending.updated_at() + window {
             return;
         }
     }
@@ -285,7 +337,7 @@ mod tests {
     async fn rapid_updates_publish_only_the_greatest_version() {
         let coalescer = Arc::new(BroadcastCoalescer::with_window(Duration::from_millis(10)));
         let sends = Arc::new(AtomicUsize::new(0));
-        let sent_cid = Arc::new(Mutex::new(None));
+        let sent_cid = Arc::new(AtomOption::<Bytes>::none());
         let updates: Vec<_> = [b"1".as_slice(), b"2".as_slice(), b"3".as_slice()]
             .into_iter()
             .map(broadcast)
@@ -305,7 +357,7 @@ mod tests {
                 coalescer
                     .run(update, move |latest| async move {
                         sends.fetch_add(1, Ordering::Relaxed);
-                        *sent_cid.lock() = Some(latest.cid);
+                        sent_cid.store_some(latest.cid);
                         Ok(BroadcastResult::Success)
                     })
                     .await
@@ -315,7 +367,7 @@ mod tests {
             assert_eq!(task.await.unwrap().unwrap(), BroadcastResult::Success);
         }
         assert_eq!(sends.load(Ordering::Relaxed), 1);
-        assert_eq!(*sent_cid.lock(), Some(expected_cid));
+        assert_eq!(sent_cid.load().as_deref(), Some(&expected_cid));
         assert_eq!(coalescer.coalesced(), 2);
     }
 
@@ -466,12 +518,12 @@ mod tests {
                     .await
             })
         };
-        while coalescer.pending.lock().is_empty() {
+        while coalescer.pending.is_empty() {
             tokio::task::yield_now().await;
         }
 
         let sends = Arc::new(AtomicUsize::new(0));
-        let sent_cid = Arc::new(Mutex::new(None));
+        let sent_cid = Arc::new(AtomOption::<Bytes>::none());
         let follower = {
             let coalescer = Arc::clone(&coalescer);
             let sends = Arc::clone(&sends);
@@ -480,7 +532,7 @@ mod tests {
                 coalescer
                     .run(broadcast(b"follower"), move |latest| async move {
                         sends.fetch_add(1, Ordering::Relaxed);
-                        *sent_cid.lock() = Some(latest.cid);
+                        sent_cid.store_some(latest.cid);
                         Ok(BroadcastResult::Success)
                     })
                     .await
@@ -491,14 +543,11 @@ mod tests {
         }
         let expected_cid = coalescer
             .pending
-            .lock()
             .values()
             .next()
             .unwrap()
-            .broadcast
-            .lock()
-            .cid
-            .clone();
+            .latest
+            .peek(|current| current.broadcast.cid.clone());
 
         leader.abort();
         assert!(leader.await.unwrap_err().is_cancelled());
@@ -511,8 +560,8 @@ mod tests {
             BroadcastResult::Success
         );
         assert_eq!(sends.load(Ordering::Relaxed), 1);
-        assert_eq!(*sent_cid.lock(), Some(expected_cid));
-        assert!(coalescer.pending.lock().is_empty());
+        assert_eq!(sent_cid.load().as_deref(), Some(&expected_cid));
+        assert!(coalescer.pending.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -529,7 +578,7 @@ mod tests {
                     .await
             })
         };
-        while coalescer.pending.lock().is_empty() {
+        while coalescer.pending.is_empty() {
             tokio::task::yield_now().await;
         }
 

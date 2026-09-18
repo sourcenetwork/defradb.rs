@@ -1,4 +1,6 @@
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -178,7 +180,6 @@ impl fmt::Display for ReplayPushSendError {
     }
 }
 
-#[derive(Debug)]
 pub struct ReplayPushGate {
     document_task_semaphore: Arc<Semaphore>,
     outbound_push_semaphore: Arc<Semaphore>,
@@ -246,9 +247,8 @@ impl ReplayPushGate {
     }
 }
 
-#[derive(Debug)]
 struct ReplayPeerPacer {
-    buckets: parking_lot::Mutex<RapidHashMap<String, ReplayPeerBucket>>,
+    buckets: HopscotchMap<String, Arc<Atom<ReplayPeerBucket>>, RandomState>,
     capacity: u32,
     refill_rate: f64,
 }
@@ -256,22 +256,36 @@ struct ReplayPeerPacer {
 impl ReplayPeerPacer {
     fn new(capacity: u32, refill_rate: f64) -> Self {
         Self {
-            buckets: parking_lot::Mutex::new(RapidHashMap::new()),
+            buckets: HopscotchMap::with_hasher(RandomState::default()),
             capacity,
             refill_rate,
         }
     }
 
+    fn bucket(&self, peer_id: &str) -> Arc<Atom<ReplayPeerBucket>> {
+        if let Some(bucket) = self.buckets.get(peer_id) {
+            return bucket;
+        }
+        self.buckets.get_or_insert(
+            peer_id.to_string(),
+            Arc::new(Atom::new(ReplayPeerBucket::new(self.capacity))),
+        )
+    }
+
     fn consume_or_delay(&self, peer_id: &str) -> Option<Duration> {
-        let mut buckets = self.buckets.lock();
-        buckets
-            .entry(peer_id.to_string())
-            .or_insert_with(|| ReplayPeerBucket::new(self.capacity))
-            .consume_or_delay(self.capacity, self.refill_rate)
+        let bucket = self.bucket(peer_id);
+        loop {
+            let current = bucket.load();
+            let mut next = *current;
+            let delay = next.consume_or_delay(self.capacity, self.refill_rate);
+            if bucket.compare_and_swap(&current, next).is_ok() {
+                return delay;
+            }
+        }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy)]
 struct ReplayPeerBucket {
     tokens: f64,
     last_refill: Instant,

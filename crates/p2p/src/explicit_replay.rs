@@ -12,9 +12,6 @@
 //! [`verify_capability_with_revocations`] for a custom synced deny-list.
 
 #[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
-use rapidhash::RapidHashMap;
-use rapidhash::RapidHashSet;
-#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,7 +20,8 @@ use web_time::{SystemTime, UNIX_EPOCH};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use crypto::{did::parse_did_key, public_key_from_bytes, sha256, Sha256Hash};
 use identity::FullIdentity;
-use parking_lot::RwLock;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
@@ -47,9 +45,18 @@ struct CachedExplicitReplayCapability {
 }
 
 #[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ExplicitReplayCapabilityCache {
-    capabilities: Arc<RwLock<RapidHashMap<(String, String), CachedExplicitReplayCapability>>>,
+    capabilities: Arc<HopscotchMap<(String, String), CachedExplicitReplayCapability, RandomState>>,
+}
+
+#[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
+impl Default for ExplicitReplayCapabilityCache {
+    fn default() -> Self {
+        Self {
+            capabilities: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+        }
+    }
 }
 
 #[cfg(any(feature = "libp2p-transport", feature = "iroh-transport"))]
@@ -63,7 +70,7 @@ impl ExplicitReplayCapabilityCache {
     ) -> Result<()> {
         let authorization =
             verify_capability(capability, source_peer_id, target_peer_id, collection_id)?;
-        self.capabilities.write().insert(
+        self.capabilities.insert(
             (target_peer_id.to_string(), collection_id.to_string()),
             CachedExplicitReplayCapability {
                 capability: capability.to_string(),
@@ -74,16 +81,21 @@ impl ExplicitReplayCapabilityCache {
     }
 
     pub(crate) fn clear(&self, target_peer_id: &str, collections: &[String]) {
-        let mut capabilities = self.capabilities.write();
         for collection_id in collections {
-            capabilities.remove(&(target_peer_id.to_string(), collection_id.clone()));
+            self.capabilities
+                .remove(&(target_peer_id.to_string(), collection_id.clone()));
         }
     }
 
     pub(crate) fn clear_all(&self, target_peer_id: &str) {
-        self.capabilities
-            .write()
-            .retain(|(stored_peer_id, _), _| stored_peer_id != target_peer_id);
+        let stale: Vec<(String, String)> = self
+            .capabilities
+            .keys()
+            .filter(|(stored_peer_id, _)| stored_peer_id == target_peer_id)
+            .collect();
+        for key in stale {
+            self.capabilities.remove(&key);
+        }
     }
 
     pub(crate) fn matches(
@@ -92,9 +104,11 @@ impl ExplicitReplayCapabilityCache {
         collection_id: &str,
         capability: Option<&str>,
     ) -> bool {
-        self.capabilities
-            .read()
-            .get(&(target_peer_id.to_string(), collection_id.to_string()))
+        let existing = self
+            .capabilities
+            .get(&(target_peer_id.to_string(), collection_id.to_string()));
+        existing
+            .as_ref()
             .map(|existing| existing.capability.as_str())
             == capability
     }
@@ -106,9 +120,7 @@ impl ExplicitReplayCapabilityCache {
 
         let cached = self
             .capabilities
-            .read()
-            .get(&(target_peer_id.to_string(), request.collection_id.clone()))
-            .cloned();
+            .get(&(target_peer_id.to_string(), request.collection_id.clone()));
         if let Some(cached) = cached.filter(|cached| request.creator == cached.authorizer_did) {
             request.explicit_replay_capability = Some(cached.capability);
         }
@@ -133,9 +145,24 @@ struct ExplicitReplayCapabilityEnvelope {
     signature: Vec<u8>,
 }
 
-#[derive(Debug, Default)]
 pub struct ExplicitReplayRevocationRegistry {
-    revoked_capabilities: RwLock<RapidHashSet<Sha256Hash>>,
+    revoked_capabilities: HopscotchMap<Sha256Hash, (), RandomState>,
+}
+
+impl Default for ExplicitReplayRevocationRegistry {
+    fn default() -> Self {
+        Self {
+            revoked_capabilities: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
+}
+
+impl std::fmt::Debug for ExplicitReplayRevocationRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExplicitReplayRevocationRegistry")
+            .field("revoked", &self.revoked_capabilities.len())
+            .finish()
+    }
 }
 
 impl ExplicitReplayRevocationRegistry {
@@ -143,8 +170,8 @@ impl ExplicitReplayRevocationRegistry {
         let envelope = decode_envelope(capability)?;
         Ok(self
             .revoked_capabilities
-            .write()
-            .insert(capability_revocation_key(&envelope)?))
+            .insert_if_absent(capability_revocation_key(&envelope)?, ())
+            .is_none())
     }
 
     pub fn is_capability_revoked(&self, capability: &str) -> Result<bool> {
@@ -155,8 +182,7 @@ impl ExplicitReplayRevocationRegistry {
     fn is_envelope_revoked(&self, envelope: &ExplicitReplayCapabilityEnvelope) -> Result<bool> {
         Ok(self
             .revoked_capabilities
-            .read()
-            .contains(&capability_revocation_key(envelope)?))
+            .contains_key(&capability_revocation_key(envelope)?))
     }
 }
 

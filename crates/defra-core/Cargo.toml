@@ -34,6 +34,10 @@ ipld-core.workspace = true
 # Hashing
 rapidhash.workspace = true
 
+# Lock-free shared state
+kovan-map.workspace = true
+kovan-queue.workspace = true
+
 # Cryptography (for CID generation)
 sha2.workspace = true
 rand.workspace = true

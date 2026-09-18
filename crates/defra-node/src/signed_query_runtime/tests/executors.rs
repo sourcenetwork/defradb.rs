@@ -2,15 +2,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use defra_core::signing::{SigningConfig, SigningKeyType};
+use kovan_queue::seg_queue::SegQueue;
 use query::{QueryExecutor, QueryRequest, TransactionError, TransactionHandle};
 
 enum TestExecution {
     Slow {
         started: Arc<AtomicBool>,
-        completed: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        completed: SegQueue<std::sync::mpsc::Sender<()>>,
     },
     Spawning {
-        completed: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        completed: SegQueue<std::sync::mpsc::Sender<()>>,
     },
     ObserveContext {
         expected_did: String,
@@ -22,18 +23,20 @@ pub(super) fn slow_signing_executor(
     started: Arc<AtomicBool>,
     completed: std::sync::mpsc::Sender<()>,
 ) -> Arc<dyn QueryExecutor> {
+    let slot = SegQueue::new();
+    slot.push(completed);
     Arc::new(TestExecution::Slow {
         started,
-        completed: std::sync::Mutex::new(Some(completed)),
+        completed: slot,
     })
 }
 
 pub(super) fn spawning_signing_executor(
     completed: std::sync::mpsc::Sender<()>,
 ) -> Arc<dyn QueryExecutor> {
-    Arc::new(TestExecution::Spawning {
-        completed: std::sync::Mutex::new(Some(completed)),
-    })
+    let slot = SegQueue::new();
+    slot.push(completed);
+    Arc::new(TestExecution::Spawning { completed: slot })
 }
 
 pub(super) fn context_observing_executor(
@@ -67,19 +70,13 @@ impl QueryExecutor for TestExecution {
                 started.store(true, Ordering::SeqCst);
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 completed
-                    .lock()
-                    .expect("completion sender poisoned")
-                    .take()
+                    .pop()
                     .expect("completion sender missing")
                     .send(())
                     .expect("completion receiver dropped");
             }
             Self::Spawning { completed } => {
-                let completed = completed
-                    .lock()
-                    .expect("completion sender poisoned")
-                    .take()
-                    .expect("completion sender missing");
+                let completed = completed.pop().expect("completion sender missing");
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     completed.send(()).expect("completion receiver dropped");

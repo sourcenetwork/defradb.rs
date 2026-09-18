@@ -77,8 +77,8 @@ impl Drop for ThreadSigningContextGuard {
 pub(super) struct SignedQueryRuntime {
     handle: tokio::runtime::Handle,
     state: Arc<SignedQueryRuntimeState>,
-    shutdown_tx: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
-    owner_thread: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+    shutdown_tx: kovan_queue::seg_queue::SegQueue<std::sync::mpsc::Sender<()>>,
+    owner_thread: kovan_queue::seg_queue::SegQueue<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -198,11 +198,15 @@ impl SignedQueryRuntime {
                 ));
             }
         };
+        let shutdown_slot = kovan_queue::seg_queue::SegQueue::new();
+        shutdown_slot.push(shutdown_tx);
+        let owner_slot = kovan_queue::seg_queue::SegQueue::new();
+        owner_slot.push(owner_thread);
         Ok(Self {
             handle,
             state,
-            shutdown_tx: std::sync::Mutex::new(Some(shutdown_tx)),
-            owner_thread: std::sync::Mutex::new(Some(owner_thread)),
+            shutdown_tx: shutdown_slot,
+            owner_thread: owner_slot,
         })
     }
 
@@ -259,11 +263,7 @@ impl SignedQueryRuntime {
 
     pub(super) async fn shutdown(&self) {
         self.signal_shutdown();
-        let owner_thread = self
-            .owner_thread
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
+        let owner_thread = self.owner_thread.pop();
         if let Some(owner_thread) = owner_thread {
             let _ = tokio::task::spawn_blocking(move || owner_thread.join()).await;
         } else {
@@ -279,12 +279,7 @@ impl SignedQueryRuntime {
 
     fn signal_shutdown(&self) {
         self.close_admission();
-        let shutdown_tx = self
-            .shutdown_tx
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        if let Some(shutdown_tx) = shutdown_tx {
+        if let Some(shutdown_tx) = self.shutdown_tx.pop() {
             let _ = shutdown_tx.send(());
         }
     }
@@ -294,10 +289,7 @@ impl SignedQueryRuntime {
 impl Drop for SignedQueryRuntime {
     fn drop(&mut self) {
         self.signal_shutdown();
-        self.owner_thread
-            .get_mut()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
+        self.owner_thread.pop();
     }
 }
 

@@ -5,23 +5,66 @@
 //! SE query response two-stream protocol) can be routed back to the requester.
 //!
 //! Mirrors the KMS [`crate::pubsub_rpc::correlator::Correlator`] state machine
-//! (shared `Arc<Mutex<RapidHashMap>>` + Drop-cleanup), but is keyed by the message-ID
+//! (shared lock-free map + Drop-cleanup), but is keyed by the message-ID
 //! `String` rather than a `Cid`, since SE query message IDs are UUID strings.
+//! The slot helpers here are shared with [`crate::manage_correlator`].
 
-use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
-use parking_lot::Mutex;
+use kovan_map::HopscotchMap;
+use kovan_queue::array_queue::ArrayQueue;
 use tokio::sync::oneshot;
 use tracing::debug;
 
 use crate::message::QuerySEArtifactsReply;
 
+/// One-slot holder for a registered sender: whichever of deliver, cancel,
+/// overwrite or drop removes the entry pops the sender out and owns it, so
+/// the requester's receiver ends right there rather than when the retired
+/// map node is reclaimed.
+type ReplySlot<R> = Arc<ArrayQueue<oneshot::Sender<R>>>;
+
+pub(crate) type Ongoing<R> = Arc<HopscotchMap<String, ReplySlot<R>, rapidhash::fast::RandomState>>;
+
+pub(crate) fn new_ongoing<R: Send + 'static>() -> Ongoing<R> {
+    Arc::new(HopscotchMap::with_hasher(
+        rapidhash::fast::RandomState::default(),
+    ))
+}
+
+pub(crate) fn register_slot<R: Send + 'static>(
+    ongoing: &Ongoing<R>,
+    message_id: String,
+) -> oneshot::Receiver<R> {
+    let (tx, rx) = oneshot::channel();
+    let slot = ArrayQueue::new(1);
+    let _ = slot.push(tx);
+    if let Some(previous) = ongoing.insert(message_id, Arc::new(slot)) {
+        drop(previous.pop());
+    }
+    rx
+}
+
+pub(crate) fn take_sender<R: Send + 'static>(
+    ongoing: &Ongoing<R>,
+    message_id: &str,
+) -> Option<oneshot::Sender<R>> {
+    ongoing.remove(message_id).and_then(|slot| slot.pop())
+}
+
 /// Outstanding SE-query registry shared between the requester and the event
 /// loop that receives replies. Cheap to clone into tasks.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SeQueryCorrelator {
-    ongoing: Arc<Mutex<RapidHashMap<String, oneshot::Sender<QuerySEArtifactsReply>>>>,
+    ongoing: Ongoing<QuerySEArtifactsReply>,
+}
+
+impl Default for SeQueryCorrelator {
+    fn default() -> Self {
+        Self {
+            ongoing: new_ongoing(),
+        }
+    }
 }
 
 /// Handle for a registered SE query. The correlator slot is removed when this
@@ -46,7 +89,7 @@ impl PendingSeQuery {
 
 impl Drop for PendingSeQuery {
     fn drop(&mut self) {
-        self.correlator.ongoing.lock().remove(&self.message_id);
+        self.correlator.cancel(&self.message_id);
     }
 }
 
@@ -62,11 +105,10 @@ impl SeQueryCorrelator {
     /// times out); callers must use unique message IDs (sign-first generates a
     /// fresh UUID per request).
     pub fn register(&self, message_id: String) -> PendingSeQuery {
-        let (tx, rx) = oneshot::channel();
-        self.ongoing.lock().insert(message_id.clone(), tx);
+        let receiver = register_slot(&self.ongoing, message_id.clone());
         PendingSeQuery {
             message_id,
-            receiver: rx,
+            receiver,
             correlator: self.clone(),
         }
     }
@@ -76,8 +118,7 @@ impl SeQueryCorrelator {
     /// Returns `true` if a waiting requester received the reply, `false` if the
     /// reply was stale (no matching slot, late arrival, or requester gone).
     pub fn deliver(&self, reply: QuerySEArtifactsReply) -> bool {
-        let sender = self.ongoing.lock().remove(&reply.message_id);
-        match sender {
+        match take_sender(&self.ongoing, &reply.message_id) {
             Some(tx) => tx.send(reply).is_ok(),
             None => {
                 debug!(message_id = %reply.message_id, "se_query: reply with no matching request dropped");
@@ -88,11 +129,11 @@ impl SeQueryCorrelator {
 
     /// Drop the slot for `message_id` without waiting for a reply.
     pub fn cancel(&self, message_id: &str) {
-        self.ongoing.lock().remove(message_id);
+        drop(take_sender(&self.ongoing, message_id));
     }
 
     /// Number of currently in-flight SE queries. For tests/metrics only.
     pub fn in_flight(&self) -> usize {
-        self.ongoing.lock().len()
+        self.ongoing.len()
     }
 }

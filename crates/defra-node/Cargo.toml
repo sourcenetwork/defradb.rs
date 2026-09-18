@@ -52,6 +52,7 @@ bench = false
 
 [dependencies]
 rapidhash.workspace = true
+kovan-queue.workspace = true
 db = { path = "../db", default-features = false }
 storage = { path = "../storage" }
 query = { path = "../query" }
@@ -94,6 +95,7 @@ telemetry = { path = "../telemetry", default-features = false }
 
 [dev-dependencies]
 axum.workspace = true
+kovan.workspace = true
 crypto = { path = "../crypto" }
 hex.workspace = true
 tempfile = "3"

@@ -42,7 +42,7 @@ pub unsafe extern "C" fn create_subscription(
 
         // Create subscription state with optional collection filter
         let state = SubscriptionState {
-            subscription,
+            subscription: parking_lot::Mutex::new(subscription),
             node_handle: node_ptr,
             collection_filter: collection,
         };
@@ -82,7 +82,7 @@ pub extern "C" fn create_merge_complete_subscription(node_ptr: usize) -> CreateS
         };
 
         let state = SubscriptionState {
-            subscription,
+            subscription: parking_lot::Mutex::new(subscription),
             node_handle: node_ptr,
             collection_filter: None,
         };

@@ -12,7 +12,6 @@ use defra_core::encryption::EncryptionConfig;
 use document::Document;
 use document::NormalValue;
 use std::sync::Arc;
-use std::sync::Mutex;
 use storage::RegolithStore;
 
 fn make_test_blockstore() -> Arc<DefraBlockstore<RegolithStore>> {
@@ -301,7 +300,7 @@ fn test_compute_signature_signs_remote_secp256r1_once_the_gate_is_open() {
 
 struct CapturingRemoteSigner {
     private_key: crypto::Ed25519PrivateKey,
-    seen_authorization: Arc<Mutex<Option<defra_core::signing::SigningAuthorization>>>,
+    seen_authorization: Arc<kovan::AtomOption<defra_core::signing::SigningAuthorization>>,
 }
 
 impl defra_core::signing::RemoteSigner for CapturingRemoteSigner {
@@ -310,7 +309,10 @@ impl defra_core::signing::RemoteSigner for CapturingRemoteSigner {
         data: &[u8],
         authorization: Option<&defra_core::signing::SigningAuthorization>,
     ) -> Result<Vec<u8>, String> {
-        *self.seen_authorization.lock().expect("lock") = authorization.cloned();
+        match authorization {
+            Some(authorization) => self.seen_authorization.store_some(authorization.clone()),
+            None => self.seen_authorization.store_none(),
+        }
         self.private_key
             .sign(data)
             .map_err(|error| format!("remote sign failed: {}", error))
@@ -321,7 +323,7 @@ impl defra_core::signing::RemoteSigner for CapturingRemoteSigner {
 fn test_compute_signature_passes_signing_authorization_to_remote_signer() {
     let private_key = crypto::generate_ed25519().expect("should generate ed25519 key");
     let public_key = private_key.public_key();
-    let seen_authorization = Arc::new(Mutex::new(None));
+    let seen_authorization = Arc::new(kovan::AtomOption::none());
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
@@ -355,7 +357,7 @@ fn test_compute_signature_passes_signing_authorization_to_remote_signer() {
         .expect("composite block should be signed");
 
     assert_eq!(
-        *seen_authorization.lock().expect("lock"),
+        seen_authorization.load().map(|seen| seen.clone()),
         signer.signing_authorization
     );
 }

@@ -86,11 +86,11 @@ impl<S: Store> crate::database::DB<S> {
                 txn.commit().await?;
 
                 // Update the process-wide cache after successful commit
-                let mut cache = self.collections.write().map_err(|e| {
-                    tracing::error!(error = ?e, collection_name = %name, "Collection cache lock poisoned after delete");
-                    Error::CacheUpdateFailedAfterCommit(name.to_string())
-                })?;
-                cache.remove(name);
+                self.collections.rcu(|old| {
+                    let mut cache = old.clone();
+                    cache.remove(name);
+                    cache
+                });
 
                 Ok(())
             }

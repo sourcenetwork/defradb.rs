@@ -2,10 +2,12 @@
 
 use rapidhash::{RapidHashMap, RapidHashSet};
 use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
 
 use cid::Cid;
+use kovan::Atom;
 
 use crate::ExplicitReplayAuthorization;
 
@@ -68,12 +70,15 @@ pub struct PendingDag {
 
 /// Pending roots and the reverse index used to route arriving blocks only to
 /// roots that are waiting for them.
-#[derive(Debug, Default)]
+///
+/// Values sit behind `Arc` so a copy of the registry shares every untouched
+/// entry and a write pays for the entries it changes.
+#[derive(Debug, Default, Clone)]
 pub(super) struct PendingDagRegistry {
-    roots: RapidHashMap<Cid, PendingDag>,
-    waiters: RapidHashMap<Cid, RapidHashSet<Cid>>,
-    roots_by_source: RapidHashMap<String, usize>,
-    current_by_source_scope: RapidHashMap<PendingScopeKey, (HeadVersion, Cid)>,
+    roots: RapidHashMap<Cid, Arc<PendingDag>>,
+    waiters: RapidHashMap<Cid, Arc<RapidHashSet<Cid>>>,
+    roots_by_source: RapidHashMap<Arc<str>, usize>,
+    current_by_source_scope: RapidHashMap<Arc<PendingScopeKey>, (HeadVersion, Cid)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -98,7 +103,7 @@ pub(super) enum ScopeHeadDecision {
 }
 
 impl Deref for PendingDagRegistry {
-    type Target = RapidHashMap<Cid, PendingDag>;
+    type Target = RapidHashMap<Cid, Arc<PendingDag>>;
 
     fn deref(&self) -> &Self::Target {
         &self.roots
@@ -191,28 +196,42 @@ impl PendingDagRegistry {
         }
     }
 
+    /// Whether any entry has outlived `PENDING_DAG_TTL` at `now`.
+    pub(super) fn has_expired(&self, now: Instant) -> bool {
+        self.roots
+            .values()
+            .any(|dag| now.duration_since(dag.inserted_at) >= PENDING_DAG_TTL)
+    }
+
+    pub(super) fn snapshot(&self, root_cid: &Cid) -> Option<PendingDag> {
+        self.roots.get(root_cid).map(|dag| PendingDag::clone(dag))
+    }
+
     pub(super) fn get_mut(&mut self, root_cid: &Cid) -> Option<&mut PendingDag> {
-        self.roots.get_mut(root_cid)
+        self.roots.get_mut(root_cid).map(Arc::make_mut)
     }
 
     pub(super) fn insert(&mut self, root_cid: Cid, dag: PendingDag) -> Option<PendingDag> {
         let previous = self.remove(&root_cid);
         for missing_cid in &dag.missing {
-            self.waiters
-                .entry(*missing_cid)
-                .or_default()
-                .insert(root_cid);
+            Arc::make_mut(self.waiters.entry(*missing_cid).or_default()).insert(root_cid);
         }
         if let Some(source_peer) = &dag.source_peer {
-            *self.roots_by_source.entry(source_peer.clone()).or_default() += 1;
+            match self.roots_by_source.get_mut(source_peer.as_str()) {
+                Some(count) => *count += 1,
+                None => {
+                    self.roots_by_source
+                        .insert(Arc::from(source_peer.as_str()), 1);
+                }
+            }
         }
         if let (Some(key), Some(version)) =
             (Self::scope_key(&dag), Self::head_version(root_cid, &dag))
         {
             self.current_by_source_scope
-                .insert(key, (version, root_cid));
+                .insert(Arc::new(key), (version, root_cid));
         }
-        self.roots.insert(root_cid, dag);
+        self.roots.insert(root_cid, Arc::new(dag));
         previous
     }
 
@@ -224,14 +243,14 @@ impl PendingDagRegistry {
         if let Some(source_peer) = &dag.source_peer {
             let remove_source = self
                 .roots_by_source
-                .get_mut(source_peer)
+                .get_mut(source_peer.as_str())
                 .is_some_and(|count| {
                     debug_assert!(*count > 0);
                     *count = count.saturating_sub(1);
                     *count == 0
                 });
             if remove_source {
-                self.roots_by_source.remove(source_peer);
+                self.roots_by_source.remove(source_peer.as_str());
             }
         }
         if let Some(key) = Self::scope_key(&dag) {
@@ -243,7 +262,7 @@ impl PendingDagRegistry {
                 self.current_by_source_scope.remove(&key);
             }
         }
-        Some(dag)
+        Some(Arc::try_unwrap(dag).unwrap_or_else(|shared| PendingDag::clone(&shared)))
     }
 
     pub(super) fn source_count(&self, source_peer: &str) -> usize {
@@ -262,15 +281,11 @@ impl PendingDagRegistry {
             self.remove_waiter(missing_cid, root_cid);
         }
         for missing_cid in missing.difference(&previous) {
-            self.waiters
-                .entry(*missing_cid)
-                .or_default()
-                .insert(*root_cid);
+            Arc::make_mut(self.waiters.entry(*missing_cid).or_default()).insert(*root_cid);
         }
-        self.roots
-            .get_mut(root_cid)
-            .expect("root checked above")
-            .missing = missing;
+        if let Some(dag) = self.roots.get_mut(root_cid) {
+            Arc::make_mut(dag).missing = missing;
+        }
         true
     }
 
@@ -290,11 +305,15 @@ impl PendingDagRegistry {
         received_cid: &Cid,
         newly_missing: &[Cid],
     ) -> Vec<Cid> {
-        let waiting_roots = self.waiters.remove(received_cid).unwrap_or_default();
+        let waiting_roots: Vec<Cid> = self
+            .waiters
+            .remove(received_cid)
+            .map(|roots| roots.iter().copied().collect())
+            .unwrap_or_default();
         let mut emptied = Vec::new();
 
         for root_cid in waiting_roots {
-            let Some(dag) = self.roots.get_mut(&root_cid) else {
+            let Some(dag) = self.roots.get_mut(&root_cid).map(Arc::make_mut) else {
                 continue;
             };
             if !dag.missing.remove(received_cid) {
@@ -302,10 +321,7 @@ impl PendingDagRegistry {
             }
             for missing_cid in newly_missing {
                 if dag.missing.insert(*missing_cid) {
-                    self.waiters
-                        .entry(*missing_cid)
-                        .or_default()
-                        .insert(root_cid);
+                    Arc::make_mut(self.waiters.entry(*missing_cid).or_default()).insert(root_cid);
                 }
             }
             if dag.missing.is_empty() {
@@ -318,11 +334,37 @@ impl PendingDagRegistry {
 
     fn remove_waiter(&mut self, missing_cid: &Cid, root_cid: &Cid) {
         let remove_entry = self.waiters.get_mut(missing_cid).is_some_and(|roots| {
+            let roots = Arc::make_mut(roots);
             roots.remove(root_cid);
             roots.is_empty()
         });
         if remove_entry {
             self.waiters.remove(missing_cid);
+        }
+    }
+}
+
+/// The registry shared by every sync path, replaced as one unit on each
+/// write: admission reads the capacity, the per-source quota and the scope
+/// head before inserting, and an insert or removal touches all four indexes.
+#[derive(Debug, Default)]
+pub(super) struct SharedPendingDags(Atom<PendingDagRegistry>);
+
+impl SharedPendingDags {
+    pub(super) fn read<R>(&self, f: impl FnOnce(&PendingDagRegistry) -> R) -> R {
+        self.0.peek(f)
+    }
+
+    /// Apply `f` to a copy of the registry and publish it. `f` may run more
+    /// than once under contention, so it must stay pure.
+    pub(super) fn update<R>(&self, mut f: impl FnMut(&mut PendingDagRegistry) -> R) -> R {
+        loop {
+            let current = self.0.load();
+            let mut next = PendingDagRegistry::clone(&current);
+            let result = f(&mut next);
+            if self.0.compare_and_swap(&current, next).is_ok() {
+                return result;
+            }
         }
     }
 }

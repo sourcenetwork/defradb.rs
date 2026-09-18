@@ -14,7 +14,7 @@ use identity::Did;
 use storage::corekv::Store;
 
 /// Adapter that implements TransactionOperations using a shared DbTransactionRegistry.
-pub struct TxnRegistryAdapter<S: Store> {
+pub struct TxnRegistryAdapter<S: Store + 'static> {
     registry: Arc<db::DbTransactionRegistry<S>>,
     document_acp: Option<Arc<dyn acp::DocumentACP>>,
 }

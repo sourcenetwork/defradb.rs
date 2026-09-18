@@ -187,9 +187,8 @@ impl<S: Store> P2PHost<S> {
 
                 match crate::signing::sign_message(self.keypair(), &mut reply) {
                     Ok(()) => {
-                        let handler = self.two_stream_handler.clone();
+                        let mut h = self.two_stream_handler.clone();
                         self.spawned_tasks.spawn(async move {
-                            let mut h = handler.lock().await.clone();
                             if let Err(error) = h.send_identity_response(peer_id, reply).await {
                                 warn!(peer_id = %peer_id, error = %error, "Failed to send identity response");
                             }

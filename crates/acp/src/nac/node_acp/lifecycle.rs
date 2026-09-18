@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::nac::policy::{create_node_policy, NODE_POLICY_ID, NODE_RESOURCE_NAME, OWNER_RELATION};
 use zanzibar::{Relationship, ZanzibarStore};
 
-impl<S: ZanzibarStore> NodeACP<S> {
+impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
     /// Enable NAC with the given owner identity.
     ///
     /// The owner identity has full control over the node and can grant
@@ -15,7 +15,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
     ///
     /// Succeeds silently if NAC is already enabled (idempotent).
     pub async fn enable(&self, owner: &Did) -> Result<()> {
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         if status == NacStatus::Enabled {
             return Ok(());
         }
@@ -42,8 +42,8 @@ impl<S: ZanzibarStore> NodeACP<S> {
             .await?;
 
         // Update state
-        *self.owner.write().await = Some(owner.clone());
-        *self.status.write().await = NacStatus::Enabled;
+        self.owner.store_some(owner.clone());
+        self.status.store(NacStatus::Enabled);
 
         tracing::info!(
             target: "nac::audit",
@@ -72,7 +72,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
     /// this method with proper authorization checks.
     #[doc(hidden)]
     pub async fn disable(&self) -> Result<()> {
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         match status {
             NacStatus::NotConfigured => {
                 return Err(Error::InvalidPolicy("node acp is not configured".into()));
@@ -84,7 +84,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
         }
 
         // Persist disabled flag so it survives restarts
-        if let Some(owner) = self.owner.read().await.clone() {
+        if let Some(owner) = self.owner.load().map(|g| (*g).clone()) {
             let disabled_rel = Relationship::with_entity(
                 NODE_RESOURCE_NAME,
                 NODE_OBJECT_ID,
@@ -96,7 +96,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
                 .await?;
         }
 
-        *self.status.write().await = NacStatus::DisabledTemporarily;
+        self.status.store(NacStatus::DisabledTemporarily);
 
         tracing::info!(
             target: "nac::audit",
@@ -118,7 +118,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
     /// this method with proper authorization checks.
     #[doc(hidden)]
     pub async fn re_enable(&self) -> Result<()> {
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         match status {
             NacStatus::NotConfigured => {
                 return Err(Error::InvalidPolicy("node acp is not configured".into()));
@@ -130,7 +130,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
         }
 
         // Remove persisted disabled flag
-        if let Some(owner) = self.owner.read().await.clone() {
+        if let Some(owner) = self.owner.load().map(|g| (*g).clone()) {
             let disabled_rel = Relationship::with_entity(
                 NODE_RESOURCE_NAME,
                 NODE_OBJECT_ID,
@@ -143,7 +143,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
                 .await;
         }
 
-        *self.status.write().await = NacStatus::Enabled;
+        self.status.store(NacStatus::Enabled);
 
         tracing::info!(
             target: "nac::audit",
@@ -184,8 +184,8 @@ impl<S: ZanzibarStore> NodeACP<S> {
         }
 
         // Reset state
-        *self.owner.write().await = None;
-        *self.status.write().await = NacStatus::NotConfigured;
+        self.owner.store_none();
+        self.status.store(NacStatus::NotConfigured);
 
         tracing::warn!(
             target: "nac::audit",

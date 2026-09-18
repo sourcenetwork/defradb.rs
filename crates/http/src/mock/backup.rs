@@ -1,14 +1,15 @@
 //! Mock backup operations for testing backup handlers.
 
 use async_trait::async_trait;
-use std::sync::{Arc, RwLock};
+use kovan::Atom;
+use std::sync::Arc;
 
 use crate::router::{BackupOperations, ImportResult};
 
 /// Mock backup operations for testing backup handlers.
 #[derive(Debug)]
 pub struct MockBackupOperations {
-    data: Arc<RwLock<String>>,
+    data: Arc<Atom<String>>,
 }
 
 impl Clone for MockBackupOperations {
@@ -29,7 +30,7 @@ impl MockBackupOperations {
     /// Create a new mock backup operations instance.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(RwLock::new(
+            data: Arc::new(Atom::new(
                 r#"{"Users": [{"_docID": "bae-123", "name": "Alice"}]}"#.to_string(),
             )),
         }
@@ -38,7 +39,7 @@ impl MockBackupOperations {
     /// Create with custom backup data.
     pub fn with_data(data: &str) -> Self {
         Self {
-            data: Arc::new(RwLock::new(data.to_string())),
+            data: Arc::new(Atom::new(data.to_string())),
         }
     }
 }
@@ -50,7 +51,7 @@ impl BackupOperations for MockBackupOperations {
         _collections: Option<Vec<String>>,
         pretty: bool,
     ) -> Result<String, String> {
-        let data = self.data.read().unwrap().clone();
+        let data = self.data.load_clone();
         if pretty {
             // Format the JSON nicely
             let parsed: serde_json::Value =
@@ -80,7 +81,7 @@ impl BackupOperations for MockBackupOperations {
         }
 
         // Store the new data
-        *self.data.write().unwrap() = data.to_string();
+        self.data.store(data.to_string());
 
         Ok(ImportResult {
             documents_imported,

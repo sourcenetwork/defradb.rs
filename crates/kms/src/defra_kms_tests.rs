@@ -3,6 +3,7 @@ use crate::context::RequestContext;
 use crate::memory_store::MemoryKeyStore;
 use crate::transport::{EncodedFetchRequest, IncomingHandler, KeyTransport, TransportReplyStream};
 use crate::types::KeyScope;
+use kovan_queue::seg_queue::SegQueue;
 use std::sync::Arc;
 
 struct AnyDocResolver;
@@ -404,9 +405,19 @@ async fn serve_request_skips_unknown_cids() {
 }
 
 struct FakeTransport {
-    reply:
-        tokio::sync::Mutex<Option<crate::Result<(crate::wire::FetchEncryptionKeyReply, String)>>>,
+    // A one-shot canned reply: pushed once at construction, popped once by
+    // the single `send_request` call each test drives.
+    reply: SegQueue<crate::Result<(crate::wire::FetchEncryptionKeyReply, String)>>,
 }
+
+impl FakeTransport {
+    fn new(reply: crate::Result<(crate::wire::FetchEncryptionKeyReply, String)>) -> Self {
+        let queue = SegQueue::new();
+        queue.push(reply);
+        Self { reply: queue }
+    }
+}
+
 #[async_trait::async_trait]
 impl KeyTransport for FakeTransport {
     fn name(&self) -> &'static str {
@@ -414,7 +425,7 @@ impl KeyTransport for FakeTransport {
     }
     async fn send_request(&self, _: EncodedFetchRequest) -> crate::Result<TransportReplyStream> {
         let (tx, rx) = crate::transport_reply_channel(1);
-        if let Some(r) = self.reply.lock().await.take() {
+        if let Some(r) = self.reply.pop() {
             let _ = tx.send(r).await;
         }
         Ok(rx)
@@ -423,7 +434,7 @@ impl KeyTransport for FakeTransport {
 }
 
 struct RecordingTransport {
-    payload: tokio::sync::Mutex<Option<Vec<u8>>>,
+    payload: AtomOption<Vec<u8>>,
 }
 
 #[async_trait::async_trait]
@@ -436,7 +447,7 @@ impl KeyTransport for RecordingTransport {
         &self,
         request: EncodedFetchRequest,
     ) -> crate::Result<TransportReplyStream> {
-        *self.payload.lock().await = Some(request.payload);
+        self.payload.store_some(request.payload);
         let (_tx, rx) = crate::transport_reply_channel(1);
         Ok(rx)
     }
@@ -447,7 +458,7 @@ impl KeyTransport for RecordingTransport {
 #[tokio::test]
 async fn get_keys_identifies_the_requesting_node_on_the_wire() {
     let transport = Arc::new(RecordingTransport {
-        payload: tokio::sync::Mutex::new(None),
+        payload: AtomOption::none(),
     });
     let node = node_did();
     let kms = DefraKms::new(
@@ -470,9 +481,8 @@ async fn get_keys_identifies_the_requesting_node_on_the_wire() {
 
     let payload = transport
         .payload
-        .lock()
-        .await
-        .clone()
+        .load()
+        .map(|g| (*g).clone())
         .expect("transport must receive a request");
     let request: crate::FetchEncryptionKeyRequest = defra_core::cbor::from_slice(&payload).unwrap();
     assert_eq!(request.identity, node.to_string().into_bytes());
@@ -527,9 +537,7 @@ async fn get_keys_fans_out_when_local_miss() {
 
     // Local empty KMS with a fake transport carrying the reply + the
     // responder peer id (same one the serve side bound into the AAD).
-    let fake = FakeTransport {
-        reply: tokio::sync::Mutex::new(Some(Ok((reply, "peer".to_string())))),
-    };
+    let fake = FakeTransport::new(Ok((reply, "peer".to_string())));
     let store: Arc<dyn crate::KeyStore> = Arc::new(MemoryKeyStore::new());
     let policy: Arc<dyn crate::policy::AccessPolicy> = Arc::new(AllowAll);
     let kms = DefraKms::new(
@@ -591,12 +599,8 @@ async fn get_keys_ignores_failed_transport_when_another_resolves_key() {
         )
         .await
         .unwrap();
-    let failed = FakeTransport {
-        reply: tokio::sync::Mutex::new(Some(Err(crate::Error::KeyUnavailable))),
-    };
-    let resolved = FakeTransport {
-        reply: tokio::sync::Mutex::new(Some(Ok((reply, "peer".to_string())))),
-    };
+    let failed = FakeTransport::new(Err(crate::Error::KeyUnavailable));
+    let resolved = FakeTransport::new(Ok((reply, "peer".to_string())));
     let store: Arc<dyn crate::KeyStore> = Arc::new(MemoryKeyStore::new());
     let policy: Arc<dyn crate::policy::AccessPolicy> = Arc::new(AllowAll);
     let kms = DefraKms::new(
@@ -622,9 +626,7 @@ async fn get_keys_ignores_failed_transport_when_another_resolves_key() {
 
 #[tokio::test]
 async fn get_keys_propagates_transport_timeout() {
-    let fake = FakeTransport {
-        reply: tokio::sync::Mutex::new(Some(Err(crate::Error::KeyUnavailable))),
-    };
+    let fake = FakeTransport::new(Err(crate::Error::KeyUnavailable));
     let store: Arc<dyn crate::KeyStore> = Arc::new(MemoryKeyStore::new());
     let policy: Arc<dyn crate::policy::AccessPolicy> = Arc::new(AllowAll);
     let kms = DefraKms::new(
@@ -650,16 +652,14 @@ async fn get_keys_propagates_transport_timeout() {
 
 #[tokio::test]
 async fn get_keys_maps_empty_peer_reply_to_unavailable() {
-    let fake = FakeTransport {
-        reply: tokio::sync::Mutex::new(Some(Ok((
-            crate::FetchEncryptionKeyReply {
-                links: vec![],
-                blocks: vec![],
-                ephemeral_public_key: vec![],
-            },
-            "peer".to_string(),
-        )))),
-    };
+    let fake = FakeTransport::new(Ok((
+        crate::FetchEncryptionKeyReply {
+            links: vec![],
+            blocks: vec![],
+            ephemeral_public_key: vec![],
+        },
+        "peer".to_string(),
+    )));
     let store: Arc<dyn crate::KeyStore> = Arc::new(MemoryKeyStore::new());
     let policy: Arc<dyn crate::policy::AccessPolicy> = Arc::new(AllowAll);
     let kms = DefraKms::new(
@@ -688,16 +688,14 @@ async fn get_keys_rejects_reply_length_mismatch() {
     let cid: crate::EncryptionCid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
         .parse()
         .unwrap();
-    let fake = FakeTransport {
-        reply: tokio::sync::Mutex::new(Some(Ok((
-            crate::FetchEncryptionKeyReply {
-                links: vec![cid.to_bytes()],
-                blocks: vec![],
-                ephemeral_public_key: vec![],
-            },
-            "peer".to_string(),
-        )))),
-    };
+    let fake = FakeTransport::new(Ok((
+        crate::FetchEncryptionKeyReply {
+            links: vec![cid.to_bytes()],
+            blocks: vec![],
+            ephemeral_public_key: vec![],
+        },
+        "peer".to_string(),
+    )));
     let store: Arc<dyn crate::KeyStore> = Arc::new(MemoryKeyStore::new());
     let policy: Arc<dyn crate::policy::AccessPolicy> = Arc::new(AllowAll);
     let kms = DefraKms::new(
@@ -740,9 +738,7 @@ async fn get_keys_rejects_encryption_block_with_mismatched_cid() {
             .as_bytes()
             .to_vec(),
     };
-    let fake = FakeTransport {
-        reply: tokio::sync::Mutex::new(Some(Ok((reply, "peer".to_string())))),
-    };
+    let fake = FakeTransport::new(Ok((reply, "peer".to_string())));
     let store: Arc<dyn crate::KeyStore> = Arc::new(MemoryKeyStore::new());
     let inspect_store = Arc::clone(&store);
     let policy: Arc<dyn crate::policy::AccessPolicy> = Arc::new(AllowAll);

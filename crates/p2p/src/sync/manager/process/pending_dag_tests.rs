@@ -449,12 +449,8 @@ fn insert_pending_dag_replaces_existing_entry_at_capacity() {
     ));
     assert_eq!(manager.pending_dag_count(), DEFAULT_MAX_PENDING_DAGS);
     assert_eq!(
-        manager
-            .pending_dags
-            .read()
-            .get(&root)
-            .map(|dag| dag.doc_id.as_str()),
-        Some("replacement")
+        manager.pending_dag_snapshot(&root).map(|dag| dag.doc_id),
+        Some("replacement".to_string())
     );
 }
 
@@ -492,14 +488,15 @@ fn pending_dag_peer_quota_preserves_capacity_for_other_sources() {
         second,
         pending_dag_from("replacement", Some("noisy"), Instant::now()),
     ));
-    assert_eq!(manager.pending_dags.read().source_count("noisy"), 2);
+    let source_count = |peer: &str| manager.pending_dags.read(|p| p.source_count(peer));
+    assert_eq!(source_count("noisy"), 2);
 
     assert!(manager.insert_pending_dag(
         second,
         pending_dag_from("transferred", Some("healthy"), Instant::now()),
     ));
-    assert_eq!(manager.pending_dags.read().source_count("noisy"), 1);
-    assert_eq!(manager.pending_dags.read().source_count("healthy"), 2);
+    assert_eq!(source_count("noisy"), 1);
+    assert_eq!(source_count("healthy"), 2);
     assert_eq!(manager.pending_dag_count(), 3);
 }
 
@@ -519,29 +516,17 @@ fn pending_dag_reverse_index_tracks_frontier_lifecycle() {
     assert!(manager.insert_pending_dag(root_a, dag_a));
     assert!(manager.insert_pending_dag(root_b, dag_b));
 
-    let waiting: RapidHashSet<_> = manager
-        .pending_dags
-        .read()
-        .waiting_roots(&shared)
-        .into_iter()
-        .collect();
+    let waiting_roots = |cid: &Cid| manager.pending_dags.read(|p| p.waiting_roots(cid));
+    let waiting: RapidHashSet<_> = waiting_roots(&shared).into_iter().collect();
     assert_eq!(waiting, [root_a, root_b].into_iter().collect());
 
     assert!(manager
         .pending_dags
-        .write()
-        .advance_waiters(&shared, &[next])
+        .update(|p| p.advance_waiters(&shared, &[next]))
         .is_empty());
-    assert!(manager
-        .pending_dags
-        .read()
-        .waiting_roots(&shared)
-        .is_empty());
+    assert!(waiting_roots(&shared).is_empty());
     assert_eq!(
-        manager
-            .pending_dags
-            .read()
-            .waiting_roots(&next)
+        waiting_roots(&next)
             .into_iter()
             .collect::<RapidHashSet<_>>(),
         [root_a, root_b].into_iter().collect()
@@ -552,17 +537,11 @@ fn pending_dag_reverse_index_tracks_frontier_lifecycle() {
         manager.pending_dag_snapshot(&root_a).unwrap().inserted_at,
         [other].into_iter().collect(),
     ));
-    assert_eq!(
-        manager.pending_dags.read().waiting_roots(&next).as_slice(),
-        &[root_b]
-    );
+    assert_eq!(waiting_roots(&next).as_slice(), &[root_b]);
 
     assert!(manager.clear_pending_dag(&root_b));
-    assert!(manager.pending_dags.read().waiting_roots(&next).is_empty());
-    assert_eq!(
-        manager.pending_dags.read().waiting_roots(&other).as_slice(),
-        &[root_a]
-    );
+    assert!(waiting_roots(&next).is_empty());
+    assert_eq!(waiting_roots(&other).as_slice(), &[root_a]);
 }
 
 #[test]

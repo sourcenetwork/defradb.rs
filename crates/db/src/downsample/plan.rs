@@ -294,17 +294,12 @@ impl<S: Store> crate::database::DB<S> {
         names_filter: Option<&RapidHashSet<String>>,
         source_name_filter: Option<&str>,
     ) -> Result<Vec<DownsamplePlan>> {
-        let collections: Vec<CollectionVersion> = {
-            let cache = self.collections.read().map_err(|_| {
-                Error::Other(
-                    "failed to acquire collections lock while planning downsamples".to_string(),
-                )
-            })?;
+        let collections: Vec<CollectionVersion> = self.collections.peek(|cache| {
             cache
                 .values()
                 .map(|collection| collection.schema().clone())
                 .collect()
-        };
+        });
 
         let mut plans = Vec::new();
         for collection in collections {

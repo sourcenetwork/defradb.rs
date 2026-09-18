@@ -1,8 +1,7 @@
-use std::sync::Mutex;
-
+use kovan_map::HopscotchMap;
 use p2p::{ReplicationFilter, ReplicationFilterMatcher};
 use query::Filter;
-use rapidhash::{HashMapExt, RapidHashMap};
+use rapidhash::fast::RandomState;
 use schema::{CType, FieldDescription, FieldKind};
 use serde_json::Value as JsonValue;
 
@@ -122,18 +121,20 @@ fn validate_op(
     Ok(())
 }
 
+const CACHE_LIMIT: usize = 256;
+
 /// Evaluates replication filters using the DefraDB query filter engine.
 ///
 /// Parsed [`Filter`] objects are cached by the canonical JSON of the conditions
 /// so re-parsing is avoided when the same predicate is applied to many documents.
 pub struct QueryReplicationFilterMatcher {
-    cache: Mutex<RapidHashMap<String, Filter>>,
+    cache: HopscotchMap<String, Filter, RandomState>,
 }
 
 impl QueryReplicationFilterMatcher {
     pub fn new() -> Self {
         Self {
-            cache: Mutex::new(RapidHashMap::new()),
+            cache: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
@@ -141,15 +142,14 @@ impl QueryReplicationFilterMatcher {
         match filter {
             ReplicationFilter::Predicate(conds) => {
                 let key = serde_json::to_string(conds).unwrap_or_default();
-                let parsed = {
-                    let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-                    if cache.len() >= 256 {
-                        cache.clear();
-                    }
-                    cache
-                        .entry(key)
-                        .or_insert_with(|| Filter::from_conditions(conds.clone()))
-                        .clone()
+                if self.cache.len() >= CACHE_LIMIT {
+                    self.cache.clear();
+                }
+                let parsed = match self.cache.get(&key) {
+                    Some(hit) => hit,
+                    None => self
+                        .cache
+                        .get_or_insert(key, Filter::from_conditions(conds.clone())),
                 };
                 parsed.matches_json_object(document).unwrap_or(false)
             }

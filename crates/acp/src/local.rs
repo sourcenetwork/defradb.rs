@@ -13,7 +13,7 @@
 
 use async_trait::async_trait;
 use identity::Did;
-use parking_lot::RwLock;
+use kovan::Atom;
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
@@ -409,14 +409,14 @@ impl DocumentACP for LocalDocumentACP {
 
 /// In-memory ACP store for local use and testing.
 pub struct MemoryAcpStore {
-    tuples: RwLock<RapidHashMap<String, RelationTuple>>,
+    tuples: Atom<RapidHashMap<String, RelationTuple>>,
 }
 
 impl MemoryAcpStore {
     /// Create a new in-memory ACP store.
     pub fn new() -> Self {
         Self {
-            tuples: RwLock::new(RapidHashMap::new()),
+            tuples: Atom::new(RapidHashMap::new()),
         }
     }
 }
@@ -431,19 +431,25 @@ impl Default for MemoryAcpStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AcpStore for MemoryAcpStore {
     async fn put_tuple(&self, tuple: &RelationTuple) -> Result<()> {
-        self.tuples
-            .write()
-            .insert(tuple.storage_key(), tuple.clone());
+        self.tuples.rcu(|m| {
+            let mut m = m.clone();
+            m.insert(tuple.storage_key(), tuple.clone());
+            m
+        });
         Ok(())
     }
 
     async fn delete_tuple(&self, tuple: &RelationTuple) -> Result<()> {
-        self.tuples.write().remove(&tuple.storage_key());
+        self.tuples.rcu(|m| {
+            let mut m = m.clone();
+            m.remove(&tuple.storage_key());
+            m
+        });
         Ok(())
     }
 
     async fn has_tuple(&self, tuple: &RelationTuple) -> Result<bool> {
-        Ok(self.tuples.read().contains_key(&tuple.storage_key()))
+        Ok(self.tuples.load().contains_key(&tuple.storage_key()))
     }
 
     async fn get_doc_tuples(
@@ -457,7 +463,7 @@ impl AcpStore for MemoryAcpStore {
         let prefix = RelationTuple::doc_prefix(collection_id, doc_id);
         let tuples = self
             .tuples
-            .read()
+            .load()
             .iter()
             .filter(|(k, _)| k.starts_with(&prefix))
             .map(|(_, v)| v.clone())
@@ -477,7 +483,7 @@ impl AcpStore for MemoryAcpStore {
         let prefix = RelationTuple::relation_prefix(collection_id, doc_id, relation);
         let subjects = self
             .tuples
-            .read()
+            .load()
             .iter()
             .filter(|(k, _)| k.starts_with(&prefix))
             .map(|(_, v)| v.subject().clone())
@@ -497,7 +503,7 @@ impl AcpStore for MemoryAcpStore {
         let prefix = RelationTuple::doc_prefix(collection_id, doc_id);
         let relations = self
             .tuples
-            .read()
+            .load()
             .iter()
             .filter(|(k, v)| k.starts_with(&prefix) && v.subject() == subject)
             .map(|(_, v)| v.relation().to_string())
@@ -510,7 +516,12 @@ impl AcpStore for MemoryAcpStore {
         RelationTuple::validate_prefix(collection_id, doc_id)?;
 
         let prefix = RelationTuple::doc_prefix(collection_id, doc_id);
-        self.tuples.write().retain(|k, _| !k.starts_with(&prefix));
+        self.tuples.rcu(|m| {
+            m.iter()
+                .filter(|(k, _)| !k.starts_with(&prefix))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        });
         Ok(())
     }
 
@@ -519,7 +530,7 @@ impl AcpStore for MemoryAcpStore {
         RelationTuple::validate_prefix(collection_id, doc_id)?;
 
         let prefix = RelationTuple::doc_prefix(collection_id, doc_id);
-        Ok(self.tuples.read().keys().any(|k| k.starts_with(&prefix)))
+        Ok(self.tuples.load().keys().any(|k| k.starts_with(&prefix)))
     }
 
     async fn register_doc_atomic(
@@ -535,16 +546,20 @@ impl AcpStore for MemoryAcpStore {
         let tuple = RelationTuple::owner(owner.clone(), collection_id, doc_id);
         let key = tuple.storage_key();
 
-        // Hold write lock for entire operation - this is the atomic guarantee
-        let mut guard = self.tuples.write();
-
-        // Check if document is already registered (any tuple with this prefix)
-        if guard.keys().any(|k| k.starts_with(&prefix)) {
-            return Ok(false); // Already registered, no change
+        // CAS loop is the atomic guarantee: the prefix check and the insert
+        // linearize against the same observed snapshot, so a racing
+        // registration always retries against the up-to-date map.
+        loop {
+            let current = self.tuples.load();
+            if current.keys().any(|k| k.starts_with(&prefix)) {
+                return Ok(false); // Already registered, no change
+            }
+            let mut new_map = current.clone();
+            new_map.insert(key.clone(), tuple.clone());
+            match self.tuples.compare_and_swap(&current, new_map) {
+                Ok(_) => return Ok(true),
+                Err(_) => continue,
+            }
         }
-
-        // Document not registered, insert owner tuple
-        guard.insert(key, tuple);
-        Ok(true)
     }
 }

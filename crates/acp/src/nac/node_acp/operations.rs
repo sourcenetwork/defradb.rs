@@ -8,7 +8,7 @@ use crate::nac::permission::NodePermission;
 use crate::nac::policy::{ADMIN_RELATION, NODE_POLICY_ID, NODE_RESOURCE_NAME};
 use zanzibar::{Relationship, Subject, ZanzibarStore};
 
-impl<S: ZanzibarStore> NodeACP<S> {
+impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
     /// Check if an identity has a specific node permission.
     ///
     /// Returns `true` if:
@@ -19,7 +19,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
         identity: &Did,
         permission: NodePermission,
     ) -> Result<bool> {
-        let status = *self.status.read().await;
+        let status = *self.status.load();
 
         // If NAC is not enabled, allow all operations
         if status != NacStatus::Enabled {
@@ -61,16 +61,15 @@ impl<S: ZanzibarStore> NodeACP<S> {
 
     /// Check if an identity is the owner.
     pub async fn is_owner(&self, identity: &Did) -> bool {
-        if let Some(owner) = self.owner.read().await.as_ref() {
-            owner == identity
-        } else {
-            false
+        match self.owner.load() {
+            Some(owner) => *owner == *identity,
+            None => false,
         }
     }
 
     /// Check if an identity is an admin (owner or has admin relation).
     pub async fn is_admin(&self, identity: &Did) -> Result<bool> {
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         if status != NacStatus::Enabled {
             return Ok(true); // Everyone is admin when NAC is disabled
         }
@@ -109,7 +108,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
     /// Write operations are blocked when NAC is disabled to prevent privilege escalation.
     pub async fn add_admin(&self, requestor: &Did, target: &Did) -> Result<bool> {
         // Block write operations when disabled to prevent privilege escalation
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         if status == NacStatus::DisabledTemporarily {
             return Err(Error::InvalidPolicy(
                 "cannot modify relationships while NAC is disabled - re-enable NAC first".into(),
@@ -178,7 +177,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
     /// Write operations are blocked when NAC is disabled to prevent privilege escalation.
     pub async fn remove_admin(&self, requestor: &Did, target: &Did) -> Result<bool> {
         // Block write operations when disabled to prevent privilege escalation
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         if status == NacStatus::DisabledTemporarily {
             return Err(Error::InvalidPolicy(
                 "cannot modify relationships while NAC is disabled - re-enable NAC first".into(),
@@ -242,7 +241,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
         permission: NodePermission,
     ) -> Result<bool> {
         // Block write operations when disabled to prevent privilege escalation
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         if status == NacStatus::DisabledTemporarily {
             return Err(Error::InvalidPolicy(
                 "cannot modify relationships while NAC is disabled - re-enable NAC first".into(),
@@ -311,7 +310,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
         permission: NodePermission,
     ) -> Result<bool> {
         // Block write operations when disabled to prevent privilege escalation
-        let status = *self.status.read().await;
+        let status = *self.status.load();
         if status == NacStatus::DisabledTemporarily {
             return Err(Error::InvalidPolicy(
                 "cannot modify relationships while NAC is disabled - re-enable NAC first".into(),

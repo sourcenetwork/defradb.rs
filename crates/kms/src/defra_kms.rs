@@ -7,8 +7,9 @@
 
 use async_trait::async_trait;
 use identity::Did;
+use kovan::{Atom, AtomOption};
 use rapidhash::{HashSetExt, RapidHashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::context::RequestContext;
 use crate::error::{Error, Result};
@@ -47,9 +48,9 @@ pub struct DefraKms {
     /// This node's transport-level peer id, bound into the ECIES AAD of
     /// served replies (Go's `makeAssociatedData`). Empty until the node
     /// wiring sets it from the P2P transport.
-    local_peer_id: RwLock<String>,
+    local_peer_id: Atom<String>,
     /// Test-only deterministic ephemeral. `None` in prod ⇒ fresh per call.
-    test_ephemeral: RwLock<Option<x25519_dalek::StaticSecret>>,
+    test_ephemeral: AtomOption<x25519_dalek::StaticSecret>,
 }
 
 impl DefraKms {
@@ -67,23 +68,19 @@ impl DefraKms {
             policy,
             doc_resolver,
             node_identity,
-            local_peer_id: RwLock::new(String::new()),
-            test_ephemeral: RwLock::new(None),
+            local_peer_id: Atom::new(String::new()),
+            test_ephemeral: AtomOption::none(),
         }
     }
 
     fn local_peer_id(&self) -> String {
-        self.local_peer_id
-            .read()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.local_peer_id.load_clone()
     }
 
     fn ephemeral(&self) -> x25519_dalek::StaticSecret {
         self.test_ephemeral
-            .read()
-            .ok()
-            .and_then(|g| g.clone())
+            .load()
+            .map(|g| (*g).clone())
             .unwrap_or_else(|| crypto::generate_x25519().expect("OsRng"))
     }
 
@@ -110,9 +107,7 @@ impl DefraKms {
     /// decrypt replies produced by a `FakeTransport`.
     #[cfg(test)]
     pub(crate) fn set_ephemeral_for_test(&self, eph: x25519_dalek::StaticSecret) {
-        if let Ok(mut g) = self.test_ephemeral.write() {
-            *g = Some(eph);
-        }
+        self.test_ephemeral.store_some(eph);
     }
 
     /// Local release decision for the DEK stored under `cid`.
@@ -529,9 +524,7 @@ impl KmsService for DefraKms {
     }
 
     fn set_local_peer_id(&self, id: String) {
-        if let Ok(mut g) = self.local_peer_id.write() {
-            *g = id;
-        }
+        self.local_peer_id.store(id);
     }
 }
 

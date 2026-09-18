@@ -22,11 +22,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let Some(kms) = self.kms() else {
             return;
         };
+        if self
+            .prefetched_dek_cids
+            .insert_if_absent(enc_cid, ())
+            .is_some()
         {
-            let mut seen = self.prefetched_dek_cids.lock().unwrap();
-            if !seen.insert(enc_cid) {
-                return;
-            }
+            return;
         }
         let ctx = Self::kms_request_context(Some(metadata));
         let prefetched_dek_cids = Arc::clone(&self.prefetched_dek_cids);
@@ -35,7 +36,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(results) => results.wait_all().await.map(|_| ()),
                 Err(error) => Err(error),
             };
-            prefetched_dek_cids.lock().unwrap().remove(&enc_cid);
+            prefetched_dek_cids.remove(&enc_cid);
             if let Err(error) = result {
                 tracing::debug!(enc_cid = %enc_cid, error = %error, "DEK prefetch failed");
             }

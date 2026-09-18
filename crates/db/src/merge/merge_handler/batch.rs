@@ -2,7 +2,6 @@ use super::hook::CompositePostCommitAction;
 use super::*;
 
 use defra_core::merge::MergeBlock;
-use rapidhash::HashSetExt;
 
 /// Event collected during batch processing, emitted after commit.
 pub(crate) struct PendingMergeEvent {
@@ -163,17 +162,12 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
 
         let txn = self.db.new_txn(false).await?;
-        let batch_merged: std::sync::Mutex<RapidHashSet<Cid>> =
-            std::sync::Mutex::new(RapidHashSet::new());
-        let batch_merged_collections: std::sync::Mutex<RapidHashSet<Cid>> =
-            std::sync::Mutex::new(RapidHashSet::new());
-        let pending_events: std::sync::Mutex<Vec<PendingMergeEvent>> =
-            std::sync::Mutex::new(Vec::new());
-        let pending_post_commit_actions: std::sync::Mutex<Vec<PendingPostCommitAction>> =
-            std::sync::Mutex::new(Vec::new());
-        let pending_field_block_finalizations: std::sync::Mutex<
-            Vec<PendingFieldBlockFinalization>,
-        > = std::sync::Mutex::new(Vec::new());
+        let batch_merged = cid_set();
+        let batch_merged_collections = cid_set();
+        let pending_events: SegQueue<PendingMergeEvent> = SegQueue::new();
+        let pending_post_commit_actions: SegQueue<PendingPostCommitAction> = SegQueue::new();
+        let pending_field_block_finalizations: SegQueue<PendingFieldBlockFinalization> =
+            SegQueue::new();
 
         let mut results = Vec::with_capacity(blocks.len());
         let mut batch_error: Option<MergeError> = None;
@@ -248,19 +242,12 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         txn.force_commit().await?;
 
         // Move batch-merged CIDs into the permanent dedup set
-        {
-            let batch = batch_merged.lock().unwrap();
-            let mut merged = self.merged_composites.lock().unwrap();
-            merged.extend(batch.iter());
-        }
-        {
-            let batch = batch_merged_collections.lock().unwrap();
-            let mut merged = self.merged_collections.lock().unwrap();
-            merged.extend(batch.iter());
-        }
+        self.merged_composites
+            .extend(batch_merged.keys().map(|cid| (cid, ())));
+        self.merged_collections
+            .extend(batch_merged_collections.keys().map(|cid| (cid, ())));
 
-        let post_commit_actions = pending_post_commit_actions.into_inner().unwrap();
-        for action in post_commit_actions {
+        while let Some(action) = pending_post_commit_actions.pop() {
             if let Err(error) = action.action.run().await {
                 tracing::warn!(
                     error = %error,
@@ -272,12 +259,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // Finalization belongs to the committed batch too. Persisting one
         // merged marker transaction per historical revision would restore
         // linear fsync overhead after the shared document transaction.
-        let mut field_cids: Vec<Cid> = pending_field_block_finalizations
-            .into_inner()
-            .unwrap()
-            .into_iter()
-            .flat_map(|finalization| finalization.cids)
-            .collect();
+        let mut field_cids: Vec<Cid> = Vec::new();
+        while let Some(finalization) = pending_field_block_finalizations.pop() {
+            field_cids.extend(finalization.cids);
+        }
         field_cids.sort_unstable();
         field_cids.dedup();
         self.best_effort_finalize_linked_field_blocks(&field_cids)
@@ -285,8 +270,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
 
         // Emit all collected events
         if let Some(bus) = self.db.event_bus() {
-            let events = pending_events.into_inner().unwrap();
-            bus.publish_batch(events.into_iter().map(|event| event.message).collect());
+            let mut events = Vec::with_capacity(pending_events.len());
+            while let Some(event) = pending_events.pop() {
+                events.push(event.message);
+            }
+            bus.publish_batch(events);
         }
 
         Ok(results)
@@ -304,11 +292,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         cid: &Cid,
         block_data: &[u8],
         metadata: &BlockMetadata<'_>,
-        batch_merged: &std::sync::Mutex<RapidHashSet<Cid>>,
-        batch_merged_collections: &std::sync::Mutex<RapidHashSet<Cid>>,
-        pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
-        pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
-        pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
+        batch_merged: &CidSet,
+        batch_merged_collections: &CidSet,
+        pending_events: &SegQueue<PendingMergeEvent>,
+        pending_post_commit_actions: &SegQueue<PendingPostCommitAction>,
+        pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
     ) -> Result<MergeOutcome, MergeError> {
         // Decode the block from DAG-CBOR
         let block =
@@ -502,25 +490,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 match result {
                     Ok(r) if r.applied => {
                         pending_field_block_finalizations
-                            .lock()
-                            .unwrap_or_else(|e| {
-                                tracing::warn!(
-                                    "pending_field_block_finalizations lock poisoned, recovering"
-                                );
-                                e.into_inner()
-                            })
                             .push(PendingFieldBlockFinalization { cids: vec![*cid] });
                         Ok(MergeOutcome::Merged)
                     }
                     Ok(_) => {
                         pending_field_block_finalizations
-                            .lock()
-                            .unwrap_or_else(|e| {
-                                tracing::warn!(
-                                    "pending_field_block_finalizations lock poisoned, recovering"
-                                );
-                                e.into_inner()
-                            })
                             .push(PendingFieldBlockFinalization { cids: vec![*cid] });
                         Ok(MergeOutcome::terminal_skip("rejected by CRDT"))
                     }

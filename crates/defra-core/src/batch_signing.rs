@@ -5,10 +5,12 @@
 //! used to compute a Merkle root which is then signed as a single batch.
 
 use std::cell::RefCell;
-use std::sync::Mutex;
+use std::sync::{Arc, OnceLock};
 
 use cid::Cid;
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+use rapidhash::fast::RandomState;
 use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
@@ -63,33 +65,34 @@ pub fn compute_merkle_root(cids: &[Cid]) -> Option<[u8; 32]> {
 // Global batch collector  (same pattern as IDENTITY_STORE in signing.rs)
 // ---------------------------------------------------------------------------
 
-static BATCH_COLLECTORS: std::sync::OnceLock<Mutex<RapidHashMap<String, Vec<Cid>>>> =
-    std::sync::OnceLock::new();
+static BATCH_COLLECTORS: OnceLock<HopscotchMap<String, Arc<SegQueue<Cid>>, RandomState>> =
+    OnceLock::new();
 
-fn collectors() -> &'static Mutex<RapidHashMap<String, Vec<Cid>>> {
-    BATCH_COLLECTORS.get_or_init(|| Mutex::new(RapidHashMap::new()))
+fn collectors() -> &'static HopscotchMap<String, Arc<SegQueue<Cid>>, RandomState> {
+    BATCH_COLLECTORS.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()))
 }
 
 /// Start (or reset) a batch collection session for `session_key`.
 pub fn batch_start(session_key: &str) {
-    if let Ok(mut map) = collectors().lock() {
-        map.insert(session_key.to_string(), Vec::new());
-    }
+    collectors().insert(session_key.to_string(), Arc::new(SegQueue::new()));
 }
 
 /// Append a CID to the session identified by `session_key`.
 /// No-op if the session does not exist.
 pub fn batch_collect_cid(session_key: &str, cid: Cid) {
-    if let Ok(mut map) = collectors().lock() {
-        if let Some(vec) = map.get_mut(session_key) {
-            vec.push(cid);
-        }
+    if let Some(queue) = collectors().get(session_key) {
+        queue.push(cid);
     }
 }
 
 /// Remove and return all collected CIDs for `session_key`.
 pub fn batch_take_cids(session_key: &str) -> Option<Vec<Cid>> {
-    collectors().lock().ok()?.remove(session_key)
+    let queue = collectors().remove(session_key)?;
+    let mut cids = Vec::with_capacity(queue.len());
+    while let Some(cid) = queue.pop() {
+        cids.push(cid);
+    }
+    Some(cids)
 }
 
 // ---------------------------------------------------------------------------

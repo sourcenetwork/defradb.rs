@@ -100,7 +100,7 @@ pub unsafe extern "C" fn exec_request_with_signing(
         // Matches Go's behavior: if signing is enabled and no explicit identity,
         // fall back to node identity for block signing.
         let (node_did, node_signing_enabled) = NODES
-            .get(node_ptr, |state| (state.node_identity_did.clone(), state.signing_enabled))
+            .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
             .unwrap_or((None, false));
         let signing_enabled = match signing_override {
             -1 => node_signing_enabled,
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn exec_request_with_signing(
             let sub_variables = subscription_variables.clone();
 
             // Create result channel for buffering processed subscription results
-            let (result_tx, result_rx) = tokio::sync::mpsc::channel::<String>(256);
+            let (result_tx, result_rx) = kovan_channel::bounded::<String>(256);
 
             // Capture signing config and DAC bypass before spawning.
             // The thread-locals were set on this thread (lines 63-116) but the
@@ -247,9 +247,7 @@ pub unsafe extern "C" fn exec_request_with_signing(
                         }
 
                         if let Ok(json) = serde_json::to_string(&response) {
-                            if result_tx.send(json).await.is_err() {
-                                break; // Receiver dropped
-                            }
+                            result_tx.send_async(json).await;
                         }
                     }
                 }

@@ -53,9 +53,8 @@ impl<S: Store> P2PHost<S> {
         reply: PushLogReply,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_response(peer_id, reply).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendTwoStreamResponse command response dropped - caller cancelled");
@@ -69,27 +68,18 @@ impl<S: Store> P2PHost<S> {
         request: PushLogRequest,
         response: tokio::sync::oneshot::Sender<Result<PushLogReply>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut handler = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            // Phase 1: Fork a stream control and send the request.
-            let (message_id, rx) = {
-                // Clone the libp2p-stream control before opening the stream.
-                // The pending-response map remains shared, while a stalled
-                // peer cannot hold the handler mutex and serialize unrelated
-                // healthy peers behind its dial timeout.
-                let mut h = handler.lock().await.clone();
-                match h.start_request(peer_id, request).await {
-                    Ok(pair) => pair,
-                    Err(e) => {
-                        if response.send(Err(e)).is_err() {
-                            debug!(peer_id = %peer_id, "SendTwoStreamRequest command response dropped - caller cancelled");
-                        }
-                        return;
+            let (message_id, rx) = match handler.start_request(peer_id, request).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    if response.send(Err(e)).is_err() {
+                        debug!(peer_id = %peer_id, "SendTwoStreamRequest command response dropped - caller cancelled");
                     }
+                    return;
                 }
-            }; // Handler lock released here — response handler can now route replies.
+            };
 
-            // Phase 2: Wait for response WITHOUT holding the handler lock.
             let result = match tokio::time::timeout(
                 std::time::Duration::from_secs(30),
                 rx,
@@ -98,13 +88,13 @@ impl<S: Store> P2PHost<S> {
             {
                 Ok(Ok(reply)) => Ok(reply),
                 Ok(Err(_)) => {
-                    handler.lock().await.cleanup_pending(peer_id, &message_id);
+                    handler.cleanup_pending(peer_id, &message_id);
                     Err(crate::error::Error::Transport(
                         "response channel closed".into(),
                     ))
                 }
                 Err(_) => {
-                    handler.lock().await.cleanup_pending(peer_id, &message_id);
+                    handler.cleanup_pending(peer_id, &message_id);
                     Err(crate::error::Error::Transport(
                         "timeout waiting for response".into(),
                     ))
@@ -122,9 +112,8 @@ impl<S: Store> P2PHost<S> {
         reply: DocSyncReply,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_doc_sync_response(peer_id, reply).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendDocSyncResponse command response dropped - caller cancelled");
@@ -138,9 +127,8 @@ impl<S: Store> P2PHost<S> {
         request: DocSyncRequest,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             // Send the request - response will arrive asynchronously via TwoStreamEvent::DocSyncReply
             let result = h.send_doc_sync_request_fire_and_forget(peer_id, request).await;
             if response.send(result).is_err() {
@@ -155,9 +143,8 @@ impl<S: Store> P2PHost<S> {
         reply: BranchableSyncReply,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_branchable_sync_response(peer_id, reply).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendBranchableSyncResponse command response dropped - caller cancelled");
@@ -171,9 +158,8 @@ impl<S: Store> P2PHost<S> {
         request: BranchableSyncRequest,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h
                 .send_branchable_sync_request_fire_and_forget(peer_id, request)
                 .await;
@@ -189,9 +175,8 @@ impl<S: Store> P2PHost<S> {
         request: PushSEArtifactsRequest,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_se_artifacts_fire_and_forget(peer_id, request).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendSEArtifacts command response dropped - caller cancelled");
@@ -205,9 +190,8 @@ impl<S: Store> P2PHost<S> {
         reply: PushSEArtifactsReply,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_se_artifacts_response(peer_id, reply).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendSEArtifactsResponse command response dropped - caller cancelled");
@@ -221,9 +205,8 @@ impl<S: Store> P2PHost<S> {
         request: QuerySEArtifactsRequest,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h
                 .send_se_query_request_fire_and_forget(peer_id, request)
                 .await;
@@ -239,9 +222,8 @@ impl<S: Store> P2PHost<S> {
         reply: QuerySEArtifactsReply,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_se_query_response(peer_id, reply).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendSEQueryResponse command response dropped - caller cancelled");
@@ -255,9 +237,8 @@ impl<S: Store> P2PHost<S> {
         request: ManageRequest,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h
                 .send_manage_request_fire_and_forget(peer_id, request)
                 .await;
@@ -273,9 +254,8 @@ impl<S: Store> P2PHost<S> {
         reply: ManageReply,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_manage_response(peer_id, reply).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendManageResponse command response dropped - caller cancelled");
@@ -289,9 +269,8 @@ impl<S: Store> P2PHost<S> {
         request: ManageQueryRequest,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h
                 .send_manage_query_request_fire_and_forget(peer_id, request)
                 .await;
@@ -307,9 +286,8 @@ impl<S: Store> P2PHost<S> {
         reply: ManageQueryReply,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_manage_query_response(peer_id, reply).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendManageQueryResponse command response dropped - caller cancelled");
@@ -323,9 +301,8 @@ impl<S: Store> P2PHost<S> {
         root_cid: Cid,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_car_request(peer_id, root_cid).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendCarRequest command response dropped");
@@ -339,9 +316,8 @@ impl<S: Store> P2PHost<S> {
         car_data: Vec<u8>,
         response: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let handler = self.two_stream_handler.clone();
+        let mut h = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
-            let mut h = handler.lock().await.clone();
             let result = h.send_car_response(peer_id, car_data).await;
             if response.send(result).is_err() {
                 debug!(peer_id = %peer_id, "SendCarResponse command response dropped");
@@ -356,14 +332,11 @@ impl<S: Store> P2PHost<S> {
     ) {
         let local_peer_id = self.swarm.local_peer_id().to_string();
         let keypair = self.keypair.clone();
-        let handler = self.two_stream_handler.clone();
+        let mut handler = self.two_stream_handler.clone();
         self.spawned_tasks.spawn(async move {
             let mut request = IdentityRequest::new(local_peer_id.clone());
             let result = match crate::signing::sign_message(&keypair, &mut request) {
-                Ok(()) => {
-                    let mut h = handler.lock().await.clone();
-                    h.send_identity_request(peer_id, request).await
-                }
+                Ok(()) => handler.send_identity_request(peer_id, request).await,
                 Err(error) => Err(crate::error::Error::Transport(format!(
                     "failed to sign identity request: {error}"
                 ))),

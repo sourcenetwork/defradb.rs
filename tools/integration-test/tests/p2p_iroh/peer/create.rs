@@ -474,8 +474,8 @@ async fn create_with_collection_and_subscription() {
     let api_url1 = cluster.api_url(1).to_string();
     let sub_url = format!("{}/api/v0/graphql", api_url1);
     let sub_body = serde_json::json!({ "query": "subscription { Users { _docID name age } }" });
-    let sub_events: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sub_events: std::sync::Arc<kovan::Atom<Vec<serde_json::Value>>> =
+        std::sync::Arc::new(kovan::Atom::new(Vec::new()));
     let sub_events_clone = sub_events.clone();
 
     let sub_handle = tokio::spawn(async move {
@@ -513,7 +513,11 @@ async fn create_with_collection_and_subscription() {
                 }
                 if event_type == "next" {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data) {
-                        sub_events_clone.lock().unwrap().push(val);
+                        sub_events_clone.rcu(|items| {
+                            let mut next = items.clone();
+                            next.push(val.clone());
+                            next
+                        });
                     }
                 }
             }
@@ -553,7 +557,7 @@ async fn create_with_collection_and_subscription() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     sub_handle.abort();
 
-    let collected = sub_events.lock().unwrap();
+    let collected = sub_events.load_clone();
     assert!(
         !collected.is_empty(),
         "expected at least 1 subscription event for replicated doc on node1, got 0"
@@ -569,6 +573,6 @@ async fn create_with_collection_and_subscription() {
     assert!(
         has_john,
         "subscription event should contain John, got: {:?}",
-        *collected
+        collected
     );
 }

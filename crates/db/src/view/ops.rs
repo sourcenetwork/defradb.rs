@@ -399,15 +399,13 @@ impl<S: Store> crate::database::DB<S> {
 
     /// Get all active collections as CollectionVersion objects (internal helper).
     pub(crate) fn get_all_active_collections_internal(&self) -> Result<Vec<CollectionVersion>> {
-        let cache = self
-            .collections
-            .read()
-            .map_err(|_| Error::Other("failed to acquire collections lock".to_string()))?;
-        Ok(cache
-            .values()
-            .map(|collection| collection.schema())
-            .filter(|schema| schema.is_active)
-            .cloned()
-            .collect())
+        Ok(self.collections.peek(|cache| {
+            cache
+                .values()
+                .map(|collection| collection.schema())
+                .filter(|schema| schema.is_active)
+                .cloned()
+                .collect()
+        }))
     }
 }

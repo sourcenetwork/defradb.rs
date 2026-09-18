@@ -11,14 +11,12 @@ use crate::txn::DbTxn;
 
 impl<S: Store> DB<S> {
     fn collection_lock(&self, collection_id: &str) -> Result<Arc<RwLock<()>>> {
-        let mut locks = self
+        if let Some(lock) = self.collection_locks.get(collection_id) {
+            return Ok(lock);
+        }
+        Ok(self
             .collection_locks
-            .lock()
-            .map_err(|_| Error::LockPoisoned("collection lock map poisoned".into()))?;
-        Ok(locks
-            .entry(collection_id.to_string())
-            .or_insert_with(|| Arc::new(RwLock::new(())))
-            .clone())
+            .get_or_insert(collection_id.to_string(), Arc::new(RwLock::new(()))))
     }
 
     pub(crate) async fn collection_read_guard(
@@ -40,15 +38,12 @@ impl<S: Store> DB<S> {
         &self,
         name: &str,
     ) -> Result<Option<RwLockReadGuardArc<()>>> {
-        let collection_id = {
-            let cache = self
-                .collections
-                .read()
-                .map_err(|_| Error::LockPoisoned("collection cache lock poisoned".into()))?;
-            match cache.get(name) {
-                Some(collection) => collection.collection_id().to_string(),
-                None => return Ok(None),
-            }
+        let collection_id = match self
+            .collections
+            .peek(|cache| cache.get(name).map(|c| c.collection_id().to_string()))
+        {
+            Some(collection_id) => collection_id,
+            None => return Ok(None),
         };
         Ok(Some(self.collection_read_guard(&collection_id).await?))
     }

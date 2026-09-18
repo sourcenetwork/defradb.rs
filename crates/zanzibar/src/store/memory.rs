@@ -1,7 +1,8 @@
 use async_trait::async_trait;
-use parking_lot::RwLock;
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::did::Did;
 
@@ -9,17 +10,19 @@ use super::traits::ZanzibarStore;
 use crate::error::Result;
 use crate::types::{ObjectRef, Policy, Relationship, Subject};
 
+type RelationshipMap = HopscotchMap<String, Relationship, RandomState>;
+
 pub struct MemoryZanzibarStore {
-    policies: RwLock<RapidHashMap<String, Policy>>,
-    relationships: RwLock<RapidHashMap<String, RapidHashMap<String, Relationship>>>,
+    policies: HopscotchMap<String, Policy, RandomState>,
+    relationships: HopscotchMap<String, Arc<RelationshipMap>, RandomState>,
     policy_counter: AtomicU64,
 }
 
 impl MemoryZanzibarStore {
     pub fn new() -> Self {
         Self {
-            policies: RwLock::new(RapidHashMap::new()),
-            relationships: RwLock::new(RapidHashMap::new()),
+            policies: HopscotchMap::with_hasher(RandomState::default()),
+            relationships: HopscotchMap::with_hasher(RandomState::default()),
             policy_counter: AtomicU64::new(0),
         }
     }
@@ -35,14 +38,12 @@ impl Default for MemoryZanzibarStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl ZanzibarStore for MemoryZanzibarStore {
     async fn store_policy(&self, policy: &Policy) -> Result<()> {
-        self.policies
-            .write()
-            .insert(policy.id.clone(), policy.clone());
+        self.policies.insert(policy.id.clone(), policy.clone());
         Ok(())
     }
 
     async fn get_policy(&self, policy_id: &str) -> Result<Option<Policy>> {
-        Ok(self.policies.read().get(policy_id).cloned())
+        Ok(self.policies.get(policy_id))
     }
 
     async fn next_policy_counter(&self) -> Result<u64> {
@@ -50,31 +51,30 @@ impl ZanzibarStore for MemoryZanzibarStore {
     }
 
     async fn list_policies(&self) -> Result<Vec<Policy>> {
-        Ok(self.policies.read().values().cloned().collect())
+        Ok(self.policies.values().collect())
     }
 
     async fn delete_policy(&self, policy_id: &str) -> Result<bool> {
-        let removed = self.policies.write().remove(policy_id).is_some();
+        let removed = self.policies.remove(policy_id).is_some();
         if removed {
-            self.relationships.write().remove(policy_id);
+            self.relationships.remove(policy_id);
         }
         Ok(removed)
     }
 
     async fn store_relationship(&self, policy_id: &str, rel: &Relationship) -> Result<()> {
         let key = rel.storage_key();
-        self.relationships
-            .write()
-            .entry(policy_id.to_string())
-            .or_default()
-            .insert(key, rel.clone());
+        let rels = self.relationships.get_or_insert(
+            policy_id.to_string(),
+            Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+        );
+        rels.insert(key, rel.clone());
         Ok(())
     }
 
     async fn delete_relationship(&self, policy_id: &str, rel: &Relationship) -> Result<bool> {
         let key = rel.storage_key();
-        let mut guard = self.relationships.write();
-        if let Some(rels) = guard.get_mut(policy_id) {
+        if let Some(rels) = self.relationships.get(policy_id) {
             return Ok(rels.remove(&key).is_some());
         }
         Ok(false)
@@ -91,8 +91,7 @@ impl ZanzibarStore for MemoryZanzibarStore {
         let rel = Relationship::new(resource, object_id, relation, subject.clone());
         let key = rel.storage_key();
 
-        let guard = self.relationships.read();
-        if let Some(rels) = guard.get(policy_id) {
+        if let Some(rels) = self.relationships.get(policy_id) {
             return Ok(rels.contains_key(&key));
         }
         Ok(false)
@@ -112,8 +111,7 @@ impl ZanzibarStore for MemoryZanzibarStore {
         let wildcard = Relationship::new(resource, object_id, relation, Subject::Wildcard);
         let wildcard_key = wildcard.storage_key();
 
-        let guard = self.relationships.read();
-        if let Some(rels) = guard.get(policy_id) {
+        if let Some(rels) = self.relationships.get(policy_id) {
             if rels.contains_key(&direct_key) || rels.contains_key(&wildcard_key) {
                 return Ok(true);
             }
@@ -137,8 +135,7 @@ impl ZanzibarStore for MemoryZanzibarStore {
     ) -> Result<Vec<Subject>> {
         let prefix = Relationship::relation_prefix(resource, object_id, relation);
 
-        let guard = self.relationships.read();
-        if let Some(rels) = guard.get(policy_id) {
+        if let Some(rels) = self.relationships.get(policy_id) {
             let subjects: Vec<_> = rels
                 .iter()
                 .filter(|(k, _)| k.starts_with(&prefix))
@@ -158,8 +155,7 @@ impl ZanzibarStore for MemoryZanzibarStore {
     ) -> Result<Vec<ObjectRef>> {
         let prefix = Relationship::relation_prefix(resource, object_id, relation);
 
-        let guard = self.relationships.read();
-        if let Some(rels) = guard.get(policy_id) {
+        if let Some(rels) = self.relationships.get(policy_id) {
             let targets: Vec<_> = rels
                 .iter()
                 .filter(|(k, _)| k.starts_with(&prefix))
@@ -185,9 +181,11 @@ impl ZanzibarStore for MemoryZanzibarStore {
     ) -> Result<()> {
         let prefix = Relationship::object_prefix(resource, object_id);
 
-        let mut guard = self.relationships.write();
-        if let Some(rels) = guard.get_mut(policy_id) {
-            rels.retain(|k, _| !k.starts_with(&prefix));
+        if let Some(rels) = self.relationships.get(policy_id) {
+            let dead: Vec<String> = rels.keys().filter(|k| k.starts_with(&prefix)).collect();
+            for key in &dead {
+                rels.remove(key);
+            }
         }
         Ok(())
     }

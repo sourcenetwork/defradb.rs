@@ -67,7 +67,7 @@ async fn transform_reaching_the_view_layer(body: &str) -> (StatusCode, Option<Op
         .json(body)
         .send_to(router_with(Arc::clone(&view)))
         .await;
-    let seen = view.add_view_transform.lock().unwrap().clone();
+    let seen = view.add_view_transform.load().map(|t| (*t).clone());
     (status, seen)
 }
 
@@ -124,7 +124,7 @@ async fn a_view_without_a_query_or_sdl_is_rejected() {
 async fn refresh_options_for(call: Call) -> (StatusCode, Option<db::CollectionSelector>) {
     let view = Arc::new(RecordingViewOps::default());
     let (status, _) = call.send_to(router_with(Arc::clone(&view))).await;
-    let seen = view.refresh.lock().unwrap().clone();
+    let seen = view.refresh.load().map(|r| (*r).clone());
     (status, seen)
 }
 

@@ -297,7 +297,7 @@ mod tests {
     struct RecordingAuthorizer {
         allow_any: AtomicBool,
         allow_collection: AtomicBool,
-        seen_collection: parking_lot::Mutex<Option<String>>,
+        seen_collection: kovan::AtomOption<String>,
     }
 
     impl RecordingAuthorizer {
@@ -305,7 +305,7 @@ mod tests {
             Self {
                 allow_any: AtomicBool::new(allow_any),
                 allow_collection: AtomicBool::new(allow_collection),
-                seen_collection: parking_lot::Mutex::new(None),
+                seen_collection: kovan::AtomOption::none(),
             }
         }
     }
@@ -325,7 +325,7 @@ mod tests {
             _peer_id_str: &str,
             collection_id: &str,
         ) -> bool {
-            *self.seen_collection.lock() = Some(collection_id.to_string());
+            self.seen_collection.store_some(collection_id.to_string());
             self.allow_collection.load(Ordering::SeqCst)
         }
     }
@@ -658,8 +658,9 @@ mod tests {
             envelope.err, "",
             "authorizer::peer_authorized_for_collection=true must let branchable-sync through"
         );
+        let seen_collection = authorizer.seen_collection.load().as_deref().cloned();
         assert_eq!(
-            authorizer.seen_collection.lock().as_deref(),
+            seen_collection.as_deref(),
             Some("collectionA"),
             "handler must forward the collection id to the authorizer"
         );

@@ -40,7 +40,7 @@ pub use mutation::{
     UpsertNode,
 };
 pub use orderby::OrderByNode;
-pub use orphan::{OrphanNode, SharedYieldedIds};
+pub use orphan::{new_shared_yielded_ids, OrphanNode, SharedYieldedIds};
 pub use permission_filter::PermissionFilterNode;
 pub use scan::ScanNode;
 pub use se_filter::{SEFilterCondition, SEFilterNode};

@@ -1,5 +1,5 @@
-use rapidhash::{HashMapExt, RapidHashMap};
-use std::sync::Mutex;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::time::{Duration, Instant};
 
 #[derive(Clone)]
@@ -17,14 +17,14 @@ pub(crate) struct CachedPolicy {
 /// never silently denies or allows access incorrectly.
 pub(crate) struct PolicyCache {
     ttl: Duration,
-    entries: Mutex<RapidHashMap<String, CachedPolicy>>,
+    entries: HopscotchMap<String, CachedPolicy, RandomState>,
 }
 
 impl PolicyCache {
     pub(crate) fn new(ttl: Duration) -> Self {
         Self {
             ttl,
-            entries: Mutex::new(RapidHashMap::new()),
+            entries: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
@@ -33,26 +33,23 @@ impl PolicyCache {
     /// Returns `None` on cache miss or expiry — callers must fall back to
     /// an on-chain query in that case.
     pub(crate) fn get(&self, policy_id: &str) -> Option<CachedPolicy> {
-        let entries = self.entries.lock().ok()?;
-        let entry = entries.get(policy_id)?;
+        let entry = self.entries.get(policy_id)?;
         if entry.cached_at.elapsed() > self.ttl {
             None
         } else {
-            Some(entry.clone())
+            Some(entry)
         }
     }
 
     /// Insert or refresh a policy entry.
     pub(crate) fn insert(&self, policy_id: &str, name: String) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.insert(
-                policy_id.to_string(),
-                CachedPolicy {
-                    id: policy_id.to_string(),
-                    name,
-                    cached_at: Instant::now(),
-                },
-            );
-        }
+        self.entries.insert(
+            policy_id.to_string(),
+            CachedPolicy {
+                id: policy_id.to_string(),
+                name,
+                cached_at: Instant::now(),
+            },
+        );
     }
 }

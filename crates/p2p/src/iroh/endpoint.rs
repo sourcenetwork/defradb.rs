@@ -5,12 +5,15 @@
 //! - Gossip events from iroh-gossip
 //! - Commands from the `IrohTransport` facade
 
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::fast::RandomState;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::Arc;
 
 use iroh::{Endpoint, EndpointId};
 use iroh_gossip::net::Gossip;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use n0_future::task::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
@@ -19,7 +22,7 @@ use defra_core::thread_bounds::MaybeSend;
 
 use crate::bitswap::ReplicatorRegistry;
 use crate::message::PushLogReply;
-use crate::tracked_task::{TrackedAbort, TrackedTaskSet};
+use crate::tracked_task::TrackedAbort;
 use crate::transport::{PeerAddr, PeerId, TransportEvent};
 
 use super::command::IrohCommand;
@@ -31,8 +34,9 @@ use super::endpoint_config::{
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
 use super::endpoint_streams::handle_incoming;
 use super::gossip_heal::{self, GossipHealer};
-use super::peer_map::{parse_endpoint_id, PeerMap};
+use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
+use super::task_registry::TaskRegistry;
 
 const MAX_COMMAND_BATCH: usize = 16;
 
@@ -46,7 +50,7 @@ mod task_shutdown_tests;
 pub(super) struct EndpointResources {
     pub(super) endpoint: Endpoint,
     pub(super) gossip: Gossip,
-    pub(super) peer_map: Arc<parking_lot::Mutex<PeerMap>>,
+    pub(super) peer_map: Arc<SharedPeerMap>,
     pub(super) connection_cache: ConnectionCache,
     pub(super) healer: Arc<GossipHealer>,
     pub(super) spawned_tasks: SpawnedTasks,
@@ -58,34 +62,32 @@ pub(super) struct EndpointResources {
 pub(super) struct TopicSubscription {
     pub(super) sender: iroh_gossip::api::GossipSender,
     pub(super) reader_task: JoinHandle<()>,
-    pub(super) neighbors: Arc<parking_lot::Mutex<RapidHashSet<EndpointId>>>,
+    pub(super) neighbors: Neighbors,
 }
 
 pub(super) type SubscriptionSenders = Vec<(String, iroh_gossip::api::GossipSender)>;
+pub(super) type Neighbors = Arc<HopscotchMap<EndpointId, (), RandomState>>;
+pub(super) type RawTopics = Arc<HopscotchMap<String, (), RandomState>>;
 
 /// Active block sync task.
 pub(super) struct ActiveSync {
     pub(super) abort_handle: TrackedAbort,
 }
 
-pub(super) type SpawnedTasks = Arc<parking_lot::Mutex<Option<TrackedTaskSet>>>;
-pub(super) type PendingPushLogReplies =
-    Arc<parking_lot::Mutex<RapidHashMap<String, oneshot::Sender<PushLogReply>>>>;
+pub(super) type SpawnedTasks = Arc<TaskRegistry>;
+/// A reply sender parked in a queue so the responder can take ownership of it.
+pub(super) type PushLogReplySlot = Arc<SegQueue<oneshot::Sender<PushLogReply>>>;
+pub(super) type PendingPushLogReplies = Arc<HopscotchMap<String, PushLogReplySlot, RandomState>>;
 
 pub(super) fn spawn_task(
     spawned_tasks: &SpawnedTasks,
     future: impl Future<Output = ()> + MaybeSend + 'static,
 ) -> Option<TrackedAbort> {
-    Some(spawned_tasks.lock().as_mut()?.spawn(future))
+    spawned_tasks.spawn(future)
 }
 
 async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks, readers: Vec<JoinHandle<()>>) {
-    // Closing registration under the spawn lock also covers child tasks
-    // scheduled by work that was already running when shutdown began.
-    let tasks = spawned_tasks
-        .lock()
-        .take()
-        .map_or_else(Vec::new, |mut tasks| tasks.abort_all());
+    let tasks = spawned_tasks.close();
     let task_count = tasks.len() + readers.len();
     for reader in &readers {
         reader.abort();
@@ -187,18 +189,14 @@ async fn run_event_loop(
     replicators: Arc<ReplicatorRegistry>,
 ) {
     let shutdown_started = web_time::Instant::now();
-    let peer_map = Arc::new(parking_lot::Mutex::new(PeerMap::new()));
-    let pending_pushlog_replies = Arc::new(parking_lot::Mutex::new(RapidHashMap::<
-        String,
-        oneshot::Sender<PushLogReply>,
-    >::new()));
+    let peer_map = Arc::new(SharedPeerMap::new());
+    let pending_pushlog_replies: PendingPushLogReplies =
+        Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let connection_cache = new_connection_cache();
     let mut subscriptions: RapidHashMap<String, TopicSubscription> = RapidHashMap::new();
-    let raw_topics: Arc<parking_lot::Mutex<rapidhash::RapidHashSet<String>>> =
-        Arc::new(parking_lot::Mutex::new(rapidhash::RapidHashSet::new()));
+    let raw_topics: RawTopics = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let mut active_syncs: RapidHashMap<u64, ActiveSync> = RapidHashMap::new();
-    let spawned_tasks: SpawnedTasks =
-        Arc::new(parking_lot::Mutex::new(Some(TrackedTaskSet::default())));
+    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
     let mut next_query_id: u64 = 1;
 
     let heal_enabled = gossip_heal_config.enabled();
@@ -371,10 +369,9 @@ pub(super) async fn join_peer_to_subscription_senders(
 
 /// Look up the cached direct socket address for a peer from the peer map.
 pub(super) fn peer_direct_addr(
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: &SharedPeerMap,
     peer_id: &PeerId,
 ) -> Option<std::net::SocketAddr> {
     let id = parse_endpoint_id(peer_id).ok()?;
-    let map = peer_map.lock();
-    map.get(&id).and_then(|info| info.remote_addr)
+    peer_map.remote_addr(&id)
 }

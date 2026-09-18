@@ -1,41 +1,47 @@
-use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use kovan::AtomOption;
+use kovan_queue::seg_queue::SegQueue;
 
 use super::*;
 
-/// Records which relationship-emitting provider method a routing test drove,
-/// plus the structured-subject codec tuple for the EntitySet path.
-#[derive(Default)]
-struct RelationshipCalls {
-    set_relationship: bool,
-    delete_relationship: bool,
-    set_subject: Option<(u8, String, String, String)>,
-    delete_subject: Option<(u8, String, String, String)>,
-}
-
+/// Which relationship-emitting provider method a routing test drove, plus
+/// the structured-subject codec tuple for the EntitySet path. Each field
+/// stands alone: tests only ever read one after its own call completes, so
+/// there is no compound state that needs a single shared guard.
 struct MockProvider {
-    decisions: Mutex<VecDeque<bool>>,
-    created_decision: Mutex<Option<String>>,
-    verify_calls: Mutex<usize>,
-    rel_calls: Mutex<RelationshipCalls>,
+    decisions: SegQueue<bool>,
+    created_decision: AtomOption<String>,
+    verify_calls: AtomicUsize,
+    set_relationship_called: AtomicBool,
+    delete_relationship_called: AtomicBool,
+    set_subject_call: AtomOption<(u8, String, String, String)>,
+    delete_subject_call: AtomOption<(u8, String, String, String)>,
 }
 
 impl MockProvider {
     fn new(decisions: Vec<bool>) -> Self {
+        let queue = SegQueue::new();
+        for decision in decisions {
+            queue.push(decision);
+        }
         Self {
-            decisions: Mutex::new(decisions.into()),
-            created_decision: Mutex::new(None),
-            verify_calls: Mutex::new(0),
-            rel_calls: Mutex::new(RelationshipCalls::default()),
+            decisions: queue,
+            created_decision: AtomOption::none(),
+            verify_calls: AtomicUsize::new(0),
+            set_relationship_called: AtomicBool::new(false),
+            delete_relationship_called: AtomicBool::new(false),
+            set_subject_call: AtomOption::none(),
+            delete_subject_call: AtomOption::none(),
         }
     }
 
     fn verify_calls(&self) -> usize {
-        *self.verify_calls.lock().unwrap()
+        self.verify_calls.load(Ordering::Relaxed)
     }
 
     fn created_decision(&self) -> Option<String> {
-        self.created_decision.lock().unwrap().clone()
+        self.created_decision.load().map(|g| (*g).clone())
     }
 }
 
@@ -89,7 +95,7 @@ impl SourceHubProvider for MockProvider {
         _relation: &str,
         _subject: &SubjectRef,
     ) -> std::result::Result<bool, ProviderError> {
-        self.rel_calls.lock().unwrap().set_relationship = true;
+        self.set_relationship_called.store(true, Ordering::Relaxed);
         Ok(true)
     }
 
@@ -102,7 +108,8 @@ impl SourceHubProvider for MockProvider {
         _relation: &str,
         _subject: &SubjectRef,
     ) -> std::result::Result<bool, ProviderError> {
-        self.rel_calls.lock().unwrap().delete_relationship = true;
+        self.delete_relationship_called
+            .store(true, Ordering::Relaxed);
         Ok(true)
     }
 
@@ -117,7 +124,7 @@ impl SourceHubProvider for MockProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> std::result::Result<bool, ProviderError> {
-        self.rel_calls.lock().unwrap().set_subject = Some((
+        self.set_subject_call.store_some((
             kind,
             subject_resource.to_string(),
             subject_object_id.to_string(),
@@ -137,7 +144,7 @@ impl SourceHubProvider for MockProvider {
         subject_object_id: &str,
         subject_relation: &str,
     ) -> std::result::Result<bool, ProviderError> {
-        self.rel_calls.lock().unwrap().delete_subject = Some((
+        self.delete_subject_call.store_some((
             kind,
             subject_resource.to_string(),
             subject_object_id.to_string(),
@@ -173,13 +180,8 @@ impl SourceHubProvider for MockProvider {
         _permission: &str,
         _actor_did: &str,
     ) -> std::result::Result<bool, ProviderError> {
-        *self.verify_calls.lock().unwrap() += 1;
-        let decision = self
-            .decisions
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("mock verify_access decision");
+        self.verify_calls.fetch_add(1, Ordering::Relaxed);
+        let decision = self.decisions.pop().expect("mock verify_access decision");
         Ok(decision)
     }
 
@@ -192,7 +194,7 @@ impl SourceHubProvider for MockProvider {
         actor_did: &str,
     ) -> std::result::Result<Option<String>, ProviderError> {
         let decision_id = format!("decision-for-{actor_did}");
-        *self.created_decision.lock().unwrap() = Some(decision_id.clone());
+        self.created_decision.store_some(decision_id.clone());
         Ok(Some(decision_id))
     }
 }
@@ -305,10 +307,12 @@ async fn add_relationship_routes_actor_to_set_relationship() {
         .expect("actor relationship should route to set_relationship");
     assert!(result);
 
-    let calls = provider.rel_calls.lock().unwrap();
-    assert!(calls.set_relationship, "actor must hit set_relationship");
     assert!(
-        calls.set_subject.is_none(),
+        provider.set_relationship_called.load(Ordering::Relaxed),
+        "actor must hit set_relationship"
+    );
+    assert!(
+        provider.set_subject_call.is_none(),
         "actor must not hit subject path"
     );
 }
@@ -333,13 +337,12 @@ async fn add_relationship_routes_object_edge_to_subject_kind_2() {
         .expect("object edge should route to set_relationship_subject");
     assert!(result);
 
-    let calls = provider.rel_calls.lock().unwrap();
     assert!(
-        !calls.set_relationship,
+        !provider.set_relationship_called.load(Ordering::Relaxed),
         "object edge must not hit actor path"
     );
     assert_eq!(
-        calls.set_subject,
+        provider.set_subject_call.load().map(|g| (*g).clone()),
         Some((2, "directory".to_string(), "d1".to_string(), String::new()))
     );
 }
@@ -362,9 +365,8 @@ async fn add_relationship_routes_userset_to_subject_kind_3() {
     .await
     .expect("userset should route to set_relationship_subject");
 
-    let calls = provider.rel_calls.lock().unwrap();
     assert_eq!(
-        calls.set_subject,
+        provider.set_subject_call.load().map(|g| (*g).clone()),
         Some((
             3,
             "directory".to_string(),
@@ -392,10 +394,9 @@ async fn delete_relationship_routes_object_edge_to_subject_kind_2() {
     .await
     .expect("object edge delete should route to delete_relationship_subject");
 
-    let calls = provider.rel_calls.lock().unwrap();
-    assert!(!calls.delete_relationship);
+    assert!(!provider.delete_relationship_called.load(Ordering::Relaxed));
     assert_eq!(
-        calls.delete_subject,
+        provider.delete_subject_call.load().map(|g| (*g).clone()),
         Some((2, "directory".to_string(), "d1".to_string(), String::new()))
     );
 }

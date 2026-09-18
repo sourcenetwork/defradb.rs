@@ -7,9 +7,10 @@
 use std::cell::RefCell;
 use std::fmt;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use zeroize::Zeroize;
 
 /// Remote signing delegate (e.g. Orbis, Secure Enclave host callbacks).
@@ -216,26 +217,21 @@ pub fn get_signing_config() -> Option<SigningConfig> {
 /// Global identity store mapping DID → SigningConfig.
 /// When create_identity() generates a keypair, we store it here so that
 /// exec_request() can look up the signing key from just a DID string.
-static IDENTITY_STORE: std::sync::OnceLock<Mutex<RapidHashMap<String, SigningConfig>>> =
+static IDENTITY_STORE: std::sync::OnceLock<HopscotchMap<String, SigningConfig, RandomState>> =
     std::sync::OnceLock::new();
 
-fn identity_store() -> &'static Mutex<RapidHashMap<String, SigningConfig>> {
-    IDENTITY_STORE.get_or_init(|| Mutex::new(RapidHashMap::new()))
+fn identity_store() -> &'static HopscotchMap<String, SigningConfig, RandomState> {
+    IDENTITY_STORE.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()))
 }
 
 /// Store a signing config for a DID.
 pub fn store_identity(did: &str, config: SigningConfig) {
-    if let Ok(mut store) = identity_store().lock() {
-        store.insert(did.to_string(), config);
-    }
+    identity_store().insert(did.to_string(), config);
 }
 
 /// Retrieve stored signing config for a DID.
 pub fn get_identity(did: &str) -> Option<SigningConfig> {
-    identity_store()
-        .lock()
-        .ok()
-        .and_then(|store| store.get(did).cloned())
+    identity_store().get(did)
 }
 
 /// Find a registered DID backed by a remote signer.
@@ -245,11 +241,9 @@ pub fn get_identity(did: &str) -> Option<SigningConfig> {
 /// should fall back to the remote signer identity rather than a local `--identity`
 /// secp256k1 key, so create mutations still go through the signing gate.
 pub fn find_remote_signer_did() -> Option<String> {
-    identity_store().lock().ok().and_then(|store| {
-        store
-            .iter()
-            .find_map(|(did, config)| config.has_remote_signer().then(|| did.clone()))
-    })
+    identity_store()
+        .iter()
+        .find_map(|(did, config)| config.has_remote_signer().then_some(did))
 }
 
 /// Resolve signing config for a request identity when signing is enabled.
@@ -301,9 +295,7 @@ pub fn resolve_signing_config_with_flag(
 
 /// Clear all stored identities (for node cleanup).
 pub fn clear_identity_store() {
-    if let Ok(mut store) = identity_store().lock() {
-        drop(std::mem::take(&mut *store));
-    }
+    identity_store().clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -317,38 +309,35 @@ use std::sync::OnceLock;
 /// `thread_local!` doesn't work here because tokio can migrate async tasks
 /// between OS threads at `.await` points. A global map keyed by DID ensures
 /// the token is available regardless of which thread reads it.
-fn request_token_store() -> &'static Mutex<RapidHashMap<String, String>> {
-    static STORE: OnceLock<Mutex<RapidHashMap<String, String>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(RapidHashMap::new()))
+fn request_token_store() -> &'static HopscotchMap<String, String, RandomState> {
+    static STORE: OnceLock<HopscotchMap<String, String, RandomState>> = OnceLock::new();
+    STORE.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()))
 }
 
 /// Store the raw JWT from the HTTP Authorization header, keyed by the caller's DID.
 ///
 /// When a user authenticates via JWT, the node doesn't have their private key
 /// and can't create new bearer tokens for them. Instead, we pass through the
-/// original JWT — which IS signed by the user's key — to hub.rs/SourceHub
+/// original JWT (which IS signed by the user's key) to hub.rs/SourceHub
 /// for ACP operations like register_object.
 pub fn set_request_bearer_token(did: &str, token: impl Into<String>) {
-    if let Ok(mut store) = request_token_store().lock() {
-        store.insert(did.to_string(), token.into());
-    }
+    request_token_store().insert(did.to_string(), token.into());
 }
 
 /// Get the stored request bearer token for a specific DID.
 pub fn get_request_bearer_token(did: &str) -> Option<String> {
-    request_token_store().lock().ok()?.get(did).cloned()
+    request_token_store().get(did)
 }
 
 /// Remove the stored request bearer token for a specific DID.
 pub fn clear_request_bearer_token(did: &str) {
-    if let Ok(mut store) = request_token_store().lock() {
-        store.remove(did);
-    }
+    request_token_store().remove(did);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     fn make_config(label: &str) -> SigningConfig {
         SigningConfig {

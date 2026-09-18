@@ -240,9 +240,7 @@ impl<S: Store> crate::database::DB<S> {
 
         // Update schema_heads: new collection starts at height=1
         if let Ok(cid) = cid::Cid::try_from(version_id.as_str()) {
-            if let Ok(mut heads) = self.schema_heads.write() {
-                heads.insert(name.clone(), (vec![cid], 1));
-            }
+            self.schema_heads.insert(name.clone(), (vec![cid], 1));
         }
 
         // Add to transaction's cache
@@ -317,11 +315,11 @@ impl<S: Store> crate::database::DB<S> {
         self.unforbid_collection_id(finalized_schema.collection_id.as_str())?;
 
         // Update the process-wide cache after successful commit
-        let mut cache = self.collections.write().map_err(|e| {
-            tracing::error!(error = ?e, collection_name = %name, "Collection cache lock poisoned after create");
-            Error::CacheUpdateFailedAfterCommit(name.clone())
-        })?;
-        cache.insert(name, Collection::new(finalized_schema.clone()));
+        self.collections.rcu(|old| {
+            let mut cache = old.clone();
+            cache.insert(name.clone(), Collection::new(finalized_schema.clone()));
+            cache
+        });
 
         Ok(finalized_schema)
     }
@@ -455,14 +453,13 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Update the process-wide cache after successful commit
-        let mut cache = self.collections.write().map_err(|e| {
-            tracing::error!(error = ?e, "Collection cache lock poisoned after atomic create");
-            Error::CacheUpdateFailedAfterCommit("atomic collections".to_string())
-        })?;
-
-        for schema in &finalized_schemas {
-            cache.insert(schema.name.clone(), Collection::new(schema.clone()));
-        }
+        self.collections.rcu(|old| {
+            let mut cache = old.clone();
+            for schema in &finalized_schemas {
+                cache.insert(schema.name.clone(), Collection::new(schema.clone()));
+            }
+            cache
+        });
 
         Ok(finalized_schemas)
     }

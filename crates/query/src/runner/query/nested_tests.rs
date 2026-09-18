@@ -4,27 +4,49 @@ use async_trait::async_trait;
 use bm25::{Document as Bm25Document, Language, SearchEngineBuilder};
 use document::Document;
 use identity::Did;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
-use std::sync::Mutex;
 
 use super::super::nested_profile::ScopedFulltextProfile;
 use crate::fetcher::FetchByIdsResult;
 use crate::planner::Planner;
 use schema::PolicyDescription;
 
-type ScoreMap = RapidHashMap<(String, String, String), RapidHashMap<String, f64>>;
+type ScoreKey = (String, String, String);
 
-#[derive(Default)]
 struct FullTextTestFetcher {
-    docs: Mutex<RapidHashMap<String, Vec<Document>>>,
-    scores: Mutex<ScoreMap>,
+    docs: HopscotchMap<String, Arc<Atom<Vec<Document>>>, RandomState>,
+    scores: HopscotchMap<ScoreKey, RapidHashMap<String, f64>, RandomState>,
+}
+
+impl Default for FullTextTestFetcher {
+    fn default() -> Self {
+        Self {
+            docs: HopscotchMap::with_hasher(RandomState::default()),
+            scores: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl FullTextTestFetcher {
     fn add_doc(&self, collection: &str, doc: Document) {
-        let mut docs = self.docs.lock().unwrap();
-        docs.entry(collection.to_string()).or_default().push(doc);
+        self.docs
+            .get_or_insert(collection.to_string(), Arc::new(Atom::new(Vec::new())))
+            .rcu(|docs| {
+                let mut docs = docs.clone();
+                docs.push(doc.clone());
+                docs
+            });
+    }
+
+    fn collection_docs(&self, collection: &str) -> Vec<Document> {
+        self.docs
+            .get(collection)
+            .map(|docs| docs.load_clone())
+            .unwrap_or_default()
     }
 
     fn set_scores(
@@ -34,7 +56,7 @@ impl FullTextTestFetcher {
         query: &str,
         scores: RapidHashMap<String, f64>,
     ) {
-        self.scores.lock().unwrap().insert(
+        self.scores.insert(
             (collection.to_string(), field.to_string(), query.to_string()),
             scores,
         );
@@ -62,8 +84,7 @@ impl DocFetcher for FullTextTestFetcher {
         Ok(Box::new(crate::doc_stream::VecStream::new(picked)))
     }
     async fn get_all(&self, collection_name: &str) -> Result<Vec<Document>> {
-        let docs = self.docs.lock().unwrap();
-        Ok(docs.get(collection_name).cloned().unwrap_or_default())
+        Ok(self.collection_docs(collection_name))
     }
 
     /// In-memory mock: there is no storage to stream from.
@@ -83,8 +104,7 @@ impl DocFetcher for FullTextTestFetcher {
         collection_name: &str,
         doc_ids: &[String],
     ) -> Result<FetchByIdsResult> {
-        let docs = self.docs.lock().unwrap();
-        let all = docs.get(collection_name).cloned().unwrap_or_default();
+        let all = self.collection_docs(collection_name);
 
         let mut found = Vec::new();
         let mut missing = Vec::new();
@@ -110,8 +130,7 @@ impl DocFetcher for FullTextTestFetcher {
         field_name: &str,
         value: &str,
     ) -> Result<Vec<Document>> {
-        let docs = self.docs.lock().unwrap();
-        let all = docs.get(collection_name).cloned().unwrap_or_default();
+        let all = self.collection_docs(collection_name);
 
         Ok(all
             .into_iter()
@@ -130,14 +149,13 @@ impl DocFetcher for FullTextTestFetcher {
         field_name: &str,
         query: &str,
     ) -> Result<RapidHashMap<String, f64>> {
-        let scores = self.scores.lock().unwrap();
-        Ok(scores
+        Ok(self
+            .scores
             .get(&(
                 collection_name.to_string(),
                 field_name.to_string(),
                 query.to_string(),
             ))
-            .cloned()
             .unwrap_or_default())
     }
 }

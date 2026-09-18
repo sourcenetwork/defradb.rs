@@ -5,7 +5,8 @@ use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use query::txn::{DeferredAcpMutations, TransactionContext};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use storage::corekv::Store;
 use web_time::Instant;
@@ -31,8 +32,14 @@ pub struct DbTransactionContext<S: Store> {
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
     action_lock: Arc<async_lock::Mutex<()>>,
     created_at: Instant,
-    last_request_seen: Mutex<Instant>,
+    last_request_seen: AtomicU64,
 }
+
+/// `last_request_seen` sentinel for a context a cleanup sweep has claimed. It
+/// couples the claim to the idle clock, so a request arriving mid-sweep either
+/// refreshes the clock before the claim and keeps the transaction, or finds it
+/// claimed and treats it as gone.
+const CLAIMED_FOR_CLEANUP: u64 = u64::MAX;
 
 impl<S: Store> DbTransactionContext<S> {
     /// Create a transaction context. Pass `Some(broadcaster)` to forward
@@ -55,7 +62,7 @@ impl<S: Store> DbTransactionContext<S> {
             broadcaster,
             action_lock: Arc::new(async_lock::Mutex::new(())),
             created_at: now,
-            last_request_seen: Mutex::new(now),
+            last_request_seen: AtomicU64::new(0),
         }
     }
 
@@ -64,30 +71,48 @@ impl<S: Store> DbTransactionContext<S> {
         self.created_at
     }
 
-    /// Mark that a request used this transaction.
-    pub(crate) fn touch(&self) {
-        match self.last_request_seen.lock() {
-            Ok(mut last_request_seen) => {
-                *last_request_seen = Instant::now();
-            }
-            Err(poisoned) => {
-                let mut last_request_seen = poisoned.into_inner();
-                *last_request_seen = Instant::now();
-            }
-        }
+    /// Mark that a request used this transaction. `false` when a cleanup sweep
+    /// has already claimed it, in which case the caller must treat the
+    /// transaction as gone.
+    pub(crate) fn touch(&self) -> bool {
+        let now = self.age_nanos(Instant::now());
+        self.last_request_seen
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |seen| {
+                (seen != CLAIMED_FOR_CLEANUP).then_some(now)
+            })
+            .is_ok()
+    }
+
+    /// Claim this transaction for a cleanup sweep, but only while it is still
+    /// idle for longer than `max_idle_age`.
+    pub(crate) fn try_claim_stale(&self, now: Instant, max_idle_age: Duration) -> bool {
+        let now = self.age_nanos(now);
+        self.last_request_seen
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |seen| {
+                (seen != CLAIMED_FOR_CLEANUP
+                    && Duration::from_nanos(now.saturating_sub(seen)) > max_idle_age)
+                    .then_some(CLAIMED_FOR_CLEANUP)
+            })
+            .is_ok()
     }
 
     /// Get the instant when this transaction last saw a request.
     pub fn last_request_seen(&self) -> Instant {
-        match self.last_request_seen.lock() {
-            Ok(last_request_seen) => *last_request_seen,
-            Err(poisoned) => *poisoned.into_inner(),
+        match self.last_request_seen.load(Ordering::Acquire) {
+            CLAIMED_FOR_CLEANUP => self.created_at,
+            nanos => self.created_at + Duration::from_nanos(nanos),
         }
     }
 
     /// Get how long this transaction has been idle.
     pub fn idle_for(&self, now: Instant) -> Duration {
-        now.duration_since(self.last_request_seen())
+        now.saturating_duration_since(self.last_request_seen())
+    }
+
+    fn age_nanos(&self, now: Instant) -> u64 {
+        u64::try_from(now.saturating_duration_since(self.created_at).as_nanos())
+            .unwrap_or(u64::MAX)
+            .min(CLAIMED_FOR_CLEANUP - 1)
     }
 }
 
@@ -98,6 +123,12 @@ impl<S: Store + 'static> DbTransactionContext<S> {
     /// fetcher operations will return an error.
     pub async fn take_txn(&self) -> Option<DbTxn<S>> {
         self.fetcher.take_txn().await
+    }
+
+    /// Take the underlying transaction without waiting. `None` when it is
+    /// already taken, or another task is holding it.
+    pub(crate) fn try_take_txn(&self) -> Option<DbTxn<S>> {
+        self.fetcher.try_take_txn()
     }
 
     /// Check if the transaction has been consumed (via commit/rollback).

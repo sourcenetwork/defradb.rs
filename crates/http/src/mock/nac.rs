@@ -2,8 +2,12 @@
 
 use async_trait::async_trait;
 use identity::Did;
-use std::sync::{Arc, RwLock};
+use kovan::{Atom, AtomOption};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use std::sync::Arc;
 
+use crate::mock::update_vec;
 use crate::router::{NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission};
 
 /// Mock NAC operations for testing NAC-protected handlers.
@@ -13,13 +17,12 @@ use crate::router::{NacStatus, NacStatusInfo, NodeAcpOperations, NodePermission}
 /// - Owner identity
 /// - Admin identities
 /// - Permission grants
-#[derive(Debug)]
 pub struct MockNodeAcpOperations {
-    status: Arc<RwLock<NacStatus>>,
-    owner: Arc<RwLock<Option<Did>>>,
-    admins: Arc<RwLock<Vec<Did>>>,
+    status: Arc<Atom<NacStatus>>,
+    owner: Arc<AtomOption<Did>>,
+    admins: Arc<HopscotchMap<Did, (), RandomState>>,
     /// Permission grants: (identity, permission) pairs
-    grants: Arc<RwLock<Vec<(Did, NodePermission)>>>,
+    grants: Arc<Atom<Vec<(Did, NodePermission)>>>,
 }
 
 impl Clone for MockNodeAcpOperations {
@@ -43,42 +46,44 @@ impl MockNodeAcpOperations {
     /// Create a new mock NAC with NAC not configured (permissive).
     pub fn new() -> Self {
         Self {
-            status: Arc::new(RwLock::new(NacStatus::NotConfigured)),
-            owner: Arc::new(RwLock::new(None)),
-            admins: Arc::new(RwLock::new(vec![])),
-            grants: Arc::new(RwLock::new(vec![])),
+            status: Arc::new(Atom::new(NacStatus::NotConfigured)),
+            owner: Arc::new(AtomOption::none()),
+            admins: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            grants: Arc::new(Atom::new(vec![])),
         }
     }
 
     /// Create with NAC enabled and the given owner.
     pub fn enabled_with_owner(owner: Did) -> Self {
         Self {
-            status: Arc::new(RwLock::new(NacStatus::Enabled)),
-            owner: Arc::new(RwLock::new(Some(owner))),
-            admins: Arc::new(RwLock::new(vec![])),
-            grants: Arc::new(RwLock::new(vec![])),
+            status: Arc::new(Atom::new(NacStatus::Enabled)),
+            owner: Arc::new(AtomOption::some(owner)),
+            admins: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            grants: Arc::new(Atom::new(vec![])),
         }
     }
 
     /// Create with NAC disabled temporarily.
     pub fn disabled() -> Self {
         Self {
-            status: Arc::new(RwLock::new(NacStatus::DisabledTemporarily)),
-            owner: Arc::new(RwLock::new(None)),
-            admins: Arc::new(RwLock::new(vec![])),
-            grants: Arc::new(RwLock::new(vec![])),
+            status: Arc::new(Atom::new(NacStatus::DisabledTemporarily)),
+            owner: Arc::new(AtomOption::none()),
+            admins: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            grants: Arc::new(Atom::new(vec![])),
         }
     }
 
     /// Add an admin identity.
     pub fn with_admin(self, admin: Did) -> Self {
-        self.admins.write().unwrap().push(admin);
+        self.admins.insert(admin, ());
         self
     }
 
     /// Add a permission grant.
     pub fn with_grant(self, identity: Did, permission: NodePermission) -> Self {
-        self.grants.write().unwrap().push((identity, permission));
+        update_vec(&self.grants, |grants| {
+            grants.push((identity.clone(), permission))
+        });
         self
     }
 }
@@ -90,7 +95,7 @@ impl NodeAcpOperations for MockNodeAcpOperations {
         identity: &Did,
         permission: NodePermission,
     ) -> Result<bool, String> {
-        let status = *self.status.read().unwrap();
+        let status = *self.status.load();
 
         // If NAC is not enabled, allow all
         if status != NacStatus::Enabled {
@@ -98,71 +103,63 @@ impl NodeAcpOperations for MockNodeAcpOperations {
         }
 
         // Check if owner
-        if let Some(owner) = self.owner.read().unwrap().as_ref() {
-            if owner == identity {
+        if let Some(owner) = self.owner.load() {
+            if *owner == *identity {
                 return Ok(true);
             }
         }
 
         // Check if admin (admins have all permissions)
-        if self.admins.read().unwrap().contains(identity) {
+        if self.admins.contains_key(identity) {
             return Ok(true);
         }
 
         // Check specific permission grants
-        let grants = self.grants.read().unwrap();
-        for (grantee, perm) in grants.iter() {
-            if grantee == identity && *perm == permission {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        Ok(self.grants.peek(|grants| {
+            grants
+                .iter()
+                .any(|(grantee, perm)| grantee == identity && *perm == permission)
+        }))
     }
 
     async fn get_status(&self) -> NacStatus {
-        *self.status.read().unwrap()
+        *self.status.load()
     }
 
     async fn owner(&self) -> Option<Did> {
-        self.owner.read().unwrap().clone()
+        self.owner.load().map(|owner| (*owner).clone())
     }
 
     async fn is_admin(&self, identity: &Did) -> Result<bool, String> {
-        let status = *self.status.read().unwrap();
+        let status = *self.status.load();
         if status != NacStatus::Enabled {
             return Ok(true); // Everyone is admin when NAC is disabled
         }
 
         // Check if owner
-        if let Some(owner) = self.owner.read().unwrap().as_ref() {
-            if owner == identity {
+        if let Some(owner) = self.owner.load() {
+            if *owner == *identity {
                 return Ok(true);
             }
         }
 
         // Check admins list
-        Ok(self.admins.read().unwrap().contains(identity))
+        Ok(self.admins.contains_key(identity))
     }
 
     async fn add_admin(&self, _requestor: &Did, target: &Did) -> Result<bool, String> {
-        let status = *self.status.read().unwrap();
+        let status = *self.status.load();
         if status == NacStatus::DisabledTemporarily {
             return Err(
                 "cannot modify relationships while NAC is disabled - re-enable NAC first".into(),
             );
         }
 
-        let mut admins = self.admins.write().unwrap();
-        if admins.contains(target) {
-            return Ok(false);
-        }
-        admins.push(target.clone());
-        Ok(true)
+        Ok(self.admins.insert_if_absent(target.clone(), ()).is_none())
     }
 
     async fn remove_admin(&self, _requestor: &Did, target: &Did) -> Result<bool, String> {
-        let status = *self.status.read().unwrap();
+        let status = *self.status.load();
         if status == NacStatus::DisabledTemporarily {
             return Err(
                 "cannot modify relationships while NAC is disabled - re-enable NAC first".into(),
@@ -170,37 +167,32 @@ impl NodeAcpOperations for MockNodeAcpOperations {
         }
 
         // Cannot remove owner
-        if let Some(owner) = self.owner.read().unwrap().as_ref() {
-            if owner == target {
+        if let Some(owner) = self.owner.load() {
+            if *owner == *target {
                 return Err("cannot remove owner's admin access".into());
             }
         }
 
-        let mut admins = self.admins.write().unwrap();
-        let initial_len = admins.len();
-        admins.retain(|a| a != target);
-        Ok(admins.len() < initial_len)
+        Ok(self.admins.remove(target).is_some())
     }
 
     async fn disable(&self, _requestor: &Did) -> Result<(), String> {
-        let mut status = self.status.write().unwrap();
-        *status = NacStatus::DisabledTemporarily;
+        self.status.store(NacStatus::DisabledTemporarily);
         Ok(())
     }
 
     async fn re_enable(&self, _requestor: &Did) -> Result<(), String> {
-        let mut status = self.status.write().unwrap();
-        *status = NacStatus::Enabled;
+        self.status.store(NacStatus::Enabled);
         Ok(())
     }
 
     async fn enable(&self, owner: &Did) -> Result<(), String> {
-        let status = *self.status.read().unwrap();
+        let status = *self.status.load();
         if status != NacStatus::NotConfigured {
             return Err("NAC is already configured".into());
         }
-        *self.status.write().unwrap() = NacStatus::Enabled;
-        *self.owner.write().unwrap() = Some(owner.clone());
+        self.status.store(NacStatus::Enabled);
+        self.owner.store_some(owner.clone());
         Ok(())
     }
 
@@ -217,7 +209,7 @@ impl NodeAcpOperations for MockNodeAcpOperations {
             return self.add_admin(requestor, target).await;
         }
         if NodePermission::parse(relation).is_some() {
-            let status = *self.status.read().unwrap();
+            let status = *self.status.load();
             if status == NacStatus::DisabledTemporarily {
                 return Err(
                     "cannot modify relationships while NAC is disabled - re-enable NAC first"
@@ -242,7 +234,7 @@ impl NodeAcpOperations for MockNodeAcpOperations {
             return self.remove_admin(requestor, target).await;
         }
         if NodePermission::parse(relation).is_some() {
-            let status = *self.status.read().unwrap();
+            let status = *self.status.load();
             if status == NacStatus::DisabledTemporarily {
                 return Err(
                     "cannot modify relationships while NAC is disabled - re-enable NAC first"

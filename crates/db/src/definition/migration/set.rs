@@ -227,16 +227,16 @@ impl<S: Store> DB<S> {
         self.bump_migration_generation();
 
         if !collection_name.is_empty() {
-            let mut cache = self.collections.write().map_err(|e| {
-                tracing::error!(error = ?e, "Collection cache lock poisoned during set_migration");
-                Error::LockPoisoned("collection cache lock poisoned during set_migration".into())
-            })?;
-
-            if let Some(cached) = cache.get(&collection_name) {
-                if cached.schema().version_id == dest_version_id {
-                    cache.insert(collection_name.clone(), Collection::new(dst_col));
+            self.collections.rcu(|old| {
+                let mut cache = old.clone();
+                let matches_dest = cache
+                    .get(&collection_name)
+                    .is_some_and(|cached| cached.schema().version_id == dest_version_id);
+                if matches_dest {
+                    cache.insert(collection_name.clone(), Collection::new(dst_col.clone()));
                 }
-            }
+                cache
+            });
         }
 
         if !collection_name.is_empty() {

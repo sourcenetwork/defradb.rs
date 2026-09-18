@@ -119,6 +119,12 @@ impl<S: Store> LensedDocFetcher<S> {
         self.txn.lock().await.take()
     }
 
+    /// Take the transaction without waiting. `None` when it is already taken,
+    /// or another task is holding it.
+    pub(crate) fn try_take_txn(&self) -> Option<DbTxn<S>> {
+        self.txn.try_lock()?.take()
+    }
+
     /// Check if the transaction has been consumed.
     pub async fn is_consumed(&self) -> bool {
         self.txn.lock().await.is_none()

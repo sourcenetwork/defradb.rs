@@ -31,7 +31,7 @@ pub struct ParsedForeignKey {
     pub on_delete_cascade: bool,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct DdlMetadata {
     pub foreign_keys: Vec<ForeignKeyInfo>,
     pub indexes: Vec<IndexInfo>,

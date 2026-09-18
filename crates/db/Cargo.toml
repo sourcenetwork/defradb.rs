@@ -56,6 +56,11 @@ multihash.workspace = true
 sha2.workspace = true
 rapidhash.workspace = true
 
+# Lock-free shared state
+kovan.workspace = true
+kovan-map.workspace = true
+kovan-queue.workspace = true
+
 # Random number generation (for Counter CRDT nonces)
 rand.workspace = true
 

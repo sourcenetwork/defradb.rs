@@ -5,9 +5,9 @@
 //! holds the bidirectional mapping between short IDs and the public
 //! genesis-CID-derived DocIDs, plus a block-CID -> DocID ownership index.
 
-use async_lock::Mutex;
 use bytes::Bytes;
 use datastore::NamespaceView;
+use kovan::Atom;
 use rapidhash::HashMapExt;
 use std::sync::Arc;
 use storage::corekv::{Key, Store};
@@ -22,7 +22,7 @@ use crate::error::{Error, Result};
 const DOC_SHORT_ID_RESERVATION_SIZE: u64 = 1024;
 const MAX_RESERVATION_CONFLICT_RETRIES: u32 = 16;
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct ReservedRange {
     next: u64,
     remaining: u64,
@@ -30,11 +30,12 @@ struct ReservedRange {
 
 /// Allocates document short IDs from persisted ranges.
 ///
-/// The sequence stores the end of the latest reserved range. A crash can leave
+/// The sequence stores the end of the latest reserved range. A crash, or two
+/// callers reserving at once where only one reservation is installed, can leave
 /// gaps, but every returned ID remains unique across restarts and DB instances.
 pub struct DocShortIdAllocator<S: Store> {
     systemstore: Systemstore<S>,
-    range: Mutex<ReservedRange>,
+    range: Atom<ReservedRange>,
     reservation_size: u64,
 }
 
@@ -47,36 +48,68 @@ impl<S: Store> DocShortIdAllocator<S> {
         assert!(reservation_size > 0, "reservation size must be non-zero");
         Self {
             systemstore: Systemstore::new(store),
-            range: Mutex::new(ReservedRange::default()),
+            range: Atom::new(ReservedRange::default()),
             reservation_size,
         }
     }
 
     pub async fn next(&self) -> Result<u64> {
-        let mut range = self.range.lock().await;
-        if range.remaining == 0 {
-            range.next = self.reserve_range().await?;
-            range.remaining = self.reservation_size;
+        loop {
+            if let Some(id) = self.take_reserved()? {
+                return Ok(id);
+            }
+            self.install_reservation().await?;
         }
-
-        let id = range.next;
-        range.remaining -= 1;
-        if range.remaining > 0 {
-            range.next = id
-                .checked_add(1)
-                .ok_or_else(|| Error::Other("document short-ID sequence exhausted".into()))?;
-        }
-        Ok(id)
     }
 
     /// The id the next [`next`](Self::next) returns, left unallocated.
     pub async fn peek(&self) -> Result<u64> {
-        let mut range = self.range.lock().await;
-        if range.remaining == 0 {
-            range.next = self.reserve_range().await?;
-            range.remaining = self.reservation_size;
+        loop {
+            let reserved = {
+                let range = self.range.load();
+                (range.remaining > 0).then_some(range.next)
+            };
+            if let Some(next) = reserved {
+                return Ok(next);
+            }
+            self.install_reservation().await?;
         }
-        Ok(range.next)
+    }
+
+    fn take_reserved(&self) -> Result<Option<u64>> {
+        loop {
+            let range = self.range.load();
+            if range.remaining == 0 {
+                return Ok(None);
+            }
+            let id = range.next;
+            let mut taken = *range;
+            taken.remaining -= 1;
+            if taken.remaining > 0 {
+                taken.next = id
+                    .checked_add(1)
+                    .ok_or_else(|| Error::Other("document short-ID sequence exhausted".into()))?;
+            }
+            if self.range.compare_and_swap(&range, taken).is_ok() {
+                return Ok(Some(id));
+            }
+        }
+    }
+
+    async fn install_reservation(&self) -> Result<()> {
+        let reserved = ReservedRange {
+            next: self.reserve_range().await?,
+            remaining: self.reservation_size,
+        };
+        loop {
+            let range = self.range.load();
+            if range.remaining > 0 {
+                return Ok(());
+            }
+            if self.range.compare_and_swap(&range, reserved).is_ok() {
+                return Ok(());
+            }
+        }
     }
 
     async fn reserve_range(&self) -> Result<u64> {

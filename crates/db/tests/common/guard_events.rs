@@ -11,7 +11,10 @@
 //! keyed by collection id so parallel tests cannot be mistaken for each
 //! other.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 const GUARD_TARGET: &str = "db::collection::locks";
 
@@ -20,18 +23,15 @@ pub const READ_HOLDING: &str = "holding the collection guard";
 pub const WRITE_WAITING: &str = "waiting for the collection write guard";
 pub const WRITE_HOLDING: &str = "holding the collection write guard";
 
-/// Every guard event emitted anywhere in this process, as (collection id,
-/// message).
-pub struct Recorder(Mutex<Vec<(String, String)>>);
+/// How often every guard event was emitted anywhere in this process, counted
+/// per (collection id, message).
+pub struct Recorder(HopscotchMap<(String, String), Arc<AtomicUsize>, RandomState>);
 
 impl Recorder {
     pub fn count(&self, collection_id: &str, message: &str) -> usize {
         self.0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(collection, seen)| collection == collection_id && seen == message)
-            .count()
+            .get(&(collection_id.to_string(), message.to_string()))
+            .map_or(0, |count| count.load(Ordering::Acquire))
     }
 }
 
@@ -64,9 +64,11 @@ impl tracing::Subscriber for Recorder {
         let mut fields = Fields::default();
         event.record(&mut fields);
         self.0
-            .lock()
-            .unwrap()
-            .push((fields.collection_id, fields.message));
+            .get_or_insert(
+                (fields.collection_id, fields.message),
+                Arc::new(AtomicUsize::new(0)),
+            )
+            .fetch_add(1, Ordering::AcqRel);
     }
     fn enter(&self, _: &tracing::span::Id) {}
     fn exit(&self, _: &tracing::span::Id) {}
@@ -76,7 +78,7 @@ pub fn recorder() -> Arc<Recorder> {
     static RECORDER: OnceLock<Arc<Recorder>> = OnceLock::new();
     RECORDER
         .get_or_init(|| {
-            let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+            let recorder = Arc::new(Recorder(HopscotchMap::with_hasher(RandomState::default())));
             tracing::subscriber::set_global_default(recorder.clone())
                 .expect("this test binary installs no other global subscriber");
             recorder

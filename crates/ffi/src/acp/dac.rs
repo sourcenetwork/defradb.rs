@@ -149,7 +149,7 @@ pub unsafe extern "C" fn add_dac_policy(
                 Ok(policy_id) => {
                     // Cache policy on all live FFI nodes so multi-node SourceHub tests
                     // can validate schemas that reference a policy created by another node.
-                    NODES.for_each_mut(|state| {
+                    NODES.for_each(|state| {
                         state.policy_store.store_policy(&policy_id, &policy_str);
                     });
                     FfiResult::success(serde_json::json!({ "PolicyID": policy_id }).to_string())
