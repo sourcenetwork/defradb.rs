@@ -15,6 +15,7 @@ pub mod broadcast;
 use async_trait::async_trait;
 use blockstore::Blockstore;
 use document::{DocID, Document};
+use kovan::Atom;
 use p2p::message::SEArtifact;
 use p2p::sync::SyncCoordinator;
 use p2p::transport::P2PTransport;
@@ -25,7 +26,6 @@ use query::mutator::{
 use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
 use std::sync::Arc;
-use std::sync::RwLock;
 use storage::corekv::Store;
 use zeroize::Zeroizing;
 
@@ -96,7 +96,7 @@ pub struct BroadcastMutator<S: Store, B: Blockstore, T: P2PTransport> {
     inner: AutoCommitMutator<S>,
     sync: Arc<SyncCoordinator<B, T>>,
     db: Arc<DB<S>>,
-    se_options: Arc<RwLock<BroadcastSeOptions>>,
+    se_options: Atom<BroadcastSeOptions>,
 }
 
 impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, T> {
@@ -106,7 +106,7 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, 
             inner: AutoCommitMutator::new(db.clone()),
             sync,
             db,
-            se_options: Arc::new(RwLock::new(BroadcastSeOptions::default())),
+            se_options: Atom::new(BroadcastSeOptions::default()),
         }
     }
 
@@ -115,19 +115,12 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, 
     }
 
     pub fn set_se_options(&self, options: BroadcastSeOptions) -> Result<(), String> {
-        let mut guard = self
-            .se_options
-            .write()
-            .map_err(|_| "broadcast SE options lock poisoned".to_string())?;
-        *guard = options;
+        self.se_options.store(options);
         Ok(())
     }
 
     fn load_se_options(&self) -> BroadcastSeOptions {
-        self.se_options
-            .read()
-            .map(|options| options.clone())
-            .unwrap_or_default()
+        self.se_options.load_clone()
     }
 
     fn generate_se_artifacts(

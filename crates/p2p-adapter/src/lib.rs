@@ -1,7 +1,8 @@
 //! Shared P2P adapters implementing the HTTP P2P operation surface.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
+use kovan::Atom;
 use rapidhash::{RapidHashMap, RapidHashSet};
 use zeroize::Zeroizing;
 
@@ -451,29 +452,22 @@ impl Eq for ReplicatorPushOptions {}
 
 #[derive(Debug, Clone, Default)]
 pub struct ReplicatorPushOptionsState {
-    inner: Arc<RwLock<ReplicatorPushOptions>>,
+    inner: Arc<Atom<ReplicatorPushOptions>>,
 }
 
 impl ReplicatorPushOptionsState {
     pub fn new(options: ReplicatorPushOptions) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(options)),
+            inner: Arc::new(Atom::new(options)),
         }
     }
 
     pub fn load(&self) -> ReplicatorPushOptions {
-        self.inner
-            .read()
-            .map(|options| options.clone())
-            .unwrap_or_default()
+        self.inner.load_clone()
     }
 
     pub fn store(&self, options: ReplicatorPushOptions) -> Result<(), String> {
-        let mut guard = self
-            .inner
-            .write()
-            .map_err(|_| "replicator push options lock poisoned".to_string())?;
-        *guard = options;
+        self.inner.store(options);
         Ok(())
     }
 }

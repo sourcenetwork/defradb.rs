@@ -1,8 +1,10 @@
 //! Mock P2P operations for testing P2P handlers.
 
 use async_trait::async_trait;
-use std::sync::{Arc, RwLock};
+use kovan::Atom;
+use std::sync::Arc;
 
+use crate::mock::update_vec;
 use crate::router::{
     P2PError, P2POperations, P2PResult, P2pDocumentInfo, P2pDocumentRequest, ReplicatorInfo,
 };
@@ -12,9 +14,9 @@ use crate::router::{
 pub struct MockP2POperations {
     peer_id: String,
     addresses: Vec<String>,
-    peers: Arc<RwLock<Vec<String>>>,
-    replicators: Arc<RwLock<Vec<ReplicatorInfo>>>,
-    collections: Arc<RwLock<Vec<String>>>,
+    peers: Arc<Atom<Vec<String>>>,
+    replicators: Arc<Atom<Vec<ReplicatorInfo>>>,
+    collections: Arc<Atom<Vec<String>>>,
 }
 
 impl Clone for MockP2POperations {
@@ -41,34 +43,36 @@ impl MockP2POperations {
         Self {
             peer_id: "12D3KooWMockPeerId123456789".to_string(),
             addresses: vec!["/ip4/127.0.0.1/tcp/9000".to_string()],
-            peers: Arc::new(RwLock::new(vec![])),
-            replicators: Arc::new(RwLock::new(vec![])),
-            collections: Arc::new(RwLock::new(vec![])),
+            peers: Arc::new(Atom::new(vec![])),
+            replicators: Arc::new(Atom::new(vec![])),
+            collections: Arc::new(Atom::new(vec![])),
         }
     }
 
     /// Create with a connected peer.
     pub fn with_peer(self, peer_id: &str) -> Self {
-        self.peers.write().unwrap().push(peer_id.to_string());
+        update_vec(&self.peers, |peers| peers.push(peer_id.to_string()));
         self
     }
 
     /// Create with a replicator.
     pub fn with_replicator(self, collections: Vec<String>, address: Option<String>) -> Self {
-        self.replicators.write().unwrap().push(ReplicatorInfo {
-            id: Some("12D3KooWReplicator".to_string()),
-            collections,
-            address,
-            status: Some(0),
-            last_status_change: Some("0001-01-01T00:00:00Z".to_string()),
-            filters: Default::default(),
+        update_vec(&self.replicators, |replicators| {
+            replicators.push(ReplicatorInfo {
+                id: Some("12D3KooWReplicator".to_string()),
+                collections: collections.clone(),
+                address: address.clone(),
+                status: Some(0),
+                last_status_change: Some("0001-01-01T00:00:00Z".to_string()),
+                filters: Default::default(),
+            })
         });
         self
     }
 
     /// Create with P2P collections.
     pub fn with_collections(self, collections: Vec<String>) -> Self {
-        *self.collections.write().unwrap() = collections;
+        self.collections.store(collections);
         self
     }
 }
@@ -88,7 +92,7 @@ impl P2POperations for MockP2POperations {
     }
 
     async fn connected_peers(&self) -> P2PResult<Vec<String>> {
-        Ok(self.peers.read().unwrap().clone())
+        Ok(self.peers.load_clone())
     }
 
     async fn connect_peer(&self, addr: &str) -> P2PResult<()> {
@@ -98,7 +102,7 @@ impl P2POperations for MockP2POperations {
         } else {
             format!("peer-{}", addr.len())
         };
-        self.peers.write().unwrap().push(peer_id);
+        update_vec(&self.peers, |peers| peers.push(peer_id.clone()));
         Ok(())
     }
 
@@ -108,7 +112,7 @@ impl P2POperations for MockP2POperations {
         } else {
             format!("peer-{}", addr.len())
         };
-        self.peers.write().unwrap().retain(|p| p != &peer_id);
+        update_vec(&self.peers, |peers| peers.retain(|p| p != &peer_id));
         Ok(())
     }
 
@@ -117,7 +121,7 @@ impl P2POperations for MockP2POperations {
     }
 
     async fn get_replicators(&self) -> P2PResult<Vec<ReplicatorInfo>> {
-        Ok(self.replicators.read().unwrap().clone())
+        Ok(self.replicators.load_clone())
     }
 
     async fn add_replicator(
@@ -128,13 +132,15 @@ impl P2POperations for MockP2POperations {
         _explicit_replay_capabilities: Vec<crate::router::ExplicitReplayCapabilityInput>,
         _expected_authorizer_did: Option<&str>,
     ) -> P2PResult<()> {
-        self.replicators.write().unwrap().push(ReplicatorInfo {
-            id: Some("12D3KooWNewReplicator".to_string()),
-            collections,
-            address: addr.map(|s| s.to_string()),
-            status: Some(0),
-            last_status_change: Some("0001-01-01T00:00:00Z".to_string()),
-            filters,
+        update_vec(&self.replicators, |replicators| {
+            replicators.push(ReplicatorInfo {
+                id: Some("12D3KooWNewReplicator".to_string()),
+                collections: collections.clone(),
+                address: addr.map(|s| s.to_string()),
+                status: Some(0),
+                last_status_change: Some("0001-01-01T00:00:00Z".to_string()),
+                filters: filters.clone(),
+            })
         });
         Ok(())
     }
@@ -144,28 +150,31 @@ impl P2POperations for MockP2POperations {
         collections: Vec<String>,
         _addr: Option<&str>,
     ) -> P2PResult<()> {
-        let mut replicators = self.replicators.write().unwrap();
-        replicators.retain(|r| !collections.iter().all(|c| r.collections.contains(c)));
+        update_vec(&self.replicators, |replicators| {
+            replicators.retain(|r| !collections.iter().all(|c| r.collections.contains(c)))
+        });
         Ok(())
     }
 
     async fn get_collections(&self) -> P2PResult<Vec<String>> {
-        Ok(self.collections.read().unwrap().clone())
+        Ok(self.collections.load_clone())
     }
 
     async fn add_collections(&self, collections: Vec<String>) -> P2PResult<()> {
-        let mut existing = self.collections.write().unwrap();
-        for col in collections {
-            if !existing.contains(&col) {
-                existing.push(col);
+        update_vec(&self.collections, |existing| {
+            for col in &collections {
+                if !existing.contains(col) {
+                    existing.push(col.clone());
+                }
             }
-        }
+        });
         Ok(())
     }
 
     async fn remove_collections(&self, collections: Vec<String>) -> P2PResult<()> {
-        let mut existing = self.collections.write().unwrap();
-        existing.retain(|c| !collections.contains(c));
+        update_vec(&self.collections, |existing| {
+            existing.retain(|c| !collections.contains(c))
+        });
         Ok(())
     }
 

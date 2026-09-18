@@ -94,49 +94,49 @@ impl DefraQueryHandler {
     }
 
     async fn handle_pg_indexes(&self) -> PgWireResult<Response> {
-        let meta = self.ddl_metadata.read().await;
-        let rows: Vec<Vec<(String, String)>> = meta
-            .indexes
-            .iter()
-            .map(|idx| {
-                vec![
-                    ("schemaname".to_string(), "public".to_string()),
-                    ("tablename".to_string(), idx.table_name.clone()),
-                    ("indexname".to_string(), idx.index_name.clone()),
-                ]
-            })
-            .collect();
+        let rows: Vec<Vec<(String, String)>> = self.ddl_metadata.peek(|meta| {
+            meta.indexes
+                .iter()
+                .map(|idx| {
+                    vec![
+                        ("schemaname".to_string(), "public".to_string()),
+                        ("tablename".to_string(), idx.table_name.clone()),
+                        ("indexname".to_string(), idx.index_name.clone()),
+                    ]
+                })
+                .collect()
+        });
         encode::encode_text_rows(&rows)
     }
 
     async fn handle_fk_constraints(&self) -> PgWireResult<Response> {
-        let meta = self.ddl_metadata.read().await;
-        let rows: Vec<Vec<(String, String)>> = meta
-            .foreign_keys
-            .iter()
-            .map(|fk| {
-                vec![
-                    ("table_name".to_string(), fk.from_table.clone()),
-                    ("constraint_name".to_string(), fk.constraint_name.clone()),
-                    ("foreign_table_name".to_string(), fk.to_table.clone()),
-                ]
-            })
-            .collect();
+        let rows: Vec<Vec<(String, String)>> = self.ddl_metadata.peek(|meta| {
+            meta.foreign_keys
+                .iter()
+                .map(|fk| {
+                    vec![
+                        ("table_name".to_string(), fk.from_table.clone()),
+                        ("constraint_name".to_string(), fk.constraint_name.clone()),
+                        ("foreign_table_name".to_string(), fk.to_table.clone()),
+                    ]
+                })
+                .collect()
+        });
         encode::encode_text_rows(&rows)
     }
 
     async fn handle_pk_columns(&self, sql: &str) -> PgWireResult<Response> {
         let table_name = extract_regclass_table(sql).unwrap_or_default();
-        let meta = self.ddl_metadata.read().await;
-        let rows: Vec<Vec<(String, String)>> = meta
-            .primary_key_for(&table_name)
-            .map(|pk| {
-                pk.columns
-                    .iter()
-                    .map(|col| vec![("attname".to_string(), col.clone())])
-                    .collect()
-            })
-            .unwrap_or_default();
+        let rows: Vec<Vec<(String, String)>> = self.ddl_metadata.peek(|meta| {
+            meta.primary_key_for(&table_name)
+                .map(|pk| {
+                    pk.columns
+                        .iter()
+                        .map(|col| vec![("attname".to_string(), col.clone())])
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
         encode::encode_text_rows(&rows)
     }
 }

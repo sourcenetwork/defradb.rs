@@ -180,13 +180,13 @@ pub struct EmbeddedNode {
     #[cfg(not(target_arch = "wasm32"))]
     transaction_stats: Option<storage::TransactionStatsHandle>,
     #[cfg(feature = "http")]
-    txn_cleanup_task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    txn_cleanup_task: kovan_queue::seg_queue::SegQueue<tokio::task::JoinHandle<()>>,
     #[cfg(feature = "p2p")]
     p2p_ops: Option<Arc<dyn defra_http::P2POperations>>,
     #[cfg(feature = "p2p")]
     p2p_lifecycle: Option<p2p_runtime::P2PLifecycle>,
     #[cfg(feature = "otel")]
-    telemetry: std::sync::Mutex<Option<TelemetryHandle>>,
+    telemetry: kovan_queue::seg_queue::SegQueue<TelemetryHandle>,
 }
 
 #[cfg(feature = "http")]
@@ -194,6 +194,15 @@ pub struct EmbeddedNode {
 struct TransactionCleanupConfig {
     max_idle_age: Duration,
     sweep_interval: Duration,
+}
+
+#[cfg(any(feature = "http", feature = "otel"))]
+fn single_slot<T: 'static>(value: Option<T>) -> kovan_queue::seg_queue::SegQueue<T> {
+    let slot = kovan_queue::seg_queue::SegQueue::new();
+    if let Some(value) = value {
+        slot.push(value);
+    }
+    slot
 }
 
 impl EmbeddedNode {
@@ -690,7 +699,7 @@ impl EmbeddedNode {
     /// with no error surfaced. Drop the node after shutdown completes.
     pub async fn shutdown(&self) {
         #[cfg(feature = "http")]
-        if let Some(task) = self.txn_cleanup_task.lock().await.take() {
+        if let Some(task) = self.txn_cleanup_task.pop() {
             task.abort();
             let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
         }
@@ -727,14 +736,8 @@ impl EmbeddedNode {
         // thread (up to ~5 s, double with metrics), so run it on a blocking
         // thread rather than stalling this Tokio worker / reactor.
         #[cfg(feature = "otel")]
-        {
-            let handle = match self.telemetry.lock() {
-                Ok(mut guard) => guard.take(),
-                Err(poisoned) => poisoned.into_inner().take(),
-            };
-            if let Some(handle) = handle {
-                let _ = tokio::task::spawn_blocking(move || handle.shutdown()).await;
-            }
+        if let Some(handle) = self.telemetry.pop() {
+            let _ = tokio::task::spawn_blocking(move || handle.shutdown()).await;
         }
     }
 }
@@ -1645,13 +1648,13 @@ impl NodeBuilder {
             #[cfg(not(target_arch = "wasm32"))]
             transaction_stats,
             #[cfg(feature = "http")]
-            txn_cleanup_task: tokio::sync::Mutex::new(txn_cleanup_task),
+            txn_cleanup_task: single_slot(txn_cleanup_task),
             #[cfg(feature = "p2p")]
             p2p_ops,
             #[cfg(feature = "p2p")]
             p2p_lifecycle,
             #[cfg(feature = "otel")]
-            telemetry: std::sync::Mutex::new(telemetry_handle),
+            telemetry: single_slot(telemetry_handle),
         })
     }
 }

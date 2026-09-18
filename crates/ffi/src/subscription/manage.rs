@@ -34,13 +34,15 @@ use super::{CloseSubscriptionResult, PollSubscriptionResult};
 #[no_mangle]
 pub extern "C" fn poll_subscription(subscription_handle: usize) -> PollSubscriptionResult {
     ffi_entry! {
-        let result = SUBSCRIPTIONS.get_mut(subscription_handle, |state| {
+        let result = SUBSCRIPTIONS.get(subscription_handle).map(|state| {
+            let mut subscription = state.subscription.lock();
+
             // Check for dropped messages
-            let dropped = state.subscription.check_and_reset_dropped();
+            let dropped = subscription.check_and_reset_dropped();
 
             // Try to receive events, filtering by collection if specified
             loop {
-                match state.subscription.try_recv() {
+                match subscription.try_recv() {
                     Ok(message) => {
                         // Check collection filter
                         if let Some(ref filter) = state.collection_filter {
@@ -94,15 +96,14 @@ pub extern "C" fn poll_graphql_subscription(
             Err(_) => return PollSubscriptionResult::error("invalid subscription id: not a number"),
         };
 
-        let result =
-            GRAPHQL_SUBSCRIPTIONS.get_mut(handle, |state| match state.result_receiver.try_recv() {
-                Ok(json) => PollSubscriptionResult::event(json, 0),
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                    PollSubscriptionResult::no_event(0)
-                }
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+        let result = GRAPHQL_SUBSCRIPTIONS
+            .get(handle)
+            .map(|state| match state.result_receiver.try_recv() {
+                Some(json) => PollSubscriptionResult::event(json, 0),
+                None if state.result_receiver.is_disconnected() => {
                     PollSubscriptionResult::closed()
                 }
+                None => PollSubscriptionResult::no_event(0),
             });
 
         result.unwrap_or_else(|| PollSubscriptionResult::error("invalid subscription handle"))
@@ -128,8 +129,9 @@ pub extern "C" fn close_subscription(subscription_handle: usize) -> CloseSubscri
         };
 
         // Unsubscribe from the event bus
+        let subscription_id = state.subscription.lock().id();
         let unsubscribed = NODES.get(state.node_handle, |node_state| {
-            node_state.event_bus.unsubscribe(state.subscription.id());
+            node_state.event_bus.unsubscribe(subscription_id);
         });
 
         if unsubscribed.is_none() {

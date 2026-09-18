@@ -23,7 +23,7 @@ use super::identity_ops::{
 #[no_mangle]
 pub extern "C" fn get_node_identity(node_ptr: usize) -> FfiResult {
     ffi_entry! {
-        if let Some(Some(did)) = NODES.get(node_ptr, |state| state.node_identity_did.clone()) {
+        if let Some(Some(did)) = NODES.get(node_ptr, |state| state.identity_did()) {
             return FfiResult::success(serde_json::json!({ "did": did }).to_string());
         }
 
@@ -254,12 +254,12 @@ pub extern "C" fn node_set_default_identity(node_ptr: usize, did: *const c_char)
             return FfiResult::error(format!("no signing identity registered for DID: {}", did_str));
         }
 
-        let updated = NODES.get_mut(node_ptr, |state| {
-            state.node_identity_did = if did_str.is_empty() {
-                None
+        let updated = NODES.get(node_ptr, |state| {
+            if did_str.is_empty() {
+                state.node_identity_did.store_none();
             } else {
-                Some(did_str.clone())
-            };
+                state.node_identity_did.store_some(did_str.clone());
+            }
             state.sync_replicator_push_options()
         });
 
@@ -349,11 +349,13 @@ mod tests {
     use crypto::{keys::Key, keys::PublicKey, PrivateKey};
     use std::ffi::{CStr, CString};
     use std::sync::{Mutex, OnceLock};
+
+    use kovan::Atom;
     use std::time::Duration;
 
-    fn remote_key_store() -> &'static Mutex<Vec<u8>> {
-        static STORE: OnceLock<Mutex<Vec<u8>>> = OnceLock::new();
-        STORE.get_or_init(|| Mutex::new(Vec::new()))
+    fn remote_key_store() -> &'static Atom<Vec<u8>> {
+        static STORE: OnceLock<Atom<Vec<u8>>> = OnceLock::new();
+        STORE.get_or_init(|| Atom::new(Vec::new()))
     }
 
     fn remote_test_lock() -> &'static Mutex<()> {
@@ -371,7 +373,7 @@ mod tests {
         out_signature_capacity: usize,
         out_signature_len: *mut usize,
     ) -> i32 {
-        let key_bytes = remote_key_store().lock().unwrap().clone();
+        let key_bytes = remote_key_store().load_clone();
         let private_key = match crypto::Secp256r1PrivateKey::from_bytes(&key_bytes) {
             Ok(key) => key,
             Err(_) => return 1,
@@ -459,7 +461,7 @@ mod tests {
         let _guard = remote_test_lock().lock().unwrap();
 
         let private_key = crypto::generate_secp256r1().unwrap();
-        *remote_key_store().lock().unwrap() = private_key.raw().to_vec();
+        remote_key_store().store(private_key.raw().to_vec());
 
         let raw_identity = identity::RawIdentity::from_secp256r1(private_key).unwrap();
         let did = raw_identity.did().unwrap().to_string();
@@ -509,7 +511,7 @@ mod tests {
         let _guard = remote_test_lock().lock().unwrap();
 
         let private_key = crypto::generate_secp256r1().unwrap();
-        *remote_key_store().lock().unwrap() = private_key.raw().to_vec();
+        remote_key_store().store(private_key.raw().to_vec());
 
         let raw_identity = identity::RawIdentity::from_secp256r1(private_key).unwrap();
         let did = raw_identity.did().unwrap().to_string();
@@ -600,7 +602,7 @@ mod tests {
         assert!(crate::runtime::init_runtime());
 
         let private_key = crypto::generate_secp256r1().unwrap();
-        *remote_key_store().lock().unwrap() = private_key.raw().to_vec();
+        remote_key_store().store(private_key.raw().to_vec());
 
         let raw_identity = identity::RawIdentity::from_secp256r1(private_key).unwrap();
         let did = raw_identity.did().unwrap().to_string();

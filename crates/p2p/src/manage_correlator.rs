@@ -10,26 +10,31 @@
 //! - [`ManageQueryCorrelator`] for read-only query operations (typed reply via [`ManageQueryReply`]).
 //!
 //! Both mirror the SE query correlator ([`crate::se_correlator`]) exactly:
-//! a shared `Arc<Mutex<RapidHashMap>>` + Drop-cleanup guard, keyed by message-ID `String`.
+//! a shared lock-free map + Drop-cleanup guard, keyed by message-ID `String`.
 
-use rapidhash::RapidHashMap;
-use std::sync::Arc;
-
-use parking_lot::Mutex;
 use tokio::sync::oneshot;
 use tracing::debug;
 
 use crate::message::{ManageQueryReply, ManageReply};
+use crate::se_correlator::{new_ongoing, register_slot, take_sender, Ongoing};
 
 // ---------------------------------------------------------------------------
-// ManageCorrelator — for mutating management operations (ManageReply)
+// ManageCorrelator: for mutating management operations (ManageReply)
 // ---------------------------------------------------------------------------
 
 /// Outstanding manage-request registry shared between the requester and the
 /// event loop that receives replies. Cheap to clone into tasks.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ManageCorrelator {
-    ongoing: Arc<Mutex<RapidHashMap<String, oneshot::Sender<ManageReply>>>>,
+    ongoing: Ongoing<ManageReply>,
+}
+
+impl Default for ManageCorrelator {
+    fn default() -> Self {
+        Self {
+            ongoing: new_ongoing(),
+        }
+    }
 }
 
 /// Handle for a registered manage request. The correlator slot is removed when
@@ -52,7 +57,7 @@ impl PendingManage {
 
 impl Drop for PendingManage {
     fn drop(&mut self) {
-        self.correlator.ongoing.lock().remove(&self.message_id);
+        self.correlator.cancel(&self.message_id);
     }
 }
 
@@ -67,11 +72,10 @@ impl ManageCorrelator {
     /// `message_id` twice overwrites the first slot (the first caller then
     /// times out); callers must use unique message IDs.
     pub fn register(&self, message_id: String) -> PendingManage {
-        let (tx, rx) = oneshot::channel();
-        self.ongoing.lock().insert(message_id.clone(), tx);
+        let receiver = register_slot(&self.ongoing, message_id.clone());
         PendingManage {
             message_id,
-            receiver: rx,
+            receiver,
             correlator: self.clone(),
         }
     }
@@ -81,8 +85,7 @@ impl ManageCorrelator {
     /// Returns `true` if a waiting requester received the reply, `false` if
     /// the reply was stale (no matching slot, late arrival, or requester gone).
     pub fn deliver(&self, reply: ManageReply) -> bool {
-        let sender = self.ongoing.lock().remove(&reply.message_id);
-        match sender {
+        match take_sender(&self.ongoing, &reply.message_id) {
             Some(tx) => tx.send(reply).is_ok(),
             None => {
                 debug!(message_id = %reply.message_id, "manage: reply with no matching request dropped");
@@ -93,24 +96,32 @@ impl ManageCorrelator {
 
     /// Drop the slot for `message_id` without waiting for a reply.
     pub fn cancel(&self, message_id: &str) {
-        self.ongoing.lock().remove(message_id);
+        drop(take_sender(&self.ongoing, message_id));
     }
 
     /// Number of currently in-flight manage requests. For tests/metrics only.
     pub fn in_flight(&self) -> usize {
-        self.ongoing.lock().len()
+        self.ongoing.len()
     }
 }
 
 // ---------------------------------------------------------------------------
-// ManageQueryCorrelator — for read-only management operations (ManageQueryReply)
+// ManageQueryCorrelator: for read-only management operations (ManageQueryReply)
 // ---------------------------------------------------------------------------
 
 /// Outstanding manage-query registry shared between the requester and the
 /// event loop that receives replies. Cheap to clone into tasks.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ManageQueryCorrelator {
-    ongoing: Arc<Mutex<RapidHashMap<String, oneshot::Sender<ManageQueryReply>>>>,
+    ongoing: Ongoing<ManageQueryReply>,
+}
+
+impl Default for ManageQueryCorrelator {
+    fn default() -> Self {
+        Self {
+            ongoing: new_ongoing(),
+        }
+    }
 }
 
 /// Handle for a registered manage-query request. The correlator slot is
@@ -136,7 +147,7 @@ impl PendingManageQuery {
 
 impl Drop for PendingManageQuery {
     fn drop(&mut self) {
-        self.correlator.ongoing.lock().remove(&self.message_id);
+        self.correlator.cancel(&self.message_id);
     }
 }
 
@@ -151,11 +162,10 @@ impl ManageQueryCorrelator {
     /// `message_id` twice overwrites the first slot (the first caller then
     /// times out); callers must use unique message IDs.
     pub fn register(&self, message_id: String) -> PendingManageQuery {
-        let (tx, rx) = oneshot::channel();
-        self.ongoing.lock().insert(message_id.clone(), tx);
+        let receiver = register_slot(&self.ongoing, message_id.clone());
         PendingManageQuery {
             message_id,
-            receiver: rx,
+            receiver,
             correlator: self.clone(),
         }
     }
@@ -165,8 +175,7 @@ impl ManageQueryCorrelator {
     /// Returns `true` if a waiting requester received the reply, `false` if
     /// the reply was stale (no matching slot, late arrival, or requester gone).
     pub fn deliver(&self, reply: ManageQueryReply) -> bool {
-        let sender = self.ongoing.lock().remove(&reply.message_id);
-        match sender {
+        match take_sender(&self.ongoing, &reply.message_id) {
             Some(tx) => tx.send(reply).is_ok(),
             None => {
                 debug!(message_id = %reply.message_id, "manage_query: reply with no matching request dropped");
@@ -177,11 +186,11 @@ impl ManageQueryCorrelator {
 
     /// Drop the slot for `message_id` without waiting for a reply.
     pub fn cancel(&self, message_id: &str) {
-        self.ongoing.lock().remove(message_id);
+        drop(take_sender(&self.ongoing, message_id));
     }
 
     /// Number of currently in-flight manage-query requests. For tests/metrics only.
     pub fn in_flight(&self) -> usize {
-        self.ongoing.lock().len()
+        self.ongoing.len()
     }
 }

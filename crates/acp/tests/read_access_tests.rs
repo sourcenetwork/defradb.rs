@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use kovan::Atom;
+use std::sync::Arc;
 
 use acp::read_access::{check_doc_read_access, DocAccess, ObjectAccessChecker};
 use async_trait::async_trait;
@@ -6,7 +7,7 @@ use async_trait::async_trait;
 struct FakeChecker {
     doc_access: DocAccess,
     collection_access: DocAccess,
-    calls: Arc<Mutex<Vec<String>>>,
+    calls: Arc<Atom<Vec<String>>>,
 }
 
 impl FakeChecker {
@@ -14,12 +15,12 @@ impl FakeChecker {
         Self {
             doc_access,
             collection_access,
-            calls: Arc::new(Mutex::new(Vec::new())),
+            calls: Arc::new(Atom::new(Vec::new())),
         }
     }
 
     fn calls(&self) -> Vec<String> {
-        self.calls.lock().unwrap().clone()
+        self.calls.load_clone()
     }
 }
 
@@ -31,7 +32,11 @@ impl ObjectAccessChecker for FakeChecker {
         _resource_name: &str,
         object_id: &str,
     ) -> acp::Result<DocAccess> {
-        self.calls.lock().unwrap().push(object_id.to_string());
+        self.calls.rcu(|calls| {
+            let mut next = calls.clone();
+            next.push(object_id.to_string());
+            next
+        });
         Ok(if object_id == "col1" {
             self.collection_access
         } else {

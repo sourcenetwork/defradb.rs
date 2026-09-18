@@ -23,12 +23,15 @@
 //! closes the peer's RPC connections so `PeerDisconnected` fires and the peer
 //! is dropped until the next discovery/dial recreates it through the 0→1 path.
 
+use rapidhash::fast::RandomState;
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::time::Duration;
 use web_time::Instant;
 
 use iroh::endpoint::Connection;
 use iroh::EndpointId;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
 use tracing::{debug, warn};
 
 use super::endpoint::{
@@ -113,6 +116,7 @@ impl GossipHealConfig {
 /// refresh to well under this), so a stuck flag cannot block healing forever.
 const IN_FLIGHT_STALE: Duration = Duration::from_secs(60);
 
+#[derive(Clone, Copy)]
 struct PeerHeal {
     attempts: u32,
     next_due: Instant,
@@ -121,6 +125,7 @@ struct PeerHeal {
 
 /// Pure per-peer refresh schedule with exponential backoff. Time is injected
 /// so the state machine is deterministic under test.
+#[derive(Clone)]
 struct HealSchedule {
     config: GossipHealConfig,
     peers: RapidHashMap<EndpointId, PeerHeal>,
@@ -216,34 +221,46 @@ impl HealSchedule {
 /// Shared healer: refresh schedule plus every gossip connection to a peer
 /// this node still holds a handle on, retained so each refresh can close the
 /// connection it supersedes and so a revoke can hang up on all of them.
+///
+/// A sweep prunes departed peers, admits new ones and marks due ones in
+/// flight in one pass, so the schedule is replaced as a unit on every write.
 pub(super) struct GossipHealer {
     config: GossipHealConfig,
-    schedule: parking_lot::Mutex<HealSchedule>,
-    conns: parking_lot::Mutex<RapidHashMap<EndpointId, Connection>>,
+    schedule: Atom<HealSchedule>,
+    conns: HopscotchMap<EndpointId, Connection, RandomState>,
     /// Gossip connections this node ACCEPTED, as opposed to the one it
     /// dialled and injected (`conns`).
     ///
     /// `handle_incoming` hands an accepted `GOSSIP_ALPN` connection straight
     /// to `Gossip::handle_connection`, which takes ownership, and returns
-    /// before the peer is ever registered in `peer_map`. Such a connection is
-    /// therefore in none of the three places `disconnect` looks (`peer_map`,
-    /// the outbound connection cache, `conns`), so without a handle retained
-    /// here there is no way to hang up on it at all. iroh `Connection` clones
-    /// share the underlying QUIC connection, so closing the clone kept here
-    /// tears down the connection gossip is using.
+    /// before the peer is ever registered in the peer map. Such a connection
+    /// is therefore in none of the three places `disconnect` looks (the peer
+    /// map, the outbound connection cache, `conns`), so without a handle
+    /// retained here there is no way to hang up on it at all. iroh
+    /// `Connection` clones share the underlying QUIC connection, so closing
+    /// the clone kept here tears down the connection gossip is using.
     ///
-    /// A `Vec` rather than one per peer: a peer may hold several accepted
-    /// gossip connections over time, and unlike `conns` these do not
-    /// supersede one another.
-    accepted: parking_lot::Mutex<RapidHashMap<EndpointId, Vec<Connection>>>,
+    /// Keyed by a per-connection serial rather than by peer, because a peer
+    /// may hold several accepted gossip connections at once and, unlike
+    /// `conns`, these do not supersede one another. A per-peer `Vec` would
+    /// need a read-modify-write to append, which this map cannot do
+    /// atomically; one entry per connection needs no such update, and losing
+    /// a race here cannot leave a revoked peer connected because the accept
+    /// path re-checks admission after retaining its handle.
+    accepted: HopscotchMap<u64, (EndpointId, Connection), RandomState>,
+    /// Serial for `accepted`'s keys. Only ever incremented, and only used to
+    /// keep entries distinct, so wrapping after 2^64 connections is not a
+    /// correctness concern.
+    accepted_serial: std::sync::atomic::AtomicU64,
 }
 
 impl GossipHealer {
     pub(super) fn new(config: GossipHealConfig) -> Self {
         Self {
-            schedule: parking_lot::Mutex::new(HealSchedule::new(config.clone())),
-            conns: parking_lot::Mutex::new(RapidHashMap::new()),
-            accepted: parking_lot::Mutex::new(RapidHashMap::new()),
+            schedule: Atom::new(HealSchedule::new(config.clone())),
+            conns: HopscotchMap::with_hasher(RandomState::default()),
+            accepted: HopscotchMap::with_hasher(RandomState::default()),
+            accepted_serial: std::sync::atomic::AtomicU64::new(0),
             config,
         }
     }
@@ -253,81 +270,104 @@ impl GossipHealer {
     /// so a long-lived peer whose gossip connections churn does not
     /// accumulate them.
     pub(super) fn retain_accepted(&self, id: EndpointId, conn: Connection) {
-        let mut accepted = self.accepted.lock();
-        // Prune the whole map, not just this peer's entry. The periodic sweep
-        // also prunes, but it does not run at all when healing is disabled
-        // (a zero refresh interval), and bounding memory must not depend on an
-        // optional feature being switched on. Every accepted gossip connection
-        // passes through here, so this is the one place guaranteed to run.
-        // The map holds at most one entry per peer with a live gossip
-        // connection, so the walk is small.
-        accepted.retain(|_, handles| {
-            handles.retain(|c| c.close_reason().is_none());
-            !handles.is_empty()
-        });
-        accepted.entry(id).or_default().push(conn);
+        // Prune on the way in. The periodic sweep prunes too, but it does not
+        // run at all when healing is disabled (a zero refresh interval), and
+        // bounding memory must not depend on an optional feature being
+        // switched on. Every accepted gossip connection passes through here,
+        // so this is the one place guaranteed to run.
+        self.prune_accepted();
+        let serial = self
+            .accepted_serial
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.accepted.insert(serial, (id, conn));
     }
 
     /// Take every retained accepted-gossip handle for a peer.
+    ///
+    /// A handle inserted while this is walking can be missed, and that is
+    /// safe: the accept path re-checks admission after retaining its handle
+    /// (`endpoint_streams::handle_incoming`), so a connection this misses is
+    /// closed by the accept side instead. One of the two always sees the
+    /// other.
     pub(super) fn take_accepted(&self, id: &EndpointId) -> Vec<Connection> {
-        self.accepted.lock().remove(id).unwrap_or_default()
+        let keys: Vec<u64> = self
+            .accepted
+            .iter()
+            .filter(|(_, (peer, _))| peer == id)
+            .map(|(key, _)| key)
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| self.accepted.remove(&key))
+            .map(|(_, conn)| conn)
+            .collect()
     }
 
-    /// Drop accepted-gossip handles whose connection has already closed, and
-    /// the per-peer entries left empty by that.
+    /// Drop accepted-gossip handles whose connection has already closed.
     ///
-    /// Belt and braces alongside the same prune in `retain_accepted`: this one
-    /// reclaims entries for peers that have gone quiet, which would otherwise
-    /// wait for the next accepted gossip connection to arrive. Only the prune
-    /// in `retain_accepted` is load bearing for the bound, because this sweep
-    /// does not run when healing is disabled.
+    /// Without this the map keeps one entry per gossip connection ever
+    /// accepted. That is unbounded, and on an `AcceptAll` endpoint any peer
+    /// can drive it by reconnecting under fresh endpoint ids.
     pub(super) fn prune_accepted(&self) {
-        let mut accepted = self.accepted.lock();
-        accepted.retain(|_, handles| {
-            handles.retain(|conn| conn.close_reason().is_none());
-            !handles.is_empty()
-        });
+        let closed: Vec<u64> = self
+            .accepted
+            .iter()
+            .filter(|(_, (_, conn))| conn.close_reason().is_some())
+            .map(|(key, _)| key)
+            .collect();
+        for key in closed {
+            self.accepted.remove(&key);
+        }
     }
 
     pub(super) fn config(&self) -> &GossipHealConfig {
         &self.config
     }
 
+    fn update_schedule<R>(&self, mut f: impl FnMut(&mut HealSchedule) -> R) -> R {
+        loop {
+            let current = self.schedule.load();
+            let mut next = HealSchedule::clone(&current);
+            let result = f(&mut next);
+            if self.schedule.compare_and_swap(&current, next).is_ok() {
+                return result;
+            }
+        }
+    }
+
     fn due_peers(&self, connected: &[EndpointId], now: Instant) -> Vec<EndpointId> {
-        self.schedule.lock().due_peers(connected, now)
+        self.update_schedule(|schedule| schedule.due_peers(connected, now))
     }
 
     fn note_connected(&self, id: EndpointId, now: Instant) {
-        self.schedule.lock().note_connected(id, now);
+        self.update_schedule(|schedule| schedule.note_connected(id, now));
     }
 
     fn record_success(&self, id: EndpointId, now: Instant) {
-        self.schedule.lock().record_success(id, now);
+        self.update_schedule(|schedule| schedule.record_success(id, now));
     }
 
     fn record_failure(&self, id: EndpointId, now: Instant) -> bool {
-        self.schedule.lock().record_failure(id, now)
+        self.update_schedule(|schedule| schedule.record_failure(id, now))
     }
 
     fn store_conn(&self, id: EndpointId, conn: Connection) -> Option<Connection> {
-        self.conns.lock().insert(id, conn)
+        self.conns.insert(id, conn)
     }
 
     pub(super) fn take_conn(&self, id: &EndpointId) -> Option<Connection> {
-        self.conns.lock().remove(id)
+        self.conns.remove(id)
     }
 
     /// Injected gossip connections whose peer is no longer connected.
     fn take_departed_conns(&self, connected: &[EndpointId]) -> Vec<Connection> {
-        let mut conns = self.conns.lock();
-        let departed: Vec<EndpointId> = conns
+        let departed: Vec<EndpointId> = self
+            .conns
             .keys()
             .filter(|id| !connected.contains(id))
-            .copied()
             .collect();
         departed
             .into_iter()
-            .filter_map(|id| conns.remove(&id))
+            .filter_map(|id| self.conns.remove(&id))
             .collect()
     }
 }
@@ -383,7 +423,7 @@ pub(super) fn sweep(
     res: &EndpointResources,
     subscriptions: &RapidHashMap<String, TopicSubscription>,
 ) {
-    let connected: Vec<EndpointId> = res.peer_map.lock().endpoint_ids().collect();
+    let connected = res.peer_map.endpoint_ids();
     for conn in res.healer.take_departed_conns(&connected) {
         conn.close(0u32.into(), b"gossip-heal");
     }
@@ -481,10 +521,7 @@ async fn dial_and_inject(
     }
 
     let peer_id = endpoint_id_to_peer_id(&endpoint_id);
-    let direct_addr = {
-        let map = res.peer_map.lock();
-        map.get(&endpoint_id).and_then(|info| info.remote_addr)
-    };
+    let direct_addr = res.peer_map.remote_addr(&endpoint_id);
     let conn = connect_with_direct_addr_fallback(
         &res.endpoint,
         &peer_id,

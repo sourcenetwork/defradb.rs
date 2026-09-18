@@ -1,5 +1,7 @@
 //! Mock executors for testing HTTP routes.
 
+use kovan::Atom;
+
 mod acp;
 mod backup;
 mod block;
@@ -27,3 +29,19 @@ pub use p2p::{FailingMockP2POperations, MockP2POperations};
 pub use query::{FailingMockExecutor, MockQueryExecutor};
 pub use rest::{FailingMockRestOperations, MockRestOperations};
 pub use txn_ops::MockTransactionOperations;
+
+/// Applies `f` to a private copy of `atom`'s vector and publishes it, retrying
+/// until no concurrent writer replaced the value in between.
+fn update_vec<T, R>(atom: &Atom<Vec<T>>, mut f: impl FnMut(&mut Vec<T>) -> R) -> R
+where
+    T: Clone + Send + Sync + 'static,
+{
+    loop {
+        let current = atom.load();
+        let mut next = (*current).clone();
+        let result = f(&mut next);
+        if atom.compare_and_swap(&current, next).is_ok() {
+            return result;
+        }
+    }
+}

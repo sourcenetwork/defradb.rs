@@ -536,7 +536,6 @@ mod tests {
     use super::*;
 
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
 
     use async_trait::async_trait;
     use cid::Cid;
@@ -559,7 +558,7 @@ mod tests {
         /// failure the probe has to survive without acting.
         connected: Option<Vec<PeerId>>,
         dial_hangs: bool,
-        dials: Arc<Mutex<Vec<PeerId>>>,
+        dials: Arc<kovan::Atom<Vec<PeerId>>>,
         observations: Arc<AtomicUsize>,
     }
 
@@ -570,7 +569,7 @@ mod tests {
                 pubkey: vec![1],
                 connected,
                 dial_hangs: false,
-                dials: Arc::new(Mutex::new(Vec::new())),
+                dials: Arc::new(kovan::Atom::new(Vec::new())),
                 observations: Arc::new(AtomicUsize::new(0)),
             }
         }
@@ -583,7 +582,7 @@ mod tests {
         }
 
         fn dialled(&self) -> Vec<PeerId> {
-            self.dials.lock().unwrap().clone()
+            self.dials.load_clone()
         }
     }
     #[async_trait]
@@ -603,7 +602,11 @@ mod tests {
         }
 
         async fn dial(&self, peer_id: &PeerId, _addrs: Vec<PeerAddr>) -> P2PResult<()> {
-            self.dials.lock().unwrap().push(peer_id.clone());
+            self.dials.rcu(|dials| {
+                let mut next = dials.clone();
+                next.push(peer_id.clone());
+                next
+            });
             if self.dial_hangs {
                 std::future::pending::<()>().await;
             }

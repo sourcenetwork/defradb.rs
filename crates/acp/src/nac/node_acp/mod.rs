@@ -16,6 +16,7 @@ use storage::corekv::MaybeSendSync;
 use async_lock::RwLock;
 use async_trait::async_trait;
 use identity::Did;
+use kovan::{Atom, AtomOption};
 
 use crate::error::{Error, Result};
 use crate::nac::permission::NodePermission;
@@ -70,14 +71,14 @@ impl std::fmt::Display for NacStatus {
 ///
 /// Uses a local Zanzibar store to manage node-level permissions.
 /// Unlike DAC, NAC is always local (no SourceHub option).
-pub struct NodeACP<S: ZanzibarStore> {
+pub struct NodeACP<S: ZanzibarStore + Send + Sync + 'static> {
     store: Arc<S>,
     engine: RwLock<PermissionEngine<S>>,
-    status: RwLock<NacStatus>,
-    owner: RwLock<Option<Did>>,
+    status: Atom<NacStatus>,
+    owner: AtomOption<Did>,
 }
 
-impl<S: ZanzibarStore> NodeACP<S> {
+impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
     /// Create a new NodeACP with the given store.
     ///
     /// Starts in NotConfigured status. Call `enable()` to activate.
@@ -85,8 +86,8 @@ impl<S: ZanzibarStore> NodeACP<S> {
         Self {
             store: store.clone(),
             engine: RwLock::new(PermissionEngine::new(store)),
-            status: RwLock::new(NacStatus::NotConfigured),
-            owner: RwLock::new(None),
+            status: Atom::new(NacStatus::NotConfigured),
+            owner: AtomOption::none(),
         }
     }
 
@@ -111,7 +112,7 @@ impl<S: ZanzibarStore> NodeACP<S> {
                 .await?;
 
             if let Some(Subject::Entity(owner_did)) = subjects.first() {
-                *self.owner.write().await = Some(owner_did.clone());
+                self.owner.store_some(owner_did.clone());
 
                 let disabled_subjects = self
                     .store
@@ -124,9 +125,9 @@ impl<S: ZanzibarStore> NodeACP<S> {
                     .await?;
 
                 if disabled_subjects.is_empty() {
-                    *self.status.write().await = NacStatus::Enabled;
+                    self.status.store(NacStatus::Enabled);
                 } else {
-                    *self.status.write().await = NacStatus::DisabledTemporarily;
+                    self.status.store(NacStatus::DisabledTemporarily);
                 }
 
                 tracing::info!(
@@ -143,11 +144,11 @@ impl<S: ZanzibarStore> NodeACP<S> {
     }
 
     pub async fn status(&self) -> NacStatus {
-        *self.status.read().await
+        *self.status.load()
     }
 
     pub async fn owner(&self) -> Option<Did> {
-        self.owner.read().await.clone()
+        self.owner.load().map(|g| (*g).clone())
     }
 }
 
@@ -164,7 +165,7 @@ pub trait NodeAcpOperations: MaybeSendSync {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<S: ZanzibarStore + 'static> NodeAcpOperations for NodeACP<S> {
+impl<S: ZanzibarStore + Send + Sync + 'static> NodeAcpOperations for NodeACP<S> {
     async fn check_permission(&self, identity: &Did, permission: NodePermission) -> Result<bool> {
         NodeACP::check_permission(self, identity, permission).await
     }

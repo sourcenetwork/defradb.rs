@@ -267,9 +267,9 @@ impl TypeJoinOne {
     }
 
     /// Record a yielded parent docID in the shared set (for orphan exclusion).
-    async fn record_yielded_id(&self, doc_id: &str) {
-        if let Some(ref ids) = self.shared_yielded_ids {
-            ids.write().await.insert(doc_id.to_string());
+    fn record_yielded_id(&self, doc_id: &str) {
+        if let Some(ids) = &self.shared_yielded_ids {
+            ids.insert_if_absent(doc_id.to_string(), ());
         }
     }
 
@@ -702,7 +702,7 @@ impl TypeJoinOne {
             if !self.docs_to_yield.is_empty() {
                 let doc = self.docs_to_yield.remove(0);
                 if let Some(pid) = doc.doc_id() {
-                    self.record_yielded_id(pid).await;
+                    self.record_yielded_id(pid);
                 }
                 self.current_doc = doc;
                 return Ok(true);
@@ -829,7 +829,7 @@ impl TypeJoinOne {
             }
 
             if let Some(pid) = parent_doc.doc_id() {
-                self.record_yielded_id(pid).await;
+                self.record_yielded_id(pid);
             }
             self.merge_child(&mut parent_doc, Some(child_doc));
             self.current_doc = parent_doc;

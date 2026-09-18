@@ -6,11 +6,11 @@
 use std::sync::Arc;
 
 use acp::{DocumentACP, DocumentPermission, Identity};
-use async_lock::Mutex;
 use async_trait::async_trait;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use futures::{stream::FuturesOrdered, FutureExt, StreamExt};
 use identity::Did;
+use sync_wrapper::SyncWrapper;
 
 use crate::document::DocumentMapping;
 use crate::error::Result;
@@ -51,9 +51,9 @@ pub struct PermissionFilterNode {
     document_mapping: DocumentMapping,
 
     /// Ordered checks retain source order while allowing bounded concurrency.
-    /// The mutex only supplies the `Sync` bound required by `PlanNode`; access
-    /// is exclusive through `&mut self` and never locks.
-    pending: Mutex<FuturesOrdered<PermissionCheck>>,
+    /// The wrapper only supplies the `Sync` bound required by `PlanNode`;
+    /// access is exclusive through `&mut self`.
+    pending: SyncWrapper<FuturesOrdered<PermissionCheck>>,
 
     /// Whether the wrapped source has no more documents to enqueue.
     source_exhausted: bool,
@@ -84,7 +84,7 @@ impl PermissionFilterNode {
             resource_name: Arc::from(resource_name.into()),
             current_doc: Doc::default(),
             document_mapping,
-            pending: Mutex::new(FuturesOrdered::new()),
+            pending: SyncWrapper::new(FuturesOrdered::new()),
             source_exhausted: false,
         }
     }

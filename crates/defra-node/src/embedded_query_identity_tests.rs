@@ -2,36 +2,36 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use defra_core::signing::{SigningConfig, SigningKeyType};
+use kovan::Atom;
 use query::{QueryRequest, TransactionError, TransactionHandle};
 
 use super::tests::{TestRemoteSigner, SIGNING_STORE_GUARD};
 use super::{EmbeddedNode, ExecuteRetryPolicy, QueryExecutor};
 
 struct IdentityRecordingExecutor {
-    identities: std::sync::Mutex<Vec<Option<String>>>,
+    identities: Atom<Vec<Option<String>>>,
     remaining_conflicts: AtomicUsize,
 }
 
 impl IdentityRecordingExecutor {
     fn new(remaining_conflicts: usize) -> Self {
         Self {
-            identities: std::sync::Mutex::new(Vec::new()),
+            identities: Atom::new(Vec::new()),
             remaining_conflicts: AtomicUsize::new(remaining_conflicts),
         }
     }
 
     fn identities(&self) -> Vec<Option<String>> {
-        self.identities
-            .lock()
-            .expect("recorded identities poisoned")
-            .clone()
+        self.identities.load_clone()
     }
 
     fn record(&self, request: &QueryRequest) {
-        self.identities
-            .lock()
-            .expect("recorded identities poisoned")
-            .push(request.identity.as_ref().map(ToString::to_string));
+        let identity = request.identity.as_ref().map(ToString::to_string);
+        self.identities.rcu(|recorded| {
+            let mut recorded = recorded.clone();
+            recorded.push(identity.clone());
+            recorded
+        });
     }
 }
 

@@ -1,7 +1,6 @@
 use bytes::Bytes;
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,7 +17,9 @@ use crate::{QueryId, ReplicatorInfo};
 
 use super::super::push_worker::send_head_hint_via_transport;
 use super::*;
-use rapidhash::HashSetExt;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 
 #[derive(Clone)]
 pub(in crate::sync::coordinator) struct SentPush {
@@ -33,9 +34,9 @@ type SentLog = Vec<SentPush>;
 pub(in crate::sync::coordinator) struct TestTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
-    replies: Arc<Mutex<VecDeque<PushLogReply>>>,
-    sent: Arc<Mutex<SentLog>>,
-    stalled_peers: Arc<Mutex<rapidhash::RapidHashSet<String>>>,
+    replies: Arc<SegQueue<PushLogReply>>,
+    sent: Arc<Atom<SentLog>>,
+    stalled_peers: Arc<HopscotchMap<String, (), rapidhash::fast::RandomState>>,
     send_delay: Duration,
     signs: Arc<AtomicUsize>,
     sign_failures_remaining: Arc<AtomicUsize>,
@@ -43,12 +44,18 @@ pub(in crate::sync::coordinator) struct TestTransport {
 
 impl TestTransport {
     pub(in crate::sync::coordinator) fn new(replies: Vec<PushLogReply>) -> Self {
+        let reply_queue = SegQueue::new();
+        for reply in replies {
+            reply_queue.push(reply);
+        }
         Self {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
-            replies: Arc::new(Mutex::new(VecDeque::from(replies))),
-            sent: Arc::new(Mutex::new(Vec::new())),
-            stalled_peers: Arc::new(Mutex::new(rapidhash::RapidHashSet::new())),
+            replies: Arc::new(reply_queue),
+            sent: Arc::new(Atom::new(Vec::new())),
+            stalled_peers: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
             send_delay: Duration::ZERO,
             signs: Arc::new(AtomicUsize::new(0)),
             sign_failures_remaining: Arc::new(AtomicUsize::new(0)),
@@ -63,7 +70,7 @@ impl TestTransport {
     /// Sends to this peer never complete: a deterministic nonresponsive
     /// peer for worker fault-injection tests.
     pub(in crate::sync::coordinator) fn with_stalled_peer(self, peer: &str) -> Self {
-        self.stalled_peers.lock().unwrap().insert(peer.to_string());
+        self.stalled_peers.insert(peer.to_string(), ());
         self
     }
 
@@ -74,15 +81,11 @@ impl TestTransport {
 
     fn sent_cids(&self) -> Vec<Vec<u8>> {
         self.sent
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|push| push.cid.clone())
-            .collect()
+            .peek(|sent| sent.iter().map(|push| push.cid.clone()).collect())
     }
 
     pub(in crate::sync::coordinator) fn sent(&self) -> SentLog {
-        self.sent.lock().unwrap().clone()
+        self.sent.load_clone()
     }
 
     pub(in crate::sync::coordinator) fn sign_count(&self) -> usize {
@@ -173,27 +176,25 @@ impl P2PTransport for TestTransport {
         peer_id: &PeerId,
         req: PushLogRequest,
     ) -> P2PResult<PushLogReply> {
-        if self
-            .stalled_peers
-            .lock()
-            .unwrap()
-            .contains(&peer_id.to_string())
-        {
+        if self.stalled_peers.contains_key(peer_id.as_str()) {
             std::future::pending::<()>().await;
         }
-        self.sent.lock().unwrap().push(SentPush {
+        let push = SentPush {
             peer_id: peer_id.to_string(),
             cid: req.cid.to_vec(),
             block_bytes: req.block.len(),
+        };
+        self.sent.rcu(|sent| {
+            let mut next = sent.clone();
+            next.push(push.clone());
+            next
         });
         if !self.send_delay.is_zero() {
             n0_future::time::sleep(self.send_delay).await;
         }
         Ok(self
             .replies
-            .lock()
-            .unwrap()
-            .pop_front()
+            .pop()
             .unwrap_or_else(|| PushLogReply::success("ok")))
     }
 

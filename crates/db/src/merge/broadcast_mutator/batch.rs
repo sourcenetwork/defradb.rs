@@ -1,9 +1,9 @@
-use async_lock::Mutex as TokioMutex;
 use async_trait::async_trait;
 use blockstore::Blockstore;
 use bytes::Bytes;
 use cid::Cid;
 use document::{DocID, Document};
+use kovan_queue::seg_queue::SegQueue;
 use p2p::sync::SyncCoordinator;
 use p2p::transport::P2PTransport;
 use query::mutator::{
@@ -50,7 +50,7 @@ pub(crate) struct BroadcastBatchMutator<S: Store, B: Blockstore, T: P2PTransport
     inner: Arc<BatchMutator<S>>,
     sync: Arc<SyncCoordinator<B, T>>,
     db: Arc<DB<S>>,
-    pending_broadcasts: TokioMutex<Vec<PendingBroadcast>>,
+    pending_broadcasts: SegQueue<PendingBroadcast>,
     inner_controller: Arc<dyn MutationBatchController>,
 }
 
@@ -65,9 +65,17 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport + 'static> BroadcastBatc
             inner,
             sync,
             db,
-            pending_broadcasts: TokioMutex::new(Vec::new()),
+            pending_broadcasts: SegQueue::new(),
             inner_controller,
         }
+    }
+
+    fn drain_pending_broadcasts(&self) -> Vec<PendingBroadcast> {
+        let mut drained = Vec::with_capacity(self.pending_broadcasts.len());
+        while let Some(pending) = self.pending_broadcasts.pop() {
+            drained.push(pending);
+        }
+        drained
     }
 
     fn get_collection_id(&self, collection_name: &str) -> query::error::Result<String> {
@@ -103,7 +111,7 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport + 'static> BroadcastBatc
         };
 
         let collection_id = self.get_collection_id(collection_name)?;
-        self.pending_broadcasts.lock().await.push(PendingBroadcast {
+        self.pending_broadcasts.push(PendingBroadcast {
             cid,
             block,
             doc_id: doc_id.to_string(),
@@ -341,11 +349,11 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
     /// logical write blindly.
     async fn commit(&self) -> query::error::Result<()> {
         if let Err(err) = self.inner_controller.commit().await {
-            self.pending_broadcasts.lock().await.clear();
+            self.drain_pending_broadcasts();
             return Err(err);
         }
 
-        let pending_broadcasts = std::mem::take(&mut *self.pending_broadcasts.lock().await);
+        let pending_broadcasts = self.drain_pending_broadcasts();
         if !pending_broadcasts.is_empty() {
             let mut marker_errors = Vec::new();
             for pending in &pending_broadcasts {
@@ -375,7 +383,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatch
 
     async fn rollback(&self) -> query::error::Result<()> {
         let rollback_result = self.inner_controller.rollback().await;
-        self.pending_broadcasts.lock().await.clear();
+        self.drain_pending_broadcasts();
         rollback_result
     }
 }

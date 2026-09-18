@@ -58,6 +58,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"], o
 # Synchronization
 parking_lot.workspace = true
 
+# Lock-free shared state
+kovan.workspace = true
+kovan-channel.workspace = true
+kovan-map.workspace = true
+kovan-queue.workspace = true
+
 # Cryptographic hashing
 sha2.workspace = true
 hex.workspace = true

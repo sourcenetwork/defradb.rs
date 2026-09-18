@@ -15,7 +15,7 @@ use super::endpoint::{
     spawn_task, EndpointResources, PendingPushLogReplies, SpawnedTasks, SubscriptionSenders,
 };
 use super::gossip_heal;
-use super::peer_map::{endpoint_id_to_peer_id, PeerMap};
+use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
 
 /// QUIC application error code closing a connection refused by the inbound
@@ -108,7 +108,6 @@ pub(super) async fn handle_incoming(
     let is_new =
         resources
             .peer_map
-            .lock()
             .increment_connections(remote_id, remote_addr, connection.clone());
 
     // Re-check AFTER registering, not only before. A revoke that ran between
@@ -157,7 +156,7 @@ pub(super) async fn handle_incoming(
 #[derive(Clone)]
 pub(super) struct ConnectionStreamContext {
     event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
-    peer_map: Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: Arc<SharedPeerMap>,
     pending_pushlog_replies: PendingPushLogReplies,
     node_identity: Option<Arc<identity::RawIdentity>>,
     spawned_tasks: SpawnedTasks,
@@ -221,7 +220,7 @@ pub(super) async fn handle_connection_streams(
         });
     }
 
-    let fully_disconnected = context.peer_map.lock().decrement_connections(&remote_id);
+    let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
     debug!(peer_id = %peer_id, fully_disconnected, "Connection closed");
 
     if fully_disconnected
@@ -314,11 +313,10 @@ async fn dispatch_stream(
             // same-stream reply support.
             let reply: PushLogReply =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
-            let (sender, pending_len_after_remove) = {
-                let mut pending = pending_pushlog_replies.lock();
-                let sender = pending.remove(&reply.message_id);
-                (sender, pending.len())
-            };
+            let sender = pending_pushlog_replies
+                .remove(&reply.message_id)
+                .and_then(|slot| slot.pop());
+            let pending_len_after_remove = pending_pushlog_replies.len();
             if let Some(sender) = sender {
                 let _ = sender.send(reply);
             } else {

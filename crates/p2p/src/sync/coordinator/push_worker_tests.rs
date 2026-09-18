@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use cid::Cid;
+use kovan::AtomOption;
 use multihash_codetable::{Code, MultihashDigest};
-use parking_lot::Mutex;
 
 use super::super::broadcast::tests::TestTransport;
 use super::*;
@@ -26,7 +26,7 @@ fn test_context(
         selective_car_access: Arc::new(
             super::super::selective_car_access::SelectiveCarAccess::default(),
         ),
-        failure_tx: Arc::new(Mutex::new(Some(tx))),
+        failure_tx: Arc::new(AtomOption::some(tx)),
         send_timeout,
     });
     (context, rx)
@@ -83,9 +83,9 @@ async fn slow_peer_does_not_starve_healthy_peers() {
     let shutdown = SyncShutdownHandle::new(4);
     spawn_push_workers(context, &shutdown);
 
-    backlog.try_enqueue(job("slow", b"slow-1"));
+    backlog.try_enqueue(job("slow", b"slow-1")).await;
     for index in 0..5u8 {
-        backlog.try_enqueue(job("healthy", &[index]));
+        backlog.try_enqueue(job("healthy", &[index])).await;
     }
 
     let deadline = n0_future::time::Instant::now() + Duration::from_secs(5);
@@ -105,7 +105,7 @@ async fn slow_peer_does_not_starve_healthy_peers() {
         n0_future::time::sleep(Duration::from_millis(10)).await;
     }
 
-    let snap = backlog.snapshot();
+    let snap = backlog.snapshot().await;
     assert!(snap.active_jobs <= 2);
     assert!(snap.completed_total >= 5);
     backlog.close();
@@ -122,7 +122,7 @@ async fn stalled_send_times_out_and_reports_push_failure() {
     let shutdown = SyncShutdownHandle::new(4);
     spawn_push_workers(context, &shutdown);
 
-    backlog.try_enqueue(job("slow", b"slow-1"));
+    backlog.try_enqueue(job("slow", b"slow-1")).await;
 
     let failure = n0_future::time::timeout(Duration::from_secs(5), failure_rx.recv())
         .await
@@ -132,11 +132,11 @@ async fn stalled_send_times_out_and_reports_push_failure() {
     assert_eq!(failure.doc_id, "doc-slow-736c6f772d31");
 
     let deadline = n0_future::time::Instant::now() + Duration::from_secs(2);
-    while backlog.snapshot().failed_total == 0 {
+    while backlog.snapshot().await.failed_total == 0 {
         assert!(n0_future::time::Instant::now() < deadline);
         n0_future::time::sleep(Duration::from_millis(5)).await;
     }
-    assert_eq!(backlog.snapshot().active_jobs, 0);
+    assert_eq!(backlog.snapshot().await.active_jobs, 0);
     backlog.close();
 }
 
@@ -162,7 +162,7 @@ async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
         queued_b.doc_id.clone(),
     ];
     for job in [active, queued_a, queued_b] {
-        assert_eq!(backlog.try_enqueue(job), EnqueueOutcome::Enqueued);
+        assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     }
     let active = backlog.next_job().await.expect("active job");
 
@@ -181,10 +181,10 @@ async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
     expected_docs.sort();
     failed_docs.sort();
     assert_eq!(failed_docs, expected_docs);
-    assert_eq!(backlog.snapshot().queued_items, 0);
-    assert_eq!(backlog.snapshot().queued_bytes, 0);
+    assert_eq!(backlog.snapshot().await.queued_items, 0);
+    assert_eq!(backlog.snapshot().await.queued_bytes, 0);
 
-    backlog.job_done(&active, completion);
+    backlog.job_done(&active, completion).await;
     backlog.close();
 }
 
@@ -222,7 +222,7 @@ async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
         root_cid,
         root,
     );
-    assert_eq!(backlog.try_enqueue(job), EnqueueOutcome::Enqueued);
+    assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
 
     let completion = run_push_job(&context, &active).await;
@@ -231,7 +231,7 @@ async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
     assert_eq!(transport.sign_count(), 1);
     assert!(transport.sent().is_empty());
     assert_eq!(failure_rx.recv().await.unwrap().cid, root_cid.to_string());
-    backlog.job_done(&active, completion);
+    backlog.job_done(&active, completion).await;
     backlog.close();
 }
 
@@ -273,7 +273,7 @@ async fn root_only_push_installs_receiver_pull_authority() {
         root_cid,
         root_bytes,
     );
-    assert_eq!(backlog.try_enqueue(job), EnqueueOutcome::Enqueued);
+    assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
 
     let completion = run_push_job(&context, &active).await;
@@ -283,7 +283,7 @@ async fn root_only_push_installs_receiver_pull_authority() {
         context.selective_car_access.allows_root(&peer, &root_cid),
         "root-only push must still grant the child block for receiver recovery"
     );
-    backlog.job_done(&active, completion);
+    backlog.job_done(&active, completion).await;
     backlog.close();
 }
 
@@ -361,14 +361,14 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
         root_cid,
         root_bytes,
     );
-    assert_eq!(backlog.try_enqueue(job), EnqueueOutcome::Enqueued);
+    assert_eq!(backlog.try_enqueue(job).await, EnqueueOutcome::Enqueued);
     let active = backlog.next_job().await.unwrap();
     let completion = run_push_job(&context, &active).await;
     assert_eq!(completion, JobCompletion::Succeeded);
-    backlog.job_done(&active, completion);
+    backlog.job_done(&active, completion).await;
 
     let sent = transport.sent();
-    let snapshot = backlog.snapshot();
+    let snapshot = backlog.snapshot().await;
     let result = OwnershipArm {
         scheduled: snapshot.enqueued_total,
         transmitted: sent.len(),
@@ -420,23 +420,23 @@ async fn superseded_active_failure_never_enters_persisted_retry() {
     let shutdown = SyncShutdownHandle::new(4);
     spawn_push_workers(context, &shutdown);
 
-    backlog.try_enqueue(versioned_job("peer", 1));
+    backlog.try_enqueue(versioned_job("peer", 1)).await;
     let deadline = n0_future::time::Instant::now() + Duration::from_secs(1);
     while transport.sent().is_empty() {
         assert!(n0_future::time::Instant::now() < deadline);
         n0_future::time::sleep(Duration::from_millis(2)).await;
     }
-    backlog.try_enqueue(versioned_job("peer", 2));
+    backlog.try_enqueue(versioned_job("peer", 2)).await;
 
     let deadline = n0_future::time::Instant::now() + Duration::from_secs(2);
-    while backlog.snapshot().completed_total < 1 {
+    while backlog.snapshot().await.completed_total < 1 {
         assert!(n0_future::time::Instant::now() < deadline);
         n0_future::time::sleep(Duration::from_millis(5)).await;
     }
     let events: Vec<_> = std::iter::from_fn(|| failure_rx.try_recv().ok()).collect();
     assert!(events.iter().any(|event| !event.create_retry));
     assert!(events.iter().all(|event| !event.create_retry));
-    assert_eq!(backlog.snapshot().stale_head_retirements_total, 1);
+    assert_eq!(backlog.snapshot().await.stale_head_retirements_total, 1);
     backlog.close();
 }
 
@@ -457,7 +457,7 @@ async fn report_push_failure_backpressures_instead_of_dropping() {
     })
     .await
     .unwrap();
-    let slot = Arc::new(Mutex::new(Some(tx)));
+    let slot = Arc::new(AtomOption::some(tx));
 
     let peer = PeerId::new("slow".to_string());
     let reporter = {
@@ -494,7 +494,7 @@ async fn report_push_failure_backpressures_instead_of_dropping() {
 #[tokio::test]
 async fn collection_commit_failure_enters_the_retry_channel_with_its_cid() {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<PushFailure>(1);
-    let slot = Arc::new(Mutex::new(Some(tx)));
+    let slot = Arc::new(AtomOption::some(tx));
     let cid = Cid::new_v1(0x55, Code::Sha2_256.digest(b"collection-commit"));
 
     report_push_failure(
@@ -522,7 +522,7 @@ async fn collection_commit_failure_enters_the_retry_channel_with_its_cid() {
 #[tokio::test]
 async fn versionless_collection_failure_is_not_recorded() {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<PushFailure>(1);
-    let slot = Arc::new(Mutex::new(Some(tx)));
+    let slot = Arc::new(AtomOption::some(tx));
 
     report_push_failure(
         &slot,

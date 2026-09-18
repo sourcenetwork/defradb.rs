@@ -6,15 +6,15 @@
 //!
 //! Mirrors the state machine in
 //! `sourcenetwork/go-libp2p-pubsub-rpc/rpc.go:204-278` minus the direct
-//! gossipsub coupling — the gossipsub integration lives in the host layer
+//! gossipsub coupling: the gossipsub integration lives in the host layer
 //! (see `crate::host::p2p_host::protocols`), so this module stays
 //! transport-agnostic for unit testing.
 
-use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use cid::Cid;
-use parking_lot::Mutex;
+use kovan_map::HopscotchMap;
+use kovan_queue::array_queue::ArrayQueue;
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -41,7 +41,7 @@ pub struct PubsubResponse {
     /// Responder peer, populated from the verified gossip message source. Held
     /// as the transport-native peer-id string (libp2p base58 or iroh hex) since
     /// it is only forwarded to the caller (e.g. for the KMS ECIES AAD), never
-    /// used as a correlation key — that is the request [`Cid`].
+    /// used as a correlation key: that is the request [`Cid`].
     pub from: String,
     /// Raw response payload.
     pub data: Vec<u8>,
@@ -74,14 +74,46 @@ impl Default for PublishOptions {
 
 /// Outstanding-request registry shared between the publisher and the
 /// subscription listener. Safe to clone into tasks.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Correlator {
-    ongoing: Arc<Mutex<RapidHashMap<Cid, Entry>>>,
+    ongoing: Arc<HopscotchMap<Cid, Entry, rapidhash::fast::RandomState>>,
 }
 
+impl Default for Correlator {
+    fn default() -> Self {
+        Self {
+            ongoing: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+        }
+    }
+}
+
+/// The owning sender sits in a one-slot queue so that removing the entry can
+/// drop it on the spot and end the caller's receiver; deliveries upgrade the
+/// weak handle instead, so multi-response entries stay usable in place.
+#[derive(Clone)]
 struct Entry {
-    sender: mpsc::Sender<PubsubResponse>,
+    owner: Arc<ArrayQueue<mpsc::Sender<PubsubResponse>>>,
+    sender: mpsc::WeakSender<PubsubResponse>,
     multi_response: bool,
+}
+
+impl Entry {
+    fn new(sender: mpsc::Sender<PubsubResponse>, multi_response: bool) -> Self {
+        let weak = sender.downgrade();
+        let owner = ArrayQueue::new(1);
+        let _ = owner.push(sender);
+        Self {
+            owner: Arc::new(owner),
+            sender: weak,
+            multi_response,
+        }
+    }
+
+    fn close(&self) {
+        drop(self.owner.pop());
+    }
 }
 
 /// Handle for a request that expects one or more responses.
@@ -101,9 +133,7 @@ pub struct PreparedPublish {
 
 impl Drop for PreparedPublish {
     fn drop(&mut self) {
-        // Always attempt to remove — cheap if the entry was already cleared
-        // by a single-response auto-close or an explicit cancel.
-        self.correlator.ongoing.lock().remove(&self.id);
+        self.correlator.cancel(&self.id);
     }
 }
 
@@ -122,9 +152,9 @@ impl Correlator {
     ///
     /// The request ID is the CID of `data`, so two callers publishing
     /// **identical** bytes derive the same ID. The second `publish` overwrites
-    /// the first's entry in the in-flight map — the first caller's response
-    /// channel is silently dropped and that caller times out instead of
-    /// receiving the reply. Go has the same behavior: `Topic.Publish` in
+    /// the first's entry in the in-flight map: the first caller's response
+    /// channel is closed and that caller times out instead of receiving the
+    /// reply. Go has the same behavior: `Topic.Publish` in
     /// `sourcenetwork/go-libp2p-pubsub-rpc/rpc.go:222-230` performs an
     /// unguarded `t.ongoing[msgID] = ongoingMessage{...}`, so this is a Go
     /// parity match by design. Callers that need to multiplex truly identical
@@ -138,11 +168,9 @@ impl Correlator {
             1
         };
         let (tx, rx) = mpsc::channel(buffer);
-        let entry = Entry {
-            sender: tx,
-            multi_response: opts.multi_response,
-        };
-        self.ongoing.lock().insert(id, entry);
+        if let Some(previous) = self.ongoing.insert(id, Entry::new(tx, opts.multi_response)) {
+            previous.close();
+        }
         PreparedPublish {
             id,
             data,
@@ -160,11 +188,13 @@ impl Correlator {
     }
 
     /// Drop the correlation entry for `id` without waiting for a response.
-    /// Normally not needed — [`PreparedPublish`]'s `Drop` does this — but
+    /// Normally not needed ([`PreparedPublish`]'s `Drop` does this) but
     /// exposed for callers that want to cancel early while holding the
     /// handle alive for other purposes (rare).
     pub fn cancel(&self, id: &Cid) {
-        self.ongoing.lock().remove(id);
+        if let Some(entry) = self.ongoing.remove(id) {
+            entry.close();
+        }
     }
 
     /// Drop every in-flight response sender and wake waiting publishers.
@@ -172,7 +202,15 @@ impl Correlator {
     /// Used during coordinator shutdown so callers don't sit on the normal
     /// response timeout after the transport has already started closing.
     pub fn cancel_all(&self) -> usize {
-        self.ongoing.lock().drain().count()
+        let ids: Vec<Cid> = self.ongoing.keys().collect();
+        let mut cancelled = 0;
+        for id in ids {
+            if let Some(entry) = self.ongoing.remove(&id) {
+                entry.close();
+                cancelled += 1;
+            }
+        }
+        cancelled
     }
 
     /// Deliver a decoded response envelope. Routes to the matching ongoing
@@ -195,29 +233,28 @@ impl Correlator {
                 Some(response.err)
             },
         };
-        let mut map = self.ongoing.lock();
-        let Some(entry) = map.get(&id) else {
+        let Some(entry) = self.ongoing.get(&id) else {
             return false;
         };
-        let multi = entry.multi_response;
+        if !entry.multi_response {
+            let Some(sender) = self.ongoing.remove(&id).and_then(|entry| entry.owner.pop()) else {
+                return false;
+            };
+            return sender.try_send(response).is_ok();
+        }
+        let Some(sender) = entry.sender.upgrade() else {
+            return false;
+        };
         // Use try_send: if the caller has fallen behind the buffer, Go also
         // drops responses rather than blocking the gossipsub loop
         // (`rpc.go:275` uses a non-blocking select with a default-log).
-        let send_result = entry.sender.try_send(response);
-        match send_result {
-            Ok(()) => {
-                if !multi {
-                    map.remove(&id);
-                }
-                true
-            }
+        match sender.try_send(response) {
+            Ok(()) => true,
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                // Receiver dropped — treat as cancelled.
-                map.remove(&id);
+                self.cancel(&id);
                 false
             }
             Err(mpsc::error::TrySendError::Full(dropped)) => {
-                // Full: backpressure trap. Keep the entry but report drop.
                 debug!(
                     from = %dropped.from,
                     request_id = %id,
@@ -231,6 +268,6 @@ impl Correlator {
     /// Number of currently in-flight requests. Intended for tests and
     /// metrics, not for correctness-critical code paths.
     pub fn in_flight(&self) -> usize {
-        self.ongoing.lock().len()
+        self.ongoing.len()
     }
 }

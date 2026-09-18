@@ -39,8 +39,9 @@ use crate::PeerIdentityResolver;
 use crate::QueryId;
 use crate::{ReplicationFilter, ReplicationFilters, ReplicatorInfo};
 use async_trait::async_trait;
-use parking_lot::RwLock;
-use rapidhash::{HashMapExt, HashSetExt};
+use kovan::{Atom, AtomOption};
+use kovan_map::HopscotchMap;
+use rapidhash::HashMapExt;
 
 use super::authorizer::RuntimeAuthorizer;
 use super::{
@@ -332,7 +333,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         runtime: SyncRuntime {
             transport,
             broadcaster,
-            failure_tx: Arc::new(parking_lot::Mutex::new(None)),
+            failure_tx: Arc::new(AtomOption::none()),
             dag_fetch_limiter: DagFetchLimiter::new(DEFAULT_MAX_CONCURRENT_DAG_FETCHES),
             push_backlog: crate::sync::push_backlog::PushBacklog::new(
                 crate::sync::DEFAULT_PUSH_QUEUE_CAPACITY,
@@ -363,13 +364,9 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         },
         subscriptions: SyncSubscriptionState {
             mutation: Arc::new(tokio::sync::Mutex::new(())),
-            subscribed_collections: Arc::new(tokio::sync::RwLock::new(
-                rapidhash::RapidHashSet::new(),
-            )),
-            retrying_subscribes: Arc::new(tokio::sync::Mutex::new(rapidhash::RapidHashSet::new())),
-            retrying_unsubscribes: Arc::new(
-                tokio::sync::Mutex::new(rapidhash::RapidHashSet::new()),
-            ),
+            subscribed_collections: super::collection_set(),
+            retrying_subscribes: super::collection_set(),
+            retrying_unsubscribes: super::collection_set(),
             collection_store: Arc::new(NoOpCollectionStorage),
             head_provider,
         },
@@ -633,16 +630,25 @@ impl Blockstore for ConflictOnceBlockstore {
 pub(super) struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
-    replicators: Arc<RwLock<rapidhash::RapidHashMap<String, Vec<String>>>>,
-    connected_peers: Arc<RwLock<Vec<PeerId>>>,
-    doc_sync_replies: Arc<RwLock<Vec<DocSyncReply>>>,
-    car_responses: Arc<RwLock<Vec<Vec<u8>>>>,
-    pushlog_replies: Arc<RwLock<Vec<crate::message::PushLogReply>>>,
-    pushlog_response_tokens: Arc<RwLock<Vec<usize>>>,
-    two_stream_replies: Arc<RwLock<Vec<crate::message::PushLogReply>>>,
-    two_stream_handler: Arc<RwLock<Option<TwoStreamHandler>>>,
-    branchable_replies: Arc<RwLock<Vec<BranchableSyncReply>>>,
-    car_requests: Arc<RwLock<Vec<Cid>>>,
+    replicators: Arc<Atom<rapidhash::RapidHashMap<String, Vec<String>>>>,
+    connected_peers: Arc<Atom<Vec<PeerId>>>,
+    doc_sync_replies: Arc<Atom<Vec<DocSyncReply>>>,
+    car_responses: Arc<Atom<Vec<Vec<u8>>>>,
+    pushlog_replies: Arc<Atom<Vec<crate::message::PushLogReply>>>,
+    pushlog_response_tokens: Arc<Atom<Vec<usize>>>,
+    two_stream_replies: Arc<Atom<Vec<crate::message::PushLogReply>>>,
+    two_stream_handler: Arc<AtomOption<TwoStreamHandler>>,
+    branchable_replies: Arc<Atom<Vec<BranchableSyncReply>>>,
+    car_requests: Arc<Atom<Vec<Cid>>>,
+}
+
+/// Appends to a recorder that tests read back cumulatively.
+fn record<T: Clone + Send + Sync + 'static>(log: &Atom<Vec<T>>, item: T) {
+    log.rcu(|items| {
+        let mut next = items.clone();
+        next.push(item.clone());
+        next
+    });
 }
 
 impl NoopTransport {
@@ -650,55 +656,55 @@ impl NoopTransport {
         Self {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
-            replicators: Arc::new(RwLock::new(rapidhash::RapidHashMap::new())),
-            connected_peers: Arc::new(RwLock::new(Vec::new())),
-            doc_sync_replies: Arc::new(RwLock::new(Vec::new())),
-            car_responses: Arc::new(RwLock::new(Vec::new())),
-            pushlog_replies: Arc::new(RwLock::new(Vec::new())),
-            pushlog_response_tokens: Arc::new(RwLock::new(Vec::new())),
-            two_stream_replies: Arc::new(RwLock::new(Vec::new())),
-            two_stream_handler: Arc::new(RwLock::new(None)),
-            branchable_replies: Arc::new(RwLock::new(Vec::new())),
-            car_requests: Arc::new(RwLock::new(Vec::new())),
+            replicators: Arc::new(Atom::new(rapidhash::RapidHashMap::new())),
+            connected_peers: Arc::new(Atom::new(Vec::new())),
+            doc_sync_replies: Arc::new(Atom::new(Vec::new())),
+            car_responses: Arc::new(Atom::new(Vec::new())),
+            pushlog_replies: Arc::new(Atom::new(Vec::new())),
+            pushlog_response_tokens: Arc::new(Atom::new(Vec::new())),
+            two_stream_replies: Arc::new(Atom::new(Vec::new())),
+            two_stream_handler: Arc::new(AtomOption::none()),
+            branchable_replies: Arc::new(Atom::new(Vec::new())),
+            car_requests: Arc::new(Atom::new(Vec::new())),
         }
     }
 
     fn set_connected_peers(&self, peers: Vec<PeerId>) {
-        *self.connected_peers.write() = peers;
+        self.connected_peers.store(peers);
     }
 
     fn doc_sync_replies(&self) -> Vec<DocSyncReply> {
-        self.doc_sync_replies.read().clone()
+        self.doc_sync_replies.load_clone()
     }
 
     fn pushlog_replies(&self) -> Vec<crate::message::PushLogReply> {
-        self.pushlog_replies.read().clone()
+        self.pushlog_replies.load_clone()
     }
 
     fn pushlog_response_tokens(&self) -> Vec<usize> {
-        self.pushlog_response_tokens.read().clone()
+        self.pushlog_response_tokens.load_clone()
     }
 
     fn two_stream_replies(&self) -> Vec<crate::message::PushLogReply> {
-        self.two_stream_replies.read().clone()
+        self.two_stream_replies.load_clone()
     }
 
     fn set_two_stream_handler(&self, handler: TwoStreamHandler) {
-        *self.two_stream_handler.write() = Some(handler);
+        self.two_stream_handler.store_some(handler);
     }
 
     fn branchable_replies(&self) -> Vec<BranchableSyncReply> {
-        self.branchable_replies.read().clone()
+        self.branchable_replies.load_clone()
     }
 
     /// CARv1 payloads the coordinator sent, in order (used to assert which
     /// blocks were actually served after per-block serve filtering).
     fn car_responses(&self) -> Vec<Vec<u8>> {
-        self.car_responses.read().clone()
+        self.car_responses.load_clone()
     }
 
     fn car_requests(&self) -> Vec<Cid> {
-        self.car_requests.read().clone()
+        self.car_requests.load_clone()
     }
 }
 
@@ -731,7 +737,7 @@ impl P2PTransport for NoopTransport {
     }
 
     async fn connected_peers(&self) -> crate::Result<Vec<PeerId>> {
-        Ok(self.connected_peers.read().clone())
+        Ok(self.connected_peers.load_clone())
     }
 
     async fn listen_addresses(&self) -> crate::Result<Vec<PeerAddr>> {
@@ -775,8 +781,8 @@ impl P2PTransport for NoopTransport {
         token: Self::ResponseToken,
         reply: crate::message::PushLogReply,
     ) -> crate::Result<()> {
-        self.pushlog_response_tokens.write().push(token);
-        self.pushlog_replies.write().push(reply);
+        record(&self.pushlog_response_tokens, token);
+        record(&self.pushlog_replies, reply);
         Ok(())
     }
 
@@ -785,7 +791,7 @@ impl P2PTransport for NoopTransport {
         peer_id: &PeerId,
         req: PushLogRequest,
     ) -> crate::Result<crate::message::PushLogReply> {
-        let handler = self.two_stream_handler.read().clone();
+        let handler = self.two_stream_handler.load().as_deref().cloned();
         if let Some(handler) = handler {
             return handler(peer_id.clone(), req).await;
         }
@@ -797,7 +803,7 @@ impl P2PTransport for NoopTransport {
         _peer_id: &PeerId,
         reply: crate::message::PushLogReply,
     ) -> crate::Result<()> {
-        self.two_stream_replies.write().push(reply);
+        record(&self.two_stream_replies, reply);
         Ok(())
     }
 
@@ -814,7 +820,7 @@ impl P2PTransport for NoopTransport {
         _peer_id: &PeerId,
         reply: crate::message::DocSyncReply,
     ) -> crate::Result<()> {
-        self.doc_sync_replies.write().push(reply);
+        record(&self.doc_sync_replies, reply);
         Ok(())
     }
 
@@ -831,17 +837,17 @@ impl P2PTransport for NoopTransport {
         _peer_id: &PeerId,
         reply: crate::message::BranchableSyncReply,
     ) -> crate::Result<()> {
-        self.branchable_replies.write().push(reply);
+        record(&self.branchable_replies, reply);
         Ok(())
     }
 
     async fn send_car_request(&self, _peer_id: &PeerId, root_cid: Cid) -> crate::Result<()> {
-        self.car_requests.write().push(root_cid);
+        record(&self.car_requests, root_cid);
         Ok(())
     }
 
     async fn send_car_response(&self, _peer_id: &PeerId, car_data: Vec<u8>) -> crate::Result<()> {
-        self.car_responses.write().push(car_data);
+        record(&self.car_responses, car_data);
         Ok(())
     }
 
@@ -850,7 +856,7 @@ impl P2PTransport for NoopTransport {
         _token: Self::ResponseToken,
         car_data: Vec<u8>,
     ) -> crate::Result<()> {
-        self.car_responses.write().push(car_data);
+        record(&self.car_responses, car_data);
         Ok(())
     }
 
@@ -859,7 +865,7 @@ impl P2PTransport for NoopTransport {
         _token: Self::ResponseToken,
         reply: crate::message::DocSyncReply,
     ) -> crate::Result<()> {
-        self.doc_sync_replies.write().push(reply);
+        record(&self.doc_sync_replies, reply);
         Ok(())
     }
 
@@ -868,7 +874,7 @@ impl P2PTransport for NoopTransport {
         _token: Self::ResponseToken,
         reply: crate::message::BranchableSyncReply,
     ) -> crate::Result<()> {
-        self.branchable_replies.write().push(reply);
+        record(&self.branchable_replies, reply);
         Ok(())
     }
 
@@ -898,34 +904,38 @@ impl P2PTransport for NoopTransport {
         peer_id: &PeerId,
         collections: Vec<String>,
     ) -> crate::Result<()> {
-        self.replicators
-            .write()
-            .insert(peer_id.to_string(), collections);
+        self.replicators.rcu(|replicators| {
+            let mut next = replicators.clone();
+            next.insert(peer_id.to_string(), collections.clone());
+            next
+        });
         Ok(())
     }
 
     async fn delete_replicator(&self, peer_id: &PeerId) -> crate::Result<()> {
-        self.replicators.write().remove(peer_id.as_str());
+        self.replicators.rcu(|replicators| {
+            let mut next = replicators.clone();
+            next.remove(peer_id.as_str());
+            next
+        });
         Ok(())
     }
 
     async fn list_replicators(&self) -> crate::Result<Vec<ReplicatorInfo>> {
-        Ok(self
-            .replicators
-            .read()
-            .iter()
-            .map(|(peer_id, collections)| {
-                ReplicatorInfo::from_raw(peer_id.clone(), collections.clone(), Vec::new())
-            })
-            .collect())
+        Ok(self.replicators.peek(|replicators| {
+            replicators
+                .iter()
+                .map(|(peer_id, collections)| {
+                    ReplicatorInfo::from_raw(peer_id.clone(), collections.clone(), Vec::new())
+                })
+                .collect()
+        }))
     }
 
     async fn get_replicator(&self, peer_id: &PeerId) -> crate::Result<Option<ReplicatorInfo>> {
         Ok(self
             .replicators
-            .read()
-            .get(peer_id.as_str())
-            .cloned()
+            .peek(|replicators| replicators.get(peer_id.as_str()).cloned())
             .map(|collections| {
                 ReplicatorInfo::from_raw(peer_id.to_string(), collections, Vec::new())
             }))
@@ -936,18 +946,20 @@ impl P2PTransport for NoopTransport {
         peer_id: &PeerId,
         collections: Vec<String>,
     ) -> crate::Result<bool> {
-        let mut replicators = self.replicators.write();
-        let Some(existing) = replicators.get_mut(peer_id.as_str()) else {
-            return Ok(false);
-        };
+        let mut fully_deleted = None;
+        self.replicators.rcu(|replicators| {
+            let mut next = replicators.clone();
+            fully_deleted = next.get_mut(peer_id.as_str()).map(|existing| {
+                existing.retain(|collection| !collections.contains(collection));
+                existing.is_empty()
+            });
+            if fully_deleted == Some(true) {
+                next.remove(peer_id.as_str());
+            }
+            next
+        });
 
-        existing.retain(|collection| !collections.contains(collection));
-        let fully_deleted = existing.is_empty();
-        if fully_deleted {
-            replicators.remove(peer_id.as_str());
-        }
-
-        Ok(fully_deleted)
+        Ok(fully_deleted.unwrap_or(false))
     }
 
     async fn shutdown(&self) -> crate::Result<()> {
@@ -2029,7 +2041,9 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
     });
     let coordinator = Arc::new(coordinator);
 
-    let receiver_blocks = Arc::new(RwLock::new(rapidhash::RapidHashSet::new()));
+    let receiver_blocks: Arc<HopscotchMap<Cid, (), rapidhash::fast::RandomState>> = Arc::new(
+        HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
+    );
     let root_acked = Arc::new(AtomicBool::new(false));
     transport.set_two_stream_handler(Arc::new({
         let receiver_blocks = Arc::clone(&receiver_blocks);
@@ -2045,9 +2059,9 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
                     return Ok(PushLogReply::success("field-ack"));
                 }
 
-                receiver_blocks.write().insert(pushed_cid);
+                receiver_blocks.insert(pushed_cid, ());
                 assert_eq!(pushed_cid, root_cid);
-                assert!(!receiver_blocks.read().contains(&field_cid));
+                assert!(!receiver_blocks.contains_key(&field_cid));
                 root_acked.store(true, Ordering::SeqCst);
                 Ok(PushLogReply::success("root-ack"))
             })
@@ -2061,7 +2075,7 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
 
     let snapshot = timeout(Duration::from_secs(5), async {
         loop {
-            let snapshot = coordinator.sync_status().push_backlog;
+            let snapshot = coordinator.sync_status().await.push_backlog;
             if root_acked.load(Ordering::SeqCst) && snapshot.completed_total == 1 {
                 break snapshot;
             }
@@ -2072,8 +2086,8 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
     .expect("sender push did not complete after the receiver acked the root");
 
     assert_eq!(snapshot.failed_total, 0);
-    assert!(receiver_blocks.read().contains(&root_cid));
-    assert!(!receiver_blocks.read().contains(&field_cid));
+    assert!(receiver_blocks.contains_key(&root_cid));
+    assert!(!receiver_blocks.contains_key(&field_cid));
     assert!(coordinator
         .runtime
         .selective_car_access
@@ -2118,11 +2132,11 @@ async fn filtered_car_authority_is_rederived_after_sender_restart() {
     let response = transport.car_responses().last().cloned().unwrap();
     let (_roots, blocks) = crate::sync::car::decode_car(&response).unwrap();
     for (cid, _data) in blocks {
-        receiver_blocks.write().insert(cid);
+        receiver_blocks.insert(cid, ());
     }
-    assert!(receiver_blocks.read().contains(&field_cid));
+    assert!(receiver_blocks.contains_key(&field_cid));
     assert!(
-        receiver_blocks.read().contains(&previous_field_cid),
+        receiver_blocks.contains_key(&previous_field_cid),
         "one bounded frontier CAR must include linked descendants"
     );
 }
@@ -2603,9 +2617,7 @@ async fn gossip_subscribed_collection_accepts_without_peer_connection_cache() {
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     let result = coordinator
         .handle_transport_event(gossip_event(peer.clone(), "collection1"))
@@ -2687,7 +2699,7 @@ async fn committed_head_marker_failure_is_returned_before_queue_admission() {
         .await
         .expect_err("a missing durable recorder must fail the committed head handoff");
     assert!(matches!(error, Error::DurableHeadMarker(_)));
-    let snapshot = coordinator.sync_status().push_backlog;
+    let snapshot = coordinator.sync_status().await.push_backlog;
     assert_eq!(snapshot.head_hints_failed_local, 1);
     assert_eq!(snapshot.enqueued_total, 0);
 }
@@ -2703,9 +2715,7 @@ async fn pushlog_controlled_mode_allows_locally_subscribed_collection() {
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     coordinator
         .handle_transport_event(pushlog_event(peer.clone(), "collection1"))
@@ -2834,9 +2844,7 @@ async fn two_stream_controlled_mode_allows_locally_subscribed_collection() {
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     coordinator
         .handle_transport_event(two_stream_event(peer.clone(), "collection1", false))
@@ -2892,9 +2900,7 @@ async fn gossip_controlled_mode_allows_subscribed_collection() {
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     let result = coordinator
         .handle_transport_event(gossip_event(peer, "collection1"))
@@ -2921,9 +2927,7 @@ async fn gossip_relay_cannot_confer_explicit_replicator_trust_on_origin() {
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     let mut event = gossip_event(relay.clone(), "collection1");
     let TransportEvent::GossipMessage { message, .. } = &mut event else {
@@ -2979,9 +2983,7 @@ async fn gossip_controlled_mode_rejects_mismatched_topic_and_payload_collection(
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     let result = coordinator
         .handle_transport_event(gossip_event_on_topic(peer, "collection2", "collection1"))
@@ -3030,9 +3032,7 @@ async fn gossip_controlled_mode_allows_subscribed_outbound_replicator_target() {
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     let result = coordinator
         .handle_transport_event(gossip_event(peer, "collection1"))
@@ -3043,7 +3043,13 @@ async fn gossip_controlled_mode_allows_subscribed_outbound_replicator_target() {
         "subscribed collections must accept gossip from outbound replicator targets, got {:?}",
         result
     );
-    assert_eq!(coordinator.sync_status().gossip_direction_filtered_total, 0);
+    assert_eq!(
+        coordinator
+            .sync_status()
+            .await
+            .gossip_direction_filtered_total,
+        0
+    );
 }
 
 /// Collection commits carry an EMPTY `doc_id`, so unlike document updates they
@@ -3068,9 +3074,7 @@ async fn gossip_allows_doc_less_collection_commit_from_outbound_replicator_targe
     coordinator
         .subscriptions
         .subscribed_collections
-        .write()
-        .await
-        .insert("collection1".to_string());
+        .insert("collection1".to_string(), ());
 
     let result = coordinator
         .handle_transport_event(collection_commit_gossip_event(peer, "collection1"))
@@ -3082,7 +3086,13 @@ async fn gossip_allows_doc_less_collection_commit_from_outbound_replicator_targe
          collection topic must accept it from a peer we also replicate to, got {:?}",
         result
     );
-    assert_eq!(coordinator.sync_status().gossip_direction_filtered_total, 0);
+    assert_eq!(
+        coordinator
+            .sync_status()
+            .await
+            .gossip_direction_filtered_total,
+        0
+    );
 }
 
 #[tokio::test]
@@ -3128,7 +3138,13 @@ async fn gossip_open_mode_rejects_unsubscribed_outbound_replicator_target() {
         "unsubscribed outbound replicator targets must not become gossip sources, got {:?}",
         result
     );
-    assert_eq!(coordinator.sync_status().gossip_direction_filtered_total, 1);
+    assert_eq!(
+        coordinator
+            .sync_status()
+            .await
+            .gossip_direction_filtered_total,
+        1
+    );
 }
 
 #[tokio::test]
@@ -4134,7 +4150,7 @@ async fn sync_status_surfaces_quarantine_counters() {
     let peer_state = Arc::new(PeerStateTracker::new());
     let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
 
-    let before = coordinator.sync_status();
+    let before = coordinator.sync_status().await;
     assert_eq!(before.pending_dag_terminal_quarantined, 0);
     assert_eq!(before.quarantined_pending_dags, 0);
 
@@ -4144,7 +4160,7 @@ async fn sync_status_surfaces_quarantine_counters() {
         .quarantine_pending_dag(&root, "unique constraint violation")
         .await;
 
-    let after = coordinator.sync_status();
+    let after = coordinator.sync_status().await;
     assert_eq!(after.pending_dag_terminal_quarantined, 1);
     assert_eq!(after.quarantined_pending_dags, 1);
 }

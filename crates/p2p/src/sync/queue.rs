@@ -5,8 +5,10 @@
 //! conflicts during merge.
 
 use cid::Cid;
-use parking_lot::Mutex;
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+use rapidhash::fast::RandomState;
+use std::sync::atomic::{fence, AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 
@@ -31,10 +33,41 @@ impl std::fmt::Debug for ProcessQueue {
     }
 }
 
+#[derive(Default)]
+struct Waiters {
+    senders: SegQueue<oneshot::Sender<()>>,
+    released: AtomicBool,
+}
+
+impl Waiters {
+    /// Marks the entry released before draining, with a SeqCst fence on both
+    /// this side and the joining side, so a sender pushed after the drain
+    /// always observes the flag and re-elects instead of waiting forever.
+    fn release(&self) -> (usize, usize) {
+        self.released.store(true, Ordering::Relaxed);
+        fence(Ordering::SeqCst);
+        let mut total = 0;
+        let mut notified = 0;
+        while let Some(tx) = self.senders.pop() {
+            total += 1;
+            if tx.send(()).is_ok() {
+                notified += 1;
+            }
+        }
+        (notified, total)
+    }
+
+    fn join(&self) -> Option<oneshot::Receiver<()>> {
+        let (tx, rx) = oneshot::channel();
+        self.senders.push(tx);
+        fence(Ordering::SeqCst);
+        (!self.released.load(Ordering::Relaxed)).then_some(rx)
+    }
+}
+
 struct ProcessQueueInner {
     released: tokio::sync::Notify,
-    /// Map of CID -> list of waiters
-    waiters: Mutex<RapidHashMap<Cid, Vec<oneshot::Sender<()>>>>,
+    waiters: HopscotchMap<Cid, Arc<Waiters>, RandomState>,
 }
 
 impl ProcessQueue {
@@ -43,7 +76,7 @@ impl ProcessQueue {
         Self {
             inner: Arc::new(ProcessQueueInner {
                 released: tokio::sync::Notify::new(),
-                waiters: Mutex::new(RapidHashMap::new()),
+                waiters: HopscotchMap::with_hasher(RandomState::default()),
             }),
         }
     }
@@ -52,11 +85,11 @@ impl ProcessQueue {
     ///
     /// Useful for monitoring and debugging.
     pub fn active_count(&self) -> usize {
-        self.inner.waiters.lock().len()
+        self.inner.waiters.len()
     }
 
     pub(crate) fn is_active(&self, cid: &Cid) -> bool {
-        self.inner.waiters.lock().contains_key(cid)
+        self.inner.waiters.contains_key(cid)
     }
 
     pub(crate) async fn released(&self) {
@@ -67,7 +100,7 @@ impl ProcessQueue {
     ///
     /// Useful for debugging stuck operations.
     pub fn active_cids(&self) -> Vec<Cid> {
-        self.inner.waiters.lock().keys().cloned().collect()
+        self.inner.waiters.keys().collect()
     }
 
     /// Force release a stuck CID.
@@ -85,22 +118,17 @@ impl ProcessQueue {
     ///
     /// Returns `true` if the CID was released, `false` if it wasn't locked.
     pub fn force_release(&self, cid: &Cid) -> bool {
-        let mut waiters = self.inner.waiters.lock();
-        if let Some(waiting) = waiters.remove(cid) {
-            self.inner.released.notify_one();
-            tracing::warn!(
-                ?cid,
-                waiter_count = waiting.len(),
-                "Force-releasing stuck CID"
-            );
-            // Notify any waiters that processing is "complete"
-            for tx in waiting {
-                let _ = tx.send(());
-            }
-            true
-        } else {
-            false
-        }
+        let Some(waiting) = self.inner.waiters.force_remove(cid) else {
+            return false;
+        };
+        self.inner.released.notify_one();
+        tracing::warn!(
+            ?cid,
+            waiter_count = waiting.senders.len(),
+            "Force-releasing stuck CID"
+        );
+        waiting.release();
+        true
     }
 
     /// Force release all stuck CIDs.
@@ -111,17 +139,19 @@ impl ProcessQueue {
     ///
     /// Returns the number of CIDs that were released.
     pub fn force_release_all(&self) -> usize {
-        let mut waiters = self.inner.waiters.lock();
-        let count = waiters.len();
+        let cids: Vec<Cid> = self.inner.waiters.keys().collect();
+        let mut count = 0;
+        for cid in cids {
+            let Some(waiting) = self.inner.waiters.force_remove(&cid) else {
+                continue;
+            };
+            count += 1;
+            tracing::debug!(?cid, "Force-releasing CID");
+            waiting.release();
+        }
         if count > 0 {
             self.inner.released.notify_one();
             tracing::warn!(count = count, "Force-releasing all stuck CIDs");
-            for (cid, waiting) in waiters.drain() {
-                tracing::debug!(?cid, "Force-releasing CID");
-                for tx in waiting {
-                    let _ = tx.send(());
-                }
-            }
         }
         count
     }
@@ -151,20 +181,26 @@ impl ProcessQueue {
     /// }
     /// ```
     pub async fn try_acquire(&self, cid: &Cid) -> Result<ProcessGuard, oneshot::Receiver<()>> {
-        let mut waiters = self.inner.waiters.lock();
-
-        if waiters.contains_key(cid) {
-            // Someone else is processing - add ourselves as a waiter
-            let (tx, rx) = oneshot::channel();
-            waiters.get_mut(cid).unwrap().push(tx);
-            Err(rx)
-        } else {
-            // We're the first - create the entry and return a guard
-            waiters.insert(*cid, Vec::new());
-            Ok(ProcessGuard {
-                cid: *cid,
-                queue: self.clone(),
-            })
+        loop {
+            let existing = match self.inner.waiters.get(cid) {
+                Some(existing) => existing,
+                None => match self
+                    .inner
+                    .waiters
+                    .insert_if_absent(*cid, Arc::new(Waiters::default()))
+                {
+                    None => {
+                        return Ok(ProcessGuard {
+                            cid: *cid,
+                            queue: self.clone(),
+                        })
+                    }
+                    Some(existing) => existing,
+                },
+            };
+            if let Some(rx) = existing.join() {
+                return Err(rx);
+            }
         }
     }
 
@@ -172,16 +208,14 @@ impl ProcessQueue {
     ///
     /// Returns `None` immediately when another caller owns the CID.
     pub fn try_acquire_nowait(&self, cid: &Cid) -> Option<ProcessGuard> {
-        let mut waiters = self.inner.waiters.lock();
-        if waiters.contains_key(cid) {
-            return None;
-        }
-
-        waiters.insert(*cid, Vec::new());
-        Some(ProcessGuard {
-            cid: *cid,
-            queue: self.clone(),
-        })
+        self.inner
+            .waiters
+            .insert_if_absent(*cid, Arc::new(Waiters::default()))
+            .is_none()
+            .then(|| ProcessGuard {
+                cid: *cid,
+                queue: self.clone(),
+            })
     }
 
     /// Try to acquire exclusive processing rights for every CID without
@@ -190,9 +224,9 @@ impl ProcessQueue {
     /// CAR responses can contain blocks shared by several document DAGs.  A
     /// root-only guard therefore does not prevent two imports from racing the
     /// same mutable merge marker. Sorting and de-duplicating the keys gives one
-    /// batch every affected CID in one critical section. If any CID already
-    /// has an owner, no ownership changes and the conflicting CID is returned.
-    /// This is intentionally
+    /// batch every affected CID in canonical order; the first CID that already
+    /// has an owner releases everything acquired so far and is returned, so no
+    /// partial ownership outlives the call. This is intentionally
     /// non-waiting: duplicate CAR arrivals must not retain global transport
     /// task slots while the owner they are waiting for needs that transport to
     /// make progress.
@@ -204,45 +238,30 @@ impl ProcessQueue {
         cids.sort_unstable();
         cids.dedup();
 
-        let mut waiters = self.inner.waiters.lock();
-        if let Some(conflict) = cids.iter().find(|cid| waiters.contains_key(cid)) {
-            return Err(*conflict);
+        let mut guards = Vec::with_capacity(cids.len());
+        for cid in cids {
+            match self.try_acquire_nowait(&cid) {
+                Some(guard) => guards.push(guard),
+                None => return Err(cid),
+            }
         }
-        for cid in &cids {
-            waiters.insert(*cid, Vec::new());
-        }
-        drop(waiters);
-
-        Ok(cids
-            .into_iter()
-            .map(|cid| ProcessGuard {
-                cid,
-                queue: self.clone(),
-            })
-            .collect())
+        Ok(guards)
     }
 
     /// Release the CID and notify all waiters (synchronous version).
     fn release_sync(&self, cid: &Cid) {
-        let mut waiters = self.inner.waiters.lock();
-        if let Some(waiting) = waiters.remove(cid) {
-            self.inner.released.notify_one();
-            // Notify all waiters that processing is complete
-            let waiter_count = waiting.len();
-            let mut notified = 0;
-            for tx in waiting {
-                if tx.send(()).is_ok() {
-                    notified += 1;
-                }
-            }
-            if notified < waiter_count {
-                tracing::debug!(
-                    ?cid,
-                    notified,
-                    total = waiter_count,
-                    "Some waiters were cancelled before notification"
-                );
-            }
+        let Some(waiting) = self.inner.waiters.force_remove(cid) else {
+            return;
+        };
+        self.inner.released.notify_one();
+        let (notified, total) = waiting.release();
+        if notified < total {
+            tracing::debug!(
+                ?cid,
+                notified,
+                total,
+                "Some waiters were cancelled before notification"
+            );
         }
     }
 }
@@ -279,8 +298,7 @@ impl ProcessGuard {
 
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
-        // Release synchronously - this works both inside and outside tokio runtime
-        // because we use parking_lot::Mutex which supports synchronous locking.
+        // Release synchronously so it works both inside and outside a runtime.
         self.queue.release_sync(&self.cid);
     }
 }

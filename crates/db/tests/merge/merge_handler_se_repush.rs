@@ -1,8 +1,8 @@
 //! A merged document's SE artifacts must be pushed to this node's replicators,
 //! on both the standalone and the batch merge path.
 
+use kovan::Atom;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use async_trait::async_trait;
 use blockstore::DefraBlockstore;
@@ -22,16 +22,17 @@ use super::merge_handler_tests::build_merge_block;
 
 #[derive(Default)]
 struct RecordingRepusher {
-    calls: Mutex<Vec<(String, String)>>,
+    calls: Atom<Vec<(String, String)>>,
 }
 
 #[async_trait]
 impl SeArtifactRepusher for RecordingRepusher {
     async fn regenerate_and_push_se_artifacts(&self, collection_id: &str, doc_id: &str) {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((collection_id.to_string(), doc_id.to_string()));
+        self.calls.rcu(|calls| {
+            let mut next = calls.clone();
+            next.push((collection_id.to_string(), doc_id.to_string()));
+            next
+        });
     }
 }
 
@@ -83,7 +84,7 @@ async fn standalone_merge_pushes_se_artifacts_for_the_merged_document() {
 
     assert_eq!(outcome, MergeOutcome::Merged);
     assert_eq!(
-        *repusher.calls.lock().unwrap(),
+        repusher.calls.load_clone(),
         vec![("col-users".to_string(), doc_id)]
     );
 }
@@ -103,7 +104,7 @@ async fn batch_merge_pushes_se_artifacts_for_every_merged_document() {
     assert!(results
         .iter()
         .all(|result| matches!(result, Ok(MergeOutcome::Merged))));
-    let mut calls = repusher.calls.lock().unwrap().clone();
+    let mut calls = repusher.calls.load_clone();
     calls.sort();
     expected.sort();
     assert_eq!(calls, expected);
@@ -161,7 +162,7 @@ async fn multi_commit_dag_pushes_se_artifacts_once_for_the_head() {
 
     assert_eq!(outcome, MergeOutcome::Merged);
     assert_eq!(
-        *repusher.calls.lock().unwrap(),
+        repusher.calls.load_clone(),
         vec![("col-users".to_string(), create.doc_id.clone())],
         "one push for the head, not one per merged parent"
     );

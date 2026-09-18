@@ -132,12 +132,8 @@ impl<S: Store> crate::database::DB<S> {
         // For branching patches (v1→v2 then v1→v3), the headstore tracks the latest
         // CID after v2, so v3 gets heads=[v2_cid] and priority=3, matching Go.
         let (collection_heads, collection_priority) = {
-            let heads_map = self
-                .schema_heads
-                .read()
-                .map_err(|_| Error::LockPoisoned("schema_heads lock poisoned".into()))?;
-            match heads_map.get(actual_name) {
-                Some((heads, h)) => (heads.clone(), *h + 1),
+            match self.schema_heads.get(actual_name) {
+                Some((heads, h)) => (heads, h + 1),
                 None => {
                     // Fallback: compute from version chain (for databases loaded from storage)
                     let versions_map: rapidhash::RapidHashMap<&str, &CollectionVersion> =
@@ -238,13 +234,7 @@ impl<S: Store> crate::database::DB<S> {
 
         // Also check for pending migrations targeting this new version (in-memory fallback)
         {
-            let pending = self.pending_migrations.read().map_err(|e| {
-                tracing::error!(error = ?e, "Pending migrations lock poisoned");
-                Error::LockPoisoned(
-                    "pending migrations lock poisoned during patch_collection".into(),
-                )
-            })?;
-            if let Some((_source_id, transform_id)) = pending.get(&new_version_id) {
+            if let Some((_source_id, transform_id)) = self.pending_migrations.get(&new_version_id) {
                 if let Some(ref mut prev) = new_schema.previous_version {
                     // Only override if we didn't already get a transform from the placeholder
                     if prev.transform.is_none() {
@@ -481,39 +471,25 @@ impl<S: Store> crate::database::DB<S> {
 
         // Publish the new head only after all durable patch writes succeed.
         if let Ok(new_cid) = cid::Cid::try_from(new_version_id.as_str()) {
-            if let Ok(mut heads) = self.schema_heads.write() {
-                heads.insert(
-                    actual_name.to_string(),
-                    (vec![new_cid], collection_priority),
-                );
-            }
+            self.schema_heads.insert(
+                actual_name.to_string(),
+                (vec![new_cid], collection_priority),
+            );
         }
 
         // Clean up any pending migration that was linked to this version
-        {
-            let mut pending = self.pending_migrations.write().map_err(|e| {
-                tracing::error!(error = ?e, "Pending migrations lock poisoned during cleanup");
-                Error::CacheUpdateFailedAfterCommit(collection_name.to_string())
-            })?;
-            pending.remove(&new_version_id);
-        }
+        self.pending_migrations.remove(&new_version_id);
 
-        // Update cache based on which version is active
-        {
-            let mut cache = self.collections.write().map_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    collection_name = %collection_name,
-                    "Collection cache lock poisoned during patch_collection update"
-                );
-                Error::CacheUpdateFailedAfterCommit(collection_name.to_string())
-            })?;
-            if new_schema.is_active {
-                // New version is active - cache it under the actual collection name
-                // (not collection_name, which might be a version_id for branching patches)
+        // Update cache based on which version is active.
+        // An inactive new version leaves the old version cached, as it already is.
+        if new_schema.is_active {
+            // Cache under the actual collection name, not collection_name, which
+            // might be a version_id for branching patches.
+            self.collections.rcu(|old| {
+                let mut cache = old.clone();
                 cache.insert(actual_name.to_string(), Collection::new(new_schema.clone()));
-            }
-            // If new version is inactive, old version stays in cache (already there)
+                cache
+            });
         }
 
         // Cross-collection one-to-one index creation.
@@ -550,17 +526,13 @@ impl<S: Store> crate::database::DB<S> {
     ) -> Result<()> {
         // Collect candidates from the cache: other collections with primary non-array
         // relation fields pointing at just_patched.
-        let candidates: Vec<(String, CollectionVersion)> = {
-            let cache = self
-                .collections
-                .read()
-                .map_err(|_| Error::LockPoisoned("collection cache lock poisoned".into()))?;
+        let candidates: Vec<(String, CollectionVersion)> = self.collections.peek(|cache| {
             cache
                 .iter()
                 .filter(|(name, _)| name.as_str() != just_patched.name)
                 .map(|(name, col)| (name.clone(), col.schema().clone()))
                 .collect()
-        };
+        });
 
         for (coll_name, other_schema) in &candidates {
             let mut needs_update = false;
@@ -635,11 +607,11 @@ impl<S: Store> crate::database::DB<S> {
                 txn.commit().await?;
 
                 // Update cache
-                let mut cache = self
-                    .collections
-                    .write()
-                    .map_err(|_| Error::LockPoisoned("collection cache lock poisoned".into()))?;
-                cache.insert(coll_name.clone(), Collection::new(updated_schema));
+                self.collections.rcu(|old| {
+                    let mut cache = old.clone();
+                    cache.insert(coll_name.clone(), Collection::new(updated_schema.clone()));
+                    cache
+                });
             }
         }
 

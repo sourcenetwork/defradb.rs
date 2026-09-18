@@ -1,9 +1,10 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 use cosmrs::crypto::secp256k1::SigningKey;
 use cosmrs::tx::{Body, Fee, SignDoc, SignerInfo};
 use cosmrs::{AccountId, Any, Coin};
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::client::SourceHubClient;
@@ -231,15 +232,14 @@ fn is_sequence_mismatch(message: &str) -> bool {
 }
 
 fn sequence_state(client: &SourceHubClient, address: &str) -> Arc<AsyncMutex<SequenceState>> {
-    static STATES: OnceLock<Mutex<RapidHashMap<String, Arc<AsyncMutex<SequenceState>>>>> =
+    static STATES: OnceLock<HopscotchMap<String, Arc<AsyncMutex<SequenceState>>, RandomState>> =
         OnceLock::new();
 
-    let states = STATES.get_or_init(|| Mutex::new(RapidHashMap::new()));
-    let mut guard = states.lock().expect("sequence state map poisoned");
-    guard
-        .entry(client.sequence_cache_key(address))
-        .or_insert_with(|| Arc::new(AsyncMutex::new(SequenceState::default())))
-        .clone()
+    let states = STATES.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()));
+    states.get_or_insert(
+        client.sequence_cache_key(address),
+        Arc::new(AsyncMutex::new(SequenceState::default())),
+    )
 }
 
 // === SourceHub-specific message builders ===

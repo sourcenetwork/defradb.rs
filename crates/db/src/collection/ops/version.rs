@@ -117,17 +117,11 @@ impl<S: Store> crate::database::DB<S> {
         txn.commit().await?;
 
         // Update the process-wide cache (scoped to drop lock before reindex)
-        {
-            let mut cache = self.collections.write().map_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    version_id = %version_id,
-                    "Collection cache lock poisoned during set_active_collection_version"
-                );
-                Error::CacheUpdateFailedAfterCommit(name.clone())
-            })?;
-            cache.insert(name.clone(), Collection::new(target_schema));
-        }
+        self.collections.rcu(|old| {
+            let mut cache = old.clone();
+            cache.insert(name.clone(), Collection::new(target_schema.clone()));
+            cache
+        });
 
         tracing::info!(
             collection_name = %name,
@@ -147,20 +141,12 @@ impl<S: Store> crate::database::DB<S> {
     /// This searches the in-memory cache for a collection with the given version ID.
     /// It only returns active collections that are in the cache.
     pub fn get_collection_by_version_id(&self, version_id: &str) -> Result<Option<Collection>> {
-        let cache = self.collections.read().map_err(|e| {
-            tracing::error!(
-                error = ?e,
-                version_id = %version_id,
-                "Collection cache lock poisoned during get_collection_by_version_id"
-            );
-            Error::LockPoisoned(
-                "collection cache lock poisoned during get_collection_by_version_id".into(),
-            )
-        })?;
-        Ok(cache
-            .values()
-            .find(|c| c.version_id() == version_id)
-            .cloned())
+        Ok(self.collections.peek(|cache| {
+            cache
+                .values()
+                .find(|c| c.version_id() == version_id)
+                .cloned()
+        }))
     }
 
     /// Get a collection by version ID, searching both cache and KV store.
@@ -354,9 +340,11 @@ impl<S: Store> crate::database::DB<S> {
 
         // 5. Remove from in-memory cache if active
         if target_schema.is_active {
-            if let Ok(mut cache) = self.collections.write() {
+            self.collections.rcu(|old| {
+                let mut cache = old.clone();
                 cache.remove(&name);
-            }
+                cache
+            });
         }
         if is_deleting_last_local_version {
             self.forbid_collection_id(&collection_id)?;

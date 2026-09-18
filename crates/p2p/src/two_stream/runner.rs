@@ -8,7 +8,6 @@ use std::sync::Arc;
 use futures::AsyncReadExt as _;
 use futures::StreamExt;
 use libp2p_stream as stream;
-use parking_lot::Mutex;
 use tokio::sync::{mpsc, Semaphore};
 
 use super::event::TwoStreamEvent;
@@ -21,7 +20,7 @@ pub struct TwoStreamRunner {
     /// Pending responses for lock-free response processing.
     /// Stored separately from the handler to avoid holding the handler's
     /// tokio::sync::Mutex during network I/O in response stream reads.
-    pending: Arc<Mutex<PendingResponses>>,
+    pending: Arc<PendingResponses>,
     /// Incoming request streams.
     request_streams: stream::IncomingStreams,
     /// Incoming response streams.
@@ -66,7 +65,7 @@ impl TwoStreamRunner {
     /// Create a new runner.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        pending: Arc<Mutex<PendingResponses>>,
+        pending: Arc<PendingResponses>,
         request_streams: stream::IncomingStreams,
         response_streams: stream::IncomingStreams,
         se_request_streams: stream::IncomingStreams,

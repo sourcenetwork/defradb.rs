@@ -1,9 +1,12 @@
 //! Mock collection management operations for testing.
 
 use async_trait::async_trait;
+use kovan::{Atom, AtomOption};
+use kovan_queue::seg_queue::SegQueue;
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use crate::mock::update_vec;
 use crate::router::{CollectionManagementOperations, CollectionVersionOperations};
 
 type TruncateCall = (String, Option<serde_json::Value>);
@@ -18,14 +21,14 @@ fn mock_collection_version(name: &str) -> schema::CollectionVersion {
 }
 
 /// Mock collection management operations for testing.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct MockCollectionManagementOperations {
-    last_migration: Arc<Mutex<Option<lens::LensConfig>>>,
+    last_migration: Arc<AtomOption<lens::LensConfig>>,
     /// Names passed to `delete_collection`, so a test can tell a filtered
     /// document delete from a collection drop. A no-op mock cannot: it lets a
     /// route wired back to the drop keep every assertion green.
-    dropped_collections: Arc<Mutex<Vec<String>>>,
-    truncated_collections: Arc<Mutex<Vec<TruncateCall>>>,
+    dropped_collections: Arc<Atom<Vec<String>>>,
+    truncated_collections: Arc<SegQueue<TruncateCall>>,
 }
 
 impl MockCollectionManagementOperations {
@@ -34,16 +37,21 @@ impl MockCollectionManagementOperations {
     }
 
     pub fn last_migration(&self) -> Option<lens::LensConfig> {
-        self.last_migration.lock().unwrap().clone()
+        self.last_migration.load().map(|config| (*config).clone())
     }
 
     /// Collections dropped through `delete_collection`.
     pub fn dropped_collections(&self) -> Vec<String> {
-        self.dropped_collections.lock().unwrap().clone()
+        self.dropped_collections.load_clone()
     }
 
+    /// Drains the recorded truncate calls, oldest first.
     pub fn truncated_collections(&self) -> Vec<TruncateCall> {
-        self.truncated_collections.lock().unwrap().clone()
+        let mut calls = Vec::new();
+        while let Some(call) = self.truncated_collections.pop() {
+            calls.push(call);
+        }
+        calls
     }
 }
 
@@ -66,7 +74,10 @@ impl CollectionManagementOperations for MockCollectionManagementOperations {
         _patch: &str,
         migration: Option<lens::LensConfig>,
     ) -> Result<serde_json::Value, String> {
-        *self.last_migration.lock().unwrap() = migration;
+        match migration {
+            Some(migration) => self.last_migration.store_some(migration),
+            None => self.last_migration.store_none(),
+        }
         Ok(json!({"name": collection_name, "version": "v2"}))
     }
 
@@ -79,10 +90,7 @@ impl CollectionManagementOperations for MockCollectionManagementOperations {
         name: &str,
         filter: Option<serde_json::Value>,
     ) -> Result<(), String> {
-        self.truncated_collections
-            .lock()
-            .unwrap()
-            .push((name.to_string(), filter));
+        self.truncated_collections.push((name.to_string(), filter));
         Ok(())
     }
 
@@ -124,10 +132,9 @@ impl CollectionManagementOperations for MockCollectionManagementOperations {
     }
 
     async fn delete_collection(&self, name: &str) -> Result<(), String> {
-        self.dropped_collections
-            .lock()
-            .unwrap()
-            .push(name.to_string());
+        update_vec(&self.dropped_collections, |dropped| {
+            dropped.push(name.to_string())
+        });
         Ok(())
     }
 

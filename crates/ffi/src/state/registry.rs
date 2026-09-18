@@ -1,18 +1,28 @@
-use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, Weak};
 
-use parking_lot::RwLock;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+use rapidhash::fast::RandomState;
 
 use super::{
     GraphQLSubscriptionState, NodeHandle, NodeState, SubscriptionHandle, SubscriptionState,
 };
 
-/// Global registry of active nodes.
+/// A registered node: the single owning reference plus a borrowing handle.
 ///
-/// Uses RwLock for safe concurrent access from multiple threads.
+/// The map retires a removed entry instead of dropping it, so the owning
+/// reference sits in a queue that hands it back by value at `remove`. Closing
+/// a node then releases its store, and with it the on-disk lock, at the
+/// removal rather than whenever reclamation catches up.
+struct NodeSlot {
+    owner: SegQueue<Arc<NodeState>>,
+    reader: Weak<NodeState>,
+}
+
+/// Global registry of active nodes.
 pub struct NodeRegistry {
-    nodes: RwLock<RapidHashMap<NodeHandle, NodeState>>,
+    nodes: HopscotchMap<NodeHandle, Arc<NodeSlot>, RandomState>,
     next_handle: AtomicUsize,
 }
 
@@ -20,7 +30,7 @@ impl NodeRegistry {
     /// Create a new empty registry.
     fn new() -> Self {
         Self {
-            nodes: RwLock::new(RapidHashMap::new()),
+            nodes: HopscotchMap::with_hasher(RandomState::default()),
             next_handle: AtomicUsize::new(1), // Start at 1, 0 is invalid
         }
     }
@@ -28,61 +38,54 @@ impl NodeRegistry {
     /// Insert a new node state and return its handle.
     pub fn insert(&self, state: NodeState) -> NodeHandle {
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        let mut nodes = self.nodes.write();
-        nodes.insert(handle, state);
+        let state = Arc::new(state);
+        let slot = NodeSlot {
+            owner: SegQueue::new(),
+            reader: Arc::downgrade(&state),
+        };
+        slot.owner.push(state);
+        self.nodes.insert(handle, Arc::new(slot));
         handle
     }
 
-    /// Get a reference to a node state.
+    /// Apply `f` to a node state.
     ///
     /// Returns None if the handle is invalid.
     pub fn get<F, R>(&self, handle: NodeHandle, f: F) -> Option<R>
     where
         F: FnOnce(&NodeState) -> R,
     {
-        let nodes = self.nodes.read();
-        nodes.get(&handle).map(f)
-    }
-
-    /// Get a mutable reference to a node state.
-    ///
-    /// Returns None if the handle is invalid.
-    pub fn get_mut<F, R>(&self, handle: NodeHandle, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut NodeState) -> R,
-    {
-        let mut nodes = self.nodes.write();
-        nodes.get_mut(&handle).map(f)
+        let slot = self.nodes.get(&handle)?;
+        let state = slot.reader.upgrade()?;
+        Some(f(&state))
     }
 
     /// Remove and return a node state.
     ///
     /// Returns None if the handle is invalid.
-    pub fn remove(&self, handle: NodeHandle) -> Option<NodeState> {
-        let mut nodes = self.nodes.write();
-        nodes.remove(&handle)
+    pub fn remove(&self, handle: NodeHandle) -> Option<Arc<NodeState>> {
+        self.nodes.remove(&handle)?.owner.pop()
     }
 
     /// Check if a handle is valid.
     pub fn contains(&self, handle: NodeHandle) -> bool {
-        let nodes = self.nodes.read();
-        nodes.contains_key(&handle)
+        self.nodes.contains_key(&handle)
     }
 
     /// Get the number of active nodes.
     pub fn len(&self) -> usize {
-        let nodes = self.nodes.read();
-        nodes.len()
+        self.nodes.len()
     }
 
-    /// Apply a mutable operation to every node state in the registry.
-    pub fn for_each_mut<F>(&self, mut f: F)
+    /// Apply an operation to every node state in the registry.
+    pub fn for_each<F>(&self, mut f: F)
     where
-        F: FnMut(&mut NodeState),
+        F: FnMut(&NodeState),
     {
-        let mut nodes = self.nodes.write();
-        for state in nodes.values_mut() {
-            f(state);
+        for slot in self.nodes.values() {
+            if let Some(state) = slot.reader.upgrade() {
+                f(&state);
+            }
         }
     }
 
@@ -102,14 +105,14 @@ pub fn nodes() -> &'static NodeRegistry {
 
 /// Global registry of active subscriptions.
 pub struct SubscriptionRegistry {
-    subscriptions: RwLock<RapidHashMap<SubscriptionHandle, SubscriptionState>>,
+    subscriptions: HopscotchMap<SubscriptionHandle, Arc<SubscriptionState>, RandomState>,
     next_handle: AtomicUsize,
 }
 
 impl SubscriptionRegistry {
     fn new() -> Self {
         Self {
-            subscriptions: RwLock::new(RapidHashMap::new()),
+            subscriptions: HopscotchMap::with_hasher(RandomState::default()),
             next_handle: AtomicUsize::new(1),
         }
     }
@@ -117,38 +120,32 @@ impl SubscriptionRegistry {
     /// Insert a new subscription state and return its handle.
     pub fn insert(&self, state: SubscriptionState) -> SubscriptionHandle {
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        let mut subs = self.subscriptions.write();
-        subs.insert(handle, state);
+        self.subscriptions.insert(handle, Arc::new(state));
         handle
     }
 
-    /// Get mutable access to a subscription state (required for try_recv).
-    pub fn get_mut<F, R>(&self, handle: SubscriptionHandle, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut SubscriptionState) -> R,
-    {
-        let mut subs = self.subscriptions.write();
-        subs.get_mut(&handle).map(f)
+    /// Get a subscription state.
+    pub fn get(&self, handle: SubscriptionHandle) -> Option<Arc<SubscriptionState>> {
+        self.subscriptions.get(&handle)
     }
 
     /// Remove and return a subscription state.
-    pub fn remove(&self, handle: SubscriptionHandle) -> Option<SubscriptionState> {
-        let mut subs = self.subscriptions.write();
-        subs.remove(&handle)
+    pub fn remove(&self, handle: SubscriptionHandle) -> Option<Arc<SubscriptionState>> {
+        self.subscriptions.remove(&handle)
     }
 
     /// Remove all subscriptions for a given node handle.
-    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<SubscriptionState> {
-        let mut subs = self.subscriptions.write();
-        let handles_to_remove: Vec<SubscriptionHandle> = subs
+    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<Arc<SubscriptionState>> {
+        let handles_to_remove: Vec<SubscriptionHandle> = self
+            .subscriptions
             .iter()
             .filter(|(_, state)| state.node_handle == node_handle)
-            .map(|(handle, _)| *handle)
+            .map(|(handle, _)| handle)
             .collect();
 
         handles_to_remove
             .into_iter()
-            .filter_map(|handle| subs.remove(&handle))
+            .filter_map(|handle| self.subscriptions.remove(&handle))
             .collect()
     }
 }
@@ -163,14 +160,14 @@ pub fn subscriptions() -> &'static SubscriptionRegistry {
 
 /// Global registry of active GraphQL subscriptions.
 pub struct GraphQLSubscriptionRegistry {
-    subscriptions: RwLock<RapidHashMap<SubscriptionHandle, GraphQLSubscriptionState>>,
+    subscriptions: HopscotchMap<SubscriptionHandle, Arc<GraphQLSubscriptionState>, RandomState>,
     next_handle: AtomicUsize,
 }
 
 impl GraphQLSubscriptionRegistry {
     fn new() -> Self {
         Self {
-            subscriptions: RwLock::new(RapidHashMap::new()),
+            subscriptions: HopscotchMap::with_hasher(RandomState::default()),
             next_handle: AtomicUsize::new(1),
         }
     }
@@ -178,38 +175,32 @@ impl GraphQLSubscriptionRegistry {
     /// Insert a new GraphQL subscription state and return its handle.
     pub fn insert(&self, state: GraphQLSubscriptionState) -> SubscriptionHandle {
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        let mut subs = self.subscriptions.write();
-        subs.insert(handle, state);
+        self.subscriptions.insert(handle, Arc::new(state));
         handle
     }
 
-    /// Get mutable access to a GraphQL subscription state.
-    pub fn get_mut<F, R>(&self, handle: SubscriptionHandle, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut GraphQLSubscriptionState) -> R,
-    {
-        let mut subs = self.subscriptions.write();
-        subs.get_mut(&handle).map(f)
+    /// Get a GraphQL subscription state.
+    pub fn get(&self, handle: SubscriptionHandle) -> Option<Arc<GraphQLSubscriptionState>> {
+        self.subscriptions.get(&handle)
     }
 
     /// Remove and return a GraphQL subscription state.
-    pub fn remove(&self, handle: SubscriptionHandle) -> Option<GraphQLSubscriptionState> {
-        let mut subs = self.subscriptions.write();
-        subs.remove(&handle)
+    pub fn remove(&self, handle: SubscriptionHandle) -> Option<Arc<GraphQLSubscriptionState>> {
+        self.subscriptions.remove(&handle)
     }
 
     /// Remove all GraphQL subscriptions for a given node handle.
-    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<GraphQLSubscriptionState> {
-        let mut subs = self.subscriptions.write();
-        let handles_to_remove: Vec<SubscriptionHandle> = subs
+    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<Arc<GraphQLSubscriptionState>> {
+        let handles_to_remove: Vec<SubscriptionHandle> = self
+            .subscriptions
             .iter()
             .filter(|(_, state)| state.node_handle == node_handle)
-            .map(|(handle, _)| *handle)
+            .map(|(handle, _)| handle)
             .collect();
 
         handles_to_remove
             .into_iter()
-            .filter_map(|handle| subs.remove(&handle))
+            .filter_map(|handle| self.subscriptions.remove(&handle))
             .collect()
     }
 }
@@ -230,18 +221,15 @@ impl SubscriptionsAccess {
         subscriptions().insert(state)
     }
 
-    pub fn get_mut<F, R>(&self, handle: SubscriptionHandle, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut SubscriptionState) -> R,
-    {
-        subscriptions().get_mut(handle, f)
+    pub fn get(&self, handle: SubscriptionHandle) -> Option<Arc<SubscriptionState>> {
+        subscriptions().get(handle)
     }
 
-    pub fn remove(&self, handle: SubscriptionHandle) -> Option<SubscriptionState> {
+    pub fn remove(&self, handle: SubscriptionHandle) -> Option<Arc<SubscriptionState>> {
         subscriptions().remove(handle)
     }
 
-    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<SubscriptionState> {
+    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<Arc<SubscriptionState>> {
         subscriptions().remove_for_node(node_handle)
     }
 }
@@ -264,21 +252,14 @@ impl NodesAccess {
         nodes().get(handle, f)
     }
 
-    pub fn get_mut<F, R>(&self, handle: NodeHandle, f: F) -> Option<R>
+    pub fn for_each<F>(&self, f: F)
     where
-        F: FnOnce(&mut NodeState) -> R,
+        F: FnMut(&NodeState),
     {
-        nodes().get_mut(handle, f)
+        nodes().for_each(f)
     }
 
-    pub fn for_each_mut<F>(&self, f: F)
-    where
-        F: FnMut(&mut NodeState),
-    {
-        nodes().for_each_mut(f)
-    }
-
-    pub fn remove(&self, handle: NodeHandle) -> Option<NodeState> {
+    pub fn remove(&self, handle: NodeHandle) -> Option<Arc<NodeState>> {
         nodes().remove(handle)
     }
 }
@@ -294,18 +275,15 @@ impl GraphQLSubscriptionsAccess {
         graphql_subscriptions().insert(state)
     }
 
-    pub fn get_mut<F, R>(&self, handle: SubscriptionHandle, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut GraphQLSubscriptionState) -> R,
-    {
-        graphql_subscriptions().get_mut(handle, f)
+    pub fn get(&self, handle: SubscriptionHandle) -> Option<Arc<GraphQLSubscriptionState>> {
+        graphql_subscriptions().get(handle)
     }
 
-    pub fn remove(&self, handle: SubscriptionHandle) -> Option<GraphQLSubscriptionState> {
+    pub fn remove(&self, handle: SubscriptionHandle) -> Option<Arc<GraphQLSubscriptionState>> {
         graphql_subscriptions().remove(handle)
     }
 
-    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<GraphQLSubscriptionState> {
+    pub fn remove_for_node(&self, node_handle: NodeHandle) -> Vec<Arc<GraphQLSubscriptionState>> {
         graphql_subscriptions().remove_for_node(node_handle)
     }
 }

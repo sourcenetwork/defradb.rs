@@ -7,41 +7,51 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_bitswap::{Block, Store};
-use rapidhash::{HashMapExt, RapidHashMap};
+use kovan_map::HopscotchMap;
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Mock BitswapStore for testing.
 ///
 /// A simple in-memory implementation of iroh_bitswap::Store that can be used
 /// in unit and integration tests without requiring a real blockstore.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MockBitswapStore {
-    blocks: Arc<Mutex<RapidHashMap<Cid, Vec<u8>>>>,
+    blocks: Arc<HopscotchMap<Cid, Bytes, rapidhash::fast::RandomState>>,
+}
+
+impl Debug for MockBitswapStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockBitswapStore")
+            .field("blocks", &self.blocks.len())
+            .finish()
+    }
 }
 
 impl MockBitswapStore {
     /// Create a new empty mock store.
     pub fn new() -> Self {
         Self {
-            blocks: Arc::new(Mutex::new(RapidHashMap::new())),
+            blocks: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
         }
     }
 
     /// Pre-populate the store with a block.
     pub fn with_block(self, cid: Cid, data: Vec<u8>) -> Self {
-        self.blocks.lock().unwrap().insert(cid, data);
+        self.blocks.insert(cid, Bytes::from(data));
         self
     }
 
     /// Get the number of blocks in the store.
     pub fn len(&self) -> usize {
-        self.blocks.lock().unwrap().len()
+        self.blocks.len()
     }
 
     /// Check if the store is empty.
     pub fn is_empty(&self) -> bool {
-        self.blocks.lock().unwrap().is_empty()
+        self.blocks.is_empty()
     }
 }
 
@@ -55,8 +65,6 @@ impl Default for MockBitswapStore {
 impl Store for MockBitswapStore {
     async fn get_size(&self, cid: &Cid) -> Result<usize> {
         self.blocks
-            .lock()
-            .unwrap()
             .get(cid)
             .map(|data| data.len())
             .ok_or_else(|| anyhow!("block not found: {}", cid))
@@ -65,16 +73,13 @@ impl Store for MockBitswapStore {
     async fn get(&self, cid: &Cid) -> Result<Block> {
         let data = self
             .blocks
-            .lock()
-            .unwrap()
             .get(cid)
-            .cloned()
             .ok_or_else(|| anyhow!("block not found: {}", cid))?;
-        Ok(Block::new(Bytes::from(data), *cid))
+        Ok(Block::new(data, *cid))
     }
 
     async fn has(&self, cid: &Cid) -> Result<bool> {
-        Ok(self.blocks.lock().unwrap().contains_key(cid))
+        Ok(self.blocks.contains_key(cid))
     }
 }
 

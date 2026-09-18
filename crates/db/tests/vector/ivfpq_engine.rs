@@ -13,6 +13,36 @@ use defra_core::vector::Metric;
 const SEED: u64 = 0x01F4_9C0D;
 const DIMENSIONS: usize = 16;
 
+#[tokio::test]
+async fn trained_distance_ties_keep_the_smallest_ids() {
+    let vector = vec![1.0f32; DIMENSIONS];
+    let mut index = index(1, 1);
+    let mut flat = Flat::new(MemoryNodeStore::new(), Metric::Cosine);
+    for id in (1..=32).rev() {
+        index.insert(NodeId(id), &vector).await.unwrap();
+        flat.insert(NodeId(id), &vector).await.unwrap();
+    }
+    index.build().await.unwrap();
+    assert!(index.is_trained().await.unwrap());
+    for k in [1, 5, 32] {
+        let actual: Vec<_> = index
+            .search(&vector, k, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect();
+        let expected: Vec<_> = flat
+            .search(&vector, k, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect();
+        assert_eq!(actual, expected, "k={k}");
+    }
+}
+
 fn params(nlist: u32, nprobe: u32) -> IvfPqParams {
     IvfPqParams {
         nlist,

@@ -1,9 +1,10 @@
 //! Configuration helpers for the iroh endpoint.
 
-use rapidhash::{HashSetExt, RapidHashSet};
+use rapidhash::fast::RandomState;
 use std::sync::Arc;
 
 use iroh::{EndpointId, SecretKey};
+use kovan_map::HopscotchMap;
 
 use super::config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 use super::gossip_heal::GossipHealConfig;
@@ -57,12 +58,12 @@ impl Default for IrohEndpointConfig {
 /// Runtime inbound-allowlist state, held by the endpoint for the life of the
 /// process.
 ///
-/// Mirrors [`IrohAllowlistConfig`] but keeps the explicit set behind a lock so
+/// Mirrors [`IrohAllowlistConfig`] but keeps the explicit set concurrent so
 /// [`IrohCommand::AllowPeer`](super::command::IrohCommand::AllowPeer) can add
 /// a newly authorized peer while the endpoint is running, without a restart.
 pub(super) enum AllowlistState {
     AcceptAll,
-    Explicit(parking_lot::Mutex<RapidHashSet<EndpointId>>),
+    Explicit(HopscotchMap<EndpointId, (), RandomState>),
 }
 
 impl AllowlistState {
@@ -70,7 +71,7 @@ impl AllowlistState {
     pub(super) fn is_allowed(&self, id: &EndpointId) -> bool {
         match self {
             Self::AcceptAll => true,
-            Self::Explicit(ids) => ids.lock().contains(id),
+            Self::Explicit(ids) => ids.contains_key(id),
         }
     }
 
@@ -78,7 +79,7 @@ impl AllowlistState {
     /// already accepted, so there is nothing to widen.
     pub(super) fn allow(&self, id: EndpointId) {
         if let Self::Explicit(ids) = self {
-            ids.lock().insert(id);
+            ids.insert_if_absent(id, ());
         }
     }
 
@@ -94,7 +95,19 @@ impl AllowlistState {
     fn remove(&self, id: &EndpointId) -> bool {
         match self {
             Self::AcceptAll => false,
-            Self::Explicit(ids) => ids.lock().remove(id),
+            Self::Explicit(ids) => ids.remove(id).is_some(),
+        }
+    }
+
+    /// Widen like [`Self::allow`], but report whether this call is the one
+    /// that actually added `id`.
+    ///
+    /// Needed so a caller that has to undo its own widening can remove only
+    /// what it put there, and never an entry a concurrent caller added.
+    fn allow_reporting(&self, id: EndpointId) -> bool {
+        match self {
+            Self::AcceptAll => false,
+            Self::Explicit(ids) => ids.insert_if_absent(id, ()).is_none(),
         }
     }
 }
@@ -161,14 +174,14 @@ impl AdmissionAuthority {
 /// and is dialled exactly as before.
 pub(super) struct PeerAdmission {
     allowlist: AllowlistState,
-    revoked: parking_lot::Mutex<RapidHashSet<EndpointId>>,
+    revoked: HopscotchMap<EndpointId, (), RandomState>,
 }
 
 impl PeerAdmission {
     pub(super) fn new(allowlist: AllowlistState) -> Self {
         Self {
             allowlist,
-            revoked: parking_lot::Mutex::new(RapidHashSet::new()),
+            revoked: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
@@ -188,7 +201,7 @@ impl PeerAdmission {
     }
 
     pub(super) fn is_revoked(&self, id: &EndpointId) -> bool {
-        self.revoked.lock().contains(id)
+        self.revoked.contains_key(id)
     }
 
     /// Authorize `id`, lifting any revocation on it, if `authority` allows.
@@ -198,33 +211,55 @@ impl PeerAdmission {
     /// able to un-bar one, or the revocation is only as strong as the weakest
     /// permission anyone holds.
     ///
-    /// The revoked-set lock is held across the whole transition, not just the
-    /// lookup. That is what makes the check and the state change one step: a
-    /// concurrent [`Self::revoke`] either completes before this takes the lock
-    /// (and is then seen, and this refuses) or after it releases (and re-bars
-    /// the peer). A check-then-act would leave a window in which a peer
-    /// revoked between the two is admitted anyway by a caller that was never
-    /// allowed to lift a revocation.
+    /// There is no lock to hold across the decision, so the weaker path is
+    /// written as check, widen, then check again, and it undoes its own
+    /// widening if a bar appeared in between. That is what keeps it a single
+    /// step in effect: a [`Self::revoke`] landing at ANY point is either seen
+    /// by the first check, or by the second. It cannot land in a gap and leave
+    /// the peer admitted, because `revoke` records the bar before it narrows
+    /// the allowlist and [`Self::admits_inbound`] refuses on the bar alone.
+    ///
+    /// The undo removes only an entry this call added (`allow_reporting`), so
+    /// a full-authority admission running concurrently is never rolled back by
+    /// a weaker caller losing the race.
     pub(super) fn allow(
         &self,
         id: EndpointId,
         authority: AdmissionAuthority,
     ) -> crate::error::Result<()> {
-        let mut revoked = self.revoked.lock();
         if !authority.may_admit {
             return Err(crate::error::Error::Transport(format!(
                 "cannot admit peer {id}: caller is not authorized to admit peers"
             )));
         }
-        if revoked.contains(&id) && !authority.may_revoke {
-            return Err(crate::error::Error::Transport(format!(
-                "cannot admit peer {id}: the peer is revoked, and lifting a revocation \
-                 needs the same authority that can revoke one"
-            )));
+
+        if authority.may_revoke {
+            // Allowed to clear a bar, so the two writes need no ordering
+            // against each other: this caller is permitted to end in the
+            // admitted state either way.
+            self.allowlist.allow(id);
+            self.revoked.remove(&id);
+            return Ok(());
         }
-        self.allowlist.allow(id);
-        revoked.remove(&id);
+
+        if self.is_revoked(&id) {
+            return Err(Self::revoked_refusal(&id));
+        }
+        let added = self.allowlist.allow_reporting(id);
+        if self.is_revoked(&id) {
+            if added {
+                self.allowlist.remove(&id);
+            }
+            return Err(Self::revoked_refusal(&id));
+        }
         Ok(())
+    }
+
+    fn revoked_refusal(id: &EndpointId) -> crate::error::Error {
+        crate::error::Error::Transport(format!(
+            "cannot admit peer {id}: the peer is revoked, and lifting a revocation \
+             needs the same authority that can revoke one"
+        ))
     }
 
     /// Bar `id` in both directions. Reports whether this changed anything,
@@ -244,8 +279,11 @@ impl PeerAdmission {
         // Same lock order as `allow` (revoked, then allowlist) and held across
         // both, so the two transitions serialise against each other instead of
         // interleaving halfway.
-        let mut revoked = self.revoked.lock();
-        let newly_revoked = revoked.insert(id);
+        // The bar is recorded BEFORE the allowlist is narrowed, so every check
+        // in between already refuses the peer: `admits_inbound` requires the
+        // absence of a bar as well as an allowlist entry, and
+        // `admits_outbound` consults the bar alone.
+        let newly_revoked = self.revoked.insert_if_absent(id, ()).is_none();
         let was_listed = self.allowlist.remove(&id);
         newly_revoked || was_listed
     }
@@ -257,7 +295,7 @@ pub(super) fn allowlist_state_from_config(
     match config {
         IrohAllowlistConfig::AcceptAll => Ok(AllowlistState::AcceptAll),
         IrohAllowlistConfig::Explicit(ids) => {
-            let mut parsed = RapidHashSet::with_capacity(ids.len());
+            let parsed = HopscotchMap::with_capacity_and_hasher(ids.len(), RandomState::default());
             for id in ids {
                 let endpoint_id: EndpointId = id.parse().map_err(|e: iroh::KeyParsingError| {
                     crate::error::Error::Transport(format!(
@@ -265,9 +303,9 @@ pub(super) fn allowlist_state_from_config(
                         id, e
                     ))
                 })?;
-                parsed.insert(endpoint_id);
+                parsed.insert_if_absent(endpoint_id, ());
             }
-            Ok(AllowlistState::Explicit(parking_lot::Mutex::new(parsed)))
+            Ok(AllowlistState::Explicit(parsed))
         }
     }
 }
@@ -441,6 +479,7 @@ pub(super) fn apply_bind_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rapidhash::{HashSetExt, RapidHashSet};
 
     #[test]
     fn multipath_limit_rejects_values_iroh_would_ignore() {

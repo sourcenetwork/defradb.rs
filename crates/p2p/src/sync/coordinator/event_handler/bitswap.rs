@@ -246,7 +246,8 @@ mod tests {
     use blockstore::DefraBlockstore;
     use bytes::Bytes;
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
-    use std::sync::{Arc, Mutex};
+    use kovan_queue::seg_queue::SegQueue;
+    use std::sync::Arc;
     use std::time::Duration;
     use storage::RegolithStore;
 
@@ -271,7 +272,7 @@ mod tests {
     struct TestTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
-        sync_calls: Arc<Mutex<Vec<SyncCall>>>,
+        sync_calls: Arc<SegQueue<SyncCall>>,
     }
 
     impl TestTransport {
@@ -279,12 +280,12 @@ mod tests {
             Self {
                 peer_id: PeerId::new("local-peer".to_string()),
                 pubkey: vec![1, 2, 3],
-                sync_calls: Arc::new(Mutex::new(Vec::new())),
+                sync_calls: Arc::new(SegQueue::new()),
             }
         }
 
         fn sync_calls(&self) -> Vec<SyncCall> {
-            self.sync_calls.lock().unwrap().clone()
+            std::iter::from_fn(|| self.sync_calls.pop()).collect()
         }
     }
 
@@ -459,7 +460,7 @@ mod tests {
             providers: Vec<PeerId>,
             missing: Vec<Cid>,
         ) -> P2PResult<QueryId> {
-            self.sync_calls.lock().unwrap().push(SyncCall {
+            self.sync_calls.push(SyncCall {
                 root,
                 providers,
                 missing,

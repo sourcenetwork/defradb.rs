@@ -1,8 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
+use kovan_queue::seg_queue::SegQueue;
 use query::executor::QueryExecutor;
 use serde_json::Value;
 use tower::ServiceExt;
@@ -12,7 +13,7 @@ use crate::router::{create_router_with_state, AppStateBuilder, BlockOperations};
 
 #[derive(Default)]
 struct RecordingBlock {
-    calls: Mutex<Vec<(String, Option<String>)>>,
+    calls: SegQueue<(String, Option<String>)>,
 }
 
 #[async_trait]
@@ -23,8 +24,6 @@ impl BlockOperations for RecordingBlock {
         caller_did: Option<&str>,
     ) -> Result<(Vec<u8>, Vec<u8>), String> {
         self.calls
-            .lock()
-            .expect("recording block lock")
             .push((cid.to_string(), caller_did.map(str::to_string)));
         Ok((b"canonical block".to_vec(), b"detached signature".to_vec()))
     }
@@ -72,8 +71,12 @@ async fn signed_block_route_returns_canonical_material() {
         assert_eq!(value["signature"], "ZGV0YWNoZWQgc2lnbmF0dXJl");
     }
 
+    let mut calls = Vec::new();
+    while let Some(call) = block.calls.pop() {
+        calls.push(call);
+    }
     assert_eq!(
-        *block.calls.lock().expect("recording block lock"),
+        calls,
         vec![
             ("bafy-test".to_string(), None),
             ("bafy-test".to_string(), None),

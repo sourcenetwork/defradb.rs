@@ -63,7 +63,7 @@ pub use result_types::{CreateReplicatorResult, LoadReplicatorsResult};
 pub use selective_car_access::{HeadHintCarAuthority, HeadHintCarGrant};
 
 use rapidhash::{HashMapExt, RapidHashMap};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,12 +71,14 @@ use acp::DocumentACP;
 use blockstore::Blockstore;
 use cid::Cid;
 use defra_core::thread_bounds::MaybeSend;
-use parking_lot::Mutex;
+use kovan::{Atom, AtomOption};
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use tokio::sync::{watch, Notify, OwnedSemaphorePermit, Semaphore};
 
 use crate::bitswap::{AccessMode, ReplicatorRegistry};
 use crate::replicator::ReplicationFilterMatcher;
-use crate::tracked_task::TrackedTask;
+use crate::tracked_task::{TrackedAbort, TrackedTask};
 use crate::transport::{P2PTransport, PeerId};
 
 use super::broadcaster::Broadcaster;
@@ -267,8 +269,15 @@ struct SyncShutdownState {
     /// is read on hot paths.
     shutdown_notify: Notify,
     shutdown_complete: watch::Receiver<bool>,
-    shutdown_complete_tx: Mutex<Option<watch::Sender<bool>>>,
-    background_tasks: Mutex<Vec<TrackedTask>>,
+    /// Popped by value by the shutdown winner, so a cancelled or panicking
+    /// drain still closes the channel by dropping the sender.
+    shutdown_complete_tx: SegQueue<watch::Sender<bool>>,
+    /// Every retained handle, pending-DAG fetches included; the registry
+    /// below keeps only their reservations and abort handles.
+    background_tasks: SegQueue<TrackedTask>,
+    /// Pruners mid-way through popping and re-pushing live handles; the drain
+    /// waits for zero before it takes the queue.
+    pruning: AtomicUsize,
     non_authoritative_broadcast_slots: Arc<Semaphore>,
     non_authoritative_broadcast_high_water: AtomicUsize,
     non_authoritative_broadcast_rejected: AtomicU64,
@@ -276,12 +285,23 @@ struct SyncShutdownState {
     /// registry bounds the event handoff and the retained task, so there is no
     /// hidden pre-semaphore task queue (#1159).
     pending_dag_fetch_task_limit: usize,
-    pending_dag_fetch_tasks: Mutex<RapidHashMap<Cid, PendingDagFetchTask>>,
+    pending_dag_fetch_tasks: Atom<RapidHashMap<Cid, PendingDagFetchTask>>,
 }
 
+#[derive(Clone)]
 enum PendingDagFetchTask {
     Scheduled,
-    Running(TrackedTask),
+    Claimed,
+    Running(TrackedAbort),
+}
+
+impl PendingDagFetchTask {
+    fn is_live(&self) -> bool {
+        match self {
+            Self::Scheduled | Self::Claimed => true,
+            Self::Running(task) => !task.is_finished(),
+        }
+    }
 }
 
 const BACKGROUND_TASK_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
@@ -296,7 +316,7 @@ const NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT: usize = 32;
 #[derive(Clone)]
 pub(crate) struct DagFetchLimiter {
     global: Arc<Semaphore>,
-    per_peer: Arc<Mutex<RapidHashMap<String, Arc<Semaphore>>>>,
+    per_peer: Arc<HopscotchMap<String, Arc<Semaphore>, rapidhash::fast::RandomState>>,
     peer_limit: usize,
 }
 
@@ -310,19 +330,20 @@ impl DagFetchLimiter {
         let global_limit = global_limit.max(1);
         Self {
             global: Arc::new(Semaphore::new(global_limit)),
-            per_peer: Arc::new(Mutex::new(RapidHashMap::new())),
+            per_peer: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
             peer_limit: global_limit.saturating_sub(1).max(1),
         }
     }
 
     pub(crate) async fn acquire(&self, source_peer: &PeerId) -> Option<DagFetchPermits> {
         let peer_key = source_peer.to_string();
-        let peer_semaphore = {
-            let mut per_peer = self.per_peer.lock();
-            per_peer
-                .entry(peer_key)
-                .or_insert_with(|| Arc::new(Semaphore::new(self.peer_limit)))
-                .clone()
+        let peer_semaphore = match self.per_peer.get(&peer_key) {
+            Some(semaphore) => semaphore,
+            None => self
+                .per_peer
+                .get_or_insert(peer_key, Arc::new(Semaphore::new(self.peer_limit))),
         };
 
         let Ok(peer_permit) = peer_semaphore.acquire_owned().await else {
@@ -340,7 +361,7 @@ impl DagFetchLimiter {
 
     fn close(&self) {
         self.global.close();
-        for semaphore in self.per_peer.lock().values() {
+        for semaphore in self.per_peer.values() {
             semaphore.close();
         }
     }
@@ -354,27 +375,30 @@ pub struct SyncShutdownHandle {
 
 impl SyncShutdownHandle {
     fn new(pending_dag_fetch_task_limit: usize) -> Self {
-        let (shutdown_complete_tx, shutdown_complete) = watch::channel(false);
+        let (sender, shutdown_complete) = watch::channel(false);
+        let shutdown_complete_tx = SegQueue::new();
+        shutdown_complete_tx.push(sender);
         Self {
             inner: Arc::new(SyncShutdownState {
                 is_shutting_down: AtomicBool::new(false),
                 shutdown_notify: Notify::new(),
                 shutdown_complete,
-                shutdown_complete_tx: Mutex::new(Some(shutdown_complete_tx)),
-                background_tasks: Mutex::new(Vec::new()),
+                shutdown_complete_tx,
+                background_tasks: SegQueue::new(),
+                pruning: AtomicUsize::new(0),
                 non_authoritative_broadcast_slots: Arc::new(Semaphore::new(
                     NON_AUTHORITATIVE_BROADCAST_TASK_LIMIT,
                 )),
                 non_authoritative_broadcast_high_water: AtomicUsize::new(0),
                 non_authoritative_broadcast_rejected: AtomicU64::new(0),
                 pending_dag_fetch_task_limit: pending_dag_fetch_task_limit.max(1),
-                pending_dag_fetch_tasks: Mutex::new(RapidHashMap::new()),
+                pending_dag_fetch_tasks: Atom::new(RapidHashMap::new()),
             }),
         }
     }
 
     fn begin_shutdown(&self) -> bool {
-        let won = !self.inner.is_shutting_down.swap(true, Ordering::AcqRel);
+        let won = !self.inner.is_shutting_down.swap(true, Ordering::SeqCst);
         if won {
             // Wake every parked `cancelled()` waiter. Ordering matters: the
             // flag is set first, so a waiter that registers between the swap
@@ -418,7 +442,7 @@ impl SyncShutdownHandle {
             let shutdown = self.clone();
             // The drain owns the only sender, so cancellation or panic closes
             // the channel instead of leaving other shutdown callers parked.
-            let sender = self.inner.shutdown_complete_tx.lock().take();
+            let sender = self.inner.shutdown_complete_tx.pop();
             n0_future::task::spawn(async move {
                 shutdown
                     .drain_background_tasks(BACKGROUND_TASK_SHUTDOWN_TIMEOUT)
@@ -437,16 +461,41 @@ impl SyncShutdownHandle {
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
-        let mut tasks = self.inner.background_tasks.lock();
         if self.is_shutting_down() {
             return false;
         }
         // Retire completed handles on every registration so retained handles
         // track live tasks instead of total spawn count (#1099).
-        tasks.retain(|task| !task.is_finished());
-        // Hold the registry lock through spawning so shutdown cannot miss the task.
-        tasks.push(TrackedTask::spawn(future));
+        self.prune_finished_tasks();
+        self.register_task(TrackedTask::spawn(future))
+    }
+
+    /// Publish the handle, then re-read the shutdown flag behind a full fence.
+    /// The drain sets the flag, fences, then takes the queue, so either it
+    /// sees this handle or this sees the flag and cancels the task itself.
+    fn register_task(&self, task: TrackedTask) -> bool {
+        let abort = task.abort_handle();
+        self.inner.background_tasks.push(task);
+        fence(Ordering::SeqCst);
+        if self.inner.is_shutting_down.load(Ordering::SeqCst) {
+            abort.abort();
+            return false;
+        }
         true
+    }
+
+    fn prune_finished_tasks(&self) {
+        let inner = &self.inner;
+        inner.pruning.fetch_add(1, Ordering::SeqCst);
+        for _ in 0..inner.background_tasks.len() {
+            let Some(task) = inner.background_tasks.pop() else {
+                break;
+            };
+            if !task.is_finished() {
+                inner.background_tasks.push(task);
+            }
+        }
+        inner.pruning.fetch_sub(1, Ordering::SeqCst);
     }
 
     fn try_acquire_non_authoritative_broadcast_slot(&self) -> Option<OwnedSemaphorePermit> {
@@ -487,57 +536,88 @@ impl SyncShutdownHandle {
         )
     }
 
-    fn prune_pending_dag_fetches(tasks: &mut RapidHashMap<Cid, PendingDagFetchTask>) {
-        tasks.retain(|_, task| match task {
-            PendingDagFetchTask::Scheduled => true,
-            PendingDagFetchTask::Running(task) => !task.is_finished(),
-        });
+    fn prune_pending_dag_fetches(
+        tasks: &RapidHashMap<Cid, PendingDagFetchTask>,
+    ) -> RapidHashMap<Cid, PendingDagFetchTask> {
+        tasks
+            .iter()
+            .filter(|(_, task)| task.is_live())
+            .map(|(root_cid, task)| (*root_cid, task.clone()))
+            .collect()
     }
 
     fn reserve_pending_dag_fetch(&self, root_cid: Cid) -> bool {
-        let mut tasks = self.inner.pending_dag_fetch_tasks.lock();
-        Self::prune_pending_dag_fetches(&mut tasks);
-        if self.is_shutting_down()
-            || tasks.contains_key(&root_cid)
-            || tasks.len() >= self.inner.pending_dag_fetch_task_limit
-        {
-            return false;
-        }
-
-        tasks.insert(root_cid, PendingDagFetchTask::Scheduled);
-        true
+        let mut reserved = false;
+        self.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let mut next = Self::prune_pending_dag_fetches(current);
+            reserved = !self.is_shutting_down()
+                && !next.contains_key(&root_cid)
+                && next.len() < self.inner.pending_dag_fetch_task_limit;
+            if reserved {
+                next.insert(root_cid, PendingDagFetchTask::Scheduled);
+            }
+            next
+        });
+        reserved
     }
 
     fn release_pending_dag_fetch_reservation(&self, root_cid: &Cid) {
-        let mut tasks = self.inner.pending_dag_fetch_tasks.lock();
-        if matches!(tasks.get(root_cid), Some(PendingDagFetchTask::Scheduled)) {
-            tasks.remove(root_cid);
-        }
+        self.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let mut next = current.clone();
+            if matches!(next.get(root_cid), Some(PendingDagFetchTask::Scheduled)) {
+                next.remove(root_cid);
+            }
+            next
+        });
     }
 
     fn available_pending_dag_fetch_slots(&self) -> usize {
-        let mut tasks = self.inner.pending_dag_fetch_tasks.lock();
-        Self::prune_pending_dag_fetches(&mut tasks);
         self.inner
             .pending_dag_fetch_task_limit
-            .saturating_sub(tasks.len())
+            .saturating_sub(self.pending_dag_fetch_count())
+    }
+
+    /// Live registry entries, after retiring finished fetches. Only publishes
+    /// a new registry when something finished.
+    fn pending_dag_fetch_count(&self) -> usize {
+        let (all_live, len) = self.inner.pending_dag_fetch_tasks.peek(|tasks| {
+            (
+                tasks.values().all(PendingDagFetchTask::is_live),
+                tasks.len(),
+            )
+        });
+        if all_live {
+            return len;
+        }
+        let mut count = 0;
+        self.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let next = Self::prune_pending_dag_fetches(current);
+            count = next.len();
+            next
+        });
+        count
     }
 
     fn spawn_pending_dag_fetch<F>(&self, root_cid: Cid, future: F) -> bool
     where
         F: std::future::Future<Output = ()> + MaybeSend + 'static,
     {
-        let mut tasks = self.inner.pending_dag_fetch_tasks.lock();
-        Self::prune_pending_dag_fetches(&mut tasks);
-        if self.is_shutting_down() {
+        let mut claimed = false;
+        self.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let mut next = Self::prune_pending_dag_fetches(current);
+            claimed = !self.is_shutting_down()
+                && match next.get(&root_cid) {
+                    Some(PendingDagFetchTask::Scheduled) => true,
+                    Some(_) => false,
+                    None => next.len() < self.inner.pending_dag_fetch_task_limit,
+                };
+            if claimed {
+                next.insert(root_cid, PendingDagFetchTask::Claimed);
+            }
+            next
+        });
+        if !claimed {
             return false;
-        }
-
-        match tasks.get(&root_cid) {
-            Some(PendingDagFetchTask::Scheduled) => {}
-            Some(PendingDagFetchTask::Running(_)) => return false,
-            None if tasks.len() < self.inner.pending_dag_fetch_task_limit => {}
-            None => return false,
         }
 
         let shutdown = self.clone();
@@ -547,38 +627,41 @@ impl SyncShutdownHandle {
                 _ = future => {}
             }
         });
-        tasks.insert(root_cid, PendingDagFetchTask::Running(task));
-        true
+        let abort = task.abort_handle();
+        self.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let mut next = current.clone();
+            next.insert(root_cid, PendingDagFetchTask::Running(abort.clone()));
+            next
+        });
+        self.register_task(task)
     }
 
     /// Number of live retained background task handles. Prunes finished
     /// handles first so a burst of completed tasks does not overstate live
     /// work between registrations.
     pub fn retained_task_count(&self) -> usize {
-        let mut tasks = self.inner.background_tasks.lock();
-        tasks.retain(|task| !task.is_finished());
-        let background_count = tasks.len();
-        drop(tasks);
-
-        let mut pending_dag_fetches = self.inner.pending_dag_fetch_tasks.lock();
-        Self::prune_pending_dag_fetches(&mut pending_dag_fetches);
-        background_count + pending_dag_fetches.len()
+        self.prune_finished_tasks();
+        let reservations = self.inner.pending_dag_fetch_tasks.peek(|tasks| {
+            tasks
+                .values()
+                .filter(|task| !matches!(task, PendingDagFetchTask::Running(_)))
+                .count()
+        });
+        self.inner.background_tasks.len() + reservations
     }
 
     async fn drain_background_tasks(&self, timeout: Duration) {
-        let mut handles = {
-            let mut tasks = self.inner.background_tasks.lock();
-            std::mem::take(&mut *tasks)
-        };
-        handles.extend({
-            let mut tasks = self.inner.pending_dag_fetch_tasks.lock();
-            std::mem::take(&mut *tasks)
-                .into_values()
-                .filter_map(|task| match task {
-                    PendingDagFetchTask::Scheduled => None,
-                    PendingDagFetchTask::Running(task) => Some(task),
-                })
-        });
+        self.inner
+            .pending_dag_fetch_tasks
+            .store(RapidHashMap::new());
+        fence(Ordering::SeqCst);
+        while self.inner.pruning.load(Ordering::SeqCst) != 0 {
+            tokio::task::yield_now().await;
+        }
+        let mut handles = Vec::new();
+        while let Some(task) = self.inner.background_tasks.pop() {
+            handles.push(task);
+        }
 
         let deadline = n0_future::time::Instant::now() + timeout;
         let mut handles = handles
@@ -639,7 +722,7 @@ pub(super) struct SyncRuntime<T: P2PTransport> {
     /// Channel for reporting durable retry updates to the host runtime.
     /// Behind a shared slot so the fixed push workers observe a channel that
     /// is installed after construction (`set_failure_channel`).
-    pub(super) failure_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<PushFailure>>>>,
+    pub(super) failure_tx: Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
 
     /// Limiter for concurrent DAG fetch tasks (configurable via SyncConfig).
     pub(super) dag_fetch_limiter: DagFetchLimiter,
@@ -693,6 +776,15 @@ pub(super) struct SyncAccessState {
     pub(super) gossip_direction_filtered: AtomicU64,
 }
 
+/// Collection-ID set shared between the coordinator and its retry tasks.
+pub(super) type CollectionSet = HopscotchMap<String, (), rapidhash::fast::RandomState>;
+
+pub(super) fn collection_set() -> Arc<CollectionSet> {
+    Arc::new(HopscotchMap::with_hasher(
+        rapidhash::fast::RandomState::default(),
+    ))
+}
+
 /// Subscription and document head support state for the coordinator.
 pub(super) struct SyncSubscriptionState {
     /// Serializes durable subscription mutations without blocking readers of
@@ -700,13 +792,13 @@ pub(super) struct SyncSubscriptionState {
     pub(super) mutation: Arc<tokio::sync::Mutex<()>>,
 
     /// Set of subscribed collection IDs for P2P sync (in-memory cache).
-    pub(super) subscribed_collections: Arc<tokio::sync::RwLock<rapidhash::RapidHashSet<String>>>,
+    pub(super) subscribed_collections: Arc<CollectionSet>,
 
     /// Desired topics with one background installation retry owner.
-    pub(super) retrying_subscribes: Arc<tokio::sync::Mutex<rapidhash::RapidHashSet<String>>>,
+    pub(super) retrying_subscribes: Arc<CollectionSet>,
 
     /// Undesired live topics with one background removal retry owner.
-    pub(super) retrying_unsubscribes: Arc<tokio::sync::Mutex<rapidhash::RapidHashSet<String>>>,
+    pub(super) retrying_unsubscribes: Arc<CollectionSet>,
 
     /// Persistent storage for P2P collection subscriptions.
     pub(super) collection_store: Arc<dyn P2PCollectionStorage>,
@@ -788,14 +880,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     }
 
     /// Point-in-time snapshot of sync resource state for diagnostics (#1099).
-    pub fn sync_status(&self) -> SyncStatus {
+    pub async fn sync_status(&self) -> SyncStatus {
         let diagnostics = self.manager.diagnostics().snapshot();
         let (
             non_authoritative_broadcast_tasks,
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,
         ) = self.runtime.shutdown.non_authoritative_broadcast_stats();
-        let push_backlog = self.runtime.push_backlog.snapshot();
+        let push_backlog = self.runtime.push_backlog.snapshot().await;
         let push_updates_coalesced_total = push_backlog.coalesced_total;
         SyncStatus {
             push_backlog,
@@ -1333,22 +1425,16 @@ mod shutdown_tests {
     #[tokio::test]
     async fn spawn_task_prunes_finished_handles() {
         let shutdown = SyncShutdownHandle::new(4);
-        let mut handles = Vec::new();
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for _ in 0..50 {
-            shutdown.spawn_task(async {});
-            handles.push(
-                shutdown
-                    .inner
-                    .background_tasks
-                    .lock()
-                    .last()
-                    .unwrap()
-                    .abort_handle(),
-            );
+            let completed = Arc::clone(&completed);
+            shutdown.spawn_task(async move {
+                completed.fetch_add(1, Ordering::SeqCst);
+            });
         }
 
         let deadline = n0_future::time::Instant::now() + Duration::from_secs(2);
-        while handles.iter().any(|handle| !handle.is_finished()) {
+        while completed.load(Ordering::SeqCst) < 50 {
             assert!(n0_future::time::Instant::now() < deadline);
             n0_future::time::sleep(Duration::from_millis(5)).await;
         }

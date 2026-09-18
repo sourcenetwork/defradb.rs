@@ -336,7 +336,7 @@ mod tests {
 
     use async_trait::async_trait;
     use blockstore::DefraBlockstore;
-    use parking_lot::Mutex;
+    use kovan_queue::seg_queue::SegQueue;
     use storage::RegolithStore;
 
     use super::*;
@@ -354,7 +354,7 @@ mod tests {
         local_peer_id: PeerId,
         subscribe_calls: Arc<AtomicUsize>,
         fail_on_call: usize,
-        registered_topics: Arc<Mutex<Vec<String>>>,
+        registered_topics: Arc<SegQueue<String>>,
     }
 
     impl RawSubscribeFailTransport {
@@ -366,7 +366,7 @@ mod tests {
                 local_peer_id: PeerId::new(peer.to_string()),
                 subscribe_calls: Arc::new(AtomicUsize::new(0)),
                 fail_on_call,
-                registered_topics: Arc::new(Mutex::new(Vec::new())),
+                registered_topics: Arc::new(SegQueue::new()),
             }
         }
     }
@@ -446,7 +446,7 @@ mod tests {
         }
 
         async fn register_pubsub_rpc_topic(&self, topic: String) -> Result<()> {
-            self.registered_topics.lock().push(topic);
+            self.registered_topics.push(topic);
             Ok(())
         }
 
@@ -613,7 +613,7 @@ mod tests {
         assert!(!coordinator.pubsub_services_ready());
         assert_eq!(subscribe_calls.load(Ordering::SeqCst), 2);
         assert_eq!(
-            registered_topics.lock().len(),
+            registered_topics.len(),
             1,
             "first topic registered before failure, but services must remain unready"
         );

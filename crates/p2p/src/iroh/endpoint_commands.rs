@@ -1,11 +1,14 @@
 //! Command handlers for the iroh endpoint event loop.
 
-use rapidhash::{RapidHashMap, RapidHashSet};
+use rapidhash::fast::RandomState;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use iroh_gossip::net::Gossip;
 use iroh_gossip::proto::TopicId;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
@@ -19,7 +22,8 @@ use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
 use super::endpoint::{
     peer_direct_addr, snapshot_subscription_senders, spawn_task, ActiveSync, EndpointResources,
-    PendingPushLogReplies, SpawnedTasks, SubscriptionSenders, TopicSubscription,
+    Neighbors, PendingPushLogReplies, RawTopics, SpawnedTasks, SubscriptionSenders,
+    TopicSubscription,
 };
 use super::endpoint_config::PeerAdmission;
 use super::endpoint_rpc::{
@@ -29,7 +33,7 @@ use super::endpoint_rpc::{
 };
 use super::endpoint_streams::ConnectionStreamContext;
 use super::gossip_heal;
-use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id, PeerMap};
+use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 
 /// Authenticate the endpoint that originated a PushLog gossip envelope.
@@ -90,7 +94,7 @@ pub(super) async fn handle_command(
     resources: &EndpointResources,
     pending_pushlog_replies: &PendingPushLogReplies,
     subscriptions: &mut RapidHashMap<String, TopicSubscription>,
-    raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
+    raw_topics: &RawTopics,
     replicators: &Arc<ReplicatorRegistry>,
     active_syncs: &mut RapidHashMap<u64, ActiveSync>,
     next_query_id: &mut u64,
@@ -150,7 +154,7 @@ pub(super) async fn handle_command(
             let _ = reply.send(Ok(()));
         }
         IrohCommand::ConnectedPeers { reply } => {
-            let _ = reply.send(Ok(peer_map.lock().connected_peers()));
+            let _ = reply.send(Ok(peer_map.connected_peers()));
         }
         IrohCommand::ListenAddresses { reply } => {
             let endpoint_addr = endpoint.addr();
@@ -167,7 +171,7 @@ pub(super) async fn handle_command(
             let _ = reply.send(Ok(addrs));
         }
         IrohCommand::PeerAddresses { reply } => {
-            let _ = reply.send(Ok(peer_map.lock().peer_addresses()));
+            let _ = reply.send(Ok(peer_map.peer_addresses()));
         }
         IrohCommand::NetworkChange { reply } => {
             endpoint.network_change().await;
@@ -231,14 +235,14 @@ pub(super) async fn handle_command(
             let _ = reply.send(result);
         }
         IrohCommand::RegisterRawTopic { topic, reply } => {
-            raw_topics.lock().insert(topic);
+            raw_topics.insert_if_absent(topic, ());
             let _ = reply.send(Ok(()));
         }
         IrohCommand::SubscribeRaw { topic, reply } => {
             // Mark as raw-routed first so the reader spawned below emits
             // GossipRawMessage (not a decoded PushLogBroadcast) for it, then
             // join the gossip mesh with a real reader task.
-            raw_topics.lock().insert(topic.clone());
+            raw_topics.insert_if_absent(topic.clone(), ());
             let result = subscribe_topic_str(
                 gossip,
                 subscriptions,
@@ -268,8 +272,10 @@ pub(super) async fn handle_command(
             let peers = subscriptions
                 .get(&topic_str)
                 .map(|sub| {
-                    let snapshot: Vec<_> = sub.neighbors.lock().iter().copied().collect();
-                    snapshot.iter().map(endpoint_id_to_peer_id).collect()
+                    sub.neighbors
+                        .keys()
+                        .map(|id| endpoint_id_to_peer_id(&id))
+                        .collect()
                 })
                 .unwrap_or_default();
             let _ = reply.send(Ok(peers));
@@ -307,9 +313,9 @@ pub(super) async fn handle_command(
                 let request_message_id = message_id.clone();
                 let result = async move {
                     let (reply_tx, reply_rx) = oneshot::channel();
-                    pending_pushlog_replies
-                        .lock()
-                        .insert(request_message_id.clone(), reply_tx);
+                    let slot = SegQueue::new();
+                    slot.push(reply_tx);
+                    pending_pushlog_replies.insert(request_message_id.clone(), Arc::new(slot));
 
                     let result = handle_two_stream_request(
                         &endpoint,
@@ -321,7 +327,9 @@ pub(super) async fn handle_command(
                         &admission,
                     )
                     .await;
-                    pending_pushlog_replies.lock().remove(&request_message_id);
+                    if let Some(slot) = pending_pushlog_replies.remove(&request_message_id) {
+                        drop(slot.pop());
+                    }
                     result
                 }
                 .await;
@@ -855,7 +863,7 @@ async fn handle_dial(
     // on the first message.
     remember_connection(&ctx.resources.connection_cache, peer_id, &connection)?;
 
-    let is_new = ctx.resources.peer_map.lock().increment_connections(
+    let is_new = ctx.resources.peer_map.increment_connections(
         endpoint_id,
         direct_addresses.first().copied(),
         connection.clone(),
@@ -989,11 +997,11 @@ fn handle_deny_peer(peer_id: PeerId, resources: &EndpointResources) -> crate::er
 /// subscribe and publish paths cannot drift apart on who counts as a
 /// neighbour.
 fn admitted_neighbours(
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: &SharedPeerMap,
     admission: &PeerAdmission,
 ) -> Vec<iroh::EndpointId> {
-    let connected: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
-    connected
+    peer_map
+        .endpoint_ids()
         .into_iter()
         .filter(|id| admission.admits_outbound(id))
         .collect()
@@ -1008,9 +1016,9 @@ fn admitted_neighbours(
 pub(super) async fn handle_subscribe(
     gossip: &Gossip,
     subscriptions: &mut RapidHashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: &SharedPeerMap,
     admission: &PeerAdmission,
-    raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
+    raw_topics: &RawTopics,
     topic: crate::topics::DefraTopic,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
@@ -1039,9 +1047,9 @@ pub(super) async fn handle_subscribe(
 pub(super) async fn subscribe_topic_str(
     gossip: &Gossip,
     subscriptions: &mut RapidHashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: &SharedPeerMap,
     admission: &PeerAdmission,
-    raw_topics: &Arc<parking_lot::Mutex<RapidHashSet<String>>>,
+    raw_topics: &RawTopics,
     topic_str: String,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
@@ -1059,9 +1067,8 @@ pub(super) async fn subscribe_topic_str(
         .map_err(|e| crate::error::Error::GossipSubSubscription(e.to_string()))?;
 
     let (sender, mut receiver) = gossip_topic.split();
-    let neighbors = Arc::new(parking_lot::Mutex::new(
-        receiver.neighbors().collect::<RapidHashSet<_>>(),
-    ));
+    let neighbors: Neighbors = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
+    neighbors.extend(receiver.neighbors().map(|id| (id, ())));
 
     let event_tx = event_tx.clone();
     let topic_str_clone = topic_str.clone();
@@ -1073,7 +1080,7 @@ pub(super) async fn subscribe_topic_str(
                 Ok(event) => match event {
                     iroh_gossip::api::Event::Received(msg) => {
                         let sender_peer_id = endpoint_id_to_peer_id(&msg.delivered_from);
-                        if raw_topics_reader.lock().contains(&topic_str_clone) {
+                        if raw_topics_reader.contains_key(&topic_str_clone) {
                             let msg_id = MessageId::new(uuid::Uuid::new_v4().to_string());
                             if event_tx
                                 .send(TransportEvent::GossipRawMessage {
@@ -1191,7 +1198,7 @@ pub(super) async fn subscribe_topic_str(
                         }
                     }
                     iroh_gossip::api::Event::NeighborUp(id) => {
-                        reader_neighbors.lock().insert(id);
+                        reader_neighbors.insert_if_absent(id, ());
                         if event_tx
                             .send(TransportEvent::PeerSubscribed {
                                 peer_id: endpoint_id_to_peer_id(&id),
@@ -1204,7 +1211,7 @@ pub(super) async fn subscribe_topic_str(
                         }
                     }
                     iroh_gossip::api::Event::NeighborDown(id) => {
-                        reader_neighbors.lock().remove(&id);
+                        reader_neighbors.remove(&id);
                         if event_tx
                             .send(TransportEvent::PeerUnsubscribed {
                                 peer_id: endpoint_id_to_peer_id(&id),
@@ -1245,7 +1252,7 @@ pub(super) async fn subscribe_topic_str(
 fn handle_publish(
     gossip: &Gossip,
     subscriptions: &RapidHashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: &SharedPeerMap,
     admission: &PeerAdmission,
     topic: crate::topics::DefraTopic,
     msg: PushLogBroadcast,
@@ -1300,7 +1307,7 @@ fn handle_publish(
 fn handle_publish_raw(
     gossip: &Gossip,
     subscriptions: &RapidHashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: &SharedPeerMap,
     admission: &PeerAdmission,
     topic_str: String,
     data: Vec<u8>,

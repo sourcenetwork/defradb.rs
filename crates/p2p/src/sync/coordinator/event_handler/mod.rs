@@ -1300,7 +1300,10 @@ mod tests {
                 .expect("coordinator");
 
         // No pending DAGs registered yet: the clock has nothing due.
-        assert_eq!(coordinator.sync_status().next_pending_retry_in_ms, None);
+        assert_eq!(
+            coordinator.sync_status().await.next_pending_retry_in_ms,
+            None
+        );
 
         let (field_cid, field_block) = create_lww_block("name");
         let (root_cid, root_block) = create_composite_block("doc123", "name", field_cid);
@@ -1317,7 +1320,7 @@ mod tests {
             .expect("root pushlog");
 
         assert!(events.try_recv().is_err());
-        let before_clock = coordinator.sync_status();
+        let before_clock = coordinator.sync_status().await;
         assert_eq!(before_clock.pending_dag_retry_dispatched, 0);
         assert!(before_clock.next_pending_retry_in_ms.is_some());
         assert_eq!(
@@ -1332,7 +1335,7 @@ mod tests {
             other => panic!("expected DagNeedsFetch, got {other:?}"),
         }
 
-        let status = coordinator.sync_status();
+        let status = coordinator.sync_status().await;
         assert_eq!(status.pending_dag_retry_dispatched, 1);
         let next_retry_ms = status
             .next_pending_retry_in_ms
@@ -1346,7 +1349,10 @@ mod tests {
         assert!(!coordinator
             .manager()
             .try_claim_pending_dag_dispatch(&root_cid, n0_future::time::Instant::now()));
-        assert_eq!(coordinator.sync_status().pending_dag_retry_suppressed, 1);
+        assert_eq!(
+            coordinator.sync_status().await.pending_dag_retry_suppressed,
+            1
+        );
 
         // Feed the missing field block: the DAG is ready, but remains owned
         // by the same clock until merge/mark reaches a terminal outcome.
@@ -1369,7 +1375,11 @@ mod tests {
         }
 
         assert!(
-            coordinator.sync_status().next_pending_retry_in_ms.is_some(),
+            coordinator
+                .sync_status()
+                .await
+                .next_pending_retry_in_ms
+                .is_some(),
             "a complete but unmerged receiver obligation remains scheduled"
         );
     }
@@ -1410,7 +1420,10 @@ mod tests {
             matches!(events.try_recv(), Ok(SyncEvent::DagNeedsFetch { root_cid: root, .. }) if root == root_cid)
         );
         assert_eq!(n0_future::time::Instant::now(), now);
-        assert_eq!(coordinator.sync_status().pending_dag_retry_dispatched, 1);
+        assert_eq!(
+            coordinator.sync_status().await.pending_dag_retry_dispatched,
+            1
+        );
         coordinator.shutdown().await;
         clock.await.expect("retry owner exits on shutdown");
     }
@@ -1443,7 +1456,7 @@ mod tests {
                 .expect("durably register pending root");
         }
 
-        let retained_before = coordinator.sync_status().retained_background_tasks;
+        let retained_before = coordinator.sync_status().await.retained_background_tasks;
         let now = n0_future::time::Instant::now();
         assert_eq!(
             coordinator.dispatch_due_pending_dag_fetches_for_test(now),
@@ -1454,9 +1467,12 @@ mod tests {
             0,
             "the second root must remain due instead of queueing behind the owner"
         );
-        assert_eq!(coordinator.sync_status().pending_dag_retry_dispatched, 1);
         assert_eq!(
-            coordinator.sync_status().retained_background_tasks,
+            coordinator.sync_status().await.pending_dag_retry_dispatched,
+            1
+        );
+        assert_eq!(
+            coordinator.sync_status().await.retained_background_tasks,
             retained_before + 1
         );
         assert!(matches!(

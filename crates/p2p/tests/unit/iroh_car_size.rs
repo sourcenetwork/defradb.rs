@@ -40,7 +40,7 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
             });
             let cache = new_connection_cache();
             let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
-            let peer_map = Arc::new(parking_lot::Mutex::new(PeerMap::new()));
+            let peer_map = Arc::new(SharedPeerMap::new());
             let endpoints = if alternate {
                 vec![&limited, &healthy]
             } else {
@@ -54,9 +54,7 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
                     connect_with_cache(&client, &provider, Some(addr), &cache, &admission)
                         .await
                         .unwrap();
-                peer_map
-                    .lock()
-                    .increment_connections(endpoint.id(), Some(addr), connection);
+                peer_map.increment_connections(endpoint.id(), Some(addr), connection);
                 providers.push(provider);
             }
             let (tx, mut rx) = mpsc::channel(8);

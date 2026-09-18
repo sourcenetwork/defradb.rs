@@ -89,6 +89,10 @@ name = "crypto"
 harness = false
 
 [[bench]]
+name = "contention"
+harness = false
+
+[[bench]]
 name = "cursor_codec"
 harness = false
 
