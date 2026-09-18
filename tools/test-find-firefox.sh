@@ -4,9 +4,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/bin" "$work/tooling/firefox" "$work/home/Applications/Firefox.app/Contents/MacOS"
+mkdir -p "$work/bin" "$work/tooling/firefox" "$work/home with spaces/Applications/Firefox.app/Contents/MacOS"
 
-app="$work/home/Applications/Firefox.app/Contents/MacOS/firefox"
+app="$work/home with spaces/Applications/Firefox.app/Contents/MacOS/firefox"
 local_browser="$work/tooling/firefox/firefox"
 path_browser="$work/bin/firefox"
 for browser in "$app" "$local_browser" "$path_browser"; do
@@ -15,7 +15,7 @@ for browser in "$app" "$local_browser" "$path_browser"; do
 done
 
 find_browser() {
-    HOME="$work/home" PATH="$work/bin" /bin/bash "$root/tools/find-firefox.sh" "$work/tooling"
+    HOME="$work/home with spaces" PATH="$work/bin" /bin/bash "$root/tools/find-firefox.sh" "$work/tooling"
 }
 
 [[ "$(find_browser)" == "$path_browser" ]]
