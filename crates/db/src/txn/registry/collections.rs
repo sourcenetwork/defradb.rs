@@ -200,7 +200,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         txn.on_success(Box::new(move || {
             if let Ok(mut cache) = db.collections.write() {
                 if committed.is_active {
-                    cache.insert(committed.name.clone(), Collection::new(committed));
+                    cache.put(Collection::new(committed));
                 } else if was_active {
                     cache.remove(&committed.name);
                 }

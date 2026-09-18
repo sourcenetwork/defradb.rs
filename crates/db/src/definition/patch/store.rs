@@ -511,7 +511,7 @@ impl<S: Store> crate::database::DB<S> {
             if new_schema.is_active {
                 // New version is active - cache it under the actual collection name
                 // (not collection_name, which might be a version_id for branching patches)
-                cache.insert(actual_name.to_string(), Collection::new(new_schema.clone()));
+                cache.put(Collection::new(new_schema.clone()));
             }
             // If new version is inactive, old version stays in cache (already there)
         }
@@ -550,19 +550,19 @@ impl<S: Store> crate::database::DB<S> {
     ) -> Result<()> {
         // Collect candidates from the cache: other collections with primary non-array
         // relation fields pointing at just_patched.
-        let candidates: Vec<(String, CollectionVersion)> = {
+        let candidates: Vec<CollectionVersion> = {
             let cache = self
                 .collections
                 .read()
                 .map_err(|_| Error::LockPoisoned("collection cache lock poisoned".into()))?;
             cache
-                .iter()
-                .filter(|(name, _)| name.as_str() != just_patched.name)
-                .map(|(name, col)| (name.clone(), col.schema().clone()))
+                .values()
+                .filter(|col| col.name() != just_patched.name)
+                .map(|col| col.schema().clone())
                 .collect()
         };
 
-        for (coll_name, other_schema) in &candidates {
+        for other_schema in &candidates {
             let mut needs_update = false;
             let mut updated_schema = other_schema.clone();
 
@@ -639,7 +639,7 @@ impl<S: Store> crate::database::DB<S> {
                     .collections
                     .write()
                     .map_err(|_| Error::LockPoisoned("collection cache lock poisoned".into()))?;
-                cache.insert(coll_name.clone(), Collection::new(updated_schema));
+                cache.put(Collection::new(updated_schema));
             }
         }
 

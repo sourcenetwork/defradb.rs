@@ -72,10 +72,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                     if let Ok(mut cache) = db.collections.write() {
                         if let Some(cached) = cache.get(&updated_destination.name) {
                             if cached.schema().version_id == destination_version_id {
-                                cache.insert(
-                                    updated_destination.name.clone(),
-                                    Collection::new(updated_destination.clone()),
-                                );
+                                cache.put(Collection::new(updated_destination.clone()));
                             }
                         }
                     }
@@ -175,7 +172,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             }
             if let Ok(mut cache) = db.collections.write() {
                 for schema in &schemas_for_cache {
-                    cache.insert(schema.name.clone(), Collection::new(schema.clone()));
+                    cache.put(Collection::new(schema.clone()));
                 }
             }
         }))?;

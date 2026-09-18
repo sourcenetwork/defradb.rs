@@ -3,7 +3,6 @@
 /// The DB struct is the main entry point for DefraDB operations.
 /// It manages the root store, creates transactions, and provides
 /// access to collections.
-use crate::collection::Collection;
 use crate::error::{Error, Result};
 pub use crate::search::EmbeddingClientConfig;
 use crate::txn::DbTxn;
@@ -195,7 +194,7 @@ pub struct DB<S: Store> {
     /// Whether the database has been closed.
     closed: AtomicBool,
     /// In-memory collection cache (name -> Collection).
-    pub(crate) collections: RwLock<RapidHashMap<String, Collection>>,
+    pub(crate) collections: RwLock<crate::collection::CollectionMap>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -270,7 +269,7 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: RwLock::new(RapidHashMap::new()),
+            collections: RwLock::new(crate::collection::CollectionMap::default()),
             event_bus: None,
             lens_store,
             pending_migrations: RwLock::new(RapidHashMap::new()),
@@ -333,7 +332,7 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: RwLock::new(RapidHashMap::new()),
+            collections: RwLock::new(crate::collection::CollectionMap::default()),
             event_bus: None,
             lens_store,
             pending_migrations: RwLock::new(RapidHashMap::new()),

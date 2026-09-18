@@ -1,19 +1,5 @@
 use super::*;
-
-/// Whether [`crate::database::DB::add_collection_to_cache`] took the schema.
-///
-/// The attribute sits on the type rather than on the method deliberately: a
-/// method's `#[must_use]` is satisfied by the `map_err` every caller applies,
-/// and the value falling out of `?` is then an ordinary expression statement
-/// that nothing lints. A `#[must_use]` type is linted wherever it is dropped.
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cached {
-    /// The schema is now the cached entry for its name.
-    Taken,
-    /// Another collection holds that name, so the cache was left alone.
-    NameHeldByAnother,
-}
+use crate::collection::Cached;
 
 impl<S: Store> crate::database::DB<S> {
     /// List all collection names using the transaction's cache.
@@ -33,7 +19,7 @@ impl<S: Store> crate::database::DB<S> {
             tracing::error!(error = ?e, "Collection cache lock poisoned during list");
             Error::LockPoisoned("collection cache lock poisoned during list".into())
         })?;
-        Ok(cache.keys().cloned().collect())
+        Ok(cache.names().cloned().collect())
     }
 
     /// Cache `schema` under its name, reporting whether the cache took it.
@@ -54,26 +40,17 @@ impl<S: Store> crate::database::DB<S> {
             )
         })?;
 
-        // The cache is keyed by name, but a collection's identity is its
-        // collection ID. An entry naming a different collection must not be
-        // replaced: whatever that collection knows and the incoming schema
-        // does not carry would be dropped silently. A placeholder is a
-        // stand-in for a definition that has not arrived, so it always yields.
-        if let Some(existing) = cache.get(&name) {
-            let existing = existing.schema();
-            if existing.collection_id != schema.collection_id && !existing.is_placeholder {
-                tracing::warn!(
-                    collection_name = %name,
-                    held = %existing.collection_id,
-                    offered = %schema.collection_id,
-                    "Refusing to displace a cached collection with a different collection ID"
-                );
-                return Ok(Cached::NameHeldByAnother);
-            }
+        let offered = schema.collection_id.clone();
+        let cached = cache.offer(Collection::new(schema));
+        if cached == Cached::NameHeldByAnother {
+            tracing::warn!(
+                collection_name = %name,
+                held = %cache.get(&name).map(Collection::collection_id).unwrap_or_default(),
+                %offered,
+                "Refusing to displace a cached collection with a different collection ID"
+            );
         }
-
-        cache.insert(name, Collection::new(schema));
-        Ok(Cached::Taken)
+        Ok(cached)
     }
 
     /// Get a collection by name using the transaction's cache.
@@ -115,7 +92,7 @@ impl<S: Store> crate::database::DB<S> {
             tracing::error!(error = ?e, collection_name = %name, "Collection cache lock poisoned during has_collection");
             Error::LockPoisoned("collection cache lock poisoned during has_collection".into())
         })?;
-        Ok(cache.contains_key(name))
+        Ok(cache.contains_name(name))
     }
 
     /// Find a collection by its collection ID (schema version ID).
@@ -135,10 +112,7 @@ impl<S: Store> crate::database::DB<S> {
                 "collection cache lock poisoned during find_collection_by_id".into(),
             )
         })?;
-        Ok(cache
-            .values()
-            .find(|c| c.collection_id() == collection_id)
-            .cloned())
+        Ok(cache.by_id(collection_id).cloned())
     }
 
     pub(crate) fn forbid_collection_id(&self, collection_id: &str) -> Result<()> {
@@ -187,6 +161,6 @@ impl<S: Store> crate::database::DB<S> {
             tracing::error!(error = ?e, "Collection cache lock poisoned during snapshot");
             Error::LockPoisoned("collection cache lock poisoned during snapshot".into())
         })?;
-        Ok(CollectionSnapshot::new(cache.clone()))
+        Ok(CollectionSnapshot::new(cache.by_name()))
     }
 }

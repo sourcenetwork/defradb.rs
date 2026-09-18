@@ -294,7 +294,7 @@ impl<S: Store> crate::database::DB<S> {
                 Error::CacheUpdateFailedAfterCommit(actual_name.clone())
             })?;
             if new_schema.is_active {
-                cache.insert(actual_name.clone(), Collection::new(new_schema.clone()));
+                cache.put(Collection::new(new_schema.clone()));
             } else {
                 cache.remove(&actual_name);
             }
