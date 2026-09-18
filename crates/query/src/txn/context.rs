@@ -1,15 +1,13 @@
 //! Transaction context trait.
 
-use acp::error::Result as AcpResult;
+use acp::error::{Error as AcpError, Result as AcpResult};
 use acp::DocumentACP;
 use acp::DocumentPermission;
 use acp::Identity;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use futures::FutureExt;
 use identity::Did;
-use kovan_map::HopscotchMap;
-use kovan_queue::seg_queue::SegQueue;
-use rapidhash::fast::RandomState;
+use rapidhash::RapidHashMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -53,30 +51,26 @@ struct DeferredAcpHookEntry {
     callback: DeferredAcpHook,
 }
 
+#[derive(Default)]
+struct DeferredAcpState {
+    projected_registrations: RapidHashMap<DocRegistrationKey, ProjectedDocRegistration>,
+    hooks: Vec<DeferredAcpHookEntry>,
+}
+
 /// Deferred ACP mutations and their transaction-local registration projection.
 ///
 /// Explicit database transactions use this to:
 /// - buffer ACP writes until commit succeeds
 /// - expose projected registration state to permission checks within the txn
+#[derive(Default)]
 pub struct DeferredAcpMutations {
-    projected_registrations:
-        HopscotchMap<DocRegistrationKey, ProjectedDocRegistration, RandomState>,
-    hooks: SegQueue<DeferredAcpHookEntry>,
-}
-
-impl Default for DeferredAcpMutations {
-    fn default() -> Self {
-        Self::new()
-    }
+    state: std::sync::Mutex<DeferredAcpState>,
 }
 
 impl DeferredAcpMutations {
     /// Create an empty deferred ACP state container.
     pub fn new() -> Self {
-        Self {
-            projected_registrations: HopscotchMap::with_hasher(RandomState::default()),
-            hooks: SegQueue::new(),
-        }
+        Self::default()
     }
 
     fn doc_key(policy_id: &str, resource_name: &str, doc_id: &str) -> DocRegistrationKey {
@@ -87,11 +81,23 @@ impl DeferredAcpMutations {
         }
     }
 
-    fn push_hook(&self, description: &'static str, callback: DeferredAcpHook) {
-        self.hooks.push(DeferredAcpHookEntry {
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, DeferredAcpState>, String> {
+        self.state
+            .lock()
+            .map_err(|_| "deferred ACP mutation state lock poisoned".to_string())
+    }
+
+    fn push_hook(
+        &self,
+        description: &'static str,
+        callback: DeferredAcpHook,
+    ) -> Result<(), String> {
+        let mut state = self.lock_state()?;
+        state.hooks.push(DeferredAcpHookEntry {
             description,
             callback,
         });
+        Ok(())
     }
 
     fn with_request_bearer_token(
@@ -108,9 +114,12 @@ impl DeferredAcpMutations {
         policy_id: &str,
         resource_name: &str,
         doc_id: &str,
-    ) -> Option<ProjectedDocRegistration> {
-        self.projected_registrations
+    ) -> AcpResult<Option<ProjectedDocRegistration>> {
+        let state = self.lock_state().map_err(AcpError::Storage)?;
+        Ok(state
+            .projected_registrations
             .get(&Self::doc_key(policy_id, resource_name, doc_id))
+            .cloned())
     }
 
     /// Schedule a document registration to run after the storage transaction commits.
@@ -123,12 +132,15 @@ impl DeferredAcpMutations {
         doc_id: String,
         request_bearer_token: Option<String>,
     ) -> Result<(), String> {
-        self.projected_registrations.insert(
-            Self::doc_key(&policy_id, &resource_name, &doc_id),
-            ProjectedDocRegistration::Registered {
-                owner: identity.clone(),
-            },
-        );
+        {
+            let mut state = self.lock_state()?;
+            state.projected_registrations.insert(
+                Self::doc_key(&policy_id, &resource_name, &doc_id),
+                ProjectedDocRegistration::Registered {
+                    owner: identity.clone(),
+                },
+            );
+        }
 
         let doc_id_for_log = doc_id.clone();
         let policy_id_for_log = policy_id.clone();
@@ -148,8 +160,7 @@ impl DeferredAcpMutations {
                         })
                 })
             }),
-        );
-        Ok(())
+        )
     }
 
     /// Schedule a document unregistration to run after the storage transaction commits.
@@ -162,10 +173,13 @@ impl DeferredAcpMutations {
         caller_identity: Option<Did>,
         request_bearer_token: Option<String>,
     ) -> Result<(), String> {
-        self.projected_registrations.insert(
-            Self::doc_key(&policy_id, &resource_name, &doc_id),
-            ProjectedDocRegistration::Unregistered,
-        );
+        {
+            let mut state = self.lock_state()?;
+            state.projected_registrations.insert(
+                Self::doc_key(&policy_id, &resource_name, &doc_id),
+                ProjectedDocRegistration::Unregistered,
+            );
+        }
 
         let doc_id_for_log = doc_id.clone();
         let policy_id_for_log = policy_id.clone();
@@ -192,13 +206,20 @@ impl DeferredAcpMutations {
                     Ok(())
                 })
             }),
-        );
-        Ok(())
+        )
     }
 
     /// Run all deferred ACP hooks in registration order.
     pub async fn run_all_logged(&self) {
-        while let Some(hook) = self.hooks.pop() {
+        let hooks = match self.lock_state() {
+            Ok(mut state) => std::mem::take(&mut state.hooks),
+            Err(err) => {
+                tracing::error!(error = %err, "Failed to drain deferred ACP hooks");
+                return;
+            }
+        };
+
+        for hook in hooks {
             let description = hook.description;
             let result = AssertUnwindSafe((hook.callback)()).catch_unwind().await;
             match result {
@@ -280,7 +301,8 @@ pub async fn is_doc_registered_with_overlay(
     doc_id: &str,
 ) -> AcpResult<bool> {
     if let Some(mutations) = current_deferred_acp_mutations() {
-        if let Some(projected) = mutations.projected_registration(policy_id, resource_name, doc_id)
+        if let Some(projected) =
+            mutations.projected_registration(policy_id, resource_name, doc_id)?
         {
             return Ok(matches!(
                 projected,
@@ -303,7 +325,8 @@ pub async fn check_doc_access_with_overlay(
     doc_id: &str,
 ) -> AcpResult<bool> {
     if let Some(mutations) = current_deferred_acp_mutations() {
-        if let Some(projected) = mutations.projected_registration(policy_id, resource_name, doc_id)
+        if let Some(projected) =
+            mutations.projected_registration(policy_id, resource_name, doc_id)?
         {
             return Ok(match projected {
                 ProjectedDocRegistration::Unregistered => true,
@@ -400,12 +423,16 @@ mod tests {
             .parse()
             .expect("stranger did");
 
-        mutations.projected_registrations.insert(
-            DeferredAcpMutations::doc_key("policy", "User", "doc-1"),
-            ProjectedDocRegistration::Registered {
-                owner: owner.clone(),
-            },
-        );
+        mutations
+            .lock_state()
+            .expect("state lock")
+            .projected_registrations
+            .insert(
+                DeferredAcpMutations::doc_key("policy", "User", "doc-1"),
+                ProjectedDocRegistration::Registered {
+                    owner: owner.clone(),
+                },
+            );
 
         let access = scope_deferred_acp_mutations(
             mutations.clone(),
@@ -441,10 +468,14 @@ mod tests {
     #[tokio::test]
     async fn projected_unregistration_reports_public_access() {
         let mutations = Arc::new(DeferredAcpMutations::new());
-        mutations.projected_registrations.insert(
-            DeferredAcpMutations::doc_key("policy", "User", "doc-1"),
-            ProjectedDocRegistration::Unregistered,
-        );
+        mutations
+            .lock_state()
+            .expect("state lock")
+            .projected_registrations
+            .insert(
+                DeferredAcpMutations::doc_key("policy", "User", "doc-1"),
+                ProjectedDocRegistration::Unregistered,
+            );
 
         let access = scope_deferred_acp_mutations(
             mutations.clone(),

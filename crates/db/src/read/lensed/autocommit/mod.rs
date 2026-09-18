@@ -11,17 +11,14 @@ mod vector;
 
 use bytes::Bytes;
 use rapidhash::RapidHashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use document::Document;
-use kovan_map::HopscotchMap;
 use lens::TargetedHistoryLink;
 use query::fetcher::CommitsQueryOptions;
 use query::planner::index_selection::IndexScanParams;
 use query::runner::{DocFetcher, FetchByIdsResult};
-use rapidhash::fast::RandomState;
 use storage::corekv::Store;
 
 use crate::database::DB;
@@ -29,40 +26,10 @@ use crate::database::DB;
 /// Cached migration context for a collection.
 type MigrationContext = (bool, Option<RapidHashMap<String, TargetedHistoryLink>>);
 
-/// Migration contexts keyed by `"{generation}:{collection_id}:{version_id}"`.
-///
-/// The generation is part of the key, so an entry published under a superseded
-/// migration graph can never be read back; `cleared_generation` only tracks
-/// which generation's entries have already been reclaimed.
+#[derive(Default)]
 struct MigrationCache {
-    cleared_generation: AtomicU64,
-    contexts: HopscotchMap<String, MigrationContext, RandomState>,
-}
-
-impl Default for MigrationCache {
-    fn default() -> Self {
-        Self {
-            cleared_generation: AtomicU64::new(0),
-            contexts: HopscotchMap::with_hasher(RandomState::default()),
-        }
-    }
-}
-
-impl MigrationCache {
-    /// Drop the entries of every earlier generation, once.
-    fn reclaim_superseded(&self, generation: u64) {
-        let cleared = self.cleared_generation.load(Ordering::Acquire);
-        if cleared == generation {
-            return;
-        }
-        if self
-            .cleared_generation
-            .compare_exchange(cleared, generation, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            self.contexts.clear();
-        }
-    }
+    generation: u64,
+    contexts: RapidHashMap<String, MigrationContext>,
 }
 
 /// Document fetcher that auto-commits and applies lens migrations.
@@ -72,7 +39,10 @@ impl MigrationCache {
 pub struct LensedAutoCommitFetcher<S: Store> {
     db: Arc<DB<S>>,
     write_back_migrations: bool,
-    migration_cache: MigrationCache,
+    /// Cache of migration contexts keyed by `"{collection_id}:{version_id}"`.
+    /// The full cache is invalidated whenever the committed migration graph's
+    /// generation changes.
+    migration_cache: Mutex<MigrationCache>,
 }
 
 impl<S: Store> LensedAutoCommitFetcher<S> {
@@ -81,7 +51,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
         Self {
             db,
             write_back_migrations: true,
-            migration_cache: MigrationCache::default(),
+            migration_cache: Mutex::new(MigrationCache::default()),
         }
     }
 
@@ -95,7 +65,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
         Self {
             db,
             write_back_migrations: false,
-            migration_cache: MigrationCache::default(),
+            migration_cache: Mutex::new(MigrationCache::default()),
         }
     }
 
@@ -107,7 +77,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
         Self {
             db: self.db.clone(),
             write_back_migrations: self.write_back_migrations,
-            migration_cache: MigrationCache::default(),
+            migration_cache: Mutex::new(MigrationCache::default()),
         }
     }
 }

@@ -38,12 +38,17 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
         let collection_id = collection.schema().collection_id.clone();
         let target_version_id = &collection.schema().version_id;
 
+        let cache_key = format!("{}:{}", collection_id, target_version_id);
         loop {
             let generation = self.db.migration_generation();
-            let cache_key = format!("{}:{}:{}", generation, collection_id, target_version_id);
-            self.migration_cache.reclaim_superseded(generation);
-            if let Some(cached) = self.migration_cache.contexts.get(&cache_key) {
-                return Ok((generation, cached.0, cached.1));
+            if let Ok(mut cache) = self.migration_cache.lock() {
+                if cache.generation != generation {
+                    cache.generation = generation;
+                    cache.contexts.clear();
+                }
+                if let Some(cached) = cache.contexts.get(&cache_key) {
+                    return Ok((generation, cached.0, cached.1.clone()));
+                }
             }
 
             let history = self.load_collection_history(collection).await.ok();
@@ -59,9 +64,12 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
             if self.db.migration_generation() != generation {
                 continue;
             }
-            self.migration_cache
-                .contexts
-                .insert(cache_key, result.clone());
+            if let Ok(mut cache) = self.migration_cache.lock() {
+                if cache.generation != generation {
+                    continue;
+                }
+                cache.contexts.insert(cache_key.clone(), result.clone());
+            }
 
             return Ok((generation, result.0, result.1));
         }

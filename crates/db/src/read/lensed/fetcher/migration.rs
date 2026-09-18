@@ -157,8 +157,11 @@ impl<S: Store> LensedDocFetcher<S> {
         let cache_key = format!("{}:{}", collection_id, target_version_id);
 
         // First check if history is cached
-        if let Some(history) = self.history_cache.get(&cache_key) {
-            return Ok(history);
+        {
+            let cache = self.history_cache.read().await;
+            if let Some(history) = cache.get(&cache_key) {
+                return Ok(history.clone());
+            }
         }
 
         // Load versions using the helper
@@ -180,7 +183,11 @@ impl<S: Store> LensedDocFetcher<S> {
                 ))
             })?;
 
-        self.history_cache.insert(cache_key, history.clone());
+        // Cache the history
+        {
+            let mut cache = self.history_cache.write().await;
+            cache.insert(cache_key, history.clone());
+        }
 
         Ok(history)
     }
