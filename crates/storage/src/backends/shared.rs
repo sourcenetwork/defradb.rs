@@ -9,7 +9,7 @@
 //! counters for what actually happened.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use kovan_queue::seg_queue::SegQueue;
 use serde::{Deserialize, Serialize};
@@ -59,12 +59,9 @@ impl CallbackCounts {
     }
 }
 
-/// Callbacks a transaction runs when it resolves.
-///
-/// Registration takes `&self` because a transaction is shareable. Each list
-/// is a FIFO queue so callbacks run in registration order without a lock.
+/// The six queues, allocated together the first time one is used.
 #[derive(Default)]
-pub(crate) struct CallbackManager {
+struct CallbackLists {
     success: SegQueue<TxnCallback>,
     success_async: SegQueue<AsyncTxnCallback>,
     error: SegQueue<TxnCallback>,
@@ -73,39 +70,67 @@ pub(crate) struct CallbackManager {
     discard_async: SegQueue<AsyncTxnCallback>,
 }
 
+/// Callbacks a transaction runs when it resolves.
+///
+/// Registration takes `&self` because a transaction is shareable. Each list
+/// is a FIFO queue so callbacks run in registration order without a lock.
+///
+/// The queues are built on the first registration rather than with the
+/// transaction. `SegQueue::new` allocates a 32-slot segment up front and
+/// frees it through an epoch-pinned walk, and a transaction carries six of
+/// them, so building them eagerly cost a read-only transaction (which
+/// registers nothing) six allocations, six frees and seven epoch pins on a
+/// path whose whole budget is a few hundred nanoseconds. Behind the box this
+/// is two words in the transaction, and an unused one is an atomic load.
+#[derive(Default)]
+pub(crate) struct CallbackManager {
+    lists: OnceLock<Box<CallbackLists>>,
+}
+
 impl CallbackManager {
+    fn lists(&self) -> &CallbackLists {
+        self.lists.get_or_init(Box::default)
+    }
+
+    fn registered(&self) -> Option<&CallbackLists> {
+        self.lists.get().map(Box::as_ref)
+    }
+
     pub(crate) fn on_success(&self, callback: TxnCallback) {
-        self.success.push(callback);
+        self.lists().success.push(callback);
     }
 
     pub(crate) fn on_success_async(&self, callback: AsyncTxnCallback) {
-        self.success_async.push(callback);
+        self.lists().success_async.push(callback);
     }
 
     pub(crate) fn on_error(&self, callback: TxnCallback) {
-        self.error.push(callback);
+        self.lists().error.push(callback);
     }
 
     pub(crate) fn on_error_async(&self, callback: AsyncTxnCallback) {
-        self.error_async.push(callback);
+        self.lists().error_async.push(callback);
     }
 
     pub(crate) fn on_discard(&self, callback: TxnCallback) {
-        self.discard.push(callback);
+        self.lists().discard.push(callback);
     }
 
     pub(crate) fn on_discard_async(&self, callback: AsyncTxnCallback) {
-        self.discard_async.push(callback);
+        self.lists().discard_async.push(callback);
     }
 
     pub(crate) fn counts(&self) -> CallbackCounts {
+        let Some(lists) = self.registered() else {
+            return CallbackCounts::default();
+        };
         CallbackCounts {
-            success: self.success.len(),
-            success_async: self.success_async.len(),
-            error: self.error.len(),
-            error_async: self.error_async.len(),
-            discard: self.discard.len(),
-            discard_async: self.discard_async.len(),
+            success: lists.success.len(),
+            success_async: lists.success_async.len(),
+            error: lists.error.len(),
+            error_async: lists.error_async.len(),
+            discard: lists.discard.len(),
+            discard_async: lists.discard_async.len(),
         }
     }
 
@@ -115,16 +140,22 @@ impl CallbackManager {
 
     /// Run the success callbacks, synchronous ones first.
     pub(crate) async fn run_success(&self) {
-        Self::run(&self.success);
-        while let Some(callback) = self.success_async.pop() {
+        let Some(lists) = self.registered() else {
+            return;
+        };
+        Self::run(&lists.success);
+        while let Some(callback) = lists.success_async.pop() {
             callback().await;
         }
     }
 
     /// Run the error callbacks.
     pub(crate) async fn run_error(&self) {
-        Self::run(&self.error);
-        while let Some(callback) = self.error_async.pop() {
+        let Some(lists) = self.registered() else {
+            return;
+        };
+        Self::run(&lists.error);
+        while let Some(callback) = lists.error_async.pop() {
             callback().await;
         }
     }
@@ -137,12 +168,15 @@ impl CallbackManager {
     /// nowhere to run it, and that is said out loud rather than dropped
     /// quietly.
     pub(crate) fn run_discard(&self) {
-        Self::run(&self.discard);
-        if self.discard_async.is_empty() {
+        let Some(lists) = self.registered() else {
+            return;
+        };
+        Self::run(&lists.discard);
+        if lists.discard_async.is_empty() {
             return;
         }
-        let mut pending = Vec::with_capacity(self.discard_async.len());
-        while let Some(callback) = self.discard_async.pop() {
+        let mut pending = Vec::with_capacity(lists.discard_async.len());
+        while let Some(callback) = lists.discard_async.pop() {
             pending.push(callback);
         }
         #[cfg(not(target_arch = "wasm32"))]
