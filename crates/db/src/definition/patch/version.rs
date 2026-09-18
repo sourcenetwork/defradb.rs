@@ -118,6 +118,11 @@ impl<S: Store> crate::database::DB<S> {
             collection_heads,
             query_select.as_deref(),
             query_transform.as_ref(),
+            schema::Commitments {
+                governance_root: schema.governance_root.as_deref(),
+                is_branchable: schema.is_branchable,
+                policy_cid: schema::policy_commitment(schema.policy.as_ref()),
+            },
         ) {
             Ok(cid) => cid.to_string(),
             Err(_) => {

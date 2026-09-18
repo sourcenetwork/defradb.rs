@@ -140,6 +140,19 @@ pub struct FieldDefinitionDeltaPayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub relative_id: Option<i32>,
+
+    /// Whether the field is set once and never changed.
+    ///
+    /// A commitment to writers, not a local choice, so it belongs in the
+    /// field's identity. Skipped when false, so a mutable field's delta
+    /// serialises to the bytes it did before this field existed.
+    #[serde(rename = "immutable", default, skip_serializing_if = "is_false")]
+    pub immutable: bool,
+}
+
+/// `skip_serializing_if` for a flag whose absence means false.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl FieldDefinitionDeltaPayload {
@@ -152,6 +165,7 @@ impl FieldDefinitionDeltaPayload {
             scalar_kind: None,
             collection_id: None,
             relative_id: None,
+            immutable: false,
         }
     }
 
@@ -182,6 +196,12 @@ impl FieldDefinitionDeltaPayload {
     /// Set the relative ID
     pub fn with_relative_id(mut self, id: i32) -> Self {
         self.relative_id = Some(id);
+        self
+    }
+
+    /// Mark the field as set once and never changed.
+    pub fn with_immutable(mut self, immutable: bool) -> Self {
+        self.immutable = immutable;
         self
     }
 }
@@ -215,6 +235,32 @@ pub struct CollectionDefinitionDeltaPayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub query_transform: Option<Cid>,
+
+    /// The governance root claiming this collection, when one does.
+    ///
+    /// Skipped when absent, so an ungoverned collection's delta serialises to
+    /// exactly the bytes it did before this field existed and keeps its CID.
+    #[serde(
+        rename = "governance",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub governance_root: Option<String>,
+
+    /// Whether the collection's history is tracked as one verifiable entity.
+    ///
+    /// Changes what a writer is promised about the collection's history, so
+    /// it belongs in the identity. Skipped when false.
+    #[serde(rename = "branchable", default, skip_serializing_if = "is_false")]
+    pub is_branchable: bool,
+
+    /// The collection's policy, as a CID over its reference.
+    ///
+    /// Present in the delta the version ID is taken over and absent from the
+    /// one the collection ID is taken over, so a policy change mints a new
+    /// version of the same collection.
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy_cid: Option<Cid>,
 }
 
 impl CollectionDefinitionDeltaPayload {
@@ -225,6 +271,9 @@ impl CollectionDefinitionDeltaPayload {
             name: None,
             query_select: None,
             query_transform: None,
+            governance_root: None,
+            is_branchable: false,
+            policy_cid: None,
         }
     }
 
@@ -243,6 +292,24 @@ impl CollectionDefinitionDeltaPayload {
     /// Set the query transform CID (for view collections with lens transforms)
     pub fn with_query_transform(mut self, transform_cid: Cid) -> Self {
         self.query_transform = Some(transform_cid);
+        self
+    }
+
+    /// Set the governance root claiming this collection.
+    pub fn with_governance_root(mut self, root: impl Into<String>) -> Self {
+        self.governance_root = Some(root.into());
+        self
+    }
+
+    /// Mark the collection's history as one verifiable entity.
+    pub fn with_branchable(mut self, is_branchable: bool) -> Self {
+        self.is_branchable = is_branchable;
+        self
+    }
+
+    /// Set the CID over the collection's policy reference.
+    pub fn with_policy_cid(mut self, policy_cid: Cid) -> Self {
+        self.policy_cid = Some(policy_cid);
         self
     }
 }

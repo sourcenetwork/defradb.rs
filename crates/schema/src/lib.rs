@@ -24,9 +24,11 @@ pub mod definition_validation;
 pub use cid::{
     generate_collection_block_full, generate_collection_block_full_with_query,
     generate_collection_cid, generate_collection_cid_full, generate_collection_cid_full_with_query,
-    generate_collection_cid_with_priority, generate_collection_cid_with_priority_and_heads,
-    generate_collection_set_cid, generate_field_block_with_priority_and_heads, generate_field_cid,
-    generate_field_cid_with_priority, generate_field_cid_with_priority_and_heads, BlockWithCid,
+    generate_collection_cid_governed, generate_collection_cid_with_priority,
+    generate_collection_cid_with_priority_and_heads, generate_collection_set_cid,
+    generate_field_block_with_priority_and_heads, generate_field_cid,
+    generate_field_cid_with_priority, generate_field_cid_with_priority_and_heads,
+    generate_policy_cid, policy_commitment, BlockWithCid, Commitments,
 };
 pub use collection::{
     legacy_collection_short_id, CollectionBuilder, CollectionVersion, ORPHAN_COLLECTION_ID,

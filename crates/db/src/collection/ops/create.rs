@@ -76,6 +76,11 @@ impl<S: Store> crate::database::DB<S> {
                 &[],
                 qs_bytes.as_deref(),
                 qt_cid.as_ref(),
+                schema::Commitments {
+                    governance_root: schema.governance_root.as_deref(),
+                    is_branchable: schema.is_branchable,
+                    policy_cid: schema::policy_commitment(schema.policy.as_ref()),
+                },
             ) {
                 let new_version_id = new_cid.to_string();
                 let old_version_id = schema.version_id.clone();
@@ -208,6 +213,11 @@ impl<S: Store> crate::database::DB<S> {
             &[], // no heads for new collections
             qs_bytes_for_block.as_deref(),
             qt_cid_for_block.as_ref(),
+            schema::Commitments {
+                governance_root: schema.governance_root.as_deref(),
+                is_branchable: schema.is_branchable,
+                policy_cid: schema::policy_commitment(schema.policy.as_ref()),
+            },
         ) {
             Ok(block_with_cid) => {
                 blockstore

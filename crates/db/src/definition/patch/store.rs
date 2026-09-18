@@ -445,6 +445,11 @@ impl<S: Store> crate::database::DB<S> {
                 &collection_heads,
                 query_select.as_deref(),
                 query_transform.as_ref(),
+                schema::Commitments {
+                    governance_root: new_schema.governance_root.as_deref(),
+                    is_branchable: new_schema.is_branchable,
+                    policy_cid: schema::policy_commitment(new_schema.policy.as_ref()),
+                },
             ) {
                 Ok(block_with_cid) => {
                     blockstore

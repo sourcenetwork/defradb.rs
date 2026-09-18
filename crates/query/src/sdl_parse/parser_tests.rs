@@ -134,6 +134,38 @@ fn test_parse_immutable_field_with_index() {
 }
 
 #[test]
+fn test_parse_governed_directive() {
+    let sdl = r#"
+        type Agent @governed(root: "EIaZ9-root-inception-digest") {
+            did: String
+        }
+    "#;
+
+    let collections = parse_sdl(sdl).unwrap();
+    assert_eq!(
+        collections[0].governance_root.as_deref(),
+        Some("EIaZ9-root-inception-digest")
+    );
+}
+
+#[test]
+fn test_ungoverned_collection_has_no_root() {
+    let collections = parse_sdl(r#"type Agent { did: String }"#).unwrap();
+    assert_eq!(collections[0].governance_root, None);
+}
+
+#[test]
+fn test_governed_requires_a_non_empty_root() {
+    for sdl in [
+        r#"type Agent @governed { did: String }"#,
+        r#"type Agent @governed(root: "") { did: String }"#,
+        r#"type Agent @governed(root: 7) { did: String }"#,
+    ] {
+        assert!(parse_sdl(sdl).is_err(), "accepted: {sdl}");
+    }
+}
+
+#[test]
 fn test_parse_primary_directive() {
     let sdl = r#"
         type Post {
@@ -704,11 +736,26 @@ fn test_crdt_validation_fails_for_non_numeric() {
 #[test]
 fn test_collection_ids_are_deterministic() {
     // With empty fields (matches Go's behavior for field-less collections)
-    let id1 = generate_collection_id("User", &[], &RapidHashMap::new());
-    let id2 = generate_collection_id("User", &[], &RapidHashMap::new());
+    let id1 = generate_collection_id(
+        "User",
+        &[],
+        &RapidHashMap::new(),
+        schema::Commitments::default(),
+    );
+    let id2 = generate_collection_id(
+        "User",
+        &[],
+        &RapidHashMap::new(),
+        schema::Commitments::default(),
+    );
     assert_eq!(id1, id2, "same type name should produce same collection ID");
 
-    let id3 = generate_collection_id("Post", &[], &RapidHashMap::new());
+    let id3 = generate_collection_id(
+        "Post",
+        &[],
+        &RapidHashMap::new(),
+        schema::Commitments::default(),
+    );
     assert_ne!(
         id1, id3,
         "different type names should produce different IDs"
@@ -1971,5 +2018,126 @@ fn test_one_to_many_collection_ids_match_go() {
             .kind
             .relation_collection_id(),
         Some(book.collection_id.as_str()),
+    );
+}
+
+/// The identity an ungoverned collection has today, pinned byte for byte.
+///
+/// A collection ID is a CID over the type name and the CIDs of its field
+/// definitions, and a field definition CID covers a field's name, CRDT type
+/// and kind. Nothing else reaches it, and the version ID equals it for a new
+/// schema. Putting governance into the identities must leave every one of
+/// these unchanged.
+const UNGOVERNED_AGENT_ID: &str = "bafyreibeq6rbxfwgvzuaow4alns74u3f4t6wv7udfheyul4l5ju2vyblfy";
+
+#[test]
+fn ungoverned_collection_identities_are_pinned() {
+    let plain = &parse_sdl(r#"type Agent { did: String, body: String }"#).unwrap()[0];
+    assert_eq!(plain.collection_id, UNGOVERNED_AGENT_ID);
+    assert_eq!(
+        plain.version_id, plain.collection_id,
+        "a new schema's version ID is its collection ID"
+    );
+}
+
+/// A governance root is part of the collection's identity: the same schema
+/// under two roots is two collections, and a node that does not know the root
+/// derives neither.
+#[test]
+fn a_governance_root_changes_the_collection_id() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+
+    let ungoverned = id_for(r#"type Agent { did: String, body: String }"#);
+    let root_a = id_for(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#);
+    let root_b = id_for(r#"type Agent @governed(root: "root-b") { did: String, body: String }"#);
+
+    assert_eq!(ungoverned, UNGOVERNED_AGENT_ID);
+    assert_ne!(root_a, ungoverned);
+    assert_ne!(root_b, ungoverned);
+    assert_ne!(root_a, root_b);
+}
+
+/// The derivation stays a function of the schema, so a second node parsing the
+/// same governed SDL reaches the same identity.
+#[test]
+fn the_same_governed_schema_derives_the_same_identity() {
+    let sdl = r#"type Agent @governed(root: "root-a") { did: String, body: String }"#;
+    let once = &parse_sdl(sdl).unwrap()[0];
+    let twice = &parse_sdl(sdl).unwrap()[0];
+
+    assert_eq!(once.collection_id, twice.collection_id);
+    assert_eq!(once.version_id, twice.version_id);
+    assert_eq!(once.governance_root, twice.governance_root);
+}
+
+/// Which commitments reach the identity, and which do not.
+///
+/// A commitment is a promise to writers — who governs, what may never change,
+/// whether history is verifiable — and moves the collection ID. A
+/// representation or performance choice a node can make and unmake does not:
+/// an index is added to a live collection and backfilled under the same
+/// version ID, so it cannot be part of an identity it would have to change.
+#[test]
+fn commitments_reach_the_identity_and_configuration_does_not() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+
+    // Moved: each of these now mints a different collection.
+    for sdl in [
+        r#"type Agent { did: String @immutable, body: String }"#,
+        r#"type Agent @branchable { did: String, body: String }"#,
+        r#"type Agent @governed(root: "root-a") { did: String, body: String }"#,
+    ] {
+        assert_ne!(id_for(sdl), UNGOVERNED_AGENT_ID, "still unmoved: {sdl}");
+    }
+
+    // Unmoved: configuration, and a policy, which reaches the version ID only.
+    for sdl in [
+        r#"type Agent { did: String @index, body: String }"#,
+        r#"type Agent @policy(id: "p1", resource: "agents") { did: String, body: String }"#,
+    ] {
+        assert_eq!(id_for(sdl), UNGOVERNED_AGENT_ID, "moved: {sdl}");
+    }
+}
+
+/// A policy reaches the version and not the collection: attaching or amending
+/// one mints a new version of the same collection, rather than a different
+/// collection whose documents the old one's no longer belong to.
+#[test]
+fn a_policy_moves_the_version_id_and_not_the_collection_id() {
+    let parse = |sdl: &str| parse_sdl(sdl).unwrap().remove(0);
+
+    let bare = parse(r#"type Agent { did: String, body: String }"#);
+    let policied =
+        parse(r#"type Agent @policy(id: "p1", resource: "agents") { did: String, body: String }"#);
+    let other =
+        parse(r#"type Agent @policy(id: "p2", resource: "agents") { did: String, body: String }"#);
+
+    assert_eq!(bare.version_id, bare.collection_id);
+    assert_eq!(policied.collection_id, bare.collection_id);
+    assert_eq!(other.collection_id, bare.collection_id);
+
+    assert_ne!(policied.version_id, policied.collection_id);
+    assert_ne!(policied.version_id, bare.version_id);
+    assert_ne!(policied.version_id, other.version_id);
+}
+
+/// The three commitments are independent: each moves the identity on its own,
+/// and no two of them collide.
+#[test]
+fn each_commitment_mints_a_distinct_identity() {
+    let id_for = |sdl: &str| parse_sdl(sdl).unwrap()[0].collection_id.clone();
+    let mut ids = vec![
+        UNGOVERNED_AGENT_ID.to_string(),
+        id_for(r#"type Agent { did: String @immutable, body: String }"#),
+        id_for(r#"type Agent @branchable { did: String, body: String }"#),
+        id_for(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#),
+    ];
+    let total = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        total,
+        "two commitments share an identity: {ids:?}"
     );
 }
