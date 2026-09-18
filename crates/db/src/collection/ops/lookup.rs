@@ -26,7 +26,24 @@ impl<S: Store> crate::database::DB<S> {
     /// The collection can be inactive (synced collections start inactive until manually activated).
     pub fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<()> {
         let name = schema.name.clone();
+        // The cache is keyed by name, but a collection's identity is its
+        // collection ID. An entry naming a different collection must not be
+        // replaced: whatever that collection knows and the incoming schema
+        // does not carry would be dropped silently. A placeholder is a
+        // stand-in for a definition that has not arrived, so it always yields.
         self.collections.rcu(|old| {
+            if let Some(existing) = old.get(&name) {
+                let existing = existing.schema();
+                if existing.collection_id != schema.collection_id && !existing.is_placeholder {
+                    tracing::warn!(
+                        collection_name = %name,
+                        held = %existing.collection_id,
+                        offered = %schema.collection_id,
+                        "Refusing to displace a cached collection with a different collection ID"
+                    );
+                    return old.clone();
+                }
+            }
             let mut cache = old.clone();
             cache.insert(name.clone(), Collection::new(schema.clone()));
             cache
