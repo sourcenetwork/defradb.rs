@@ -25,6 +25,7 @@ impl<S: Store> crate::database::DB<S> {
     /// to the cache so they're visible to `list_collections` and `get_collection`.
     /// The collection can be inactive (synced collections start inactive until manually activated).
     /// Cache `schema` under its name, returning whether it was taken.
+    #[must_use = "the schema is not cached when another collection holds the name"]
     ///
     /// `false` means an entry naming a different collection already holds the
     /// name and was left alone; the caller's schema is unchanged in the cache.
