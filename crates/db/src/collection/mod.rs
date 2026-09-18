@@ -31,6 +31,7 @@ pub mod loader;
 pub(crate) mod locks;
 pub mod name;
 pub(crate) mod ops;
+pub use ops::Cached;
 pub(crate) mod provider;
 pub mod retriever;
 pub mod selector;

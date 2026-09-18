@@ -36,7 +36,7 @@ use datastore::NamespaceView;
 use defra_core::block::{
     Block, CollectionDefinitionDeltaPayload, CrdtDelta, FieldDefinitionDeltaPayload,
 };
-use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
+use defra_core::merge::{BlockMetadata, MergeErrorDisposition, MergeHandler, MergeOutcome};
 use defra_core::types::DocId;
 use document::{DocID, Document, NormalValue};
 use events::{MergeCompleteData, Message, Update};
@@ -148,7 +148,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
         for id in ids() {
             if let Some(stored) = self.db.get_collection_by_version_id_full(id).await? {
-                return Ok(self.db.find_collection_by_id(stored.collection_id())?);
+                // Prefer the cached entry, which carries index action state,
+                // but fall back to the definition just read from the store. A
+                // collection can be durably known and absent from the cache,
+                // which is keyed by name and so holds one collection per name.
+                return Ok(Some(
+                    self.db
+                        .find_collection_by_id(stored.collection_id())?
+                        .unwrap_or(stored),
+                ));
             }
         }
         Ok(None)

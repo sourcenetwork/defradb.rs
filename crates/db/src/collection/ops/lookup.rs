@@ -1,5 +1,20 @@
 use super::*;
 
+/// Whether [`crate::database::DB::add_collection_to_cache`] took the schema.
+///
+/// The attribute sits on the type rather than on the method deliberately: a
+/// method's `#[must_use]` is satisfied by the `map_err` every caller applies,
+/// and the value falling out of `?` is then an ordinary expression statement
+/// that nothing lints. A `#[must_use]` type is linted wherever it is dropped.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cached {
+    /// The schema is now the cached entry for its name.
+    Taken,
+    /// Another collection holds that name, so the cache was left alone.
+    NameHeldByAnother,
+}
+
 impl<S: Store> crate::database::DB<S> {
     /// List all collection names using the transaction's cache.
     ///
@@ -21,12 +36,16 @@ impl<S: Store> crate::database::DB<S> {
         Ok(cache.keys().cloned().collect())
     }
 
-    /// Add a collection to the runtime cache.
+    /// Cache `schema` under its name, reporting whether the cache took it.
     ///
-    /// This is used by the merge handler to add synced collections received via P2P
-    /// to the cache so they're visible to `list_collections` and `get_collection`.
-    /// The collection can be inactive (synced collections start inactive until manually activated).
-    pub fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<()> {
+    /// Used by the merge handler to make a collection synced over p2p visible
+    /// to `list_collections` and `get_collection`. Such a collection can be
+    /// inactive: a synced one starts inactive until it is activated.
+    ///
+    /// [`Cached::NameHeldByAnother`] means an entry naming a different
+    /// collection already holds the name and was left alone, so the cache is
+    /// unchanged.
+    pub fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<Cached> {
         let name = schema.name.clone();
         let mut cache = self.collections.write().map_err(|e| {
             tracing::error!(error = ?e, collection_name = %name, "Collection cache lock poisoned during add_collection_to_cache");
@@ -34,8 +53,27 @@ impl<S: Store> crate::database::DB<S> {
                 "collection cache lock poisoned during add_collection_to_cache".into(),
             )
         })?;
+
+        // The cache is keyed by name, but a collection's identity is its
+        // collection ID. An entry naming a different collection must not be
+        // replaced: whatever that collection knows and the incoming schema
+        // does not carry would be dropped silently. A placeholder is a
+        // stand-in for a definition that has not arrived, so it always yields.
+        if let Some(existing) = cache.get(&name) {
+            let existing = existing.schema();
+            if existing.collection_id != schema.collection_id && !existing.is_placeholder {
+                tracing::warn!(
+                    collection_name = %name,
+                    held = %existing.collection_id,
+                    offered = %schema.collection_id,
+                    "Refusing to displace a cached collection with a different collection ID"
+                );
+                return Ok(Cached::NameHeldByAnother);
+            }
+        }
+
         cache.insert(name, Collection::new(schema));
-        Ok(())
+        Ok(Cached::Taken)
     }
 
     /// Get a collection by name using the transaction's cache.
