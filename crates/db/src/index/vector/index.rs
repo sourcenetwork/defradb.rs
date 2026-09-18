@@ -54,9 +54,11 @@ impl VectorIndex {
         let mut params = Params::new(hnsw.m as usize);
         params.ef_construction = hnsw.ef_construction as usize;
         params.ef_search = hnsw.ef_search as usize;
-        // Each algorithm validates only its own block, so parameters belonging
-        // to another are inert rather than a reason to refuse the index.
-        if vector.algorithm == VectorAlgorithm::Hnsw {
+        // SSG uses HNSW to build its staging graph too.
+        if matches!(
+            vector.algorithm,
+            VectorAlgorithm::Hnsw | VectorAlgorithm::Ssg
+        ) {
             params.validate()?;
         }
 
@@ -90,6 +92,9 @@ impl VectorIndex {
         // Refused here rather than at query time, so a description that can
         // never answer is rejected where it is created.
         if vector.algorithm == VectorAlgorithm::IvfPq {
+            if vector.dimensions != 0 {
+                ivfpq.validate_dimensions(vector.dimensions as usize)?;
+            }
             IvfPq::try_new(super::store::MemoryNodeStore::new(), metric, ivfpq, 0)?;
         }
         if vector.algorithm == VectorAlgorithm::IvfFlat {

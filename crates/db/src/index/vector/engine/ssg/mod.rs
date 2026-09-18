@@ -44,6 +44,7 @@ impl<S: VectorNodeStore> Ssg<S> {
         params: SsgParams,
         seed: u64,
     ) -> Result<Self> {
+        graph.validate()?;
         params.validate()?;
         Ok(Self {
             staging: Hnsw::new(store, metric, graph, seed),
