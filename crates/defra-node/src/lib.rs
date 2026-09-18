@@ -654,6 +654,41 @@ impl EmbeddedNode {
             .map_err(|error| anyhow::anyhow!("failed to authorize peer: {error}"))
     }
 
+    /// Bar a peer from this node in both directions, while it is running and
+    /// without a restart. This is the shape a device logout takes.
+    ///
+    /// Stronger than the inverse of [`Self::allow_p2p_peer`]. It refuses the
+    /// peer's next inbound connection, refuses this node's own outbound dials
+    /// to it, and closes every connection it currently holds, so a revoked
+    /// peer can neither keep a session it already opened nor be reached for
+    /// again by this node's own reconnect logic. The bar is recorded before
+    /// anything is closed, so a reconnect racing this call cannot be
+    /// re-admitted in between.
+    ///
+    /// Destructive, and not undone by `allow_p2p_peer`: the peer's replicator
+    /// registration and its durable retry record are deleted, because
+    /// otherwise this node would keep dialling a peer it has barred.
+    /// Re-admitting the device restores its ability to connect, not its
+    /// replication, which has to be added back explicitly.
+    ///
+    /// This does not guarantee that a request already being served over a
+    /// closed connection is aborted mid-exchange.
+    ///
+    /// Returns an error if P2P is not enabled, or if the active transport has
+    /// no concept of peer admission.
+    #[cfg(feature = "p2p")]
+    pub async fn deny_p2p_peer(&self, peer_id: &str) -> anyhow::Result<()> {
+        let ops = self
+            .p2p_ops
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("P2P is not enabled for this node"))?;
+        let peer_id = defra_http::TransportPeerId::new(peer_id)
+            .map_err(|error| anyhow::anyhow!("invalid peer ID: {error}"))?;
+        ops.deny_peer(&peer_id)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to revoke peer: {error}"))
+    }
+
     /// Gracefully stop background services owned by this embedded node.
     ///
     /// **The node should not be used after this call.** When the `otel`

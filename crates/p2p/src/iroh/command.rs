@@ -30,7 +30,29 @@ pub enum IrohCommand {
     /// peer: nothing is narrowed by adding one more.
     AllowPeer {
         peer_id: PeerId,
+        /// Resolved by the caller and applied inside the admission lock, so a
+        /// principal that cannot revoke a peer cannot lift a revocation.
+        authority: super::endpoint_config::AdmissionAuthority,
         reply: oneshot::Sender<crate::error::Result<()>>,
+    },
+    /// Remove an endpoint id from the inbound allowlist while the endpoint is
+    /// running, and hang up any connection it currently holds. An error when
+    /// the endpoint was configured to accept every peer: there is no
+    /// explicit set to narrow, so denying one id would not cut it off.
+    DenyPeer {
+        peer_id: PeerId,
+        reply: oneshot::Sender<crate::error::Result<()>>,
+    },
+    /// Whether `peer_id` is currently barred.
+    ///
+    /// A read, exposed because a caller that creates durable state for a peer
+    /// (registering a replicator, say) has to be able to find out that the
+    /// peer was revoked while it was working, and undo what it wrote. Without
+    /// it such a caller can only check BEFORE it starts, which is the wrong
+    /// end of the race.
+    IsPeerRevoked {
+        peer_id: PeerId,
+        reply: oneshot::Sender<crate::error::Result<bool>>,
     },
     Listen {
         addr: PeerAddr,

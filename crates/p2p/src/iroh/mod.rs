@@ -41,7 +41,7 @@ pub use addr::{
 };
 pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::spawn_endpoint;
-pub use endpoint_config::IrohEndpointConfig;
+pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
 pub use gossip_heal::GossipHealConfig;
 #[cfg(feature = "iroh-relay-server")]
 pub use relay_server::{IrohRelayServer, IrohRelayServerConfig, IrohRelayTlsConfig};

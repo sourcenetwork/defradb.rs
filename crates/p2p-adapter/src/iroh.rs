@@ -48,6 +48,20 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
         Ok(())
     }
 
+    /// Whether the caller holds `permission`, as a plain answer rather than an
+    /// error.
+    ///
+    /// Used to resolve an authority that is carried into a state change, not to
+    /// decide whether a call is allowed: a missing permission is a fact about
+    /// the caller here, not a failure. A node with no access control configured
+    /// holds everything, exactly as `check_nac` treats it.
+    async fn holds_nac(&self, permission: acp::nac::NodePermission) -> bool {
+        match self.nac_checker {
+            Some(ref checker) => checker.check_node_access(permission).await.is_ok(),
+            None => true,
+        }
+    }
+
     /// True when the transport already holds a live connection to `peer_id`.
     ///
     /// Comparison is in canonical id form (`canonical_peer_id`), so a base32
@@ -209,6 +223,39 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             None => collections,
         }
     }
+
+    /// Drop every trace of a revoked peer's replication, so nothing dials it
+    /// again on a timer. Mirrors the full-deletion branch of
+    /// `remove_replicator` (all collections, not a subset), plus the durable
+    /// retry record that survives a restart.
+    ///
+    /// Idempotent: a peer that was never a replicator has nothing to delete
+    /// and that is not an error, which matters because revoking a peer that
+    /// never replicated is a perfectly ordinary thing to do.
+    async fn deregister_revoked_replicator(
+        &self,
+        peer_id: &p2p::transport::PeerId,
+    ) -> P2PResult<()> {
+        if let Some(ref coordinator) = self.sync_coordinator {
+            coordinator
+                .delete_replicator(peer_id)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
+        } else {
+            self.transport
+                .delete_replicator(peer_id)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
+        }
+
+        if let Some(ref pusher) = self.doc_pusher {
+            pusher
+                .delete_persisted_replicator(&peer_id.to_string())
+                .await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -341,16 +388,68 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         Ok(())
     }
 
+    /// Authorize a peer, which for a peer that is currently REVOKED means
+    /// reversing a revocation.
+    ///
+    /// Ordinary admission needs `P2pPeerConnect`, as before. Lifting a
+    /// revocation additionally needs `P2pPeerDisconnect`, the permission that
+    /// could have imposed it: otherwise a principal provisioned only to add
+    /// peers could undo a revocation it was never trusted to make, and the
+    /// revocation would only be as strong as the weakest permission anyone
+    /// holds.
+    ///
+    /// The second permission is resolved into an authority and carried down,
+    /// not checked here. Deciding it here and acting on it in the endpoint
+    /// would be a check against state that a concurrent revoke may already
+    /// have changed; the endpoint applies the authority inside the same lock
+    /// as the transition instead.
     async fn allow_peer(&self, peer_id: &TransportPeerId) -> P2PResult<()> {
         self.check_nac(acp::nac::NodePermission::P2pPeerConnect)
+            .await?;
+        let may_revoke = self
+            .holds_nac(acp::nac::NodePermission::P2pPeerDisconnect)
+            .await;
+
+        let peer_id = parse_canonical_peer_id(peer_id.as_str())
+            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        self.transport
+            .allow_peer(
+                &peer_id,
+                p2p::iroh::AdmissionAuthority::new(true, may_revoke),
+            )
+            .await
+            .map_err(|error| P2PError::transport(error.to_string()))
+    }
+
+    /// Bar a peer and stop this node reaching for it again.
+    ///
+    /// Two steps, and both are needed. `transport.deny_peer` bars the peer in
+    /// the endpoint and hangs up what it holds, but a peer registered as a
+    /// replicator is also something this node dials on a timer: the reconnect
+    /// sweep dials exactly the registered peers missing from
+    /// `connected_peers`, and hanging up is what makes it missing. Leaving the
+    /// registration in place would mean a barred peer the node keeps trying to
+    /// reach every couple of seconds, forever.
+    ///
+    /// Deregistration is deliberately destructive and is not undone by
+    /// `allow_peer`: re-admitting a device restores its ability to connect,
+    /// not its replication. The replicator has to be added back explicitly.
+    ///
+    /// The bar is applied FIRST so that a failure to deregister still leaves
+    /// the peer barred rather than half-revoked, and the failure is returned
+    /// rather than swallowed.
+    async fn deny_peer(&self, peer_id: &TransportPeerId) -> P2PResult<()> {
+        self.check_nac(acp::nac::NodePermission::P2pPeerDisconnect)
             .await?;
 
         let peer_id = parse_canonical_peer_id(peer_id.as_str())
             .map_err(|error| P2PError::invalid_input(error.to_string()))?;
         self.transport
-            .allow_peer(&peer_id)
+            .deny_peer(&peer_id)
             .await
-            .map_err(|error| P2PError::transport(error.to_string()))
+            .map_err(|error| P2PError::transport(error.to_string()))?;
+
+        self.deregister_revoked_replicator(&peer_id).await
     }
 
     async fn notify_network_change(&self) -> P2PResult<()> {
@@ -547,6 +646,48 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 .create_replicator_info(&peer_id, replicator_info)
                 .await
                 .map_err(|error| P2PError::transport(error.to_string()))?;
+        }
+
+        // Re-check the bar now the records exist, and undo them if the peer was
+        // revoked while this was running.
+        //
+        // Registering a replicator is several awaits long (validation, a dial,
+        // a durable write, then the live record), and `deny_peer` is not one
+        // step either: it bars the peer and then deletes its replicator state.
+        // Checking admission only at the start would let a registration that
+        // began before the bar finish after the deletion and put both records
+        // back, leaving a revoked peer registered and the reconnect sweep
+        // dialling it forever.
+        //
+        // Ordering makes the pair safe without a lock, the same way the accept
+        // and dial paths are made safe. `deny_peer` sets the bar BEFORE it
+        // deletes, so either its deletion runs after these creations and
+        // removes them, or the bar was already set when this check reads it and
+        // this removes them. There is no interleaving in which the records
+        // survive.
+        // A failed check counts as revoked, not as permission. This is the
+        // last gate before a peer keeps durable replication state, so the
+        // safe answer to "we could not find out" is to undo the registration
+        // and make the caller retry, not to assume the peer is fine.
+        let revoked = match self.transport.is_peer_revoked(&peer_id).await {
+            Ok(revoked) => revoked,
+            Err(error) => {
+                tracing::warn!(
+                    peer_id = %peer_id,
+                    error = %error,
+                    "could not confirm peer admission after registering its replicator; \
+                     rolling the registration back"
+                );
+                true
+            }
+        };
+        if revoked {
+            self.deregister_revoked_replicator(&peer_id).await?;
+            return Err(P2PError::invalid_input(format!(
+                "peer {peer_id} is not admitted, or its admission could not be confirmed, \
+                 while its replicator was being registered; the registration has been \
+                 rolled back and can be retried"
+            )));
         }
 
         let collection_names_requiring_replay = crate::collections_requiring_replay(

@@ -1,3 +1,4 @@
+use super::super::endpoint_config::AllowlistState;
 use super::*;
 use crate::sync::car::{decode_car_oversized, encode_car_response, CAR_MAX_BYTES};
 use multihash_codetable::{Code, MultihashDigest};
@@ -38,6 +39,7 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
                 ))
             });
             let cache = new_connection_cache();
+            let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
             let peer_map = Arc::new(SharedPeerMap::new());
             let endpoints = if alternate {
                 vec![&limited, &healthy]
@@ -48,15 +50,16 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
             for endpoint in endpoints {
                 let provider = PeerId::new(endpoint.id().to_string());
                 let addr = endpoint.addr().ip_addrs().next().copied().unwrap();
-                let connection = connect_with_cache(&client, &provider, Some(addr), &cache)
-                    .await
-                    .unwrap();
+                let connection =
+                    connect_with_cache(&client, &provider, Some(addr), &cache, &admission)
+                        .await
+                        .unwrap();
                 peer_map.increment_connections(endpoint.id(), Some(addr), connection);
                 providers.push(provider);
             }
             let (tx, mut rx) = mpsc::channel(8);
             let task = tokio::spawn(handle_block_sync(
-                BlockSyncResources::new(client.clone(), peer_map, cache, tx),
+                BlockSyncResources::new(client.clone(), peer_map, cache, tx, admission),
                 QueryId(88),
                 root,
                 providers,

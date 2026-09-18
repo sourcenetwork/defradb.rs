@@ -29,7 +29,7 @@ use super::command::IrohCommand;
 use super::endpoint_commands::handle_command;
 use super::endpoint_config::{
     allowlist_state_from_config, apply_bind_config, apply_discovery_config, apply_multipath_config,
-    relay_mode_from_config, AllowlistState, IrohEndpointConfig,
+    relay_mode_from_config, IrohEndpointConfig, PeerAdmission,
 };
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
 use super::endpoint_streams::handle_incoming;
@@ -55,7 +55,7 @@ pub(super) struct EndpointResources {
     pub(super) healer: Arc<GossipHealer>,
     pub(super) spawned_tasks: SpawnedTasks,
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
-    pub(super) allowlist: Arc<AllowlistState>,
+    pub(super) admission: Arc<PeerAdmission>,
 }
 
 /// Handle to a gossip topic subscription.
@@ -130,7 +130,9 @@ pub async fn spawn_endpoint(
     ];
 
     let relay_mode = relay_mode_from_config(&config.relay_mode)?;
-    let allowlist = Arc::new(allowlist_state_from_config(&config.allowlist)?);
+    let admission = Arc::new(PeerAdmission::new(allowlist_state_from_config(
+        &config.allowlist,
+    )?));
     let node_identity = config.node_identity.clone();
     let relay_urls: Vec<String> = relay_mode
         .relay_map()
@@ -163,7 +165,7 @@ pub async fn spawn_endpoint(
         gossip,
         gossip_heal,
         node_identity,
-        allowlist,
+        admission,
         command_rx,
         event_tx,
         replicators.clone(),
@@ -183,7 +185,7 @@ async fn run_event_loop(
     gossip: Gossip,
     gossip_heal_config: super::gossip_heal::GossipHealConfig,
     node_identity: Option<Arc<identity::RawIdentity>>,
-    allowlist: Arc<AllowlistState>,
+    admission: Arc<PeerAdmission>,
     mut command_rx: mpsc::Receiver<IrohCommand>,
     event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
     replicators: Arc<ReplicatorRegistry>,
@@ -210,7 +212,7 @@ async fn run_event_loop(
         healer: Arc::new(GossipHealer::new(gossip_heal_config)),
         spawned_tasks: Arc::clone(&spawned_tasks),
         node_identity,
-        allowlist,
+        admission,
     };
 
     // Emit Listening event with our endpoint address

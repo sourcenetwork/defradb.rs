@@ -12,6 +12,7 @@ use crate::message::{CarFetchRequest, PushLogReply};
 use crate::transport::{PeerId, TransportEvent};
 use crate::QueryId;
 
+use super::endpoint_config::PeerAdmission;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 
@@ -312,17 +313,29 @@ pub(super) fn close_peer_connections(
 
 /// The peer's shared connection, dialling it if this is the first protocol to
 /// need it.
+///
+/// This is the one gate covering every RPC outbound dial: every helper in
+/// this file reaches the network through here, so a revoked peer is refused
+/// once, for all of them. `handle_dial` gates the explicit-dial path
+/// separately.
 async fn connect_with_cache(
     endpoint: &Endpoint,
     peer_id: &PeerId,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
+    admission: &PeerAdmission,
 ) -> crate::error::Result<iroh::endpoint::Connection> {
+    let endpoint_id = parse_endpoint_id(peer_id)?;
+    if !admission.admits_outbound(&endpoint_id) {
+        return Err(crate::error::Error::Dial(format!(
+            "refusing to dial {peer_id}: peer is revoked"
+        )));
+    }
+
     if let Some(connection) = cached_connection(cache, peer_id)? {
         return Ok(connection);
     }
 
-    let endpoint_id = parse_endpoint_id(peer_id)?;
     let guard = dial_guard(cache, endpoint_id);
     let _dial_guard = guard.lock().await;
 
@@ -347,6 +360,22 @@ async fn connect_with_cache(
         }
     };
     remember_connection(cache, peer_id, &connection)?;
+
+    // Re-check AFTER caching, not only before the dial. The dial above can run
+    // for many seconds, and a revoke landing inside that window looked at the
+    // connection cache while this connection was still absent from it, so it
+    // closed nothing and the caller would go on to send RPC requests over it.
+    // Caching first and re-checking second means one of the two always sees
+    // the other: either the revoke finds this connection, or this finds the
+    // revoke. Same ordering as the accept and explicit-dial paths.
+    if !admission.admits_outbound(&endpoint_id) {
+        close_cached_connections(cache, &endpoint_id);
+        connection.close(DISCONNECT_ERROR_CODE.into(), b"peer revoked");
+        return Err(crate::error::Error::Dial(format!(
+            "dial to {peer_id} raced a revoke: connection closed"
+        )));
+    }
+
     Ok(connection)
 }
 
@@ -392,12 +421,13 @@ pub(super) async fn handle_request_response<Req, Resp>(
     request: &Req,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
+    admission: &PeerAdmission,
 ) -> crate::error::Result<Resp>
 where
     Req: serde::Serialize,
     Resp: serde::de::DeserializeOwned,
 {
-    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
     let (mut send, mut recv) = match open_tagged_stream(&connection, peer_id, tag).await {
         Ok(streams) => streams,
@@ -454,8 +484,9 @@ pub(super) async fn handle_two_stream_request(
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
     legacy_reply: oneshot::Receiver<PushLogReply>,
+    admission: &PeerAdmission,
 ) -> crate::error::Result<PushLogReply> {
-    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
     let (mut send, mut recv) =
         match open_tagged_stream(&connection, peer_id, protocols::STREAM_TWOSTREAM).await {
@@ -533,8 +564,9 @@ async fn send_one_way_message<T: serde::Serialize>(
     msg: &T,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
+    admission: &PeerAdmission,
 ) -> crate::error::Result<()> {
-    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
     let (mut send, mut recv) = match open_tagged_stream(&connection, peer_id, tag).await {
         Ok(streams) => streams,
@@ -575,8 +607,9 @@ pub(super) async fn handle_fire_and_forget<T: serde::Serialize>(
     msg: &T,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
+    admission: &PeerAdmission,
 ) -> crate::error::Result<()> {
-    send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache).await
+    send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache, admission).await
 }
 
 /// Send a one-way message, then keep the bidirectional stream alive briefly so
@@ -593,8 +626,9 @@ pub(super) async fn handle_send_only<T: serde::Serialize>(
     msg: &T,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
+    admission: &PeerAdmission,
 ) -> crate::error::Result<()> {
-    send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache).await
+    send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache, admission).await
 }
 
 /// Send a CAR request and emit the response as a transport event.
@@ -610,8 +644,9 @@ pub(super) async fn handle_car_request_response(
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    admission: &PeerAdmission,
 ) -> crate::error::Result<()> {
-    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache).await?;
+    let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
     let (mut send, mut recv) =
         match open_tagged_stream(&connection, peer_id, protocols::STREAM_CAR).await {
@@ -668,6 +703,7 @@ pub(super) async fn handle_car_request_response(
 /// Try to fetch CAR blocks from a single provider.
 ///
 /// Returns a provider outcome so the caller can aggregate useful diagnostics.
+#[allow(clippy::too_many_arguments)]
 async fn try_fetch_from_provider(
     endpoint: &Endpoint,
     query_id: QueryId,
@@ -676,6 +712,7 @@ async fn try_fetch_from_provider(
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    admission: &PeerAdmission,
 ) -> CarFetchAttempt {
     // Per-provider CAR failures log at debug — the caller aggregates per-DAG
     // outcomes into a single WARN via BitswapComplete (see issue #858).
@@ -691,23 +728,24 @@ async fn try_fetch_from_provider(
         };
     }
 
-    let connection = match connect_with_cache(endpoint, provider, direct_addr, cache).await {
-        Ok(conn) => conn,
-        Err(e) => {
-            debug!(
-                provider = %provider,
-                root = %request.root_cid,
-                recursive = request.recursive,
-                requested_count = request.wanted_cids.len(),
-                error = %e,
-                "CAR fetch: connection failed"
-            );
-            return CarFetchAttempt {
-                provider: provider.clone(),
-                outcome: CarFetchOutcome::ConnectFailed(e.to_string()),
-            };
-        }
-    };
+    let connection =
+        match connect_with_cache(endpoint, provider, direct_addr, cache, admission).await {
+            Ok(conn) => conn,
+            Err(e) => {
+                debug!(
+                    provider = %provider,
+                    root = %request.root_cid,
+                    recursive = request.recursive,
+                    requested_count = request.wanted_cids.len(),
+                    error = %e,
+                    "CAR fetch: connection failed"
+                );
+                return CarFetchAttempt {
+                    provider: provider.clone(),
+                    outcome: CarFetchOutcome::ConnectFailed(e.to_string()),
+                };
+            }
+        };
 
     let (mut send, mut recv) =
         match open_tagged_stream(&connection, provider, protocols::STREAM_CAR).await {
@@ -879,6 +917,7 @@ pub(super) struct BlockSyncResources {
     peer_map: Arc<SharedPeerMap>,
     connection_cache: ConnectionCache,
     event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    admission: Arc<PeerAdmission>,
 }
 
 impl BlockSyncResources {
@@ -887,12 +926,14 @@ impl BlockSyncResources {
         peer_map: Arc<SharedPeerMap>,
         connection_cache: ConnectionCache,
         event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+        admission: Arc<PeerAdmission>,
     ) -> Self {
         Self {
             endpoint,
             peer_map,
             connection_cache,
             event_tx,
+            admission,
         }
     }
 }
@@ -934,6 +975,7 @@ pub(super) async fn handle_block_sync(
         peer_map,
         connection_cache,
         event_tx,
+        admission,
     } = resources;
 
     for provider in &providers {
@@ -941,6 +983,7 @@ pub(super) async fn handle_block_sync(
         let peer_map = Arc::clone(&peer_map);
         let connection_cache = Arc::clone(&connection_cache);
         let event_tx = event_tx.clone();
+        let admission = Arc::clone(&admission);
         let provider = provider.clone();
         let request = request.clone();
         tasks.spawn(async move {
@@ -953,6 +996,7 @@ pub(super) async fn handle_block_sync(
                 direct_addr,
                 &connection_cache,
                 &event_tx,
+                &admission,
             )
             .await
         });
@@ -1035,6 +1079,7 @@ mod car_size_tests;
 
 #[cfg(test)]
 mod tests {
+    use super::super::endpoint_config::AllowlistState;
     use super::*;
     use multihash_codetable::{Code, MultihashDigest};
 
@@ -1089,6 +1134,54 @@ mod tests {
             .bind()
             .await
             .expect("bind endpoint")
+    }
+
+    /// A revoked peer must not be served a connection this node already has
+    /// cached.
+    ///
+    /// Distinct from the refusal covered in `allowlist_tests`: there the peer
+    /// has no known address, so the dial fails on its own and the refusal is
+    /// only visible in the error message. Here the connection is already in
+    /// the cache, so without the admission check `connect_with_cache` returns
+    /// it happily and the caller sends RPC over a revoked peer's live
+    /// connection. That is the path the check actually has to cover.
+    #[tokio::test]
+    async fn a_revoked_peer_is_not_served_from_the_connection_cache() {
+        let accept_ep = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+        let dial_ep = localhost_endpoint(vec![]).await;
+
+        let accept_task = n0_future::task::spawn({
+            let ep = accept_ep.clone();
+            async move {
+                let mut held = Vec::new();
+                while let Some(incoming) = ep.accept().await {
+                    if let Ok(conn) = incoming.await {
+                        held.push(conn);
+                    }
+                }
+            }
+        });
+
+        let connection = dial_ep
+            .connect(accept_ep.addr(), protocols::ALPN_MUX)
+            .await
+            .expect("connect");
+        let peer = PeerId::new(accept_ep.id().to_string());
+        let cache = new_connection_cache();
+        remember_connection(&cache, &peer, &connection).expect("cache connection");
+
+        let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
+        admission.revoke(accept_ep.id());
+
+        let refused = connect_with_cache(&dial_ep, &peer, None, &cache, &admission)
+            .await
+            .expect_err("a revoked peer must not be served from the cache");
+        assert!(
+            refused.to_string().contains("revoked"),
+            "the refusal must name the revocation; got: {refused}"
+        );
+
+        accept_task.abort();
     }
 
     /// Regression (#1092 review): a peer can hold several live connections —
@@ -1235,6 +1328,7 @@ mod tests {
             .expect("listener direct address");
         let peer_id = PeerId::new(accept_ep.id().to_string());
         let cache = new_connection_cache();
+        let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         let barrier = Arc::new(tokio::sync::Barrier::new(CALLERS));
         let (accepted_tx, mut accepted_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1256,10 +1350,11 @@ mod tests {
             let endpoint = dial_ep.clone();
             let peer_id = peer_id.clone();
             let cache = Arc::clone(&cache);
+            let admission = Arc::clone(&admission);
             let barrier = Arc::clone(&barrier);
             callers.spawn(async move {
                 barrier.wait().await;
-                connect_with_cache(&endpoint, &peer_id, Some(direct_addr), &cache)
+                connect_with_cache(&endpoint, &peer_id, Some(direct_addr), &cache, &admission)
                     .await
                     .expect("shared connection")
             });
