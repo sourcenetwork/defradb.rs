@@ -1,13 +1,11 @@
 //! NAC lifecycle management: enable, disable, re-enable, purge.
 
-use std::sync::Arc;
-
 use identity::Did;
 
 use super::{NacStatus, NodeACP, DISABLED_RELATION, NODE_OBJECT_ID};
 use crate::error::{Error, Result};
 use crate::nac::policy::{create_node_policy, NODE_POLICY_ID, NODE_RESOURCE_NAME, OWNER_RELATION};
-use zanzibar::{PermissionEngine, Relationship, ZanzibarStore};
+use zanzibar::{Relationship, ZanzibarStore};
 
 impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
     /// Enable NAC with the given owner identity.
@@ -27,9 +25,10 @@ impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
         self.store.store_policy(&policy).await?;
 
         // Load policy into engine
-        let mut engine = PermissionEngine::new(self.store.clone());
-        engine.add_policy(&policy);
-        self.engine.store(Arc::new(engine));
+        {
+            let mut engine = self.engine.write().await;
+            engine.add_policy(&policy);
+        }
 
         // Create owner relationship
         let owner_rel = Relationship::with_entity(
@@ -179,8 +178,10 @@ impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
         self.store.delete_policy(NODE_POLICY_ID).await?;
 
         // Clear engine cache
-        self.engine
-            .store(Arc::new(PermissionEngine::new(self.store.clone())));
+        {
+            let mut engine = self.engine.write().await;
+            engine.remove_policy(NODE_POLICY_ID);
+        }
 
         // Reset state
         self.owner.store_none();

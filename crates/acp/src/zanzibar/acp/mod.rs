@@ -2,12 +2,10 @@
 
 mod document_acp;
 
+use async_lock::RwLock;
 use std::sync::Arc;
 
 use identity::Did;
-use kovan::Atom;
-use kovan_map::HopscotchMap;
-use rapidhash::fast::RandomState;
 use zanzibar::engine::PermissionEngine;
 use zanzibar::expression::RelationExpression;
 use zanzibar::store::ZanzibarStore;
@@ -22,32 +20,17 @@ pub const UPDATER_RELATION: &str = "updater";
 pub const DELETER_RELATION: &str = "deleter";
 pub const ADMIN_RELATION: &str = "admin";
 
-pub struct ZanzibarDocumentACP<S: ZanzibarStore + ?Sized + Send + Sync + 'static> {
+pub struct ZanzibarDocumentACP<S: ZanzibarStore + ?Sized> {
     store: Arc<S>,
-    // The engine is rebuilt as a unit from `policies` (the canonical,
-    // incrementally-updated cache) on every add/remove/reload, and always
-    // swapped in with `rcu` so a rebuild observed via a CAS retry is
-    // guaranteed (by the load/CAS happens-before edge) to see every insert
-    // that predates it, even ones from other racing callers.
-    engine: Atom<Arc<PermissionEngine<S>>>,
-    policies: HopscotchMap<String, Policy, RandomState>,
+    engine: RwLock<PermissionEngine<S>>,
 }
 
-impl<S: ZanzibarStore + ?Sized + Send + Sync + 'static> ZanzibarDocumentACP<S> {
+impl<S: ZanzibarStore + ?Sized> ZanzibarDocumentACP<S> {
     pub fn new(store: Arc<S>) -> Self {
         Self {
             store: store.clone(),
-            engine: Atom::new(Arc::new(PermissionEngine::new(store))),
-            policies: HopscotchMap::with_hasher(RandomState::default()),
+            engine: RwLock::new(PermissionEngine::new(store)),
         }
-    }
-
-    fn rebuild_engine(&self) -> PermissionEngine<S> {
-        let mut engine = PermissionEngine::new(self.store.clone());
-        for policy in self.policies.values() {
-            engine.add_policy(&policy);
-        }
-        engine
     }
 
     pub fn create_default_policy(policy_id: &str, resource_name: &str) -> Policy {
@@ -101,19 +84,22 @@ impl<S: ZanzibarStore + ?Sized + Send + Sync + 'static> ZanzibarDocumentACP<S> {
     }
 
     async fn ensure_policy(&self, policy_id: &str, resource_name: &str) -> Result<()> {
-        if self.policies.contains_key(policy_id) {
-            return Ok(());
-        }
-
-        let policy = if let Some(policy) = self.store.get_policy(policy_id).await? {
-            policy
-        } else {
-            let policy = Self::create_default_policy(policy_id, resource_name);
-            self.store.store_policy(&policy).await?;
-            policy
+        let exists = {
+            let engine = self.engine.read().await;
+            engine.lookup.has_policy(policy_id)
         };
-        self.policies.insert(policy_id.to_string(), policy);
-        self.engine.rcu(|_| Arc::new(self.rebuild_engine()));
+
+        if !exists {
+            if let Some(policy) = self.store.get_policy(policy_id).await? {
+                let mut engine = self.engine.write().await;
+                engine.add_policy(&policy);
+            } else {
+                let policy = Self::create_default_policy(policy_id, resource_name);
+                self.store.store_policy(&policy).await?;
+                let mut engine = self.engine.write().await;
+                engine.add_policy(&policy);
+            }
+        }
 
         Ok(())
     }
@@ -206,21 +192,17 @@ impl<S: ZanzibarStore + ?Sized + Send + Sync + 'static> ZanzibarDocumentACP<S> {
     }
 
     pub async fn invalidate_policy_cache(&self, policy_id: &str) {
-        self.policies.force_remove(policy_id);
-        self.engine.rcu(|_| Arc::new(self.rebuild_engine()));
+        let mut engine = self.engine.write().await;
+        engine.remove_policy(policy_id);
     }
 
     pub async fn reload_policy(&self, policy_id: &str) -> Result<()> {
-        self.policies.force_remove(policy_id);
-        if let Some(policy) = self.store.get_policy(policy_id).await? {
-            self.policies.insert(policy_id.to_string(), policy);
-        }
-        self.engine.rcu(|_| Arc::new(self.rebuild_engine()));
-        Ok(())
+        let mut engine = self.engine.write().await;
+        Ok(engine.reload_policy(policy_id).await?)
     }
 
     pub async fn clear_policy_cache(&self) {
-        self.policies.clear();
-        self.engine.rcu(|_| Arc::new(self.rebuild_engine()));
+        let mut engine = self.engine.write().await;
+        engine.clear_cache();
     }
 }

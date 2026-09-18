@@ -13,6 +13,7 @@ mod operations;
 use std::sync::Arc;
 use storage::corekv::MaybeSendSync;
 
+use async_lock::RwLock;
 use async_trait::async_trait;
 use identity::Did;
 use kovan::{Atom, AtomOption};
@@ -72,7 +73,7 @@ impl std::fmt::Display for NacStatus {
 /// Unlike DAC, NAC is always local (no SourceHub option).
 pub struct NodeACP<S: ZanzibarStore + Send + Sync + 'static> {
     store: Arc<S>,
-    engine: Atom<Arc<PermissionEngine<S>>>,
+    engine: RwLock<PermissionEngine<S>>,
     status: Atom<NacStatus>,
     owner: AtomOption<Did>,
 }
@@ -84,7 +85,7 @@ impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
     pub fn new(store: Arc<S>) -> Self {
         Self {
             store: store.clone(),
-            engine: Atom::new(Arc::new(PermissionEngine::new(store))),
+            engine: RwLock::new(PermissionEngine::new(store)),
             status: Atom::new(NacStatus::NotConfigured),
             owner: AtomOption::none(),
         }
@@ -97,9 +98,8 @@ impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
         if let Some(policy) = self.store.get_policy(NODE_POLICY_ID).await? {
             validate_node_policy(&policy).map_err(Error::InvalidPolicy)?;
 
-            let mut engine = PermissionEngine::new(self.store.clone());
+            let mut engine = self.engine.write().await;
             engine.add_policy(&policy);
-            self.engine.store(Arc::new(engine));
 
             let subjects = self
                 .store

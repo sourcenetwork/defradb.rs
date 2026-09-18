@@ -1,14 +1,12 @@
 //! NAC permission checking and relationship management operations.
 
-use std::sync::Arc;
-
 use identity::Did;
 
 use super::{NacStatus, NodeACP, NODE_OBJECT_ID};
 use crate::error::{Error, Result};
 use crate::nac::permission::NodePermission;
 use crate::nac::policy::{ADMIN_RELATION, NODE_POLICY_ID, NODE_RESOURCE_NAME};
-use zanzibar::{PermissionEngine, Relationship, Subject, ZanzibarStore};
+use zanzibar::{Relationship, Subject, ZanzibarStore};
 
 impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
     /// Check if an identity has a specific node permission.
@@ -28,9 +26,8 @@ impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
             return Ok(true);
         }
 
-        // Use the engine to check permission. The Arc is cloned out before
-        // the await below: an AtomGuard must never cross an await point.
-        let engine: Arc<PermissionEngine<S>> = Arc::clone(&*self.engine.load());
+        // Use the engine to check permission
+        let engine = self.engine.read().await;
         let has_permission = engine
             .check(
                 NODE_POLICY_ID,
@@ -92,9 +89,8 @@ impl<S: ZanzibarStore + Send + Sync + 'static> NodeACP<S> {
             return Ok(true);
         }
 
-        // Check admin relation from stored relationships. The Arc is
-        // cloned out before the await: an AtomGuard must never cross one.
-        let engine: Arc<PermissionEngine<S>> = Arc::clone(&*self.engine.load());
+        // Check admin relation from stored relationships
+        let engine = self.engine.read().await;
         Ok(engine
             .check(
                 NODE_POLICY_ID,
