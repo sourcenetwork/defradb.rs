@@ -2099,6 +2099,28 @@ fn commitments_reach_the_identity_and_configuration_does_not() {
     }
 }
 
+/// A policy reaches the version and not the collection: attaching or amending
+/// one mints a new version of the same collection, rather than a different
+/// collection whose documents the old one's no longer belong to.
+#[test]
+fn a_policy_moves_the_version_id_and_not_the_collection_id() {
+    let parse = |sdl: &str| parse_sdl(sdl).unwrap().remove(0);
+
+    let bare = parse(r#"type Agent { did: String, body: String }"#);
+    let policied =
+        parse(r#"type Agent @policy(id: "p1", resource: "agents") { did: String, body: String }"#);
+    let other =
+        parse(r#"type Agent @policy(id: "p2", resource: "agents") { did: String, body: String }"#);
+
+    assert_eq!(bare.version_id, bare.collection_id);
+    assert_eq!(policied.collection_id, bare.collection_id);
+    assert_eq!(other.collection_id, bare.collection_id);
+
+    assert_ne!(policied.version_id, policied.collection_id);
+    assert_ne!(policied.version_id, bare.version_id);
+    assert_ne!(policied.version_id, other.version_id);
+}
+
 /// The three commitments are independent: each moves the identity on its own,
 /// and no two of them collide.
 #[test]

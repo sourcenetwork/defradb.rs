@@ -79,6 +79,7 @@ impl<S: Store> crate::database::DB<S> {
                 schema::Commitments {
                     governance_root: schema.governance_root.as_deref(),
                     is_branchable: schema.is_branchable,
+                    policy_cid: schema::policy_commitment(schema.policy.as_ref()),
                 },
             ) {
                 let new_version_id = new_cid.to_string();
@@ -215,6 +216,7 @@ impl<S: Store> crate::database::DB<S> {
             schema::Commitments {
                 governance_root: schema.governance_root.as_deref(),
                 is_branchable: schema.is_branchable,
+                policy_cid: schema::policy_commitment(schema.policy.as_ref()),
             },
         ) {
             Ok(block_with_cid) => {

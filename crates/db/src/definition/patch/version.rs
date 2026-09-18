@@ -121,6 +121,7 @@ impl<S: Store> crate::database::DB<S> {
             schema::Commitments {
                 governance_root: schema.governance_root.as_deref(),
                 is_branchable: schema.is_branchable,
+                policy_cid: schema::policy_commitment(schema.policy.as_ref()),
             },
         ) {
             Ok(cid) => cid.to_string(),

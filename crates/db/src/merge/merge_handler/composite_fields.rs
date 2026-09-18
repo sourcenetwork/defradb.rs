@@ -1,8 +1,10 @@
 use super::composite::{CompositeMergeContext, CompositeMergeState};
 use super::*;
 
+/// The delta is boxed: a `CrdtDelta` carries a collection definition payload,
+/// which dwarfs the other two variants.
 enum EffectiveLinkedDelta {
-    Delta(CrdtDelta),
+    Delta(Box<CrdtDelta>),
     Skip(MergeOutcome),
     SkipField,
 }
@@ -106,7 +108,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .handle_encryption(context, &linked_block, &mut state.encrypted_policy_checked)
                 .await?
             {
-                EffectiveLinkedDelta::Delta(delta) => delta,
+                EffectiveLinkedDelta::Delta(delta) => *delta,
                 EffectiveLinkedDelta::Skip(outcome) => return Ok(Some(outcome)),
                 EffectiveLinkedDelta::SkipField => continue,
             };
@@ -299,6 +301,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             other => other.clone(),
         };
 
-        Ok(EffectiveLinkedDelta::Delta(effective_linked_delta))
+        Ok(EffectiveLinkedDelta::Delta(Box::new(
+            effective_linked_delta,
+        )))
     }
 }

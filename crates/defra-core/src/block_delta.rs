@@ -253,6 +253,14 @@ pub struct CollectionDefinitionDeltaPayload {
     /// it belongs in the identity. Skipped when false.
     #[serde(rename = "branchable", default, skip_serializing_if = "is_false")]
     pub is_branchable: bool,
+
+    /// The collection's policy, as a CID over its reference.
+    ///
+    /// Present in the delta the version ID is taken over and absent from the
+    /// one the collection ID is taken over, so a policy change mints a new
+    /// version of the same collection.
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy_cid: Option<Cid>,
 }
 
 impl CollectionDefinitionDeltaPayload {
@@ -265,6 +273,7 @@ impl CollectionDefinitionDeltaPayload {
             query_transform: None,
             governance_root: None,
             is_branchable: false,
+            policy_cid: None,
         }
     }
 
@@ -295,6 +304,12 @@ impl CollectionDefinitionDeltaPayload {
     /// Mark the collection's history as one verifiable entity.
     pub fn with_branchable(mut self, is_branchable: bool) -> Self {
         self.is_branchable = is_branchable;
+        self
+    }
+
+    /// Set the CID over the collection's policy reference.
+    pub fn with_policy_cid(mut self, policy_cid: Cid) -> Self {
+        self.policy_cid = Some(policy_cid);
         self
     }
 }
