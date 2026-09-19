@@ -114,6 +114,12 @@ pub trait VectorNodeStore: MaybeSendSync {
 
     async fn put_aux(&mut self, kind: u8, key: &[u8], value: &[u8]) -> Result<()>;
 
+    /// Map each live node to one auxiliary entry, writing it before visiting
+    /// the next node. Holds one node and one output entry at a time.
+    async fn write_aux_from_nodes<F>(&mut self, kind: u8, encode: F) -> Result<u64>
+    where
+        F: FnMut(Node) -> Result<(Vec<u8>, Vec<u8>)> + MaybeSend;
+
     /// Removes one entry, if it is there. Absent is not an error: a caller
     /// clearing an entry it is not sure exists is the normal case.
     ///
