@@ -147,7 +147,7 @@ impl<S: VectorNodeStore> IvfPq<S> {
                 let (list, _) = coarse.nearest(&node.vector);
                 subtract_into(&node.vector, coarse.get(list), &mut residual);
                 quantizer.encode(&residual, &mut code);
-                Ok((codec::list_key(list as u32, node.id).to_vec(), code.clone()))
+                Ok((codec::list_key(list as u32, node.id), code.clone()))
             })
             .await?;
 
