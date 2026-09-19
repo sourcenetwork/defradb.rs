@@ -173,9 +173,9 @@ impl ScanNode {
     /// `k` overall can contain fewer than `k` matches. Asking for a wider `k`
     /// and continuing is what makes a filtered similarity query return a full
     /// page instead of whatever survived filtering the first `k`. Widening
-    /// stops once the index reports fewer candidates than asked for, or offers
-    /// nothing it has not already offered, so an unsatisfiable filter costs one
-    /// pass over the collection rather than looping.
+    /// stops at a fixed candidate budget, or when the index has nothing new.
+    /// A short page then falls back to one exhaustive scan. This bounds graph
+    /// search effort and deduplication state independently of collection size.
     async fn open_vector_stream(&mut self) -> Result<bool> {
         let (Some(route), Some(fetcher)) = (self.vector_route.clone(), self.fetcher.clone()) else {
             return Ok(false);
@@ -189,6 +189,12 @@ impl ScanNode {
         } else {
             self.vector_k.saturating_mul(2)
         };
+
+        const MAX_VECTOR_CANDIDATES: usize = 4096;
+        if next_k > MAX_VECTOR_CANDIDATES {
+            self.vector_exhausted = true;
+            return Ok(false);
+        }
 
         let candidates = fetcher
             .vector_search(
@@ -377,6 +383,11 @@ impl PlanNode for ScanNode {
         // collection instead of materializing it - callers that stop pulling
         // (e.g. a satisfied LimitNode) stop the underlying fetch.
         self.vector_seen.clear();
+        self.vector_returned.clear();
+        self.vector_fell_back = false;
+        if self.vector_route.is_some() {
+            self.vector_indexed = false;
+        }
         self.vector_exhausted = false;
         self.vector_k = 0;
         self.emitted = 0;
@@ -399,6 +410,7 @@ impl PlanNode for ScanNode {
                             .await?
                     }
                 });
+                self.vector_fell_back = self.vector_route.is_some();
             } else {
                 // No docs provided and no fetcher - this is a programming error.
                 // Either pre-load docs with with_docs() or attach a fetcher with with_fetcher().
@@ -641,7 +653,8 @@ impl PlanNode for ScanNode {
         // A vector-index hit counts as one fetch. Unlike a scalar index, which
         // counts each entry read, this does not reflect the graph search's real
         // node reads; matching the reference, which tracks the same gap.
-        let index_fetches = self.exec_info.indexes_fetched + u64::from(self.vector_indexed);
+        let index_fetches = self.exec_info.indexes_fetched
+            + u64::from(self.vector_indexed && self.vector_route.is_none());
         obj.insert("indexFetches".to_string(), serde_json::json!(index_fetches));
         if let Some(name) = self.vector_index_name() {
             obj.insert("vectorIndex".to_string(), serde_json::json!(name));
