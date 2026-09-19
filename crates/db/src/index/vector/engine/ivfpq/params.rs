@@ -52,6 +52,17 @@ impl IvfPqParams {
         Ok(())
     }
 
+    /// Validate a configured subdivision once the vector width is known.
+    pub fn validate_dimensions(&self, dimensions: usize) -> Result<()> {
+        let m = self.m as usize;
+        if m != 0 && (m > dimensions || !dimensions.is_multiple_of(m)) {
+            return Err(Error::Other(format!(
+                "vector index IVF-PQ m must divide the dimensions: {m} does not divide {dimensions}"
+            )));
+        }
+        Ok(())
+    }
+
     /// `4*sqrt(n)` is the usual starting point: lists stay large enough to
     /// train and small enough that probing a few is much cheaper than a scan.
     pub fn resolved_nlist(&self, corpus: u64) -> u32 {
@@ -62,7 +73,7 @@ impl IvfPqParams {
     /// wide, capped so a code stays small against the vector it replaces.
     pub fn resolved_m(&self, dimensions: usize) -> usize {
         if self.m > 0 {
-            return (self.m as usize).min(dimensions.max(1));
+            return self.m as usize;
         }
         let target = (dimensions / 8).clamp(1, MAX_M as usize);
         (1..=target)

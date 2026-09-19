@@ -139,6 +139,7 @@ impl<S: VectorNodeStore> VectorIndexEngine for IvfPq<S> {
     /// the code of whatever vector was assigned to it, so a stale one returns
     /// the document a second time, ranked by an embedding it no longer has.
     async fn insert<E: Element>(&mut self, id: NodeId, vector: &[E]) -> Result<()> {
+        self.params.validate_dimensions(vector.len())?;
         let trained = self.trained().await?;
 
         // Read before the write, because `staging.insert` overwrites the node

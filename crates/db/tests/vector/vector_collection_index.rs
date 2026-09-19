@@ -53,6 +53,82 @@ fn index() -> VectorIndex {
     VectorIndex::try_new(COLLECTION, description(DIMENSIONS)).expect("a valid vector description")
 }
 
+#[test]
+fn parameter_validation_bounds_ssg_staging_graph() {
+    use db::index::vector::params::{MAX_EF_CONSTRUCTION, MAX_EF_SEARCH, MAX_M};
+    for hnsw in [
+        HnswParams {
+            m: MAX_M as u32 + 1,
+            ..HnswParams::default()
+        },
+        HnswParams {
+            ef_construction: MAX_EF_CONSTRUCTION as u32 + 1,
+            ..HnswParams::default()
+        },
+        HnswParams {
+            ef_search: MAX_EF_SEARCH as u32 + 1,
+            ..HnswParams::default()
+        },
+    ] {
+        let mut config = vector_config(DIMENSIONS);
+        config.algorithm = VectorAlgorithm::Ssg;
+        config.hnsw = Some(hnsw);
+        assert!(
+            VectorIndex::try_new(COLLECTION, description(DIMENSIONS).as_vector(config)).is_err()
+        );
+        config.algorithm = VectorAlgorithm::Flat;
+        assert!(
+            VectorIndex::try_new(COLLECTION, description(DIMENSIONS).as_vector(config)).is_ok()
+        );
+    }
+}
+
+#[test]
+fn parameter_validation_requires_pq_m_to_divide_dimensions() {
+    for (dimensions, m, valid) in [
+        (768, 5, false),
+        (4, 8, false),
+        (768, 8, true),
+        (7, 0, true),
+        (0, 5, true),
+    ] {
+        let mut config = vector_config(dimensions);
+        config.algorithm = VectorAlgorithm::IvfPq;
+        config.ivfpq = Some(schema::IvfPqParams {
+            m,
+            ..schema::IvfPqParams::default()
+        });
+        assert_eq!(
+            VectorIndex::try_new(COLLECTION, description(dimensions).as_vector(config)).is_ok(),
+            valid,
+            "dimensions={dimensions}, m={m}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn parameter_validation_rejects_inferred_pq_width_before_writing() {
+    use db::index::vector::engine::{
+        ann::VectorIndexEngine,
+        ivfpq::{IvfPq, IvfPqParams},
+    };
+    use db::index::vector::store::MemoryNodeStore;
+    use defra_core::vector::Metric;
+    let mut index = IvfPq::try_new(
+        MemoryNodeStore::new(),
+        Metric::Cosine,
+        IvfPqParams {
+            m: 3,
+            ..IvfPqParams::default()
+        },
+        1,
+    )
+    .unwrap();
+    assert!(index.insert(NodeId(1), &[1.0; 4]).await.is_err());
+    assert!(index.store().get_node(NodeId(1)).await.unwrap().is_none());
+    index.insert(NodeId(1), &[1.0; 6]).await.unwrap();
+}
+
 async fn txn(store: &RegolithStore) -> Box<dyn Txn> {
     store.new_txn(false).await.unwrap()
 }
