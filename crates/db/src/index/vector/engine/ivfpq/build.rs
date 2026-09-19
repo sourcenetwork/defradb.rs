@@ -6,7 +6,7 @@ use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Centroids, Quantizer, Sampler};
 use crate::index::vector::engine::ivf;
 use crate::index::vector::quantize::{KMeans, ProductQuantizer, Reservoir};
-use crate::index::vector::store::{NodeId, VectorNodeStore};
+use crate::index::vector::store::VectorNodeStore;
 
 /// What a build did, so a caller can report it rather than guess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,25 +79,36 @@ impl<S: VectorNodeStore> IvfPq<S> {
     /// sample, the centroids and the codebooks, each bounded by configuration
     /// rather than by the corpus.
     pub async fn build(&mut self) -> Result<BuildReport> {
-        let live = self.live_count().await?;
-        if live == 0 {
-            return Err(Error::Other(
-                "vector index: nothing to train an IVF-PQ build on".into(),
-            ));
-        }
-
-        let dimensions = self.first_width().await?;
-        let nlist = self.params().resolved_nlist(live);
-        let m = self.params().resolved_m(dimensions);
-
-        let mut reservoir =
-            Reservoir::new(dimensions, self.params().sample_bytes as usize, self.seed());
+        let mut live = 0;
+        let mut dimensions = 0;
+        let mut reservoir = None;
         self.store()
             .iterate_nodes(|node| {
-                reservoir.offer(&node.vector);
+                if node.vector.is_empty() {
+                    return Err(Error::Other(
+                        "vector index: stored vector has no dimensions".into(),
+                    ));
+                }
+                let sample = reservoir.get_or_insert_with(|| {
+                    dimensions = node.vector.len();
+                    Reservoir::new(dimensions, self.params().sample_bytes as usize, self.seed())
+                });
+                if node.vector.len() != dimensions {
+                    return Err(Error::VectorDimensionMismatch {
+                        indexed: dimensions,
+                        got: node.vector.len(),
+                    });
+                }
+                live += 1;
+                sample.offer(&node.vector);
                 Ok(())
             })
             .await?;
+        let reservoir = reservoir.ok_or_else(|| {
+            Error::Other("vector index: nothing to train an IVF-PQ build on".into())
+        })?;
+        let nlist = self.params().resolved_nlist(live);
+        let m = self.params().resolved_m(dimensions);
 
         let sampled = reservoir.len();
         let sample_bytes = reservoir.resident_bytes();
@@ -128,25 +139,17 @@ impl<S: VectorNodeStore> IvfPq<S> {
             dimensions: dimensions as u32,
         };
 
-        let mut assignments: Vec<(u32, NodeId, Vec<u8>)> = Vec::new();
         let mut code = vec![0u8; quantizer.code_len()];
         let mut residual = vec![0.0f32; dimensions];
-        self.store()
-            .iterate_nodes(|node| {
+        let indexed = self
+            .store_mut()
+            .write_aux_from_nodes(codec::LIST, |node| {
                 let (list, _) = coarse.nearest(&node.vector);
                 subtract_into(&node.vector, coarse.get(list), &mut residual);
                 quantizer.encode(&residual, &mut code);
-                assignments.push((list as u32, node.id, code.clone()));
-                Ok(())
+                Ok((codec::list_key(list as u32, node.id), code.clone()))
             })
             .await?;
-
-        let indexed = assignments.len() as u64;
-        for (list, id, code) in assignments {
-            self.store_mut()
-                .put_aux(codec::LIST, &codec::list_key(list, id), &code)
-                .await?;
-        }
 
         self.store_mut()
             .put_aux(codec::STATE, b"", &codec::encode_state(&state))
@@ -177,24 +180,6 @@ impl<S: VectorNodeStore> IvfPq<S> {
 
     pub(super) async fn load_coarse_centroids(&self, state: &TrainedState) -> Result<Centroids> {
         ivf::load_centroids(self.store(), state.nlist, state.dimensions).await
-    }
-
-    async fn first_width(&self) -> Result<usize> {
-        let mut width = 0usize;
-        self.store()
-            .iterate_nodes(|node| {
-                if width == 0 {
-                    width = node.vector.len();
-                }
-                Ok(())
-            })
-            .await?;
-        if width == 0 {
-            return Err(Error::Other(
-                "vector index: no stored vector to take a width from".into(),
-            ));
-        }
-        Ok(width)
     }
 }
 
