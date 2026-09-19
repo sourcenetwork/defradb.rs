@@ -23,11 +23,12 @@ pub fn funded_identity() -> TestIdentity {
     }
 }
 
-/// Start a 1-node hub.rs devnet cluster and wait for it to be healthy.
+/// Start a native-only pipelined Vera validator and wait for readiness.
 pub async fn start_hub_cluster() -> vera_harness::cluster::TestCluster {
     let cluster = vera_harness::cluster::TestCluster::builder()
         .nodes(1)
         .seed(0)
+        .genesis(vera_harness::cluster::GenesisBuilder::devnet().simplex(Default::default()))
         .build()
         .await
         .expect("start hub.rs cluster");
