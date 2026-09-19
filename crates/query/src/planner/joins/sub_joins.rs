@@ -337,6 +337,13 @@ impl Planner {
             &child_scope_path,
         )?;
 
+        child_plan = self.add_similarity_nodes(
+            child_plan,
+            nested_select,
+            &child_scan_mapping,
+            &target_collection.indexes,
+        )?;
+
         // Now wrap with SelectNode if there's a filter (deferred from earlier).
         // At this point, relation sub-joins are in place so the filter can evaluate
         // conditions on joined relation data (e.g., publisher.yearOpened).

@@ -222,17 +222,64 @@ impl Planner {
                 .as_ref()
                 .is_some_and(|order| order.has_relation_order());
 
-        let child_index_result = if force_child_full_scan_for_relation_order {
-            None
-        } else {
-            self.try_select_child_index(
-                child_filter_for_index.as_ref(),
-                combined_child_order.as_ref(),
-                &target_collection,
-                nested_limit,
-                nested_offset,
+        // The join supplies the FK scope at execution time. Only scalar leaf
+        // selections can count their accepted rows here; filters or grouping
+        // above the scan must retain the exhaustive path.
+        let vector_route = if relation_field.kind.is_array()
+            && !select.show_deleted
+            && !select.exhaustive
+            && !nested_select.exhaustive
+            && nested_select.group_by.is_none()
+            && target_collection.policy.is_none()
+            && select.group_by.is_none()
+            && !select
+                .order_by
+                .as_ref()
+                .is_some_and(|order| order.has_relation_order())
+            && agg_scan_filter.is_none()
+            && parent_relation_filter_for_child.is_none()
+            && !select
+                .fields
+                .iter()
+                .any(|field| matches!(field, Requestable::Aggregate(_)))
+            && !nested_select.fields.iter().any(|field| {
+                matches!(
+                    field,
+                    Requestable::Select(_)
+                        | Requestable::Aggregate(_)
+                        | Requestable::FullTextSearch(_)
+                )
+            })
+            && !nested_select
+                .filter
+                .as_ref()
+                .is_some_and(|filter| filter.has_relation_filters() || filter.has_alias_filter())
+            && self
+                .fetcher
+                .as_ref()
+                .is_some_and(|fetcher| fetcher.supports_vector_search())
+        {
+            crate::planner::vector_routing::route(
+                &crate::planner::vector_routing::similarity_query(nested_select),
+                &target_collection.indexes,
             )
+            .ok()
+        } else {
+            None
         };
+
+        let child_index_result =
+            if force_child_full_scan_for_relation_order || vector_route.is_some() {
+                None
+            } else {
+                self.try_select_child_index(
+                    child_filter_for_index.as_ref(),
+                    combined_child_order.as_ref(),
+                    &target_collection,
+                    nested_limit,
+                    nested_offset,
+                )
+            };
         let child_uses_index = child_index_result.is_some();
 
         // Create the child scan plan with scan_mapping (includes FK fields for joins)
@@ -259,6 +306,15 @@ impl Planner {
             }
             if let Some(filter) = agg_scan_filter {
                 child_scan = child_scan.with_filter(filter);
+            }
+            if let Some(route) = vector_route {
+                child_scan = child_scan.with_parent_vector_route(route);
+                if let Some(filter) = &nested_select.filter {
+                    child_scan = child_scan.with_filter(filter.clone());
+                }
+                if let Some(ids) = &nested_select.doc_ids {
+                    child_scan = child_scan.with_doc_ids(ids.clone());
+                }
             }
             Box::new(child_scan)
         };
