@@ -82,9 +82,9 @@ _sha256 file:
 # Setup
 # ---------------------------------------------------------------------------
 
-# Install every dependency needed to develop, test and verify the database.
+# Install core development tools. Browser tests also need `just setup-browser`.
 [group('setup')]
-setup: setup-rust setup-jq setup-cargo-tools setup-protoc setup-go setup-jdk setup-lean setup-tla setup-browser
+setup: setup-rust setup-jq setup-cargo-tools setup-protoc setup-go setup-jdk setup-lean setup-tla
     @echo
     @just doctor
 
@@ -231,16 +231,13 @@ setup-browser:
     fi
     # A system Firefox is used when present; the pinned build is only fetched
     # when there is nothing to drive, so this stays cheap on a normal machine.
-    if command -v firefox >/dev/null 2>&1; then
-        echo "firefox: $(firefox --version) (system)"; exit 0
-    fi
-    if [ -x "{{ tooling }}/firefox/firefox" ]; then
-        echo "firefox: $("{{ tooling }}/firefox/firefox" --version) (.tooling)"; exit 0
+    if firefox="$(bash tools/find-firefox.sh "{{ tooling }}")"; then
+        echo "firefox: $("$firefox" --version) ($firefox)"; exit 0
     fi
     case "$(uname -s)-$(uname -m)" in
         Linux-x86_64|Linux-amd64)  ff_platform="linux-x86_64" ;;
         Linux-aarch64|Linux-arm64) ff_platform="linux-aarch64" ;;
-        *) echo "error: no firefox on PATH and no pinned build for $(uname -s)-$(uname -m)" >&2
+        *) echo "error: Firefox not found and no pinned build for $(uname -s)-$(uname -m)" >&2
            echo "       install Firefox, then re-run: just setup-browser" >&2; exit 1 ;;
     esac
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -515,10 +512,8 @@ test-wasm:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v geckodriver >/dev/null 2>&1 || { echo "error: no geckodriver; run: just setup-browser" >&2; exit 1; }
-    if ! command -v firefox >/dev/null 2>&1 && [ -x "{{ tooling }}/firefox/firefox" ]; then
-        export PATH="{{ tooling }}/firefox:$PATH"
-    fi
-    command -v firefox >/dev/null 2>&1 || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
+    firefox="$(bash tools/find-firefox.sh "{{ tooling }}")" || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
+    export PATH="$(dirname "$firefox"):$PATH"
     export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
     cargo test -p defra-wasm --target wasm32-unknown-unknown --lib --tests
 
@@ -527,10 +522,8 @@ test-wasm:
 test-browser-p2p:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! command -v firefox >/dev/null 2>&1 && [ -x "{{ tooling }}/firefox/firefox" ]; then
-        export PATH="{{ tooling }}/firefox:$PATH"
-    fi
-    export PATH="{{ tooling_bin }}:$PATH"
+    firefox="$(bash tools/find-firefox.sh "{{ tooling }}")" || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
+    export PATH="{{ tooling_bin }}:$(dirname "$firefox"):$PATH"
     tools/browser-p2p-e2e.sh
 
 # Unit tests for one crate: `just test-crate crdt`.
