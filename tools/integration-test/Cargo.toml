@@ -18,6 +18,10 @@ name = "query"
 path = "tests/query.rs"
 
 [[test]]
+name = "vector"
+path = "tests/vector.rs"
+
+[[test]]
 name = "acp"
 path = "tests/acp.rs"
 
