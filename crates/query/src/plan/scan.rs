@@ -58,6 +58,8 @@ pub struct ScanNode {
     /// that builds a plan gets it: a similarity query always goes through the
     /// planner, so a narrowing done anywhere else never runs.
     vector_route: Option<VectorRoute>,
+    parent_vector_route: Option<VectorRoute>,
+    vector_parent: Option<(usize, String)>,
     /// Candidate short ids already streamed, so widening never re-reads one.
     vector_seen: RapidHashSet<u64>,
     /// Set once the index returned fewer candidates than asked for.
@@ -113,6 +115,8 @@ impl ScanNode {
             doc_short_ids: None,
             vector_indexed: false,
             vector_route: None,
+            parent_vector_route: None,
+            vector_parent: None,
             vector_seen: RapidHashSet::new(),
             vector_exhausted: false,
             emitted: 0,
@@ -163,6 +167,12 @@ impl ScanNode {
     /// Draw this scan's candidates from a vector index.
     pub fn with_vector_route(mut self, route: VectorRoute) -> Self {
         self.vector_route = Some(route);
+        self
+    }
+
+    /// Only activate this route when a join supplies its parent scope.
+    pub fn with_parent_vector_route(mut self, route: VectorRoute) -> Self {
+        self.parent_vector_route = Some(route);
         self
     }
 
@@ -374,6 +384,15 @@ impl ScanNode {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl PlanNode for ScanNode {
+    fn set_vector_parent(&mut self, field_index: usize, doc_id: &str) -> bool {
+        let Some(route) = &self.parent_vector_route else {
+            return false;
+        };
+        self.vector_route = Some(route.clone());
+        self.vector_parent = Some((field_index, doc_id.to_string()));
+        true
+    }
+
     async fn init(&mut self) -> Result<()> {
         self.position = 0;
         // Reset execution stats
@@ -487,6 +506,12 @@ impl PlanNode for ScanNode {
                         continue;
                     };
                     if !doc_ids.iter().any(|id| id == doc_id) {
+                        continue;
+                    }
+                }
+
+                if let Some((field, parent)) = &self.vector_parent {
+                    if doc.get(*field).and_then(|value| value.as_str()) != Some(parent.as_str()) {
                         continue;
                     }
                 }

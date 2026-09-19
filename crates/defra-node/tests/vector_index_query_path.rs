@@ -141,6 +141,63 @@ async fn assert_routes(node: &EmbeddedNode, query: &str, context: &str) {
 }
 
 #[tokio::test]
+async fn nested_vector_pages_are_scoped_to_each_parent() {
+    let node = EmbeddedNode::builder().build().await.unwrap();
+    node.add_schema("type Owner { name: String notes: [Note] }
+        type Note { title: String owner: Owner embedding: [Float32!] @index(vector: {dimensions: 4, flat: {metric: DOT}}) }")
+        .await.unwrap();
+    for (name, base) in [("a", 100), ("b", 0)] {
+        let data = query_data(
+            &node,
+            &format!("mutation {{ add_Owner(input: {{name: \"{name}\"}}) {{ _docID }} }}"),
+            "owner",
+        )
+        .await;
+        let owner = data["add_Owner"][0]["_docID"].as_str().unwrap();
+        for i in 0..8 {
+            query_data(&node, &format!("mutation {{ add_Note(input: {{title: \"{name}{i}\", owner: \"{owner}\", embedding: [{}, 0, 0, 0]}}) {{ _docID }} }}", base + i), "note").await;
+        }
+    }
+    let query = r#"{ Owner(order: {name: ASC}) { name notes(limit: 2, offset: 1, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [1, 0, 0, 0]}) } } }"#;
+    let data = query_data(&node, query, "nested vector pages").await;
+    for (i, name) in ["a", "b"].iter().enumerate() {
+        let notes = data["Owner"][i]["notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0]["title"], format!("{name}6"));
+        assert_eq!(notes[1]["title"], format!("{name}5"));
+    }
+    assert_routes(&node, query, "nested vector route").await;
+
+    let filtered = r#"{ Owner(filter: {name: {_eq: "a"}}) { notes(filter: {title: {_neq: "a7"}}, limit: 2, offset: 1, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [1, 0, 0, 0]}) } } }"#;
+    let data = query_data(&node, filtered, "filtered nested page").await;
+    assert_eq!(data["Owner"][0]["notes"][0]["title"], "a5");
+    assert_eq!(data["Owner"][0]["notes"][1]["title"], "a4");
+    assert_routes(&node, filtered, "filtered nested route").await;
+
+    let single_parent = r#"{ Owner(filter: {name: {_eq: "a"}}) { notes(limit: 2, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [1, 0, 0, 0]}) } } }"#;
+    let explain = query_data(
+        &node,
+        &format!("query @explain(type: execute) {single_parent}"),
+        "nested cost",
+    )
+    .await;
+    assert!(vector_index(&explain).is_some());
+    assert!(total(&explain, "docFetches") < 16, "{explain:#}");
+
+    let deferred = r#"{ Owner(filter: {name: {_eq: "a"}}) { notes(filter: {_alias: {sim: {_gt: 103}}}, limit: 2, offset: 1, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [1, 0, 0, 0]}) } } }"#;
+    let data = query_data(&node, deferred, "nested deferred filter").await;
+    assert_eq!(data["Owner"][0]["notes"][0]["title"], "a6");
+    assert_eq!(data["Owner"][0]["notes"][1]["title"], "a5");
+    let explain = query_data(
+        &node,
+        &format!("query @explain(type: execute) {deferred}"),
+        "nested fallback",
+    )
+    .await;
+    assert!(vector_index(&explain).is_none());
+}
+
+#[tokio::test]
 async fn similarity_reaches_the_index_on_the_autocommit_path() {
     let node = node_with("").await;
     seed(&node).await;

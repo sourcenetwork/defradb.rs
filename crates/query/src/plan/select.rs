@@ -377,6 +377,10 @@ impl PlanNode for SelectNode {
         self.source.set_cursor_seek(seek)
     }
 
+    fn set_vector_parent(&mut self, field_index: usize, doc_id: &str) -> bool {
+        self.source.set_vector_parent(field_index, doc_id)
+    }
+
     fn set_cursor_fetch_limit(&mut self, limit: u64) -> bool {
         self.source.set_cursor_fetch_limit(limit)
     }
