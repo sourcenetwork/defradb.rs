@@ -188,7 +188,6 @@ async fn ivfpq_build_streams_two_passes_over_live_nodes() {
             nprobe: 2,
             m: 2,
             sample_bytes: 16 * 4 * 32,
-            ..IvfPqParams::default()
         },
         GRAPH_SEED,
     )
