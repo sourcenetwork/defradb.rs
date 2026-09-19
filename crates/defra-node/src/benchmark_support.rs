@@ -1315,8 +1315,22 @@ pub async fn seed_coding_session_embedding_fixture(
     node: &EmbeddedNode,
     config: &CodingSessionFixtureConfig,
 ) -> Result<CodingSessionFixture> {
-    seed_coding_session_fixture_with_schema(node, config, CODING_SESSION_EMBEDDING_FIXTURE_SDL)
-        .await
+    seed_coding_session_embedding_fixture_with_dimensions(node, config, [14; 3]).await
+}
+
+/// Vector widths for the message, action and search-chunk models respectively.
+pub async fn seed_coding_session_embedding_fixture_with_dimensions(
+    node: &EmbeddedNode,
+    config: &CodingSessionFixtureConfig,
+    dimensions: [usize; 3],
+) -> Result<CodingSessionFixture> {
+    let mut parts = CODING_SESSION_EMBEDDING_FIXTURE_SDL.split("dimensions: 14");
+    let mut sdl = parts.next().unwrap_or_default().to_string();
+    for (width, tail) in dimensions.into_iter().zip(parts) {
+        sdl.push_str(&format!("dimensions: {width}"));
+        sdl.push_str(tail);
+    }
+    seed_coding_session_fixture_with_schema(node, config, &sdl).await
 }
 
 async fn seed_coding_session_fixture_with_schema(
