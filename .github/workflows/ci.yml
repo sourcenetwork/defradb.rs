@@ -475,7 +475,7 @@ jobs:
         run: >-
           cargo test --profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
-          --test backup --test fts --test acp_replay_outage_repro
+          --test backup --test fts --test vector --test acp_replay_outage_repro
           -- --test-threads=1 --skip ::go_
       - name: Run rust P2P integration tests
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
