@@ -354,6 +354,7 @@ enum Command {
     JobDone(Box<JobDoneRequest>),
     ParkPeerAtCapacity {
         peer_key: String,
+        retry_after: Option<Duration>,
     },
     TakeQueuedForPeer {
         peer_key: String,
@@ -435,8 +436,17 @@ impl PushBacklog {
     /// peer keeps rejecting and jitters the wake time so a fleet of senders does
     /// not re-fire in unison (defradb#1112).
     pub fn park_peer_at_capacity(&self, peer_id: &PeerId) {
+        self.park_peer_with_retry_after(peer_id, None);
+    }
+
+    pub(crate) fn park_peer_with_retry_after(
+        &self,
+        peer_id: &PeerId,
+        retry_after: Option<Duration>,
+    ) {
         self.commands.send(Command::ParkPeerAtCapacity {
             peer_key: peer_id.to_string(),
+            retry_after,
         });
     }
 
@@ -571,7 +581,10 @@ impl BacklogOwner {
             }
             Command::NextJob { reply } => self.waiters.push_back(reply),
             Command::JobDone(request) => self.job_done(*request),
-            Command::ParkPeerAtCapacity { peer_key } => self.park_peer_at_capacity(peer_key),
+            Command::ParkPeerAtCapacity {
+                peer_key,
+                retry_after,
+            } => self.park_peer_at_capacity(peer_key, retry_after),
             Command::TakeQueuedForPeer { peer_key, reply } => {
                 let jobs = self.take_queued_for_peer(&peer_key);
                 let _ = reply.send(jobs);
@@ -776,7 +789,7 @@ impl BacklogOwner {
         }
     }
 
-    fn park_peer_at_capacity(&mut self, peer_key: String) {
+    fn park_peer_at_capacity(&mut self, peer_key: String, retry_after: Option<Duration>) {
         let inner = &mut self.inner;
         let consecutive = inner
             .peer_cooldowns
@@ -796,14 +809,16 @@ impl BacklogOwner {
             std::hash::Hash::hash(&(&peer_key, consecutive), &mut hasher);
             std::hash::Hasher::finish(&hasher) % 500
         };
-        let cooldown = base + (base * jitter_bp as u32) / 1000;
-        inner.peer_cooldowns.insert(
-            peer_key,
-            PeerCooldown {
-                until: Instant::now() + cooldown,
-                consecutive,
-            },
+        let cooldown = retry_after.unwrap_or_else(|| base + (base * jitter_bp as u32) / 1000);
+        let until = (Instant::now() + cooldown).max(
+            inner
+                .peer_cooldowns
+                .get(&peer_key)
+                .map_or(Instant::now(), |cooldown| cooldown.until),
         );
+        inner
+            .peer_cooldowns
+            .insert(peer_key, PeerCooldown { until, consecutive });
         inner.peer_capacity_parks_total = inner.peer_capacity_parks_total.saturating_add(1);
     }
 
@@ -1044,6 +1059,30 @@ mod tests {
             .find(|entry| entry.peer_id == peer)
             .expect("parked peer is reported")
             .cooldown_remaining_ms
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_after_parks_live_queue_without_blocking_other_peers() {
+        let backlog = PushBacklog::new(100, usize::MAX, 1, 2);
+        let peer = PeerId::new("limited".into());
+        backlog.park_peer_with_retry_after(&peer, Some(Duration::from_secs(45)));
+        backlog.try_enqueue(job("limited", b"a")).await;
+        backlog.try_enqueue(job("healthy", b"b")).await;
+        let healthy = backlog.next_job().await.unwrap();
+        assert_eq!(healthy.peer_id.as_str(), "healthy");
+        backlog.job_done(&healthy, JobCompletion::Succeeded).await;
+        tokio::time::advance(Duration::from_secs(44)).await;
+        backlog.park_peer_with_retry_after(&peer, Some(Duration::from_millis(1)));
+        assert_eq!(cooldown_remaining_ms(&backlog, "limited").await, 1000);
+        let waiting = tokio::spawn({
+            let backlog = backlog.clone();
+            async move { backlog.next_job().await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(waiting.await.unwrap().unwrap().peer_id.as_str(), "limited");
+        backlog.close();
     }
 
     /// defradb#1112: a saturated receiver parks the WHOLE peer, not just the CID

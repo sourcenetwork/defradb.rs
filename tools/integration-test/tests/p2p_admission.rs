@@ -33,6 +33,7 @@ const DOCS_PER_PUSHER: usize = 8;
 #[tokio::test]
 async fn fan_in_pushlog_admission_no_silent_divergence() {
     std::env::set_var("DEFRA_P2P_MAX_PENDING_DAGS", "1");
+    std::env::set_var("RUST_LOG", "info,p2p::retry_after=debug");
 
     let cluster = TestCluster::builder()
         .rust_nodes(1 + PUSHERS)
@@ -247,4 +248,47 @@ async fn fan_in_pushlog_admission_no_silent_divergence() {
         );
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+
+    // Require a negotiated hint from actual receiver saturation and a later
+    // durable dispatch honoring its deadline, not merely a default retry rung.
+    let mut hinted_retries = 0;
+    for pusher in 1..=PUSHERS {
+        let path = cluster.nodes[pusher]
+            .rootdir
+            .parent()
+            .unwrap()
+            .join("logs/stdout.log");
+        let log = std::fs::read_to_string(path).expect("pusher log");
+        let deadlines: std::collections::HashSet<u64> = log
+            .lines()
+            .filter(|line| line.contains("Persisting negotiated PushLog retry-after"))
+            .map(|line| {
+                assert!(log_number(line, "retry_after_ms=") > 0);
+                log_number(line, "retry_not_before_unix=")
+            })
+            .collect();
+        for line in log
+            .lines()
+            .filter(|line| line.contains("Dispatching deferred PushLog retry"))
+        {
+            let deadline = log_number(line, "retry_not_before_unix=");
+            let started = log_number(line, "retry_started_unix=");
+            assert!(
+                started >= deadline,
+                "retry dispatched before receiver hint: {line}"
+            );
+            hinted_retries += usize::from(deadlines.contains(&deadline));
+        }
+    }
+    assert!(
+        hinted_retries > 0,
+        "saturation never exercised a negotiated, durably deferred retry"
+    );
+}
+
+fn log_number(line: &str, field: &str) -> u64 {
+    line.split_whitespace()
+        .find_map(|part| part.strip_prefix(field))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("missing {field} in {line}"))
 }

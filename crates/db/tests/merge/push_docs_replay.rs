@@ -81,6 +81,144 @@ fn record_max(max_seen: &AtomicUsize, value: usize) {
 }
 
 #[tokio::test]
+async fn replay_hint_defers_following_sends_without_polling_transport() {
+    let gate = ReplayPushGate::new(ReplayPushConfig::default());
+    let peer = PeerId::new("limited".into());
+    let mut reply = PushLogReply::error("message", p2p::error::RATE_LIMITED_MESSAGE);
+    reply.retry_after_ms = Some(45_000);
+    gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
+    let result = gate
+        .send_pushlog(&peer, async { panic!("must defer to durable owner") })
+        .await;
+    assert!(
+        matches!(result, Err(ReplayPushSendError::Backpressure { retry_after }) if retry_after > Duration::from_secs(44))
+    );
+    gate.send_pushlog(&PeerId::new("healthy".into()), async {
+        Ok(PushLogReply::success("ok"))
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn replay_hint_is_durable_while_another_send_is_still_pending() {
+    let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+    let peerstore = storage::stores::Peerstore::new(store);
+    let peer = PeerId::new("peer".into());
+    peerstore
+        .create_replicator(peer.as_str(), b"replicator")
+        .await
+        .unwrap();
+    for doc in ["slow", "limited"] {
+        peerstore
+            .observe_push_head(peer.as_str(), doc, "collection")
+            .await
+            .unwrap();
+    }
+    let gate = Arc::new(ReplayPushGate::new(ReplayPushConfig::default()));
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, wait) = tokio::sync::oneshot::channel();
+    let slow_gate = gate.clone();
+    let slow_peer = peer.clone();
+    let slow = tokio::spawn(async move {
+        slow_gate
+            .send_pushlog(&slow_peer, async {
+                started.send(()).unwrap();
+                wait.await.unwrap();
+                Ok(PushLogReply::success("slow"))
+            })
+            .await
+            .unwrap();
+    });
+    ready.await.unwrap();
+    let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
+    reply.retry_after_ms = Some(45_000);
+    let reply = gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
+    persist_retry_after(&peerstore, &peer, &reply)
+        .await
+        .unwrap();
+    assert!(!slow.is_finished());
+    assert!(
+        remaining_retry_after(&peerstore, &peer)
+            .await
+            .unwrap()
+            .unwrap()
+            > Duration::from_secs(44)
+    );
+    assert_eq!(
+        peerstore
+            .get_retry_documents(peer.as_str())
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    release.send(()).unwrap();
+    slow.await.unwrap();
+}
+
+#[tokio::test]
+async fn durable_hint_arriving_while_waiting_for_send_permit_prevents_dispatch() {
+    let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+    let peerstore = Arc::new(storage::stores::Peerstore::new(store));
+    let peer = PeerId::new("peer".into());
+    peerstore
+        .create_replicator(peer.as_str(), b"replicator")
+        .await
+        .unwrap();
+    peerstore
+        .observe_push_head(peer.as_str(), "doc", "collection")
+        .await
+        .unwrap();
+    let gate = Arc::new(ReplayPushGate::new(ReplayPushConfig {
+        max_concurrent_outbound_pushes: 1,
+        ..Default::default()
+    }));
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, wait) = tokio::sync::oneshot::channel();
+    let first_gate = gate.clone();
+    let first_peer = peer.clone();
+    let first = tokio::spawn(async move {
+        first_gate
+            .send_pushlog(&first_peer, async {
+                started.send(()).unwrap();
+                wait.await.unwrap();
+                Ok(PushLogReply::success("first"))
+            })
+            .await
+            .unwrap();
+    });
+    ready.await.unwrap();
+    let waiting_gate = gate.clone();
+    let waiting_store = peerstore.clone();
+    let waiting_peer = peer.clone();
+    let (entered, entered_rx) = tokio::sync::oneshot::channel();
+    let waiting = tokio::spawn(async move {
+        let attempt = waiting_gate.send_pushlog_with_admission(
+            &waiting_peer,
+            check_retry_admission(&waiting_store, &waiting_peer),
+            async { panic!("hint installed while queued must prevent transport dispatch") },
+        );
+        tokio::pin!(attempt);
+        assert!(futures::poll!(&mut attempt).is_pending());
+        entered.send(()).unwrap();
+        attempt.await
+    });
+    entered_rx.await.unwrap();
+    let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
+    reply.retry_after_ms = Some(45_000);
+    persist_retry_after(&peerstore, &peer, &reply)
+        .await
+        .unwrap();
+    release.send(()).unwrap();
+    first.await.unwrap();
+    assert!(matches!(
+        waiting.await.unwrap(),
+        Err(ReplayPushSendError::Backpressure { .. })
+    ));
+}
+
+#[tokio::test]
 async fn unfinished_replay_uses_configured_schedule_and_marks_replicator_inactive() {
     use storage::RegolithStore;
 

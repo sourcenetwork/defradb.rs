@@ -59,6 +59,126 @@ async fn info(peerstore: &Peerstore<RegolithStore>) -> RetryInfo {
 }
 
 #[tokio::test]
+async fn no_hint_registration_preserves_supplied_rung_and_cursor() {
+    let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
+    let mut requested = RetryInfo::new_initial();
+    requested.num_retries = 3;
+    requested.dispatch_cursor = 17;
+    peerstore
+        .record_push_failure("peer", "doc", "collection", &requested.to_bytes().unwrap())
+        .await
+        .unwrap();
+    let actual = info(&peerstore).await;
+    assert_eq!(actual.num_retries, 4);
+    assert_eq!(actual.dispatch_cursor, 17);
+}
+
+#[tokio::test]
+async fn retry_after_registration_survives_reopen_and_cannot_be_shortened() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RegolithStore::open(dir.path()).unwrap());
+    let peerstore = Peerstore::new(store.clone());
+    peerstore
+        .create_replicator("peer", b"replicator")
+        .await
+        .unwrap();
+    let mut requested = RetryInfo::new_initial();
+    requested.defer_for(std::time::Duration::from_secs(45));
+    let deadline = requested.not_before_unix;
+    peerstore
+        .record_push_failure("peer", "doc", "collection", &requested.to_bytes().unwrap())
+        .await
+        .unwrap();
+    requested.defer_for(std::time::Duration::from_millis(1));
+    peerstore
+        .record_push_failure(
+            "peer",
+            "other",
+            "collection",
+            &requested.to_bytes().unwrap(),
+        )
+        .await
+        .unwrap();
+    peerstore.activate_retry_peer("peer").await.unwrap();
+    assert_eq!(info(&peerstore).await.next_retry_unix, deadline);
+    drop(peerstore);
+    store.close().await.unwrap();
+    drop(store);
+    let reopened = Arc::new(RegolithStore::open(dir.path()).unwrap());
+    let peerstore = Peerstore::new(reopened.clone());
+    assert_eq!(info(&peerstore).await.not_before_unix, deadline);
+    assert!(!info(&peerstore).await.is_due());
+    drop(peerstore);
+    reopened.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn last_scope_ack_preserves_peer_hint_until_expiry_or_forget() {
+    use storage::corekv::Key;
+    use storage::keys::peerstore::ReplicatorRetryIDKey;
+
+    let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
+    peerstore
+        .create_replicator("peer", b"replicator")
+        .await
+        .unwrap();
+    peerstore
+        .observe_push_head("peer", "doc", "collection")
+        .await
+        .unwrap();
+    peerstore
+        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(45)), 0)
+        .await
+        .unwrap();
+    let deadline = info(&peerstore).await.not_before_unix;
+    peerstore
+        .complete_retry_scope("peer", "doc", "collection", false)
+        .await
+        .unwrap();
+    peerstore.clear_retry_peer("peer").await.unwrap();
+    assert!(peerstore
+        .get_retry_documents("peer")
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(info(&peerstore).await.not_before_unix, deadline);
+    peerstore
+        .observe_push_head("peer", "new", "collection")
+        .await
+        .unwrap();
+    assert!(!info(&peerstore).await.is_backpressure_elapsed());
+    peerstore
+        .complete_retry_scope("peer", "new", "collection", false)
+        .await
+        .unwrap();
+
+    // Move only the persisted deadline into the past; no wall-clock sleep.
+    let mut expired = info(&peerstore).await;
+    expired.not_before_unix = 1;
+    let mut txn = peerstore.new_txn(false).await.unwrap();
+    txn.set(
+        &ReplicatorRetryIDKey::new("peer").bytes(),
+        &expired.to_bytes().unwrap(),
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+    peerstore.clear_retry_peer("peer").await.unwrap();
+    assert!(peerstore.get_retry_info("peer").await.unwrap().is_none());
+
+    peerstore
+        .observe_push_head("peer", "doc", "collection")
+        .await
+        .unwrap();
+    peerstore
+        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(45)), 0)
+        .await
+        .unwrap();
+    peerstore.delete_replicator("peer").await.unwrap();
+    assert!(peerstore.get_retry_info("peer").await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn configured_schedule_survives_scope_updates_and_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(RegolithStore::open(dir.path()).unwrap());
