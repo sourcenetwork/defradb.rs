@@ -10,6 +10,9 @@
 mod create;
 mod manage;
 #[cfg(test)]
+#[path = "../../tests/subscription/replicator_completion.rs"]
+mod replicator_completion_tests;
+#[cfg(test)]
 mod tests;
 
 use std::ffi::{c_char, c_int};
