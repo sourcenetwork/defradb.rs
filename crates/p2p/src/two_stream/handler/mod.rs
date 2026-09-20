@@ -238,6 +238,10 @@ impl TwoStreamHandler {
         StreamProtocol::new(REP_REQUEST_PROTOCOL)
     }
 
+    pub fn retry_request_protocol() -> StreamProtocol {
+        StreamProtocol::new(crate::protocol::REP_RETRY_REQUEST_PROTOCOL)
+    }
+
     /// Get the response protocol.
     pub fn response_protocol() -> StreamProtocol {
         StreamProtocol::new(REP_RESPONSE_PROTOCOL)

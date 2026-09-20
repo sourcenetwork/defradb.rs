@@ -3780,6 +3780,43 @@ async fn pushlog_request_rate_limited_replies_backpressure_nack() {
         reply.err_message.as_deref(),
         Some(crate::error::RATE_LIMITED_MESSAGE)
     );
+    assert_eq!(reply.retry_after_ms, None);
+}
+
+#[tokio::test]
+async fn negotiated_pushlog_rate_limit_carries_retry_after() {
+    for iroh in [false, true] {
+        let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(PeerStateTracker::new()),
+            always_limited_rate_limiter(),
+        );
+        let mut request = pushlog_request("collection1");
+        request.supports_retry_after = iroh;
+        request.negotiated_retry_after = !iroh;
+        coordinator
+            .handle_transport_event(TransportEvent::TwoStreamRequest {
+                peer_id: random_peer_id(),
+                request,
+                token: None,
+                is_explicit_replicator: true,
+                explicit_replay_authorization: None,
+            })
+            .await
+            .expect_err("rate limited");
+        let reply = coordinator
+            .runtime
+            .transport
+            .two_stream_replies()
+            .pop()
+            .unwrap();
+        assert!(reply.retry_after().is_some());
+        assert_eq!(
+            reply.err_message.as_deref(),
+            Some(crate::error::RATE_LIMITED_MESSAGE)
+        );
+    }
 }
 
 #[tokio::test]

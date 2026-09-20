@@ -160,7 +160,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             );
         }
 
-        let reply = build_pushlog_reply(&request.message_id, &process_result);
+        let mut reply = build_pushlog_reply(&request.message_id, &process_result);
+        if process_result
+            .as_ref()
+            .is_err_and(|e| e.backpressure_reply_message().is_some())
+        {
+            reply = reply.with_retry_after(
+                request.accepts_retry_after(),
+                std::time::Duration::from_secs(2),
+            );
+        }
 
         if let Err(e) = self
             .runtime
@@ -255,6 +264,16 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             .await;
 
         let mut reply = build_pushlog_reply(&request.message_id, &process_result);
+
+        if process_result
+            .as_ref()
+            .is_err_and(|e| e.backpressure_reply_message().is_some())
+        {
+            reply = reply.with_retry_after(
+                request.accepts_retry_after(),
+                std::time::Duration::from_secs(2),
+            );
+        }
 
         if let Err(e) = sign_with_transport(&self.runtime.transport, &mut reply) {
             tracing::error!(

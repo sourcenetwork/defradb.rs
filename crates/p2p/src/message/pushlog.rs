@@ -92,9 +92,25 @@ pub struct PushLogRequest {
         default
     )]
     pub supports_same_stream_reply: bool,
+
+    /// Iroh-only capability. Libp2p negotiates this via its stream protocol.
+    #[serde(
+        rename = "SupportsRetryAfter",
+        default,
+        skip_serializing_if = "is_false"
+    )]
+    pub supports_retry_after: bool,
+
+    /// Authenticated libp2p protocol negotiation, never accepted from CBOR.
+    #[serde(skip)]
+    pub(crate) negotiated_retry_after: bool,
 }
 
 impl PushLogRequest {
+    pub(crate) fn accepts_retry_after(&self) -> bool {
+        self.supports_retry_after || self.negotiated_retry_after
+    }
+
     /// Create a new PushLogRequest.
     pub fn new(
         doc_id: String,
@@ -117,6 +133,8 @@ impl PushLogRequest {
             block,
             explicit_replay_capability: None,
             supports_same_stream_reply: false,
+            supports_retry_after: false,
+            negotiated_retry_after: false,
         }
     }
 }
@@ -203,9 +221,37 @@ pub struct PushLogReply {
     /// Error message if something went wrong.
     #[serde(rename = "ErrMessage", skip_serializing_if = "Option::is_none")]
     pub err_message: Option<String>,
+
+    /// Minimum delay before retrying a backpressure nack, negotiated per request.
+    #[serde(
+        rename = "RetryAfterMs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub retry_after_ms: Option<u64>,
 }
 
 impl PushLogReply {
+    /// Ignore hints on unrelated errors; cap untrusted delays at one minute.
+    pub fn retry_after(&self) -> Option<std::time::Duration> {
+        let error = self.err_message.as_deref()?;
+        if error != crate::error::RATE_LIMITED_MESSAGE && error != crate::error::AT_CAPACITY_MESSAGE
+        {
+            return None;
+        }
+        self.retry_after_ms
+            .filter(|ms| *ms > 0)
+            .map(|ms| std::time::Duration::from_millis(ms.min(60_000)))
+    }
+
+    pub(crate) fn with_retry_after(mut self, supported: bool, delay: std::time::Duration) -> Self {
+        if supported {
+            self.retry_after_ms =
+                Some(delay.as_nanos().div_ceil(1_000_000).clamp(1, 60_000) as u64);
+        }
+        self
+    }
+
     /// Create a new successful PushLogReply.
     pub fn success(request_message_id: &str) -> Self {
         Self {
@@ -215,6 +261,7 @@ impl PushLogReply {
             pubkey: Vec::new(),
             signature: None,
             err_message: None,
+            retry_after_ms: None,
         }
     }
 
@@ -227,6 +274,7 @@ impl PushLogReply {
             pubkey: Vec::new(),
             signature: None,
             err_message: Some(err.to_string()),
+            retry_after_ms: None,
         }
     }
 }
@@ -280,6 +328,57 @@ impl Message for PushLogReply {
 #[cfg(test)]
 mod push_log_fixture_tests {
     use super::*;
+
+    #[test]
+    fn retry_after_is_bounded_and_only_backpressure() {
+        let mut reply = PushLogReply::error("id", crate::error::RATE_LIMITED_MESSAGE);
+        for (hint, expected) in [
+            (None, None),
+            (Some(0), None),
+            (Some(123), Some(123)),
+            (Some(u64::MAX), Some(60_000)),
+        ] {
+            reply.retry_after_ms = hint;
+            assert_eq!(reply.retry_after().map(|d| d.as_millis()), expected);
+        }
+        reply.err_message = None;
+        assert_eq!(reply.retry_after(), None);
+        reply.err_message = Some("access denied".into());
+        assert_eq!(reply.retry_after(), None);
+    }
+
+    #[test]
+    fn legacy_reply_omits_retry_after_and_negotiated_request_metadata_is_not_signed() {
+        let legacy = PushLogReply::error("id", crate::error::RATE_LIMITED_MESSAGE)
+            .with_retry_after(false, std::time::Duration::from_secs(1));
+        let value: ciborium::Value =
+            defra_core::cbor::from_slice(&defra_core::cbor::to_vec(&legacy).unwrap()).unwrap();
+        let ciborium::Value::Map(fields) = value else {
+            panic!("map")
+        };
+        assert!(!fields
+            .iter()
+            .any(|(key, _)| key.as_text() == Some("RetryAfterMs")));
+        let fixture = hex::decode(GO_PUSH_LOG_REQUEST_HEX).unwrap();
+        let mut request: PushLogRequest = ciborium::from_reader(fixture.as_slice()).unwrap();
+        request.negotiated_retry_after = true;
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&request, &mut encoded).unwrap();
+        assert_eq!(encoded, fixture);
+    }
+
+    #[cfg(feature = "libp2p-transport")]
+    #[test]
+    fn retry_after_is_covered_by_reply_signature() {
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let mut reply = PushLogReply::error("id", crate::error::RATE_LIMITED_MESSAGE)
+            .with_retry_after(true, std::time::Duration::from_micros(1001));
+        assert_eq!(reply.retry_after_ms, Some(2));
+        crate::signing::sign_message(&key, &mut reply).unwrap();
+        crate::signing::verify_message(&reply).unwrap();
+        reply.retry_after_ms = Some(3);
+        assert!(crate::signing::verify_message(&reply).is_err());
+    }
 
     // Generated by `go run ./testdata/gen_message_fixtures` using Go's
     // fxamacker/cbor encoder. Keep this contiguous so the repository's Go

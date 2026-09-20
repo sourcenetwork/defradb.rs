@@ -108,6 +108,10 @@ pub struct PushFailure {
     /// False for a pre-send observation; true for a terminal failure that keeps
     /// the already-registered scope marker on its durable ladder.
     pub create_retry: bool,
+    /// Negotiated receiver backpressure, handed to the durable retry owner.
+    pub retry_after: Option<Duration>,
+    /// Query the durable peer deadline immediately before a transport send.
+    pub admission_only: bool,
     /// Successful acknowledgement for this exact scope/head.
     pub acknowledged: bool,
     /// Register-before-send handshake with the durable recorder.
@@ -168,6 +172,8 @@ mod head_ack_fence_tests {
             create_retry: false,
             acknowledged: false,
             durable_tx: None,
+            retry_after: None,
+            admission_only: false,
         }
     }
 
