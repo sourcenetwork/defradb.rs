@@ -181,14 +181,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .await
                     {
                         Ok(outcome) => outcome,
-                        Err(error) if !is_root => {
-                            tracing::debug!(
-                                parent_cid = %cid,
-                                %error,
-                                "Parent collection merge failed"
-                            );
-                            continue;
-                        }
                         Err(error) => return Err(error),
                     };
                     if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
@@ -273,12 +265,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
                 match &linked_block.delta {
                     CrdtDelta::Composite(composite_payload) => {
-                        let doc_id_str = self
-                            .resolve_composite_doc_id(link_cid, &linked_block, depth + 1)
-                            .await?;
                         tracing::debug!(
                             link_cid = %link_cid,
-                            doc_id = %doc_id_str,
                             "Processing linked composite from Collection"
                         );
                         match self
@@ -299,6 +287,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 // Publish per-document MergeComplete so the Go test
                                 // framework's WaitForSync can track each document.
                                 if let Some(bus) = self.db.event_bus() {
+                                    let doc_id_str = self
+                                        .resolve_composite_doc_id(link_cid, &linked_block, 0)
+                                        .await?;
                                     let col_id = metadata
                                         .collection_id
                                         .unwrap_or(&payload.schema_version_id)
@@ -319,6 +310,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                     "Composite skipped"
                                 );
                                 if let Some(bus) = self.db.event_bus() {
+                                    let Ok(doc_id_str) = self
+                                        .resolve_composite_doc_id(link_cid, &linked_block, 0)
+                                        .await
+                                    else {
+                                        continue;
+                                    };
                                     let col_id = metadata
                                         .collection_id
                                         .unwrap_or(&payload.schema_version_id)
@@ -338,7 +335,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                     outcome = ?outcome,
                                     "Composite skipped and will be retried"
                                 );
-                                retryable_skip.get_or_insert(outcome);
+                                return Ok(outcome);
                             }
                             Err(e) => {
                                 tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed");
@@ -630,14 +627,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .await
                     {
                         Ok(outcome) => outcome,
-                        Err(error) if !is_root => {
-                            tracing::debug!(
-                                parent_cid = %cid,
-                                %error,
-                                "Parent collection merge failed in batch"
-                            );
-                            continue;
-                        }
                         Err(error) => return Err(error),
                     };
                     if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
@@ -699,9 +688,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 };
 
                 if let CrdtDelta::Composite(composite_payload) = &linked_block.delta {
-                    let doc_id_str = self
-                        .resolve_composite_doc_id(link_cid, &linked_block, depth + 1)
-                        .await?;
                     match self
                         .process_composite_delta_in_txn(
                             datastore,
@@ -722,6 +708,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .await
                     {
                         Ok(MergeOutcome::Merged) => {
+                            let doc_id_str = self
+                                .resolve_composite_doc_id_in_txn(
+                                    systemstore,
+                                    link_cid,
+                                    &linked_block,
+                                    0,
+                                )
+                                .await?;
                             any_merged = true;
                             // Collect per-document MergeComplete event
                             let col_id = metadata
@@ -739,6 +733,17 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             });
                         }
                         Ok(outcome) if outcome.is_terminal_skip() => {
+                            let Ok(doc_id_str) = self
+                                .resolve_composite_doc_id_in_txn(
+                                    systemstore,
+                                    link_cid,
+                                    &linked_block,
+                                    0,
+                                )
+                                .await
+                            else {
+                                continue;
+                            };
                             tracing::debug!(link_cid = %link_cid, outcome = ?outcome, "Composite skipped in batch");
                             let col_id = metadata
                                 .collection_id
@@ -756,7 +761,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                         Ok(outcome) => {
                             tracing::debug!(link_cid = %link_cid, outcome = ?outcome, "Composite skipped in batch and will be retried");
-                            retryable_skip.get_or_insert(outcome);
+                            return Ok(outcome);
                         }
                         Err(e) => {
                             tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed in batch");
