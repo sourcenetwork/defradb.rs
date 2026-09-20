@@ -18,6 +18,7 @@ mod doc_identity;
 mod encryption;
 pub(crate) mod error;
 mod frame_source;
+mod history;
 pub mod hook;
 mod lww;
 mod merge_keys;

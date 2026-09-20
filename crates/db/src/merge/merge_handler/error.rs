@@ -77,6 +77,10 @@ pub enum MergeError {
     #[error("block signature verification failed for cid={cid}: {reason}")]
     SignatureVerificationFailed { cid: Cid, reason: String },
 
+    /// The caller must discard its shared transaction and resume per root.
+    #[error("history requires a resumable merge turn")]
+    HistoryRequired,
+
     /// DAG traversal depth limit exceeded.
     ///
     /// A maliciously crafted deeply-nested DAG could otherwise consume unbounded resources.
@@ -112,7 +116,8 @@ impl MergeError {
             | Self::Storage(_)
             | Self::Kms(_)
             | Self::NeedsDecryptionKey(_)
-            | Self::NeedsBatchDecryptionKey { .. } => MergeErrorDisposition::Retryable,
+            | Self::NeedsBatchDecryptionKey { .. }
+            | Self::HistoryRequired => MergeErrorDisposition::Retryable,
         }
     }
 }
