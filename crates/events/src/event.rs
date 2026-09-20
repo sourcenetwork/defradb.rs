@@ -197,6 +197,16 @@ impl Update {
     }
 }
 
+/// Outcome of scheduling initial replay for one replicator installation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicatorCompletedData {
+    pub peer_id: String,
+    pub collections: Vec<String>,
+    pub skipped: bool,
+    /// A replay-level failure, not an acknowledgement of remote delivery.
+    pub error: Option<String>,
+}
+
 /// Message wrapper for events.
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -218,6 +228,8 @@ pub enum MessageData {
     MergeComplete(MergeCompleteData),
     /// Replicator completed signal (initial docs pushed).
     ReplicatorCompleted,
+    /// Completion of a particular replicator installation.
+    ReplicatorCompletedWithData(ReplicatorCompletedData),
     /// GossipSub topic peer event.
     TopicPeerEvent(TopicPeerEventData),
     /// SE artifact received after merge.
@@ -262,6 +274,20 @@ impl Message {
         Self {
             name: EventName::ReplicatorCompleted,
             data: MessageData::ReplicatorCompleted,
+        }
+    }
+
+    pub fn replicator_completed_with_data(data: ReplicatorCompletedData) -> Self {
+        Self {
+            name: EventName::ReplicatorCompleted,
+            data: MessageData::ReplicatorCompletedWithData(data),
+        }
+    }
+
+    pub fn as_replicator_completed(&self) -> Option<&ReplicatorCompletedData> {
+        match &self.data {
+            MessageData::ReplicatorCompletedWithData(data) => Some(data),
+            _ => None,
         }
     }
 
