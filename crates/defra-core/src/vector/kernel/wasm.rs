@@ -36,11 +36,16 @@ unsafe fn load_widened(p: *const f32) -> v128 {
     f64x2_promote_low_f32x4(v128_load64_zero(p.cast::<u64>()))
 }
 
+/// `v128_load` reads through `*const v128` and so promises 16-byte alignment,
+/// but an `f64` slice only guarantees 8. The unaligned read takes both lanes
+/// at whatever alignment the caller's slice carries, matching the x86 tier's
+/// `loadu` and NEON's `vld1`.
+///
 /// # Safety
 /// `p` must be readable for `LANES` `f64`.
 #[inline(always)]
 unsafe fn load_direct(p: *const f64) -> v128 {
-    v128_load(p.cast::<v128>())
+    p.cast::<v128>().read_unaligned()
 }
 
 /// # Safety
