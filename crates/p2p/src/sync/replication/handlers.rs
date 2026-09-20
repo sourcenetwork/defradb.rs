@@ -252,6 +252,10 @@ where
     H: MergeHandler + ?Sized + 'static,
 {
     // Load block from blockstore
+    let _pending_owner = coordinator.pending_dag_merge_guard(cid);
+    coordinator
+        .manager()
+        .consume_pending_merge_continuation(&cid);
     let block_data = match coordinator.blockstore().get(&cid).await {
         Ok(Some(data)) => data,
         Ok(None) => {
@@ -426,6 +430,18 @@ where
                 collection_id: collection_id_for_result,
             }
         }
+        Ok(MergeOutcome::Yielded) => {
+            coordinator
+                .manager()
+                .schedule_pending_merge_continuation(&cid);
+            ReplicationResult::Skipped {
+                cid,
+                doc_id: doc_id_for_result,
+                collection_id: collection_id_for_result,
+                reason: "merge work budget yielded".to_string(),
+                terminal: false,
+            }
+        }
         Ok(MergeOutcome::Skipped { reason, terminal }) => {
             if terminal {
                 if let Err(e) = coordinator.mark_as_merged(&cid).await {
@@ -590,6 +606,17 @@ where
 {
     let mut merge_blocks = Vec::with_capacity(events.len());
     let mut results = Vec::new();
+    let _pending_owners: Vec<_> = events
+        .iter()
+        .filter_map(event_merge_cid)
+        .map(|cid| {
+            let owner = coordinator.pending_dag_merge_guard(cid);
+            coordinator
+                .manager()
+                .consume_pending_merge_continuation(&cid);
+            owner
+        })
+        .collect();
 
     // Load block data for each event from blockstore
     for event in &events {
@@ -670,6 +697,18 @@ where
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
                     collection_id: block.collection_id.clone(),
+                });
+            }
+            Ok(MergeOutcome::Yielded) => {
+                coordinator
+                    .manager()
+                    .schedule_pending_merge_continuation(&block.cid);
+                results.push(ReplicationResult::Skipped {
+                    cid: block.cid,
+                    doc_id: block.doc_id.clone(),
+                    collection_id: block.collection_id.clone(),
+                    reason: "merge work budget yielded".to_string(),
+                    terminal: false,
                 });
             }
             Ok(MergeOutcome::Skipped { reason, terminal }) => {
@@ -950,6 +989,7 @@ where
     let Some(cid) = event_merge_cid(&event) else {
         return process_event(coordinator, event, handler, config).await;
     };
+    let _pending_owner = coordinator.pending_dag_merge_guard(cid);
 
     loop {
         match coordinator
