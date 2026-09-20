@@ -20,7 +20,10 @@ async fn doc_id_restrictions_fill_vector_pages_after_offset() {
     seed(&node).await;
     let documents = query_data(
         &node,
-        "{ Note(filter: {tag: {_eq: \"odd\"}}) { _docID } }",
+        &format!(
+            "{{ Note(order: {{_alias: {{sim: ASC}}}}) {{ _docID sim: SIMILARITY(embedding: {{vector: [{}]}}) }} }}",
+            render(&vector_for(0))
+        ),
         "ids",
     )
     .await;
@@ -29,6 +32,7 @@ async fn doc_id_restrictions_fill_vector_pages_after_offset() {
             .as_array()
             .unwrap()
             .iter()
+            .take(8)
             .map(|doc| doc["_docID"].clone())
             .collect::<Vec<_>>(),
     )
