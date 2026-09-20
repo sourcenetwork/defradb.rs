@@ -3,7 +3,8 @@
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    ClientArgs, IdentityArgs, KeyringArgs, SdlArgs, ServerDumpArgs, StartArgs, VersionArgs,
+    ClientArgs, IdentityArgs, KeyringArgs, SdlArgs, ServerDumpArgs, StartArgs, StorageArgs,
+    VersionArgs,
 };
 use crate::config::Config;
 use crate::error::Result;
@@ -179,6 +180,9 @@ pub enum Command {
 
     /// Dump server-side data
     ServerDump(ServerDumpArgs),
+
+    /// Inspect local database storage.
+    Storage(StorageArgs),
 }
 
 impl Cli {
@@ -192,6 +196,7 @@ impl Cli {
             Command::Identity(args) => args.execute(config),
             Command::Sdl(args) => args.execute(),
             Command::ServerDump(args) => args.execute(&config).await,
+            Command::Storage(args) => args.execute(&config).await,
         }
     }
 }

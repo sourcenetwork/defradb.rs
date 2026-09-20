@@ -231,6 +231,24 @@ The filter field must be a scalar, `@immutable` LWW field on the collection.
 
 **Filtered replication is a push-path selectivity optimization, not an access-control boundary.** A peer that also subscribes to the collection (`p2p collection add`) joins the collection's gossip topic and receives every document, bypassing the filter. Use ACP and encryption for confidentiality. The `--filter-value` is matched as a JSON string, so only string-valued fields can be filtered today.
 
+## Storage Diagnostics
+
+Stop the node before inspecting its on-disk store:
+
+```bash
+defradb --rootdir /path/to/node storage stats
+defradb --rootdir /path/to/node storage stats --versions
+```
+
+The command opens the store read-only and prints JSON aggregates by namespace,
+collection ID, field, and block kind. Counts describe logical key/value bytes,
+not compressed disk usage; document values are never printed. Unknown or
+ambiguous keys are reported separately. `--versions` counts document ownership of field blocks,
+using memory proportional to the number of document/field pairs.
+
+Embedded callers can use `DB::storage_stats` on a live read snapshot. Use this
+API rather than the offline command for an at-rest-encrypted store.
+
 ## Documentation
 
 - [DefraDB (Go)](https://github.com/sourcenetwork/defradb) — concepts, architecture, specifications
