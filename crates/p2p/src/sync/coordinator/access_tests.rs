@@ -1808,7 +1808,9 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     let markers = n0_future::task::spawn(async move {
         while let Some(mut observation) = failure_rx.recv().await {
             if let Some(ack) = observation.durable_tx.take() {
-                observer.fetch_add(1, Ordering::SeqCst);
+                if !observation.admission_only {
+                    observer.fetch_add(1, Ordering::SeqCst);
+                }
                 let _ = ack.send(true);
             }
         }
