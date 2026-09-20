@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "alloy-primitives",
  "borsh",
@@ -2543,7 +2543,7 @@ name = "conformance"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "defra-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
+ "defra-harness",
  "serde",
  "serde_json",
  "serial_test",
@@ -3505,28 +3505,8 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sourcehub-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
- "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "defra-harness"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
-dependencies = [
- "eyre",
- "futures",
- "libc",
- "paste",
- "rand 0.8.5",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sourcehub-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
- "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
+ "sourcehub-harness",
+ "test-infra",
  "tokio",
  "tracing",
 ]
@@ -5329,7 +5309,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hub-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -5348,7 +5328,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
+ "test-infra",
  "tokio",
  "tracing",
 ]
@@ -5838,7 +5818,7 @@ dependencies = [
  "crypto",
  "ctor",
  "defra-core",
- "defra-harness 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
+ "defra-harness",
  "document",
  "futures",
  "hex",
@@ -11350,23 +11330,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "serde_json",
- "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa)",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "sourcehub-harness"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
-dependencies = [
- "cosmrs",
- "eyre",
- "hex",
- "regex",
- "reqwest 0.12.28",
- "serde_json",
- "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4)",
+ "test-infra",
  "tokio",
  "tracing",
 ]
@@ -11895,22 +11859,6 @@ dependencies = [
 name = "test-infra"
 version = "0.1.0"
 source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
-dependencies = [
- "eyre",
- "futures",
- "libc",
- "rand 0.8.5",
- "regex",
- "serde",
- "tokio",
- "toml 0.8.23",
- "tracing",
-]
-
-[[package]]
-name = "test-infra"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e0c42841f212119a385ee6c10465c3afe6fc62d4#9fe9622a53bb5cc08574788ca370b5fb201868aa"
 dependencies = [
  "eyre",
  "futures",
