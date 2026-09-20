@@ -29,28 +29,23 @@ impl<S: Store> crate::database::DB<S> {
     /// [`Cached::NameHeldByAnother`] means an entry naming a different
     /// collection already holds the name and was left alone, so the cache is
     /// unchanged.
+    /// A `Collection` whose write/query index sets reflect the persisted
+    /// action statuses. Every cache refresh path goes through this, so a
+    /// cached entry never silently widens an ERRORED index back into writes
+    /// or an in-progress one into queries.
+    pub(crate) async fn collection_with_index_actions(
+        &self,
+        schema: CollectionVersion,
+    ) -> Result<Collection> {
+        let txn = self.new_txn(true).await?;
+        let result = Collection::load_index_actions(schema, &txn.systemstore()?).await;
+        let _ = txn.discard();
+        result
+    }
+
     pub async fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<Cached> {
         let name = schema.name.clone();
-        // The cached entry must carry index action state or it lies to every
-        // reader: `block_collection` prefers the cache precisely because it
-        // is supposed to carry it, and a plain `Collection::new` puts
-        // ERRORED indexes back into writes and in-progress ones into queries.
-        // The actions are read outside the cache swap so the swap stays
-        // non-blocking.
-        let collection = {
-            let txn = self.new_txn(true).await?;
-            let actions = match txn.systemstore() {
-                Ok(systemstore) => crate::database::action::index_action_statuses(
-                    &systemstore,
-                    &schema.collection_id,
-                )
-                .await
-                .unwrap_or_default(),
-                Err(_) => Default::default(),
-            };
-            let _ = txn.discard();
-            Collection::with_index_actions(schema.clone(), &actions)
-        };
+        let collection = self.collection_with_index_actions(schema.clone()).await?;
 
         let offered = schema.collection_id.clone();
         let mut cached = Cached::Taken;

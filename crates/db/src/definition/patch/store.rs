@@ -487,9 +487,12 @@ impl<S: Store> crate::database::DB<S> {
             // name index, schema_heads and the reindex switch were written
             // under — not new_schema.name, which for a placeholder rename
             // has not become the registered name yet.
+            let cached_collection = self
+                .collection_with_index_actions(new_schema.clone())
+                .await?;
             self.collections.rcu(|old| {
                 let mut cache = old.clone();
-                cache.put_named(actual_name, Collection::new(new_schema.clone()));
+                cache.put_named(actual_name, cached_collection.clone());
                 cache
             });
         }
@@ -609,9 +612,10 @@ impl<S: Store> crate::database::DB<S> {
                 txn.commit().await?;
 
                 // Update cache
+                let cached_collection = self.collection_with_index_actions(updated_schema).await?;
                 self.collections.rcu(|old| {
                     let mut cache = old.clone();
-                    cache.put_named(&coll_name.clone(), Collection::new(updated_schema.clone()));
+                    cache.put_named(coll_name, cached_collection.clone());
                     cache
                 });
             }

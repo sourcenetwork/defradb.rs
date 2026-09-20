@@ -3,6 +3,7 @@ use std::sync::Arc;
 use db::{DbCollectionProvider, DB};
 use defra_core::{Action, ActionStatus};
 use query::fetcher::CollectionProvider;
+use query::txn::TransactionRegistry;
 use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
 use storage::{corekv::Key, keys::systemstore::ActionStatusKey, RegolithStore};
 
@@ -72,6 +73,20 @@ async fn recaching_and_activation_preserve_pending_index_restrictions() {
         db.set_active_collection_version(&schema.version_id)
             .await
             .unwrap();
+        assert!(provider
+            .get_collection("Note")
+            .await
+            .unwrap()
+            .unwrap()
+            .indexes
+            .is_empty());
+        let registry = db::txn::registry::DbTransactionRegistry::new(db.clone());
+        let handle = registry.begin(false).await.unwrap();
+        registry
+            .set_collection_active_in_txn(handle.as_str(), &schema.version_id, true)
+            .await
+            .unwrap();
+        registry.commit(&handle).await.unwrap();
         assert!(provider
             .get_collection("Note")
             .await

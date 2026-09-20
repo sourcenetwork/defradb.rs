@@ -314,9 +314,12 @@ impl<S: Store> crate::database::DB<S> {
         self.unforbid_collection_id(finalized_schema.collection_id.as_str())?;
 
         // Update the process-wide cache after successful commit
+        let collection = self
+            .collection_with_index_actions(finalized_schema.clone())
+            .await?;
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cache.put(Collection::new(finalized_schema.clone()));
+            cache.put(collection.clone());
             cache
         });
 
@@ -452,10 +455,14 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Update the process-wide cache after successful commit
+        let mut collections = Vec::with_capacity(finalized_schemas.len());
+        for schema in &finalized_schemas {
+            collections.push(self.collection_with_index_actions(schema.clone()).await?);
+        }
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            for schema in &finalized_schemas {
-                cache.put(Collection::new(schema.clone()));
+            for collection in &collections {
+                cache.put(collection.clone());
             }
             cache
         });

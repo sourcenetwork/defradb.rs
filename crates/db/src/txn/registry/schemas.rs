@@ -80,11 +80,11 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                                 cached.schema().version_id == destination_version_id
                             });
                         if matches_destination {
+                            // `updated_collection` carries this transaction's
+                            // index actions; a plain entry would drop them.
                             cache.put_named(
                                 &updated_destination.name.clone(),
-                                // `updated_collection` carries this transaction's
-                                // index actions; a plain entry would drop them.
-                                updated_collection,
+                                updated_collection.clone(),
                             );
                         }
                         cache
