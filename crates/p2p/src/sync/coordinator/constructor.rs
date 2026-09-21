@@ -270,6 +270,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 authorizer,
                 classifier,
                 serve_acp,
+                rooted_authorization:
+                    crate::sync::car_authorization::RootedAuthorizationProgress::new(),
                 document_acp: std::sync::OnceLock::new(),
                 #[cfg(feature = "kms")]
                 kms_transport: std::sync::OnceLock::new(),
