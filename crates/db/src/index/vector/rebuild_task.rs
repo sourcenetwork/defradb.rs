@@ -1,9 +1,12 @@
 //! The background pass that rebuilds HNSW graphs when their waste says so.
 
-use std::sync::Arc;
-
 use storage::corekv::Store;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::time::{self, MissedTickBehavior};
 
 use crate::database::DB;
@@ -13,6 +16,7 @@ use schema::VectorAlgorithm;
 /// How often the sweep looks for due rebuilds. A due check is one meta read
 /// per HNSW index, so a short interval would be cheap; this stays deliberate
 /// because a rebuild that fires is anything but.
+#[cfg(not(target_arch = "wasm32"))]
 const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl<S: Store + 'static> DB<S> {
