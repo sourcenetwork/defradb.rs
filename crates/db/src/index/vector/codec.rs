@@ -22,7 +22,10 @@ use crate::index::vector::store::{Meta, Node, NodeId};
 
 /// First byte of both encodings, so a layout change is rejected not misread.
 const NODE_VERSION: u8 = 0x01;
-const META_VERSION: u8 = 0x01;
+const META_VERSION: u8 = 0x02;
+/// Metas written before the rebuild counters existed. Still readable: the
+/// counters decode as zeroed, which reads as "never rebuilt".
+const META_V1_VERSION: u8 = 0x01;
 
 /// Named so the size arithmetic and the offset advances cannot drift apart.
 const VERSION_WIDTH: usize = 1;
@@ -33,6 +36,10 @@ const NODE_ID_WIDTH: usize = 8;
 const TOP_LAYER_WIDTH: usize = 4;
 
 const META_LEN: usize = VERSION_WIDTH + NODE_ID_WIDTH + TOP_LAYER_WIDTH;
+/// The live, waste and rebuild counters the rebuild pass reads and writes.
+const META_COUNTER_WIDTH: usize = 8 + 8 + 4;
+const META_V1_LEN: usize = META_LEN;
+const META_V2_LEN: usize = META_LEN + META_COUNTER_WIDTH;
 
 /// Smallest valid encoded node, before any vector element or layer.
 const NODE_HEADER_LEN: usize = VERSION_WIDTH + NODE_ID_WIDTH + FLAG_WIDTH + COUNT_WIDTH * 2;
@@ -106,20 +113,25 @@ pub fn decode_node(bytes: &[u8]) -> Result<Node> {
 
 /// Encodes `meta` for storage as a single value.
 pub fn encode_meta(meta: &Meta) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(META_LEN);
+    let mut buf = Vec::with_capacity(META_V2_LEN);
     buf.push(META_VERSION);
     buf.extend_from_slice(&meta.entry_point.0.to_le_bytes());
     buf.extend_from_slice(&(meta.top_layer as u32).to_le_bytes());
+    buf.extend_from_slice(&meta.live.to_le_bytes());
+    buf.extend_from_slice(&meta.waste.to_le_bytes());
+    buf.extend_from_slice(&meta.rebuilds.to_le_bytes());
     buf
 }
 
-/// Decodes a value written by [`encode_meta`].
+/// Decodes a value written by [`encode_meta`], or by an older layout, whose
+/// counters read as zeroed.
 pub fn decode_meta(bytes: &[u8]) -> Result<Meta> {
-    if bytes.len() != META_LEN {
+    if bytes.len() != META_V2_LEN && bytes.len() != META_V1_LEN {
         return Err(invalid("meta encoding has the wrong length"));
     }
     let mut cursor = Cursor::new(bytes);
-    if cursor.take_u8()? != META_VERSION {
+    let version = cursor.take_u8()?;
+    if version != META_VERSION && version != META_V1_VERSION {
         return Err(invalid("unsupported meta encoding version"));
     }
     let entry_point = NodeId(cursor.take_u64()?);
@@ -128,9 +140,20 @@ pub fn decode_meta(bytes: &[u8]) -> Result<Meta> {
     if top_layer < 0 {
         return Err(invalid("meta has a negative top layer"));
     }
+    let (live, waste, rebuilds) = if version == META_V1_VERSION {
+        (0, 0, 0)
+    } else {
+        let live = cursor.take_u64()?;
+        let waste = cursor.take_u64()?;
+        let rebuilds = cursor.take_u32()?;
+        (live, waste, rebuilds)
+    };
     Ok(Meta {
         entry_point,
         top_layer: top_layer as usize,
+        live,
+        waste,
+        rebuilds,
     })
 }
 

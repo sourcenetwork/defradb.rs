@@ -66,46 +66,6 @@ impl<'txn, T> KvNodeStore<'txn, T> {
     }
 }
 
-impl<T: Reader + Writer + MaybeSend> KvNodeStore<'_, T> {
-    /// Removes every key of this epoch, in batches, so the memory held is
-    /// bounded by the batch size rather than by the number of nodes.
-    ///
-    /// The scan is over the whole epoch prefix rather than the node prefix,
-    /// which is what makes "every key" true: the aux space holds a partitioned
-    /// kind's centroids, codebooks and inverted lists, and a graph kind's
-    /// adjacency, and none of it is under the node prefix. Leaving it behind
-    /// corrupts a reindex, because a surviving trained-state marker makes the
-    /// engine append to lists built from centroids that are gone, and leaks the
-    /// whole aux keyspace on a drop, because nothing else ever removes it.
-    ///
-    /// Prefix rather than a per-kind sweep so a kind added later is covered
-    /// without anyone remembering to add it here.
-    pub async fn clear(&mut self) -> Result<()> {
-        loop {
-            let mut batch = Vec::new();
-            {
-                let mut iter = self
-                    .txn
-                    .iterator(IterOptions::default().with_prefix(self.epoch_prefix()))
-                    .await?;
-                while let Some(pair) = iter.next().await? {
-                    batch.push(pair.key);
-                    if batch.len() >= CLEAR_BATCH {
-                        break;
-                    }
-                }
-            }
-            if batch.is_empty() {
-                break;
-            }
-            for key in batch {
-                self.txn.delete(&key).await?;
-            }
-        }
-        Ok(())
-    }
-}
-
 /// The iterator is reopened per batch because deleting through a live one is
 /// not defined for every backend.
 const CLEAR_BATCH: usize = 1024;
@@ -155,6 +115,44 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
                 continue;
             }
             visit(node)?;
+        }
+        Ok(())
+    }
+
+    /// Removes every key of this epoch, in batches, so the memory held is
+    /// bounded by the batch size rather than by the number of nodes.
+    ///
+    /// The scan is over the whole epoch prefix rather than the node prefix,
+    /// which is what makes "every key" true: the aux space holds a partitioned
+    /// kind's centroids, codebooks and inverted lists, and a graph kind's
+    /// adjacency, and none of it is under the node prefix. Leaving it behind
+    /// corrupts a reindex, because a surviving trained-state marker makes the
+    /// engine append to lists built from centroids that are gone, and leaks the
+    /// whole aux keyspace on a drop, because nothing else ever removes it.
+    ///
+    /// Prefix rather than a per-kind sweep so a kind added later is covered
+    /// without anyone remembering to add it here.
+    async fn clear(&mut self) -> Result<()> {
+        loop {
+            let mut batch = Vec::new();
+            {
+                let mut iter = self
+                    .txn
+                    .iterator(IterOptions::default().with_prefix(self.epoch_prefix()))
+                    .await?;
+                while let Some(pair) = iter.next().await? {
+                    batch.push(pair.key);
+                    if batch.len() >= CLEAR_BATCH {
+                        break;
+                    }
+                }
+            }
+            if batch.is_empty() {
+                break;
+            }
+            for key in batch {
+                self.txn.delete(&key).await?;
+            }
         }
         Ok(())
     }
