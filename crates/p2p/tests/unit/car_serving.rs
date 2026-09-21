@@ -75,8 +75,8 @@ impl Blockstore for ReadCountingBlockstore {
 }
 
 /// An ungranted peer asking for a known oversized block must not be able to
-/// price a full disk read and hash into the denial: neither the root
-/// authority check nor the candidate authorization touches a payload (#1729).
+/// price a full disk read and hash into the denial (#1729). The small root's
+/// one bounded read stays: it is the same read every legitimate request pays.
 #[tokio::test]
 async fn ungranted_oversized_candidates_authorize_without_payload_reads() {
     let peer = random_peer_id();
@@ -124,8 +124,8 @@ async fn ungranted_oversized_candidates_authorize_without_payload_reads() {
     );
     assert_eq!(
         blockstore.payload_read_count(&root),
-        0,
-        "root authority must be reconstructed without a payload read"
+        1,
+        "root authority classifies the small root from one bounded read"
     );
 }
 
@@ -453,4 +453,122 @@ async fn car_size_notice_stores_siblings_and_only_reports_missing_link() {
         completion.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
     ));
+}
+
+/// A small root the doc index cannot attribute (a doc-less collection
+/// commit, or a composite whose merge terminal-skipped before recording
+/// ownership) keeps its restart-safe authority through the one bounded
+/// payload read. A filtered replicator has no per-block fallback, so the
+/// rooted grant is the only path that serves them anything.
+#[tokio::test]
+async fn unattributable_small_root_keeps_authority_through_its_payload() {
+    let peer = random_peer_id();
+    let transport = NoopTransport::new();
+    let blockstore = ReadCountingBlockstore::new(Arc::new(DefraBlockstore::new(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        true,
+    )));
+    let small_data = b"small";
+    let small = cid_for(small_data);
+    let root_data = serde_ipld_dagcbor::to_vec(&ipld_core::ipld!({ "small": small })).unwrap();
+    let root = cid_for(&root_data);
+    blockstore.put(&small, small_data).await.unwrap();
+    blockstore.put(&root, &root_data).await.unwrap();
+
+    let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+        transport.clone(),
+        blockstore.clone(),
+        SyncConfig::default(),
+        AccessMode::Controlled,
+        filtered_replicator_registry(&peer, "collection1"),
+        Arc::new(NoOpCollectionStorage),
+        Arc::new(crate::replicator::EqOnlyFilterMatcher),
+        Arc::new(PayloadOnlyClassifier {
+            collection_id: "collection1".to_owned(),
+        }),
+        Arc::new(LateBoundServeAcp::default()),
+    )
+    .await
+    .unwrap();
+
+    coordinator
+        .handle_transport_event(selective_car_fetch_event(peer, root, vec![root, small]))
+        .await
+        .unwrap();
+
+    let responses = transport.car_responses();
+    let response = responses.last().unwrap();
+    assert_eq!(
+        decode_car(response).unwrap().1,
+        vec![(root, root_data.clone()), (small, small_data.to_vec())],
+        "the rooted grant must survive for a root the index cannot attribute"
+    );
+    assert!(
+        blockstore.payload_read_count(&root) >= 1,
+        "authority comes from bounded payload reads of the small root"
+    );
+}
+
+/// The ACP leg of the oversized-notice decision: indexed metadata reaches
+/// may_read, which serves the notice to an identity holding read access and
+/// drops it for everyone else.
+#[tokio::test]
+async fn oversized_notice_follows_the_acp_read_gate() {
+    let reader =
+        identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
+    let outsider =
+        identity::Did::new("did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR").unwrap();
+    let oversized_data = vec![0; CAR_MAX_BYTES + 1];
+    let oversized = cid_for(&oversized_data);
+    let root_data = b"root";
+    let root = cid_for(root_data);
+
+    for (identity, expect_notice) in [(reader.clone(), true), (outsider.clone(), false)] {
+        let peer = random_peer_id();
+        let transport = NoopTransport::new();
+        let blockstore = Arc::new(DefraBlockstore::new(
+            Arc::new(RegolithStore::in_memory().unwrap()),
+            true,
+        ));
+        blockstore.put(&oversized, &oversized_data).await.unwrap();
+        blockstore.put(&root, root_data).await.unwrap();
+
+        let serve_acp = Arc::new(LateBoundServeAcp::default());
+        serve_acp.set(ServeAcp {
+            resolver: Arc::new(FixedIdentityResolver(identity)),
+            gate: Arc::new(OnlyIdentityReadGate(reader.clone())),
+        });
+        let (coordinator, _events) = SyncCoordinator::with_access_control_and_serve_gate(
+            transport.clone(),
+            blockstore,
+            SyncConfig::default(),
+            AccessMode::Controlled,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(NoOpCollectionStorage),
+            Arc::new(crate::replicator::EqOnlyFilterMatcher),
+            Arc::new(StaticDataClassifier {
+                collection_id: "collection1".to_owned(),
+            }),
+            serve_acp,
+        )
+        .await
+        .unwrap();
+
+        coordinator
+            .handle_transport_event(selective_car_fetch_event(peer, root, vec![oversized]))
+            .await
+            .unwrap();
+
+        let responses = transport.car_responses();
+        let response = responses.last().unwrap();
+        let notices = decode_car_oversized(response).unwrap();
+        if expect_notice {
+            assert_eq!(notices, vec![(oversized, CAR_MAX_BYTES + 1)]);
+        } else {
+            assert!(
+                notices.is_empty(),
+                "an identity without read access must not learn the block exists"
+            );
+        }
+    }
 }

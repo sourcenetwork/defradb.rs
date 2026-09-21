@@ -41,33 +41,23 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
     /// Resolve the block's metadata from the durable doc index alone: the
     /// block→doc map, then the doc's registered collection. This is the same
     /// index the payload path consults for doc IDs, so a merged block yields
-    /// the identical meta without reading or hashing its payload. `None`
-    /// leaves the block unattributed, which callers fail closed on.
+    /// the identical meta without reading or hashing its payload. A block
+    /// whose owners do not all belong to one collection cannot be attributed
+    /// to a single policy, so it stays unattributed; `None` in every
+    /// unattributable case, which callers fail closed on.
     async fn indexed_meta(&self, cid: &Cid) -> Option<BlockAcpMeta> {
         let txn = self.db.new_txn(true).await.ok()?;
-        let systemstore = match txn.systemstore() {
-            Ok(systemstore) => systemstore,
-            Err(_) => {
-                let _ = txn.discard();
-                return None;
-            }
-        };
-        let doc_ids = db::docid::map::get_doc_ids_for_block(&systemstore, &cid.to_string())
-            .await
-            .ok()?;
-        let doc_ref = match doc_ids.first() {
-            Some(doc_id) => db::docid::map::get_doc_ref(&systemstore, doc_id)
-                .await
-                .ok()?,
-            None => None,
+        let attribution = match txn.systemstore() {
+            Ok(systemstore) => self.indexed_attribution(&systemstore, cid).await,
+            Err(_) => None,
         };
         let _ = txn.discard();
-        let doc_ref = doc_ref?;
+        let (doc_ids, collection_short_id) = attribution?;
         for name in self.db.list_collections().ok()? {
             let Ok(Some(collection)) = self.db.get_collection(&name) else {
                 continue;
             };
-            if collection.resolved_root_id() != doc_ref.collection_short_id {
+            if collection.resolved_root_id() != collection_short_id {
                 continue;
             }
             let collection = collection.schema();
@@ -83,6 +73,35 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
             });
         }
         None
+    }
+
+    /// The block's owning docs and their shared collection. Ownership is only
+    /// an attribution when every owning doc resolves to the same collection:
+    /// merges record a linked block against the merging document without
+    /// checking the linked block's own schema version, so a composite from
+    /// one collection can append a foreign doc to another collection's block
+    /// map. Disagreement leaves the block unattributable rather than letting
+    /// the lexicographically first owner choose the policy.
+    async fn indexed_attribution(
+        &self,
+        systemstore: &db::NamespaceView,
+        cid: &Cid,
+    ) -> Option<(Vec<String>, u32)> {
+        let doc_ids = db::docid::map::get_doc_ids_for_block(systemstore, &cid.to_string())
+            .await
+            .ok()?;
+        let mut collection_short_id: Option<u32> = None;
+        for doc_id in &doc_ids {
+            let doc_ref = db::docid::map::get_doc_ref(systemstore, doc_id)
+                .await
+                .ok()??;
+            match collection_short_id {
+                None => collection_short_id = Some(doc_ref.collection_short_id),
+                Some(current) if current == doc_ref.collection_short_id => {}
+                Some(_) => return None,
+            }
+        }
+        Some((doc_ids, collection_short_id?))
     }
 }
 
@@ -289,6 +308,59 @@ mod tests {
         let classifier = DbBlockClassifier::new(db);
 
         assert_eq!(classifier.classify(&cid, &bytes).await, BlockClass::Deny);
+    }
+
+    #[tokio::test]
+    async fn indexed_classification_refuses_cross_collection_co_ownership() {
+        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(test_collection()).await.unwrap();
+        db.create_collection(
+            CollectionVersion::new(
+                "Other",
+                "version-2",
+                "collection-2",
+                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            )
+            .with_policy(PolicyDescription::new("policy2", "others")),
+        )
+        .await
+        .unwrap();
+        let (cid, _bytes) = data_block("doc-from-delta");
+        let first = db
+            .get_collection("User")
+            .unwrap()
+            .expect("created collection")
+            .resolved_root_id();
+        let second = db
+            .get_collection("Other")
+            .unwrap()
+            .expect("created collection")
+            .resolved_root_id();
+
+        let txn = db.new_txn(false).await.unwrap();
+        {
+            let systemstore = txn.systemstore().unwrap();
+            db::docid::map::set_doc_id_mapping(&systemstore, first, 1, "bae-doc-a")
+                .await
+                .unwrap();
+            db::docid::map::set_doc_id_mapping(&systemstore, second, 2, "bae-doc-b")
+                .await
+                .unwrap();
+            db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), "bae-doc-a")
+                .await
+                .unwrap();
+            db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), "bae-doc-b")
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
+
+        let classifier = DbBlockClassifier::new(db);
+
+        assert!(
+            classifier.classify_indexed(&cid).await.is_none(),
+            "an owner in another collection must not choose this block's policy"
+        );
     }
 
     #[tokio::test]

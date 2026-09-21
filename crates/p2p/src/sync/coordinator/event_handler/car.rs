@@ -360,10 +360,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// reconstructs the rooted CAR capability without CID-valued sender
     /// delivery state or an eventually observed gossip-neighbor event.
     async fn has_restart_safe_root_authority(&self, peer_id: &PeerId, root_cid: &Cid) -> bool {
-        // The requested root may itself be oversized, and this check runs for
-        // unauthenticated peers, so its attribution reads durable metadata
-        // rather than the payload (#1729).
-        let Some(BlockClass::Data(meta)) = self.classifier.classify_indexed(root_cid).await else {
+        let Some(meta) = self.root_authorization_meta(root_cid).await else {
             return false;
         };
         // Document composite roots resolve to one or more document IDs, while
@@ -419,6 +416,36 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             );
         }
         acp_authorized
+    }
+
+    /// Attribute the requested root for restart-safe authority. An oversized
+    /// root, or one whose size cannot be read, is attributed from durable
+    /// metadata only, so no unauthenticated request can price a full disk
+    /// read into this check (#1729). Any other root is classified from its
+    /// payload, which keeps authority derivable for blocks the doc index
+    /// cannot attribute: doc-less collection commits, composites whose merge
+    /// terminal-skipped before recording ownership, and roots still awaiting
+    /// their first merge.
+    async fn root_authorization_meta(
+        &self,
+        root_cid: &Cid,
+    ) -> Option<crate::bitswap::BlockAcpMeta> {
+        let payload_bounded = matches!(
+            self.manager.blockstore().get_size(root_cid).await,
+            Ok(Some(size)) if size <= crate::sync::car::CAR_MAX_BYTES
+        );
+        if payload_bounded {
+            let root_data = self.manager.blockstore().get(root_cid).await.ok()??;
+            match self.classifier.classify(root_cid, &root_data).await {
+                BlockClass::Data(meta) => Some(meta),
+                _ => None,
+            }
+        } else {
+            match self.classifier.classify_indexed(root_cid).await {
+                Some(BlockClass::Data(meta)) => Some(meta),
+                _ => None,
+            }
+        }
     }
 
     /// Handle an inbound CAR fetch response: decode and store blocks.
