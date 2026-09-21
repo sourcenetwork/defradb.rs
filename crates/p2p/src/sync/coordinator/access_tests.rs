@@ -75,6 +75,28 @@ impl BlockClassifier for StaticDataClassifier {
             doc_ids: vec!["doc1".to_string()],
         })
     }
+
+    async fn classify_indexed(&self, _cid: &Cid) -> Option<BlockClass> {
+        Some(self.classify(_cid, b"").await)
+    }
+}
+
+/// Classifies only from payloads: durable metadata is unavailable, so every
+/// indexed authorization must fail closed.
+struct PayloadOnlyClassifier {
+    collection_id: String,
+}
+
+#[async_trait]
+impl BlockClassifier for PayloadOnlyClassifier {
+    async fn classify(&self, _cid: &Cid, _data: &[u8]) -> BlockClass {
+        BlockClass::Data(BlockAcpMeta {
+            collection_id: self.collection_id.clone(),
+            is_branchable: false,
+            policy: None,
+            doc_ids: vec!["doc1".to_string()],
+        })
+    }
 }
 
 struct CollectionHeadClassifier {
@@ -131,6 +153,10 @@ impl BlockClassifier for CollectionHeadClassifier {
             // Collection commits are intentionally not mapped to one document.
             doc_ids: Vec::new(),
         })
+    }
+
+    async fn classify_indexed(&self, _cid: &Cid) -> Option<BlockClass> {
+        Some(self.classify(_cid, b"").await)
     }
 }
 

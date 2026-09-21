@@ -253,62 +253,85 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .as_ref()
                 .is_some_and(|cids| cids.contains(&cid));
             // Authorize notices at the same boundary as block bytes, without
-            // retaining oversized payloads for the entire response.
-            let data = match data {
-                Some(data) => data,
-                None if granted => {
-                    blocks
-                        .oversized_blocks
-                        .push((cid, oversized.expect("oversized candidate")));
+            // retaining oversized payloads for the entire response. An
+            // oversized candidate is only ever re-advertised as a notice, so
+            // its authorization reads durable metadata, never the payload:
+            // an ungranted peer must not be able to price a full disk read
+            // and hash into every denial (#1729).
+            let meta = if granted {
+                if let Some(size) = oversized {
+                    blocks.oversized_blocks.push((cid, size));
                     continue;
                 }
-                None => match self.manager.blockstore().get(&cid).await {
-                    Ok(Some(data)) => data,
-                    _ => continue,
-                },
-            };
-            let allowed = if granted {
-                true
+                None
             } else {
-                match self.classifier.classify(&cid, &data).await {
-                    BlockClass::Allow => true,
-                    BlockClass::Deny => {
-                        tracing::debug!(
-                            cid = %cid,
-                            peer_id = %peer_id,
-                            "CAR handler: dropping block denied by classifier"
-                        );
-                        false
-                    }
-                    BlockClass::Data(meta) => {
-                        if self
-                            .access
-                            .replicators
-                            .is_filtered_replicator(&meta.collection_id, &peer_str)
-                        {
+                match data.as_ref() {
+                    Some(payload) => match self.classifier.classify(&cid, payload).await {
+                        BlockClass::Allow => {
+                            blocks
+                                .blocks
+                                .push((cid, data.expect("classified from its own payload")));
                             continue;
                         }
-                        if self
-                            .access
-                            .replicators
-                            .is_replicator(&meta.collection_id, &peer_str)
-                        {
-                            true
-                        } else {
-                            let Some(serve) = serve else {
-                                continue;
-                            };
-                            if identity.is_none() {
-                                identity = Some(match serve.resolver.resolve(peer_id).await {
-                                    Some(did) => acp::Identity::Authenticated(did),
-                                    None => acp::Identity::Anonymous,
-                                });
-                            }
-                            serve
-                                .gate
-                                .may_read(identity.as_ref().expect("identity set"), &meta)
-                                .await
+                        BlockClass::Deny => {
+                            tracing::debug!(
+                                cid = %cid,
+                                peer_id = %peer_id,
+                                "CAR handler: dropping block denied by classifier"
+                            );
+                            continue;
                         }
+                        BlockClass::Data(meta) => Some(meta),
+                    },
+                    None => match self.classifier.classify_indexed(&cid).await {
+                        Some(BlockClass::Data(meta)) => Some(meta),
+                        Some(BlockClass::Allow) => {
+                            blocks
+                                .oversized_blocks
+                                .push((cid, oversized.expect("oversized candidate")));
+                            continue;
+                        }
+                        _ => {
+                            tracing::debug!(
+                                cid = %cid,
+                                peer_id = %peer_id,
+                                "CAR handler: dropping oversized candidate without indexed metadata"
+                            );
+                            continue;
+                        }
+                    },
+                }
+            };
+            let allowed = match meta {
+                None => true,
+                Some(meta) => {
+                    if self
+                        .access
+                        .replicators
+                        .is_filtered_replicator(&meta.collection_id, &peer_str)
+                    {
+                        continue;
+                    }
+                    if self
+                        .access
+                        .replicators
+                        .is_replicator(&meta.collection_id, &peer_str)
+                    {
+                        true
+                    } else {
+                        let Some(serve) = serve else {
+                            continue;
+                        };
+                        if identity.is_none() {
+                            identity = Some(match serve.resolver.resolve(peer_id).await {
+                                Some(did) => acp::Identity::Authenticated(did),
+                                None => acp::Identity::Anonymous,
+                            });
+                        }
+                        serve
+                            .gate
+                            .may_read(identity.as_ref().expect("identity set"), &meta)
+                            .await
                     }
                 }
             };
@@ -316,7 +339,9 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 if let Some(size) = oversized {
                     blocks.oversized_blocks.push((cid, size));
                 } else {
-                    blocks.blocks.push((cid, data));
+                    blocks
+                        .blocks
+                        .push((cid, data.expect("in-memory payload for a served block")));
                 }
             }
         }
@@ -335,10 +360,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// reconstructs the rooted CAR capability without CID-valued sender
     /// delivery state or an eventually observed gossip-neighbor event.
     async fn has_restart_safe_root_authority(&self, peer_id: &PeerId, root_cid: &Cid) -> bool {
-        let Ok(Some(root_data)) = self.manager.blockstore().get(root_cid).await else {
-            return false;
-        };
-        let BlockClass::Data(meta) = self.classifier.classify(root_cid, &root_data).await else {
+        // The requested root may itself be oversized, and this check runs for
+        // unauthenticated peers, so its attribution reads durable metadata
+        // rather than the payload (#1729).
+        let Some(BlockClass::Data(meta)) = self.classifier.classify_indexed(root_cid).await else {
             return false;
         };
         // Document composite roots resolve to one or more document IDs, while

@@ -27,6 +27,15 @@ pub enum BlockClass {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait BlockClassifier: defra_core::thread_bounds::MaybeSendSync {
     async fn classify(&self, cid: &Cid, data: &[u8]) -> BlockClass;
+
+    /// Classify from durable metadata alone, for authorization decisions on
+    /// payloads the caller must not read — an oversized block that can only
+    /// be re-advertised as a notice must not cost its full disk read and hash
+    /// merely to be denied. `None` means the metadata is unavailable; callers
+    /// fail closed on it.
+    async fn classify_indexed(&self, _cid: &Cid) -> Option<BlockClass> {
+        None
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

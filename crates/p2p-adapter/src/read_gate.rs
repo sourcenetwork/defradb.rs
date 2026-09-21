@@ -37,6 +37,53 @@ impl<S: Store + 'static> DbBlockClassifier<S> {
         let _ = txn.discard();
         doc_ids
     }
+
+    /// Resolve the block's metadata from the durable doc index alone: the
+    /// block→doc map, then the doc's registered collection. This is the same
+    /// index the payload path consults for doc IDs, so a merged block yields
+    /// the identical meta without reading or hashing its payload. `None`
+    /// leaves the block unattributed, which callers fail closed on.
+    async fn indexed_meta(&self, cid: &Cid) -> Option<BlockAcpMeta> {
+        let txn = self.db.new_txn(true).await.ok()?;
+        let systemstore = match txn.systemstore() {
+            Ok(systemstore) => systemstore,
+            Err(_) => {
+                let _ = txn.discard();
+                return None;
+            }
+        };
+        let doc_ids = db::docid::map::get_doc_ids_for_block(&systemstore, &cid.to_string())
+            .await
+            .ok()?;
+        let doc_ref = match doc_ids.first() {
+            Some(doc_id) => db::docid::map::get_doc_ref(&systemstore, doc_id)
+                .await
+                .ok()?,
+            None => None,
+        };
+        let _ = txn.discard();
+        let doc_ref = doc_ref?;
+        for name in self.db.list_collections().ok()? {
+            let Ok(Some(collection)) = self.db.get_collection(&name) else {
+                continue;
+            };
+            if collection.resolved_root_id() != doc_ref.collection_short_id {
+                continue;
+            }
+            let collection = collection.schema();
+            let policy = collection
+                .policy
+                .as_ref()
+                .map(|p| (p.id.clone(), p.resource_name.clone()));
+            return Some(BlockAcpMeta {
+                collection_id: collection.collection_id.clone(),
+                is_branchable: collection.is_branchable,
+                policy,
+                doc_ids,
+            });
+        }
+        None
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -88,6 +135,10 @@ impl<S: Store + 'static> BlockClassifier for DbBlockClassifier<S> {
             Err(_) if is_lens_block(data) => BlockClass::Allow,
             Err(_) => BlockClass::Deny,
         }
+    }
+
+    async fn classify_indexed(&self, cid: &Cid) -> Option<BlockClass> {
+        self.indexed_meta(cid).await.map(BlockClass::Data)
     }
 }
 
@@ -238,6 +289,51 @@ mod tests {
         let classifier = DbBlockClassifier::new(db);
 
         assert_eq!(classifier.classify(&cid, &bytes).await, BlockClass::Deny);
+    }
+
+    #[tokio::test]
+    async fn indexed_classification_resolves_metadata_without_the_payload() {
+        let db = Arc::new(db::DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collection(test_collection()).await.unwrap();
+        let (cid, _bytes) = data_block("doc-from-delta");
+        let collection_short_id = db
+            .get_collection("User")
+            .unwrap()
+            .expect("created collection")
+            .resolved_root_id();
+
+        let txn = db.new_txn(false).await.unwrap();
+        {
+            let systemstore = txn.systemstore().unwrap();
+            db::docid::map::set_doc_id_mapping(&systemstore, collection_short_id, 1, "bae-doc-1")
+                .await
+                .unwrap();
+            db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), "bae-doc-1")
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
+
+        let classifier = DbBlockClassifier::new(db);
+
+        match classifier.classify_indexed(&cid).await {
+            Some(BlockClass::Data(meta)) => {
+                assert_eq!(meta.collection_id, "collection-1");
+                assert!(meta.is_branchable);
+                assert_eq!(
+                    meta.policy,
+                    Some(("policy1".to_string(), "users".to_string()))
+                );
+                assert_eq!(meta.doc_ids, vec!["bae-doc-1"]);
+            }
+            other => panic!("expected indexed data metadata, got {other:?}"),
+        }
+
+        let absent = defra_core::block::generate_cid_from_bytes(b"absent").unwrap();
+        assert!(
+            classifier.classify_indexed(&absent).await.is_none(),
+            "an unmapped block stays unattributable"
+        );
     }
 
     #[tokio::test]
