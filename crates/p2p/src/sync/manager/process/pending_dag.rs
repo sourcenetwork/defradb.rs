@@ -405,9 +405,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         missing: RapidHashSet<Cid>,
     ) -> bool {
         self.pending_dags.update(|pending| {
-            if !pending
+            if pending
                 .get(root_cid)
-                .is_some_and(|dag| dag.inserted_at == inserted_at)
+                .is_none_or(|dag| dag.inserted_at != inserted_at)
             {
                 return false;
             }

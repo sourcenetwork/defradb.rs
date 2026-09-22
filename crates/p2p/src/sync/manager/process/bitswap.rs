@@ -12,7 +12,6 @@ use rapidhash::HashMapExt;
 use blockstore::{verify_block_cid, Blockstore};
 
 use crate::error::{Error, Result};
-use crate::sync::manager::events::SyncEvent;
 use crate::QueryId;
 
 use super::SyncManager;
@@ -339,104 +338,6 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// Remove and return the root CID associated with a Bitswap query.
     pub fn take_query_root(&self, query_id: QueryId) -> Option<Cid> {
         self.query_to_root.remove(&query_id)
-    }
-
-    /// Handle Bitswap query completion.
-    ///
-    /// Called when a Bitswap sync completes (success or failure).
-    pub async fn handle_bitswap_complete(
-        &self,
-        query_id: QueryId,
-        success: bool,
-        error: Option<String>,
-    ) -> Result<()> {
-        // Find the root CID for this query
-        let root_cid = match self.query_to_root.remove(&query_id) {
-            Some(cid) => cid,
-            None => {
-                tracing::debug!(
-                    query_id = ?query_id,
-                    "Bitswap complete for unknown query, ignoring"
-                );
-                return Ok(());
-            }
-        };
-
-        if success {
-            // All blocks fetched - emit BlockReceived for the root
-            let dag = self
-                .pending_dags
-                .update(|pending| pending.remove(&root_cid));
-            match dag {
-                Some(dag) => {
-                    tracing::info!(
-                        cid = %root_cid,
-                        doc_id = %dag.doc_id,
-                        "Bitswap sync complete, emitting BlockReceived"
-                    );
-
-                    if self
-                        .event_tx
-                        .send(SyncEvent::BlockReceived {
-                            cid: root_cid,
-                            doc_id: dag.doc_id,
-                            collection_id: dag.collection_id,
-                            creator: dag.creator,
-                            sender_peer: dag.source_peer,
-                            is_explicit_replicator: dag.is_explicit_replicator,
-                            explicit_replay_authorization: dag.explicit_replay_authorization,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        tracing::error!(
-                            cid = %root_cid,
-                            "Failed to send BlockReceived after Bitswap complete - receiver dropped"
-                        );
-                        return Err(Error::ChannelSend);
-                    }
-                }
-                None => {
-                    // This can happen if the DAG was processed by another path,
-                    // cleaned up, or if there's a race condition
-                    tracing::warn!(
-                        cid = %root_cid,
-                        "Bitswap sync completed but no pending DAG found - \
-                         DAG may have been processed by another path or cleaned up"
-                    );
-                }
-            }
-        } else {
-            // Sync failed - emit error, clean up
-            self.pending_dags.update(|pending| {
-                pending.remove(&root_cid);
-            });
-
-            let error_msg = error.unwrap_or_else(|| "Bitswap sync failed".to_string());
-            tracing::warn!(
-                cid = %root_cid,
-                error = %error_msg,
-                "Bitswap sync failed"
-            );
-
-            if self
-                .event_tx
-                .send(SyncEvent::SyncError {
-                    cid: root_cid,
-                    error: error_msg,
-                })
-                .await
-                .is_err()
-            {
-                tracing::warn!(
-                    cid = %root_cid,
-                    "Failed to send SyncError event - receiver dropped"
-                );
-                return Err(Error::ChannelSend);
-            }
-        }
-
-        Ok(())
     }
 
     /// Store a block received via Bitswap and check if pending DAGs can now proceed.
