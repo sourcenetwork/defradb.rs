@@ -70,6 +70,13 @@ impl VectorNodeStore for MemoryNodeStore {
         Ok(())
     }
 
+    async fn clear(&mut self) -> Result<()> {
+        self.nodes.clear();
+        self.meta = None;
+        self.aux.clear();
+        Ok(())
+    }
+
     async fn get_aux(&self, kind: u8, key: &[u8]) -> Result<Option<Bytes>> {
         Ok(self.aux.get(&(kind, key.to_vec())).cloned())
     }

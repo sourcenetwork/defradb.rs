@@ -97,8 +97,13 @@ fn values_match_the_go_codec() {
         hex(&encode_meta(&Meta {
             entry_point: NodeId(42),
             top_layer: 3,
+            live: 7,
+            waste: 5,
+            rebuilds: 2,
         })),
-        "012a0000000000000003000000"
+        // Meta carries the rebuild counters since layout v2; the node
+        // encoding above is the Go-shared one and is unchanged.
+        "022a00000000000000030000000700000000000000050000000000000002000000"
     );
 }
 
@@ -129,6 +134,9 @@ fn values_round_trip() {
     let meta = Meta {
         entry_point: NodeId(u64::MAX),
         top_layer: 0,
+        live: 3,
+        waste: 0,
+        rebuilds: 1,
     };
     assert_eq!(decode_meta(&encode_meta(&meta)).unwrap(), meta);
 }
@@ -170,6 +178,9 @@ fn corrupt_values_are_rejected() {
     let meta = encode_meta(&Meta {
         entry_point: NodeId(1),
         top_layer: 1,
+        live: 0,
+        waste: 0,
+        rebuilds: 0,
     });
     assert!(decode_meta(&meta[..meta.len() - 1]).is_err());
     assert!(decode_meta(&[&meta[..], &[0u8]].concat()).is_err());
@@ -273,6 +284,9 @@ async fn a_node_scan_sees_one_epoch_only() {
         kv.put_meta(Meta {
             entry_point: NodeId(1000),
             top_layer: 0,
+            live: 0,
+            waste: 0,
+            rebuilds: 0,
         })
         .await
         .unwrap();
@@ -287,6 +301,9 @@ async fn a_node_scan_sees_one_epoch_only() {
     kv.put_meta(Meta {
         entry_point: NodeId(1),
         top_layer: 0,
+        live: 0,
+        waste: 0,
+        rebuilds: 0,
     })
     .await
     .unwrap();
@@ -372,6 +389,9 @@ async fn clearing_an_epoch_leaves_its_neighbours_alone() {
         kv.put_meta(Meta {
             entry_point: NodeId(1),
             top_layer: 0,
+            live: 0,
+            waste: 0,
+            rebuilds: 0,
         })
         .await
         .unwrap();
@@ -463,6 +483,9 @@ async fn clear_removes_the_aux_space_too() {
         kv.put_meta(Meta {
             entry_point: NodeId(1),
             top_layer: 0,
+            live: 0,
+            waste: 0,
+            rebuilds: 0,
         })
         .await
         .unwrap();
@@ -502,4 +525,29 @@ async fn clear_removes_the_aux_space_too() {
             kind as char
         );
     }
+}
+
+/// A meta written before the rebuild counters existed still decodes: its
+/// counters read as zeroed, which the rebuild trigger reads as "never
+/// rebuilt" and answers with one healing rebuild.
+#[test]
+fn a_v1_meta_decodes_with_zeroed_counters() {
+    // version 0x01 | entry_point 42 | top_layer 3
+    let v1 = hex_decode("012a0000000000000003000000");
+    let meta = decode_meta(&v1).unwrap();
+    assert_eq!(meta.entry_point, NodeId(42));
+    assert_eq!(meta.top_layer, 3);
+    assert_eq!(meta.live, 0);
+    assert_eq!(meta.waste, 0);
+    assert_eq!(meta.rebuilds, 0);
+
+    // And the current encoding round-trips through the same decoder.
+    assert_eq!(decode_meta(&encode_meta(&meta)).unwrap(), meta);
+}
+
+fn hex_decode(s: &str) -> Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }

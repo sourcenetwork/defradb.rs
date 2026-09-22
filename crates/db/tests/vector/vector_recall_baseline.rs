@@ -140,6 +140,10 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.inner.iterate_nodes(visit).await
     }
 
+    async fn clear(&mut self) -> Result<()> {
+        self.inner.clear().await
+    }
+
     async fn get_aux(&self, kind: u8, key: &[u8]) -> Result<Option<bytes::Bytes>> {
         self.inner.get_aux(kind, key).await
     }

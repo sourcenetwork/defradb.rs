@@ -39,6 +39,7 @@ pub(super) struct ServerSetup {
     pub p2p_handle: Option<p2p::P2PHostHandle>,
     pub p2p_tasks: Option<P2PTasks>,
     pub downsample_task: Option<JoinHandle<()>>,
+    pub vector_rebuild_task: Option<JoinHandle<()>>,
     pub txn_cleanup_task: Option<JoinHandle<()>>,
     pub http_server: defra_http::Server,
     #[cfg(feature = "postgres")]
@@ -53,6 +54,7 @@ pub struct Node {
     pub(super) p2p_handle: Option<p2p::P2PHostHandle>,
     pub(super) p2p_tasks: Option<P2PTasks>,
     pub(super) downsample_task: Option<JoinHandle<()>>,
+    pub(super) vector_rebuild_task: Option<JoinHandle<()>>,
     pub(super) txn_cleanup_task: Option<JoinHandle<()>>,
     pub(super) http_server: Option<defra_http::Server>,
     #[cfg(feature = "postgres")]
@@ -306,6 +308,7 @@ impl Node {
             p2p_handle: servers.p2p_handle,
             p2p_tasks: servers.p2p_tasks,
             downsample_task: servers.downsample_task,
+            vector_rebuild_task: servers.vector_rebuild_task,
             txn_cleanup_task: servers.txn_cleanup_task,
             http_server: Some(servers.http_server),
             #[cfg(feature = "postgres")]

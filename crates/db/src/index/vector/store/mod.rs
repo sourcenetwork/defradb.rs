@@ -59,6 +59,17 @@ pub struct Meta {
     pub entry_point: NodeId,
     /// Highest layer any node currently occupies.
     pub top_layer: usize,
+    /// Live nodes counted since the store began. Approximate bookkeeping for
+    /// the rebuild trigger, not a queryable census: a meta decoded from an
+    /// older layout reads zero here until the next rebuild recounts.
+    pub live: u64,
+    /// Tombstones since the last rebuild. The unit the rebuild trigger is
+    /// priced in: one tombstone, or one stale link a rebuild would drop.
+    pub waste: u64,
+    /// Rebuilds this build of the graph has been through. Zero on a graph
+    /// last written before self-link-free inserts, which marks it as owed a
+    /// healing rebuild; a graph created by the current code starts at one.
+    pub rebuilds: u32,
 }
 
 /// Where a graph lives.
@@ -87,6 +98,11 @@ pub trait VectorNodeStore: MaybeSendSync {
     async fn iterate_nodes<F>(&self, visit: F) -> Result<()>
     where
         F: FnMut(Node) -> Result<()> + MaybeSend;
+
+    /// Removes every key of this build: nodes, meta, and every aux kind
+    /// beside them. What a rebuild starts from, and what an index drop
+    /// leaves behind.
+    async fn clear(&mut self) -> Result<()>;
 
     /// A namespaced blob space private to this index and epoch, for whatever a
     /// kind needs beyond nodes: coarse centroids, codebooks, inverted lists.

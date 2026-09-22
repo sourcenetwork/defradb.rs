@@ -9,4 +9,5 @@ pub mod index;
 pub mod kv_store;
 pub mod params;
 pub mod quantize;
+pub mod rebuild_task;
 pub mod store;

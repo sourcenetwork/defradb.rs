@@ -27,6 +27,7 @@
 
 mod insert;
 mod level;
+mod rebuild;
 mod search;
 
 pub use level::LevelSampler;
@@ -114,6 +115,15 @@ impl<S: VectorNodeStore> Hnsw<S> {
         }
         node.deleted = true;
         self.store.put_node(node).await?;
+        // The tombstone is waste the next rebuild reclaims, so the trigger
+        // sees it the moment it lands. Counters stay approximate otherwise:
+        // a meta from an older layout reads zeroed and is trued up by the
+        // rebuild itself.
+        if let Some(mut meta) = self.store.get_meta().await? {
+            meta.live = meta.live.saturating_sub(1);
+            meta.waste += 1;
+            self.store.put_meta(meta).await?;
+        }
         Ok(true)
     }
 
@@ -158,6 +168,14 @@ impl<S: VectorNodeStore> VectorIndexEngine for Hnsw<S> {
 
     async fn delete(&mut self, id: NodeId) -> Result<bool> {
         Hnsw::delete(self, id).await
+    }
+
+    async fn should_build(&self) -> Result<bool> {
+        self.should_rebuild().await
+    }
+
+    async fn build(&mut self) -> Result<()> {
+        self.rebuild().await
     }
 
     /// `effort` is `ef_search`, defaulting to the configured value.
