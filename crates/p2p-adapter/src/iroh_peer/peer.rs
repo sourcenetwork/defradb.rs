@@ -223,7 +223,8 @@ impl<S: Store + 'static> IrohPeer<S> {
         coordinator.spawn_background_task("pending_dag_retry_clock", async move {
             retry_clock_coordinator
                 .run_pending_dag_retry_clock(std::time::Duration::from_secs(2))
-                .await;
+                .await
+                .expect("retry interval is nonzero");
         });
 
         let event_handler_task = spawn_event_handler(
