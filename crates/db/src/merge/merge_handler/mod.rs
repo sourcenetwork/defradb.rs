@@ -224,8 +224,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
     }
 
-    /// Report composites merged by re-drive to `sink`, which marks them merged
-    /// and fans them out as the replication layer does a first-attempt merge.
     /// Lower the deferred index's capacity, so a test can reach the
     /// at-capacity path without indexing
     /// [`crate::merge::governance::MAX_DEFERRED_COMPOSITES`] composites first.
@@ -234,6 +232,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         self.deferred.set_capacity(capacity);
     }
 
+    /// Report composites merged by re-drive to `sink`, which marks them merged
+    /// and fans them out as the replication layer does a first-attempt merge.
     pub fn set_redriven_merge_sink(
         &self,
         sink: Arc<dyn crate::merge::governance::RedrivenMergeSink>,
