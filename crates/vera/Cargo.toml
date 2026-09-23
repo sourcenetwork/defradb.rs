@@ -75,7 +75,7 @@ alloy-rlp.workspace = true
 bs58.workspace = true
 
 # ACP light client (proof-validated cache)
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "9fe9622a53bb5cc08574788ca370b5fb201868aa" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "74478d66e0b994b0edad5bb36b1daf86948e7804" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true
