@@ -67,15 +67,18 @@ VARIABLES
   pushed,       \* [Replicas -> SUBSET Writes]   composites received over replication
   merged,       \* [Replicas -> SUBSET Writes]   the merged set (durable)
   quarantined,  \* [Replicas -> SUBSET Writes]   quarantine records (durable)
-  pending,      \* [Replicas -> [Writes -> SUBSET Entries]]  the defer index (in memory)
+  pending,      \* [Replicas -> [Writes -> SUBSET Entries]]  the defer index, CID keys (in memory)
+  pendingLogs,  \* [Replicas -> [Writes -> SUBSET Logs]]     the defer index, field keys (same index)
   sweepQ,       \* [Replicas -> SUBSET Writes]   released waiters awaiting re-merge
   crashes
 
-dvars == << store, pushed, merged, quarantined, pending, sweepQ, crashes >>
+dvars == << store, pushed, merged, quarantined, pending, pendingLogs, sweepQ, crashes >>
 
-\* An index entry exists iff the composite is filed under at least one key.
-\* A composite that named nothing cannot be filed: there is no key for it.
-Registered(r) == { w \in Writes : pending[r][w] # {} }
+\* An index entry exists iff the composite is filed under at least one key,
+\* CID or field. A composite that named nothing cannot be filed: there is no
+\* key for it. Both kinds live in DeferredMerges, so they share its capacity
+\* and die with the process together.
+Registered(r) == { w \in Writes : pending[r][w] # {} \/ pendingLogs[r][w] # {} }
 Unmerged(r) == { w \in pushed[r] : w \notin merged[r] /\ w \notin quarantined[r] }
 
 \* ---- The plugin (MergeValidator::validate) ----
@@ -96,7 +99,7 @@ Awaited(r, w) ==
 \* indexed under the keys it named, if it named any and the index has room.
 Apply(r, w) ==
   LET v    == Verdict(r, w)
-      room == Cardinality(Registered(r)) < PendingCap \/ pending[r][w] # {}
+      room == Cardinality(Registered(r)) < PendingCap \/ w \in Registered(r)
   IN
   /\ merged'      = [merged      EXCEPT ![r] = IF v = "Accept" THEN @ \cup {w} ELSE @]
   /\ quarantined' = [quarantined EXCEPT ![r] = IF v = "Reject" THEN @ \cup {w} ELSE @]
@@ -104,23 +107,27 @@ Apply(r, w) ==
                        IF v # "Defer" THEN {}
                        ELSE IF room   THEN Awaited(r, w)
                                       ELSE {}]
+  /\ pendingLogs' = [pendingLogs EXCEPT ![r][w] =
+                       IF v # "Defer" THEN {}
+                       ELSE IF room /\ AwaitKeys = "CidAndField" THEN AwaitLogs[w]
+                                      ELSE {}]
 
 \* ---- Events ----
 
 \* A block arrives and releases its waiters (DeferredMerges::release). A
-\* composite CID releases what named it; with field keys an entry of an
-\* awaited field key releases too.
+\* composite CID releases what is filed under it; an entry of a field key
+\* releases what is filed under that key. Nothing not filed is released.
 Released(r, e) ==
   { w \in Unmerged(r) :
       \/ e \in pending[r][w]
-      \/ (AwaitKeys = "CidAndField" /\ Log[e] \in AwaitLogs[w]) }
+      \/ Log[e] \in pendingLogs[r][w] }
 
 ReceiveBlock(r, e) ==
   /\ e \in Deliverable
   /\ e \notin store[r]
   /\ store' = [store EXCEPT ![r] = @ \cup {e}]
   /\ sweepQ' = [sweepQ EXCEPT ![r] = @ \cup Released(r, e)]
-  /\ UNCHANGED << pushed, merged, quarantined, pending, crashes >>
+  /\ UNCHANGED << pushed, merged, quarantined, pending, pendingLogs, crashes >>
 
 PushLog(r, w) ==
   /\ w \notin pushed[r]
@@ -134,7 +141,7 @@ DrainReleased(r, w) ==
   /\ sweepQ' = [sweepQ EXCEPT ![r] = @ \ {w}]
   /\ IF w \in Unmerged(r)
        THEN Apply(r, w)
-       ELSE UNCHANGED << merged, quarantined, pending >>
+       ELSE UNCHANGED << merged, quarantined, pending, pendingLogs >>
   /\ UNCHANGED << store, pushed, crashes >>
 
 \* The sweep. SweepScope is the question: what does it iterate?
@@ -160,6 +167,8 @@ Crash(r) ==
   /\ crashes' = crashes + 1
   /\ pending' = [pending EXCEPT ![r] =
                    IF IndexDurable THEN @ ELSE [w \in Writes |-> {}]]
+  /\ pendingLogs' = [pendingLogs EXCEPT ![r] =
+                       IF IndexDurable THEN @ ELSE [w \in Writes |-> {}]]
   /\ sweepQ' = [sweepQ EXCEPT ![r] = IF IndexDurable THEN Unmerged(r) ELSE {}]
   /\ UNCHANGED << store, pushed, merged, quarantined >>
 
@@ -177,6 +186,7 @@ DInit ==
   /\ merged = [r \in Replicas |-> {}]
   /\ quarantined = [r \in Replicas |-> {}]
   /\ pending = [r \in Replicas |-> [w \in Writes |-> {}]]
+  /\ pendingLogs = [r \in Replicas |-> [w \in Writes |-> {}]]
   /\ sweepQ = [r \in Replicas |-> {}]
   /\ crashes = 0
 
@@ -212,7 +222,8 @@ hWasJust == [r \in Replicas |-> [w \in Writes |-> TRUE]]
 
 H == INSTANCE GovernanceContract WITH
        held <- store, arrived <- pushed, final <- hFinal,
-       awaiting <- pending, queue <- sweepQ, restarts <- crashes,
+       awaiting <- pending, awaitingLogs <- pendingLogs,
+       queue <- sweepQ, restarts <- crashes,
        forgotten <- hForgotten, forgets <- 0, wasJust <- hWasJust,
        GC <- FALSE,
        GCFloor <- TRUE,

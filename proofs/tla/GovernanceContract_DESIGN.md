@@ -36,7 +36,10 @@ The validator is **not** modelled. It collapses to three constants:
 name: an unheld input is nameable iff the composite pins it (`Self[w]`) or a
 held input references it (`Refs[f]`). A composite that pins nothing and holds
 nothing referencing what it needs names nothing, which is the case the sweep
-exists for.
+exists for. Under `FieldAwait` a Defer can also name field keys
+(`AwaitLogs[w]`); those are filed in the same index (`awaitingLogs`), count
+toward its capacity and are lost with it on a restart, exactly as CID keys are.
+A field key is a slot, not a standing subscription.
 
 **The abstraction is generous in one direction and that is deliberate.** Every
 settleable composite is acceptable once its reads are held, so the model never
@@ -119,7 +122,9 @@ With `WaitKey::ImmutableField` the composite awaits the field keys of the logs
 it depends on, so the arrival of *any* entry of either re-drives it, including
 the one nothing had named. Field keys are not a convenience over naming CIDs:
 they remove the arrival order in which the sweep is the only mechanism that
-works.
+works. They remove only that one. A field-key waiter is a slot in the same
+bounded, in-memory index as a CID waiter, so the two routes of result 3, a full
+index and a restart, still fall back on the sweep with field keys on.
 
 ## Result 3 — restart, and the bounded index, both fall back on the sweep
 

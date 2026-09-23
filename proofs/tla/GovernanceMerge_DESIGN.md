@@ -30,7 +30,13 @@ corrupts state.
   Defer is a *retryable* (non-terminal) skip carrying its await keys. `Apply`.
 - `awaited.rs:9-13, :43-44` — `WaitKey::{Composite, ImmutableField}`. The
   `AwaitKeys` knob: `"Cid"` is the index before field keys existed,
-  `"CidAndField"` is today.
+  `"CidAndField"` is today. **Both kinds of key are filed in the one
+  `DeferredMerges`**, so a field-key waiter is `pendingLogs[r][w]`, counts
+  toward `Registered(r)` and the capacity, and dies with the process like a
+  CID waiter. An earlier draft released field-key waiters straight from the
+  constant `AwaitLogs`, which let them escape both bounds and made
+  `Green_Augmented` green for a reason the code does not have; a reviewer
+  caught it, and `Released` now releases only what is filed.
 - `deferred.rs:12-21` — `MAX_DEFERRED_COMPOSITES` (`PendingCap`),
   `MAX_AWAITED_PER_COMPOSITE`, `REDRIVE_BUDGET`. `:101-108` `defer`: a Defer
   whose `awaiting` is empty, or one arriving at capacity, **is not indexed**:
@@ -99,17 +105,17 @@ not an input. It is result 1: with an unmerged-scoped sweep it costs nothing.
 
 | Config | Await keys | Sweep scope | Durable index | States | Verdict |
 |---|---|---|---|---|---|
-| `MC_GovernanceMerge_Today` | CID + field | unmerged | no | 1 792 | GREEN |
+| `MC_GovernanceMerge_Today` | CID + field | unmerged | no | 2 016 | GREEN |
 | `MC_GovernanceMerge_Green_CidOnly` | CID | unmerged | no | 1 152 | GREEN |
-| `MC_GovernanceMerge_Green_Augmented` | CID + field | indexed | yes | 1 560 | GREEN |
-| `MC_GovernanceMerge_Red_NoSweep` | CID + field | indexed | no | 1 560 | RED |
+| `MC_GovernanceMerge_Green_Augmented` | CID + field | indexed | yes | 1 680 | GREEN |
+| `MC_GovernanceMerge_Red_NoSweep` | CID + field | indexed | no | 2 016 | RED |
 | `MC_GovernanceMerge_Red_SweepIndexed` | CID | indexed | yes | 1 632 | RED |
-| `MC_GovernanceMerge_Red_Mutant` | teeth check: one silent merge | | | 43 | RED |
+| `MC_GovernanceMerge_Red_Mutant` | teeth check: one silent merge | | | 44 | RED |
 
 ## Result 1 — the merge path as coded refines the contract
 
 `MC_GovernanceMerge_Today`: field keys, a sweep over unmerged composites, an
-in-memory index. **GREEN**, safety and liveness, 1 792 states.
+in-memory index. **GREEN**, safety and liveness, 2 016 states.
 
 The orphan composite that strands in `MC_GovernanceContract_Red_NoRetry` does
 not strand here, and the model says why: the sweep iterates unmerged
@@ -124,9 +130,16 @@ keys, re-drive from the index only, in-memory index. **RED** on
 tree before `sweep.rs` existed, when `deferred.rs`'s comments promised "the
 replication retry clock" as the fallback: that clock sweeps pending-DAG
 *registrations* (roots with missing links), and a governed composite whose links
-are complete but whose verdict defers has none. Three routes reach the RED: a
-Defer naming nothing, the index at capacity, and a restart. The three probe
-tests in `crates/db/tests/merge/governance/sweep.rs` are those routes.
+are complete but whose verdict defers has none.
+
+The route this instance exhibits is the **restart**: the orphan is filed under
+its field keys, the crash empties the index, and if every input had already
+arrived nothing is left to release it. The other two routes to the same place
+need a different instance: the index at capacity is
+`MC_GovernanceContract_Red_IndexFull`, and a Defer naming nothing is
+`Red_SweepIndexed` below, where there are no field keys to file it under. The
+three probe tests in `crates/db/tests/merge/governance/sweep.rs` are those three
+routes as code.
 
 ## Result 3 — the sweep's scope is the load-bearing choice
 

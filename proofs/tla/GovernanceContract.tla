@@ -91,7 +91,8 @@ VARIABLES
   held,       \* [Replicas -> SUBSET Entries]  the blockstore
   arrived,    \* [Replicas -> SUBSET Writes]   composites delivered here
   final,      \* [Replicas -> [Writes -> Verdicts]]  merged set + quarantine
-  awaiting,   \* [Replicas -> [Writes -> SUBSET Entries]]  the defer index
+  awaiting,   \* [Replicas -> [Writes -> SUBSET Entries]]  the defer index, CID keys
+  awaitingLogs, \* [Replicas -> [Writes -> SUBSET Logs]]   the defer index, field keys
   queue,      \* [Replicas -> SUBSET Writes]   waiters a drained budget left
   restarts,   \* how many restarts have happened, bounded by MaxRestarts
   forgotten,  \* [Replicas -> SUBSET Entries]  dropped by disposition, not re-delivered
@@ -99,15 +100,17 @@ VARIABLES
   wasJust     \* ghost: [Replicas -> [Writes -> BOOLEAN]] was an Accept
               \* justified by what the replica held when it was recorded
 
-vars == << held, arrived, final, awaiting, queue, restarts, forgotten, forgets, wasJust >>
+vars == << held, arrived, final, awaiting, awaitingLogs, queue, restarts, forgotten, forgets, wasJust >>
 
 \* A composite is deferred at r when it has arrived and holds no final
 \* verdict: MergeOutcome::Skipped { terminal: false }, unmerged in the
 \* blockstore. The deferred set is derived, not stored.
 Deferred(r) == { w \in arrived[r] : final[r][w] = "None" }
 
-\* The defer index (DeferredMerges) is in memory and bounded.
-Indexed(r) == { w \in Writes : awaiting[r][w] # {} }
+\* The defer index (DeferredMerges) is in memory and bounded. A composite is
+\* indexed under CID keys, field keys, or both; the two kinds share the one
+\* index, its capacity and its lifetime.
+Indexed(r) == { w \in Writes : awaiting[r][w] # {} \/ awaitingLogs[r][w] # {} }
 
 \* ---- The verdict, abstracted (MergeValidator::validate) ----
 
@@ -123,32 +126,40 @@ Nameable(r, w) ==
       \/ e \in Self[w]
       \/ \E f \in held[r] : e \in Refs[f] }
 
-\* Judging w at r. A Defer is indexed by what it can name, subject to the
-\* index capacity: at capacity a new defer is NOT indexed (DeferredMerges::defer)
-\* and only the sweep ever reaches it. A composite already holding a slot may
+\* Judging w at r. A Defer is indexed by what it can name, CID keys and,
+\* under FieldAwait, field keys, subject to the index capacity: at capacity
+\* a new defer is NOT indexed under either kind (DeferredMerges::defer) and
+\* only the sweep ever reaches it. A composite already holding a slot may
 \* always re-index into it.
 Judge(r, w) ==
   LET v    == Judgement(r, w)
-      room == Cardinality(Indexed(r)) < MaxIndexed \/ awaiting[r][w] # {}
+      room == Cardinality(Indexed(r)) < MaxIndexed \/ w \in Indexed(r)
   IN
   /\ final' = [final EXCEPT ![r][w] = v]
   /\ awaiting' = [awaiting EXCEPT ![r][w] =
                     IF v # "None"  THEN {}
                     ELSE IF room   THEN Nameable(r, w)
                                    ELSE {}]
+  /\ awaitingLogs' = [awaitingLogs EXCEPT ![r][w] =
+                        IF v # "None"  THEN {}
+                        ELSE IF room /\ FieldAwait THEN AwaitLogs[w]
+                                       ELSE {}]
   /\ wasJust' = [wasJust EXCEPT ![r][w] =
                    IF v = "Accept" THEN Needs[w] \subseteq held[r] ELSE @]
 
 \* ---- Events the host raises ----
 
 \* Which deferred composites the arrival of e re-drives. A composite CID
-\* fires only for a composite that named it (WaitKey::Composite). Under
-\* FieldAwait an entry of an awaited field key fires too (WaitKey::ImmutableField),
-\* whether or not the composite could ever have named a CID.
+\* fires only for a composite indexed under it (WaitKey::Composite). Under
+\* FieldAwait an entry of a field key fires for a composite indexed under
+\* that key (WaitKey::ImmutableField), whether or not the composite could
+\* ever have named a CID. Either way the composite has to BE indexed: a
+\* field key is not a standing subscription, it is a slot in the same
+\* bounded, in-memory index.
 Waiters(r, e) ==
   { w \in Deferred(r) :
       \/ (Redrive /\ e \in awaiting[r][w])
-      \/ (FieldAwait /\ Log[e] \in AwaitLogs[w]) }
+      \/ (FieldAwait /\ Log[e] \in awaitingLogs[r][w]) }
 
 \* An input arrives, in any order, and its waiters are queued for re-drive
 \* (DeferredMerges::release). Only Deliverable inputs ever arrive; the rest
@@ -162,7 +173,7 @@ DeliverEntry(r, e) ==
   /\ e \notin held[r]
   /\ held' = [held EXCEPT ![r] = @ \cup {e}]
   /\ queue' = [queue EXCEPT ![r] = @ \cup Waiters(r, e)]
-  /\ UNCHANGED << arrived, final, awaiting, restarts, forgotten, forgets, wasJust >>
+  /\ UNCHANGED << arrived, final, awaiting, awaitingLogs, restarts, forgotten, forgets, wasJust >>
 
 \* The merge attempt: the host calls the validator once on arrival and maps
 \* the verdict (judge_governed).
@@ -178,7 +189,7 @@ DrainOne(r, w) ==
   /\ queue' = [queue EXCEPT ![r] = @ \ {w}]
   /\ IF final[r][w] = "None"
        THEN Judge(r, w)
-       ELSE UNCHANGED << final, awaiting, wasJust >>    \* already final
+       ELSE UNCHANGED << final, awaiting, awaitingLogs, wasJust >>    \* already final
   /\ UNCHANGED << held, arrived, restarts, forgotten, forgets >>
 
 \* The sweep (sweep_unmerged_governed): re-judge a deferred composite with no
@@ -213,6 +224,8 @@ Restart(r) ==
   /\ restarts' = restarts + 1
   /\ awaiting' = [awaiting EXCEPT ![r] =
                     IF Recovery THEN @ ELSE [w \in Writes |-> {}]]
+  /\ awaitingLogs' = [awaitingLogs EXCEPT ![r] =
+                        IF Recovery THEN @ ELSE [w \in Writes |-> {}]]
   /\ queue' = [queue EXCEPT ![r] = IF Recovery THEN Deferred(r) ELSE {}]
   /\ UNCHANGED << held, arrived, final, forgotten, forgets, wasJust >>
 
@@ -238,7 +251,7 @@ Forget(r, e) ==
   /\ held' = [held EXCEPT ![r] = @ \ {e}]
   /\ forgotten' = [forgotten EXCEPT ![r] = @ \cup {e}]
   /\ forgets' = forgets + 1
-  /\ UNCHANGED << arrived, final, awaiting, queue, restarts, wasJust >>
+  /\ UNCHANGED << arrived, final, awaiting, awaitingLogs, queue, restarts, wasJust >>
 
 Next ==
   \/ \E r \in Replicas, e \in Entries : Forget(r, e)
@@ -254,6 +267,7 @@ Init ==
   /\ arrived = [r \in Replicas |-> {}]
   /\ final = [r \in Replicas |-> [w \in Writes |-> "None"]]
   /\ awaiting = [r \in Replicas |-> [w \in Writes |-> {}]]
+  /\ awaitingLogs = [r \in Replicas |-> [w \in Writes |-> {}]]
   /\ queue = [r \in Replicas |-> {}]
   /\ restarts = 0
   /\ forgotten = [r \in Replicas |-> {}]
@@ -284,6 +298,7 @@ TypeOK ==
   /\ arrived \in [Replicas -> SUBSET Writes]
   /\ final \in [Replicas -> [Writes -> Verdicts]]
   /\ awaiting \in [Replicas -> [Writes -> SUBSET Entries]]
+  /\ awaitingLogs \in [Replicas -> [Writes -> SUBSET Logs]]
   /\ queue \in [Replicas -> SUBSET Writes]
   /\ restarts \in 0 .. MaxRestarts
   /\ forgotten \in [Replicas -> SUBSET Entries]
@@ -321,7 +336,8 @@ INV_AcceptHeldNow ==
 INV_AwaitSound ==
   \A r \in Replicas, w \in Writes :
     /\ awaiting[r][w] \subseteq Needs[w]
-    /\ final[r][w] # "None" => awaiting[r][w] = {}
+    /\ awaitingLogs[r][w] \subseteq AwaitLogs[w]
+    /\ final[r][w] # "None" => awaiting[r][w] = {} /\ awaitingLogs[r][w] = {}
 
 \* Two replicas never hold opposite final verdicts for one composite.
 INV_NoSplit ==
@@ -386,6 +402,7 @@ ACT_RejectLocal ==
             /\ arrived'[q] = arrived[q]
             /\ final'[q] = final[q]
             /\ awaiting'[q] = awaiting[q]
+            /\ awaitingLogs'[q] = awaitingLogs[q]
             /\ queue'[q] = queue[q] ]_vars
 
 \* ---- Liveness: the point of this model ----

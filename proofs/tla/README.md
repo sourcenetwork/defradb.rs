@@ -343,7 +343,7 @@ checked to refine the contract on safety *and* liveness.
 ```bash
 # GREEN: the merge path as coded refines the contract (field keys, unmerged-scoped sweep, in-memory index).
 ./tools/tlc -metadir states/gov_t  -config MC_GovernanceMerge_Today.cfg             MC_GovernanceMerge_Orphan.tla
-# RED: the tree before sweep.rs — a Defer that named nothing, an index at capacity, or a restart strands a composite.
+# RED: the tree before sweep.rs — a restart empties the in-memory index and nothing re-judges what it held.
 ./tools/tlc -metadir states/gov_ns -config MC_GovernanceMerge_Red_NoSweep.cfg       MC_GovernanceMerge_Orphan.tla
 # RED: the refactor to refuse — a sweep over the defer index instead of the unmerged set.
 ./tools/tlc -metadir states/gov_si -config MC_GovernanceMerge_Red_SweepIndexed.cfg  MC_GovernanceMerge_Orphan.tla

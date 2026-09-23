@@ -15,7 +15,7 @@ EXTENDS MC_GovernanceMerge_Orphan
 SilentMerge(r, w) ==
   /\ w \in Unmerged(r)
   /\ merged' = [merged EXCEPT ![r] = @ \cup {w}]
-  /\ UNCHANGED << store, pushed, quarantined, pending, sweepQ, crashes >>
+  /\ UNCHANGED << store, pushed, quarantined, pending, pendingLogs, sweepQ, crashes >>
 
 MNext == DNext \/ \E r \in Replicas, w \in Writes : SilentMerge(r, w)
 
