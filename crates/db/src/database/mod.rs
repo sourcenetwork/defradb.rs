@@ -232,7 +232,11 @@ pub struct DB<S: Store> {
     nac_manager: std::sync::OnceLock<std::sync::Arc<dyn NacManagerApi>>,
     /// Collections an app has claimed and the validator governing their
     /// replicated composites. Set once, before replication starts.
-    merge_governance: std::sync::OnceLock<Arc<crate::merge::governance::MergeGovernance>>,
+    ///
+    /// Held by value: every reader borrows it, and on wasm the validator is
+    /// `?Send`, so wrapping it in an `Arc` would be an `Arc` over a value that
+    /// is neither `Send` nor `Sync`.
+    merge_governance: std::sync::OnceLock<crate::merge::governance::MergeGovernance>,
     /// Told about each composite a local write commits, so composites deferred
     /// awaiting what the write created are released.
     local_commit_release:
@@ -488,10 +492,10 @@ impl<S: Store> DB<S> {
     /// replication starts so no composite of a claimed collection merges
     /// ungoverned.
     pub fn set_merge_governance(&self, governance: crate::merge::governance::MergeGovernance) {
-        let _ = self.merge_governance.set(Arc::new(governance));
+        let _ = self.merge_governance.set(governance);
     }
 
-    pub fn merge_governance(&self) -> Option<&Arc<crate::merge::governance::MergeGovernance>> {
+    pub fn merge_governance(&self) -> Option<&crate::merge::governance::MergeGovernance> {
         self.merge_governance.get()
     }
 
