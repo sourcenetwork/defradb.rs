@@ -1397,7 +1397,10 @@ mod tests {
             .await
             .expect_err("zero interval must be rejected");
         assert!(matches!(error, crate::error::Error::InvalidConfig(_)));
-        assert_eq!(coordinator.sync_status().pending_dag_retry_dispatched, 0);
+        assert_eq!(
+            coordinator.sync_status().await.pending_dag_retry_dispatched,
+            0
+        );
         coordinator.shutdown().await;
         assert!(matches!(
             coordinator
