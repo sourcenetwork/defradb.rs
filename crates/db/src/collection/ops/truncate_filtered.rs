@@ -29,7 +29,15 @@ impl<S: Store> crate::database::DB<S> {
         let collection = self
             .get_collection(name)?
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
-        if collection.schema().is_branchable {
+        // A branchable collection's DAG references the documents its blocks
+        // were built from, so pruning documents dangles those references for
+        // any peer walking the collection. When nothing replicates the
+        // collection, no peer walks it and the DAG has no consumer: the
+        // truncate is allowed and the DAG is pruned with the documents
+        // (#1804). Replicated branchable collections keep the deferral until
+        // per-block pruning semantics exist.
+        let prune_collection_dag = collection.schema().is_branchable;
+        if prune_collection_dag && self.collection_is_replicated(&collection).await? {
             return Err(Error::FilteredTruncateBranchableCollection);
         }
 
@@ -57,6 +65,15 @@ impl<S: Store> crate::database::DB<S> {
                     break;
                 }
                 doc_count += self.truncate_filtered_chunk(&collection, &doc_ids).await?;
+            }
+            if doc_count > 0 && prune_collection_dag {
+                // The write guards held across this operation exclude local
+                // collection writes, so nothing appends between the last
+                // chunk and this cleanup. Surviving documents lose their
+                // collection-DAG history: an acceptable trade for a
+                // collection nothing replicates, whose DAG has no consumer.
+                // A collection subscribed later syncs from its new writes.
+                self.truncate_collection_dag(short_id).await?;
             }
             Ok(doc_count)
         }
@@ -255,5 +272,59 @@ impl<S: Store> crate::database::DB<S> {
                 Err(error)
             }
         }
+    }
+}
+
+/// Whether anything replicates `collection`: a p2p subscription, or a
+/// replicator entry naming it. Read from the persisted state both transports
+/// restore from, so the answer holds across a restart and needs no live p2p
+/// stack. Replicator entries are Go's `client.Replicator` JSON; only the
+/// collection list is decoded, which keeps this readable without depending on
+/// the p2p crate.
+impl<S: Store> crate::database::DB<S> {
+    async fn collection_is_replicated(&self, collection: &Collection) -> Result<bool> {
+        let collection_id = collection.collection_id();
+        let txn = self.new_txn(true).await?;
+        // The txn moves into the block: a borrowed DbTxn is not Send, and
+        // holding one across an await would make this future unsendable for
+        // the truncator's boxed trait future.
+        let replicated = async move {
+            let systemstore = txn.systemstore()?;
+            let subscribed = systemstore
+                .get(&storage::keys::P2PCollectionKey::new(collection_id).bytes())
+                .await
+                .map_err(Error::Storage)?
+                .is_some();
+            if subscribed {
+                return Ok(true);
+            }
+            let peerstore = txn.peerstore()?;
+            let mut iter = peerstore
+                .iterator(
+                    IterOptions::new()
+                        .with_prefix(storage::keys::ReplicatorKey::replicator_prefix()),
+                )
+                .await
+                .map_err(Error::Storage)?;
+            let mut replicated = false;
+            while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
+                #[derive(serde::Deserialize)]
+                struct ReplicatedCollections {
+                    #[serde(rename = "CollectionIDs", default)]
+                    collection_ids: Vec<String>,
+                }
+                if serde_json::from_slice::<ReplicatedCollections>(&pair.value)
+                    .map(|entry| entry.collection_ids.iter().any(|id| id == collection_id))
+                    .unwrap_or(false)
+                {
+                    replicated = true;
+                    break;
+                }
+            }
+            iter.close().await.map_err(Error::Storage)?;
+            Ok(replicated)
+        }
+        .await;
+        replicated
     }
 }

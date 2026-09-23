@@ -353,21 +353,70 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     /// Delete collection-level metadata: index entries and collection heads.
-    async fn truncate_collection_metadata(&self, collection_id: &str, short_id: u32) -> Result<()> {
-        use storage::keys::headstore::HeadstoreColSuperseded;
-        use storage::keys::{HeadstoreColKey, IndexDataStoreKey};
-
+    pub(crate) async fn truncate_collection_metadata(
+        &self,
+        collection_id: &str,
+        short_id: u32,
+    ) -> Result<()> {
         let txn = self.new_txn(false).await?;
         let datastore = txn.datastore()?;
+
+        let result: Result<()> = async {
+            // Delete index entries
+            let idx_prefix = storage::keys::IndexDataStoreKey::collection_prefix(short_id);
+            delete_prefix(&datastore, idx_prefix).await?;
+
+            self.truncate_collection_dag(short_id).await?;
+
+            // Delete the top-level doc/del/version prefixes
+            let doc_prefix = format!("/d/{}/", collection_id).into_bytes();
+            delete_prefix(&datastore, doc_prefix).await?;
+            let del_prefix = format!("/del/{}/", collection_id).into_bytes();
+            delete_prefix(&datastore, del_prefix).await?;
+            let version_prefix = format!("/v/{}/", collection_id).into_bytes();
+            delete_prefix(&datastore, version_prefix).await?;
+
+            Ok(())
+        }
+        .await;
+
+        drop(datastore);
+
+        match result {
+            Ok(()) => {
+                txn.commit().await?;
+                Ok(())
+            }
+            Err(e) => {
+                if let Err(discard_err) = txn.discard() {
+                    tracing::warn!(
+                        error = %discard_err,
+                        original_error = %e,
+                        "Transaction discard failed during truncate metadata cleanup"
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Clear the collection DAG: head entries, their supersede markers, and
+    /// the collection blocks those heads owned. The documents' own state is
+    /// untouched — the filtered truncate has already removed exactly the
+    /// documents it selected, and the survivors keep their datastore keys.
+    /// Used by a filtered truncate on a branchable collection nothing
+    /// replicates, where the DAG's references dangle once its documents are
+    /// gone and no peer ever walks it (#1804).
+    pub(crate) async fn truncate_collection_dag(&self, short_id: u32) -> Result<()> {
+        use storage::keys::headstore::HeadstoreColSuperseded;
+        use storage::keys::HeadstoreColKey;
+
+        let txn = self.new_txn(false).await?;
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
         let systemstore = txn.systemstore()?;
 
         let result: Result<()> = async {
-            // Delete index entries
-            let idx_prefix = IndexDataStoreKey::collection_prefix(short_id);
-            delete_prefix(&datastore, idx_prefix).await?;
-
             // Collect block CIDs from collection heads, then delete
             let col_head_prefix = HeadstoreColKey::collection_prefix(short_id);
             let mut block_cids = Vec::new();
@@ -396,19 +445,10 @@ impl<S: Store> crate::database::DB<S> {
             crate::block::cleanup::delete_owned_dag(&blockstore, &systemstore, &block_cids, "")
                 .await?;
 
-            // Delete the top-level doc/del/version prefixes
-            let doc_prefix = format!("/d/{}/", collection_id).into_bytes();
-            delete_prefix(&datastore, doc_prefix).await?;
-            let del_prefix = format!("/del/{}/", collection_id).into_bytes();
-            delete_prefix(&datastore, del_prefix).await?;
-            let version_prefix = format!("/v/{}/", collection_id).into_bytes();
-            delete_prefix(&datastore, version_prefix).await?;
-
             Ok(())
         }
         .await;
 
-        drop(datastore);
         drop(headstore);
         drop(blockstore);
         drop(systemstore);
