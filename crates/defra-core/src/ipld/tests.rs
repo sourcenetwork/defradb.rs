@@ -758,3 +758,30 @@ fn a_governance_root_changes_the_delta_bytes() {
     assert_ne!(encode(&bare), encode(&governed));
     assert_ne!(encode(&governed), encode(&other));
 }
+
+/// Both commitment flags refuse a wrong-typed value rather than reading it as
+/// false. The serde codec rejects the same bytes, so a lenient reading here
+/// would let the two decoders disagree about whether a peer's field is
+/// immutable or its collection branchable.
+#[test]
+fn a_wrong_typed_commitment_flag_is_refused() {
+    let mut collection = BTreeMap::new();
+    collection.insert("priority".to_string(), Ipld::Integer(1));
+    collection.insert("branchable".to_string(), Ipld::String("yes".to_string()));
+    assert!(CollectionDefinitionDeltaPayload::try_from(&Ipld::Map(collection)).is_err());
+
+    let mut field = BTreeMap::new();
+    field.insert("priority".to_string(), Ipld::Integer(1));
+    field.insert("immutable".to_string(), Ipld::Integer(1));
+    assert!(FieldDefinitionDeltaPayload::try_from(&Ipld::Map(field)).is_err());
+}
+
+/// An explicit false is a valid encoding of the default and still decodes.
+#[test]
+fn an_explicit_false_commitment_flag_decodes() {
+    let mut collection = BTreeMap::new();
+    collection.insert("priority".to_string(), Ipld::Integer(1));
+    collection.insert("branchable".to_string(), Ipld::Bool(false));
+    let decoded = CollectionDefinitionDeltaPayload::try_from(&Ipld::Map(collection)).unwrap();
+    assert!(!decoded.is_branchable);
+}
