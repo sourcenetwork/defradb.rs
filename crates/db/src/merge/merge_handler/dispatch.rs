@@ -133,7 +133,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     continue;
                 }
             };
-            let metadata = BlockMetadata::normal(
+            // A swept composite has no carrier, so it names no creator and no
+            // sending peer; an id left empty reads as absent, not as "".
+            let mut metadata = BlockMetadata::normal(
                 &entry.doc_id,
                 &entry.collection_id,
                 &entry.creator,
@@ -141,6 +143,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 entry.is_explicit_replicator,
             )
             .with_explicit_replay_authorization(entry.explicit_replay_authorization.clone());
+            metadata.doc_id = metadata.doc_id.filter(|id| !id.is_empty());
+            metadata.collection_id = metadata.collection_id.filter(|id| !id.is_empty());
+            metadata.creator = metadata.creator.filter(|creator| !creator.is_empty());
             let outcome = self.merge_with_retries(&entry.cid, &data, metadata).await;
             tracing::debug!(cid = %entry.cid, ?outcome, "Re-drove deferred composite");
             if matches!(outcome, Ok(MergeOutcome::Merged)) {
