@@ -29,6 +29,7 @@ use storage::RegolithStore;
 
 mod definition;
 mod lookup;
+mod sweep;
 
 type Blocks = DefraBlockstore<RegolithStore>;
 
