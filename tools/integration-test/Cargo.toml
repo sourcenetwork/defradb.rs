@@ -110,8 +110,8 @@ name = "http_contract"
 path = "tests/http_contract.rs"
 
 [dependencies]
-hub-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "9fe9622a53bb5cc08574788ca370b5fb201868aa" }
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "9fe9622a53bb5cc08574788ca370b5fb201868aa" }
+hub-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "74478d66e0b994b0edad5bb36b1daf86948e7804" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "74478d66e0b994b0edad5bb36b1daf86948e7804" }
 document = { path = "../../crates/document" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { version = "0.12", default-features = false, features = [
