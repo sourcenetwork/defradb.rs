@@ -218,6 +218,34 @@ cargo bench -p benches --bench document_write
 
 ## P2P Replication
 
+### Protected writes with SourceHub ACP
+
+For a policy-protected document, inbound updates and deletes require the
+**verified signer of each composite block** to hold the corresponding SourceHub
+`update` or `delete` permission. This also applies to ancestors, batch merges,
+and explicit-replicator replay. An unsigned update is rejected. The receiving
+node's read access is a separate check, not permission for the sender to write.
+If document registration is not yet visible, strict-mode updates wait for a
+retry rather than treating the document as public.
+
+HTTP/JWT authentication and block signing are different identities: the JWT
+identifies the caller for the local mutation, but the serving node signs the
+replicated blocks. To edit an existing protected document through another node,
+the owner must **grant that node's DID** a relation whose policy expression
+permits `update` and/or `delete`, before issuing the mutation. For example, with
+a policy where `writer` grants both permissions, add a `writer` relationship
+for the serving node's DID on that document. `client node-identity` reports the
+DID; do not substitute its transport peer ID. Grant read access as needed for
+replication, but a `reader` relationship alone cannot authorize writes.
+
+Only grant write access to trusted nodes: it authorizes their signatures, not
+just requests made by a particular user. Without the grant, a local HTTP edit
+can succeed while its replication is rejected and quarantined. Granting access
+later does not automatically replay a quarantined update. This inbound write
+gate intentionally differs from Go's serve-side-read-only replication checks.
+Local ACP retains its existing node-owner shortcut and unregistered-replica
+semantics; genesis handling is unchanged.
+
 ### Filtered replication
 
 A replicator can carry an optional per-collection predicate so a source node only **pushes** documents whose field matches:
