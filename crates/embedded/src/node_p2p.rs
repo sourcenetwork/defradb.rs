@@ -228,6 +228,20 @@ where
             .expect("retry interval is nonzero");
     });
 
+    // The fallback for a deferred verdict no arrival can release: one named
+    // nothing, one past the index's capacity, and everything the index held
+    // before this process started.
+    let sweep_handler = replication.merge_handler_inner.clone();
+    let sweep_shutdown = coordinator.shutdown_handle();
+    let governance_sweep_task = tokio::spawn(async move {
+        db::merge::governance::run_governance_sweep(
+            sweep_handler,
+            db::merge::governance::SWEEP_INTERVAL,
+            sweep_shutdown,
+        )
+        .await;
+    });
+
     match db::merge::load_persisted_collections(&coordinator).await {
         Ok(count) if count > 0 => tracing::debug!(count, "loaded persisted P2P collections"),
         Ok(_) => {}
@@ -351,6 +365,7 @@ where
                 retry_loop_task,
                 pending_dag_resync_task,
                 pending_dag_retry_task,
+                governance_sweep_task,
             ],
         ),
         replicator_push_options,
