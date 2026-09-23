@@ -386,6 +386,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 reason,
                 "Ancestor collection block has an unprocessed link; continuing the walk"
             );
+            // The ancestor records nothing, or the Enter guard's
+            // already-merged skip discharges it on a later attempt before
+            // the missing link arrives, and that link is never merged. The
+            // walk still continues: this outcome is what the frame loop
+            // treats as finished for a non-root frame.
+            if any_merged {
+                return Ok(MergeOutcome::Merged);
+            }
+            return Ok(MergeOutcome::terminal_skip(reason));
         }
 
         // Update collection headstore using proper head merging.
@@ -775,6 +784,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 reason,
                 "Ancestor collection block has an unprocessed link; continuing the walk"
             );
+            // As in the single-block walk: an unprocessed ancestor writes no
+            // head and marks nothing merged, so the root's later retry can
+            // still walk it once the missing link has arrived.
+            if any_merged {
+                return Ok(MergeOutcome::Merged);
+            }
+            return Ok(MergeOutcome::terminal_skip(reason));
         }
 
         // Update collection headstore using the shared headstore view

@@ -43,8 +43,28 @@ impl<S: Store> crate::database::DB<S> {
     /// [`Cached::NameHeldByAnother`] means an entry naming a different
     /// collection already holds the name and was left alone, so the cache is
     /// unchanged.
-    pub fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<Cached> {
+    pub async fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<Cached> {
         let name = schema.name.clone();
+        // The cached entry must carry index action state or it lies to every
+        // reader: `block_collection` prefers the cache precisely because it
+        // is supposed to carry it, and a plain `Collection::new` puts
+        // ERRORED indexes back into writes and in-progress ones into queries.
+        // The actions are read outside the cache swap so the swap stays
+        // non-blocking.
+        let collection = {
+            let txn = self.new_txn(true).await?;
+            let actions = match txn.systemstore() {
+                Ok(systemstore) => crate::database::action::index_action_statuses(
+                    &systemstore,
+                    &schema.collection_id,
+                )
+                .await
+                .unwrap_or_default(),
+                Err(_) => Default::default(),
+            };
+            let _ = txn.discard();
+            Collection::with_index_actions(schema.clone(), &actions)
+        };
         // The cache is keyed by name, but a collection's identity is its
         // collection ID. An entry naming a different collection must not be
         // replaced: whatever that collection knows and the incoming schema
@@ -66,7 +86,7 @@ impl<S: Store> crate::database::DB<S> {
                 }
             }
             let mut cache = old.clone();
-            cache.insert(name.clone(), Collection::new(schema.clone()));
+            cache.insert(name.clone(), collection.clone());
             cache
         });
         Ok(cached)

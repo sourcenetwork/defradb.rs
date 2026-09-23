@@ -192,6 +192,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let cached = self
             .db
             .add_collection_to_cache(schema.clone())
+            .await
             .map_err(MergeError::Database)?
             == crate::collection::Cached::Taken;
 

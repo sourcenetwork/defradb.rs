@@ -167,6 +167,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         let cached = self
                             .db
                             .add_collection_to_cache(prev.clone())
+                            .await
                             .map_err(MergeError::Database)?;
                         if cached == crate::collection::Cached::NameHeldByAnother {
                             tracing::debug!(
