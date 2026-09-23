@@ -326,3 +326,49 @@ async fn a_synced_definition_does_not_strip_an_ungoverned_collection() {
         "the immutable flag was stripped"
     );
 }
+
+/// The same, for a governed collection carrying a policy. Its collection ID
+/// and version ID differ — the policy reaches only the version — so the
+/// receiver cannot read the collection ID off the block's own CID.
+#[tokio::test]
+async fn a_policied_definition_block_reproduces_its_identity_on_a_fresh_node() {
+    let author = Node::bare().await;
+    let defined = query::parse_sdl(
+        r#"type Ledgers @governed(root: "root-a") @policy(id: "p1", resource: "ledgers") { writer: String @immutable }"#,
+    )
+    .unwrap()
+    .remove(0);
+    assert_ne!(
+        defined.version_id, defined.collection_id,
+        "a policy moves the version ID away from the collection ID"
+    );
+    author.db.create_collection(defined.clone()).await.unwrap();
+    let authored = author.db.get_collection("Ledgers").unwrap().unwrap();
+    let version_id = authored.schema().version_id.clone();
+    let cid: Cid = version_id.parse().expect("the version ID names the block");
+    let bytes = author.blockstore.get(&cid).await.unwrap().expect("block");
+
+    let fresh = Node::bare().await;
+    fresh.blockstore.put(&cid, &bytes).await.unwrap();
+    for link in Block::from_dag_cbor(&bytes).unwrap().links.iter().flatten() {
+        let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
+        fresh.blockstore.put(&link.link, &field).await.unwrap();
+    }
+    fresh
+        .handler
+        .handle_block(
+            &cid,
+            &bytes,
+            BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+        )
+        .await
+        .unwrap();
+
+    let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(synced.schema().version_id, version_id);
+    assert_eq!(
+        synced.schema().collection_id,
+        defined.collection_id,
+        "the receiver must derive the same collection ID the author did"
+    );
+}

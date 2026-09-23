@@ -20,8 +20,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Resolve name and collection_id from the previous version via block.heads.
         let (collection_name, collection_id, prev_fields, previous) = match &payload.name {
             Some(name) => {
-                // Initial version: name is explicit, collection_id = version_id
-                (name.clone(), version_id.clone(), Vec::new(), None)
+                // Initial version: the name is explicit and the collection ID
+                // is this block's own CID, except that a policy reaches the
+                // version and not the collection, so a policied block is named
+                // by its version ID alone and the collection ID has to be
+                // derived from the same block without it.
+                (name.clone(), collection_id_of(cid, block)?, Vec::new(), None)
             }
             None => {
                 // Patched version: look up previous version from heads
@@ -289,6 +293,29 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         field.immutable = payload.immutable;
         Ok(field)
     }
+}
+
+/// The collection ID a definition block's initial version carries.
+///
+/// The block is hashed over a delta that includes the policy, so its CID is
+/// the version ID. The collection ID is the CID of the same delta without it,
+/// which is what the author derived and what peers must agree on: a policy
+/// mints a new version of the same collection, never a different one.
+fn collection_id_of(version_id: &Cid, block: &Block) -> Result<String, MergeError> {
+    let CrdtDelta::CollectionDefinition(payload) = &block.delta else {
+        return Ok(version_id.to_string());
+    };
+    if payload.policy_cid.is_none() {
+        return Ok(version_id.to_string());
+    }
+    let mut without_policy = block.clone();
+    if let CrdtDelta::CollectionDefinition(payload) = &mut without_policy.delta {
+        payload.policy_cid = None;
+    }
+    without_policy
+        .generate_cid()
+        .map(|cid| cid.to_string())
+        .map_err(|error| MergeError::MergeFailed(error.to_string()))
 }
 
 /// What `stored` commits to that `incoming` does not carry.
