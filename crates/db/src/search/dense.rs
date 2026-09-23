@@ -19,7 +19,10 @@ use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value as JsonValue};
 
-use crate::search::{embedding::embed_text_with_provider, EmbeddingClientConfig};
+use crate::search::{
+    embedding::{embed_text_with_provider, normalized_embedding_url},
+    EmbeddingClientConfig,
+};
 
 const DEFAULT_LIMIT: usize = 10;
 const DEFAULT_CANDIDATE_LIMIT: usize = 0;
@@ -192,7 +195,9 @@ pub async fn hybrid_search_dense<E: query::QueryExecutor + ?Sized>(
     if let Some(url) = &request.embedding_url {
         request_config.url.clone_from(url);
         // A node credential must not follow a request to another endpoint.
-        if url.trim() != embedding_config.url.trim() {
+        // The same normalized form the request itself uses, so an override
+        // differing only by whitespace or a trailing slash keeps it.
+        if normalized_embedding_url(url) != normalized_embedding_url(&embedding_config.url) {
             request_config.api_key.clear();
         }
     }
