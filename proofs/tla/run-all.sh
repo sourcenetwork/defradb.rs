@@ -142,6 +142,26 @@ RUNS=(
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)
   "MC_HeadSet_Red_PerKeyScan.cfg   HeadSet.tla                  RED"   # a head scan validated per key: a sweep reclaiming a key the scan yielded aborts an in-flight append (INV_NoWriteConflict)
+  # ---- GovernanceContract.tla: what a merge validator may assume; GovernanceMerge.tla: the merge path checked to refine it ----
+  "MC_GovernanceContract_Green.cfg            MC_GovernanceContract_Orphan.tla       GREEN" # re-drive + sweep: every settleable composite settles
+  "MC_GovernanceContract_Green_Nameable.cfg   MC_GovernanceContract_Nameable.tla     GREEN" # nameable awaits: arrival re-drive alone settles them, no sweep
+  "MC_GovernanceContract_Green_FieldAwait.cfg MC_GovernanceContract_Orphan.tla       GREEN" # immutable-field keys settle the orphan, no sweep
+  "MC_GovernanceContract_Green_Recovery.cfg   MC_GovernanceContract_Nameable.tla     GREEN" # restart followed by a pass over the unmerged composites
+  "MC_GovernanceContract_Green_IndexFull.cfg  MC_GovernanceContract_TwoDeferred.tla  GREEN" # index at capacity: the sweep covers the unindexed defer
+  "MC_GovernanceContract_Green_Withheld.cfg   MC_GovernanceContract_Withheld.tla     GREEN" # a withheld input defers its composite forever and rejects nothing
+  "MC_GovernanceContract_Red_NoRetry.cfg      MC_GovernanceContract_Orphan.tla       RED"   # a Defer naming nothing strands without the sweep (L1 L2 L3)
+  "MC_GovernanceContract_Red_NoDrain.cfg      MC_GovernanceContract_NoDrain.tla      RED"   # drained re-drive budget, no backstop: waiter never settles (L1 L2 L3)
+  "MC_GovernanceContract_Red_NoRecovery.cfg   MC_GovernanceContract_Nameable.tla     RED"   # restart loses the defer index and nothing re-drives (L1 L2)
+  "MC_GovernanceContract_Red_IndexFull.cfg    MC_GovernanceContract_TwoDeferred.tla  RED"   # index at capacity with no sweep: unindexed defer stranded (L1 L2)
+  "MC_GovernanceContract_Red_Absence.cfg      MC_GovernanceContract_Nameable.tla     RED"   # purity violated, reject on absence -> replicas split (INV_NoSplit)
+  "MC_GovernanceContract_Green_GC.cfg         MC_GovernanceContract_Nameable.tla     GREEN" # disposition with the floor: forgetting strands nothing
+  "MC_GovernanceContract_Red_GCNoFloor.cfg    MC_GovernanceContract_Nameable.tla     RED"   # disposition below the floor: a settleable composite is stranded (L1 L2 L3)
+  "MC_GovernanceMerge_Today.cfg               MC_GovernanceMerge_Orphan.tla          GREEN" # the merge path as coded refines the contract: field keys, unmerged-scoped sweep, in-memory index
+  "MC_GovernanceMerge_Green_CidOnly.cfg       MC_GovernanceMerge_Orphan.tla          GREEN" # an unmerged-scoped sweep suffices alone: no field keys, nothing durable
+  "MC_GovernanceMerge_Green_Augmented.cfg     MC_GovernanceMerge_Orphan.tla          GREEN" # field keys + a persisted index would also refine, without the sweep
+  "MC_GovernanceMerge_Red_NoSweep.cfg         MC_GovernanceMerge_Orphan.tla          RED"   # the tree before sweep.rs: index-only re-drive, in-memory index -> orphan never merges
+  "MC_GovernanceMerge_Red_SweepIndexed.cfg    MC_GovernanceMerge_Orphan.tla          RED"   # the refactor to refuse: a sweep over the index never sees an unindexed composite
+  "MC_GovernanceMerge_Red_Mutant.cfg          MC_GovernanceMerge_Mutant.tla          RED"   # teeth check: a silent merge must break the refinement
 )
 
 fails=0; n=0
