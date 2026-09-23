@@ -297,3 +297,7 @@ pub fn parse_sdl_with_warnings(sdl: &str) -> Result<ParseOutput> {
 #[cfg(test)]
 #[path = "parser_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "identity_tests.rs"]
+mod identity_tests;
