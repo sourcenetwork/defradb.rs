@@ -221,9 +221,13 @@ A plugin author does not re-model the merge path. They instantiate this module:
    `MC_GovernanceContract_*` modules are the pattern; two replicas, two or
    three inputs, two composites is enough to exhibit an arrival order.
 2. **Check your properties with the host's levers as they are.** Re-drive,
-   field keys, the sweep, recovery on restart and judge-afresh-on-re-push are
-   all on in the code today. `GovernanceMerge.tla` is what guarantees the
-   levers mean what this module says they mean.
+   field keys, the sweep and judge-afresh-on-re-push are on in the code today;
+   `Recovery` is not. It keeps `awaiting` across a `Restart`, and the defer
+   index is in memory, so a restart loses it and the sweep is what covers the
+   restart. `MC_GovernanceMerge_Today` maps `Recovery <- IndexDurable` and sets
+   it `FALSE`, so `Recovery = FALSE, RetryClock = TRUE` is the configuration
+   the refinement check actually covers. `GovernanceMerge.tla` is what
+   guarantees the levers mean what this module says they mean.
 3. **Turn one lever off to see what you depend on.** `RetryClock = FALSE`
    shows whether your defers always name something. `AbsenceReject = TRUE`
    shows what happens if your validator ever rejects for a missing input.
