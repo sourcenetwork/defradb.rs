@@ -7,8 +7,9 @@ use defra_core::block::{Block, CrdtDelta};
 use defra_core::thread_bounds::MaybeSendSync;
 use document::{DocID, Document, NormalValue};
 use rapidhash::RapidHashMap;
-use storage::corekv::Store;
+use storage::corekv::{IterOptions, Store};
 use storage::index::SimpleIndex;
+use storage::keys::doc_id_index::decode_doc_short_id;
 
 use crate::collection::Collection;
 use crate::merge::merge_handler::DbMergeHandler;
@@ -55,6 +56,12 @@ pub trait MergeView: MaybeSendSync {
     /// updates merged in. A mutable field could match on one replica and not
     /// another. Documents still arrive over time, so an empty result must
     /// defer, never reject.
+    ///
+    /// Deleted documents are included: a delete merges on one replica before
+    /// another, and an immutable field does not change by being deleted, so
+    /// presence here depends only on whether the document has replicated. The
+    /// ids come back sorted by id string, so two replicas holding the same
+    /// documents return the same `Vec`.
     async fn find_documents(
         &self,
         collection: &str,
@@ -69,8 +76,10 @@ pub trait MergeView: MaybeSendSync {
     /// merged in.
     ///
     /// Absence is not stable, so it must defer, never reject: `None` means the
-    /// document is not merged here yet or is deleted, and an immutable field
-    /// missing from the list may still be set by an update not yet merged.
+    /// document is not merged here yet, and an immutable field missing from
+    /// the list may still be set by an update not yet merged. A deleted
+    /// document is still returned: deletion is a merge like any other, and a
+    /// read that changed with it would give two replicas different verdicts.
     async fn immutable_fields(
         &self,
         collection: &str,
@@ -184,11 +193,16 @@ where
             Some(documents) => documents,
             None => self.documents(&collection).await?,
         };
-        Ok(documents
+        let mut ids: Vec<String> = documents
             .into_iter()
             .filter(|document| document.get(field) == Some(value))
             .filter_map(|document| document.id().map(|id| id.to_string()))
-            .collect())
+            .collect();
+        // Both paths yield node-local short-id order; the id string is the
+        // same on every replica.
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
     }
 
     async fn immutable_fields(
@@ -232,8 +246,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
             .map_err(|error| error.to_string())
     }
 
-    /// The merged, undeleted document `doc_id` of `collection`, read by id.
-    /// `None` when the collection or the document is unknown.
+    /// The merged document `doc_id` of `collection`, read by id, deleted or
+    /// not. `None` when the collection or the document is unknown.
     async fn document(
         &self,
         collection: &str,
@@ -249,26 +263,79 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
         let txn = snapshot.as_ref().expect("snapshot opened above");
         let datastore = txn.datastore().map_err(|error| error.to_string())?;
         let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
-        let document = collection
-            .get_by_doc_id(&datastore, &systemstore, &parsed)
+        let Some((short_id, canonical)) = collection
+            .resolve_doc_identity(&systemstore, &parsed)
             .await
             .map_err(|error| error.to_string())?
-            // An alias resolves to its document; only the canonical id names it here.
-            .filter(|document| document.id().is_some_and(|id| id.to_string() == doc_id));
+        else {
+            return Ok(None);
+        };
+        // An alias resolves to its document; only the canonical id names it here.
+        if canonical.to_string() != doc_id {
+            return Ok(None);
+        }
+        let document = collection
+            .get_with_datastore_include_deleted(&datastore, short_id, &canonical, false)
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|(document, _)| document);
         Ok(document.map(|document| (collection, document)))
     }
 
-    /// Every merged, undeleted document of `collection` on this verdict's
-    /// snapshot.
+    /// Every merged document of `collection` on this verdict's snapshot,
+    /// deleted or not.
     async fn documents(&self, collection: &Collection) -> Result<Vec<Document>, String> {
         let snapshot = self.snapshot().await?;
         let txn = snapshot.as_ref().expect("snapshot opened above");
         let datastore = txn.datastore().map_err(|error| error.to_string())?;
         let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
-        collection
-            .get_all_with_datastore(&datastore, &systemstore)
+        Ok(collection
+            .get_all_with_datastore_include_deleted(&datastore, &systemstore, true)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|(document, _)| document)
+            .collect())
+    }
+
+    /// The deleted documents of `collection` on this verdict's snapshot: a
+    /// scan of the deletion markers, whose cost follows the deleted rows and
+    /// not the collection. An index drops a document's entries when it is
+    /// deleted, so a lookup through an index has to add these back.
+    pub(super) async fn deleted_documents(
+        &self,
+        collection: &Collection,
+    ) -> Result<Vec<Document>, String> {
+        let snapshot = self.snapshot().await?;
+        let txn = snapshot.as_ref().expect("snapshot opened above");
+        let datastore = txn.datastore().map_err(|error| error.to_string())?;
+        let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
+
+        let mut prefix = storage::keys::document::DELETED_KEY_PREFIX.to_vec();
+        prefix.extend_from_slice(collection.collection_id().as_bytes());
+        prefix.push(b'/');
+        let prefix_len = prefix.len();
+        let mut markers = datastore
+            .iterator(IterOptions::new().with_prefix(prefix))
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut short_ids = Vec::new();
+        while let Some(pair) = markers.next().await.map_err(|error| error.to_string())? {
+            if let Ok(short_id) = decode_doc_short_id(&pair.key[prefix_len..]) {
+                short_ids.push(short_id);
+            }
+        }
+        markers.close().await.map_err(|error| error.to_string())?;
+        if short_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(collection
+            .get_by_short_ids(&datastore, &systemstore, &short_ids, true)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|(_, document, _)| document)
+            .collect())
     }
 }
 

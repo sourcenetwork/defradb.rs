@@ -15,6 +15,7 @@ use db::merge::governance::{
 };
 use db::merge::merge_handler::DbMergeHandler;
 use db::write::autocommit::batch::BatchMutator;
+use db::write::autocommit::AutoCommitMutator;
 use db::AutoCommitFetcher;
 use defra_core::block::{
     Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload, Signature, SignatureHeader,
@@ -112,13 +113,16 @@ impl MergeValidator for GrantValidator {
 /// merged by re-drive never reaches through `handle_block`'s return value.
 #[derive(Default)]
 struct RecordingSink {
-    forwarded: Mutex<Vec<Cid>>,
+    forwarded: Mutex<Vec<(Cid, String)>>,
 }
 
 #[async_trait]
 impl RedrivenMergeSink for RecordingSink {
     async fn forward(&self, merged: RedrivenMerge) {
-        self.forwarded.lock().unwrap().push(merged.cid);
+        self.forwarded
+            .lock()
+            .unwrap()
+            .push((merged.cid, merged.collection_id));
     }
 }
 
@@ -212,7 +216,52 @@ impl Node {
     }
 
     fn forwarded(&self) -> Vec<Cid> {
+        self.forwarded_with_ids()
+            .into_iter()
+            .map(|(cid, _)| cid)
+            .collect()
+    }
+
+    /// What was forwarded, with the collection id each was forwarded under.
+    fn forwarded_with_ids(&self) -> Vec<(Cid, String)> {
         self.sink.forwarded.lock().unwrap().clone()
+    }
+
+    /// Grants as in `open`, and Notes whose version id differs from its
+    /// collection id, so a re-drive that confuses the two is visible.
+    async fn with_versioned_notes(governance: MergeGovernance) -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(
+            DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+                .await
+                .unwrap(),
+        );
+        for (name, id, version, field) in [
+            ("Grants", "col-grants", "col-grants", "writer"),
+            ("Notes", "col-notes", "ver-notes", "grant"),
+        ] {
+            db.create_collection(CollectionVersion::new(
+                name,
+                id,
+                version,
+                vec![
+                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                    FieldDescription::new("2", field, FieldKind::string()),
+                ],
+            ))
+            .await
+            .unwrap();
+        }
+        db.set_merge_governance(governance);
+        Self::assemble(db, store)
+    }
+
+    /// Delete a document the way a client mutation does, index cleanup included.
+    async fn delete_locally(&self, collection: &str, doc_id: &str) {
+        AutoCommitMutator::new(self.db.clone())
+            .delete(collection, &doc_id.parse().unwrap())
+            .await
+            .unwrap();
     }
 
     /// Create a document the way a client mutation does, and return its
@@ -1045,4 +1094,149 @@ async fn a_local_write_releases_a_composite_awaiting_its_genesis() {
     node.wait_for_doc("Notes", &note.doc_id).await;
     assert_eq!(node.handler.deferred_composites(), 0);
     assert_eq!(node.forwarded(), vec![note.cid]);
+}
+
+/// Defers every note on a field of a collection this node does not hold.
+struct AwaitAbsentCollection;
+
+#[async_trait]
+impl MergeValidator for AwaitAbsentCollection {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::defer(
+            "grant not replicated",
+            [Awaited::immutable_field(
+                "Absent",
+                "writer",
+                NormalValue::String("anyone".to_string()),
+            )],
+        ))
+    }
+}
+
+#[tokio::test]
+async fn awaiting_a_field_of_an_absent_collection_is_indexed_not_refused() {
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        MergeGovernance::new(["Notes"]).with_validator(Arc::new(AwaitAbsentCollection)),
+        true,
+    )
+    .await;
+    let writer = signer();
+    let note = genesis("col-notes", "grant", "anything", &writer);
+
+    // `find_documents` answers an unknown collection empty and the validator
+    // defers on that; the wait key must be indexed so the arrival of the
+    // collection and a match can re-drive the note.
+    assert_eq!(
+        note.merge(&node, &writer.did).await,
+        MergeOutcome::retryable_skip("grant not replicated")
+    );
+    assert_eq!(node.handler.deferred_composites(), 1);
+}
+
+#[tokio::test]
+async fn an_unresolved_update_in_a_claimed_collection_without_validator_is_not_indexed() {
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        MergeGovernance::new(["Notes"]),
+        true,
+    )
+    .await;
+    let writer = signer();
+    let created = genesis("col-notes", "grant", "first", &writer);
+    let updated = authored("col-notes", Some(&created), "grant", "second", &writer);
+
+    // Claimed but no validator: defer, and nothing reaches the deferral
+    // machinery, the same as a composite whose document resolves.
+    assert!(matches!(
+        updated.merge(&node, &writer.did).await,
+        MergeOutcome::Skipped {
+            terminal: false,
+            ..
+        }
+    ));
+    assert_eq!(node.handler.deferred_composites(), 0);
+
+    assert!(matches!(
+        created.merge(&node, &writer.did).await,
+        MergeOutcome::Skipped {
+            terminal: false,
+            ..
+        }
+    ));
+    assert_eq!(node.handler.deferred_composites(), 0);
+    assert!(node.forwarded().is_empty());
+    assert!(node.doc_ids("Notes").await.is_empty());
+}
+
+#[tokio::test]
+async fn a_recovered_deferred_composite_is_not_forwarded_under_the_schema_version_id() {
+    let validator = Arc::new(GenesisFirst::default());
+    let node = Node::with_versioned_notes(
+        MergeGovernance::new(["Notes"]).with_validator(validator.clone()),
+    )
+    .await;
+    let writer = signer();
+    let created = genesis("ver-notes", "grant", "first", &writer);
+    let updated = authored("ver-notes", Some(&created), "grant", "second", &writer);
+
+    // A recovery merge carries no collection id.
+    updated.store(&node).await;
+    let outcome = node
+        .handler
+        .handle_block(&updated.cid, updated.bytes(), BlockMetadata::recovery())
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        MergeOutcome::retryable_skip("document genesis not held")
+    );
+    assert_eq!(node.handler.deferred_composites(), 1);
+
+    assert_eq!(
+        created.merge(&node, &writer.did).await,
+        MergeOutcome::Merged
+    );
+    assert_eq!(
+        field_value(&node, "Notes", &created.doc_id, "grant").await,
+        Some("second".to_string())
+    );
+    // The re-driven merge is forwarded with the id it was given, which is
+    // none: the sink skips the push, as the first attempt would have. Never
+    // the schema version id, which no replicator subscribes to.
+    let forwarded = node.forwarded_with_ids();
+    assert_eq!(forwarded, vec![(updated.cid, String::new())]);
+}
+
+#[tokio::test]
+async fn immutable_fields_of_a_deleted_document_are_still_read() {
+    let validator = Arc::new(ReadImmutable {
+        collection: "Grants",
+        doc_id: Mutex::new(String::new()),
+        read: Mutex::new(None),
+    });
+    let node = Node::with_immutable_grants(validator.clone()).await;
+    let writer = signer();
+    let grant = genesis("col-grants", "writer", &writer.did, &writer);
+    assert_eq!(grant.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    node.delete_locally("Grants", &grant.doc_id).await;
+    assert!(node.doc_ids("Grants").await.is_empty());
+
+    // A replica that merged the delete first must read what a replica that
+    // judged before the delete read; otherwise one accepts and the other
+    // defers forever.
+    *validator.doc_id.lock().unwrap() = grant.doc_id.clone();
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    assert_eq!(
+        validator.read.lock().unwrap().clone().unwrap(),
+        Some(vec![(
+            "writer".to_string(),
+            NormalValue::String(writer.did.clone())
+        )])
+    );
 }

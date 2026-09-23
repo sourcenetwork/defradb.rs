@@ -301,7 +301,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc_id_str: String,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         let root_cid = *cid;
-        let root_payload = payload;
         let doc_id_for_index = doc_id_str.clone();
         let mut frames = vec![CompositeMergeFrame::Enter {
             cid: *cid,
@@ -395,13 +394,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             }
                         }
                         CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                            self.index_deferred(
-                                &root_cid,
-                                &doc_id_for_index,
-                                root_payload,
-                                metadata,
-                                awaiting,
-                            );
+                            self.index_deferred(&root_cid, &doc_id_for_index, metadata, awaiting);
                             return Ok(outcome);
                         }
                     }
@@ -745,7 +738,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         };
         let root_cid = *cid;
-        let root_payload = payload;
         let doc_id_for_index = doc_id.clone();
         let mut frames = vec![CompositeMergeFrame::Enter {
             cid: *cid,
@@ -842,13 +834,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             }
                         }
                         CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                            self.index_deferred(
-                                &root_cid,
-                                &doc_id_for_index,
-                                root_payload,
-                                metadata,
-                                awaiting,
-                            );
+                            self.index_deferred(&root_cid, &doc_id_for_index, metadata, awaiting);
                             return Ok(outcome);
                         }
                     }

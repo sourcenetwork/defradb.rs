@@ -282,3 +282,48 @@ async fn find_documents_through_an_index_reads_only_the_matches() {
     // The unindexed twin still scans, and the scan trips on the bystander.
     assert!(found[1].1.is_err(), "{:?}", found[1].1);
 }
+
+#[tokio::test]
+async fn find_documents_orders_ids_the_same_on_both_paths() {
+    let probe = Probe::new(&["writer", "twin"]);
+    let node = Node::with_indexed_grants(probe.clone()).await;
+    let peer = signer();
+    let mut grants = vec![grant("shared", "a", &peer), grant("shared", "b", &peer)];
+    // Merge in descending id order, so short-id order is the reverse of id order.
+    grants.sort_by(|x, y| y.doc_id.cmp(&x.doc_id));
+    for g in &grants {
+        assert_eq!(g.merge(&node, &peer.did).await, MergeOutcome::Merged);
+    }
+    let mut expected: Vec<String> = grants.iter().map(|g| g.doc_id.clone()).collect();
+    expected.sort();
+
+    let found = probe.lookups(&node, &["shared"]).await;
+    // writer is indexed, twin is scanned: both sorted by id string.
+    assert_eq!(found[0].1, Ok(expected.clone()));
+    assert_eq!(found[1].1, Ok(expected));
+}
+
+#[tokio::test]
+async fn find_documents_still_finds_a_deleted_document_on_both_paths() {
+    let probe = Probe::new(&["writer", "twin"]);
+    let node = Node::with_indexed_grants(probe.clone()).await;
+    let peer = signer();
+    let gone = grant("gone", "a", &peer);
+    assert_eq!(gone.merge(&node, &peer.did).await, MergeOutcome::Merged);
+    let kept = grant("kept", "b", &peer);
+    assert_eq!(kept.merge(&node, &peer.did).await, MergeOutcome::Merged);
+    node.delete_locally("Grants", &gone.doc_id).await;
+    assert_eq!(node.doc_ids("Grants").await, vec![kept.doc_id.clone()]);
+
+    // The delete removed the index entry; the governance read adds the
+    // deleted rows back, so the index path and the scan path agree.
+    let found = probe.lookups(&node, &["gone", "kept", "absent"]).await;
+    let ids = |key: &str| {
+        let (_, ids) = found.iter().find(|(found, _)| found == key).unwrap();
+        ids.clone().unwrap()
+    };
+    assert_eq!(ids("writer=gone"), vec![gone.doc_id.clone()]);
+    assert_eq!(ids("twin=gone"), vec![gone.doc_id.clone()]);
+    assert_eq!(ids("writer=kept"), vec![kept.doc_id.clone()]);
+    assert!(ids("writer=absent").is_empty());
+}

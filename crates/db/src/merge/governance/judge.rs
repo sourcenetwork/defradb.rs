@@ -79,9 +79,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         })
     }
 
-    /// Index keys for a verdict's awaited inputs. An awaited field that is not
-    /// an `@immutable` scalar LWW field of a local collection is a validator
-    /// error: its value could differ between replicas.
+    /// Index keys for a verdict's awaited inputs. An awaited field of a local
+    /// collection that is not an `@immutable` scalar LWW field is a validator
+    /// error: its value could differ between replicas. A collection this node
+    /// does not hold yet is not an error: `find_documents` answers it empty
+    /// and the validator defers on that, so the key must be indexed for the
+    /// composite to be re-driven when the collection and a match arrive.
     fn wait_keys(&self, awaiting: Vec<Awaited>) -> Result<Vec<WaitKey>, MergeError> {
         awaiting
             .into_iter()
@@ -92,14 +95,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     field,
                     value,
                 } => {
-                    let immutable = self
-                        .db
-                        .get_collection(&collection)?
-                        .is_some_and(|local| is_immutable_scalar_field(local.schema(), &field));
-                    if !immutable {
-                        return Err(MergeError::MergeFailed(format!(
-                            "awaited field '{field}' in collection '{collection}' must be an @immutable scalar LWW field"
-                        )));
+                    if let Some(local) = self.db.get_collection(&collection)? {
+                        if !is_immutable_scalar_field(local.schema(), &field) {
+                            return Err(MergeError::MergeFailed(format!(
+                                "awaited field '{field}' in collection '{collection}' must be an @immutable scalar LWW field"
+                            )));
+                        }
                     }
                     WaitKey::immutable_field(&collection, &field, &value)
                         .map_err(MergeError::MergeFailed)
@@ -195,7 +196,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         &self,
         root: &Cid,
         doc_id: &str,
-        payload: &CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
         awaiting: Vec<WaitKey>,
     ) {
@@ -204,10 +204,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 cid: *root,
                 block_data: bytes::Bytes::new(),
                 doc_id: doc_id.to_string(),
-                collection_id: metadata
-                    .collection_id
-                    .unwrap_or(&payload.schema_version_id)
-                    .to_string(),
+                // Only what the carrier said. A recovery merge carries no
+                // collection id, and the empty string keeps the re-driven merge
+                // off the replicator push, as the first attempt was; the schema
+                // version id is not an id replicators subscribe to.
+                collection_id: metadata.collection_id.unwrap_or_default().to_string(),
                 creator: metadata.creator.unwrap_or_default().to_string(),
                 sender_peer: metadata.sender_peer.map(str::to_string),
                 is_explicit_replicator: metadata.is_explicit_replicator,
@@ -231,12 +232,26 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         metadata: &BlockMetadata<'_>,
         error: MergeError,
     ) -> Result<MergeOutcome, MergeError> {
-        let governed = self
+        let Some(governance) = self.db.merge_governance() else {
+            return Err(error);
+        };
+        let Some(collection) = self
             .block_collection(&payload.schema_version_id, None)
             .await?
-            .is_some_and(|collection| self.is_governed(collection.schema()));
-        if !governed {
+        else {
             return Err(error);
+        };
+        if !governance.governs(collection.schema()) {
+            return Err(error);
+        }
+        // A claimed collection with no validator defers everything and indexes
+        // nothing, as `judge_governed` does: nothing may reach the deferral
+        // machinery until a validator is installed.
+        if governance.validator().is_none() {
+            return Ok(MergeOutcome::retryable_skip(format!(
+                "collection {} is governed but no merge validator is installed",
+                collection.name()
+            )));
         }
         let Some(missing) = self.first_missing_ancestor(cid, block).await? else {
             return Err(error);
@@ -244,7 +259,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         self.index_deferred(
             cid,
             metadata.doc_id.unwrap_or_default(),
-            payload,
             metadata,
             vec![WaitKey::Composite(missing)],
         );

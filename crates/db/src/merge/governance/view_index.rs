@@ -15,9 +15,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
     ///
     /// A merge and a local write each put a document's index entries in the
     /// transaction that stores the document, so on one snapshot the index
-    /// lists exactly the documents a scan would match. A unique index is not
-    /// used: a merge keeps one entry per value, where a scan sees every
-    /// document holding it.
+    /// lists exactly the undeleted documents a scan would match; the deleted
+    /// ones, whose entries a delete removed, are added from the deletion
+    /// markers. A unique index is not used: a merge keeps one entry per
+    /// value, where a scan sees every document holding it.
     pub(super) async fn indexed_documents(
         &self,
         collection: &Collection,
@@ -66,16 +67,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
         entries.close().await.map_err(|error| error.to_string())?;
         doc_short_ids.sort_unstable();
 
-        let documents = collection
-            .get_by_short_ids(&datastore, &systemstore, &doc_short_ids, false)
+        let mut documents: Vec<Document> = collection
+            .get_by_short_ids(&datastore, &systemstore, &doc_short_ids, true)
             .await
-            .map_err(|error| error.to_string())?;
-        Ok(Some(
-            documents
-                .into_iter()
-                .map(|(_, document, _)| document)
-                .collect(),
-        ))
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|(_, document, _)| document)
+            .collect();
+        drop(snapshot);
+        // A delete removes a document's index entries, and a governance read
+        // must still see the document (`MergeView::find_documents`). The
+        // caller filters by value, so the deleted rows join the candidates.
+        documents.extend(self.deleted_documents(collection).await?);
+        Ok(Some(documents))
     }
 }
 
