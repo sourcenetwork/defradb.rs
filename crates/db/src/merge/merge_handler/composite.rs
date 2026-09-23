@@ -163,7 +163,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         .await
     }
 
-    fn has_merged_composite(&self, cid: &Cid) -> bool {
+    pub(crate) fn has_merged_composite(&self, cid: &Cid) -> bool {
         self.merged_composites
             .lock()
             .unwrap_or_else(|error| {
