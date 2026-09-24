@@ -27,6 +27,7 @@ use storage::corekv::Store;
 pub mod action;
 pub(crate) mod dump;
 pub(crate) mod spawn;
+pub mod storage_stats;
 
 /// Default maximum number of lazy migrations written in one transaction.
 pub const DEFAULT_MIGRATION_WRITE_BACK_BATCH_SIZE: usize = 128;

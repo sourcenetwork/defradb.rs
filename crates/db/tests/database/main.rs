@@ -5,3 +5,4 @@ mod common;
 mod action;
 mod db;
 mod encryption;
+mod storage_stats;
