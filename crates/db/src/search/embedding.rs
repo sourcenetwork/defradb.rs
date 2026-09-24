@@ -114,6 +114,16 @@ pub async fn embed_text(
     text: &str,
     model: Option<&str>,
 ) -> AnyhowResult<Vec<f64>> {
+    embed_text_with_provider(embedding_config, "openai", text, model).await
+}
+
+/// Embed query text using the same provider contract as document embeddings.
+pub async fn embed_text_with_provider(
+    embedding_config: &EmbeddingClientConfig,
+    provider: &str,
+    text: &str,
+    model: Option<&str>,
+) -> AnyhowResult<Vec<f64>> {
     let url = embedding_config.url.trim();
     if url.is_empty() {
         bail!("embedding URL is empty");
@@ -129,7 +139,7 @@ pub async fn embed_text(
         .ok_or_else(|| anyhow!("embedding model is empty"))?;
 
     let vector = call_embedding(
-        "openai",
+        provider,
         url,
         resolved_model,
         &embedding_config.api_key,
@@ -191,6 +201,13 @@ pub fn resolve_embedding_config<'a>(
     Ok(ResolvedEmbeddingConfig { url, model })
 }
 
+/// The form every embedding URL is used in: surrounding whitespace gone and
+/// trailing slashes dropped, so `https://host/api/` and `https://host/api`
+/// are one endpoint everywhere a URL is compared or joined.
+pub(crate) fn normalized_embedding_url(url: &str) -> &str {
+    url.trim().trim_end_matches('/')
+}
+
 async fn call_embedding(
     provider: &str,
     url: &str,
@@ -198,7 +215,7 @@ async fn call_embedding(
     api_key: &str,
     text: &str,
 ) -> Result<Vec<f64>, EmbeddingError> {
-    let endpoint = format!("{}/embeddings", url.trim_end_matches('/'));
+    let endpoint = format!("{}/embeddings", normalized_embedding_url(url));
     let (body, response_pointer) = match provider {
         "ollama" => (
             serde_json::json!({ "model": model, "prompt": text }),
@@ -271,4 +288,29 @@ pub fn parse_embedding_vector(embedding: &[serde_json::Value]) -> Result<Vec<f64
                 .ok_or_else(|| format!("embedding value at index {} is not numeric", index))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_embedding_url;
+
+    #[test]
+    fn trailing_slashes_and_whitespace_are_one_endpoint() {
+        assert_eq!(
+            normalized_embedding_url("https://host/api/"),
+            "https://host/api"
+        );
+        assert_eq!(
+            normalized_embedding_url(" https://host/api "),
+            "https://host/api"
+        );
+        assert_eq!(
+            normalized_embedding_url("https://host/api//"),
+            normalized_embedding_url("https://host/api")
+        );
+        assert_ne!(
+            normalized_embedding_url("https://host/api"),
+            normalized_embedding_url("https://other.host/api")
+        );
+    }
 }

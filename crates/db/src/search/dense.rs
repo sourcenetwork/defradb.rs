@@ -2,16 +2,15 @@
 //!
 //! This module intentionally keeps the contract narrow:
 //! - one dense vector per configured vector field
-//! - query-time embeddings are generated through an OpenAI-compatible
-//!   `/embeddings` endpoint
-//! - DefraDB scores stored and query vectors with dot product
+//! - query-time embeddings use OpenAI-compatible or Ollama endpoints
+//! - similarity uses the field's vector-index metric, or cosine without an index
 //! - hybrid ranking is BM25 + dense similarity fused with reciprocal rank fusion
 //!
 //! Model-specific behavior such as query instructions, pooling strategy,
 //! normalization, and any asymmetric query/document preprocessing is expected to
-//! be handled by the embedding service itself. DefraDB v1 only sends `model` and
-//! `input`, and assumes the returned query vectors are compatible with the
-//! vectors already stored in the collection.
+//! be handled by the embedding service itself. The caller selects the provider,
+//! endpoint, and model compatible with the vectors stored in the collection.
+//! Ollama vectors are normalized using the document embedding contract.
 
 use rapidhash::{HashMapExt, RapidHashMap};
 use std::cmp::Ordering;
@@ -20,7 +19,10 @@ use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value as JsonValue};
 
-use crate::search::{embedding::embed_text, EmbeddingClientConfig};
+use crate::search::{
+    embedding::{embed_text_with_provider, normalized_embedding_url},
+    EmbeddingClientConfig,
+};
 
 const DEFAULT_LIMIT: usize = 10;
 const DEFAULT_CANDIDATE_LIMIT: usize = 0;
@@ -49,6 +51,13 @@ pub struct DenseHybridSearchRequest {
     pub candidate_limit: usize,
     pub exclude_doc_ids: Vec<String>,
     pub embedding_model: Option<String>,
+    /// Defaults to OpenAI for existing callers; may also be `ollama`.
+    #[serde(default)]
+    pub embedding_provider: Option<String>,
+    /// Overrides the node endpoint for this request only. A different endpoint
+    /// does not receive the node's API key.
+    #[serde(default)]
+    pub embedding_url: Option<String>,
 }
 
 impl DenseHybridSearchRequest {
@@ -73,6 +82,8 @@ impl DenseHybridSearchRequest {
             candidate_limit: DEFAULT_CANDIDATE_LIMIT,
             exclude_doc_ids: Vec::new(),
             embedding_model: None,
+            embedding_provider: None,
+            embedding_url: None,
         }
     }
 
@@ -111,6 +122,16 @@ impl DenseHybridSearchRequest {
 
     pub fn with_embedding_model(mut self, embedding_model: impl Into<String>) -> Self {
         self.embedding_model = Some(embedding_model.into());
+        self
+    }
+
+    pub fn with_embedding_provider(mut self, provider: impl Into<String>) -> Self {
+        self.embedding_provider = Some(provider.into());
+        self
+    }
+
+    pub fn with_embedding_url(mut self, url: impl Into<String>) -> Self {
+        self.embedding_url = Some(url.into());
         self
     }
 }
@@ -170,8 +191,19 @@ pub async fn hybrid_search_dense<E: query::QueryExecutor + ?Sized>(
             (!default_model.is_empty()).then_some(default_model.to_string())
         })
         .ok_or_else(|| anyhow!("dense-search request is missing an embedding model"))?;
-    let query_vector = embed_text(
-        embedding_config,
+    let mut request_config = embedding_config.clone();
+    if let Some(url) = &request.embedding_url {
+        request_config.url.clone_from(url);
+        // A node credential must not follow a request to another endpoint.
+        // The same normalized form the request itself uses, so an override
+        // differing only by whitespace or a trailing slash keeps it.
+        if normalized_embedding_url(url) != normalized_embedding_url(&embedding_config.url) {
+            request_config.api_key.clear();
+        }
+    }
+    let query_vector = embed_text_with_provider(
+        &request_config,
+        request.embedding_provider.as_deref().unwrap_or("openai"),
         &request.query_text,
         Some(&embedding_model),
     )
