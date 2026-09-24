@@ -214,7 +214,14 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
             }
         }
         if report.total.keys % 1024 == 0 {
-            tokio::task::yield_now().await;
+            // A one-shot waker yield rather than tokio::task::yield_now: the
+            // wasm client builds this crate without the native feature, which
+            // is the only thing that links tokio in.
+            futures::future::poll_fn(|cx| {
+                cx.waker().wake_by_ref();
+                std::task::Poll::<()>::Pending
+            })
+            .await;
         }
     }
     iter.close().await?;
