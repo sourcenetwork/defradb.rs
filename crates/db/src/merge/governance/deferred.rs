@@ -202,6 +202,13 @@ impl DeferredMerges {
         self.entries.len()
     }
 
+    /// Drop a composite's own entry, if it has one: it merged, so nothing it
+    /// awaited can release it any more, and its slot would otherwise be held
+    /// for the life of the process.
+    pub(crate) fn forget(&self, cid: &Cid) -> bool {
+        self.take_entry(cid).is_some()
+    }
+
     /// Remove a composite's entry and its waiters, releasing its slot.
     fn take_entry(&self, cid: &Cid) -> Option<Entry> {
         let entry = self.entries.remove(cid)?;
@@ -285,5 +292,19 @@ mod tests {
             assert!(seen.insert(block.cid), "{} was queued twice", block.cid);
         }
         assert_eq!(index.held.load(Ordering::Acquire), index.len());
+    }
+
+    /// A composite that merged while its own entry was being filed would
+    /// otherwise hold a slot forever: nothing it awaited can release it.
+    #[test]
+    fn a_merged_composite_forgets_its_own_entry() {
+        let index = DeferredMerges::default();
+        index.defer(block(1), vec![key(1)]);
+        assert_eq!(index.len(), 1);
+        assert!(index.forget(&cid(1)));
+        assert_eq!(index.len(), 0);
+        assert!(!index.has_waiters());
+        assert_eq!(index.held.load(Ordering::Acquire), 0);
+        assert!(!index.forget(&cid(1)));
     }
 }

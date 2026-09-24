@@ -7,6 +7,7 @@ use storage::corekv::Store;
 
 use super::awaited::{is_immutable_scalar_field, Awaited, WaitKey};
 use super::validator::MergeCandidate;
+use super::verdict::MergeVerdict;
 use super::view::DbMergeView;
 use crate::merge::merge_handler::{DbMergeHandler, MergeError};
 
@@ -81,6 +82,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             MergeError::MergeFailed(format!("merge validator failed on {cid}: {error}"))
         })?;
         tracing::debug!(%cid, %doc_id, collection = %collection.name, ?verdict, "Governed composite judged");
+        if matches!(verdict, MergeVerdict::Reject { .. }) {
+            self.rejected_governed.insert(*cid, ());
+        }
 
         Ok(match verdict.into_outcome() {
             (None, _) => Judgement::Accept,
@@ -125,6 +129,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// and, when any deferred composite awaits a field value, on each
     /// `@immutable` scalar LWW value it sets.
     pub(crate) async fn release_merged_composite(&self, cid: &Cid, block: Option<&Block>) {
+        // Its own entry first: a judgement that deferred this composite may
+        // have filed it after another accepted and merged it.
+        self.deferred.forget(cid);
         let mut keys = vec![WaitKey::Composite(*cid)];
         if self.deferred.awaits_fields() {
             match self.immutable_field_keys(cid, block).await {
