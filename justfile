@@ -82,7 +82,8 @@ _sha256 file:
 # Setup
 # ---------------------------------------------------------------------------
 
-# Install every dependency needed to develop, test and verify the database.
+# Install core development tools. Browser tools install best-effort: the
+# browser suites name what they need when it is missing.
 [group('setup')]
 setup: setup-rust setup-jq setup-cargo-tools setup-protoc setup-go setup-jdk setup-lean setup-tla setup-browser
     @echo
@@ -231,17 +232,14 @@ setup-browser:
     fi
     # A system Firefox is used when present; the pinned build is only fetched
     # when there is nothing to drive, so this stays cheap on a normal machine.
-    if command -v firefox >/dev/null 2>&1; then
-        echo "firefox: $(firefox --version) (system)"; exit 0
-    fi
-    if [ -x "{{ tooling }}/firefox/firefox" ]; then
-        echo "firefox: $("{{ tooling }}/firefox/firefox" --version) (.tooling)"; exit 0
+    if firefox="$(bash tools/find-firefox.sh "{{ tooling }}")"; then
+        echo "firefox: $("$firefox" --version) ($firefox)"; exit 0
     fi
     case "$(uname -s)-$(uname -m)" in
         Linux-x86_64|Linux-amd64)  ff_platform="linux-x86_64" ;;
         Linux-aarch64|Linux-arm64) ff_platform="linux-aarch64" ;;
-        *) echo "error: no firefox on PATH and no pinned build for $(uname -s)-$(uname -m)" >&2
-           echo "       install Firefox, then re-run: just setup-browser" >&2; exit 1 ;;
+        *) echo "warning: Firefox not found and no pinned build for $(uname -s)-$(uname -m)" >&2
+           echo "         browser tests need it: install Firefox, then re-run: just setup-browser" >&2; exit 0 ;;
     esac
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
     url="https://download-installer.cdn.mozilla.net/pub/firefox/releases/{{ firefox_version }}/${ff_platform}/en-US/firefox-{{ firefox_version }}.tar.xz"
@@ -453,6 +451,8 @@ doctor:
     for t in docker node npm python3; do
         printf '%-16s %s\n' "$t" "$(command -v "$t" 2>/dev/null || echo 'missing')"
     done
+    printf '%-16s %s\n' "firefox" "$(bash tools/find-firefox.sh "{{ tooling }}" 2>/dev/null || echo 'missing (just setup-browser)')"
+    printf '%-16s %s\n' "geckodriver" "$(command -v geckodriver 2>/dev/null || echo 'missing (just setup-browser)')"
 
 # ---------------------------------------------------------------------------
 # Build
@@ -515,10 +515,13 @@ test-wasm:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v geckodriver >/dev/null 2>&1 || { echo "error: no geckodriver; run: just setup-browser" >&2; exit 1; }
-    if ! command -v firefox >/dev/null 2>&1 && [ -x "{{ tooling }}/firefox/firefox" ]; then
-        export PATH="{{ tooling }}/firefox:$PATH"
+    firefox="$(bash tools/find-firefox.sh "{{ tooling }}")" || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
+    # Only a Firefox found outside PATH (the pinned build, a macOS app bundle)
+    # needs its directory exported. Prepending the directory of one already on
+    # PATH would put the system bin directory ahead of .tooling and rustup.
+    if ! command -v firefox >/dev/null 2>&1; then
+        export PATH="$(dirname "$firefox"):$PATH"
     fi
-    command -v firefox >/dev/null 2>&1 || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
     export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
     cargo test -p defra-wasm --target wasm32-unknown-unknown --lib --tests
 
@@ -527,10 +530,12 @@ test-wasm:
 test-browser-p2p:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! command -v firefox >/dev/null 2>&1 && [ -x "{{ tooling }}/firefox/firefox" ]; then
-        export PATH="{{ tooling }}/firefox:$PATH"
+    firefox="$(bash tools/find-firefox.sh "{{ tooling }}")" || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
+    # Same rule as test-wasm: only a Firefox found outside PATH is exported,
+    # and .tooling/bin stays first either way.
+    if ! command -v firefox >/dev/null 2>&1; then
+        export PATH="{{ tooling_bin }}:$(dirname "$firefox"):$PATH"
     fi
-    export PATH="{{ tooling_bin }}:$PATH"
     tools/browser-p2p-e2e.sh
 
 # Unit tests for one crate: `just test-crate crdt`.
