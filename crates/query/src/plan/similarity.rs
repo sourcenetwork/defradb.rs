@@ -159,6 +159,10 @@ impl PlanNode for SimilarityNode {
         self.source.set_cursor_seek(seek)
     }
 
+    fn set_vector_parent(&mut self, field_index: usize, doc_id: &str) -> bool {
+        self.source.set_vector_parent(field_index, doc_id)
+    }
+
     fn set_cursor_fetch_limit(&mut self, _limit: u64) -> bool {
         // Similarity consumes all input to rank by distance; bounding the scan
         // below it would drop candidates. Do not forward.

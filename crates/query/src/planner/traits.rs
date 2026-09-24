@@ -51,6 +51,13 @@ pub trait PlanNode: MaybeSendSync {
     /// Get the source/child plan node (for plan tree traversal).
     fn source(&self) -> Option<&dyn PlanNode>;
 
+    /// Bind a routed child scan to its current parent before initialization.
+    /// Wrappers that preserve field positions may forward this; other plans
+    /// leave the child on its exhaustive path.
+    fn set_vector_parent(&mut self, _field_index: usize, _doc_id: &str) -> bool {
+        false
+    }
+
     /// Get the document mapping for this node.
     fn document_map(&self) -> &DocumentMapping;
 
