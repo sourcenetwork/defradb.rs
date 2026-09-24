@@ -26,6 +26,6 @@ pub use local_commit::LocalCommitRelease;
 pub use redriven::{RedrivenMerge, RedrivenMergeSink};
 pub use signature::SignatureStatus;
 pub use sweep::{run_governance_sweep, SWEEP_BUDGET, SWEEP_INTERVAL};
-pub use validator::{MergeCandidate, MergeGovernance, MergeValidator};
+pub use validator::{DefinitionCandidate, MergeCandidate, MergeGovernance, MergeValidator};
 pub use verdict::MergeVerdict;
 pub use view::{FieldValue, MergeView};

@@ -121,6 +121,45 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 verified_creator: None,
             }));
         }
+        // A governed definition a verdict deferred is owed a re-judgement
+        // like any composite; it is not a document write, so it carries no
+        // document and no carrier id.
+        if let CrdtDelta::CollectionDefinition(definition) = &block.delta {
+            // A version already held was accepted, or defined here; a
+            // re-judgement would find it held and do nothing.
+            if self
+                .db
+                .get_collection_by_version_id_full(&cid.to_string())
+                .await
+                .map_err(MergeError::Database)?
+                .is_some()
+            {
+                return Ok(None);
+            }
+            // An initial definition carries its root; a patch inherits it
+            // from the version it supersedes.
+            let governed = match &definition.governance_root {
+                Some(_) => true,
+                None => self
+                    .resolve_previous_collection_version(&block)
+                    .await?
+                    .is_some_and(|previous| previous.governance_root.is_some()),
+            };
+            if !governed {
+                return Ok(None);
+            }
+            return Ok(Some(MergeBlock {
+                cid: *cid,
+                block_data: bytes::Bytes::new(),
+                doc_id: String::new(),
+                collection_id: String::new(),
+                creator: String::new(),
+                sender_peer: None,
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+                verified_creator: None,
+            }));
+        }
         let CrdtDelta::Composite(payload) = &block.delta else {
             return Ok(None);
         };

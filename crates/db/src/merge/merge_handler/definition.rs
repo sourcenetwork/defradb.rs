@@ -206,6 +206,48 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(MergeOutcome::Merged);
         }
 
+        // A governed definition is judged before it is stored. An initial one
+        // is self-certifying, since the collection ID commits to the root;
+        // a patch inherits that ID and changes what every later write is
+        // judged against, so the application says who may publish one.
+        if schema.governance_root.is_some() {
+            match self
+                .judge_definition(crate::merge::governance::DefinitionCandidate {
+                    cid,
+                    block,
+                    payload,
+                    version: &schema,
+                    previous: previous.as_ref(),
+                })
+                .await?
+            {
+                crate::merge::governance::Judgement::Ungoverned
+                | crate::merge::governance::Judgement::Accept => {}
+                crate::merge::governance::Judgement::Verdict { outcome, awaiting } => {
+                    if !awaiting.is_empty() {
+                        // No document and no carrier id: a definition is not
+                        // a document write, and re-drive must not push it as
+                        // one.
+                        self.deferred.defer(
+                            defra_core::merge::MergeBlock {
+                                cid: *cid,
+                                block_data: bytes::Bytes::new(),
+                                doc_id: String::new(),
+                                collection_id: String::new(),
+                                creator: String::new(),
+                                sender_peer: None,
+                                is_explicit_replicator: false,
+                                explicit_replay_authorization: None,
+                                verified_creator: None,
+                            },
+                            awaiting,
+                        );
+                    }
+                    return Ok(outcome);
+                }
+            }
+        }
+
         // Store in systemstore
         let txn = self.db.new_txn(false).await.map_err(MergeError::Database)?;
         {

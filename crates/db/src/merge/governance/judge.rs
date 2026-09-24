@@ -6,7 +6,7 @@ use schema::CollectionVersion;
 use storage::corekv::Store;
 
 use super::awaited::{is_immutable_scalar_field, Awaited, WaitKey};
-use super::validator::MergeCandidate;
+use super::validator::{DefinitionCandidate, MergeCandidate};
 use super::verdict::MergeVerdict;
 use super::view::DbMergeView;
 use crate::merge::merge_handler::{DbMergeHandler, MergeError};
@@ -95,13 +95,58 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         })
     }
 
+    /// Judge a definition block of a governed collection, the same way a
+    /// composite is judged: only when the app has claimed the collection,
+    /// deferring everything when it has claimed it and installed no
+    /// validator, and remembering a reject so the sweep leaves it alone.
+    pub(crate) async fn judge_definition(
+        &self,
+        candidate: DefinitionCandidate<'_>,
+    ) -> Result<Judgement, MergeError> {
+        let Some(governance) = self.db.merge_governance() else {
+            return Ok(Judgement::Ungoverned);
+        };
+        if !governance.governs(candidate.version) {
+            return Ok(Judgement::Ungoverned);
+        }
+        let Some(validator) = governance.validator() else {
+            return Ok(Judgement::Verdict {
+                outcome: MergeOutcome::retryable_skip(format!(
+                    "collection {} is governed but no merge validator is installed",
+                    candidate.version.name
+                )),
+                awaiting: Vec::new(),
+            });
+        };
+        let cid = *candidate.cid;
+        let view = DbMergeView::new(self);
+        let verdict = validator.validate_definition(&candidate, &view).await;
+        view.finish().await;
+        let verdict = verdict.map_err(|error| {
+            MergeError::MergeFailed(format!(
+                "merge validator failed on definition {cid}: {error}"
+            ))
+        })?;
+        tracing::debug!(%cid, collection = %candidate.version.name, ?verdict, "Governed definition judged");
+        if matches!(verdict, MergeVerdict::Reject { .. }) {
+            self.rejected_governed.insert(cid, ());
+        }
+        Ok(match verdict.into_outcome() {
+            (None, _) => Judgement::Accept,
+            (Some(outcome), awaiting) => Judgement::Verdict {
+                outcome,
+                awaiting: self.wait_keys(awaiting)?,
+            },
+        })
+    }
+
     /// Index keys for a verdict's awaited inputs. An awaited field of a local
     /// collection that is not an `@immutable` scalar LWW field is a validator
     /// error: its value could differ between replicas. A collection this node
     /// does not hold yet is not an error: `find_documents` answers it empty
     /// and the validator defers on that, so the key must be indexed for the
     /// composite to be re-driven when the collection and a match arrive.
-    fn wait_keys(&self, awaiting: Vec<Awaited>) -> Result<Vec<WaitKey>, MergeError> {
+    pub(crate) fn wait_keys(&self, awaiting: Vec<Awaited>) -> Result<Vec<WaitKey>, MergeError> {
         awaiting
             .into_iter()
             .map(|awaited| match awaited {

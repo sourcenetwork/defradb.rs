@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cid::Cid;
-use defra_core::block::{Block, CompositeDeltaPayload};
+use defra_core::block::{Block, CollectionDefinitionDeltaPayload, CompositeDeltaPayload};
 use defra_core::thread_bounds::MaybeSendSync;
 use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
@@ -49,6 +49,34 @@ pub struct MergeCandidate<'a> {
 ///   composite unmerged and never treats an error as a verdict.
 ///
 /// Replication policy is node-local and is never an input to this verdict.
+/// A definition block of a governed collection, as the merge path holds it
+/// before the version it describes is stored.
+///
+/// The identity is self-certifying for an initial definition: the collection
+/// ID commits to the root, so a definition claiming a root with other fields
+/// is a different collection, not a forgery of this one. A patch is not: it
+/// inherits the collection ID and changes what every later write is judged
+/// against, so who may publish one is the application's rule to state.
+pub struct DefinitionCandidate<'a> {
+    /// The version ID: the CID of this block.
+    pub cid: &'a Cid,
+    pub block: &'a Block,
+    pub payload: &'a CollectionDefinitionDeltaPayload,
+    /// The version as this node has rebuilt it from the block: the record
+    /// that will be stored if the verdict accepts.
+    pub version: &'a CollectionVersion,
+    /// The version this block patches, as held here; `None` for an initial
+    /// definition.
+    pub previous: Option<&'a CollectionVersion>,
+}
+
+impl DefinitionCandidate<'_> {
+    /// Whether this is the collection's first definition rather than a patch.
+    pub fn is_initial(&self) -> bool {
+        self.previous.is_none()
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait MergeValidator: MaybeSendSync {
@@ -57,6 +85,28 @@ pub trait MergeValidator: MaybeSendSync {
         candidate: &MergeCandidate<'_>,
         view: &dyn MergeView,
     ) -> Result<MergeVerdict, String>;
+
+    /// Judge a definition block of a governed collection the app has claimed,
+    /// before the version it describes is stored. The same three verdicts
+    /// and the same rules as [`Self::validate`]: a reject rests on the
+    /// block's own content, a defer names what could change it, and the
+    /// verdict reads nothing but held bytes through `view`.
+    ///
+    /// Not called for an ungoverned collection, nor for a version this node
+    /// already holds. A rejected definition is left unmerged and never
+    /// stored; a deferred one is re-driven when what it awaits merges.
+    ///
+    /// The default accepts every definition, which is the behaviour before
+    /// this entry point existed: a version arriving over the network is
+    /// stored inactive for an operator to activate.
+    async fn validate_definition(
+        &self,
+        candidate: &DefinitionCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        let _ = (candidate, view);
+        Ok(MergeVerdict::Accept)
+    }
 }
 
 /// The collections an app has claimed and the validator that governs them.
