@@ -47,7 +47,6 @@ defra-core = { path = "../defra-core" }
 crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
-rand.workspace = true
 tempfile = "3"
 vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "25f796771363d7ca979b59c8bd747f6c863825e5" }
 vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "25f796771363d7ca979b59c8bd747f6c863825e5" }

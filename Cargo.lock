@@ -14132,7 +14132,6 @@ dependencies = [
  "kovan-map",
  "kovan-queue",
  "prost 0.14.3",
- "rand 0.8.5",
  "rapidhash",
  "reqwest 0.12.28",
  "serde",
