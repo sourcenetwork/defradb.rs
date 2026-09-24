@@ -130,6 +130,12 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     prefetched_dek_cids: Arc<CidSet>,
     /// Composites a merge validator deferred, by the CIDs they await.
     pub(crate) deferred: crate::merge::governance::DeferredMerges,
+    /// Composites a merge validator rejected. A reject rests on present bytes
+    /// and never changes, and the block stays in the blockstore's unmerged
+    /// set, so without this the governance sweep would re-judge every
+    /// rejected composite each tick and, past its budget, never reach a
+    /// deferred one. In memory: after a restart each is re-judged once.
+    pub(crate) rejected_governed: CidSet,
     /// Where composites merged by re-drive are reported, so they take the
     /// same post-merge path as a first-attempt merge.
     redriven_sink: std::sync::OnceLock<Arc<dyn crate::merge::governance::RedrivenMergeSink>>,
@@ -220,6 +226,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             merge_queue,
             prefetched_dek_cids: Arc::new(cid_set()),
             deferred: Default::default(),
+            rejected_governed: cid_set(),
             redriven_sink: std::sync::OnceLock::new(),
         }
     }

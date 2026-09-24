@@ -281,3 +281,85 @@ async fn the_sweep_does_not_walk_a_claimed_collection_without_a_validator() {
     assert!(node.doc_ids("Notes").await.is_empty());
     assert!(node.forwarded().is_empty());
 }
+
+/// Rejects everything it sees.
+struct RejectEverything;
+
+#[async_trait]
+impl MergeValidator for RejectEverything {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::reject("forged"))
+    }
+}
+
+/// Defers on first sight, naming a composite; rejects on every later look.
+struct DeferThenReject(Cid, std::sync::atomic::AtomicBool);
+
+#[async_trait]
+impl MergeValidator for DeferThenReject {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        if self.1.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            Ok(MergeVerdict::reject("forged"))
+        } else {
+            Ok(MergeVerdict::defer("first look", [self.0]))
+        }
+    }
+}
+
+/// A rejected composite stays in the blockstore's unmerged set, and a reject
+/// rests on present bytes, so no tick can change it. The sweep must not
+/// re-judge it: each one would otherwise spend the budget that exists for
+/// composites a verdict deferred.
+#[tokio::test]
+async fn the_sweep_does_not_rejudge_a_rejected_composite() {
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        MergeGovernance::new(["Notes"]).with_validator(Arc::new(RejectEverything)),
+        true,
+    )
+    .await;
+    let writer = signer();
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    assert_eq!(
+        note.merge(&node, &writer.did).await,
+        MergeOutcome::rejected("forged")
+    );
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 0);
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 0);
+}
+
+/// A composite deferred on arrival and rejected when re-driven is remembered
+/// the same way: the sweep re-judges it once, then leaves it.
+#[tokio::test]
+async fn a_composite_rejected_on_redrive_is_not_swept_again() {
+    let writer = signer();
+    let grant = genesis("col-grants", "writer", &writer.did, &writer);
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        MergeGovernance::new(["Notes"]).with_validator(Arc::new(DeferThenReject(
+            grant.cid,
+            std::sync::atomic::AtomicBool::new(false),
+        ))),
+        true,
+    )
+    .await;
+    assert_eq!(
+        note.merge(&node, &writer.did).await,
+        MergeOutcome::retryable_skip("first look")
+    );
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 1);
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 0);
+    assert!(
+        node.forwarded().is_empty(),
+        "a rejected re-drive was forwarded"
+    );
+}

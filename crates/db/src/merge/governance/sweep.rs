@@ -79,9 +79,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
 
     /// The re-drive entry for an unmerged block, or `None` when the sweep has
     /// no business with it: a block that is not a composite, one whose
-    /// collection is not governed, or one already merged in this process.
+    /// collection is not governed, one already merged in this process, or
+    /// one a verdict rejected, which no arrival can change.
     async fn sweep_candidate(&self, cid: &Cid) -> Result<Option<MergeBlock>, MergeError> {
-        if self.has_merged_composite(cid) {
+        if self.has_merged_composite(cid) || self.rejected_governed.contains_key(cid) {
             return Ok(None);
         }
         let Some(data) = self
