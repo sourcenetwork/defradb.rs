@@ -31,6 +31,16 @@ pub enum Error {
     #[error("collection version ID can't be empty")]
     CollectionVersionIDEmpty,
 
+    #[error(
+        "collection version {version_id} binds policy {policy_cid}, which this node does not hold: \
+         a synced definition carries the policy by CID only, so activating it would serve the \
+         collection with no policy"
+    )]
+    CollectionVersionPolicyNotHeld {
+        version_id: String,
+        policy_cid: String,
+    },
+
     #[error("collection already exists. Name: {0}")]
     CollectionAlreadyExists(String),
 

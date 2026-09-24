@@ -89,6 +89,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Apply ACP filtering: check read permission for each reconstructed document.
         // CID-based time-travel queries must enforce the same ACP rules as regular queries.
         // Documents the caller lacks read permission for are silently excluded (Go behavior).
+        let app_identity = caller_identity.clone();
         let documents = if let Some(ref policy) = collection.policy {
             let identity = Identity::from(caller_identity);
             let mut permitted = Vec::with_capacity(documents.len());
@@ -126,6 +127,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         } else {
             documents
         };
+        let mut readable = Vec::with_capacity(documents.len());
+        for (doc, cid) in documents {
+            let doc_id = doc.id().map(|id| id.to_string()).unwrap_or_default();
+            if self
+                .app_may_read(app_identity.as_ref(), &collection, &doc_id)
+                .await
+            {
+                readable.push((doc, cid));
+            }
+        }
+        let documents = readable;
 
         let documents = if let Some(ref filter) = select.filter {
             let mut filtered = Vec::with_capacity(documents.len());

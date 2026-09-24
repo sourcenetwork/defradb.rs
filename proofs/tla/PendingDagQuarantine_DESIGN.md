@@ -123,3 +123,14 @@ crash-window leftover the `is_quarantined` check exists to clean up without
 re-registering. `crates/p2p/src/sync/replication/mod.rs`'s `Rejected`-in-a-batch
 regression test is the sibling fence for the batch-merge path feeding the same
 disposition.
+
+## A precondition since merge governance
+
+`RetryForever` is RED because the sweep re-drives a root whose merge is *rejected
+on content* forever. A governed collection's merge validator can also return
+`Defer` (`crates/db/src/merge/governance/verdict.rs`), a non-terminal skip on
+**absence** of an input, and the governance sweep re-drives such a composite at
+every tick by design, until its inputs arrive or the plugin lets it go. That is
+not this model's wedge: the two outcomes are distinct (`MergeOutcome::rejected`
+versus a retryable skip) and only the first is a poison root. See
+[GovernanceMerge_DESIGN.md](GovernanceMerge_DESIGN.md).

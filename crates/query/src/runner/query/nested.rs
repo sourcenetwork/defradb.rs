@@ -68,7 +68,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut planner = Planner::new(collections)
             .with_query_limits(self.query_limits)
             .with_fetcher(Arc::new(fetcher_arc))
-            .with_acp(self.acp.clone(), identity);
+            .with_acp(self.acp.clone(), identity)
+            .with_read_validator(self.read_validator.clone());
         if !fts_scores.is_empty() {
             planner = planner.with_fts_scores(fts_scores);
         }

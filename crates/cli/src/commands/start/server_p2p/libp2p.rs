@@ -192,6 +192,20 @@ impl Node {
                 .expect("retry interval is nonzero");
         });
 
+        // The fallback for a deferred verdict no arrival can release: one
+        // named nothing, one past the index's capacity, and everything the
+        // index held before this process started.
+        let sweep_handler = replication.merge_handler_inner.clone();
+        let sweep_shutdown = coordinator.shutdown_handle();
+        coordinator.spawn_background_task("governance_sweep", async move {
+            db::merge::governance::run_governance_sweep(
+                sweep_handler,
+                db::merge::governance::SWEEP_INTERVAL,
+                sweep_shutdown,
+            )
+            .await;
+        });
+
         let coordinator_for_events = coordinator.clone();
         let se_store = store.clone();
         let se_handle = handle.clone();

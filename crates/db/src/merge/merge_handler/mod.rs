@@ -22,6 +22,7 @@ mod protected_update;
 mod recovery;
 pub mod se_merge;
 mod signature;
+pub(crate) use signature::verify_signature_data;
 
 pub use error::MergeError;
 pub(crate) use error::{CounterMergeResult, LwwMergeResult};
@@ -127,6 +128,17 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// (pushlog + gossip + retries) don't fan out duplicate cross-peer
     /// fetches.
     prefetched_dek_cids: Arc<CidSet>,
+    /// Composites a merge validator deferred, by the CIDs they await.
+    pub(crate) deferred: crate::merge::governance::DeferredMerges,
+    /// Composites a merge validator rejected. A reject rests on present bytes
+    /// and never changes, and the block stays in the blockstore's unmerged
+    /// set, so without this the governance sweep would re-judge every
+    /// rejected composite each tick and, past its budget, never reach a
+    /// deferred one. In memory: after a restart each is re-judged once.
+    pub(crate) rejected_governed: CidSet,
+    /// Where composites merged by re-drive are reported, so they take the
+    /// same post-merge path as a first-attempt merge.
+    redriven_sink: std::sync::OnceLock<Arc<dyn crate::merge::governance::RedrivenMergeSink>>,
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
@@ -213,7 +225,33 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             kms: std::sync::OnceLock::new(),
             merge_queue,
             prefetched_dek_cids: Arc::new(cid_set()),
+            deferred: Default::default(),
+            rejected_governed: cid_set(),
+            redriven_sink: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Lower the deferred index's capacity, so a test can reach the
+    /// at-capacity path without indexing
+    /// [`crate::merge::governance::MAX_DEFERRED_COMPOSITES`] composites first.
+    /// Nothing in production calls this.
+    pub fn set_deferred_capacity(&self, capacity: usize) {
+        self.deferred.set_capacity(capacity);
+    }
+
+    /// Report composites merged by re-drive to `sink`, which marks them merged
+    /// and fans them out as the replication layer does a first-attempt merge.
+    pub fn set_redriven_merge_sink(
+        &self,
+        sink: Arc<dyn crate::merge::governance::RedrivenMergeSink>,
+    ) {
+        let _ = self.redriven_sink.set(sink);
+    }
+
+    pub(crate) fn redriven_merge_sink(
+        &self,
+    ) -> Option<&Arc<dyn crate::merge::governance::RedrivenMergeSink>> {
+        self.redriven_sink.get()
     }
 
     /// Enforce the same parent-chain depth policy for every merge traversal.

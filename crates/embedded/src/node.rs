@@ -264,6 +264,8 @@ pub struct NodeBuilder {
     data_path: Option<PathBuf>,
     config: EmbeddedNodeConfig,
     at_rest_encryption_key: Option<[u8; 32]>,
+    #[cfg(feature = "iroh")]
+    access_hooks: Option<crate::AccessHooks>,
 }
 
 impl NodeBuilder {
@@ -331,6 +333,14 @@ impl NodeBuilder {
         self
     }
 
+    /// Install the app's own access control. Only an iroh node accepts it:
+    /// `build` fails for any other transport.
+    #[cfg(feature = "iroh")]
+    pub fn with_access_hooks(mut self, hooks: crate::AccessHooks) -> Self {
+        self.access_hooks = Some(hooks);
+        self
+    }
+
     /// Enable transparent at-rest value encryption for the storage backend,
     /// keyed by the given 32-byte AES-256 key. Opt-in; off by default.
     pub fn with_at_rest_encryption_key(mut self, key: [u8; 32]) -> Self {
@@ -392,6 +402,9 @@ impl NodeBuilder {
         };
 
         self.config.persistence = persistence;
+        #[cfg(feature = "iroh")]
+        return build_with_store_and_access_hooks(store, self.config, self.access_hooks).await;
+        #[cfg(not(feature = "iroh"))]
         build_with_store(store, self.config).await
     }
 }
@@ -480,6 +493,39 @@ pub async fn build_with_store<S>(
 where
     S: storage::corekv::Store + 'static,
 {
+    build_node(store, config, None).await
+}
+
+/// Build an iroh node whose access control the app supplies. Fails when
+/// `hooks` is set and the transport is not iroh.
+#[cfg(feature = "iroh")]
+pub async fn build_with_store_and_access_hooks<S>(
+    store: Arc<S>,
+    config: EmbeddedNodeConfig,
+    hooks: Option<crate::AccessHooks>,
+) -> Result<EmbeddedNode<S>>
+where
+    S: storage::corekv::Store + 'static,
+{
+    if hooks.is_some() && !matches!(config.transport, TransportConfig::Iroh(_)) {
+        return Err(anyhow!("access hooks require the iroh transport"));
+    }
+    build_node(store, config, hooks).await
+}
+
+#[cfg(feature = "iroh")]
+type NodeAccessHooks = Option<crate::AccessHooks>;
+#[cfg(not(feature = "iroh"))]
+type NodeAccessHooks = Option<std::convert::Infallible>;
+
+async fn build_node<S>(
+    store: Arc<S>,
+    config: EmbeddedNodeConfig,
+    access_hooks: NodeAccessHooks,
+) -> Result<EmbeddedNode<S>>
+where
+    S: storage::corekv::Store + 'static,
+{
     let event_bus: Arc<dyn events::Bus> = Arc::new(events::ChannelBus::default());
 
     let (raw_identity, node_identity_did) = create_node_identity(&config.signing)?;
@@ -493,6 +539,10 @@ where
         .await
         .map_err(|error| anyhow!("failed to open database: {error}"))?;
     database.set_event_bus(event_bus.clone());
+    #[cfg(feature = "iroh")]
+    if let Some(hooks) = &access_hooks {
+        hooks.install(&database);
+    }
     let database = Arc::new(database);
     let background_tasks = Arc::new(BackgroundTasks::new(Some(
         database.clone().start_downsample_task(),
@@ -707,6 +757,13 @@ where
     {
         query_runner = query_runner.with_se_transport(se_transport);
     }
+
+    #[cfg(feature = "iroh")]
+    if let Some(hooks) = &access_hooks {
+        query_runner = hooks.apply(query_runner);
+    }
+    #[cfg(not(feature = "iroh"))]
+    let _ = access_hooks;
 
     let query_runner: Arc<dyn query::QueryExecutor> = Arc::new(query_runner);
 

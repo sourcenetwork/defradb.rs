@@ -9,6 +9,7 @@ mod broadcast_mutator_broadcast;
 mod collection_block_links;
 mod collection_guard_race;
 mod collection_heads;
+mod governance;
 mod head_provider;
 mod merge_handler_composite_persist;
 mod merge_handler_se_merge;

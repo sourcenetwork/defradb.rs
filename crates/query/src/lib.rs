@@ -18,6 +18,7 @@
 //! - `planner`: Plan node trait and execution info
 //! - `plan`: Concrete plan node implementations
 
+pub mod access_hooks;
 pub(crate) mod collection_provider;
 pub(crate) mod doc;
 pub mod document;
