@@ -124,6 +124,7 @@ async fn coding_session_fixture_exports_context1_style_tasks() {
 #[derive(Clone, Default)]
 struct MockEmbeddingState {
     requests: Arc<Atom<Vec<EmbeddingRequest>>>,
+    dimensions: [usize; 3],
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -153,8 +154,15 @@ static EMBEDDING_FIXTURE_TEST: tokio::sync::Semaphore = tokio::sync::Semaphore::
 
 impl MockEmbeddingServer {
     async fn start() -> Self {
+        Self::start_with_dimensions([14; 3]).await
+    }
+
+    async fn start_with_dimensions(dimensions: [usize; 3]) -> Self {
         let fixture_permit = EMBEDDING_FIXTURE_TEST.acquire().await.unwrap();
-        let state = MockEmbeddingState::default();
+        let state = MockEmbeddingState {
+            dimensions,
+            ..MockEmbeddingState::default()
+        };
         let app = Router::new()
             .route("/embeddings", post(mock_embedding_handler))
             .with_state(state.clone());
@@ -194,10 +202,15 @@ async fn mock_embedding_handler(
         requests
     });
 
+    let mut embedding = deterministic_embedding(&request.model, &request.input);
+    let model_index = match request.model.as_str() {
+        "coding-action-model" => 1,
+        "coding-search-chunk-model" => 2,
+        _ => 0,
+    };
+    embedding.resize(state.dimensions[model_index], 0.0);
     Json(EmbeddingResponse {
-        data: vec![EmbeddingResponseItem {
-            embedding: deterministic_embedding(&request.model, &request.input),
-        }],
+        data: vec![EmbeddingResponseItem { embedding }],
     })
 }
 
@@ -883,6 +896,40 @@ fn assert_hybrid_summary(summary: &HybridComparisonSummary, expected_term: &str)
         summary.case_name,
         expected_term
     );
+}
+
+#[tokio::test]
+async fn coding_session_embedding_fixture_accepts_model_specific_dimensions() {
+    let server = MockEmbeddingServer::start_with_dimensions([16, 24, 32]).await;
+    let node = crate::EmbeddedNode::builder()
+        .with_embedding_url(server.base_url.clone())
+        .build()
+        .await
+        .unwrap();
+    seed_coding_session_embedding_fixture_with_dimensions(
+        &node,
+        &CodingSessionFixtureConfig::smoke_test(),
+        [16, 24, 32],
+    )
+    .await
+    .unwrap();
+    for (collection, field, width) in [
+        ("CodingMessage", "content_v", 16),
+        ("CodingAction", "command_v", 24),
+        ("CodingSearchChunk", "content_v", 32),
+    ] {
+        let result = node
+            .execute(&format!("{{ {collection}(limit: 1) {{ {field} }} }}"))
+            .await;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(
+            result.data.unwrap()[collection][0][field]
+                .as_array()
+                .unwrap()
+                .len(),
+            width
+        );
+    }
 }
 
 #[tokio::test]
@@ -1613,6 +1660,24 @@ impl Drop for RealEmbeddingServer {
     }
 }
 
+async fn seed_real_embedding_fixture(
+    node: &crate::EmbeddedNode,
+    config: &CodingSessionFixtureConfig,
+    server: &RealEmbeddingServer,
+) -> anyhow::Result<CodingSessionFixture> {
+    let mut dimensions = [0; 3];
+    for (width, model) in dimensions.iter_mut().zip([
+        "coding-message-model",
+        "coding-action-model",
+        "coding-search-chunk-model",
+    ]) {
+        *width = request_real_embedding(&server.base_url, model, "dimension probe")
+            .await?
+            .len();
+    }
+    seed_coding_session_embedding_fixture_with_dimensions(node, config, dimensions).await
+}
+
 async fn request_real_embedding(
     base_url: &str,
     model: &str,
@@ -1687,7 +1752,7 @@ async fn coding_session_embedding_fixture_real_models_e2e() {
         .await
         .unwrap();
 
-    let _fixture = seed_coding_session_embedding_fixture(&node, &config)
+    let _fixture = seed_real_embedding_fixture(&node, &config, &server)
         .await
         .unwrap();
     assert!(total_embedding_documents(&node).await > 102);
@@ -1758,7 +1823,7 @@ async fn coding_session_embedding_fixture_real_models_hybrid_rank_comparison() {
         .await
         .unwrap();
 
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
+    let fixture = seed_real_embedding_fixture(&node, &config, &server)
         .await
         .unwrap();
 
@@ -1818,7 +1883,7 @@ async fn coding_session_embedding_fixture_real_models_hybrid_search_api() {
         .await
         .unwrap();
 
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
+    let fixture = seed_real_embedding_fixture(&node, &config, &server)
         .await
         .unwrap();
     let tasks = build_context1_style_coding_tasks(&node, &fixture)
@@ -1876,7 +1941,7 @@ async fn dense_search_v1_real_models_query_text_api() {
         .await
         .unwrap();
 
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
+    let fixture = seed_real_embedding_fixture(&node, &config, &server)
         .await
         .unwrap();
     let tasks = build_context1_style_coding_tasks(&node, &fixture)
@@ -1937,7 +2002,7 @@ async fn coding_session_embedding_fixture_real_models_context1_task_eval() {
         .await
         .unwrap();
 
-    let fixture = seed_coding_session_embedding_fixture(&node, &config)
+    let fixture = seed_real_embedding_fixture(&node, &config, &server)
         .await
         .unwrap();
     let tasks = build_context1_style_coding_tasks(&node, &fixture)
