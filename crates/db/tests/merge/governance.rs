@@ -10,8 +10,8 @@ use cid::Cid;
 use crypto::PrivateKey as _;
 use db::database::{DbOptions, DB};
 use db::merge::governance::{
-    Awaited, FieldValue, MergeCandidate, MergeGovernance, MergeValidator, MergeVerdict, MergeView,
-    RedrivenMerge, RedrivenMergeSink, SignatureStatus,
+    Awaited, DefinitionCandidate, FieldValue, MergeCandidate, MergeGovernance, MergeValidator,
+    MergeVerdict, MergeView, RedrivenMerge, RedrivenMergeSink, SignatureStatus,
 };
 use db::merge::merge_handler::DbMergeHandler;
 use db::write::autocommit::batch::BatchMutator;
