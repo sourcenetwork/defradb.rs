@@ -261,6 +261,14 @@ pub struct CollectionDefinitionDeltaPayload {
     /// version of the same collection.
     #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
     pub policy_cid: Option<Cid>,
+
+    /// The rule this version is judged by, as an opaque tag.
+    ///
+    /// Version ID only, like the policy: changing the rule is an upgrade of
+    /// the same collection. A name today; a content identifier for the rule's
+    /// code when rules are carried as code.
+    #[serde(rename = "rule", default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 impl CollectionDefinitionDeltaPayload {
@@ -274,6 +282,7 @@ impl CollectionDefinitionDeltaPayload {
             governance_root: None,
             is_branchable: false,
             policy_cid: None,
+            rule: None,
         }
     }
 
@@ -310,6 +319,12 @@ impl CollectionDefinitionDeltaPayload {
     /// Set the CID over the collection's policy reference.
     pub fn with_policy_cid(mut self, policy_cid: Cid) -> Self {
         self.policy_cid = Some(policy_cid);
+        self
+    }
+
+    /// Set the tag of the rule this version is judged by.
+    pub fn with_rule(mut self, rule: impl Into<String>) -> Self {
+        self.rule = Some(rule.into());
         self
     }
 }

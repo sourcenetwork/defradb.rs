@@ -68,6 +68,7 @@ attributes; pinned by `ungoverned_identities_are_pinned` in
 | `is_branchable` | absent | present when true |
 | per-field `immutable` (in the field block) | absent | present when true |
 | `policy_cid` | absent | a CID over the policy reference, when a policy is attached |
+| `rule` | absent | the tag of the rule this version is judged by, from `@governed(rule:)` |
 
 ### 2.2 Identity: two CIDs over one block
 
@@ -95,6 +96,14 @@ flowchart TB
   policy is never edited in place, so the reference pins the ruleset. (The
   local id also folds in a per-node counter, so the same policy text added on
   two nodes can carry two ids; under SourceHub the id comes from the chain.)
+- **The rule tag** is a version commitment like the policy. The identity
+  otherwise commits to who governs and not to which validator runs, so two
+  nodes could agree on a revision and judge under different code;
+  `@governed(rule: "<tag>")` puts the rule in the version ID, so a rule
+  change is a recorded upgrade and a node judging under another rule is
+  visibly on a different version. A name today, a content identifier for
+  the rule's code later; a validator should refuse a definition naming a
+  rule it does not recognise.
 - The block a receiving node rebuilds the identity from is the block itself,
   so a peer derives the same IDs the author did
   (`a_definition_block_reproduces_its_identity_on_a_fresh_node`).

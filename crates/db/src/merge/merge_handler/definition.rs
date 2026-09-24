@@ -145,6 +145,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_branchable = payload.is_branchable;
             schema.governance_root.clone_from(&payload.governance_root);
         }
+        // The rule is a version's, carried on every version's delta like the
+        // policy, so a patch states its own or has none.
+        if schema.governance_root.is_some() {
+            schema.governance_rule.clone_from(&payload.rule);
+        }
         // The version ID binds the policy by a CID over its reference. The
         // record keeps the binding, and the policy itself only when a version
         // this node holds of the same collection supplies the reference the
@@ -423,12 +428,14 @@ fn collection_id_of(version_id: &Cid, block: &Block) -> Result<String, MergeErro
     let CrdtDelta::CollectionDefinition(payload) = &block.delta else {
         return Ok(version_id.to_string());
     };
-    if payload.governance_root.is_none() || payload.policy_cid.is_none() {
+    if payload.governance_root.is_none() || (payload.policy_cid.is_none() && payload.rule.is_none())
+    {
         return Ok(version_id.to_string());
     }
     let mut without_policy = block.clone();
     if let CrdtDelta::CollectionDefinition(payload) = &mut without_policy.delta {
         payload.policy_cid = None;
+        payload.rule = None;
     }
     without_policy
         .generate_cid()

@@ -30,6 +30,17 @@ fn definition_with(
     governance_root: Option<&str>,
     is_branchable: bool,
 ) -> Definition {
+    definition_block(collection, fields, governance_root, is_branchable, None)
+}
+
+/// As `definition_with`, naming the rule the version is judged by.
+fn definition_block(
+    collection: &str,
+    fields: &[&str],
+    governance_root: Option<&str>,
+    is_branchable: bool,
+    rule: Option<&str>,
+) -> Definition {
     let mut blocks = Vec::new();
     let mut links = Vec::new();
     for field in fields {
@@ -56,6 +67,9 @@ fn definition_with(
         .with_branchable(is_branchable);
     if let Some(root) = governance_root {
         payload = payload.with_governance_root(root);
+    }
+    if let Some(rule) = rule {
+        payload = payload.with_rule(rule);
     }
     let block = Block::new(CrdtDelta::CollectionDefinition(payload), vec![], links);
     let cid = block.generate_cid().unwrap();
@@ -579,6 +593,11 @@ async fn a_held_version_is_not_rebuilt_from_its_own_block() {
 /// A patch of `prev`: no name, heads naming the version it supersedes, and
 /// the fields it adds. `prev`'s blocks are assumed held already.
 fn patch_of(prev: &Definition, fields: &[&str]) -> Definition {
+    patch_block(prev, fields, None)
+}
+
+/// As `patch_of`, naming the rule the new version is judged by.
+fn patch_block(prev: &Definition, fields: &[&str], rule: Option<&str>) -> Definition {
     let mut blocks = Vec::new();
     let mut links = Vec::new();
     for field in fields {
@@ -599,8 +618,12 @@ fn patch_of(prev: &Definition, fields: &[&str]) -> Definition {
         blocks.push((cid, block.to_dag_cbor().unwrap()));
         links.push(DAGLink::new(name, cid));
     }
+    let mut payload = CollectionDefinitionDeltaPayload::new(2);
+    if let Some(rule) = rule {
+        payload = payload.with_rule(rule);
+    }
     let block = Block::new(
-        CrdtDelta::CollectionDefinition(CollectionDefinitionDeltaPayload::new(2)),
+        CrdtDelta::CollectionDefinition(payload),
         vec![prev.cid],
         links,
     );
@@ -805,4 +828,84 @@ async fn a_governed_definition_claimed_without_a_validator_is_not_stored() {
         )
     );
     assert!(!node.holds_version(&initial.cid).await);
+}
+
+/// A rule tag reaches the version ID and the rebuilt record, and a peer
+/// derives the same identities the author did.
+#[tokio::test]
+async fn a_ruled_definition_block_reproduces_its_identity_on_a_fresh_node() {
+    let author = Node::bare().await;
+    let defined = query::parse_sdl(
+        r#"type Ledgers @governed(root: "root-a", rule: "fefra/v3") { writer: String @immutable }"#,
+    )
+    .unwrap()
+    .remove(0);
+    assert_ne!(defined.version_id, defined.collection_id);
+    author.db.create_collection(defined.clone()).await.unwrap();
+
+    let fresh = Node::bare().await;
+    sync_definition(&author, &fresh, &defined.version_id).await;
+    let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(synced.schema().version_id, defined.version_id);
+    assert_eq!(synced.schema().collection_id, defined.collection_id);
+    assert_eq!(synced.schema().governance_rule.as_deref(), Some("fefra/v3"));
+}
+
+/// Refuses a patch that names a rule other than the one it supersedes.
+struct SameRule;
+
+#[async_trait]
+impl MergeValidator for SameRule {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::Accept)
+    }
+
+    async fn validate_definition(
+        &self,
+        candidate: &DefinitionCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        let Some(previous) = candidate.previous else {
+            return Ok(MergeVerdict::Accept);
+        };
+        Ok(
+            if candidate.version.governance_rule == previous.governance_rule {
+                MergeVerdict::Accept
+            } else {
+                MergeVerdict::reject("the patch changes the rule")
+            },
+        )
+    }
+}
+
+/// A rule change is an upgrade the validator sees on the version it judges,
+/// so a node judging under one rule can decline a patch naming another.
+#[tokio::test]
+async fn a_patch_naming_another_rule_is_the_validators_to_refuse() {
+    let node = Node::judging(&["Ledgers"], Arc::new(SameRule)).await;
+    let initial = definition_block(
+        "Ledgers",
+        &["_docID", "!writer"],
+        Some("root-a"),
+        false,
+        Some("fefra/v3"),
+    );
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+    let held = node.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(held.schema().governance_rule.as_deref(), Some("fefra/v3"));
+
+    let other = patch_block(&initial, &["note"], Some("fefra/v4"));
+    assert_eq!(
+        other.merge(&node).await,
+        MergeOutcome::rejected("the patch changes the rule")
+    );
+    assert!(!node.holds_version(&other.cid).await);
+
+    let same = patch_block(&initial, &["note"], Some("fefra/v3"));
+    assert_eq!(same.merge(&node).await, MergeOutcome::Merged);
+    assert!(node.holds_version(&same.cid).await);
 }
