@@ -186,6 +186,26 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_materialized = true;
         }
 
+        // A version this node already holds is not rebuilt. The local record
+        // commits to at least what the block carries, and holds what the
+        // block cannot: whether it is active, its indexes, its policy. The
+        // cache gate below would keep a rebuilt copy out of the cache, but
+        // the systemstore write is what a restart reads.
+        if self
+            .db
+            .get_collection_by_version_id_full(&version_id)
+            .await
+            .map_err(MergeError::Database)?
+            .is_some()
+        {
+            tracing::debug!(
+                collection_name = %collection_name,
+                version_id = %version_id,
+                "Synced collection definition already held; nothing rebuilt"
+            );
+            return Ok(MergeOutcome::Merged);
+        }
+
         // Store in systemstore
         let txn = self.db.new_txn(false).await.map_err(MergeError::Database)?;
         {

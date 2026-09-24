@@ -537,3 +537,39 @@ async fn an_ungoverned_policy_link_does_not_move_the_collection_id() {
     );
     assert_eq!(synced.schema().version_id, cid.to_string());
 }
+
+/// The definition block of a collection this node defined itself comes back
+/// from a peer. The record on disk is the one a restart reads, and it holds
+/// what the block cannot: that the collection is active, and for an
+/// ungoverned one, its `@immutable` flag. Neither may be rebuilt away.
+#[tokio::test]
+async fn a_held_version_is_not_rebuilt_from_its_own_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("node");
+    let governance = || MergeGovernance::new(["Grants"]).with_validator(Arc::new(AcceptEverything));
+    let version_id = {
+        let node = Node::open(RegolithStore::open(&path).unwrap(), governance(), false).await;
+        let defined = query::parse_sdl(r#"type Ledgers { writer: String @immutable }"#)
+            .unwrap()
+            .remove(0);
+        node.db.create_collection(defined.clone()).await.unwrap();
+        sync_definition(&node, &node, &defined.version_id).await;
+        let held = node.db.get_collection("Ledgers").unwrap().unwrap();
+        assert!(held.schema().is_active, "the cache lost the active flag");
+        node.db.close().await.unwrap();
+        defined.version_id
+    };
+
+    let node = Node::open(RegolithStore::open(&path).unwrap(), governance(), false).await;
+    let reopened = node.db.get_collection("Ledgers").unwrap().unwrap();
+    let schema = reopened.schema();
+    assert_eq!(schema.version_id, version_id);
+    assert!(schema.is_active, "the record on disk was rebuilt inactive");
+    assert!(
+        schema
+            .fields
+            .iter()
+            .any(|field| field.name == "writer" && field.immutable),
+        "the record on disk lost @immutable"
+    );
+}
