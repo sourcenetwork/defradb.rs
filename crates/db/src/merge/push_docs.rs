@@ -236,7 +236,12 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         .map_err(|error| format!("failed to coordinate existing-document replay: {error}"))?
     else {
         tracing::debug!(peer_id = %peer_id, "Replicator removed before existing-document replay");
-        return Ok(());
+        // An error, not a success: nothing was replayed, and a caller that
+        // publishes a completion event off Ok(()) would claim a replay that
+        // never ran.
+        return Err(format!(
+            "replicator {peer_id} removed before existing-document replay"
+        ));
     };
     // Serialize storage transitions, not the bounded network wait. A live
     // update must be able to dirty the marker while initial replay is stalled.
@@ -365,7 +370,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 .await
                 .map_err(|error| format!("failed to coordinate replay marker: {error}"))?
             else {
-                return Ok(());
+                // Tasks already spawned are still pushing. Join them so the
+                // error below is the whole truth, then report the removal:
+                // Ok(()) here would let a caller publish a completion event
+                // while pushes are on the wire.
+                for (_, _, _, _, handle) in push_handles.drain(..) {
+                    let _ = handle.await;
+                }
+                return Err(format!(
+                    "replicator {peer_id} removed during existing-document replay"
+                ));
             };
             peerstore
                 .observe_push_head(peer_id.as_str(), doc_id, collection.collection_id())
