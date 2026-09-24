@@ -10,6 +10,15 @@ use super::validator::MergeCandidate;
 use super::view::DbMergeView;
 use crate::merge::merge_handler::{DbMergeHandler, MergeError};
 
+/// One composite frame as dispatch hands it to the judge.
+pub(crate) struct GovernedFrame<'a> {
+    pub cid: &'a Cid,
+    pub block: &'a Block,
+    pub payload: &'a CompositeDeltaPayload,
+    pub doc_id: &'a str,
+    pub collection: &'a CollectionVersion,
+}
+
 pub(crate) enum Judgement {
     Ungoverned,
     Accept,
@@ -31,12 +40,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// recovery, where dispatch skips verification, is judged the same way.
     pub(crate) async fn judge_governed(
         &self,
-        cid: &Cid,
-        block: &Block,
-        payload: &CompositeDeltaPayload,
-        doc_id: &str,
-        collection: &CollectionVersion,
+        frame: GovernedFrame<'_>,
     ) -> Result<Judgement, MergeError> {
+        let GovernedFrame {
+            cid,
+            block,
+            payload,
+            doc_id,
+            collection,
+        } = frame;
         let Some(governance) = self.db.merge_governance() else {
             return Ok(Judgement::Ungoverned);
         };

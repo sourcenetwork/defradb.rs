@@ -1,6 +1,6 @@
 use super::batch::{PendingFieldBlockFinalization, PendingMergeEvent, PendingPostCommitAction};
 use super::*;
-use crate::merge::governance::Judgement;
+use crate::merge::governance::{GovernedFrame, Judgement};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompositeMergeMode {
@@ -256,7 +256,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
 
             match self
-                .judge_governed(cid, block, payload, doc_id, collection.schema())
+                .judge_governed(GovernedFrame {
+                    cid,
+                    block,
+                    payload,
+                    doc_id,
+                    collection: collection.schema(),
+                })
                 .await?
             {
                 Judgement::Ungoverned => {
