@@ -1,15 +1,8 @@
 //! Deferred-ACP overlay consistency family — `MC_DeferredAcp_Green`.
 //!
-//! INV_FailClosedActive: a transaction-local ACP projection gates *exactly* as
-//! committed state would. Within an uncommitted txn, an ACP-protected document
-//! created by the owner is visible to the owner (positive) but denied to an
-//! unauthorized identity (the projection gates — no owner-bypass), and once the
-//! txn is discarded the write leaves no residue in committed state (rollback is
-//! a no-op).
-//!
-//! Anti-tautology: every negative (denied / empty) is preceded by a positive
-//! (owner sees the doc through the *same* txn-scoped path), so a denial can
-//! never pass merely because the txn setup silently failed to write anything.
+//! An owner can read its uncommitted ACP-protected write. Other callers cannot
+//! use that transaction, and a valid owner transaction still filters documents
+//! belonging to another identity. Discarding the write leaves no committed data.
 
 use crate::support;
 use defra_harness::fixtures::{users_schema_with_policy, USER_ACP_POLICY};
@@ -53,16 +46,39 @@ fn query_with_tx_and_identity(
     val.get("data").cloned().unwrap_or(val)
 }
 
-/// Same as above but for a mutation: returns the parsed `data` payload so the
-/// caller can pull out the created `_docID`.
-fn mutate_with_tx_and_identity(
-    binary: &Path,
-    url: &str,
-    gql: &str,
-    tx_id: &str,
-    hex_key: &str,
-) -> Value {
-    query_with_tx_and_identity(binary, url, gql, tx_id, hex_key)
+fn transaction_command(binary: &Path, url: &str, key: &str, args: &[&str]) -> String {
+    let output = Command::new(binary)
+        .args(["--url", url, "client", "-i", key, "tx"])
+        .args(args)
+        .output()
+        .expect("spawn transaction command");
+    assert!(
+        output.status.success(),
+        "transaction command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("transaction output is UTF-8")
+}
+
+fn assert_transaction_denied(binary: &Path, url: &str, query: &str, tx: &str, key: Option<&str>) {
+    let mut command = Command::new(binary);
+    command.args(["--url", url, "client"]);
+    if let Some(key) = key {
+        command.args(["-i", key]);
+    }
+    let output = command
+        .args(["--tx", tx, "query", query])
+        .output()
+        .expect("spawn unauthorized transaction query");
+    assert!(
+        !output.status.success(),
+        "foreign transaction must be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("transaction '{tx}' not found")),
+        "expected transaction ownership rejection, got: {stderr}"
+    );
 }
 
 #[tokio::test]
@@ -103,10 +119,30 @@ async fn deferred_acp_txn_local_gating() {
 
     // ---- Phase 1: txn-local projection gates as committed state would ----
 
-    let tx = node.tx_create().expect("create transaction");
+    // A valid transaction must still enforce document ACP on committed data.
+    node.query_with_identity(
+        r#"mutation { add_User(input: {name: "MallorySecret", age: 5}) { _docID } }"#,
+        &mallory.private_key_hex,
+    )
+    .expect("create Mallory's protected document");
+    assert_eq!(
+        user_count(
+            &node
+                .query_with_identity(user_q, &mallory.private_key_hex)
+                .unwrap()
+        ),
+        1
+    );
+
+    let created_tx = transaction_command(&binary, &url, &owner.private_key_hex, &["new"]);
+    let created_tx: Value = serde_json::from_str(&created_tx).expect("transaction response");
+    let tx = created_tx["id"]
+        .as_u64()
+        .expect("transaction id")
+        .to_string();
 
     // Owner creates an ACP-protected document *inside the uncommitted txn*.
-    let created = mutate_with_tx_and_identity(
+    let created = query_with_tx_and_identity(
         &binary,
         &url,
         r#"mutation { add_User(input: {name: "TxnSecret", age: 7}) { _docID } }"#,
@@ -130,38 +166,18 @@ async fn deferred_acp_txn_local_gating() {
         "owner must see the txn-local protected doc (projection lets the owner through)"
     );
 
-    // NEGATIVE — no owner-bypass: an unauthorized identity, querying inside the
-    // SAME uncommitted txn, is still denied. The deferred-ACP overlay gates the
-    // txn-local projection exactly as committed state would.
-    let mallory_in_tx =
-        query_with_tx_and_identity(&binary, &url, user_q, &tx, &mallory.private_key_hex);
     assert_eq!(
-        user_count(&mallory_in_tx),
-        0,
-        "unauthorized identity must be denied the txn-local doc (no owner-bypass in the overlay)"
+        owner_in_tx["User"][0]["_docID"].as_str(),
+        Some(doc_id.as_str())
     );
 
-    // NEGATIVE — anonymous identity inside the txn is likewise denied.
-    let anon_in_tx = {
-        let output = Command::new(&binary)
-            .args(["--url", &url, "client", "--tx", &tx, "query", user_q])
-            .output()
-            .expect("spawn anon tx query");
-        assert!(output.status.success(), "anon tx query should not error");
-        let out = String::from_utf8_lossy(&output.stdout);
-        let s = out.find('{').map(|i| &out[i..]).unwrap_or(&out);
-        let v: Value = serde_json::from_str(s).expect("parse anon tx query");
-        v.get("data").cloned().unwrap_or(v)
-    };
-    assert_eq!(
-        user_count(&anon_in_tx),
-        0,
-        "anonymous identity must be denied the txn-local doc"
-    );
+    // Transaction ownership is checked before the document ACP overlay.
+    assert_transaction_denied(&binary, &url, user_q, &tx, Some(&mallory.private_key_hex));
+    assert_transaction_denied(&binary, &url, user_q, &tx, None);
 
     // ---- Phase 2: rollback is a no-op (no residue) ----
 
-    node.tx_discard(&tx).expect("discard transaction");
+    transaction_command(&binary, &url, &owner.private_key_hex, &["discard", &tx]);
 
     // The owner — now in committed state — must see NOTHING: the discarded
     // write left no residue. Contrast with Phase 1 where the owner saw exactly
@@ -202,15 +218,15 @@ async fn deferred_acp_txn_local_gating() {
         "owner must see the committed protected doc"
     );
 
-    // NEGATIVE: the unauthorized identity is denied in committed state too —
-    // identical gating to Phase 1's txn-local projection.
+    let owner_doc_id = committed["add_User"][0]["_docID"].as_str().unwrap();
+    let owner_doc_query = format!(r#"query {{ User(docID: "{owner_doc_id}") {{ _docID name }} }}"#);
     assert_eq!(
         user_count(
             &node
-                .query_with_identity(user_q, &mallory.private_key_hex)
-                .expect("mallory committed query")
+                .query_with_identity(&owner_doc_query, &mallory.private_key_hex)
+                .unwrap()
         ),
         0,
-        "unauthorized identity must be denied in committed state (matches txn-local gating)"
+        "Mallory must not read the owner's committed document"
     );
 }
