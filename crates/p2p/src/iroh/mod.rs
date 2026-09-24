@@ -47,6 +47,7 @@ pub use gossip_heal::GossipHealConfig;
 pub use iroh::SecretKey;
 #[cfg(feature = "iroh-relay-server")]
 pub use relay_server::{IrohRelayServer, IrohRelayServerConfig, IrohRelayTlsConfig};
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use secret_key::load_or_generate_secret_key;
 pub use secret_key::{generate_secret_key, secret_key_from_bytes};
 pub use transport::IrohTransport;
