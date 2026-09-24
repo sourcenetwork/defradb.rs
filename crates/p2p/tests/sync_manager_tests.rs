@@ -404,7 +404,7 @@ async fn test_pending_dag_completes_when_missing_block_arrives_via_pushlog() {
     assert!(pending.is_recovery_registered);
     assert_eq!(
         pending.missing,
-        std::collections::HashSet::from([field_cid])
+        rapidhash::RapidHashSet::from_iter([field_cid])
     );
     assert_eq!(
         manager.pending_dag_count(),

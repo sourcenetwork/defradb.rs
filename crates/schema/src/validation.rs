@@ -1,15 +1,15 @@
 //! Schema validation utilities
 
 use crate::{CollectionVersion, Result, SchemaError};
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 /// Validates a set of collections for cross-collection constraints
 pub struct SchemaValidator<'a> {
-    collections: &'a HashMap<String, CollectionVersion>,
+    collections: &'a RapidHashMap<String, CollectionVersion>,
 }
 
 impl<'a> SchemaValidator<'a> {
-    pub fn new(collections: &'a HashMap<String, CollectionVersion>) -> Self {
+    pub fn new(collections: &'a RapidHashMap<String, CollectionVersion>) -> Self {
         Self { collections }
     }
 
@@ -23,7 +23,7 @@ impl<'a> SchemaValidator<'a> {
 
     /// Ensure no duplicate collection names
     fn validate_unique_names(&self) -> Result<()> {
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         for coll in self.collections.values() {
             if !seen.insert(&coll.name) {
                 return Err(SchemaError::DuplicateCollectionName(coll.name.clone()));
@@ -42,7 +42,8 @@ impl<'a> SchemaValidator<'a> {
 
     /// Ensure exactly one side of each relation is marked primary
     fn validate_relation_primaries(&self) -> Result<()> {
-        let mut relation_primaries: HashMap<String, Vec<(&str, &str, bool)>> = HashMap::new();
+        let mut relation_primaries: RapidHashMap<String, Vec<(&str, &str, bool)>> =
+            RapidHashMap::new();
 
         for coll in self.collections.values() {
             for field in coll.relation_fields() {
@@ -75,6 +76,6 @@ impl<'a> SchemaValidator<'a> {
 }
 
 /// Convenience function to validate a set of collections
-pub fn validate_schema(collections: &HashMap<String, CollectionVersion>) -> Result<()> {
+pub fn validate_schema(collections: &RapidHashMap<String, CollectionVersion>) -> Result<()> {
     SchemaValidator::new(collections).validate_all()
 }

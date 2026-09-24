@@ -61,7 +61,6 @@ pub use target_subject::parse_target_subject;
 pub use validation::{validate_resource_interface, REQUIRED_DOCUMENT_PERMISSIONS};
 
 // Re-export key zanzibar engine types from the standalone zanzibar crate
-#[cfg(not(target_arch = "wasm32"))]
 pub use zanzibar::PersistentZanzibarStore;
 pub use zanzibar::ZanzibarDocumentACP;
 

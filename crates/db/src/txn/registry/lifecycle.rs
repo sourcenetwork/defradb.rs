@@ -6,21 +6,15 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     fn take_owned_ctx(
         &self,
         handle: &TransactionHandle,
-    ) -> std::result::Result<Arc<DbTransactionContext<S>>, TransactionError> {
-        let mut transactions = self.transactions.write().map_err(|_| {
-            TransactionError::lock_poisoned("failed to acquire transaction registry write lock")
-        })?;
-        match transactions.entry(handle.to_string()) {
-            std::collections::hash_map::Entry::Occupied(entry)
-                if entry.get().is_owned_by_caller() =>
-            {
-                Ok(entry.remove())
-            }
-            _ => Err(TransactionError::not_found(format!(
-                "transaction '{}' not found",
-                handle
-            ))),
-        }
+    ) -> std::result::Result<RemovedTransaction<S>, TransactionError> {
+        self.transactions
+            .get(handle.as_str())
+            .and_then(|slot| slot.ctx())
+            .filter(|ctx| ctx.is_owned_by_caller())
+            .and_then(|_| self.take_registered(handle))
+            .ok_or_else(|| {
+                TransactionError::not_found(format!("transaction '{}' not found", handle))
+            })
     }
 
     /// Apply the txn's recorded counter ops (#1044) then durably commit.
@@ -117,11 +111,11 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     ) -> query::error::Result<()> {
         use crate::collection::loader::load_collection_from_systemstore;
         use crate::write::autocommit::helpers::apply_pending_counter_op;
-        use std::collections::HashMap;
+        use rapidhash::{HashMapExt, RapidHashMap};
 
         // Load each touched collection once (keyed by name) and build its index manager.
-        let mut collections: HashMap<String, (Collection, crate::index::IndexManager)> =
-            HashMap::new();
+        let mut collections: RapidHashMap<String, (Collection, crate::index::IndexManager)> =
+            RapidHashMap::new();
         for op in ops {
             if collections.contains_key(&op.collection_name) {
                 continue;
@@ -152,8 +146,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         // share a doc_id — key the corrections by (collection_name, doc_id) so each
         // (collection, doc) is corrected against its own collection.
         // (collection_name, doc_id) -> (field -> post-RMW value)
-        let mut corrections: HashMap<(String, String), Vec<(String, document::NormalValue)>> =
-            HashMap::new();
+        let mut corrections: RapidHashMap<(String, String), Vec<(String, document::NormalValue)>> =
+            RapidHashMap::new();
         for op in ops {
             let (collection, _) = collections
                 .get(&op.collection_name)
@@ -277,9 +271,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         // Registration and returning the handle must be one poll: cancellation
         // before the caller can construct its guard must not orphan an entry.
         self.transactions
-            .write()
-            .map_err(|_| TransactionError::lock_poisoned("failed to acquire write lock for begin"))?
-            .insert(txn_id.clone(), ctx);
+            .insert(txn_id.clone(), Arc::new(TransactionSlot::new(ctx)));
 
         Ok(TransactionHandle::new(txn_id))
     }
@@ -289,15 +281,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     fn abandon(&self, handle: &TransactionHandle) {
-        let ctx = {
-            // A poisoned registry remains closed to queries, but dropping an
-            // uncommitted entry is safe and must still release its resources.
-            let mut transactions = self.transactions.write().unwrap_or_else(|e| e.into_inner());
-            transactions.remove(handle.as_str())
-        };
-        // Do not run destructors while holding the registry lock. Any in-flight
-        // context borrowers release the remaining storage references on drop.
-        drop(ctx);
+        drop(self.take_registered(handle));
     }
 
     async fn begin(
@@ -314,26 +298,15 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     }
 
     fn get(&self, handle: &TransactionHandle) -> GetTransactionResult {
-        match self.transactions.read() {
-            Ok(guard) => match guard
-                .get(handle.as_str())
-                .filter(|ctx| ctx.is_owned_by_caller())
-                .cloned()
-            {
-                Some(ctx) => {
-                    ctx.touch();
-                    GetTransactionResult::Found(ctx as Arc<dyn TransactionContext>)
-                }
-                None => GetTransactionResult::NotFound,
-            },
-            Err(poisoned) => {
-                error!(
-                    txn_id = %handle,
-                    error = ?poisoned,
-                    "Transaction registry lock poisoned - system may be in corrupted state"
-                );
-                GetTransactionResult::LockPoisoned
+        match self
+            .transactions
+            .get(handle.as_str())
+            .and_then(|slot| slot.ctx())
+        {
+            Some(ctx) if ctx.is_owned_by_caller() && ctx.touch() => {
+                GetTransactionResult::Found(ctx as Arc<dyn TransactionContext>)
             }
+            _ => GetTransactionResult::NotFound,
         }
     }
 

@@ -1,10 +1,9 @@
 //! In-memory `KeyStore` backend. Tests + ephemeral embedded.
 
-use async_lock::RwLock;
 use async_trait::async_trait;
+use kovan_map::HopscotchMap;
 use rand::RngCore;
-use std::collections::HashMap;
-use std::sync::Arc;
+use rapidhash::fast::RandomState;
 
 use defra_core::block::generate_cid_from_bytes;
 use defra_core::Encryption;
@@ -13,11 +12,18 @@ use crate::error::{Error, Result};
 use crate::store::{KeyStore, StoredKey};
 use crate::types::{EncryptionCid, KeyScope};
 
-/// In-memory `KeyStore`. All entries live in RAM behind an async `RwLock`.
+/// In-memory `KeyStore`. All entries live in RAM behind a lock-free map.
 /// Ephemeral — process restart loses all keys.
-#[derive(Default)]
 pub struct MemoryKeyStore {
-    inner: Arc<RwLock<HashMap<EncryptionCid, StoredKey>>>,
+    inner: HopscotchMap<EncryptionCid, StoredKey, RandomState>,
+}
+
+impl Default for MemoryKeyStore {
+    fn default() -> Self {
+        Self {
+            inner: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl MemoryKeyStore {
@@ -31,12 +37,12 @@ impl MemoryKeyStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl KeyStore for MemoryKeyStore {
     async fn put(&self, cid: EncryptionCid, stored: StoredKey) -> Result<()> {
-        self.inner.write().await.insert(cid, stored);
+        self.inner.insert(cid, stored);
         Ok(())
     }
 
     async fn get(&self, cid: &EncryptionCid) -> Result<Option<StoredKey>> {
-        Ok(self.inner.read().await.get(cid).cloned())
+        Ok(self.inner.get(cid))
     }
 
     async fn generate(&self, _scope: &KeyScope) -> Result<(EncryptionCid, StoredKey)> {
@@ -53,17 +59,17 @@ impl KeyStore for MemoryKeyStore {
             .map_err(|e| Error::Storage(format!("cid from block: {e}")))?;
 
         let stored = StoredKey { key, block_bytes };
-        self.inner.write().await.insert(cid, stored.clone());
+        self.inner.insert(cid, stored.clone());
         Ok((cid, stored))
     }
 
     async fn delete(&self, cid: &EncryptionCid) -> Result<()> {
-        self.inner.write().await.remove(cid);
+        self.inner.remove(cid);
         Ok(())
     }
 
     async fn list(&self) -> Result<Vec<EncryptionCid>> {
-        Ok(self.inner.read().await.keys().cloned().collect())
+        Ok(self.inner.keys().collect())
     }
 }
 

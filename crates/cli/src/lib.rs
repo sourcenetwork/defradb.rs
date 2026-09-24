@@ -6,9 +6,6 @@
 pub(crate) mod acp_adapter;
 pub(crate) mod backup_adapter;
 pub(crate) mod block_adapter;
-pub(crate) mod browser_sync_adapter;
-#[cfg(test)]
-mod browser_sync_adapter_tests;
 pub mod cli;
 pub(crate) mod collection_mgmt_adapter;
 pub mod commands;
@@ -18,8 +15,6 @@ pub(crate) mod dump_adapter;
 pub(crate) mod encrypted_index_adapter;
 pub mod error;
 pub(crate) mod index_adapter;
-#[cfg(feature = "iroh")]
-pub(crate) mod iroh_p2p_adapter;
 pub(crate) mod lens_adapter;
 pub mod logging;
 #[allow(dead_code)]
@@ -29,13 +24,10 @@ pub(crate) mod p2p_adapter;
 #[allow(dead_code)]
 pub(crate) mod p2p_collection_lookup;
 pub(crate) mod schema_adapter;
-#[cfg(feature = "sourcehub")]
-pub(crate) mod sourcehub_acp_adapter;
 #[allow(dead_code)]
 pub(crate) mod transport_doc_pusher;
-#[cfg(feature = "iroh")]
-#[allow(dead_code)]
-pub(crate) mod transport_version_syncer;
 pub(crate) mod txn_adapter;
+#[cfg(feature = "vera")]
+pub(crate) mod vera_acp_adapter;
 pub(crate) mod version_syncer;
 pub(crate) mod view_adapter;

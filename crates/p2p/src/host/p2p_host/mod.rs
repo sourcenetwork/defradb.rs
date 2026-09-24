@@ -8,7 +8,7 @@ mod protocols;
 mod swarm;
 mod two_stream;
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -237,6 +237,20 @@ impl Default for P2PHostConfig {
     }
 }
 
+/// One in-flight Bitswap query: its abort handle, a join future the cancel
+/// path awaits so the session stops only once the aborted task is dropped,
+/// and the session id.
+#[derive(Clone)]
+pub(super) struct BitswapQuery {
+    pub(super) abort: tokio::task::AbortHandle,
+    pub(super) joined: futures::future::Shared<futures::future::BoxFuture<'static, ()>>,
+    pub(super) session_id: u64,
+}
+
+/// In-flight Bitswap queries by id.
+pub(super) type BitswapQueries =
+    Arc<kovan_map::HopscotchMap<QueryId, BitswapQuery, rapidhash::fast::RandomState>>;
+
 /// P2P Host that manages the libp2p swarm.
 pub struct P2PHost<S: Store> {
     pub(super) swarm: Swarm<DefraBehaviour<S>>,
@@ -244,23 +258,25 @@ pub struct P2PHost<S: Store> {
     pub(super) command_rx: mpsc::Receiver<HostCommand>,
     pub(super) event_tx: mpsc::Sender<HostEvent>,
     shutdown_requested: bool,
-    pub(super) pending_requests: HashMap<
+    pub(super) pending_requests: RapidHashMap<
         request_response::OutboundRequestId,
         tokio::sync::oneshot::Sender<Result<PushLogReply>>,
     >,
     /// Replicator registry for access control
     pub(super) replicators: Arc<ReplicatorRegistry>,
-    /// Two-stream handler for Go compatibility
-    pub(super) two_stream_handler: Arc<tokio::sync::Mutex<TwoStreamHandler>>,
+    /// Two-stream handler for Go compatibility. Cloned per task: each clone
+    /// forks the stream control and shares the pending-response table.
+    pub(super) two_stream_handler: TwoStreamHandler,
     /// Receiver for two-stream events
     pub(super) two_stream_event_rx: mpsc::Receiver<crate::two_stream::TwoStreamEvent>,
     /// Tracked spawned tasks for graceful shutdown
     pub(super) spawned_tasks: tokio::task::JoinSet<()>,
-    /// Bitswap query abort handles for cancellation support
-    pub(super) bitswap_queries: HashMap<QueryId, tokio::task::AbortHandle>,
+    /// Bitswap queries, for cancellation and session teardown. Shared with
+    /// each fetch task, which removes its own entry when it completes.
+    pub(super) bitswap_queries: BitswapQueries,
     /// Per-peer addresses learned from connections and identify protocol.
     /// Used by ActivePeers to return full multiaddrs (Go-compatible).
-    pub(super) peer_addrs: HashMap<PeerId, Multiaddr>,
+    pub(super) peer_addrs: RapidHashMap<PeerId, Multiaddr>,
     /// Optional local DEFRA identity used for Go-compatible identity exchange.
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     /// Tracks established connections and actively prunes them after the
@@ -270,7 +286,7 @@ pub struct P2PHost<S: Store> {
     /// and flow through `HostEvent::GossipRawMessage` instead. Populated
     /// by `HostCommand::RegisterPubsubRpcTopic` when the coordinator wires
     /// up a `pubsub_rpc::TopicHandler` (#828).
-    pub(super) pubsub_rpc_topics: HashSet<String>,
+    pub(super) pubsub_rpc_topics: RapidHashSet<String>,
 }
 
 impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
@@ -548,9 +564,8 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
                 Error::Behaviour("Failed to register identity response protocol".into())
             })?;
 
-        let handler = TwoStreamHandler::new(control);
-        let pending = handler.pending_responses();
-        let two_stream_handler = Arc::new(tokio::sync::Mutex::new(handler));
+        let two_stream_handler = TwoStreamHandler::new(control);
+        let pending = two_stream_handler.pending_responses();
         let (two_stream_event_tx, two_stream_event_rx) = mpsc::channel(256);
 
         // Spawn the two-stream runner as a background task
@@ -584,20 +599,22 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
             command_rx,
             event_tx,
             shutdown_requested: false,
-            pending_requests: HashMap::new(),
+            pending_requests: RapidHashMap::new(),
             replicators: Arc::clone(&replicators),
             two_stream_handler,
             two_stream_event_rx,
             spawned_tasks: tokio::task::JoinSet::new(),
-            bitswap_queries: HashMap::new(),
-            peer_addrs: HashMap::new(),
+            bitswap_queries: Arc::new(kovan_map::HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
+            peer_addrs: RapidHashMap::new(),
             node_identity,
             connection_manager: ActiveConnectionManager::new(
                 config.connection_manager_low_water,
                 config.connection_manager_high_water,
                 config.connection_manager_grace_period,
             ),
-            pubsub_rpc_topics: HashSet::new(),
+            pubsub_rpc_topics: RapidHashSet::new(),
         };
 
         Ok((host, handle, event_rx, replicators))

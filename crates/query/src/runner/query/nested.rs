@@ -1,9 +1,9 @@
 //! Planner orchestration and post-processing for nested queries.
 
 use identity::Did;
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, instrument};
 use web_time::Instant;
@@ -262,14 +262,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         select: &Select,
     ) -> Vec<JsonValue> {
         // Build map of relation output_name -> allowed sub-field names
-        let mut relation_allowed_fields: Vec<(String, HashSet<String>)> = Vec::new();
+        let mut relation_allowed_fields: Vec<(String, RapidHashSet<String>)> = Vec::new();
 
         for requestable in &select.fields {
             if let Requestable::Select(nested_select) = requestable {
                 if nested_select.field.name == "GROUP" {
                     continue;
                 }
-                let mut allowed = HashSet::new();
+                let mut allowed = RapidHashSet::new();
                 // _docID is always implicit
                 allowed.insert("_docID".to_string());
                 for sub_field in &nested_select.fields {

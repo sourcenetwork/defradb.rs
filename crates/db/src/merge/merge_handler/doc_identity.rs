@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use super::*;
 
@@ -49,7 +49,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(crate::block::builder::derive_doc_id(cid));
         }
 
-        let mut visited = HashSet::new();
+        let mut visited = RapidHashSet::new();
         self.resolve_composite_doc_id_inner(systemstore, cid, block, depth, &mut visited)
             .await
     }
@@ -73,7 +73,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         cid: &Cid,
         block: &Block,
         initial_depth: usize,
-        visited: &mut HashSet<Cid>,
+        visited: &mut RapidHashSet<Cid>,
     ) -> std::result::Result<String, MergeError> {
         // A head's owner lookup, blockstore read, and decode are all DEFERRED
         // until its frame is popped: probing later siblings eagerly would let

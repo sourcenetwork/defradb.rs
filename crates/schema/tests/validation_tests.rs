@@ -5,11 +5,11 @@
 //! - Duplicate collection name detection
 //! - Relation primary side validation
 
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{
     validate_schema, CollectionVersion, FieldDescription, FieldKind, PolicyDescription,
     QuerySource, SchemaError,
 };
-use std::collections::HashMap;
 
 // ============================================================================
 // Helper Functions
@@ -73,20 +73,20 @@ fn user_collection_with_posts(is_primary: bool) -> CollectionVersion {
 
 #[test]
 fn test_validate_empty_schema() {
-    let collections = HashMap::new();
+    let collections = RapidHashMap::new();
     assert!(validate_schema(&collections).is_ok());
 }
 
 #[test]
 fn test_validate_single_collection() {
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert("users".to_string(), user_collection());
     assert!(validate_schema(&collections).is_ok());
 }
 
 #[test]
 fn test_duplicate_collection_names_fails() {
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert("users".to_string(), user_collection());
     let mut dup = user_collection();
     dup.collection_id = "coll-users-2".into();
@@ -103,7 +103,7 @@ fn test_duplicate_collection_names_fails() {
 
 #[test]
 fn test_unique_collection_names_ok() {
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert("users".to_string(), user_collection());
     let mut other = user_collection();
     other.name = "admins".into();
@@ -140,7 +140,7 @@ fn test_multiple_active_versions_of_collection_fail() {
 
 #[test]
 fn test_relation_one_primary_valid() {
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert("users".to_string(), user_collection_with_posts(false));
     collections.insert("posts".to_string(), post_collection_with_author(true));
 
@@ -149,7 +149,7 @@ fn test_relation_one_primary_valid() {
 
 #[test]
 fn test_relation_both_primary_invalid() {
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert("users".to_string(), user_collection_with_posts(true));
     collections.insert("posts".to_string(), post_collection_with_author(true));
 
@@ -163,7 +163,7 @@ fn test_relation_both_primary_invalid() {
 
 #[test]
 fn test_relation_neither_primary_invalid() {
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert("users".to_string(), user_collection_with_posts(false));
     collections.insert("posts".to_string(), post_collection_with_author(false));
 
@@ -177,7 +177,7 @@ fn test_relation_neither_primary_invalid() {
 
 #[test]
 fn test_single_sided_relation_no_primary_check() {
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert("posts".to_string(), post_collection_with_author(false));
 
     let result = validate_schema(&collections);

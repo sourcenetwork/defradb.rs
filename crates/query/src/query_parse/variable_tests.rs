@@ -12,7 +12,7 @@ fn test_variable_in_filter() {
         }
     "#;
 
-    let variables = HashMap::from([("name".to_string(), json!("Alice"))]);
+    let variables = RapidHashMap::from_iter([("name".to_string(), json!("Alice"))]);
 
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
@@ -37,7 +37,7 @@ fn test_variable_in_limit() {
         }
     "#;
 
-    let variables = HashMap::from([("lim".to_string(), json!(10))]);
+    let variables = RapidHashMap::from_iter([("lim".to_string(), json!(10))]);
 
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
@@ -59,7 +59,7 @@ fn test_variable_in_doc_ids() {
         }
     "#;
 
-    let variables = HashMap::from([("ids".to_string(), json!(["bae-123", "bae-456"]))]);
+    let variables = RapidHashMap::from_iter([("ids".to_string(), json!(["bae-123", "bae-456"]))]);
 
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
@@ -83,7 +83,7 @@ fn test_variable_in_mutation_input() {
         }
     "#;
 
-    let variables = HashMap::from([
+    let variables = RapidHashMap::from_iter([
         ("userName".to_string(), json!("Bob")),
         ("userAge".to_string(), json!(25)),
     ]);
@@ -110,7 +110,7 @@ fn test_variable_in_mutation_doc_ids() {
         }
     "#;
 
-    let variables = HashMap::from([("id".to_string(), json!("bae-999"))]);
+    let variables = RapidHashMap::from_iter([("id".to_string(), json!("bae-999"))]);
 
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
@@ -131,7 +131,7 @@ fn test_undefined_variable_error() {
         }
     "#;
 
-    let variables = HashMap::new();
+    let variables = RapidHashMap::new();
     let result = parse_request_with_variables(query, Some(&variables), None);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("was not provided"));
@@ -188,7 +188,7 @@ fn test_variable_type_mismatch_int() {
     "#;
 
     // Provide string instead of int
-    let variables = HashMap::from([("lim".to_string(), json!("not an int"))]);
+    let variables = RapidHashMap::from_iter([("lim".to_string(), json!("not an int"))]);
     let result = parse_request_with_variables(query, Some(&variables), None);
     assert!(result.is_err());
     assert!(result
@@ -209,7 +209,7 @@ fn test_multiple_variables() {
         }
     "#;
 
-    let variables = HashMap::from([
+    let variables = RapidHashMap::from_iter([
         ("name".to_string(), json!("Alice")),
         ("minAge".to_string(), json!(18)),
         ("lim".to_string(), json!(5)),
@@ -246,7 +246,7 @@ fn test_variable_type_mismatch_bool() {
     "#;
 
     // Provide string instead of bool
-    let variables = HashMap::from([("deleted".to_string(), json!("true"))]);
+    let variables = RapidHashMap::from_iter([("deleted".to_string(), json!("true"))]);
     let result = parse_request_with_variables(query, Some(&variables), None);
     assert!(result.is_err());
     assert!(result
@@ -266,7 +266,7 @@ fn test_variable_type_mismatch_string() {
     "#;
 
     // Provide integer instead of string
-    let variables = HashMap::from([("c".to_string(), json!(12345))]);
+    let variables = RapidHashMap::from_iter([("c".to_string(), json!(12345))]);
     let result = parse_request_with_variables(query, Some(&variables), None);
     assert!(result.is_err());
     assert!(result
@@ -286,7 +286,7 @@ fn test_variable_in_order_direction() {
         }
     "#;
 
-    let variables = HashMap::from([("dir".to_string(), json!("DESC"))]);
+    let variables = RapidHashMap::from_iter([("dir".to_string(), json!("DESC"))]);
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
         ParsedOperation::Query { selects, .. } => {
@@ -310,7 +310,7 @@ fn test_variable_invalid_order_direction() {
         }
     "#;
 
-    let variables = HashMap::from([("dir".to_string(), json!("INVALID"))]);
+    let variables = RapidHashMap::from_iter([("dir".to_string(), json!("INVALID"))]);
     let result = parse_request_with_variables(query, Some(&variables), None);
     assert!(result.is_err());
     // Error format matches Go DefraDB
@@ -362,7 +362,7 @@ fn test_variable_provided_value_overrides_default() {
     "#;
 
     // Provide a value - should override default
-    let variables = HashMap::from([("name".to_string(), json!("ProvidedName"))]);
+    let variables = RapidHashMap::from_iter([("name".to_string(), json!("ProvidedName"))]);
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
         ParsedOperation::Query { selects, .. } => {
@@ -429,7 +429,7 @@ fn test_multiple_variables_with_some_defaults() {
     "#;
 
     // Only provide $name, use defaults for $minAge and $lim
-    let variables = HashMap::from([("name".to_string(), json!("Alice"))]);
+    let variables = RapidHashMap::from_iter([("name".to_string(), json!("Alice"))]);
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
         ParsedOperation::Query { selects, .. } => {

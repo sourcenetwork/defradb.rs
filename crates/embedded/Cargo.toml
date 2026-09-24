@@ -15,6 +15,7 @@ ignored = ["bytes", "document", "lens", "serde", "serde_bytes", "serde_ipld_dagc
 bench = false
 
 [dependencies]
+rapidhash.workspace = true
 acp = { path = "../acp" }
 blockstore = { path = "../blockstore" }
 crypto = { path = "../crypto" }
@@ -31,11 +32,12 @@ p2p = { path = "../p2p" }
 query = { path = "../query" }
 replication-filter = { path = "../replication-filter" }
 schema = { path = "../schema" }
-sourcehub = { path = "../sourcehub", optional = true }
+vera = { path = "../vera", optional = true }
 storage = { path = "../storage" }
 
 anyhow.workspace = true
 bytes.workspace = true
+kovan-queue.workspace = true
 async-trait.workspace = true
 cid.workspace = true
 hex.workspace = true
@@ -57,8 +59,9 @@ wasmtime-runtime = [
     "defra-p2p-adapter/wasmtime-runtime",
     "lens/wasmtime-runtime",
 ]
-# SourceHub on-chain document ACP.
-sourcehub = ["dep:sourcehub"]
+# Vera on-chain document ACP.
+vera = ["dep:vera"]
+sourcehub = ["vera"]
 # libp2p transport. Default-on; omit for an iroh-only or transportless node.
 libp2p = [
     "db/p2p",
@@ -66,7 +69,7 @@ libp2p = [
     "defra-p2p-adapter/libp2p",
     "dep:libp2p",
 ]
-iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh"]
+iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms"]
 
 [dev-dependencies]
 base64 = { workspace = true }

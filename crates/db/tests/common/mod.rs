@@ -6,5 +6,6 @@
 
 pub mod counting_store;
 pub mod fixture;
+pub mod guard_events;
 pub mod schema;
 pub mod stream;

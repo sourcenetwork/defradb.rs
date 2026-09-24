@@ -59,7 +59,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc.set(field_name, value.clone());
         }
 
-        let known_fields: std::collections::HashSet<&str> = collection
+        let known_fields: rapidhash::RapidHashSet<&str> = collection
             .schema()
             .fields
             .iter()

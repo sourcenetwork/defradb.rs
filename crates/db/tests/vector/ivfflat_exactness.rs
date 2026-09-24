@@ -113,8 +113,7 @@ async fn deletes_never_resurrect_and_every_survivor_matches_flat() {
         let mut index = built(nlist, seed ^ 0xF1A7, &vectors).await;
         let mut flat = flat_of(&vectors).await;
 
-        let deleted: std::collections::HashSet<u64> =
-            (1..=vectors.len() as u64).step_by(3).collect();
+        let deleted: rapidhash::RapidHashSet<u64> = (1..=vectors.len() as u64).step_by(3).collect();
         for &id in &deleted {
             index.delete(NodeId(id)).await.unwrap();
             flat.delete(NodeId(id)).await.unwrap();

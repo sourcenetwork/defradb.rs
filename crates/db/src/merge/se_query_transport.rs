@@ -107,7 +107,7 @@ impl<T: P2PTransport> DbMergeSeQueryTransport<T> {
             .await
             .map_err(|e| format!("failed to send SE query request: {e}"))?;
 
-        match tokio::time::timeout(SE_QUERY_TIMEOUT, pending.recv()).await {
+        match n0_future::time::timeout(SE_QUERY_TIMEOUT, pending.recv()).await {
             Ok(Ok(reply)) => {
                 if let Some(err) = reply.err_message {
                     Err(format!("replicator returned SE query error: {err}"))
@@ -121,7 +121,8 @@ impl<T: P2PTransport> DbMergeSeQueryTransport<T> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<T: P2PTransport> query::SeQueryTransport for DbMergeSeQueryTransport<T> {
     async fn query_doc_ids(
         &self,

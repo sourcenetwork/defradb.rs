@@ -44,9 +44,9 @@ use acp::nac::NodePermission;
 use acp::{DocumentACP, Identity as AcpIdentity};
 use async_trait::async_trait;
 use identity::Did;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::document::DocumentMapping;
@@ -480,14 +480,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .ok_or_else(|| QueryError::collection_not_found(name))
     }
 
-    /// Get all collections as a HashMap for operations that need multiple collections.
+    /// Get all collections as a RapidHashMap for operations that need multiple collections.
     ///
     /// This is used internally for plan building which requires access to multiple
     /// collection schemas simultaneously (e.g., for joins).
-    pub(crate) async fn collections_map(&self) -> Result<HashMap<String, Arc<CollectionVersion>>> {
+    pub(crate) async fn collections_map(
+        &self,
+    ) -> Result<RapidHashMap<String, Arc<CollectionVersion>>> {
         let provider = self.effective_provider();
         let names = provider.list_collections().await?;
-        let mut map = HashMap::new();
+        let mut map = RapidHashMap::new();
         for name in names {
             if let Some(coll) = provider.get_collection(&name).await? {
                 map.insert(name, coll);

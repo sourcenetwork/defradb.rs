@@ -1,12 +1,12 @@
 use async_graphql::dynamic::*;
+use rapidhash::RapidHashMap;
 use schema::{CollectionVersion, FieldKind, ScalarArrayKind};
-use std::collections::HashMap;
 
 /// Build aggregate selector input types and register them for a collection.
 /// Returns the types to register.
 pub(super) fn build_aggregate_types_for_collection(
     collection: &CollectionVersion,
-    id_to_name: &HashMap<String, String>,
+    id_to_name: &RapidHashMap<String, String>,
 ) -> Vec<Type> {
     let coll_name = &collection.name;
     let mut types = Vec::new();

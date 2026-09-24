@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use acp::DocumentACP;
@@ -54,9 +54,11 @@ async fn document_matches_filter<R: Reader + ?Sized>(
 /// Index an optional `(collection_name, doc_id)` allowlist.
 ///
 /// `None` means every document in the scanned collections should be considered.
-fn allowlist_index(allowlist: Option<&[(String, String)]>) -> Option<HashMap<&str, HashSet<&str>>> {
+fn allowlist_index(
+    allowlist: Option<&[(String, String)]>,
+) -> Option<RapidHashMap<&str, RapidHashSet<&str>>> {
     let docs = allowlist?;
-    let mut index: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut index: RapidHashMap<&str, RapidHashSet<&str>> = RapidHashMap::new();
     for (collection, doc_id) in docs {
         index
             .entry(collection.as_str())
@@ -68,7 +70,7 @@ fn allowlist_index(allowlist: Option<&[(String, String)]>) -> Option<HashMap<&st
 
 fn unique_collection_names(docs: &[(String, String)]) -> Vec<String> {
     let mut names = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = RapidHashSet::new();
     for (collection, _) in docs {
         if seen.insert(collection.as_str()) {
             names.push(collection.clone());
@@ -80,7 +82,7 @@ fn unique_collection_names(docs: &[(String, String)]) -> Vec<String> {
 fn document_is_allowlisted(
     collection_name: &str,
     doc_id: &str,
-    allowlist: Option<&HashMap<&str, HashSet<&str>>>,
+    allowlist: Option<&RapidHashMap<&str, RapidHashSet<&str>>>,
 ) -> bool {
     match allowlist {
         None => true,
@@ -199,7 +201,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     allowlist: Option<&[(String, String)]>,
 ) -> Result<(), String> {
     let conn_timeout = std::time::Duration::from_secs(15);
-    let conn_start = std::time::Instant::now();
+    let conn_start = web_time::Instant::now();
     let mut logged_conn_error = false;
     loop {
         let peers = match transport.connected_peers().await {
@@ -222,7 +224,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         if conn_start.elapsed() > conn_timeout {
             return Err("timeout waiting for peer connection before push".to_string());
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        n0_future::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
     let local_peer_id = transport.local_peer_id().to_string();
@@ -260,7 +262,6 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
     let mut push_handles = Vec::new();
     let replay_gate = Arc::new(ReplayPushGate::new(replay_config));
-    let mut skipped_creator_docs = 0usize;
     let allowlist_by_collection = allowlist_index(allowlist);
 
     for col_name in collections {
@@ -333,27 +334,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 }
             }
 
-            let creator = match resolve_push_creator(
-                document_acp,
-                &collection,
-                doc_id,
-                &local_peer_id,
-            )
-            .await
-            {
-                Ok(creator) => creator,
-                Err(error) => {
-                    skipped_creator_docs += 1;
-                    tracing::warn!(
-                        collection = %collection.name(),
-                        collection_id = %collection.collection_id(),
-                        doc_id = %doc_id,
-                        error = %error,
-                        "Skipping existing document replay because ACP creator could not be resolved"
-                    );
-                    continue;
-                }
-            };
+            let creator =
+                resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
             let mut doc_blocks = Vec::new();
             for head_cid in
                 load_latest_composite_head_cids(&headstore, &blockstore_view, *doc_short_id).await
@@ -433,7 +415,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     replay_collection_id,
                     *doc_short_id,
                     replay_head_cids,
-                    tokio::spawn(async move {
+                    n0_future::task::spawn(async move {
                         let _permit = permit;
                         let mut completed_blocks = 0usize;
                         for (_car_grant, req) in requests {
@@ -538,12 +520,6 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     tracing::debug!("all push tasks completed");
     persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
 
-    if skipped_creator_docs > 0 {
-        return Err(format!(
-            "skipped {skipped_creator_docs} existing document replay(s) because ACP creator could not be resolved"
-        ));
-    }
-
     if let Some(se_key) = se_options.encryption_key {
         let coordinator = match se_options.identity_pubkey {
             Some(pubkey) => crate::merge::se::SECoordinator::with_key_and_identity(
@@ -642,7 +618,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     }
                 };
 
-                let field_values: std::collections::HashMap<String, document::NormalValue> = doc
+                let field_values: rapidhash::RapidHashMap<String, document::NormalValue> = doc
                     .values()
                     .iter()
                     .map(|(k, v)| (k.clone(), v.value().clone()))
@@ -772,9 +748,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         }
         drop(filter_guard);
     }
-    let creator = resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let creator = resolve_push_creator(document_acp, &collection, doc_id, &local_peer_id).await;
 
     let headstore = storage::stores::Headstore::new(db.store().clone());
     let head_txn = headstore
@@ -831,7 +805,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
                 }
                 Err(error) => {
                     let prefix = if error.is_connection_like() {
-                        "transport became unavailable"
+                        p2p::error::TRANSPORT_UNAVAILABLE_PREFIX
                     } else {
                         "replay push failed"
                     };

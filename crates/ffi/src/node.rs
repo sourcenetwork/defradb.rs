@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use kovan::AtomOption;
+
 use crate::ffi_entry;
 use crate::state::{FfiStore, NodeState, P2PState, PolicyStore, NODES};
 use crate::try_ffi;
@@ -57,12 +59,15 @@ pub(crate) async fn build_node_state(
             .p2p
             .clone()
             .map(|system| Arc::new(P2PState::new(system))),
-        node_identity_did: node.node_identity_did.clone(),
+        node_identity_did: node
+            .node_identity_did
+            .clone()
+            .map_or_else(AtomOption::none, AtomOption::some),
         signing_enabled: options.enable_signing != 0,
-        #[cfg(feature = "sourcehub")]
-        sourcehub_acp: node.sourcehub_acp.clone(),
+        #[cfg(feature = "vera")]
+        vera_acp: node.vera_acp.clone(),
         query_limits: node.query_limits,
-        se_encryption_key: None,
+        se_encryption_key: AtomOption::none(),
     })
 }
 
@@ -152,49 +157,43 @@ fn resolve_embedded_config(
         embedded::SigningConfig::Disabled
     };
 
-    #[cfg(not(feature = "sourcehub"))]
-    if !options.sourcehub_grpc_address.is_null() {
+    #[cfg(not(feature = "vera"))]
+    if !options.vera_grpc_address.is_null() {
         return Err(
-            "this build does not include SourceHub ACP; rebuild with the sourcehub feature"
-                .to_string(),
+            "this build does not include Vera ACP; rebuild with the vera feature".to_string(),
         );
     }
-    #[cfg(not(feature = "sourcehub"))]
+    #[cfg(not(feature = "vera"))]
     let document_acp = embedded::DocumentAcpConfig::Local;
 
-    #[cfg(feature = "sourcehub")]
-    let document_acp = if !options.sourcehub_grpc_address.is_null() {
-        let grpc_address = unsafe { c_str_to_string(options.sourcehub_grpc_address) }
-            .ok_or_else(|| "sourcehub_grpc_address is not valid UTF-8".to_string())?;
-        let comet_rpc_address = unsafe { c_str_to_string(options.sourcehub_comet_rpc_address) }
-            .ok_or_else(|| "sourcehub_comet_rpc_address is not valid UTF-8".to_string())?;
-        let chain_id = unsafe { c_str_to_string(options.sourcehub_chain_id) }
-            .ok_or_else(|| "sourcehub_chain_id is not valid UTF-8".to_string())?;
+    #[cfg(feature = "vera")]
+    let document_acp = if !options.vera_grpc_address.is_null() {
+        let grpc_address = unsafe { c_str_to_string(options.vera_grpc_address) }
+            .ok_or_else(|| "vera_grpc_address is not valid UTF-8".to_string())?;
+        let comet_rpc_address = unsafe { c_str_to_string(options.vera_comet_rpc_address) }
+            .ok_or_else(|| "vera_comet_rpc_address is not valid UTF-8".to_string())?;
+        let chain_id = unsafe { c_str_to_string(options.vera_chain_id) }
+            .ok_or_else(|| "vera_chain_id is not valid UTF-8".to_string())?;
 
-        if options.sourcehub_signer_key.is_null() || options.sourcehub_signer_key_len == 0 {
-            return Err(
-                "sourcehub_signer_key is required when SourceHub is configured".to_string(),
-            );
+        if options.vera_signer_key.is_null() || options.vera_signer_key_len == 0 {
+            return Err("vera_signer_key is required when Vera is configured".to_string());
         }
-        if options.sourcehub_signer_key_len > MAX_PRIVATE_KEY_LEN {
+        if options.vera_signer_key_len > MAX_PRIVATE_KEY_LEN {
             return Err(format!(
-                "sourcehub_signer_key_len {} exceeds maximum {}",
-                options.sourcehub_signer_key_len, MAX_PRIVATE_KEY_LEN
+                "vera_signer_key_len {} exceeds maximum {}",
+                options.vera_signer_key_len, MAX_PRIVATE_KEY_LEN
             ));
         }
 
-        // SAFETY: `sourcehub_signer_key` is non-null (checked above) and
-        // `sourcehub_signer_key_len` is bounded by MAX_PRIVATE_KEY_LEN.
+        // SAFETY: `vera_signer_key` is non-null (checked above) and
+        // `vera_signer_key_len` is bounded by MAX_PRIVATE_KEY_LEN.
         // The caller guarantees the pointer is valid for the given length.
         let signer_key = unsafe {
-            std::slice::from_raw_parts(
-                options.sourcehub_signer_key,
-                options.sourcehub_signer_key_len,
-            )
-            .to_vec()
+            std::slice::from_raw_parts(options.vera_signer_key, options.vera_signer_key_len)
+                .to_vec()
         };
 
-        embedded::DocumentAcpConfig::SourceHub(embedded::SourceHubConfig {
+        embedded::DocumentAcpConfig::Vera(embedded::VeraConfig {
             grpc_address,
             comet_rpc_address,
             chain_id,
@@ -265,8 +264,9 @@ pub extern "C" fn node_close(node_ptr: usize) -> FfiResult {
 
         let removed_subs = SUBSCRIPTIONS.remove_for_node(node_ptr);
         for sub_state in removed_subs {
+            let sub_id = sub_state.subscription.lock().id();
             NODES.get(node_ptr, |state| {
-                state.event_bus.unsubscribe(sub_state.subscription.id());
+                state.event_bus.unsubscribe(sub_id);
             });
         }
 
@@ -278,19 +278,20 @@ pub extern "C" fn node_close(node_ptr: usize) -> FfiResult {
             });
         }
 
-        let mut state = match NODES.remove(node_ptr) {
+        let state = match NODES.remove(node_ptr) {
             Some(state) => state,
             None => return FfiResult::error(ERR_INVALID_NODE_HANDLE),
         };
 
         rt.block_on(state.background_tasks.shutdown());
 
-        if let Some(p2p) = state.p2p.take() {
+        if let Some(p2p) = state.p2p.as_ref() {
             rt.block_on(async { p2p.system.shutdown().await });
         }
 
         state.event_bus.close();
         let result = rt.block_on(async { state.database.close().await });
+        drop(state);
 
         match result {
             Ok(()) => FfiResult::ok(),
@@ -332,21 +333,21 @@ mod tests {
         unsafe { crate::types::defra_free_string(result.error) };
     }
 
-    #[cfg(not(feature = "sourcehub"))]
+    #[cfg(not(feature = "vera"))]
     #[test]
-    fn test_sourcehub_config_rejected_without_feature() {
+    fn test_vera_config_rejected_without_feature() {
         assert!(crate::runtime::init_runtime());
 
         let grpc = CString::new("127.0.0.1:9090").unwrap();
         let comet = CString::new("127.0.0.1:26657").unwrap();
-        let chain = CString::new("sourcehub-test").unwrap();
+        let chain = CString::new("vera-test").unwrap();
         let signer_key = [1u8; 32];
         let result = new_node(NodeInitOptions {
-            sourcehub_grpc_address: grpc.as_ptr(),
-            sourcehub_comet_rpc_address: comet.as_ptr(),
-            sourcehub_chain_id: chain.as_ptr(),
-            sourcehub_signer_key: signer_key.as_ptr(),
-            sourcehub_signer_key_len: signer_key.len(),
+            vera_grpc_address: grpc.as_ptr(),
+            vera_comet_rpc_address: comet.as_ptr(),
+            vera_chain_id: chain.as_ptr(),
+            vera_signer_key: signer_key.as_ptr(),
+            vera_signer_key_len: signer_key.len(),
             ..NodeInitOptions::default()
         });
 
@@ -354,11 +355,8 @@ mod tests {
         assert!(!result.error.is_null());
 
         let error = unsafe { CStr::from_ptr(result.error).to_string_lossy().into_owned() };
-        assert!(error.contains("SourceHub"), "unexpected error: {error}");
-        assert!(
-            error.contains("sourcehub feature"),
-            "unexpected error: {error}"
-        );
+        assert!(error.contains("Vera"), "unexpected error: {error}");
+        assert!(error.contains("vera feature"), "unexpected error: {error}");
 
         unsafe { crate::types::defra_free_string(result.error) };
     }

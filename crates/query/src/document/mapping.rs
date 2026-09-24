@@ -1,6 +1,6 @@
 //! Document mapping for query result field positioning
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use serde_json::Value as JsonValue;
 
@@ -54,7 +54,7 @@ pub struct DocumentMapping {
     ///
     /// If a field-name is not in this collection, it essentially doesn't exist.
     /// Multiple fields may exist for any given name (e.g., aliases).
-    indexes_by_name: HashMap<String, Vec<usize>>,
+    indexes_by_name: RapidHashMap<String, Vec<usize>>,
 
     /// The next index available for use (also = number of fields)
     next_index: usize,

@@ -8,10 +8,10 @@ use query::QueryLimits;
 use serde_json::Map;
 
 use super::{
-    AcpOperations, BackupOperations, BlockOperations, BrowserSyncOperations,
-    CollectionManagementOperations, CollectionVersionOperations, DocumentAcpOperations,
-    DumpOperations, EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester,
-    NodeAcpOperations, P2POperations, SchemaOperations, TransactionOperations, ViewOperations,
+    AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
+    CollectionVersionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
+    IndexOperations, LensOperations, ManageRequester, NodeAcpOperations, P2POperations,
+    SchemaOperations, TransactionOperations, ViewOperations,
 };
 
 struct CollectionVersionsFromManagement(Arc<dyn CollectionManagementOperations>);
@@ -39,7 +39,6 @@ pub struct AppState {
     pub encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     pub backup: Option<Arc<dyn BackupOperations>>,
     pub block: Option<Arc<dyn BlockOperations>>,
-    pub browser_sync: Option<Arc<dyn BrowserSyncOperations>>,
     pub schema: Option<Arc<dyn SchemaOperations>>,
     pub lens: Option<Arc<dyn LensOperations>>,
     pub nac: Option<Arc<dyn NodeAcpOperations>>,
@@ -79,13 +78,6 @@ impl std::fmt::Debug for AppState {
                 &self.backup.as_ref().map(|_| "<BackupOperations>"),
             )
             .field("block", &self.block.as_ref().map(|_| "<BlockOperations>"))
-            .field(
-                "browser_sync",
-                &self
-                    .browser_sync
-                    .as_ref()
-                    .map(|_| "<BrowserSyncOperations>"),
-            )
             .field(
                 "schema",
                 &self.schema.as_ref().map(|_| "<SchemaOperations>"),
@@ -181,17 +173,6 @@ impl AppState {
     pub fn require_block(&self) -> Result<&Arc<dyn BlockOperations>, crate::error::HttpError> {
         self.block.as_ref().ok_or_else(|| {
             crate::error::HttpError::ServiceUnavailable("Block operations are not enabled.".into())
-        })
-    }
-
-    /// Get browser sync operations or return ServiceUnavailable error.
-    pub fn require_browser_sync(
-        &self,
-    ) -> Result<&Arc<dyn BrowserSyncOperations>, crate::error::HttpError> {
-        self.browser_sync.as_ref().ok_or_else(|| {
-            crate::error::HttpError::ServiceUnavailable(
-                "browser synchronization is not enabled".into(),
-            )
         })
     }
 
@@ -301,7 +282,6 @@ pub struct AppStateBuilder {
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
-    browser_sync: Option<Arc<dyn BrowserSyncOperations>>,
     schema: Option<Arc<dyn SchemaOperations>>,
     lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
@@ -333,7 +313,6 @@ impl AppStateBuilder {
             encrypted_index: None,
             backup: None,
             block: None,
-            browser_sync: None,
             schema: None,
             lens: None,
             nac: None,
@@ -401,12 +380,6 @@ impl AppStateBuilder {
     /// Set block operations.
     pub fn with_block(mut self, block: Arc<dyn BlockOperations>) -> Self {
         self.block = Some(block);
-        self
-    }
-
-    /// Set browser sync operations.
-    pub fn with_browser_sync(mut self, browser_sync: Arc<dyn BrowserSyncOperations>) -> Self {
-        self.browser_sync = Some(browser_sync);
         self
     }
 
@@ -529,7 +502,6 @@ impl AppStateBuilder {
             encrypted_index: self.encrypted_index,
             backup: self.backup,
             block: self.block,
-            browser_sync: self.browser_sync,
             schema: self.schema,
             lens: self.lens,
             nac: self.nac,

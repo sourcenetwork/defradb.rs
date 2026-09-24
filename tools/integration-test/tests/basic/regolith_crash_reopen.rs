@@ -1,8 +1,9 @@
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use integration_test::TestCluster;
+use kovan::Atom;
 use serde_json::{json, Value};
 
 async fn graphql_query(
@@ -43,11 +44,11 @@ fn crash_reopen_ack_target() -> usize {
         .unwrap_or(50)
 }
 
-async fn wait_for_acked_writes(acked: &Arc<Mutex<Vec<i64>>>, target: usize) {
+async fn wait_for_acked_writes(acked: &Arc<Atom<Vec<i64>>>, target: usize) {
     let timeout_secs = 10_u64.max((target as u64).saturating_div(10));
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     loop {
-        if acked.lock().unwrap().len() >= target {
+        if acked.peek(Vec::len) >= target {
             return;
         }
         assert!(
@@ -80,7 +81,7 @@ async fn rust_regolith_survives_sigkill_and_reopen_after_acknowledged_writes() {
     .expect("add CrashDoc schema");
 
     let api_url = cluster.api_url(0).to_string();
-    let acked = Arc::new(Mutex::new(Vec::new()));
+    let acked = Arc::new(Atom::new(Vec::new()));
     let writer_acked = Arc::clone(&acked);
     let target_ack_count = crash_reopen_ack_target();
     let max_attempts = (target_ack_count.max(50) * 4) as i64;
@@ -102,7 +103,11 @@ async fn rust_regolith_survives_sigkill_and_reopen_after_acknowledged_writes() {
             );
 
             match graphql_query(&http, &api_url, &gql).await {
-                Ok(_) => writer_acked.lock().unwrap().push(seq),
+                Ok(_) => writer_acked.rcu(|acked| {
+                    let mut next = acked.clone();
+                    next.push(seq);
+                    next
+                }),
                 Err(_) => break,
             }
 
@@ -114,7 +119,7 @@ async fn rust_regolith_survives_sigkill_and_reopen_after_acknowledged_writes() {
     cluster.nodes[0].process.kill();
     writer.await.expect("writer task should not panic");
 
-    let acknowledged = acked.lock().unwrap().clone();
+    let acknowledged = acked.load_clone();
     assert!(
         !acknowledged.is_empty(),
         "test must observe at least one acknowledged write"

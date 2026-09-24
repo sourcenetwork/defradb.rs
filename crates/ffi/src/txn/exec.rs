@@ -92,7 +92,7 @@ pub unsafe extern "C" fn exec_request_in_txn_with_signing(
         };
 
         let (node_did, node_signing_enabled) = NODES
-            .get(node_ptr, |state| (state.node_identity_did.clone(), state.signing_enabled))
+            .get(node_ptr, |state| (state.identity_did(), state.signing_enabled))
             .unwrap_or((None, false));
         let signing_enabled = match signing_override {
             -1 => node_signing_enabled,

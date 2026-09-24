@@ -28,6 +28,12 @@ pub struct ClientConfig {
     pub private_key: Option<String>,
     /// Key type of `private_key`: ed25519, secp256k1 or secp256r1.
     pub key_type: Option<String>,
+    /// Fail to open unless OPFS synchronous access handles are granted,
+    /// rather than falling back to the in-memory mirror. For a client in a
+    /// dedicated Worker that may take over a database another Worker has
+    /// not yet released: the open then fails and can be retried, instead of
+    /// mounting an empty mirror beside the real data.
+    pub require_sync_handles: bool,
 }
 
 /// Collection info returned to JavaScript.

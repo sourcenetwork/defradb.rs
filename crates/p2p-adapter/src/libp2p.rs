@@ -1,8 +1,10 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 mod branchable_sync;
 
@@ -23,7 +25,8 @@ pub trait CollectionLookup: Send + Sync {
 }
 
 /// Trait for syncing collection versions via Bitswap.
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait VersionSyncer: Send + Sync {
     async fn sync_versions(
         &self,
@@ -41,32 +44,32 @@ pub struct P2PAdapter<B: Blockstore + 'static> {
     event_bus: Option<Arc<dyn events::Bus>>,
     version_syncer: Option<Arc<dyn VersionSyncer>>,
     replicator_push_options: ReplicatorPushOptionsState,
-    peer_addresses: Arc<std::sync::RwLock<HashMap<String, String>>>,
-    tracked_documents: Arc<std::sync::RwLock<HashSet<String>>>,
+    peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
+    tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
 }
 
 async fn wait_for_branchable_merges(
     sub: &mut events::Subscription,
     collection_id: &str,
-    start: std::time::Instant,
+    start: web_time::Instant,
     overall_timeout: std::time::Duration,
     idle_timeout: std::time::Duration,
 ) {
     let mut saw_merge = false;
-    let mut last_activity = std::time::Instant::now();
+    let mut last_activity = web_time::Instant::now();
 
     while start.elapsed() < overall_timeout {
         if last_activity.elapsed() > idle_timeout {
             break;
         }
 
-        match tokio::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
+        match n0_future::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
             Ok(Some(msg)) => {
                 if let Some(data) = msg.as_merge_complete() {
                     if data.collection_id == collection_id {
                         saw_merge = true;
-                        last_activity = std::time::Instant::now();
+                        last_activity = web_time::Instant::now();
                     }
                 }
             }
@@ -80,12 +83,12 @@ async fn wait_for_branchable_merges(
     }
 }
 
-async fn unmerged_heads<B, I>(blockstore: &B, heads: I) -> HashSet<cid::Cid>
+async fn unmerged_heads<B, I>(blockstore: &B, heads: I) -> RapidHashSet<cid::Cid>
 where
     B: Blockstore,
     I: IntoIterator<Item = cid::Cid>,
 {
-    let mut pending = HashSet::new();
+    let mut pending = RapidHashSet::new();
     for cid in heads {
         if !matches!(blockstore.is_merged(&cid).await, Ok(true)) {
             pending.insert(cid);
@@ -106,13 +109,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
     }
 
     async fn resubscribe_tracked_document_topics(&self) {
-        let doc_ids: Vec<String> = match self.tracked_documents.read() {
-            Ok(docs) => docs.iter().cloned().collect(),
-            Err(error) => {
-                tracing::warn!(error = %error, "failed to read tracked documents");
-                return;
-            }
-        };
+        let doc_ids: Vec<String> = self.tracked_documents.keys().collect();
         for doc_id in &doc_ids {
             let topic = DefraTopic::document(doc_id);
             if let Err(error) = self.handle.unsubscribe(topic.clone()).await {
@@ -139,8 +136,8 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
             event_bus: Some(event_bus),
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
         }
     }
@@ -220,10 +217,10 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
         ))
     }
 
-    pub fn set_initial_tracked_documents(&self, docs: HashSet<String>) {
-        if let Ok(mut tracked) = self.tracked_documents.write() {
-            *tracked = docs;
-        }
+    pub fn set_initial_tracked_documents(&self, docs: RapidHashSet<String>) {
+        self.tracked_documents.clear();
+        self.tracked_documents
+            .extend(docs.into_iter().map(|doc_id| (doc_id, ())));
     }
 
     /// Resolve collection names to CIDs for removal, mirroring `add_replicator`.
@@ -237,13 +234,14 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
     async fn sync_status(&self) -> P2PResult<serde_json::Value> {
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
         };
-        let mut status = serde_json::to_value(coordinator.sync_status())
+        let mut status = serde_json::to_value(coordinator.sync_status().await)
             .map_err(|error| P2PError::transport(error.to_string()))?;
         if let (Some(pusher), Some(object)) = (self.doc_pusher.as_ref(), status.as_object_mut()) {
             object.insert(
@@ -281,9 +279,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;
         self.handle
-            .resolve_peer_addresses(&connected, |peer_id| {
-                self.peer_addresses.read().ok()?.get(peer_id).cloned()
-            })
+            .resolve_peer_addresses(&connected, |peer_id| self.peer_addresses.get(peer_id))
             .await
             .map_err(|error| P2PError::transport(error.to_string()))
     }
@@ -319,9 +315,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .map(|peers| peers.contains(&parsed.peer_id))
             .unwrap_or(false);
         if already_connected {
-            if let Ok(mut addrs) = self.peer_addresses.write() {
-                addrs.insert(parsed.peer_id.to_string(), addr.to_string());
-            }
+            self.peer_addresses
+                .insert(parsed.peer_id.to_string(), addr.to_string());
             return Ok(());
         }
         self.handle
@@ -332,9 +327,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .poll_until_connected(parsed.peer_id, std::time::Duration::from_secs(10))
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;
-        if let Ok(mut addrs) = self.peer_addresses.write() {
-            addrs.insert(parsed.peer_id.to_string(), addr.to_string());
-        }
+        self.peer_addresses
+            .insert(parsed.peer_id.to_string(), addr.to_string());
         self.resubscribe_tracked_document_topics().await;
         Ok(())
     }
@@ -349,9 +343,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .disconnect(parsed.peer_id)
             .await
             .map_err(|error| P2PError::transport(error.to_string()))?;
-        if let Ok(mut addrs) = self.peer_addresses.write() {
-            addrs.remove(&parsed.peer_id.to_string());
-        }
+        self.peer_addresses.remove(&parsed.peer_id.to_string());
         Ok(())
     }
 
@@ -445,7 +437,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         }
 
         let peer_id = parsed.peer_id;
-        let requested_collections: HashSet<String> = collection_cids.iter().cloned().collect();
+        let requested_collections: RapidHashSet<String> = collection_cids.iter().cloned().collect();
         let local_peer_id = self.handle.local_peer_id_cached().to_string();
         let target_peer_id = peer_id.to_string();
         let validated_capabilities = crate::validate_explicit_replay_capabilities(
@@ -479,7 +471,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         // skip the expensive initial replay when the replicator already exists
         // with the same collections and replay capability.
         let (existing_collection_ids, existing_filters): (
-            HashSet<String>,
+            RapidHashSet<String>,
             p2p::ReplicationFilters,
         ) = {
             let result = if let Some(ref coordinator) = self.sync_coordinator {
@@ -496,14 +488,14 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             };
             match result {
                 Ok(Some(info)) => (info.collections.into_iter().collect(), info.filters),
-                Ok(None) => (HashSet::new(), p2p::ReplicationFilters::new()),
+                Ok(None) => (RapidHashSet::new(), p2p::ReplicationFilters::new()),
                 Err(e) => {
                     tracing::warn!(
                         peer_id = %peer_id,
                         error = %e,
                         "Failed to check existing replicator state; falling back to full replay"
                     );
-                    (HashSet::new(), p2p::ReplicationFilters::new())
+                    (RapidHashSet::new(), p2p::ReplicationFilters::new())
                 }
             }
         };
@@ -513,9 +505,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .map_err(|error| {
                 P2PError::transport(format!("failed to connect to replicator peer: {error}"))
             })?;
-        if let Ok(mut addrs) = self.peer_addresses.write() {
-            addrs.insert(peer_id.to_string(), addr_str.to_string());
-        }
+        self.peer_addresses
+            .insert(peer_id.to_string(), addr_str.to_string());
 
         let replicator_info = p2p::ReplicatorInfo::from_raw_with_filters(
             peer_id.to_string(),
@@ -575,7 +566,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
-                tokio::spawn(async move {
+                n0_future::task::spawn(async move {
                     if let Err(error) = push_pusher
                         .push_existing_docs(
                             &p2p::transport::PeerId::from(peer_id),
@@ -686,10 +677,24 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await?;
 
         if let Some(ref coordinator) = self.sync_coordinator {
-            coordinator
+            let collection_ids = coordinator
                 .get_subscribed_collections()
                 .await
-                .map_err(|error| P2PError::transport(error.to_string()))
+                .map_err(|error| P2PError::transport(error.to_string()))?;
+            if let Some(ref pusher) = self.doc_pusher {
+                collection_ids
+                    .into_iter()
+                    .map(|collection_id| {
+                        pusher.get_collection_name(&collection_id)?.ok_or_else(|| {
+                            P2PError::not_found(format!(
+                                "collection with ID '{collection_id}' not found"
+                            ))
+                        })
+                    })
+                    .collect()
+            } else {
+                Ok(collection_ids)
+            }
         } else {
             Ok(Vec::new())
         }
@@ -700,35 +705,26 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             .await?;
 
         if let Some(ref coordinator) = self.sync_coordinator {
-            for collection_name in collections {
-                let topic_id = if let Some(ref pusher) = self.doc_pusher {
-                    if let Some(collection_id) = pusher.get_collection_id(&collection_name) {
-                        collection_id
+            let topic_ids = collections
+                .into_iter()
+                .map(|collection_name| {
+                    if let Some(ref pusher) = self.doc_pusher {
+                        pusher.get_collection_id(&collection_name).ok_or_else(|| {
+                            P2PError::not_found(format!(
+                                "collection '{}' not found - add schema before subscribing to P2P",
+                                collection_name
+                            ))
+                        })
                     } else {
-                        return Err(P2PError::not_found(format!(
-                            "collection '{}' not found - add schema before subscribing to P2P",
-                            collection_name
-                        )));
+                        Ok(collection_name)
                     }
-                } else {
-                    collection_name.clone()
-                };
+                })
+                .collect::<P2PResult<Vec<_>>>()?;
 
-                coordinator
-                    .subscribe_collection(&topic_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-            }
-
-            if let Some(ref pusher) = self.doc_pusher {
-                let all_cols = coordinator
-                    .get_subscribed_collections()
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-                if let Err(error) = pusher.persist_p2p_collections(&all_cols).await {
-                    tracing::warn!(error = %error, "failed to persist P2P collections");
-                }
-            }
+            coordinator
+                .subscribe_collections(&topic_ids)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
 
             Ok(())
         } else {
@@ -759,22 +755,10 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 })
                 .collect::<P2PResult<Vec<_>>>()?;
 
-            for topic_id in topic_ids {
-                coordinator
-                    .unsubscribe_collection(&topic_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-            }
-
-            if let Some(ref pusher) = self.doc_pusher {
-                let all_cols = coordinator
-                    .get_subscribed_collections()
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))?;
-                if let Err(error) = pusher.persist_p2p_collections(&all_cols).await {
-                    tracing::warn!(error = %error, "failed to persist P2P collections after removal");
-                }
-            }
+            coordinator
+                .unsubscribe_collections(&topic_ids)
+                .await
+                .map_err(|error| P2PError::transport(error.to_string()))?;
 
             Ok(())
         } else {
@@ -788,10 +772,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         self.check_nac(acp::nac::NodePermission::P2pDocumentList)
             .await?;
 
-        let docs = self.tracked_documents.read().map_err(|error| {
-            P2PError::internal(format!("failed to read tracked documents: {error}"))
-        })?;
-        let mut sorted: Vec<String> = docs.iter().cloned().collect();
+        let mut sorted: Vec<String> = self.tracked_documents.keys().collect();
         sorted.sort();
         Ok(sorted
             .into_iter()
@@ -816,17 +797,11 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             if let Err(error) = self.handle.subscribe(topic).await {
                 tracing::warn!(doc_id = %doc_id, error = %error, "Failed to subscribe to topic for document");
             }
-            if let Ok(mut tracked) = self.tracked_documents.write() {
-                tracked.insert(doc_id.clone());
-            }
+            self.tracked_documents.insert(doc_id.clone(), ());
         }
 
         if let Some(ref pusher) = self.doc_pusher {
-            let all_docs: Vec<String> = self
-                .tracked_documents
-                .read()
-                .map(|docs| docs.iter().cloned().collect())
-                .unwrap_or_default();
+            let all_docs: Vec<String> = self.tracked_documents.keys().collect();
             if let Err(error) = pusher.persist_p2p_documents(&all_docs).await {
                 tracing::warn!(error = %error, "failed to persist P2P documents");
             }
@@ -849,17 +824,11 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             if let Err(error) = self.handle.unsubscribe(topic).await {
                 tracing::warn!(doc_id = %doc_id, error = %error, "Failed to unsubscribe from topic for document");
             }
-            if let Ok(mut tracked) = self.tracked_documents.write() {
-                tracked.remove(doc_id);
-            }
+            self.tracked_documents.remove(doc_id);
         }
 
         if let Some(ref pusher) = self.doc_pusher {
-            let all_docs: Vec<String> = self
-                .tracked_documents
-                .read()
-                .map(|docs| docs.iter().cloned().collect())
-                .unwrap_or_default();
+            let all_docs: Vec<String> = self.tracked_documents.keys().collect();
             if let Err(error) = pusher.persist_p2p_documents(&all_docs).await {
                 tracing::warn!(error = %error, "failed to persist P2P documents after removal");
             }
@@ -921,8 +890,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         // below gets whatever the reply wait leaves rather than a second full
         // budget.
         let overall_timeout = timeout.unwrap_or(crate::doc_sync::DEFAULT_DOC_SYNC_TIMEOUT);
-        let start = std::time::Instant::now();
-        let doc_set: HashSet<String> = doc_ids.iter().cloned().collect();
+        let start = web_time::Instant::now();
+        let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
 
         let coord = self
             .sync_coordinator
@@ -956,7 +925,8 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         let mut pending_heads = unmerged_heads(coord.blockstore().as_ref(), heads).await;
 
         while !pending_heads.is_empty() && start.elapsed() < overall_timeout {
-            match tokio::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
+            match n0_future::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await
+            {
                 Ok(Some(msg)) => {
                     if let Some(data) = msg.as_merge_complete() {
                         if doc_set.contains(&data.doc_id) {
@@ -994,7 +964,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         let mut sub = event_bus.subscribe(&[events::EventName::MergeComplete]);
         let overall_timeout = std::time::Duration::from_secs(30);
         let idle_timeout = std::time::Duration::from_secs(3);
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         let collection_id_string = collection_id.to_string();
 
         // Go-compatible pubsub_rpc path when coordinator is wired (#828).
@@ -1053,7 +1023,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             let request_clone = request.clone();
             let handle = self.handle.clone();
             let peer_id = *peer_id;
-            tokio::spawn(async move {
+            n0_future::task::spawn(async move {
                 if let Err(error) = handle
                     .send_branchable_sync_request(peer_id, request_clone)
                     .await
@@ -1139,7 +1109,8 @@ mod tests {
 
     struct FixedNac(NacOutcome);
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl db::NodeAccessChecker for FixedNac {
         async fn check_node_access(&self, permission: acp::nac::NodePermission) -> db::Result<()> {
             match self.0 {
@@ -1166,7 +1137,7 @@ mod tests {
 
         let pending = unmerged_heads(&blockstore, [merged, unmerged, unmerged]).await;
 
-        assert_eq!(pending, HashSet::from([unmerged]));
+        assert_eq!(pending, RapidHashSet::from_iter([unmerged]));
     }
 
     /// #1299 regression guard for the ordering of the two steps the pubsub
@@ -1182,7 +1153,7 @@ mod tests {
         blockstore.put(&merged, b"merged").await.unwrap();
         blockstore.mark_as_merged(&merged).await.unwrap();
 
-        let doc_set = HashSet::from(["bae-doc-1".to_string()]);
+        let doc_set = RapidHashSet::from_iter(["bae-doc-1".to_string()]);
         let replies = [(
             "peer-a".to_string(),
             p2p::message::pubsub::DocSyncReply {
@@ -1209,7 +1180,8 @@ mod tests {
     #[derive(Debug)]
     struct NoopBlockstore;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl Blockstore for NoopBlockstore {
         async fn get(&self, _cid: &cid::Cid) -> blockstore::Result<Option<bytes::Bytes>> {
             Ok(None)
@@ -1245,7 +1217,7 @@ mod tests {
     }
 
     async fn wait_until_connected(handle: &P2PHostHandle, peer_id: libp2p::PeerId) {
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         loop {
             if handle
                 .connected_peers()
@@ -1259,12 +1231,12 @@ mod tests {
                 start.elapsed() < std::time::Duration::from_secs(5),
                 "timed out waiting for connection to {peer_id}"
             );
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            n0_future::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 
     async fn wait_until_disconnected(handle: &P2PHostHandle, peer_id: libp2p::PeerId) {
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         loop {
             if !handle
                 .connected_peers()
@@ -1278,7 +1250,7 @@ mod tests {
                 start.elapsed() < std::time::Duration::from_secs(5),
                 "timed out waiting for disconnection from {peer_id}"
             );
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            n0_future::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 
@@ -1307,8 +1279,8 @@ mod tests {
             event_bus: None,
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
         }
     }
@@ -1362,8 +1334,8 @@ mod tests {
             .await
             .unwrap();
 
-        let task_a = tokio::spawn(host_a.run());
-        let task_b = tokio::spawn(host_b.run());
+        let task_a = n0_future::task::spawn(host_a.run());
+        let task_b = n0_future::task::spawn(host_b.run());
         connect_hosts(&handle_a, &handle_b).await;
 
         let adapter = identity_test_adapter(handle_a.clone());
@@ -1391,7 +1363,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let replacement_task = tokio::spawn(replacement_host.run());
+        let replacement_task = n0_future::task::spawn(replacement_host.run());
         assert_eq!(replacement_handle.local_peer_id_cached(), responder_peer);
         connect_hosts(&handle_a, &replacement_handle).await;
 
@@ -1413,8 +1385,8 @@ mod tests {
             p2p::host::P2PHost::new(BitswapStoreAdapter::new(Arc::new(NoopBlockstore)))
                 .await
                 .unwrap();
-        let task_c = tokio::spawn(host_c.run());
-        let task_d = tokio::spawn(host_d.run());
+        let task_c = n0_future::task::spawn(host_c.run());
+        let task_d = n0_future::task::spawn(host_d.run());
         connect_hosts(&handle_c, &handle_d).await;
         let adapter = identity_test_adapter(handle_c.clone());
         let peer = TransportPeerId::new(handle_d.local_peer_id_cached().to_string()).unwrap();
@@ -1441,8 +1413,8 @@ mod tests {
                 .await
                 .expect("host b");
 
-        tokio::spawn(host_a.run());
-        tokio::spawn(host_b.run());
+        n0_future::task::spawn(host_a.run());
+        n0_future::task::spawn(host_b.run());
 
         let adapter = P2PAdapter::<NoopBlockstore> {
             handle: handle_a.clone(),
@@ -1451,8 +1423,8 @@ mod tests {
             event_bus: Some(Arc::new(events::ChannelBus::default())),
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
-            peer_addresses: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            tracked_documents: Arc::new(std::sync::RwLock::new(HashSet::new())),
+            peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+            tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
         };
 

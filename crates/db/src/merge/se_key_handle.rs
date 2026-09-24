@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use kovan::AtomOption;
 use zeroize::ZeroizeOnDrop;
 
 /// The SE key material used to generate search tags. `identity_pubkey` MUST
@@ -31,32 +31,34 @@ impl SeKeyMaterial {
     }
 }
 
-/// Lock-free-ish shared cell for the SE key. `parking_lot::RwLock` is used
-/// because `arc_swap` is not a workspace dependency; reads are off the query
-/// hot path's critical section (one short read per query), so this is fine.
-pub type SeKeyHandle = Arc<RwLock<Option<Arc<SeKeyMaterial>>>>;
+/// Lock-free shared cell for the SE key. Replaced key material is zeroized
+/// when the reclamation system retires it, not at the store call.
+pub type SeKeyHandle = Arc<AtomOption<Arc<SeKeyMaterial>>>;
 
 /// Create an empty handle (no key provisioned yet). Used by embedded setup,
 /// which receives the key at runtime.
 pub fn empty_se_key_handle() -> SeKeyHandle {
-    Arc::new(RwLock::new(None))
+    Arc::new(AtomOption::none())
 }
 
 /// Create a handle pre-filled with a known key. Used by the CLI, which knows
 /// the SE key at P2P-setup time.
 pub fn filled_se_key_handle(key: [u8; 32], identity_pubkey: Option<Vec<u8>>) -> SeKeyHandle {
-    Arc::new(RwLock::new(Some(Arc::new(SeKeyMaterial::new(
+    Arc::new(AtomOption::some(Arc::new(SeKeyMaterial::new(
         key,
         identity_pubkey,
-    )))))
+    ))))
 }
 
 /// Store new key material (or clear it with `None`).
 pub fn store_se_key(handle: &SeKeyHandle, material: Option<SeKeyMaterial>) {
-    *handle.write() = material.map(Arc::new);
+    match material {
+        Some(material) => handle.store_some(Arc::new(material)),
+        None => handle.store_none(),
+    }
 }
 
 /// Load the current key material, if any.
 pub fn load_se_key(handle: &SeKeyHandle) -> Option<Arc<SeKeyMaterial>> {
-    handle.read().clone()
+    handle.load().map(|material| Arc::clone(&material))
 }

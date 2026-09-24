@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use cid::Cid;
 use query::fetcher::CommitsQueryOptions;
 use query::runner::DocFetcher;
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::str;
 use std::sync::Arc;
 use storage::corekv::{IterOptions, Store};
@@ -47,9 +47,9 @@ impl<S: Store + 'static> crate::database::DB<S> {
         plan: &DownsamplePlan,
         commits: &[document::Document],
         cutoff_nanos: i64,
-    ) -> Result<HashSet<u64>> {
+    ) -> Result<RapidHashSet<u64>> {
         let samples = self.build_source_samples(plan, commits.to_vec())?;
-        let mut heights = HashSet::new();
+        let mut heights = RapidHashSet::new();
         for sample in samples {
             if source_sample_retention_time_nanos(&sample)? < cutoff_nanos {
                 heights.insert(sample.height);
@@ -58,7 +58,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         Ok(heights)
     }
 
-    async fn current_head_cids(&self, doc_short_id: u64) -> Result<HashSet<Cid>> {
+    async fn current_head_cids(&self, doc_short_id: u64) -> Result<RapidHashSet<Cid>> {
         let txn = self.new_txn(true).await?;
         let headstore = txn.headstore()?;
         let mut iter = headstore
@@ -68,7 +68,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
             .await
             .map_err(Error::Storage)?;
 
-        let mut cids = HashSet::new();
+        let mut cids = RapidHashSet::new();
         while let Some(pair) = iter.next().await.map_err(Error::Storage)? {
             let Some(cid_str) = pair
                 .key
@@ -106,7 +106,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
     async fn prune_source_doc_history(
         &self,
         doc_id: &str,
-        pruneable_heights: &HashSet<u64>,
+        pruneable_heights: &RapidHashSet<u64>,
     ) -> Result<()> {
         if pruneable_heights.is_empty() {
             return Ok(());
@@ -152,7 +152,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
             }
             iter.close().await.map_err(Error::Storage)?;
 
-            let mut deleted_commits = HashSet::new();
+            let mut deleted_commits = RapidHashSet::new();
 
             for (key, cid) in keys_to_delete {
                 headstore.delete(&key).await.map_err(Error::Storage)?;
@@ -219,7 +219,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         }
 
         let series_doc_id = self.series_doc_id(source_doc)?;
-        let mut effective_pruneable_heights: Option<HashSet<u64>> = None;
+        let mut effective_pruneable_heights: Option<RapidHashSet<u64>> = None;
 
         for plan in plans {
             let Some(cutoff_nanos) = self
@@ -239,7 +239,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
             });
             if effective_pruneable_heights
                 .as_ref()
-                .is_some_and(HashSet::is_empty)
+                .is_some_and(RapidHashSet::is_empty)
             {
                 return Ok(());
             }
@@ -260,7 +260,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         let names_filter = options
             .as_ref()
             .and_then(|options| options.names.as_ref())
-            .map(|names| names.iter().cloned().collect::<HashSet<_>>());
+            .map(|names| names.iter().cloned().collect::<RapidHashSet<_>>());
 
         let bootstrap_names = names_filter
             .as_ref()
@@ -268,7 +268,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         self.bootstrap_downsamples(bootstrap_names.as_deref())
             .await?;
 
-        let mut grouped_plans: HashMap<String, Vec<DownsamplePlan>> = HashMap::new();
+        let mut grouped_plans: RapidHashMap<String, Vec<DownsamplePlan>> = RapidHashMap::new();
         for plan in self.downsample_plans(None, None)? {
             grouped_plans
                 .entry(plan.source.name.clone())

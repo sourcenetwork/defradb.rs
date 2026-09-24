@@ -36,6 +36,13 @@ cid.workspace = true
 # Error handling
 thiserror.workspace = true
 
+# Hashing
+rapidhash.workspace = true
+
+# Lock-free shared state
+kovan-map.workspace = true
+kovan-queue.workspace = true
+
 # Logging
 tracing.workspace = true
 telemetry = { path = "../telemetry" }
@@ -45,7 +52,6 @@ bm25.workspace = true
 
 # Utilities
 hex = "0.4"
-parking_lot = "0.12"
 
 [features]
 # regolith is the only backend, on every target, so there is nothing here to

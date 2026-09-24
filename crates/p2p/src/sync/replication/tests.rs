@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use blockstore::{Blockstore, DefraBlockstore};
 use cid::Cid;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage::RegolithStore;
@@ -114,8 +114,8 @@ struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
     publish_calls: Arc<AtomicUsize>,
-    replicators: Arc<parking_lot::Mutex<Vec<ReplicatorInfo>>>,
-    pushlog_requests: Arc<parking_lot::Mutex<Vec<(PeerId, PushLogRequest)>>>,
+    replicators: Arc<kovan::Atom<Vec<ReplicatorInfo>>>,
+    pushlog_requests: Arc<kovan_queue::seg_queue::SegQueue<(PeerId, PushLogRequest)>>,
 }
 
 impl NoopTransport {
@@ -124,8 +124,8 @@ impl NoopTransport {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
             publish_calls: Arc::new(AtomicUsize::new(0)),
-            replicators: Arc::new(parking_lot::Mutex::new(Vec::new())),
-            pushlog_requests: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            replicators: Arc::new(kovan::Atom::new(Vec::new())),
+            pushlog_requests: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
         }
     }
 
@@ -134,11 +134,19 @@ impl NoopTransport {
     }
 
     fn set_replicators(&self, replicators: Vec<ReplicatorInfo>) {
-        *self.replicators.lock() = replicators;
+        self.replicators.store(replicators);
     }
 
-    fn pushlog_requests(&self) -> Vec<(PeerId, PushLogRequest)> {
-        self.pushlog_requests.lock().clone()
+    fn pushlog_request_count(&self) -> usize {
+        self.pushlog_requests.len()
+    }
+
+    fn take_pushlog_requests(&self) -> Vec<(PeerId, PushLogRequest)> {
+        let mut requests = Vec::new();
+        while let Some(request) = self.pushlog_requests.pop() {
+            requests.push(request);
+        }
+        requests
     }
 }
 
@@ -161,8 +169,11 @@ struct PollFetchTransport {
     sync_present_blocks: Arc<AtomicUsize>,
     sync_served_blocks: Arc<AtomicUsize>,
     sync_served_bytes: Arc<AtomicUsize>,
-    sync_completion:
-        Arc<parking_lot::Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
+    sync_completion: Arc<kovan::AtomOption<crate::sync::manager::BlockSyncCompletionTracker>>,
+    rooted_car_completion: Arc<kovan::AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
+    rooted_sync: Arc<AtomicBool>,
+    bitswap_dead: Arc<AtomicBool>,
+    disconnected_peers: Arc<kovan::Atom<Vec<String>>>,
 }
 
 impl PollFetchTransport {
@@ -189,7 +200,11 @@ impl PollFetchTransport {
             sync_present_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_bytes: Arc::new(AtomicUsize::new(0)),
-            sync_completion: Arc::new(parking_lot::Mutex::new(None)),
+            sync_completion: Arc::new(kovan::AtomOption::none()),
+            rooted_car_completion: Arc::new(kovan::AtomOption::none()),
+            rooted_sync: Arc::new(AtomicBool::new(true)),
+            bitswap_dead: Arc::new(AtomicBool::new(false)),
+            disconnected_peers: Arc::new(kovan::Atom::new(Vec::new())),
         }
     }
 
@@ -215,7 +230,11 @@ impl PollFetchTransport {
             sync_present_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_blocks: Arc::new(AtomicUsize::new(0)),
             sync_served_bytes: Arc::new(AtomicUsize::new(0)),
-            sync_completion: Arc::new(parking_lot::Mutex::new(None)),
+            sync_completion: Arc::new(kovan::AtomOption::none()),
+            rooted_car_completion: Arc::new(kovan::AtomOption::none()),
+            rooted_sync: Arc::new(AtomicBool::new(true)),
+            bitswap_dead: Arc::new(AtomicBool::new(false)),
+            disconnected_peers: Arc::new(kovan::Atom::new(Vec::new())),
         }
     }
 
@@ -264,12 +283,28 @@ impl PollFetchTransport {
     }
 
     fn set_sync_completion(&self, completion: crate::sync::manager::BlockSyncCompletionTracker) {
-        *self.sync_completion.lock() = Some(completion);
+        self.sync_completion.store_some(completion);
+    }
+
+    /// Model a healed libp2p partition: the CAR request and its response are
+    /// their own substreams and still round-trip, while the per-peer Bitswap
+    /// message queue stays dead until the connection itself is rebuilt.
+    fn partition_bitswap(&self, rooted_car: crate::sync::manager::RootedCarCompletionTracker) {
+        self.rooted_sync.store(false, Ordering::SeqCst);
+        self.bitswap_dead.store(true, Ordering::SeqCst);
+        self.rooted_car_completion.store_some(rooted_car);
+    }
+
+    fn disconnected_peers(&self) -> Vec<String> {
+        self.disconnected_peers.load_clone()
     }
 
     fn signal_sync_complete(&self, query_id: QueryId) {
-        let completion = self.sync_completion.lock().clone();
-        tokio::spawn(async move {
+        let completion = self
+            .sync_completion
+            .load()
+            .map(|completion| completion.clone());
+        n0_future::task::spawn(async move {
             // The real transport emits completion after `sync_blocks` returns
             // and the poll owner registers its waiter.
             tokio::task::yield_now().await;
@@ -285,7 +320,7 @@ impl P2PTransport for PollFetchTransport {
     type ResponseToken = ();
 
     fn supports_cancellable_rooted_sync(&self) -> bool {
-        true
+        self.rooted_sync.load(Ordering::SeqCst)
     }
 
     fn local_peer_id(&self) -> &PeerId {
@@ -304,7 +339,15 @@ impl P2PTransport for PollFetchTransport {
         Ok(())
     }
 
-    async fn disconnect(&self, _peer_id: &PeerId) -> P2PResult<()> {
+    async fn disconnect(&self, peer_id: &PeerId) -> P2PResult<()> {
+        self.disconnected_peers.rcu(|peers| {
+            let mut next = peers.clone();
+            next.push(peer_id.to_string());
+            next
+        });
+        // The redial that follows builds a fresh connection, and a fresh
+        // connection builds a fresh Bitswap message queue.
+        self.bitswap_dead.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -402,9 +445,21 @@ impl P2PTransport for PollFetchTransport {
         Ok(())
     }
 
-    async fn send_car_request(&self, _peer_id: &PeerId, root_cid: Cid) -> P2PResult<()> {
+    async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> P2PResult<()> {
         self.car_request_calls.fetch_add(1, Ordering::SeqCst);
         self.car_requested_cids.fetch_add(1, Ordering::SeqCst);
+        let rooted_car = self.rooted_car_completion.load().map(|c| c.clone());
+        if self.bitswap_dead.load(Ordering::SeqCst) {
+            // The peer answers, with nothing in the CAR: the coordinator's
+            // ingest path completes the waiter either way.
+            if let Some(rooted_car) = rooted_car {
+                rooted_car.complete(root_cid, peer_id, false);
+            }
+            return Ok(());
+        }
+        if let Some(rooted_car) = rooted_car {
+            rooted_car.complete(root_cid, peer_id, true);
+        }
         if let Some(source) = &self.source_blockstore {
             let collected =
                 crate::sync::car::collect_dag_blocks_from_roots(source.as_ref(), &[root_cid])
@@ -481,6 +536,11 @@ impl P2PTransport for PollFetchTransport {
         self.sync_blocks_calls.fetch_add(1, Ordering::SeqCst);
         self.sync_requested_cids
             .fetch_add(missing.len(), Ordering::SeqCst);
+        if self.bitswap_dead.load(Ordering::SeqCst) {
+            // A stopped message queue drops the want before it is
+            // transmitted, so nothing is served and nothing completes.
+            return Ok(QueryId(1));
+        }
         if missing.is_empty() {
             if let Some(source) = &self.source_blockstore {
                 let collected =
@@ -649,7 +709,7 @@ impl P2PTransport for NoopTransport {
         peer_id: &PeerId,
         req: PushLogRequest,
     ) -> P2PResult<PushLogReply> {
-        self.pushlog_requests.lock().push((peer_id.clone(), req));
+        self.pushlog_requests.push((peer_id.clone(), req));
         Ok(PushLogReply::success("noop"))
     }
 
@@ -759,7 +819,7 @@ impl P2PTransport for NoopTransport {
     }
 
     async fn list_replicators(&self) -> P2PResult<Vec<ReplicatorInfo>> {
-        Ok(self.replicators.lock().clone())
+        Ok(self.replicators.load_clone())
     }
 
     async fn get_replicator(&self, _peer_id: &PeerId) -> P2PResult<Option<ReplicatorInfo>> {
@@ -910,7 +970,7 @@ impl MergeHandler for SlowMergeHandler {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         self.record_in_flight(current);
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        n0_future::time::sleep(Duration::from_millis(50)).await;
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
         Ok(MergeOutcome::Merged)
     }
@@ -1432,7 +1492,7 @@ async fn terminal_merge_error_quarantines_and_releases_pending_slot() {
     );
     assert!(pending_store.load_all().await.unwrap().is_empty());
     assert!(pending_store.is_quarantined(&cid).await.unwrap());
-    let status = coordinator.sync_status();
+    let status = coordinator.sync_status().await;
     assert_eq!(status.pending_dags, 0);
     assert_eq!(status.persisted_pending_dags, 0);
     assert_eq!(status.pending_dag_terminal_quarantined, 1);
@@ -1600,7 +1660,7 @@ async fn dag_ready_merge_failure_retains_receiver_obligation() {
     assert!(
         coordinator
             .manager()
-            .claim_due_pending_dag_retries(tokio::time::Instant::now())
+            .claim_due_pending_dag_retries(n0_future::time::Instant::now())
             .iter()
             .any(|(due_cid, _)| *due_cid == cid),
         "the receiver clock must own merge re-drive after a transient failure"
@@ -1921,11 +1981,11 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
         .unwrap();
 
     assert_eq!(
-        coordinator.dispatch_due_pending_dag_fetches_for_test(tokio::time::Instant::now()),
+        coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
         1
     );
 
-    let dag_needs_fetch = tokio::time::timeout(Duration::from_secs(1), events.recv())
+    let dag_needs_fetch = n0_future::time::timeout(Duration::from_secs(1), events.recv())
         .await
         .expect("DagNeedsFetch should arrive")
         .expect("event should be present");
@@ -1945,7 +2005,7 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
         ReplicationResult::DagFetchStarted { root_cid: cid } if cid == root_cid
     ));
 
-    let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+    let event = n0_future::time::timeout(Duration::from_secs(1), events.recv())
         .await
         .expect("DagReady should arrive")
         .expect("event should be present");
@@ -1988,6 +2048,163 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
         ReplicationResult::Merged { cid, .. } if cid == root_cid
     ));
     assert_eq!(coordinator.pending_dag_count(), 0);
+}
+
+/// A partition that heals without closing the socket leaves the publisher's
+/// per-peer Bitswap queue stopped: it answers CAR requests on its own
+/// substreams and serves no block. The receiver must repair that itself and
+/// then converge on the root it already holds -- the publisher never
+/// announces it a second time, so nothing else can drive the recovery.
+///
+/// The whole chain runs here: exhaustion -> disconnect -> redial ->
+/// `PeerConnected` redrive -> fetch -> `DagReady` -> merge.
+#[tokio::test(start_paused = true)]
+async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
+    use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
+
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+
+    let child_block = Block::new(
+        CrdtDelta::Lww(LwwDeltaPayload {
+            field_name: "name".to_string(),
+            priority: 1,
+            schema_version_id: "schema1".to_string(),
+            data: b"value".to_vec(),
+        }),
+        vec![],
+        vec![],
+    );
+    let child_data = child_block.to_dag_cbor().unwrap();
+    let child_cid = child_block.generate_cid().unwrap();
+    let root_block = Block::new(
+        CrdtDelta::Composite(CompositeDeltaPayload {
+            schema_version_id: "schema1".to_string(),
+            priority: 1,
+            status: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("name", child_cid)],
+    );
+    let root_data = root_block.to_dag_cbor().unwrap();
+    let root_cid = root_block.generate_cid().unwrap();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+
+    let transport = PollFetchTransport::new(blockstore.clone(), child_cid, child_data);
+    let transport_handle = transport.clone();
+    let (coordinator, mut events) = crate::sync::coordinator::SyncCoordinator::with_access_control(
+        transport,
+        blockstore.clone(),
+        crate::sync::SyncConfig::default(),
+        AccessMode::Open,
+        Arc::new(crate::ReplicatorRegistry::new()),
+        Arc::new(crate::sync::collection_store::NoOpCollectionStorage),
+        Arc::new(EqOnlyFilterMatcher),
+    )
+    .await
+    .unwrap();
+    transport_handle.set_sync_completion(coordinator.manager().block_sync_completion_tracker());
+    transport_handle.partition_bitswap(coordinator.manager().rooted_car_completion_tracker());
+
+    // The only announcement of this root, before the queue is ever used.
+    coordinator
+        .handle_transport_event(TransportEvent::TwoStreamRequest {
+            peer_id: PeerId::new("source-peer".to_string()),
+            request: PushLogRequest::new(
+                "doc1".to_string(),
+                bytes::Bytes::from(root_cid.to_bytes()),
+                "col1".to_string(),
+                "creator-1".to_string(),
+                bytes::Bytes::from(root_data),
+            ),
+            token: None,
+            is_explicit_replicator: true,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+
+    dispatch_one_pending_dag_fetch(&coordinator, &mut events, root_cid).await;
+
+    // The fetch spends its whole budget against the dead queue and hangs up.
+    let deadline = n0_future::time::Instant::now() + Duration::from_secs(1200);
+    while transport_handle.disconnected_peers().is_empty()
+        && n0_future::time::Instant::now() < deadline
+    {
+        n0_future::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        transport_handle.disconnected_peers(),
+        vec!["source-peer".to_string()],
+        "an exhausted fetch against a publisher that answers but serves nothing must drop the connection"
+    );
+    assert!(
+        !blockstore.has(&child_cid).await.unwrap(),
+        "the dead queue must not have served the child block"
+    );
+
+    // The redial. No second pushlog: `PeerConnected` is the only new input.
+    coordinator
+        .handle_transport_event(TransportEvent::PeerConnected(PeerId::new(
+            "source-peer".to_string(),
+        )))
+        .await
+        .unwrap();
+
+    dispatch_one_pending_dag_fetch(&coordinator, &mut events, root_cid).await;
+
+    let ready = n0_future::time::timeout(Duration::from_secs(30), events.recv())
+        .await
+        .expect("DagReady should arrive after the redial")
+        .expect("event should be present");
+    assert!(matches!(
+        &ready,
+        SyncEvent::DagReady { root_cid: cid, .. } if *cid == root_cid
+    ));
+    assert!(blockstore.has(&child_cid).await.unwrap());
+
+    let merged = process_event(
+        &coordinator,
+        ready,
+        &TestMergeHandler::new(true, false),
+        &ReplicationConfig::default(),
+    )
+    .await;
+    assert!(matches!(
+        merged,
+        ReplicationResult::Merged { cid, .. } if cid == root_cid
+    ));
+    assert_eq!(coordinator.pending_dag_count(), 0);
+}
+
+/// Let the retry clock dispatch the one due root and start its fetch.
+async fn dispatch_one_pending_dag_fetch(
+    coordinator: &crate::sync::coordinator::SyncCoordinator<
+        DefraBlockstore<RegolithStore>,
+        PollFetchTransport,
+    >,
+    events: &mut tokio::sync::mpsc::Receiver<SyncEvent>,
+    root_cid: Cid,
+) {
+    assert_eq!(
+        coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
+        1
+    );
+    let needs_fetch = n0_future::time::timeout(Duration::from_secs(1), events.recv())
+        .await
+        .expect("DagNeedsFetch should arrive")
+        .expect("event should be present");
+    let started = process_event(
+        coordinator,
+        needs_fetch,
+        &TestMergeHandler::new(true, false),
+        &ReplicationConfig::default(),
+    )
+    .await;
+    assert!(matches!(
+        started,
+        ReplicationResult::DagFetchStarted { root_cid: cid } if cid == root_cid
+    ));
 }
 
 #[derive(Debug)]
@@ -2137,7 +2354,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
             .await
             .unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_millis(25), events.recv())
+            n0_future::time::timeout(Duration::from_millis(25), events.recv())
                 .await
                 .is_err(),
             "legacy field dependency must not become a pending head"
@@ -2149,10 +2366,10 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
             .await
             .unwrap();
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(tokio::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
             1
         );
-        tokio::time::timeout(Duration::from_secs(1), events.recv())
+        n0_future::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("composite pending event should arrive")
             .expect("composite pending event should be present")
@@ -2164,10 +2381,10 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
             .await
             .unwrap();
         assert_eq!(
-            coordinator.dispatch_due_pending_dag_fetches_for_test(tokio::time::Instant::now()),
+            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now()),
             1
         );
-        tokio::time::timeout(Duration::from_secs(1), events.recv())
+        n0_future::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("root pending event should arrive")
             .expect("root pending event should be present")
@@ -2198,7 +2415,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
     )
     .await;
     assert!(matches!(started, ReplicationResult::DagFetchStarted { .. }));
-    let ready = tokio::time::timeout(Duration::from_secs(1), events.recv())
+    let ready = n0_future::time::timeout(Duration::from_secs(1), events.recv())
         .await
         .expect("CAR completion should emit DagReady")
         .expect("DagReady should be present");
@@ -2221,8 +2438,9 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
             .handle_transport_event(request("", root_cid, root_data.clone()))
             .await
             .expect("sender retry should re-offer the nacked logical head");
-        let _ = coordinator.dispatch_due_pending_dag_fetches_for_test(tokio::time::Instant::now());
-        let retry_pending = tokio::time::timeout(Duration::from_secs(1), events.recv())
+        let _ =
+            coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now());
+        let retry_pending = n0_future::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("retried root pending event should arrive")
             .expect("retried root pending event should be present");
@@ -2239,7 +2457,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
             // without another CAR owner.
             ReplicationResult::Merged { .. } => {}
             ReplicationResult::DagFetchStarted { .. } => {
-                let retry_ready = tokio::time::timeout(Duration::from_secs(1), events.recv())
+                let retry_ready = n0_future::time::timeout(Duration::from_secs(1), events.recv())
                     .await
                     .expect("retried CAR completion should emit DagReady")
                     .expect("retried DagReady should be present");
@@ -2258,7 +2476,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
 
     let persisted = pending_store.load_all().await.unwrap();
     coordinator.shutdown().await;
-    let status = coordinator.sync_status();
+    let status = coordinator.sync_status().await;
     ReceiverOwnershipArm {
         pushlogs_scheduled: if expand_dag { 4 } else { 1 },
         pushlogs_transmitted,
@@ -2466,7 +2684,7 @@ async fn test_run_serializes_duplicate_cids() {
     let mut results = Vec::new();
     for _ in 0..2 {
         results.push(
-            tokio::time::timeout(Duration::from_secs(1), result_rx.recv())
+            n0_future::time::timeout(Duration::from_secs(1), result_rx.recv())
                 .await
                 .expect("result should arrive")
                 .expect("result channel should remain open"),
@@ -2686,7 +2904,7 @@ async fn merged_head_forwards_to_configured_replicator_without_gossip_rebroadcas
         .unwrap();
     let (failure_tx, mut failure_rx) = tokio::sync::mpsc::channel(8);
     coordinator.set_failure_channel(failure_tx);
-    tokio::spawn(async move {
+    n0_future::task::spawn(async move {
         while let Some(mut event) = failure_rx.recv().await {
             if let Some(durable_tx) = event.durable_tx.take() {
                 let _ = durable_tx.send(true);
@@ -2715,15 +2933,15 @@ async fn merged_head_forwards_to_configured_replicator_without_gossip_rebroadcas
         results.as_slice(),
         [ReplicationResult::Merged { cid: merged_cid, .. }] if *merged_cid == cid
     ));
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while transport_handle.pushlog_requests().is_empty() {
+    n0_future::time::timeout(Duration::from_secs(1), async {
+        while transport_handle.pushlog_request_count() == 0 {
             tokio::task::yield_now().await;
         }
     })
     .await
     .expect("merged head should be forwarded to the configured downstream replicator");
 
-    let requests = transport_handle.pushlog_requests();
+    let requests = transport_handle.take_pushlog_requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].0, downstream);
     assert_eq!(requests[0].1.cid.as_ref(), cid.to_bytes());
@@ -2783,7 +3001,7 @@ async fn rapid_collection_commits_publish_only_the_current_head() {
         2,
         "one current collection head must be published once to its document and collection topics"
     );
-    assert_eq!(coordinator.sync_status().broadcast_coalesced_total, 2);
+    assert_eq!(coordinator.sync_status().await.broadcast_coalesced_total, 2);
 }
 
 #[tokio::test]

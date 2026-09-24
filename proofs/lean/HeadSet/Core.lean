@@ -77,14 +77,20 @@ preserved in `eagerWriteSet` and in
 
 Storage (`crates/storage`, this worktree):
 * `src/corekv/types.rs` no longer carries `IterOptions::commutative_set`. It
-  was a flag the removed backends honoured and regolith does not, and once
+  was a flag the removed backends honoured and regolith did not, and once
   nothing set it a flag promising overlap that no backend granted was worse
-  than no flag. It is quoted below as history, not as an anchor.
+  than no flag. regolith's `RepeatableRead` level now carries the same intent for
+  every scan of the store, so the flag is not coming back. It is quoted below
+  as history, not as an anchor.
 * `src/backends/regolith/transaction.rs` `RegolithTxn::commit` maps
   `TransactionError::Conflict` to `Error::TxnConflict`. regolith validates the
   write set at every isolation level, which is why relaxing isolation does not
-  help. `Conflict` is therefore modeled with no level parameter, and the TLA+
-  companion checks the same three levels empirically.
+  help with a write-write overlap. `Conflict` is therefore modeled with no
+  level parameter. The read side is settled outside this file: the store runs
+  at `RepeatableRead` (`src/backends/regolith/config.rs`), where a scan is recorded
+  per stretch and never per key, so reclamation deleting a key the head scan
+  walked is not a conflict. `proofs/tla/HeadSet.tla` carries that as the
+  `ScanReads` knob, red under `PerKey`.
 
 ## What is the proof's content (why it is NOT vacuous)
 

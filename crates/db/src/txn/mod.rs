@@ -9,8 +9,9 @@ use crate::collection::{populate_collection_root_id, Collection};
 use crate::error::{Error, Result};
 use async_lock::{MutexGuardArc, RwLockReadGuardArc, RwLockWriteGuardArc};
 use datastore::{AsyncCallback, BasicTxn, NamespaceView, RootView, TxnCallback};
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CollectionVersion;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
@@ -122,7 +123,7 @@ pub struct DbTxn<S: Store> {
     /// Transaction-scoped collection cache (lazy loading from SystemStore).
     collection_cache: CollectionCache,
     /// Collection IDs created inside this transaction.
-    locally_created_collection_ids: HashSet<String>,
+    locally_created_collection_ids: RapidHashSet<String>,
     /// Per-doc write guards held so a local counter read-modify-write and a P2P
     /// merge on the same document never interleave (#1021). The merge handler
     /// shares the same `DocWriteQueue`. For the interactive/explicit path
@@ -154,7 +155,7 @@ impl<S: Store> DbTxn<S> {
             txn: Some(txn),
             explicit: false,
             collection_cache: CollectionCache::new(),
-            locally_created_collection_ids: HashSet::new(),
+            locally_created_collection_ids: RapidHashSet::new(),
             doc_guards: BTreeMap::new(),
             collection_guards: BTreeMap::new(),
             pending_counter_ops: Vec::new(),
@@ -169,7 +170,7 @@ impl<S: Store> DbTxn<S> {
             txn: Some(txn),
             explicit: true,
             collection_cache: CollectionCache::new(),
-            locally_created_collection_ids: HashSet::new(),
+            locally_created_collection_ids: RapidHashSet::new(),
             doc_guards: BTreeMap::new(),
             collection_guards: BTreeMap::new(),
             pending_counter_ops: Vec::new(),

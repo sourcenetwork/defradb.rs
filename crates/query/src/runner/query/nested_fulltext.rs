@@ -4,10 +4,10 @@
 //! and sorting/top-k selection for nested relation FTS fields.
 
 use bm25::{Document as Bm25Document, Language, SearchEngineBuilder};
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{CollectionVersion, FieldDescription};
 use serde_json::Value as JsonValue;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::sync::Arc;
 use web_time::Instant;
 
@@ -26,14 +26,14 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         select: &Select,
         fetcher: &dyn DocFetcher,
-        collections_map: &HashMap<String, Arc<CollectionVersion>>,
-    ) -> Result<HashMap<String, HashMap<String, f64>>> {
+        collections_map: &RapidHashMap<String, Arc<CollectionVersion>>,
+    ) -> Result<RapidHashMap<String, RapidHashMap<String, f64>>> {
         let root_collection = collections_map
             .get(&select.collection_name)
             .cloned()
             .ok_or_else(|| QueryError::collection_not_found(&select.collection_name))?;
 
-        let mut fts_scores: HashMap<String, HashMap<String, f64>> = HashMap::new();
+        let mut fts_scores: RapidHashMap<String, RapidHashMap<String, f64>> = RapidHashMap::new();
         let mut worklist: Vec<(&Select, Arc<CollectionVersion>, Vec<String>)> = vec![(
             select,
             root_collection,
@@ -53,7 +53,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             continue;
                         }
 
-                        let mut combined_scores: HashMap<String, f64> = HashMap::new();
+                        let mut combined_scores: RapidHashMap<String, f64> = RapidHashMap::new();
                         for target_field in &fts.target_fields {
                             if let Ok(scores) = self
                                 .compute_fulltext_path_scores(
@@ -118,8 +118,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         path: &str,
         query: &str,
         fetcher: &dyn DocFetcher,
-        collections_map: &HashMap<String, Arc<CollectionVersion>>,
-    ) -> Result<HashMap<String, f64>> {
+        collections_map: &RapidHashMap<String, Arc<CollectionVersion>>,
+    ) -> Result<RapidHashMap<String, f64>> {
         let path_segments: Vec<&str> = path
             .split('.')
             .filter(|segment| !segment.is_empty())
@@ -213,7 +213,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     pub(crate) fn resolve_relation_target_collection(
         current_collection: &Arc<CollectionVersion>,
         relation_field: &FieldDescription,
-        collections_map: &HashMap<String, Arc<CollectionVersion>>,
+        collections_map: &RapidHashMap<String, Arc<CollectionVersion>>,
     ) -> Option<Arc<CollectionVersion>> {
         let target_collection_id = relation_field.kind.relation_collection_id()?;
 
@@ -251,18 +251,18 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         parent_collection: &Arc<CollectionVersion>,
         relation_field: &FieldDescription,
         target_collection: &Arc<CollectionVersion>,
-        child_scores: HashMap<String, f64>,
+        child_scores: RapidHashMap<String, f64>,
         fetcher: &dyn DocFetcher,
-    ) -> Result<HashMap<String, f64>> {
+    ) -> Result<RapidHashMap<String, f64>> {
         if child_scores.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(RapidHashMap::new());
         }
 
         // Primary non-array relations hold the FK on the parent document itself.
         if !relation_field.kind.is_array() && relation_field.is_primary {
             let fk_field_name = CollectionVersion::relation_id_field_name(&relation_field.name);
             let parent_docs = fetcher.get_all(&parent_collection.name).await?;
-            let mut parent_scores: HashMap<String, f64> = HashMap::new();
+            let mut parent_scores: RapidHashMap<String, f64> = RapidHashMap::new();
 
             for doc in parent_docs {
                 let Some(parent_id) = doc.id().map(|id| id.to_string()) else {
@@ -312,7 +312,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .await?
             .into_docs();
 
-        let mut parent_scores: HashMap<String, f64> = HashMap::new();
+        let mut parent_scores: RapidHashMap<String, f64> = RapidHashMap::new();
         for doc in child_docs {
             let Some(child_id) = doc.id().map(|id| id.to_string()) else {
                 continue;
@@ -646,7 +646,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 let doc_id = obj.get("_docID")?.as_str()?;
                 Some((doc_id, item_index))
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<RapidHashMap<_, _>>();
 
         for target_field in &fts.target_fields {
             let documents: Vec<Bm25Document<String>> = items

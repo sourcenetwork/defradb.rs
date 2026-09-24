@@ -6,8 +6,8 @@
 //! - `parse_order_condition()` - Parse a single order condition
 
 use graphql_parser::query::Value;
+use rapidhash::RapidHashMap;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 use crate::error::{QueryError, Result};
 use crate::mapper::{OrderBy, OrderCondition, OrderDirection};
@@ -16,7 +16,7 @@ use crate::mapper::{OrderBy, OrderCondition, OrderDirection};
 /// Supports both single object `{field: ASC}` and array `[{field: ASC}, {other: DESC}]` formats.
 pub(super) fn parse_order_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<OrderBy> {
     let mut order_by = OrderBy::new();
 
@@ -117,7 +117,7 @@ pub(super) fn parse_order_from_json(json: &JsonValue) -> Result<OrderBy> {
 pub(super) fn parse_order_condition(
     field_name: String,
     direction_val: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Option<OrderCondition>> {
     match direction_val {
         // Null order direction means skip this field (Go compatibility)

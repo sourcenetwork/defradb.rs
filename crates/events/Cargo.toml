@@ -13,7 +13,7 @@ ignored = ["async-trait", "thiserror"]
 
 [features]
 default = ["channel"]
-channel = ["dep:async-channel", "dep:parking_lot"]
+channel = ["dep:async-channel", "dep:kovan"]
 
 [lib]
 bench = false
@@ -24,7 +24,12 @@ defra-core = { path = "../defra-core" }
 # Async channels
 async-trait.workspace = true
 async-channel = { version = "2", optional = true }
-parking_lot = { workspace = true, optional = true }
+
+# Lock-free shared state
+kovan = { workspace = true, optional = true }
+
+# Hash maps
+rapidhash.workspace = true
 
 # Bytes
 bytes.workspace = true

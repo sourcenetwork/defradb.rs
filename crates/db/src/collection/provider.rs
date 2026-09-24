@@ -157,7 +157,7 @@ impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
     }
 
     async fn list_collections(&self) -> QueryResult<Vec<String>> {
-        let mut names: std::collections::HashSet<String> = self
+        let mut names: rapidhash::RapidHashSet<String> = self
             .db
             .list_collections()
             .map_err(|e| QueryError::execution(e.to_string()))?

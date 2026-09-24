@@ -23,13 +23,24 @@ pub enum BlockClass {
     Deny,
 }
 
-#[async_trait]
-pub trait BlockClassifier: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait BlockClassifier: defra_core::thread_bounds::MaybeSendSync {
     async fn classify(&self, cid: &Cid, data: &[u8]) -> BlockClass;
+
+    /// Classify from durable metadata alone, for authorization decisions on
+    /// payloads the caller must not read — an oversized block that can only
+    /// be re-advertised as a notice must not cost its full disk read and hash
+    /// merely to be denied. `None` means the metadata is unavailable; callers
+    /// fail closed on it.
+    async fn classify_indexed(&self, _cid: &Cid) -> Option<BlockClass> {
+        None
+    }
 }
 
-#[async_trait]
-pub trait BlockReadGate: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait BlockReadGate: defra_core::thread_bounds::MaybeSendSync {
     async fn may_read(&self, identity: &acp::Identity, meta: &BlockAcpMeta) -> bool;
 }
 
@@ -58,7 +69,8 @@ impl LateBoundServeAcp {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultBlockClassifier;
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl BlockClassifier for DefaultBlockClassifier {
     async fn classify(&self, cid: &Cid, data: &[u8]) -> BlockClass {
         match defra_core::block::generate_cid_from_bytes(data) {
@@ -86,7 +98,8 @@ impl BlockClassifier for DefaultBlockClassifier {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AllowAllBlockReadGate;
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl BlockReadGate for AllowAllBlockReadGate {
     async fn may_read(&self, _identity: &acp::Identity, _meta: &BlockAcpMeta) -> bool {
         true

@@ -27,7 +27,8 @@ use super::topic::{response_topic, response_topic_suffix, strip_response_topic_w
 /// User-supplied callback invoked for each incoming request on the base
 /// topic. Produces the raw reply bytes or an error string that will be
 /// forwarded to the caller via [`InternalResponse::err`].
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait MessageHandler: Send + Sync + 'static {
     async fn handle(&self, from: PeerId, data: Vec<u8>) -> Result<Vec<u8>, String>;
 }
@@ -36,7 +37,8 @@ pub trait MessageHandler: Send + Sync + 'static {
 /// `(PeerId, Vec<u8>) -> Future<Output = Result<Vec<u8>, String>>`.
 pub struct FnHandler<F>(pub F);
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<F, Fut> MessageHandler for FnHandler<F>
 where
     F: Fn(PeerId, Vec<u8>) -> Fut + Send + Sync + 'static,

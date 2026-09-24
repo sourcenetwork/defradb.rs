@@ -64,6 +64,68 @@ async fn two_embedded_iroh_nodes_connect_and_replicate() -> Result<()> {
     Ok(())
 }
 
+/// A node built with an explicit allowlist admits the peer it is told to
+/// admit, and that peer's inbound connection lands.
+///
+/// The allowlist is only reachable from an embedder through
+/// [`IrohConfig::allowlist`], and admitting a peer is a no-op under
+/// `AcceptAll`, so a node that could not be built with `Explicit` could not
+/// use the feature at all. Starting from an empty explicit set is the
+/// strictest case: nothing is authorized yet, so the connection that
+/// succeeds below succeeds because of the authorization and nothing else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_explicit_allowlist_admits_the_peer_it_is_given() -> Result<()> {
+    let listener = NodeBuilder::default()
+        .with_iroh(IrohConfig {
+            allowlist: p2p::iroh::IrohAllowlistConfig::Explicit(Default::default()),
+            ..test_iroh_config()
+        })
+        .build()
+        .await?;
+    let dialer = NodeBuilder::default()
+        .with_iroh(test_iroh_config())
+        .build()
+        .await?;
+
+    let listener_p2p = listener
+        .p2p()
+        .cloned()
+        .context("listener missing p2p system")?;
+    let dialer_p2p = dialer.p2p().cloned().context("dialer missing p2p system")?;
+
+    let dialer_peer = dialer_p2p
+        .ops()
+        .local_peer_id()
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let listener_addr = wait_for_connectable_iroh_addr(&listener_p2p).await?;
+
+    // Authorize the other node, by its own endpoint id, before it dials.
+    let admitted =
+        defra_http::TransportPeerId::new(dialer_peer.clone()).map_err(|e| anyhow::anyhow!(e))?;
+    listener_p2p
+        .ops()
+        .allow_peer(&admitted)
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+
+    dialer_p2p
+        .ops()
+        .connect_peer(&listener_addr)
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+
+    // The inbound side is what the allowlist governs, so the assertion is
+    // that the listener sees the peer, not merely that the dial returned.
+    wait_for_connected_peer(&listener_p2p, &dialer_peer).await?;
+
+    listener_p2p.shutdown().await;
+    dialer_p2p.shutdown().await;
+    listener.database.close().await?;
+    dialer.database.close().await?;
+    Ok(())
+}
+
 fn test_iroh_config() -> IrohConfig {
     IrohConfig {
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
@@ -72,6 +134,7 @@ fn test_iroh_config() -> IrohConfig {
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
+        allowlist: Default::default(),
     }
 }
 

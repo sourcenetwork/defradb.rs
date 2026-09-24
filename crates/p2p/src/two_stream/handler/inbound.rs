@@ -1,9 +1,6 @@
 //! Inbound stream handling for requests and responses.
 
-use std::sync::Arc;
-
 use libp2p::{PeerId, Stream};
-use parking_lot::Mutex;
 
 use super::{ensure_transport_sender, PendingResponseKey, PendingResponses};
 use crate::error::{Error, Result};
@@ -115,9 +112,9 @@ impl TwoStreamHandler {
     /// pending PushLog channel for the message_id to determine the routing.
     ///
     /// This is an associated function (no `&self`) so it can be called without
-    /// holding the handler lock. Only needs the pending responses Arc.
+    /// holding the handler lock. Only needs the pending responses table.
     pub(crate) async fn handle_response_stream(
-        pending: &Arc<Mutex<PendingResponses>>,
+        pending: &PendingResponses,
         peer_id: PeerId,
         mut stream: Stream,
         max_msg_size: u64,
@@ -151,12 +148,7 @@ impl TwoStreamHandler {
                 ensure_transport_sender(&peer_id, &reply)?;
                 let message_id = reply.message_id.clone();
                 let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
-                let is_pending_branchable_sync = {
-                    let mut pending = pending.lock();
-                    pending.consume_branchable_sync_request(&pending_key)
-                };
-
-                if !is_pending_branchable_sync {
+                if !pending.consume_branchable_sync_request(&pending_key) {
                     tracing::debug!(
                         peer_id = %peer_id,
                         message_id = %message_id,
@@ -192,12 +184,7 @@ impl TwoStreamHandler {
         if let Ok(response) = defra_core::cbor::from_slice::<PushLogReply>(&buf) {
             let message_id = response.message_id.clone();
             let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
-            let is_pending_pushlog = {
-                let pending = pending.lock();
-                pending.channels.contains_key(&pending_key)
-            };
-
-            if is_pending_pushlog {
+            if pending.has_pushlog(&pending_key) {
                 crate::verify_message(&response)?;
                 ensure_transport_sender(&peer_id, &response)?;
 
@@ -207,12 +194,7 @@ impl TwoStreamHandler {
                     "Received PushLog response on two-stream protocol"
                 );
 
-                let sender = {
-                    let mut pending = pending.lock();
-                    pending.channels.remove(&pending_key)
-                };
-
-                if let Some(sender) = sender {
+                if let Some(sender) = pending.take_pushlog(&pending_key) {
                     let _ = sender.send(response);
                 }
 
@@ -226,12 +208,7 @@ impl TwoStreamHandler {
             let message_id = reply.message_id.clone();
             let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
 
-            let sender = {
-                let mut pending = pending.lock();
-                pending.identity_channels.remove(&pending_key)
-            };
-
-            if let Some(sender) = sender {
+            if let Some(sender) = pending.take_identity(&pending_key) {
                 let _ = sender.send(reply.clone());
             }
 
@@ -252,11 +229,7 @@ impl TwoStreamHandler {
             let message_id = reply.message_id.clone();
             let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
 
-            let doc_sync_sender = {
-                let mut pending = pending.lock();
-                pending.doc_sync_channels.remove(&pending_key)
-            };
-            if let Some(sender) = doc_sync_sender {
+            if let Some(sender) = pending.take_doc_sync(&pending_key) {
                 let _ = sender.send(reply);
                 tracing::debug!(
                     peer_id = %peer_id,
@@ -266,12 +239,7 @@ impl TwoStreamHandler {
                 return Ok(None);
             }
 
-            let is_pending_doc_sync = {
-                let mut pending = pending.lock();
-                pending.consume_doc_sync_request(&pending_key)
-            };
-
-            if !is_pending_doc_sync {
+            if !pending.consume_doc_sync_request(&pending_key) {
                 tracing::debug!(
                     peer_id = %peer_id,
                     message_id = %message_id,
@@ -302,12 +270,7 @@ impl TwoStreamHandler {
                 "Received PushLog response on two-stream protocol (fallback)"
             );
 
-            let sender = {
-                let mut pending = pending.lock();
-                pending.channels.remove(&pending_key)
-            };
-
-            if let Some(sender) = sender {
+            if let Some(sender) = pending.take_pushlog(&pending_key) {
                 let _ = sender.send(response);
             } else {
                 tracing::warn!(

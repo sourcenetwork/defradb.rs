@@ -84,7 +84,7 @@ pub unsafe extern "C" fn add_view(
 
         ffi_async!(rt, {
             // Get existing collection names so the SDL parser can resolve external type references
-            let known_types: std::collections::HashSet<String> = database
+            let known_types: rapidhash::RapidHashSet<String> = database
                 .list_collections()
                 .unwrap_or_default()
                 .into_iter()

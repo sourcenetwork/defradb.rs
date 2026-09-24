@@ -21,26 +21,11 @@ enum CollectionMergeFrame {
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     fn has_merged_collection(&self, cid: &Cid) -> bool {
-        self.merged_collections
-            .lock()
-            .unwrap_or_else(|error| {
-                tracing::warn!("merged_collections lock poisoned, recovering");
-                error.into_inner()
-            })
-            .contains(cid)
+        self.merged_collections.contains_key(cid)
     }
 
-    fn has_batch_merged_collection(
-        batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
-        cid: &Cid,
-    ) -> bool {
-        batch_merged_collections
-            .lock()
-            .unwrap_or_else(|error| {
-                tracing::warn!("batch_merged_collections lock poisoned, recovering");
-                error.into_inner()
-            })
-            .contains(cid)
+    fn has_batch_merged_collection(batch_merged_collections: &CidSet, cid: &Cid) -> bool {
+        batch_merged_collections.contains_key(cid)
     }
 
     async fn load_parent_collection(&self, parent_cid: &Cid, child_cid: &Cid) -> Option<Block> {
@@ -365,8 +350,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Update collection headstore using proper head merging.
         // Only remove heads that this block explicitly supersedes (listed in block.heads),
         // preserving concurrent branches for later merge via write_collection_block.
-        let txn = self.db.new_txn(false).await?;
         let collection_id = metadata.collection_id.unwrap_or(&payload.schema_version_id);
+        let _collection_guard = match self.db.find_collection_by_id(collection_id)? {
+            Some(collection) => Some(
+                self.db
+                    .collection_read_guard(collection.collection_id())
+                    .await?,
+            ),
+            None => None,
+        };
+        let txn = self.db.new_txn(false).await?;
         let short_id = if let Ok(systemstore) = txn.systemstore() {
             crate::collection::require_persisted_collection_short_id(&systemstore, collection_id)
                 .await?
@@ -423,13 +416,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             "Collection delta processed"
         );
 
-        {
-            let mut merged = self.merged_collections.lock().unwrap_or_else(|e| {
-                tracing::warn!("merged_collections lock poisoned, recovering");
-                e.into_inner()
-            });
-            merged.insert(*cid);
-        }
+        self.merged_collections.insert(*cid, ());
 
         if any_merged {
             Ok(MergeOutcome::Merged)
@@ -454,11 +441,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         block: &Block,
         payload: &defra_core::block::CollectionDeltaPayload,
         metadata: &BlockMetadata<'_>,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
-        pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
-        pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
-        pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
+        batch_merged: &CidSet,
+        batch_merged_collections: &CidSet,
+        pending_events: &SegQueue<PendingMergeEvent>,
+        pending_post_commit_actions: &SegQueue<PendingPostCommitAction>,
+        pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
         depth: usize,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         let mut frames = vec![CollectionMergeFrame::Enter {
@@ -622,11 +609,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         block: &Block,
         payload: &defra_core::block::CollectionDeltaPayload,
         metadata: &BlockMetadata<'_>,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
-        pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
-        pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
-        pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
+        batch_merged: &CidSet,
+        batch_merged_collections: &CidSet,
+        pending_events: &SegQueue<PendingMergeEvent>,
+        pending_post_commit_actions: &SegQueue<PendingPostCommitAction>,
+        pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
         depth: usize,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         // Process linked document composites
@@ -676,8 +663,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 .collection_id
                                 .unwrap_or(&payload.schema_version_id)
                                 .to_string();
-                            let mut pe = pending_events.lock().unwrap();
-                            pe.push(PendingMergeEvent {
+                            pending_events.push(PendingMergeEvent {
                                 message: Message::merge_complete(MergeCompleteData {
                                     doc_id: doc_id_str,
                                     subject_doc_id: None,
@@ -693,11 +679,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 .collection_id
                                 .unwrap_or(&payload.schema_version_id)
                                 .to_string();
-                            let mut pe = pending_events.lock().unwrap_or_else(|e| {
-                                tracing::warn!("pending_events lock poisoned, recovering");
-                                e.into_inner()
-                            });
-                            pe.push(PendingMergeEvent {
+                            pending_events.push(PendingMergeEvent {
                                 message: Message::merge_complete(MergeCompleteData {
                                     doc_id: doc_id_str,
                                     subject_doc_id: None,
@@ -742,13 +724,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             short_id
         };
 
-        {
-            let mut batch_merged_guard = batch_merged_collections.lock().unwrap_or_else(|e| {
-                tracing::warn!("batch_merged_collections lock poisoned, recovering");
-                e.into_inner()
-            });
-            batch_merged_guard.insert(*cid);
-        }
+        batch_merged_collections.insert(*cid, ());
 
         {
             if let Some(heads) = &block.heads {

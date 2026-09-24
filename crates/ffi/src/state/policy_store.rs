@@ -1,10 +1,9 @@
-use std::collections::HashMap;
-
-use parking_lot::RwLock;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 
 /// In-memory cache of DAC policy documents, keyed by policy ID.
 pub struct PolicyStore {
-    policies: RwLock<HashMap<String, String>>,
+    policies: HopscotchMap<String, String, RandomState>,
 }
 
 impl Default for PolicyStore {
@@ -17,29 +16,27 @@ impl PolicyStore {
     /// Create a new empty policy store.
     pub fn new() -> Self {
         Self {
-            policies: RwLock::new(HashMap::new()),
+            policies: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
-    /// Store a policy with a known ID (used for SourceHub-created policies).
+    /// Store a policy with a known ID (used for Vera-created policies).
     pub fn store_policy(&self, id: &str, policy: &str) {
-        self.policies
-            .write()
-            .insert(id.to_string(), policy.to_string());
+        self.policies.insert(id.to_string(), policy.to_string());
     }
 
     /// Remove a policy from the cache.
     pub fn remove_policy(&self, id: &str) {
-        self.policies.write().remove(id);
+        self.policies.remove(id);
     }
 
     /// Get a policy by ID.
     pub fn get_policy(&self, id: &str) -> Option<String> {
-        self.policies.read().get(id).cloned()
+        self.policies.get(id)
     }
 
     /// List all policy IDs.
     pub fn list_policies(&self) -> Vec<String> {
-        self.policies.read().keys().cloned().collect()
+        self.policies.keys().collect()
     }
 }

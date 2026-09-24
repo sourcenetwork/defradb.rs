@@ -1,5 +1,6 @@
 use db::merge::se::coordinator::*;
 use document::NormalValue;
+use rapidhash::HashMapExt;
 use schema::EncryptedIndexDescription;
 use schema::EncryptedIndexType;
 use zeroize::Zeroizing;
@@ -39,7 +40,7 @@ fn test_generate_artifacts() {
 
     let encrypted_indexes = vec![EncryptedIndexDescription::new("age")];
 
-    let mut field_values = std::collections::HashMap::new();
+    let mut field_values = rapidhash::RapidHashMap::new();
     field_values.insert("age".to_string(), NormalValue::Int(25));
     field_values.insert("name".to_string(), NormalValue::String("Test".to_string()));
 

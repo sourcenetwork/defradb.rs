@@ -18,12 +18,13 @@
 
 use async_trait::async_trait;
 use cid::Cid;
+use defra_core::thread_bounds::MaybeSendSync;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::systemstore::{P2PPendingDagKey, P2PQuarantinedDagKey};
 use storage::stores::Systemstore;
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{Error, Result};
 use crate::ExplicitReplayAuthorization;
@@ -169,8 +170,9 @@ impl PersistedQuarantinedDag {
 }
 
 /// Durable KV backing for push-originated pending-DAG registrations.
-#[async_trait]
-pub trait PendingDagStorage: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait PendingDagStorage: MaybeSendSync {
     async fn put(&self, root_cid: &Cid, record: &PersistedPendingDag) -> Result<()>;
     /// Atomically install `root_cid` and retire an older head from the same
     /// sender/scope. A crash must observe either the old obligation or the new
@@ -225,7 +227,8 @@ impl<S: Store> PendingDagStore<S> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
     async fn put(&self, root_cid: &Cid, record: &PersistedPendingDag) -> Result<()> {
         let key = P2PPendingDagKey::new(root_cid.to_string());

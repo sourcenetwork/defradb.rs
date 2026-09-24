@@ -1,8 +1,8 @@
 use db::read::lensed::fetcher::*;
 use document::Document;
 use lens::TargetedHistoryLink;
+use rapidhash::RapidHashMap;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[test]
@@ -38,7 +38,7 @@ async fn unknown_document_version_passes_through() {
             schema::FieldKind::string(),
         )],
     ));
-    let history = HashMap::from([
+    let history = RapidHashMap::from_iter([
         (
             "v1".to_string(),
             TargetedHistoryLink::new("v1", "users-collection").with_next("v2"),

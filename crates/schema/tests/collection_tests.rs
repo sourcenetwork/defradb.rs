@@ -7,11 +7,11 @@
 //! - Builder pattern
 //! - Serialization roundtrip
 
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{
     CType, CollectionBuilder, CollectionVersion, EncryptedIndexDescription, FieldDescription,
     FieldKind, PolicyDescription, SchemaError,
 };
-use std::collections::HashMap;
 
 // ============================================================================
 // Helper Functions
@@ -290,7 +290,7 @@ fn test_relation_validation() {
 
     let posts = CollectionVersion::new("posts", "v1", "coll-posts", vec![author_field]);
 
-    let mut collections = HashMap::new();
+    let mut collections = RapidHashMap::new();
     collections.insert(
         "users".to_string(),
         CollectionVersion::new(
@@ -311,7 +311,7 @@ fn test_relation_to_unknown_collection_fails() {
 
     let posts = CollectionVersion::new("posts", "v1", "coll-posts", vec![author_field]);
 
-    let collections = HashMap::new();
+    let collections = RapidHashMap::new();
     let result = posts.validate_with_collections(&collections);
     assert!(result.is_err());
     assert!(matches!(

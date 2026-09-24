@@ -5,31 +5,38 @@
 //! - Gossip events from iroh-gossip
 //! - Commands from the `IrohTransport` facade
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::fast::RandomState;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::Arc;
 
 use iroh::{Endpoint, EndpointId};
 use iroh_gossip::net::Gossip;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+use n0_future::task::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::{AbortHandle, JoinHandle, JoinSet};
 use tracing::{debug, warn};
+
+use defra_core::thread_bounds::MaybeSend;
 
 use crate::bitswap::ReplicatorRegistry;
 use crate::message::PushLogReply;
+use crate::tracked_task::TrackedAbort;
 use crate::transport::{PeerAddr, PeerId, TransportEvent};
 
 use super::command::IrohCommand;
 use super::endpoint_commands::handle_command;
 use super::endpoint_config::{
-    apply_bind_config, apply_discovery_config, apply_multipath_config, relay_mode_from_config,
-    IrohEndpointConfig,
+    allowlist_state_from_config, apply_bind_config, apply_discovery_config, apply_multipath_config,
+    relay_mode_from_config, IrohEndpointConfig, PeerAdmission,
 };
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
 use super::endpoint_streams::handle_incoming;
 use super::gossip_heal::{self, GossipHealer};
-use super::peer_map::{parse_endpoint_id, PeerMap};
+use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
+use super::task_registry::TaskRegistry;
 
 const MAX_COMMAND_BATCH: usize = 16;
 
@@ -43,65 +50,57 @@ mod task_shutdown_tests;
 pub(super) struct EndpointResources {
     pub(super) endpoint: Endpoint,
     pub(super) gossip: Gossip,
-    pub(super) peer_map: Arc<parking_lot::Mutex<PeerMap>>,
+    pub(super) peer_map: Arc<SharedPeerMap>,
     pub(super) connection_cache: ConnectionCache,
     pub(super) healer: Arc<GossipHealer>,
     pub(super) spawned_tasks: SpawnedTasks,
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
+    pub(super) admission: Arc<PeerAdmission>,
 }
 
 /// Handle to a gossip topic subscription.
 pub(super) struct TopicSubscription {
     pub(super) sender: iroh_gossip::api::GossipSender,
     pub(super) reader_task: JoinHandle<()>,
-    pub(super) neighbors: Arc<parking_lot::Mutex<HashSet<EndpointId>>>,
+    pub(super) neighbors: Neighbors,
 }
 
 pub(super) type SubscriptionSenders = Vec<(String, iroh_gossip::api::GossipSender)>;
+pub(super) type Neighbors = Arc<HopscotchMap<EndpointId, (), RandomState>>;
+pub(super) type RawTopics = Arc<HopscotchMap<String, (), RandomState>>;
 
 /// Active block sync task.
 pub(super) struct ActiveSync {
-    pub(super) abort_handle: tokio::task::AbortHandle,
+    pub(super) abort_handle: TrackedAbort,
 }
 
-pub(super) type SpawnedTasks = Arc<parking_lot::Mutex<Option<JoinSet<()>>>>;
-pub(super) type PendingPushLogReplies =
-    Arc<parking_lot::Mutex<HashMap<String, oneshot::Sender<PushLogReply>>>>;
+pub(super) type SpawnedTasks = Arc<TaskRegistry>;
+/// A reply sender parked in a queue so the responder can take ownership of it.
+pub(super) type PushLogReplySlot = Arc<SegQueue<oneshot::Sender<PushLogReply>>>;
+pub(super) type PendingPushLogReplies = Arc<HopscotchMap<String, PushLogReplySlot, RandomState>>;
 
 pub(super) fn spawn_task(
     spawned_tasks: &SpawnedTasks,
-    future: impl Future<Output = ()> + Send + 'static,
-) -> Option<AbortHandle> {
-    let mut tasks = spawned_tasks.lock();
-    let tasks = tasks.as_mut()?;
-    // Reap completed work so periodic gossip healing does not grow the set.
-    while let Some(result) = tasks.try_join_next() {
-        if let Err(error) = result {
-            if !error.is_cancelled() {
-                debug!(%error, "Tracked Iroh spawned task failed");
-            }
-        }
-    }
-    Some(tasks.spawn(future))
+    future: impl Future<Output = ()> + MaybeSend + 'static,
+) -> Option<TrackedAbort> {
+    spawned_tasks.spawn(future)
 }
 
 async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks, readers: Vec<JoinHandle<()>>) {
-    // Closing registration under the spawn lock also covers child tasks
-    // scheduled by work that was already running when shutdown began.
-    let tasks = spawned_tasks.lock().take();
-    let task_count = tasks.as_ref().map_or(0, JoinSet::len) + readers.len();
+    let tasks = spawned_tasks.close();
+    let task_count = tasks.len() + readers.len();
     for reader in &readers {
         reader.abort();
     }
     let drain = async move {
-        if let Some(mut tasks) = tasks {
-            tasks.shutdown().await;
+        for task in tasks {
+            let _ = task.await;
         }
         for reader in readers {
             let _ = reader.await;
         }
     };
-    if tokio::time::timeout(std::time::Duration::from_secs(5), drain)
+    if n0_future::time::timeout(std::time::Duration::from_secs(5), drain)
         .await
         .is_err()
     {
@@ -131,6 +130,9 @@ pub async fn spawn_endpoint(
     ];
 
     let relay_mode = relay_mode_from_config(&config.relay_mode)?;
+    let admission = Arc::new(PeerAdmission::new(allowlist_state_from_config(
+        &config.allowlist,
+    )?));
     let node_identity = config.node_identity.clone();
     let relay_urls: Vec<String> = relay_mode
         .relay_map()
@@ -158,11 +160,12 @@ pub async fn spawn_endpoint(
     let replicators = Arc::new(ReplicatorRegistry::new());
 
     let gossip_heal = config.gossip_heal.clone();
-    let task = tokio::spawn(run_event_loop(
+    let task = n0_future::task::spawn(run_event_loop(
         endpoint,
         gossip,
         gossip_heal,
         node_identity,
+        admission,
         command_rx,
         event_tx,
         replicators.clone(),
@@ -176,32 +179,31 @@ pub async fn spawn_endpoint(
 mod lifecycle_tests;
 
 /// Main event loop processing incoming connections, gossip, and commands.
+#[allow(clippy::too_many_arguments)]
 async fn run_event_loop(
     endpoint: Endpoint,
     gossip: Gossip,
     gossip_heal_config: super::gossip_heal::GossipHealConfig,
     node_identity: Option<Arc<identity::RawIdentity>>,
+    admission: Arc<PeerAdmission>,
     mut command_rx: mpsc::Receiver<IrohCommand>,
     event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
     replicators: Arc<ReplicatorRegistry>,
 ) {
-    let shutdown_started = std::time::Instant::now();
-    let peer_map = Arc::new(parking_lot::Mutex::new(PeerMap::new()));
-    let pending_pushlog_replies = Arc::new(parking_lot::Mutex::new(HashMap::<
-        String,
-        oneshot::Sender<PushLogReply>,
-    >::new()));
+    let shutdown_started = web_time::Instant::now();
+    let peer_map = Arc::new(SharedPeerMap::new());
+    let pending_pushlog_replies: PendingPushLogReplies =
+        Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let connection_cache = new_connection_cache();
-    let mut subscriptions: HashMap<String, TopicSubscription> = HashMap::new();
-    let raw_topics: Arc<parking_lot::Mutex<std::collections::HashSet<String>>> =
-        Arc::new(parking_lot::Mutex::new(std::collections::HashSet::new()));
-    let mut active_syncs: HashMap<u64, ActiveSync> = HashMap::new();
-    let spawned_tasks: SpawnedTasks = Arc::new(parking_lot::Mutex::new(Some(JoinSet::new())));
+    let mut subscriptions: RapidHashMap<String, TopicSubscription> = RapidHashMap::new();
+    let raw_topics: RawTopics = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
+    let mut active_syncs: RapidHashMap<u64, ActiveSync> = RapidHashMap::new();
+    let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
     let mut next_query_id: u64 = 1;
 
     let heal_enabled = gossip_heal_config.enabled();
-    let mut heal_tick = tokio::time::interval(gossip_heal_config.tick_period());
-    heal_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut heal_tick = n0_future::time::interval(gossip_heal_config.tick_period());
+    heal_tick.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Delay);
     let resources = EndpointResources {
         endpoint: endpoint.clone(),
         gossip: gossip.clone(),
@@ -210,6 +212,7 @@ async fn run_event_loop(
         healer: Arc::new(GossipHealer::new(gossip_heal_config)),
         spawned_tasks: Arc::clone(&spawned_tasks),
         node_identity,
+        admission,
     };
 
     // Emit Listening event with our endpoint address
@@ -290,7 +293,7 @@ async fn run_event_loop(
     drop(command_rx);
 
     // Clean up
-    let subscriptions_started = std::time::Instant::now();
+    let subscriptions_started = web_time::Instant::now();
     let mut readers = Vec::with_capacity(subscriptions.len());
     for (_, sub) in subscriptions.drain() {
         sub.reader_task.abort();
@@ -301,7 +304,7 @@ async fn run_event_loop(
         "Iroh endpoint shutdown: subscriptions aborted"
     );
 
-    let syncs_started = std::time::Instant::now();
+    let syncs_started = web_time::Instant::now();
     for (_, sync) in active_syncs.drain() {
         sync.abort_handle.abort();
     }
@@ -310,15 +313,15 @@ async fn run_event_loop(
         "Iroh endpoint shutdown: active syncs aborted"
     );
 
-    let tracked_started = std::time::Instant::now();
+    let tracked_started = web_time::Instant::now();
     shutdown_tracked_tasks(spawned_tasks, readers).await;
     debug!(
         elapsed_ms = tracked_started.elapsed().as_millis(),
         "Iroh endpoint shutdown: task drain finished"
     );
 
-    let gossip_started = std::time::Instant::now();
-    match tokio::time::timeout(std::time::Duration::from_secs(1), gossip.shutdown()).await {
+    let gossip_started = web_time::Instant::now();
+    match n0_future::time::timeout(std::time::Duration::from_secs(1), gossip.shutdown()).await {
         Ok(Ok(())) => warn!(
             elapsed_ms = gossip_started.elapsed().as_millis(),
             "Iroh endpoint shutdown: gossip stopped"
@@ -327,7 +330,7 @@ async fn run_event_loop(
         Err(_) => debug!("Timed out waiting for Iroh gossip shutdown"),
     }
 
-    let close_started = std::time::Instant::now();
+    let close_started = web_time::Instant::now();
     endpoint.close().await;
     warn!(
         close_elapsed_ms = close_started.elapsed().as_millis(),
@@ -337,7 +340,7 @@ async fn run_event_loop(
 }
 
 pub(super) fn snapshot_subscription_senders(
-    subscriptions: &HashMap<String, TopicSubscription>,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
 ) -> SubscriptionSenders {
     subscriptions
         .iter()
@@ -368,10 +371,9 @@ pub(super) async fn join_peer_to_subscription_senders(
 
 /// Look up the cached direct socket address for a peer from the peer map.
 pub(super) fn peer_direct_addr(
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: &SharedPeerMap,
     peer_id: &PeerId,
 ) -> Option<std::net::SocketAddr> {
     let id = parse_endpoint_id(peer_id).ok()?;
-    let map = peer_map.lock();
-    map.get(&id).and_then(|info| info.remote_addr)
+    peer_map.remote_addr(&id)
 }

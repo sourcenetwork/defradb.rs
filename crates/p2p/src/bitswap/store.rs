@@ -52,7 +52,8 @@ impl<B: Blockstore> BitswapStoreAdapter<B> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<B: Blockstore + Debug + 'static> Store for BitswapStoreAdapter<B> {
     /// Get the size of a block by CID.
     async fn get_size(&self, cid: &Cid) -> Result<usize> {

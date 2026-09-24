@@ -27,7 +27,7 @@ The Lean model is grounded in the Zanzibar expression and evaluator code:
 - `crates/zanzibar/src/store/traits.rs:34-57`: store interface for relationship
   presence and direct permission checks.
 
-The TLA model is grounded in ACP tuple storage and SourceHub cache behavior:
+The TLA model is grounded in ACP tuple storage and Vera cache behavior:
 
 - `crates/acp/src/store.rs:42-130`: ACP tuple store operations, including put,
   delete, relation scans, and document registration.
@@ -39,15 +39,15 @@ The TLA model is grounded in ACP tuple storage and SourceHub cache behavior:
   write and delete tuples.
 - `crates/acp/src/local.rs:390-439`: local P2P export/replace reconciles
   document-scoped relationships while preserving owner.
-- `crates/sourcehub/src/access_cache.rs:10-16`: positive access decisions are
+- `crates/vera/src/access_cache.rs:10-16`: positive access decisions are
   cached by actor/policy/resource/doc/permission.
-- `crates/sourcehub/src/access_cache.rs:46-61`: cache hits return unexpired
+- `crates/vera/src/access_cache.rs:46-61`: cache hits return unexpired
   allowed decisions.
-- `crates/sourcehub/src/access_cache.rs:85-95`: object invalidation clears cached
+- `crates/vera/src/access_cache.rs:85-95`: object invalidation clears cached
   decisions for a document.
-- `crates/sourcehub/src/cosmos/dac.rs:186-223`: SourceHub ACP checks read from
+- `crates/vera/src/cosmos/dac.rs:186-223`: Vera ACP checks read from
   cache first, then calls `verify_access`, and caches only successful results.
-- `crates/sourcehub/src/cosmos/dac.rs:250-307`: SourceHub relationship grant and
+- `crates/vera/src/cosmos/dac.rs:250-307`: Vera relationship grant and
   revoke invalidate cached access for the object.
 
 ## Brainstorming Outcome
@@ -69,7 +69,7 @@ Chosen fragment:
 Out of scope:
 
 - Complete Zanzibar conformance, subject restrictions, wildcard storage-hash
-  details, parser behavior, policy YAML validation, and all SourceHub chain
+  details, parser behavior, policy YAML validation, and all Vera chain
   mechanics.
 - Key rotation or undoing access already exercised before revocation.  The TLA
   property is post-propagation enforcement, not retroactive secrecy.

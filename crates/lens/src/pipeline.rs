@@ -8,10 +8,10 @@
 
 #[cfg(not(feature = "wasmtime-runtime"))]
 use std::collections::VecDeque;
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use futures::StreamExt;
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 
 use tracing::{debug, info, warn};
 
@@ -48,7 +48,7 @@ pub struct Lens {
     store: Arc<dyn TransformStore>,
     target_version_id: String,
     #[cfg_attr(feature = "wasmtime-runtime", allow(dead_code))]
-    collection_history: HashMap<String, TargetedHistoryLink>,
+    collection_history: RapidHashMap<String, TargetedHistoryLink>,
     #[cfg(feature = "wasmtime-runtime")]
     input_tx: futures::channel::mpsc::UnboundedSender<LensInput>,
     #[cfg(feature = "wasmtime-runtime")]
@@ -67,7 +67,7 @@ impl Lens {
     pub fn new(
         store: Arc<dyn TransformStore>,
         target_version_id: impl Into<String>,
-        collection_history: HashMap<String, TargetedHistoryLink>,
+        collection_history: RapidHashMap<String, TargetedHistoryLink>,
     ) -> Self {
         let target_version_id = target_version_id.into();
 
@@ -166,7 +166,7 @@ impl Lens {
 struct PipelineProcessor {
     store: Arc<dyn TransformStore>,
     target_version_id: String,
-    collection_history: HashMap<String, TargetedHistoryLink>,
+    collection_history: RapidHashMap<String, TargetedHistoryLink>,
     input_rx: futures::channel::mpsc::UnboundedReceiver<LensInput>,
     output_tx: futures::channel::mpsc::UnboundedSender<Result<LensDoc>>,
 }
@@ -195,7 +195,7 @@ impl PipelineProcessor {
 async fn transform_to_target(
     store: &Arc<dyn TransformStore>,
     target_version_id: &str,
-    collection_history: &HashMap<String, TargetedHistoryLink>,
+    collection_history: &RapidHashMap<String, TargetedHistoryLink>,
     input: LensInput,
 ) -> Result<LensDoc> {
     info!(
@@ -223,7 +223,7 @@ async fn transform_to_target(
     let mut current_doc = input.doc;
     let mut current_version = input.schema_version_id.clone();
 
-    let mut visited = HashSet::new();
+    let mut visited = RapidHashSet::new();
     visited.insert(current_version.clone());
 
     let mut iteration = 0;
@@ -416,12 +416,13 @@ mod tests {
     use super::*;
     use crate::store::MemoryTransformStore;
     use crate::{LensConfig, LensModule};
+    use rapidhash::HashMapExt;
     use serde_json::json;
 
     #[tokio::test]
     async fn test_lens_passthrough_at_target() {
         let store = Arc::new(MemoryTransformStore::new());
-        let history = HashMap::new();
+        let history = RapidHashMap::new();
         let mut lens = Lens::new(store, "v1", history);
 
         let mut doc = LensDoc::new();
@@ -436,7 +437,7 @@ mod tests {
     #[tokio::test]
     async fn test_lens_needs_migration() {
         let store = Arc::new(MemoryTransformStore::new());
-        let mut history = HashMap::new();
+        let mut history = RapidHashMap::new();
 
         history.insert(
             "v1".to_string(),
@@ -464,7 +465,7 @@ mod tests {
         let config = LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
         let transform_id = store.add(config).await.unwrap();
 
-        let mut history = HashMap::new();
+        let mut history = RapidHashMap::new();
         history.insert(
             "v1".to_string(),
             TargetedHistoryLink::new("v1", "col_1").with_next("v2"),

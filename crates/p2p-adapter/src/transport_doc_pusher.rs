@@ -8,8 +8,9 @@ use p2p::transport::PeerId;
 use p2p::P2PTransport;
 
 /// Type-erased interface for transport-generic push operations.
-#[async_trait]
-pub trait TransportDocPusher: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         Ok(storage::stores::PushRetryMarkerStats::default())
     }
@@ -56,6 +57,8 @@ pub trait TransportDocPusher: Send + Sync {
     ) -> P2PResult<Option<String>>;
 
     fn get_collection_id(&self, name: &str) -> Option<String>;
+
+    fn get_collection_name(&self, collection_id: &str) -> P2PResult<Option<String>>;
 
     fn list_collections(&self) -> P2PResult<Vec<String>>;
 
@@ -131,7 +134,8 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     for DbTransportDocPusher<S, T>
 {
@@ -302,6 +306,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
                 None
             }
         }
+    }
+
+    fn get_collection_name(&self, collection_id: &str) -> P2PResult<Option<String>> {
+        self.db
+            .find_collection_by_id(collection_id)
+            .map(|collection| collection.map(|collection| collection.name().to_string()))
+            .map_err(|error| {
+                P2PError::internal(format!(
+                    "failed to find collection '{collection_id}': {error}"
+                ))
+            })
     }
 
     fn list_collections(&self) -> P2PResult<Vec<String>> {

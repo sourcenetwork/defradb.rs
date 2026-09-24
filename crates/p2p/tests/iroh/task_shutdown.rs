@@ -4,7 +4,7 @@ use std::sync::Arc;
 use super::{shutdown_tracked_tasks, spawn_task, SpawnedTasks};
 
 fn registry() -> SpawnedTasks {
-    Arc::new(parking_lot::Mutex::new(Some(tokio::task::JoinSet::new())))
+    Arc::new(super::TaskRegistry::default())
 }
 
 fn spawn(tasks: &SpawnedTasks, future: impl Future<Output = ()> + Send + 'static) {
@@ -83,11 +83,11 @@ async fn spawning_reaps_completed_tasks_and_preserves_individual_cancellation() 
         pending::<()>().await;
     })
     .unwrap();
-    assert_eq!(tasks.lock().as_ref().unwrap().len(), 1);
+    assert_eq!(tasks.len(), 1);
     running.abort();
     shutdown_tracked_tasks(tasks.clone(), vec![]).await;
     assert!(retained.upgrade().is_none());
-    assert!(tasks.lock().is_none());
+    assert!(tasks.is_closed());
     shutdown_tracked_tasks(tasks, vec![]).await;
 }
 
@@ -116,7 +116,7 @@ async fn concurrent_spawn_and_shutdown_release_all_resources() {
     while let Some(result) = callers.join_next().await {
         result.unwrap();
     }
-    assert!(tasks.lock().is_none());
+    assert!(tasks.is_closed());
     assert!(retained.upgrade().is_none());
 }
 
@@ -146,6 +146,6 @@ async fn shutdown_bounds_non_cooperative_tasks_and_readers() {
         // Release even on failure so the test runtime can shut down.
         let _ = release.send(());
         result.expect("shutdown exceeded its task drain budget");
-        assert!(tasks.lock().is_none());
+        assert!(tasks.is_closed());
     }
 }

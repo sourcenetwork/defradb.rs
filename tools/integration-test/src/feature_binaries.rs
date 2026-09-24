@@ -6,15 +6,15 @@ use std::sync::OnceLock;
 
 static SNAPSHOT_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
-/// Resolve a CLI snapshot with the SourceHub providers enabled.
-pub fn sourcehub_cli_binary() -> PathBuf {
+/// Resolve a CLI snapshot with the Vera providers enabled.
+pub fn vera_cli_binary() -> PathBuf {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY
         .get_or_init(|| {
             std::env::var_os("DEFRA_RUST_BINARY")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
-                    build_cli_variant(&crate::workspace_root(), &["sourcehub"], "defra-sourcehub")
+                    build_cli_variant(&crate::workspace_root(), &["vera"], "defra-vera")
                 })
         })
         .clone()

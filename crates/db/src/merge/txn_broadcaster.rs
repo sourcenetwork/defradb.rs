@@ -20,20 +20,28 @@ use crate::merge::broadcast_mutator::broadcast::{
 
 /// `TxnBroadcaster` that fans committed transactional writes out to peers via
 /// `SyncCoordinator::push_to_replicators` and gossipsub.
-pub struct SyncTxnBroadcaster<B: Blockstore + Send + Sync + 'static, T: P2PTransport + 'static> {
+pub struct SyncTxnBroadcaster<
+    B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
+    T: P2PTransport + 'static,
+> {
     sync: Arc<SyncCoordinator<B, T>>,
 }
 
-impl<B: Blockstore + Send + Sync + 'static, T: P2PTransport + 'static> SyncTxnBroadcaster<B, T> {
+impl<
+        B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
+        T: P2PTransport + 'static,
+    > SyncTxnBroadcaster<B, T>
+{
     pub fn new(sync: Arc<SyncCoordinator<B, T>>) -> Self {
         Self { sync }
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<B, T> TxnBroadcaster for SyncTxnBroadcaster<B, T>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 {
     async fn broadcast_update(&self, event: TxnBroadcastEvent) {

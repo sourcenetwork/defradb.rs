@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::env;
 use std::fs;
 use std::io;
@@ -18,7 +18,7 @@ pub(super) fn load(path: &Path) -> Result<()> {
         }
     };
 
-    let mut variables = HashMap::new();
+    let mut variables = RapidHashMap::new();
     for (index, line) in contents.lines().enumerate() {
         let line_number = index + 1;
         let line = line.trim();

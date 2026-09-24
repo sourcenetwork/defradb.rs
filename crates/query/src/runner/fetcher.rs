@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use document::Document;
+use rapidhash::RapidHashMap;
 use std::marker::PhantomData;
 
 use crate::doc_stream::DocStream;
@@ -257,7 +258,7 @@ impl DocFetcher for FetcherWrapper {
         collection_name: &str,
         field_name: &str,
         query: &str,
-    ) -> Result<std::collections::HashMap<String, f64>> {
+    ) -> Result<RapidHashMap<String, f64>> {
         self.get_fetcher()
             .search_fulltext_scored(collection_name, field_name, query)
             .await

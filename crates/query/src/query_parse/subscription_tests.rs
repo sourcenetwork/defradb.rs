@@ -54,7 +54,7 @@ fn test_parse_subscription_with_variables() {
         }
     "#;
 
-    let variables = HashMap::from([("active".to_string(), serde_json::json!(true))]);
+    let variables = RapidHashMap::from_iter([("active".to_string(), serde_json::json!(true))]);
     let result = parse_request_with_variables(query, Some(&variables), None).unwrap();
     match result {
         ParsedOperation::Subscription { select } => {

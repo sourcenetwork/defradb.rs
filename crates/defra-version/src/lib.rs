@@ -23,7 +23,7 @@ pub const GO_COMPAT_TAG: &str = "";
 /// sourcenetwork/defradb, a maintained chore branch upstream does not merge,
 /// and moves only when we retarget the parity claim or fix the client. CI
 /// fails when the pinned commit does not resolve on that repository.
-pub const GO_FFI_CLIENT_COMMIT: &str = "0c0ecfd2e78f5e879064b1caec66ba887265f5bc";
+pub const GO_FFI_CLIENT_COMMIT: &str = "c4b4e2c623b8c25e22f7972370bf2ffdcdfd30d1";
 
 /// Go compatibility metadata.
 #[derive(Debug, Clone, Serialize)]

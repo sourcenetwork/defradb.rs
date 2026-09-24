@@ -32,8 +32,8 @@ pub const POLICY: &str = "name: test\nresources:\n  doc:\n    permissions:\n";
 /// Records what the handler asked the view layer to do.
 #[derive(Debug, Default)]
 pub struct RecordingViewOps {
-    pub add_view_transform: std::sync::Mutex<Option<Option<String>>>,
-    pub refresh: std::sync::Mutex<Option<db::CollectionSelector>>,
+    pub add_view_transform: kovan::AtomOption<Option<String>>,
+    pub refresh: kovan::AtomOption<db::CollectionSelector>,
 }
 
 #[async_trait]
@@ -44,12 +44,13 @@ impl ViewOperations for RecordingViewOps {
         _sdl: &str,
         transform: Option<&str>,
     ) -> Result<Vec<schema::CollectionVersion>, String> {
-        *self.add_view_transform.lock().unwrap() = Some(transform.map(str::to_owned));
+        self.add_view_transform
+            .store_some(transform.map(str::to_owned));
         Ok(vec![])
     }
 
     async fn refresh_views(&self, options: db::CollectionSelector) -> Result<(), String> {
-        *self.refresh.lock().unwrap() = Some(options);
+        self.refresh.store_some(options);
         Ok(())
     }
 

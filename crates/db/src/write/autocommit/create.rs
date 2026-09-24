@@ -1,7 +1,4 @@
-use super::helpers::{
-    ensure_collection_is_active, register_created_doc, write_branchable_collection_block,
-    write_local_create,
-};
+use super::helpers::{register_created_doc, write_branchable_collection_block, write_local_create};
 use super::*;
 use bytes::Bytes;
 
@@ -21,13 +18,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let collection = self.get_collection_or_err(collection_name)?;
-        let _collection_guard = self
-            .db
-            .collection_read_guard(collection.collection_id())
-            .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
         // Generate embeddings before blocks (embedding values affect the genesis CID)
         let embedding_config = self.db.options().embedding_config();
@@ -211,13 +202,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let collection = self.get_collection_or_err(collection_name)?;
-        let _collection_guard = self
-            .db
-            .collection_read_guard(collection.collection_id())
-            .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
         let short_id = collection.resolved_root_id();
         let schema_version_id = collection.version_id().to_string();

@@ -5,8 +5,8 @@
 //! - `parse_filter_object()` - Parse a filter object into conditions map
 
 use graphql_parser::query::Value;
+use rapidhash::RapidHashMap;
 use serde_json::{Map, Value as JsonValue};
-use std::collections::HashMap;
 
 use crate::error::{QueryError, Result};
 use crate::mapper::Filter;
@@ -16,7 +16,7 @@ use super::values::{graphql_value_to_json, graphql_value_to_json_no_vars};
 /// Parse a filter argument value into a Filter.
 pub(super) fn parse_filter_value(
     value: &Value<'_, String>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Filter> {
     match value {
         Value::Object(obj) => {
@@ -43,7 +43,7 @@ pub(super) fn parse_filter_value(
 /// Parse a filter object into conditions map.
 pub(super) fn parse_filter_object(
     obj: &std::collections::BTreeMap<String, Value<'_, String>>,
-    variables: Option<&HashMap<String, JsonValue>>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<Map<String, JsonValue>> {
     let mut conditions = Map::new();
 

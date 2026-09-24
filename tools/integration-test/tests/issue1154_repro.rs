@@ -8,10 +8,11 @@
 //! node.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use integration_test::TestCluster;
+use kovan::Atom;
 
 const SCHEMA: &str = "type User { name: String  age: Int @immutable }";
 const PUSHERS: usize = 4;
@@ -107,7 +108,7 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
     // links on the hub, so the single pending slot keeps being occupied by a
     // success-acked registration while the writers run.
     let stop_writers = Arc::new(AtomicBool::new(false));
-    let doc_ids = Arc::new(Mutex::new(Vec::<String>::new()));
+    let doc_ids = Arc::new(Atom::new(Vec::<String>::new()));
     let writer_handles: Vec<_> = (1..=PUSHERS)
         .map(|pusher| {
             let client = cluster.client(pusher);
@@ -124,7 +125,11 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
                         .as_str()
                         .expect("missing _docID")
                         .to_string();
-                    doc_ids.lock().unwrap().push(doc_id);
+                    doc_ids.rcu(|ids| {
+                        let mut next = ids.clone();
+                        next.push(doc_id.clone());
+                        next
+                    });
                     doc += 1;
                     std::thread::sleep(Duration::from_millis(25));
                 }
@@ -135,7 +140,7 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
     // Keep the at-scale backlog while holding the missing-link fetch boundary.
     let load_deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        let produced = doc_ids.lock().unwrap().len();
+        let produced = doc_ids.peek(Vec::len);
         if produced >= MIN_DOCS {
             break;
         }
@@ -152,8 +157,7 @@ async fn hub_restart_recovers_success_acked_pending_dags() {
     }
     let expected_doc_ids = Arc::try_unwrap(doc_ids)
         .expect("writers joined")
-        .into_inner()
-        .unwrap();
+        .into_inner();
     assert!(expected_doc_ids.len() >= MIN_DOCS);
 
     let hub_api = cluster.api_url(0).to_string();

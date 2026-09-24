@@ -1,8 +1,8 @@
 //! Collection provider trait for schema resolution.
 
 use async_trait::async_trait;
+use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
-use std::collections::HashMap;
 use std::sync::Arc;
 use storage::corekv::MaybeSendSync;
 
@@ -34,7 +34,7 @@ pub trait CollectionProvider: MaybeSendSync {
 
 /// Static collection provider for tests and backward compatibility.
 pub struct StaticCollectionProvider {
-    collections: HashMap<String, Arc<CollectionVersion>>,
+    collections: RapidHashMap<String, Arc<CollectionVersion>>,
 }
 
 impl StaticCollectionProvider {
@@ -47,8 +47,8 @@ impl StaticCollectionProvider {
         Self { collections: map }
     }
 
-    /// Create from an existing HashMap.
-    pub fn from_map(collections: HashMap<String, Arc<CollectionVersion>>) -> Self {
+    /// Create from an existing RapidHashMap.
+    pub fn from_map(collections: RapidHashMap<String, Arc<CollectionVersion>>) -> Self {
         Self { collections }
     }
 }

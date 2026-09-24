@@ -1,15 +1,19 @@
 //! Router configuration and route definitions.
 
+#[cfg(feature = "server")]
 mod routes;
+#[cfg(feature = "server")]
 mod state;
 mod traits;
 
+#[cfg(feature = "server")]
 pub use routes::{create_router, create_router_with_rest, create_router_with_state};
+#[cfg(feature = "server")]
 pub(crate) use routes::{create_router_with_state_and_body_limits, BodyLimits};
+#[cfg(feature = "server")]
 pub use state::{AppState, AppStateBuilder};
 pub use traits::{
-    AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations, BrowserSyncError,
-    BrowserSyncOperations, BrowserSyncRequest, BrowserSyncResponse, BrowserSyncResult,
+    AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations,
     CollectionManagementOperations, CollectionVersionOperations, DocumentAcpOperations,
     DumpOperations, EncryptedIndexInfo, EncryptedIndexOperations, ExplicitReplayCapabilityInput,
     ImportResult, IndexFieldInfo, IndexInfo, IndexOperations, LensOperations, ManageRequester,

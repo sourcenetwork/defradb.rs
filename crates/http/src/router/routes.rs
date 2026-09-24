@@ -47,7 +47,6 @@ pub fn create_router_with_state(state: AppState) -> Router {
 /// intersecting with it, so a looser value here would raise the effective cap.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BodyLimits {
-    pub sync: usize,
     pub schema: Option<usize>,
     pub backup_import: Option<usize>,
 }
@@ -55,7 +54,6 @@ pub(crate) struct BodyLimits {
 impl BodyLimits {
     pub(crate) fn unlimited() -> Self {
         Self {
-            sync: defra_core::browser_sync::MAX_SYNC_BODY_BYTES,
             schema: None,
             backup_import: None,
         }
@@ -307,10 +305,6 @@ pub(crate) fn create_router_with_state_and_body_limits(
         )
         .route("/version", get(handlers::version))
         .route("/actions", get(handlers::actions::list_actions))
-        .route(
-            "/sync",
-            post(handlers::browser_sync::sync).layer(DefaultBodyLimit::max(limits.sync)),
-        )
         // Transaction endpoints
         .nest("/tx", tx_routes)
         // REST collection endpoints

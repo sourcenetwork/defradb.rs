@@ -40,7 +40,7 @@ property about the missing gate, not about CRDT merge details.
 - P2P merge-side ACP filtering is in `crates/db/src/merge/acp_merge_handler.rs:71`: with
   strict replicated-doc access enabled, protected composites require local
   `DocumentPermission::Read` before merge.
-- Embedded setup wires that strict merge-side mode for SourceHub-backed ACP in
+- Embedded setup wires that strict merge-side mode for Vera-backed ACP in
   `crates/embedded/src/node.rs:496`.
 - P2P egress also installs a Bitswap peer-block request filter in
   `crates/p2p/src/behaviour.rs:287`, implemented in

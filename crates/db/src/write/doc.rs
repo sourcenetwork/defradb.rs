@@ -109,7 +109,7 @@ impl<S: Store> DbDocMutator<S> {
         collection: &Collection,
     ) -> query::error::Result<()> {
         self.db
-            .acquire_collection_read_lock(&self.txn, collection.collection_id())
+            .acquire_collection_read_lock(&self.txn, collection)
             .await
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
 
@@ -361,7 +361,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         &self,
         collection_name: &str,
         mut doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)

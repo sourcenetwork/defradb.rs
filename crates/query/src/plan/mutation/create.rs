@@ -3,6 +3,7 @@
 //! This node creates documents in storage during query execution, following
 //! the Go DefraDB pattern where persistence happens within the plan node.
 
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -24,14 +25,14 @@ use super::create_conversions::{
 #[derive(Debug, Clone)]
 pub struct CreateInput {
     /// Field values keyed by field name
-    pub fields: std::collections::HashMap<String, JsonValue>,
+    pub fields: RapidHashMap<String, JsonValue>,
 }
 
 impl CreateInput {
     /// Create a new empty input.
     pub fn new() -> Self {
         Self {
-            fields: std::collections::HashMap::new(),
+            fields: RapidHashMap::new(),
         }
     }
 

@@ -1,15 +1,18 @@
 //! Mock index operations for testing index handlers.
 
 use async_trait::async_trait;
-use std::sync::{Arc, RwLock};
+use kovan::Atom;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
+use crate::mock::update_vec;
 use crate::router::{IndexFieldInfo, IndexInfo, IndexOperations};
 
 /// Mock index operations for testing index handlers.
 #[derive(Debug)]
 pub struct MockIndexOperations {
-    indexes: Arc<RwLock<Vec<IndexInfo>>>,
-    next_id: Arc<RwLock<u64>>,
+    indexes: Arc<Atom<Vec<IndexInfo>>>,
+    next_id: Arc<AtomicU64>,
 }
 
 impl Clone for MockIndexOperations {
@@ -31,27 +34,30 @@ impl MockIndexOperations {
     /// Create a new mock index operations instance.
     pub fn new() -> Self {
         Self {
-            indexes: Arc::new(RwLock::new(vec![])),
-            next_id: Arc::new(RwLock::new(1)),
+            indexes: Arc::new(Atom::new(vec![])),
+            next_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
     /// Create with a pre-existing index.
     pub fn with_index(self, collection: &str, name: &str, fields: Vec<&str>, unique: bool) -> Self {
-        self.indexes.write().unwrap().push(IndexInfo {
-            kind: None,
-            id: 0,
-            name: name.to_string(),
-            collection: collection.to_string(),
-            collection_id: collection.to_string(),
-            fields: fields
-                .into_iter()
-                .map(|f| IndexFieldInfo {
-                    name: f.to_string(),
-                    direction: Some("ASC".to_string()),
-                })
-                .collect(),
-            unique,
+        let fields: Vec<IndexFieldInfo> = fields
+            .into_iter()
+            .map(|f| IndexFieldInfo {
+                name: f.to_string(),
+                direction: Some("ASC".to_string()),
+            })
+            .collect();
+        update_vec(&self.indexes, |indexes| {
+            indexes.push(IndexInfo {
+                kind: None,
+                id: 0,
+                name: name.to_string(),
+                collection: collection.to_string(),
+                collection_id: collection.to_string(),
+                fields: fields.clone(),
+                unique,
+            })
         });
         self
     }
@@ -70,10 +76,8 @@ impl IndexOperations for MockIndexOperations {
         let index_name = match name {
             Some(n) => n.to_string(),
             None => {
-                let mut id = self.next_id.write().unwrap();
-                let name = format!("idx_{}_{}", collection.to_lowercase(), *id);
-                *id += 1;
-                name
+                let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                format!("idx_{}_{}", collection.to_lowercase(), id)
             }
         };
 
@@ -93,27 +97,28 @@ impl IndexOperations for MockIndexOperations {
             unique,
         };
 
-        self.indexes.write().unwrap().push(index.clone());
+        update_vec(&self.indexes, |indexes| indexes.push(index.clone()));
         Ok(index)
     }
 
     async fn list_indexes(&self, collection: Option<&str>) -> Result<Vec<IndexInfo>, String> {
-        let indexes = self.indexes.read().unwrap();
-        match collection {
-            Some(col) => Ok(indexes
+        Ok(self.indexes.peek(|indexes| match collection {
+            Some(col) => indexes
                 .iter()
                 .filter(|i| i.collection == col)
                 .cloned()
-                .collect()),
-            None => Ok(indexes.clone()),
-        }
+                .collect(),
+            None => indexes.clone(),
+        }))
     }
 
     async fn delete_index(&self, collection: &str, name: &str) -> Result<(), String> {
-        let mut indexes = self.indexes.write().unwrap();
-        let initial_len = indexes.len();
-        indexes.retain(|i| !(i.collection == collection && i.name == name));
-        if indexes.len() < initial_len {
+        let removed = update_vec(&self.indexes, |indexes| {
+            let initial_len = indexes.len();
+            indexes.retain(|i| !(i.collection == collection && i.name == name));
+            indexes.len() < initial_len
+        });
+        if removed {
             Ok(())
         } else {
             Err(format!(

@@ -1,6 +1,6 @@
 //! Shared types and helpers for join planning.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 
 use crate::document::DocumentMapping;
 use crate::error::Result;
@@ -12,7 +12,7 @@ use crate::planner::PlanNode;
 pub(in crate::planner) type JoinResult = Result<(
     Box<dyn PlanNode>,
     DocumentMapping,
-    HashMap<String, (String, String)>,
+    RapidHashMap<String, (String, String)>,
     bool, // join_provides_ordering
 )>;
 

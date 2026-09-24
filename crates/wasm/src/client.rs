@@ -7,17 +7,21 @@ use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 
-use db::{AutoCommitMutator, DbCollectionProvider, LensedAutoCommitFetcher, DB};
+use db::{
+    AutoCommitMutator, DbCollectionProvider, DbTransactionRegistry, LensedAutoCommitFetcher, DB,
+};
 use events::Bus;
 use query::runner::QueryRunner;
 use storage::RegolithStore;
 
-type WasmRunner = QueryRunner<LensedAutoCommitFetcher<RegolithStore>>;
+type WasmRunner =
+    QueryRunner<LensedAutoCommitFetcher<RegolithStore>, DbTransactionRegistry<RegolithStore>>;
 
 use crate::bindings::{from_js, to_js, ClientConfig, CollectionInfo, FieldInfo};
+use crate::document_changes::DocumentChanges;
 use crate::error::{Result, WasmError};
 use crate::identity::{ClientIdentity, SigningGuard};
-use defra_core::browser_sync::BrowserSyncRelationship;
+use crate::p2p::P2PRuntime;
 
 /// DefraDB client for browser applications.
 ///
@@ -51,10 +55,10 @@ use defra_core::browser_sync::BrowserSyncRelationship;
 pub struct DefraClient {
     db: Option<Arc<DB<RegolithStore>>>,
     runner: Option<WasmRunner>,
-    event_bus: Arc<events::ChannelBus>,
-    sync_task: Option<crate::sync::SyncTask>,
-    identity: Option<ClientIdentity>,
-    grants: Vec<BrowserSyncRelationship>,
+    pub(crate) event_bus: Arc<events::ChannelBus>,
+    pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
+    pub(crate) p2p: Option<P2PRuntime>,
+    pub(crate) identity: Option<ClientIdentity>,
     mutate_lock: futures::lock::Mutex<()>,
     closed: bool,
 }
@@ -66,8 +70,11 @@ impl DefraClient {
     /// # Configuration
     ///
     /// Pass a JavaScript object with:
-    /// - `db_name`: the OPFS directory the store lives in
-    /// - `db_name`: Database name (optional)
+    /// - `db_name`: the OPFS directory the store lives in (optional)
+    /// - `private_key`, `key_type`: a key to author with (optional)
+    /// - `require_sync_handles`: fail instead of falling back to the
+    ///   in-memory mirror when OPFS synchronous access handles are refused,
+    ///   so a Worker taking over a database can retry (optional)
     ///
     /// # Example
     ///
@@ -144,33 +151,15 @@ impl DefraClient {
         key_type: &str,
     ) -> std::result::Result<String, JsValue> {
         self.ensure_open()?;
+        // A running peer keeps proving the identity it started with, so a new
+        // one would sign writes as a DID its peers cannot tie to this endpoint.
+        if self.p2p.is_some() {
+            return Err(WasmError::P2P("stop P2P before changing identity".into()).into());
+        }
         let identity = ClientIdentity::from_private_key(private_key_hex, key_type)?;
         let did = identity.did().to_string();
         self.identity = Some(identity);
         Ok(did)
-    }
-
-    /// Grant these relations on every document this client authors, applied by
-    /// the push that registers the document rather than by a call after it.
-    ///
-    /// Each entry is `{ relation, target }`, where `target` is an actor DID or
-    /// `*` for everyone. Documents this client did not sign are pushed
-    /// untouched — the node would refuse a grant on them.
-    ///
-    /// # Example
-    ///
-    /// ```javascript
-    /// client.set_grants([{ relation: 'reader', target: '*' }]);
-    /// ```
-    #[wasm_bindgen]
-    pub fn set_grants(&mut self, grants: JsValue) -> std::result::Result<(), JsValue> {
-        self.ensure_open()?;
-        self.grants = if grants.is_undefined() || grants.is_null() {
-            Vec::new()
-        } else {
-            from_js(grants)?
-        };
-        Ok(())
     }
 
     /// The DID this client authors as, or `undefined` when it holds no key.
@@ -179,12 +168,19 @@ impl DefraClient {
         self.identity.as_ref().map(|id| id.did().to_string())
     }
 
+    /// Notifications of documents changing in this client, by a local write
+    /// or a merge from a peer. See [`DocumentChanges`].
+    #[wasm_bindgen]
+    pub fn document_changes(&self) -> std::result::Result<DocumentChanges, JsValue> {
+        self.ensure_open()?;
+        Ok(DocumentChanges::new(
+            self.event_bus.subscribe_document_changes(),
+        ))
+    }
+
     /// A JWT proving possession of this client's key, for `audience` — the host
-    /// of the server it will be sent to, which is what that server checks it
-    /// against.
-    ///
-    /// `sync` mints one of these for itself, so this is for callers that need
-    /// the token for a request of their own.
+    /// of the node's HTTP API it will be sent to, which is what that node checks
+    /// it against.
     #[wasm_bindgen]
     pub fn auth_token(&self, audience: Option<String>) -> std::result::Result<String, JsValue> {
         self.ensure_open()?;
@@ -227,20 +223,6 @@ impl DefraClient {
         self.persist_impl().await.map_err(|e| e.into())
     }
 
-    /// Start bidirectional synchronization with a DefraDB server.
-    ///
-    /// The optional token may be either a raw JWT or a `Bearer <JWT>` value.
-    #[wasm_bindgen]
-    pub async fn sync(
-        &mut self,
-        server_url: &str,
-        auth_token: Option<String>,
-    ) -> std::result::Result<(), JsValue> {
-        self.sync_impl(server_url, auth_token)
-            .await
-            .map_err(Into::into)
-    }
-
     /// Close the client and release resources.
     ///
     /// After closing, the client cannot be used.
@@ -267,7 +249,7 @@ impl DefraClient {
         // A regolith store on the origin-private filesystem, which is the
         // only filesystem this target has.
         let db_name = config.db_name.as_deref().unwrap_or("defradb");
-        let store = RegolithStore::open_opfs(db_name)
+        let store = RegolithStore::open_opfs_with(db_name, config.require_sync_handles)
             .await
             .map_err(|e| WasmError::Storage(format!("Failed to open store: {}", e)))?;
 
@@ -283,13 +265,11 @@ impl DefraClient {
             .map_err(|e| WasmError::Storage(format!("Failed to load collections: {}", e)))?;
 
         let db = Arc::new(db);
-
-        let fetcher = LensedAutoCommitFetcher::new(Arc::clone(&db));
-        let provider = DbCollectionProvider::new_arc(Arc::clone(&db));
-        let mutator = Arc::new(AutoCommitMutator::new(Arc::clone(&db)));
-        let runner = QueryRunner::with_provider(fetcher, provider)
-            .with_mutator(mutator)
-            .with_collection_truncator(db::DbCollectionTruncator::new_arc(Arc::clone(&db)));
+        let document_acp: Arc<dyn acp::DocumentACP> =
+            Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
+                acp::PersistentZanzibarStore::from_store(Arc::clone(db.store())),
+            )));
+        let runner = build_runner(&db, &document_acp, None);
 
         let identity = match (config.private_key.as_deref(), config.key_type.as_deref()) {
             (Some(private_key), key_type) => Some(ClientIdentity::from_private_key(
@@ -303,15 +283,30 @@ impl DefraClient {
             db: Some(db),
             runner: Some(runner),
             event_bus,
-            sync_task: None,
+            document_acp,
+            p2p: None,
             identity,
-            grants: Vec::new(),
             mutate_lock: futures::lock::Mutex::new(()),
             closed: false,
         })
     }
 
-    fn ensure_open(&self) -> Result<&Arc<DB<RegolithStore>>> {
+    /// Swap in a runner whose writes go through the P2P mutator while a peer
+    /// is running, and through plain auto-commit otherwise.
+    pub(crate) fn rebuild_runner(&mut self) {
+        if let Some(db) = self.db.as_ref() {
+            self.runner = Some(build_runner(db, &self.document_acp, self.p2p.as_ref()));
+        }
+    }
+
+    /// Who document ACP sees as the caller: the identity this client authors as.
+    fn caller(&self) -> Option<identity::Did> {
+        self.identity
+            .as_ref()
+            .and_then(|identity| identity::Did::new(identity.did()).ok())
+    }
+
+    pub(crate) fn ensure_open(&self) -> Result<&Arc<DB<RegolithStore>>> {
         if self.closed {
             return Err(WasmError::Closed);
         }
@@ -364,7 +359,10 @@ impl DefraClient {
 
         let runner = self.runner.as_ref().ok_or(WasmError::NotInitialized)?;
 
-        match runner.execute_query(graphql).await {
+        match runner
+            .execute_query_with_identity(graphql, self.caller())
+            .await
+        {
             Ok(result) => {
                 let response = serde_json::json!({
                     "data": result,
@@ -392,7 +390,7 @@ impl DefraClient {
             .runner
             .as_ref()
             .ok_or(WasmError::NotInitialized)?
-            .execute_mutation(graphql)
+            .execute_mutation_with_identity(graphql, self.caller())
             .await;
 
         match result {
@@ -438,7 +436,7 @@ impl DefraClient {
             return Ok(());
         }
 
-        self.stop_sync().await;
+        self.stop_p2p_impl().await;
         self.event_bus.close();
 
         // Drop runner first — it holds Arc<DB> refs via fetcher, mutator, and provider
@@ -470,82 +468,36 @@ impl DefraClient {
         self.closed = true;
         Ok(())
     }
-
-    async fn sync_impl(&mut self, server_url: &str, auth_token: Option<String>) -> Result<()> {
-        let database = Arc::clone(self.ensure_open()?);
-        // Unauthenticated, the push registers ownership from the block
-        // signatures but can grant nothing: `add_actor_relationship` needs a
-        // caller to attribute the grant to.
-        let auth_token = match (auth_token, self.identity.as_ref()) {
-            (Some(token), _) => Some(token),
-            (None, Some(identity)) => Some(identity.auth_token(audience_of(server_url))?),
-            (None, None) => None,
-        };
-        // A bearer token on a cleartext origin is a credential anyone on the
-        // path can take and replay. `localhost` is exempt because a browser
-        // treats it as a secure context and it is where a node is developed
-        // against.
-        if auth_token.is_some() && !is_secure_origin(server_url) {
-            return Err(WasmError::Sync(format!(
-                "refusing to send a token to {server_url}: sync with a token needs https"
-            )));
-        }
-        self.stop_sync().await;
-        self.sync_task = Some(
-            crate::sync::start(
-                database,
-                &self.event_bus,
-                server_url,
-                auth_token,
-                self.grants(),
-            )
-            .await?,
-        );
-        Ok(())
-    }
-
-    fn grants(&self) -> crate::sync::Grants {
-        crate::sync::Grants {
-            relationships: self.grants.clone(),
-            signer_identity: self
-                .identity
-                .as_ref()
-                .map(ClientIdentity::signer_identity)
-                .unwrap_or_default(),
-        }
-    }
-
-    async fn stop_sync(&mut self) {
-        if let Some(task) = self.sync_task.take() {
-            task.stop().await;
-        }
-    }
 }
 
-/// The host a server URL points at, which is the audience its node checks a
-/// token against.
-///
-/// The browser's parser is the right authority here: the node compares the
-/// audience with the `Host` header the browser sends, and that header is this
-/// same `host` — userinfo stripped, scheme lower-cased, a default port left
-/// off, an IPv6 authority bracketed.
-fn audience_of(server_url: &str) -> Option<String> {
-    let host = web_sys::Url::new(server_url).ok()?.host();
-    (!host.is_empty()).then_some(host)
-}
-
-/// Whether a browser treats this origin as secure, so a token may be sent to
-/// it. `localhost` counts, as it does for every other browser API.
-fn is_secure_origin(server_url: &str) -> bool {
-    let Ok(url) = web_sys::Url::new(server_url) else {
-        return false;
+// Nothing here is Send on wasm32, and nothing needs to be.
+#[allow(clippy::arc_with_non_send_sync)]
+fn build_runner(
+    db: &Arc<DB<RegolithStore>>,
+    document_acp: &Arc<dyn acp::DocumentACP>,
+    p2p: Option<&P2PRuntime>,
+) -> WasmRunner {
+    let (mutator, registry): (Arc<dyn query::DocMutator>, _) = match p2p {
+        Some(runtime) => (
+            Arc::clone(&runtime.mutator),
+            DbTransactionRegistry::with_broadcaster(
+                Arc::clone(db),
+                Arc::clone(&runtime.txn_broadcaster),
+            ),
+        ),
+        None => (
+            Arc::new(AutoCommitMutator::new(Arc::clone(db))),
+            DbTransactionRegistry::new(Arc::clone(db)),
+        ),
     };
-    let hostname = url.hostname();
-    url.protocol() == "https:"
-        || hostname == "localhost"
-        || hostname.ends_with(".localhost")
-        || hostname == "127.0.0.1"
-        || hostname == "[::1]"
+    QueryRunner::with_arc_registry_and_provider(
+        LensedAutoCommitFetcher::new(Arc::clone(db)),
+        DbCollectionProvider::new_arc(Arc::clone(db)),
+        Arc::new(registry),
+    )
+    .with_mutator(mutator)
+    .with_collection_truncator(db::DbCollectionTruncator::new_arc(Arc::clone(db)))
+    .with_acp(Arc::clone(document_acp))
 }
 
 #[cfg(test)]
@@ -574,54 +526,37 @@ mod tests {
             db_name: Some(name.to_string()),
             private_key: Some(private_key_hex.clone()),
             key_type: Some("ed25519".into()),
+            ..Default::default()
         })
         .unwrap();
         let client = DefraClient::create(config).await.unwrap();
         (client, private_key_hex)
     }
 
-    /// Every signature over a block of this client's one document, as the
-    /// signer identity each carries: Go's `PublicKey().String()`, so the
-    /// hex-encoded public key as bytes.
-    async fn signing_keys(client: &DefraClient) -> Vec<Vec<u8>> {
+    /// The signer identity of every signed block this client holds, grouped
+    /// by document: Go's `PublicKey().String()`, the hex-encoded public key.
+    async fn signing_keys_by_document(client: &DefraClient) -> Vec<Vec<String>> {
+        let result = client
+            .query("query { _commits { docID signature { identity } } }")
+            .await
+            .unwrap();
+        let result: serde_json::Value = serde_wasm_bindgen::from_value(result).unwrap();
+        let mut by_document: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for commit in result["data"]["_commits"].as_array().unwrap() {
+            let keys = by_document
+                .entry(commit["docID"].as_str().unwrap().to_string())
+                .or_default();
+            if let Some(identity) = commit["signature"]["identity"].as_str() {
+                keys.push(identity.to_string());
+            }
+        }
+        by_document.into_values().collect()
+    }
+
+    /// The same, for a client holding exactly one document.
+    async fn signing_keys(client: &DefraClient) -> Vec<String> {
         signing_keys_by_document(client).await.remove(0)
-    }
-
-    /// The same, for every document this client holds.
-    async fn signing_keys_by_document(client: &DefraClient) -> Vec<Vec<Vec<u8>>> {
-        let engine = db::merge::BrowserSyncEngine::new(Arc::clone(client.db.as_ref().unwrap()));
-        let mut documents = Vec::new();
-        for document_ref in engine.document_refs().await.unwrap() {
-            let document = engine
-                .load_document(&document_ref)
-                .await
-                .unwrap()
-                .expect("the document must be loadable");
-            documents.push(signatures_in(&document));
-        }
-        documents
-    }
-
-    fn signatures_in(document: &defra_core::browser_sync::BrowserSyncDocument) -> Vec<Vec<u8>> {
-        let blocks: std::collections::HashMap<String, Vec<u8>> = document
-            .blocks
-            .iter()
-            .map(|block| (block.cid.clone(), hex::decode(&block.data).unwrap()))
-            .collect();
-        let mut keys = Vec::new();
-        for bytes in blocks.values() {
-            let Ok(block) = defra_core::block::Block::from_dag_cbor(bytes) else {
-                continue;
-            };
-            let Some(signature_cid) = block.signature else {
-                continue;
-            };
-            let signature =
-                defra_core::block::Signature::from_dag_cbor(&blocks[&signature_cid.to_string()])
-                    .expect("a block's signature must decode");
-            keys.push(signature.header.identity);
-        }
-        keys
     }
 
     async fn create_one_document(client: &mut DefraClient) {
@@ -642,8 +577,7 @@ mod tests {
             crypto::private_key_from_string(crypto::KeyType::Ed25519, &private_key_hex)
                 .unwrap()
                 .public_key()
-                .to_hex_string()
-                .into_bytes();
+                .to_hex_string();
 
         create_one_document(&mut client).await;
 
@@ -682,9 +616,8 @@ mod tests {
         client.close().await.unwrap();
     }
 
-    /// The token has to name the same DID the blocks are signed with, or the
-    /// node registers a document to one identity and refuses grants from the
-    /// other.
+    /// The token has to name the same DID the blocks are signed with, or a
+    /// node's HTTP API would see a different caller than the one that authored.
     #[wasm_bindgen_test]
     async fn a_minted_token_names_the_same_did_the_blocks_carry() {
         let (mut client, _) = client_with_identity("signing_token").await;
@@ -737,53 +670,6 @@ mod tests {
         client.close().await.unwrap();
     }
 
-    /// A grant is applied as the caller and refused on a document that caller
-    /// does not own, so attaching one to a relayed document would fail the push
-    /// that carries it.
-    #[wasm_bindgen_test]
-    async fn grants_ride_only_on_documents_this_client_signed() {
-        let (mut client, _) = client_with_identity("signing_grants").await;
-        client
-            .set_grants(
-                serde_wasm_bindgen::to_value(&vec![BrowserSyncRelationship {
-                    relation: "reader".into(),
-                    target: "*".into(),
-                }])
-                .unwrap(),
-            )
-            .unwrap();
-        create_one_document(&mut client).await;
-
-        let engine = db::merge::BrowserSyncEngine::new(Arc::clone(client.db.as_ref().unwrap()));
-        let refs = engine.document_refs().await.unwrap();
-        let mut document = engine.load_document(&refs[0]).await.unwrap().unwrap();
-
-        client.grants().attach(&mut document);
-        assert_eq!(
-            document.relationships.len(),
-            1,
-            "a document this client signed carries its grants"
-        );
-
-        // The same document as far as a relay is concerned: signed by somebody
-        // whose key this client does not hold.
-        let mut relayed = document.clone();
-        relayed.relationships = Vec::new();
-        crate::sync::Grants {
-            relationships: vec![BrowserSyncRelationship {
-                relation: "reader".into(),
-                target: "*".into(),
-            }],
-            signer_identity: b"another-key".to_vec(),
-        }
-        .attach(&mut relayed);
-        assert!(
-            relayed.relationships.is_empty(),
-            "a document signed by another key must go out untouched"
-        );
-        client.close().await.unwrap();
-    }
-
     /// A browser generating its key with WebCrypto exports a JWK whose `d` is
     /// the 32-byte seed, so that is what a caller has in hand. It names the
     /// same identity as the 64-byte form this codebase stores.
@@ -811,7 +697,7 @@ mod tests {
             .mutate(r#"mutation { create_User(input: {name: "Alice"}) { _docID } }"#)
             .await
             .unwrap();
-        let expected = private_key.public_key().to_hex_string().into_bytes();
+        let expected = private_key.public_key().to_hex_string();
         let keys = signing_keys(&client).await;
         assert!(!keys.is_empty() && keys.iter().all(|key| *key == expected));
         client.close().await.unwrap();
@@ -842,64 +728,6 @@ mod tests {
         client.close().await.unwrap();
     }
 
-    /// The node compares the audience with the `Host` header the browser sent,
-    /// so the two have to be derived the same way.
-    #[wasm_bindgen_test]
-    fn an_audience_is_the_host_the_token_is_sent_to() {
-        assert_eq!(
-            audience_of("http://localhost:9181/api/v0"),
-            Some("localhost:9181".into())
-        );
-        assert_eq!(
-            audience_of("https://node.example"),
-            Some("node.example".into())
-        );
-        // A browser leaves a default port off the Host header.
-        assert_eq!(
-            audience_of("https://node.example:443"),
-            Some("node.example".into())
-        );
-        assert_eq!(
-            audience_of("http://node.example:80/x"),
-            Some("node.example".into())
-        );
-        assert_eq!(
-            audience_of("HTTPS://Node.Example/x"),
-            Some("node.example".into())
-        );
-        assert_eq!(
-            audience_of("https://user:pass@node.example"),
-            Some("node.example".into())
-        );
-        assert_eq!(audience_of("https://[::1]:9181"), Some("[::1]:9181".into()));
-        assert_eq!(audience_of(""), None);
-    }
-
-    /// A bearer token on a cleartext origin is a credential anyone on the path
-    /// can take, so sync refuses to send one.
-    #[wasm_bindgen_test]
-    async fn a_token_is_not_sent_over_cleartext() {
-        let (mut client, _) = client_with_identity("signing_cleartext").await;
-        let error = client
-            .sync("http://node.example:9181", None)
-            .await
-            .expect_err("a token must not travel in the clear");
-        assert!(
-            format!("{error:?}").contains("https"),
-            "unexpected error: {error:?}"
-        );
-        client.close().await.unwrap();
-    }
-
-    #[wasm_bindgen_test]
-    fn localhost_is_a_secure_origin_for_a_token() {
-        assert!(is_secure_origin("http://localhost:9181"));
-        assert!(is_secure_origin("http://127.0.0.1:9181"));
-        assert!(is_secure_origin("https://node.example"));
-        assert!(!is_secure_origin("http://node.example"));
-        assert!(!is_secure_origin("not a url"));
-    }
-
     /// A closed client holds no database, so changing what it would author or
     /// minting a credential for it is a mistake worth reporting.
     #[wasm_bindgen_test]
@@ -908,7 +736,6 @@ mod tests {
         client.close().await.unwrap();
 
         assert!(client.set_identity(&private_key_hex, "ed25519").is_err());
-        assert!(client.set_grants(JsValue::NULL).is_err());
         assert!(client.auth_token(None).is_err());
         // Reading back who it was is still fine.
         assert!(client.did().is_some());
@@ -920,6 +747,76 @@ mod tests {
             .await
             .unwrap();
         assert!(!client.closed);
+    }
+
+    /// Tests run on the page's main thread, where browsers refuse synchronous
+    /// access handles. Requiring them must fail the open rather than mount
+    /// the mirror, and must leave nothing held that stops the same database
+    /// opening without the requirement.
+    #[wasm_bindgen_test]
+    async fn a_client_that_requires_sync_handles_is_refused_off_a_worker() {
+        let required = serde_wasm_bindgen::to_value(&ClientConfig {
+            db_name: Some("test_require_sync_handles".to_string()),
+            require_sync_handles: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let refused = match DefraClient::create(required).await {
+            Ok(_) => panic!("a client requiring sync handles opened off a worker"),
+            Err(error) => error.as_string().unwrap_or_default(),
+        };
+        assert!(
+            refused.contains("sync access handles"),
+            "the refusal should name the requirement: {refused}"
+        );
+
+        let client = DefraClient::create(test_config("test_require_sync_handles"))
+            .await
+            .unwrap();
+        assert!(!client.closed);
+    }
+
+    /// A write names its document in the next batch, marked local, and closing
+    /// the client ends the stream with null rather than leaving it pending.
+    #[wasm_bindgen_test]
+    async fn a_local_write_arrives_as_a_document_change() {
+        let mut client = DefraClient::create(test_config("test_document_changes"))
+            .await
+            .unwrap();
+        client
+            .add_schema("type Note { text: String }")
+            .await
+            .unwrap();
+        let mut changes = client.document_changes().unwrap();
+
+        let created = client
+            .mutate(r#"mutation { add_Note(input: {text: "hello"}) { _docID } }"#)
+            .await
+            .unwrap();
+        let created: serde_json::Value = serde_wasm_bindgen::from_value(created).unwrap();
+        let added = &created["data"]["add_Note"];
+        let doc_id = added[0]["_docID"]
+            .as_str()
+            .or_else(|| added["_docID"].as_str())
+            .unwrap_or_else(|| panic!("no _docID in {created}"))
+            .to_string();
+
+        let batch: serde_json::Value =
+            serde_wasm_bindgen::from_value(changes.next_batch().await.unwrap()).unwrap();
+        let change = batch["changes"]
+            .as_array()
+            .and_then(|all| {
+                all.iter()
+                    .find(|change| change["doc_id"] == doc_id.as_str())
+            })
+            .unwrap_or_else(|| panic!("{doc_id} is not in {batch}"));
+        assert_eq!(change["local"], true, "a write here is local: {batch}");
+
+        client.close().await.unwrap();
+        assert!(
+            changes.next_batch().await.unwrap().is_null(),
+            "a closed client ends its change stream"
+        );
     }
 
     #[wasm_bindgen_test]

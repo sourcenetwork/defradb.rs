@@ -3,7 +3,7 @@
 //! Materialized views store query results in a cache. This module builds
 //! execution plans that read from the cache instead of executing live queries.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::error::Result;
 use crate::mapper::Select;
@@ -43,7 +43,7 @@ impl Planner {
             plan,
             index_scan: None,
             ordering_only_fields: Vec::new(),
-            aggregate_internal_keys: HashMap::new(),
+            aggregate_internal_keys: RapidHashMap::new(),
             warnings: Vec::new(),
         })
     }

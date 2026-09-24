@@ -11,6 +11,7 @@ use defra_core::Action;
 
 const ACTION_STATUS_PREFIX: &str = "/a/s";
 const ACTION_REASON_PREFIX: &str = "/a/r";
+const ACTION_PROGRESS_PREFIX: &str = "/a/p";
 
 fn action_key(prefix: &str, collection_id: &str, action: Action, subject: &str) -> Vec<u8> {
     if subject.is_empty() {
@@ -113,6 +114,39 @@ impl Key for ActionReasonKey {
     fn bytes(&self) -> Vec<u8> {
         action_key(
             ACTION_REASON_PREFIX,
+            &self.collection_id,
+            self.action,
+            &self.subject,
+        )
+    }
+}
+
+/// How far an action that runs in batches has got, so a restart resumes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionProgressKey {
+    collection_id: String,
+    action: Action,
+    subject: String,
+}
+
+impl ActionProgressKey {
+    pub fn new(
+        collection_id: impl Into<String>,
+        action: Action,
+        subject: impl Into<String>,
+    ) -> Self {
+        Self {
+            collection_id: collection_id.into(),
+            action,
+            subject: subject.into(),
+        }
+    }
+}
+
+impl Key for ActionProgressKey {
+    fn bytes(&self) -> Vec<u8> {
+        action_key(
+            ACTION_PROGRESS_PREFIX,
             &self.collection_id,
             self.action,
             &self.subject,
@@ -634,6 +668,16 @@ mod tests {
             ActionStatusKey::with_subject("collection", Action::BACKFILL_INDEX, "index_name");
         assert_eq!(subject.bytes(), b"/a/s/collection/3/index_name");
         assert_eq!(ActionStatusKey::parse(&subject.bytes()), Some(subject));
+    }
+
+    #[test]
+    fn action_progress_key_sits_beside_the_status_and_reason() {
+        let progress = ActionProgressKey::new("collection", Action::BACKFILL_INDEX, "7");
+        assert_eq!(progress.bytes(), b"/a/p/collection/3/7");
+        assert_eq!(
+            ActionReasonKey::new("collection", Action::BACKFILL_INDEX, "7").bytes(),
+            b"/a/r/collection/3/7"
+        );
     }
 
     #[test]

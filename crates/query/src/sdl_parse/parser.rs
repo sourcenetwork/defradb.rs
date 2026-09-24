@@ -5,8 +5,8 @@
 
 use crate::error::{QueryError, Result};
 use graphql_parser::schema::{Definition, Document, InterfaceType, ObjectType, TypeDefinition};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
-use std::collections::HashMap;
 
 use super::directives::ParsedDirectives;
 use super::helpers::{detect_missing_field_types, preprocess_empty_types};
@@ -19,7 +19,7 @@ pub(super) const EMPTY_TYPE_PLACEHOLDER: &str = "__defradb_empty_type_placeholde
 pub struct SdlParser<'a> {
     pub(super) sdl: &'a str,
     /// Parsed type definitions by name
-    pub(super) type_defs: HashMap<String, ParsedTypeDef>,
+    pub(super) type_defs: RapidHashMap<String, ParsedTypeDef>,
     /// Type names in SDL definition order (Go returns collections in this order)
     pub(super) definition_order: Vec<String>,
     /// Warnings collected during parsing
@@ -28,7 +28,7 @@ pub struct SdlParser<'a> {
     pub(super) current_type: Option<String>,
     /// External type names (e.g. existing collection types) that can be referenced
     /// in field types but are not defined in the SDL being parsed.
-    pub(super) known_external_types: std::collections::HashSet<String>,
+    pub(super) known_external_types: RapidHashSet<String>,
     /// Accumulated errors from parsing (for multi-error reporting)
     pub(super) errors: Vec<String>,
 }
@@ -103,17 +103,17 @@ impl<'a> SdlParser<'a> {
     pub fn new(sdl: &'a str) -> Self {
         Self {
             sdl,
-            type_defs: HashMap::new(),
+            type_defs: RapidHashMap::new(),
             definition_order: Vec::new(),
             warnings: Vec::new(),
             current_type: None,
-            known_external_types: std::collections::HashSet::new(),
+            known_external_types: RapidHashSet::new(),
             errors: Vec::new(),
         }
     }
 
     /// Set external type names that can be referenced but aren't defined in the SDL.
-    pub fn with_known_types(mut self, types: std::collections::HashSet<String>) -> Self {
+    pub fn with_known_types(mut self, types: RapidHashSet<String>) -> Self {
         self.known_external_types = types;
         self
     }
@@ -269,7 +269,7 @@ pub fn parse_sdl(sdl: &str) -> Result<Vec<CollectionVersion>> {
 /// producing "no type found" errors.
 pub fn parse_sdl_with_known_types(
     sdl: &str,
-    known_types: std::collections::HashSet<String>,
+    known_types: RapidHashSet<String>,
 ) -> Result<Vec<CollectionVersion>> {
     let mut parser = SdlParser::new(sdl).with_known_types(known_types);
     parser.parse()

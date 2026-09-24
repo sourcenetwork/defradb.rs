@@ -1,6 +1,6 @@
 //! Validators that only run during updates (not on initial creation).
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::CollectionVersion;
 
@@ -123,7 +123,7 @@ pub(super) fn validate_id_unique(
     _old_state: &DefinitionState,
 ) -> Vec<String> {
     let mut errs = Vec::new();
-    let mut seen: HashMap<&str, bool> = HashMap::new();
+    let mut seen: RapidHashMap<&str, bool> = RapidHashMap::new();
     for col in &new_state.collections {
         if !col.version_id.is_empty() {
             if seen.contains_key(col.version_id.as_str()) {
@@ -141,7 +141,7 @@ pub(super) fn validate_single_version_active(
     _old_state: &DefinitionState,
 ) -> Vec<String> {
     let mut errs = Vec::new();
-    let mut active_by_collection_id: HashMap<&str, &CollectionVersion> = HashMap::new();
+    let mut active_by_collection_id: RapidHashMap<&str, &CollectionVersion> = RapidHashMap::new();
     for col in &new_state.collections {
         if col.is_active {
             if let Some(existing) = active_by_collection_id.get(col.collection_id.as_str()) {
@@ -179,7 +179,7 @@ pub(super) fn validate_field_not_moved(
             }
         };
 
-        let old_indices: HashMap<&str, usize> = old_col
+        let old_indices: RapidHashMap<&str, usize> = old_col
             .fields
             .iter()
             .enumerate()
@@ -221,7 +221,7 @@ pub(super) fn validate_field_not_mutated(
             }
         };
 
-        let old_fields_by_id: HashMap<&str, &crate::FieldDescription> =
+        let old_fields_by_id: RapidHashMap<&str, &crate::FieldDescription> =
             old_col.fields.iter().map(|f| (f.id.as_str(), f)).collect();
 
         for new_field in &new_col.fields {

@@ -1,7 +1,20 @@
 //! PushLog processing and block storage.
+//!
+//! At the pending-DAG cap a push is acked only when it costs no new slot: a
+//! root already registered or persisted, a scope head that refreshes or
+//! supersedes the current root (which it evicts) or is covered by it, and a
+//! descendant a registered root awaits. Everything else is nacked so the
+//! sender retries. Descendants are not exempt as a class: anything that fails
+//! DAG-CBOR decode is reported `Descendant` by `announced_block_kind`, so a
+//! blanket exemption would admit unbounded CID-valid garbage past the cap
+//! into verification and storage. Pinned by
+//! `at_global_cap_a_cid_valid_malformed_block_is_shed`,
+//! `at_global_cap_an_unawaited_descendant_is_shed`, and
+//! `pending_capacity_sheds_unrelated_blocks_but_accepts_missing_dependency`.
 
-use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use rapidhash::{HashSetExt, RapidHashSet};
+use std::time::Duration;
+use web_time::Instant;
 
 use cid::Cid;
 
@@ -77,7 +90,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         error = %error,
                         "Retryable PushLog storage operation failed; backing off and retrying"
                     );
-                    tokio::time::sleep(retriable_pushlog_delay(attempt)).await;
+                    n0_future::time::sleep(retriable_pushlog_delay(attempt)).await;
                     attempt += 1;
                 }
                 Err(error) => return Err(error),
@@ -324,8 +337,23 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
         let announced_block_kind = announced_block_kind(&msg.block);
         let head_priority = announced_block_kind.priority();
+        // Shed only a genuinely new head that would consume a pending-DAG
+        // slot. A durably owned root and a head already superseded or covered
+        // within its sender scope each ack below without registering anything;
+        // a sender that reads the at-capacity nack as success would otherwise
+        // drop them for good. A descendant carries no such obligation of its
+        // own: `can_process_pushlog` admits it only while a registered root
+        // waits on it, so unawaited bytes stay inside the cap.
         if !self.can_process_pushlog(cid)
+            && !self.persisted_roots.contains_key(cid)
             && !self.scope_head_is_refresh_or_newer(
+                *cid,
+                sender_peer,
+                &msg.collection_id,
+                &msg.doc_id,
+                head_priority,
+            )
+            && !self.scope_head_is_covered_by_current(
                 *cid,
                 sender_peer,
                 &msg.collection_id,
@@ -519,14 +547,16 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         };
                         store.replace_scope_head(None, cid, &record).await?;
                     }
-                    if let Some(current) = self.pending_dags.write().get_mut(cid) {
-                        current.alternate_providers = existing.alternate_providers.clone();
-                        if upgrades_authorization {
-                            current.is_explicit_replicator = true;
-                            current.explicit_replay_authorization =
-                                explicit_replay_authorization.clone();
+                    self.pending_dags.update(|pending| {
+                        if let Some(current) = pending.get_mut(cid) {
+                            current.alternate_providers = existing.alternate_providers.clone();
+                            if upgrades_authorization {
+                                current.is_explicit_replicator = true;
+                                current.explicit_replay_authorization =
+                                    explicit_replay_authorization.clone();
+                            }
                         }
-                    }
+                    });
                     tracing::debug!(
                         cid = %cid,
                         source_peer = ?sender_peer,
@@ -545,7 +575,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 );
                 return Ok(());
             }
-            if self.persisted_roots.read().contains(cid) {
+            if self.persisted_roots.contains_key(cid) {
                 tracing::debug!(
                     cid = %cid,
                     announced_source_peer = ?sender_peer,
@@ -597,7 +627,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         attempts: 0,
                         fetch_failures: 0,
                         last_fetch_error: None,
-                        next_retry_at: tokio::time::Instant::now(),
+                        next_retry_at: n0_future::time::Instant::now(),
                         dispatches: 0,
                         storage_blocker: None,
                     },
@@ -660,37 +690,38 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 let durable_cap = self
                     .max_pending_dags
                     .saturating_mul(super::PERSISTED_PENDING_CAP_FACTOR);
-                // Check-and-reserve atomically under the write lock so the
-                // cap is hard under concurrent PushLogs; a failed put below
-                // releases the reservation. `newly_reserved` is false when
-                // the root already holds a record (re-push refresh).
+                // Check-and-reserve is serialized by the metadata writer held
+                // above, so the cap is hard under concurrent PushLogs; a
+                // failed put below releases the reservation. `newly_reserved`
+                // is false when the root already holds a record (re-push
+                // refresh).
                 enum DurableAdmission {
                     Reserved,
                     AlreadyPresent,
                     AtCapacity,
                 }
-                let admission = {
-                    let mut roots = self.persisted_roots.write();
-                    if roots.contains(cid) {
-                        DurableAdmission::AlreadyPresent
-                    } else if roots.len() >= durable_cap
-                        && superseded_root.is_none_or(|old| !roots.contains(&old))
-                    {
-                        DurableAdmission::AtCapacity
-                    } else {
-                        roots.insert(*cid);
-                        if let Some(old) = superseded_root {
-                            roots.remove(&old);
-                        }
-                        DurableAdmission::Reserved
+                let roots = &self.persisted_roots;
+                let admission = if roots.contains_key(cid) {
+                    DurableAdmission::AlreadyPresent
+                } else if roots.len() >= durable_cap
+                    && superseded_root.is_none_or(|old| !roots.contains_key(&old))
+                {
+                    DurableAdmission::AtCapacity
+                } else {
+                    roots.insert_if_absent(*cid, ());
+                    if let Some(old) = superseded_root {
+                        roots.remove(&old);
                     }
+                    DurableAdmission::Reserved
                 };
                 if matches!(admission, DurableAdmission::AtCapacity) {
                     self.diagnostics.record_pending_dag_capacity_shed();
-                    self.pending_dags.write().remove(cid);
-                    if let Some((old_root, old_dag)) = superseded.clone() {
-                        self.pending_dags.write().insert(old_root, old_dag);
-                    }
+                    self.pending_dags.update(|pending| {
+                        pending.remove(cid);
+                        if let Some((old_root, old_dag)) = superseded.clone() {
+                            pending.insert(old_root, old_dag);
+                        }
+                    });
                     tracing::warn!(
                         cid = %cid,
                         doc_id = %msg.doc_id,
@@ -717,15 +748,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     .await
                 {
                     if newly_reserved {
-                        self.persisted_roots.write().remove(cid);
+                        self.persisted_roots.remove(cid);
                         if let Some(old) = superseded_root {
-                            self.persisted_roots.write().insert(old);
+                            self.persisted_roots.insert_if_absent(old, ());
                         }
                     }
-                    self.pending_dags.write().remove(cid);
-                    if let Some((old_root, old_dag)) = superseded.clone() {
-                        self.pending_dags.write().insert(old_root, old_dag);
-                    }
+                    self.pending_dags.update(|pending| {
+                        pending.remove(cid);
+                        if let Some((old_root, old_dag)) = superseded.clone() {
+                            pending.insert(old_root, old_dag);
+                        }
+                    });
                     tracing::warn!(
                         cid = %cid,
                         doc_id = %msg.doc_id,
@@ -737,7 +770,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     )));
                 }
                 self.diagnostics
-                    .observe_persisted_pending_dag_depth(self.persisted_roots.read().len());
+                    .observe_persisted_pending_dag_depth(self.persisted_roots.len());
                 self.remember_persisted_scope_head(
                     *cid,
                     sender_peer,
@@ -806,7 +839,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// requested CIDs. Merely being connected or having announced the root is
     /// not evidence that a peer can serve linked descendants (#1512).
     pub(crate) fn get_providers_for_cids(&self, cids: &[Cid]) -> Vec<String> {
-        let mut providers = HashSet::new();
+        let mut providers = RapidHashSet::new();
 
         // Add peers known to have any of the CIDs
         for cid in cids {
@@ -854,7 +887,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl PendingDagStorage for BlockingPendingDagStore {
         async fn put(&self, root_cid: &Cid, record: &PersistedPendingDag) -> Result<()> {
             self.inner.put(root_cid, record).await
@@ -1084,7 +1118,7 @@ mod tests {
             manager.pending_dag_missing(&collection_cid),
             vec![field_cid]
         );
-        let due = manager.claim_due_pending_dag_retries(tokio::time::Instant::now());
+        let due = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].0, collection_cid);
         assert_eq!(due[0].1.missing, [field_cid].into_iter().collect());
@@ -1145,7 +1179,7 @@ mod tests {
             .await
             .expect("the later composite head should use the stored descendant");
 
-        assert!(manager.try_claim_pending_dag_dispatch(&head_cid, tokio::time::Instant::now()));
+        assert!(manager.try_claim_pending_dag_dispatch(&head_cid, n0_future::time::Instant::now()));
         assert!(manager
             .retry_pending_dag(&head_cid)
             .await
@@ -1175,14 +1209,14 @@ mod tests {
         let message = make_broadcast("doc123", root_cid, root_block, "collection1");
 
         let process_manager = Arc::clone(&manager);
-        let process = tokio::spawn(async move {
+        let process = n0_future::task::spawn(async move {
             process_manager
                 .process_pushlog(&message, Some("peer-1"), false, None)
                 .await
         });
 
         pending_store.replace_entered.notified().await;
-        let claimed = manager.claim_due_pending_dag_retries(tokio::time::Instant::now());
+        let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert_eq!(
             claimed.len(),
             0,
@@ -1198,7 +1232,7 @@ mod tests {
             events.try_recv().is_err(),
             "the PushLog path must not emit outside the receiver clock"
         );
-        let claimed = manager.claim_due_pending_dag_retries(tokio::time::Instant::now());
+        let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].0, root_cid);
     }
@@ -1235,7 +1269,7 @@ mod tests {
         assert_eq!(manager.pending_dag_count(), 1);
         assert_eq!(
             manager
-                .claim_due_pending_dag_retries(tokio::time::Instant::now())
+                .claim_due_pending_dag_retries(n0_future::time::Instant::now())
                 .len(),
             1
         );
@@ -1270,7 +1304,7 @@ mod tests {
 
         let owner_manager = Arc::clone(&manager);
         let owner_message = Arc::clone(&message);
-        let owner = tokio::spawn(async move {
+        let owner = n0_future::task::spawn(async move {
             owner_manager
                 .process_pushlog(&owner_message, Some("peer-0"), false, None)
                 .await
@@ -1283,7 +1317,7 @@ mod tests {
         for peer in 1..ANNOUNCEMENT_COUNT {
             let manager = Arc::clone(&manager);
             let message = Arc::clone(&message);
-            suppressed.push(tokio::spawn(async move {
+            suppressed.push(n0_future::task::spawn(async move {
                 let peer = format!("peer-{peer}");
                 manager
                     .process_pushlog(&message, Some(&peer), false, None)
@@ -1291,7 +1325,7 @@ mod tests {
             }));
         }
 
-        tokio::time::timeout(Duration::from_secs(1), async {
+        n0_future::time::timeout(Duration::from_secs(1), async {
             for task in suppressed {
                 let result = task.await.expect("suppressed task should not panic");
                 assert!(
@@ -1320,7 +1354,7 @@ mod tests {
             .expect("owner should complete");
 
         assert!(events.try_recv().is_err());
-        let claimed = manager.claim_due_pending_dag_retries(tokio::time::Instant::now());
+        let claimed = manager.claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].0, root_cid);
         assert_eq!(manager.pending_dag_count(), 1);
@@ -1367,7 +1401,7 @@ mod tests {
             .try_acquire_nowait(&cid)
             .expect("simulate the ordinary announcement owner");
 
-        let replay_result = tokio::time::timeout(
+        let replay_result = n0_future::time::timeout(
             Duration::from_secs(1),
             manager.process_pushlog(&message, Some("peer-1"), true, Some(authorization.clone())),
         )

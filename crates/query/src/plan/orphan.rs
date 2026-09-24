@@ -1,11 +1,11 @@
 //! OrphanNode scans for documents without a matching relation (orphans)
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use async_lock::RwLock;
 use async_trait::async_trait;
 use document::NormalValue;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 
 use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
@@ -15,7 +15,12 @@ use crate::planner::{IndexScanParams, IndexScanType};
 
 /// Shared set of parent docIDs yielded by the main join.
 /// TypeJoinOne writes to this during iteration; OrphanNode reads it to skip non-orphans.
-pub type SharedYieldedIds = Arc<RwLock<HashSet<String>>>;
+pub type SharedYieldedIds = Arc<HopscotchMap<String, (), RandomState>>;
+
+/// Create an empty shared set of yielded parent docIDs.
+pub fn new_shared_yielded_ids() -> SharedYieldedIds {
+    Arc::new(HopscotchMap::with_hasher(RandomState::default()))
+}
 
 enum Inner {
     /// Parent stores FK: wraps a scan with FK IS NULL filter, just delegates.
@@ -150,8 +155,7 @@ impl PlanNode for OrphanNode {
                 self.exec_info.docs_fetched += 1;
                 self.exec_info.fields_fetched += 1;
                 if let Some(doc_id) = doc.doc_id() {
-                    let ids = yielded_ids.read().await;
-                    if ids.contains(doc_id) {
+                    if yielded_ids.contains_key(doc_id) {
                         continue;
                     }
 

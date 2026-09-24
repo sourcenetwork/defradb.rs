@@ -12,3 +12,5 @@ mod index;
 mod key_management;
 #[path = "encryption/se_cross_runtime.rs"]
 mod se_cross_runtime;
+#[path = "encryption/se_merge_scope.rs"]
+mod se_merge_scope;

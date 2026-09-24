@@ -1,6 +1,7 @@
 //! IPLD link extraction and missing link detection.
 
-use std::collections::{HashSet, VecDeque};
+use rapidhash::{HashSetExt, RapidHashSet};
+use std::collections::VecDeque;
 
 use bytes::Bytes;
 use cid::Cid;
@@ -63,7 +64,7 @@ pub async fn find_all_missing_links<B: Blockstore>(
     block_data: &[u8],
 ) -> Result<Vec<Cid>> {
     let mut missing = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = RapidHashSet::new();
     let mut queue: VecDeque<Bytes> = VecDeque::new();
     queue.push_back(Bytes::copy_from_slice(block_data));
 

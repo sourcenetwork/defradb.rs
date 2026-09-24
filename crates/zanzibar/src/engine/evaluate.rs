@@ -34,7 +34,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
     ) -> MaybeBoxFuture<'a, Result<Eval>> {
         Box::pin(async move {
             let key = CheckKey::new(policy_id, resource, object_id, relation, subject);
-            if let Some(cached) = cache.get(&key).await {
+            if let Some(cached) = cache.get(&key) {
                 cache.budget.charge()?;
                 // Only untainted results are ever stored, so a hit is trail-independent.
                 return Ok((cached, false));
@@ -54,7 +54,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                 .await?;
 
             if !tainted {
-                cache.set(key, value).await;
+                cache.set(key, value);
             }
 
             Ok((value, tainted))

@@ -7,3 +7,4 @@ mod lifecycle;
 mod registry_suite;
 
 mod ownership;
+mod store_release;

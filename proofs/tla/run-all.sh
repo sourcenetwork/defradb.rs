@@ -141,6 +141,7 @@ RUNS=(
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)
+  "MC_HeadSet_Red_PerKeyScan.cfg   HeadSet.tla                  RED"   # a head scan validated per key: a sweep reclaiming a key the scan yielded aborts an in-flight append (INV_NoWriteConflict)
 )
 
 fails=0; n=0

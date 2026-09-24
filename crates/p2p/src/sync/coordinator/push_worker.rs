@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use cid::Cid;
-use parking_lot::Mutex;
+use kovan::AtomOption;
 
 use super::{PushFailure, SyncShutdownHandle};
 use crate::message::PushLogRequest;
@@ -21,7 +21,7 @@ pub(super) struct PushWorkerContext<T> {
     pub(super) transport: T,
     pub(super) backlog: Arc<PushBacklog>,
     pub(super) selective_car_access: Arc<super::selective_car_access::SelectiveCarAccess>,
-    pub(super) failure_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<PushFailure>>>>,
+    pub(super) failure_tx: Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
     pub(super) send_timeout: Duration,
 }
 
@@ -31,7 +31,7 @@ pub(super) struct PushWorkerContext<T> {
 /// this queue exists to make durable. Only a closed channel (recorder gone,
 /// process shutting down) is logged and released.
 pub(super) async fn report_push_failure(
-    failure_tx: &Arc<Mutex<Option<tokio::sync::mpsc::Sender<PushFailure>>>>,
+    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
     peer_id: &crate::transport::PeerId,
     doc_id: String,
     collection_id: String,
@@ -52,7 +52,7 @@ pub(super) async fn report_push_failure(
 }
 
 pub(super) async fn report_observed_head(
-    failure_tx: &Arc<Mutex<Option<tokio::sync::mpsc::Sender<PushFailure>>>>,
+    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
     job: &PushJobSpec,
 ) -> bool {
     report_push_event(
@@ -69,7 +69,7 @@ pub(super) async fn report_observed_head(
 }
 
 pub(super) async fn report_push_ack(
-    failure_tx: &Arc<Mutex<Option<tokio::sync::mpsc::Sender<PushFailure>>>>,
+    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
     job: &PushJobSpec,
 ) -> bool {
     report_push_event(
@@ -87,7 +87,7 @@ pub(super) async fn report_push_ack(
 
 #[allow(clippy::too_many_arguments)]
 async fn report_push_event(
-    failure_tx: &Arc<Mutex<Option<tokio::sync::mpsc::Sender<PushFailure>>>>,
+    failure_tx: &Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
     peer_id: &crate::transport::PeerId,
     doc_id: String,
     collection_id: String,
@@ -112,7 +112,7 @@ async fn report_push_event(
         }
         return false;
     }
-    let tx = failure_tx.lock().clone();
+    let tx = failure_tx.load().as_deref().cloned();
     if let Some(tx) = tx {
         let (durable_tx, durable_rx) = if create_retry || acknowledged {
             (None, None)
@@ -134,7 +134,7 @@ async fn report_push_event(
         // recorder backpressure surface in the logs instead of silently
         // stalling the push pool.
         loop {
-            match tokio::time::timeout(Duration::from_secs(5), tx.reserve()).await {
+            match n0_future::time::timeout(Duration::from_secs(5), tx.reserve()).await {
                 Ok(Ok(permit)) => {
                     permit.send(failure);
                     return match durable_rx {
@@ -174,7 +174,7 @@ pub(super) fn spawn_push_workers<T>(
         shutdown.spawn_task(async move {
             while let Some(job) = context.backlog.next_job().await {
                 let completion = run_push_job(&context, &job).await;
-                context.backlog.job_done(&job, completion);
+                context.backlog.job_done(&job, completion).await;
             }
         });
     }
@@ -184,7 +184,7 @@ async fn run_push_job<T>(context: &PushWorkerContext<T>, job: &PushJobSpec) -> J
 where
     T: P2PTransport,
 {
-    if !context.backlog.is_current(job) {
+    if !context.backlog.is_current(job).await {
         return JobCompletion::Retired;
     }
 
@@ -227,7 +227,7 @@ where
     // is going to be rejected for the same reason (defradb#1112).
     if send_outcome.at_capacity {
         context.backlog.park_peer_at_capacity(&job.peer_id);
-        for queued_job in context.backlog.take_queued_for_peer(&job.peer_id) {
+        for queued_job in context.backlog.take_queued_for_peer(&job.peer_id).await {
             let peer_id = queued_job.peer_id.clone();
             let head_priority = queued_job.head_priority();
             let _ = report_push_failure(
@@ -244,7 +244,7 @@ where
     let send_failed = send_outcome.failed;
     let any_failed = root_missing || send_failed;
 
-    if any_failed && context.backlog.is_current(job) {
+    if any_failed && context.backlog.is_current(job).await {
         let _ = report_push_failure(
             &context.failure_tx,
             &job.peer_id,
@@ -255,7 +255,7 @@ where
         )
         .await;
         JobCompletion::Failed
-    } else if context.backlog.is_current(job) {
+    } else if context.backlog.is_current(job).await {
         let _ = report_push_ack(&context.failure_tx, job).await;
         JobCompletion::Succeeded
     } else {
@@ -300,7 +300,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
 ) -> PushSendOutcome {
     use crate::error::is_at_capacity_message;
 
-    match tokio::time::timeout(
+    match n0_future::time::timeout(
         send_timeout,
         transport.send_two_stream_request(peer_id, request.clone()),
     )

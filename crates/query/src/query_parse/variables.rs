@@ -1,6 +1,6 @@
 //! Variable handling for GraphQL queries
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use graphql_parser::query::{Type, VariableDefinition};
 use serde_json::Value as JsonValue;
@@ -13,9 +13,9 @@ use super::values::graphql_value_to_json_no_vars;
 ///
 /// Provided variables take precedence over defaults.
 pub(crate) fn merge_variables(
-    provided: Option<&HashMap<String, JsonValue>>,
-    defaults: &HashMap<String, JsonValue>,
-) -> HashMap<String, JsonValue> {
+    provided: Option<&RapidHashMap<String, JsonValue>>,
+    defaults: &RapidHashMap<String, JsonValue>,
+) -> RapidHashMap<String, JsonValue> {
     let mut merged = defaults.clone();
     if let Some(vars) = provided {
         for (k, v) in vars {
@@ -27,12 +27,12 @@ pub(crate) fn merge_variables(
 
 /// Extract default values from variable definitions.
 ///
-/// Returns a HashMap of variable name -> default value for all variables
+/// Returns a RapidHashMap of variable name -> default value for all variables
 /// that have a default value defined.
 pub(crate) fn extract_variable_defaults(
     var_defs: &[VariableDefinition<'_, String>],
-) -> Result<HashMap<String, JsonValue>> {
-    let mut defaults = HashMap::new();
+) -> Result<RapidHashMap<String, JsonValue>> {
+    let mut defaults = RapidHashMap::new();
     for var_def in var_defs {
         if let Some(default_value) = &var_def.default_value {
             // Convert the default value without variable resolution (defaults can't reference other variables)
@@ -58,7 +58,7 @@ fn format_type(ty: &Type<'_, String>) -> String {
 /// the effective variables map.
 pub(crate) fn validate_required_variables(
     var_defs: &[VariableDefinition<'_, String>],
-    effective_variables: &HashMap<String, JsonValue>,
+    effective_variables: &RapidHashMap<String, JsonValue>,
 ) -> Result<()> {
     for var_def in var_defs {
         if matches!(&var_def.var_type, Type::NonNullType(_))

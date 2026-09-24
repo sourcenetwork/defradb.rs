@@ -10,6 +10,7 @@ name = "ffi-test"
 path = "src/main.rs"
 
 [dependencies]
+rapidhash.workspace = true
 axum = { workspace = true }
 defra-version = { path = "../../crates/defra-version" }
 clap = { version = "4.5", features = ["derive"] }

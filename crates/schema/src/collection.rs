@@ -5,8 +5,8 @@ use crate::{
     FieldKind, FullTextIndexDescription, IndexDescription, PolicyDescription, QuerySource, Result,
     SchemaError, VectorEmbeddingDescription,
 };
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 /// Sentinel collection ID for placeholder versions whose real collection is unknown.
@@ -345,7 +345,7 @@ impl CollectionVersion {
     }
 
     fn validate_no_duplicate_index_names(&self) -> Result<()> {
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         for index in &self.indexes {
             if !seen.insert(&index.name) {
                 return Err(SchemaError::DuplicateIndexName(index.name.clone()));
@@ -355,7 +355,7 @@ impl CollectionVersion {
     }
 
     fn validate_encrypted_indexes(&self) -> Result<()> {
-        let mut encrypted_fields = HashSet::new();
+        let mut encrypted_fields = RapidHashSet::new();
         for index in &self.encrypted_indexes {
             if self.field_by_name(&index.field_name).is_none() {
                 return Err(SchemaError::EncryptedIndexUnknownField(
@@ -461,7 +461,7 @@ impl CollectionVersion {
     /// Validate with access to other collections for relation checking
     pub fn validate_with_collections(
         &self,
-        collections: &HashMap<String, CollectionVersion>,
+        collections: &RapidHashMap<String, CollectionVersion>,
     ) -> Result<()> {
         self.validate()?;
         self.validate_relations(collections)?;
@@ -469,7 +469,7 @@ impl CollectionVersion {
     }
 
     fn validate_no_duplicate_names(&self) -> Result<()> {
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         for field in &self.fields {
             if !seen.insert(&field.name) {
                 return Err(SchemaError::DuplicateFieldName(field.name.clone()));
@@ -485,7 +485,10 @@ impl CollectionVersion {
         Ok(())
     }
 
-    fn validate_relations(&self, collections: &HashMap<String, CollectionVersion>) -> Result<()> {
+    fn validate_relations(
+        &self,
+        collections: &RapidHashMap<String, CollectionVersion>,
+    ) -> Result<()> {
         for field in self.relation_fields() {
             if let Some(collection_id) = field.kind.relation_collection_id() {
                 if !collections.contains_key(collection_id) {

@@ -11,8 +11,24 @@ repository.workspace = true
 ignored = ["futures", "hyper"]
 
 [features]
-default = []
-test-utils = []
+default = ["server"]
+# The axum server, its handlers, and middleware. Without it only the operation
+# traits and their wire types remain, which is what a browser peer's P2P
+# adapter implements; none of the server stack builds for wasm32.
+server = [
+    "dep:async-stream",
+    "dep:axum",
+    "dep:axum-server",
+    "dep:hyper",
+    "dep:rand",
+    "dep:rustls",
+    "dep:telemetry",
+    "dep:tokio",
+    "dep:tokio-stream",
+    "dep:tower",
+    "dep:tower-http",
+]
+test-utils = ["server"]
 
 [lib]
 bench = false
@@ -28,7 +44,7 @@ defra-core = { path = "../defra-core" }
 defra-version = { path = "../defra-version" }
 crypto = { path = "../crypto" }
 lens = { path = "../lens", default-features = false }
-db = { path = "../db", default-features = false, features = ["native"] }
+db = { path = "../db", default-features = false }
 
 # Encoding
 hex = "0.4"
@@ -36,33 +52,45 @@ base64.workspace = true
 cid.workspace = true
 
 # Async runtime
-tokio = { workspace = true, features = ["rt", "net", "time"] }
-tokio-stream.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "time"], optional = true }
+tokio-stream = { workspace = true, optional = true }
 async-trait.workspace = true
 futures.workspace = true
-async-stream = "0.3"
+async-stream = { version = "0.3", optional = true }
 
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
 
+# Hashing
+rapidhash.workspace = true
+
+# Lock-free shared state
+kovan.workspace = true
+kovan-map.workspace = true
+kovan-queue.workspace = true
+
 # HTTP server
-axum.workspace = true
-axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-tower.workspace = true
-tower-http.workspace = true
-hyper.workspace = true
+axum = { workspace = true, optional = true }
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
 
 # Error handling
 thiserror.workspace = true
 
 # Logging
 tracing.workspace = true
-telemetry = { path = "../telemetry" }
+telemetry = { path = "../telemetry", optional = true }
 
 # Retry jitter
-rand.workspace = true
+rand = { workspace = true, optional = true }
+
+# db's native runtime is the only one it builds with off-wasm, server or not.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+db = { path = "../db", default-features = false, features = ["native"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "test-util"] }

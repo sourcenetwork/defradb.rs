@@ -1,6 +1,6 @@
 //! Building the pruned graph from HNSW's layer 0.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use super::codec::{self, BuiltState};
 use super::Ssg;
@@ -169,6 +169,15 @@ impl<S: VectorNodeStore> Ssg<S> {
     /// Without this the node reaches the HNSW graph but never the pruned one a
     /// search walks, so it is invisible until the next rebuild.
     pub(super) async fn attach(&mut self, id: NodeId) -> Result<()> {
+        // Updating a vector must not remove paths through this node.
+        if self
+            .store()
+            .get_aux(codec::ADJACENCY, &codec::node_key(id))
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
         let Some(node) = self.store().get_node(id).await? else {
             return Ok(());
         };
@@ -179,7 +188,7 @@ impl<S: VectorNodeStore> Ssg<S> {
         let mut candidates = Vec::new();
         for neighbour in node.neighbors(0) {
             if let Some(other) = self.store().get_node(*neighbour).await? {
-                if other.deleted {
+                if other.deleted || other.id == id {
                     continue;
                 }
                 candidates.push(Candidate {
@@ -203,26 +212,63 @@ impl<S: VectorNodeStore> Ssg<S> {
             )
             .await?;
 
-        // Edges out are not enough: a walk arrives from somewhere, so the
-        // neighbours need edges back or nothing ever reaches the new node.
-        for neighbour in kept {
-            let mut theirs = self.neighbours(neighbour).await?;
-            if theirs.contains(&id) {
-                continue;
-            }
-            if theirs.len() >= max {
-                theirs.pop();
-            }
-            theirs.push(id);
-            self.store_mut()
-                .put_aux(
-                    codec::ADJACENCY,
-                    &codec::node_key(neighbour),
-                    &codec::encode_neighbours(&theirs),
-                )
-                .await?;
-        }
+        let state = self.built().await?.expect("attach requires a built graph");
+        let host = self
+            .nearest_reachable(&node.vector, state.entry_point)
+            .await?;
+        self.connect(host, id, max).await?;
         Ok(())
+    }
+
+    /// Splice an unreachable node into a reachable edge instead of deleting
+    /// that edge's only path. The new node inherits the displaced destination.
+    async fn connect(&mut self, host: NodeId, id: NodeId, max: usize) -> Result<()> {
+        let mut hosts = self.neighbours(host).await?;
+        if host == id || hosts.contains(&id) {
+            return Ok(());
+        }
+        if hosts.len() >= max {
+            let node = self
+                .store()
+                .get_node(host)
+                .await?
+                .ok_or_else(|| Error::Other("SSG host is missing".into()))?;
+            let mut worst = 0;
+            let mut distance = f64::NEG_INFINITY;
+            for (slot, neighbor) in hosts.iter().enumerate() {
+                let score = match self.store().get_node(*neighbor).await? {
+                    Some(other) => self.metric().distance_stored(&node.vector, &other.vector),
+                    None => f64::INFINITY,
+                };
+                if score >= distance {
+                    worst = slot;
+                    distance = score;
+                }
+            }
+            let displaced = hosts.remove(worst);
+            let mut edges = self.neighbours(id).await?;
+            if !edges.contains(&displaced) {
+                if edges.len() >= max {
+                    edges.pop();
+                }
+                edges.push(displaced);
+                self.store_mut()
+                    .put_aux(
+                        codec::ADJACENCY,
+                        &codec::node_key(id),
+                        &codec::encode_neighbours(&edges),
+                    )
+                    .await?;
+            }
+        }
+        hosts.push(id);
+        self.store_mut()
+            .put_aux(
+                codec::ADJACENCY,
+                &codec::node_key(host),
+                &codec::encode_neighbours(&hosts),
+            )
+            .await
     }
 
     /// Angular pruning can strand a node: nothing reachable from the entry
@@ -234,7 +280,7 @@ impl<S: VectorNodeStore> Ssg<S> {
         ids: &[NodeId],
         max: usize,
     ) -> Result<u64> {
-        let mut visited: HashSet<NodeId> = HashSet::with_capacity(ids.len());
+        let mut visited: RapidHashSet<NodeId> = RapidHashSet::with_capacity(ids.len());
         let mut stack = vec![entry];
         while let Some(id) = stack.pop() {
             if !visited.insert(id) {
@@ -259,25 +305,14 @@ impl<S: VectorNodeStore> Ssg<S> {
             // The nearest reachable node, found by walking the graph as a
             // search would, so the repair matches how it will be traversed.
             let host = self.nearest_reachable(&node.vector, entry).await?;
-            let mut hosts = self.neighbours(host).await?;
-            if !hosts.contains(id) {
-                if hosts.len() >= max {
-                    hosts.pop();
-                }
-                hosts.push(*id);
-                self.store_mut()
-                    .put_aux(
-                        codec::ADJACENCY,
-                        &codec::node_key(host),
-                        &codec::encode_neighbours(&hosts),
-                    )
-                    .await?;
-            }
+            self.connect(host, *id, max).await?;
 
             reattached += 1;
-            visited.insert(*id);
-            for neighbour in self.neighbours(*id).await? {
-                visited.insert(neighbour);
+            stack.push(*id);
+            while let Some(reached) = stack.pop() {
+                if visited.insert(reached) {
+                    stack.extend(self.neighbours(reached).await?);
+                }
             }
         }
         Ok(reattached)

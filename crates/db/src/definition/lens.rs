@@ -3,7 +3,7 @@
 //! This module contains common functions used by both LensedDocFetcher
 //! and LensedAutoCommitFetcher for document migration operations.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap};
 
 use document::Document;
 use lens::{
@@ -99,7 +99,7 @@ pub fn versions_have_migrations(versions: &[CollectionVersion]) -> bool {
 pub fn build_collection_history(
     versions: &[CollectionVersion],
     target_version_id: &str,
-) -> Option<HashMap<String, TargetedHistoryLink>> {
+) -> Option<RapidHashMap<String, TargetedHistoryLink>> {
     info!(
         version_count = versions.len(),
         target_version_id = %target_version_id,
@@ -111,7 +111,7 @@ pub fn build_collection_history(
         return None;
     }
 
-    let mut full_history: HashMap<String, CollectionHistoryLink> = HashMap::new();
+    let mut full_history: RapidHashMap<String, CollectionHistoryLink> = RapidHashMap::new();
 
     // Add each version to the history
     for version in versions {
@@ -213,7 +213,7 @@ pub fn build_collection_history(
 /// avoid stamping transform-less paths before an application has explicitly requested eager
 /// identity materialization.
 pub fn migration_path_has_transform(
-    history: &HashMap<String, TargetedHistoryLink>,
+    history: &RapidHashMap<String, TargetedHistoryLink>,
     source_version_id: &str,
     target_version_id: &str,
 ) -> bool {
@@ -222,7 +222,7 @@ pub fn migration_path_has_transform(
     }
 
     let mut current = source_version_id;
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = rapidhash::RapidHashSet::new();
     visited.insert(current.to_string());
     let mut has_transform = false;
 

@@ -21,7 +21,12 @@ storage = { path = "../storage" }
 identity = { path = "../identity" }
 acp = { path = "../acp" }
 kms = { path = "../kms", optional = true }
-kovan-map = { version = "0.1.20", optional = true }
+
+# Lock-free shared state (see the workspace manifest).
+kovan = { workspace = true }
+kovan-map = { workspace = true }
+kovan-queue = { workspace = true }
+kovan-channel = { workspace = true }
 
 # libp2p transport
 libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "identify", "request-response", "macros", "tokio", "gossipsub", "kad", "relay", "dns", "quic", "websocket", "memory-connection-limits"], optional = true }
@@ -30,9 +35,15 @@ libp2p-stream = { workspace = true, optional = true }
 multiaddr = { workspace = true, optional = true }
 
 # Async
-tokio = { workspace = true, features = ["sync", "rt", "macros", "fs", "time"] }
+tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
 async-trait = { workspace = true }
 futures = { workspace = true }
+# Spawning that resolves to tokio natively and to wasm-bindgen-futures in a
+# browser, behind one JoinHandle surface. iroh already builds on it.
+n0-future.workspace = true
+# std::time::Instant and SystemTime panic in a browser. This is std verbatim
+# off-wasm, so native timing behavior is untouched.
+web-time.workspace = true
 
 # Serialization
 serde = { workspace = true }
@@ -64,20 +75,20 @@ sysinfo = { version = "0.33", optional = true }
 # Bytes
 bytes = { workspace = true }
 
+# Hashing
+rapidhash = { workspace = true }
+
 # Varint encoding for CARv1 format
 unsigned-varint = "0.8"
 
-# Synchronization (non-poisoning locks)
-parking_lot = { workspace = true }
 lru = { workspace = true, optional = true }
 
 # Iroh transport (optional)
 iroh = { workspace = true, optional = true }
 iroh-gossip = { workspace = true, optional = true }
 iroh-tickets = { workspace = true, optional = true }
-# Preserve the noq defaults and feature aliases that iroh-blobs previously
-# enabled transitively, including the Iroh endpoint's bloom token log.
-noq = { version = "1.1", features = ["bloom", "rustls-ring"], optional = true }
+iroh-relay = { workspace = true, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 rand = { version = "0.9", optional = true }
 blake3 = { version = "1", optional = true }
 
@@ -96,14 +107,29 @@ libp2p-transport = [
 # The KMS pubsub-RPC layer (crate::kms + crate::pubsub_rpc + the coordinator's
 # KMS transport slot). Transport-generic; implied by libp2p-transport and
 # opt-in for iroh-only builds.
-kms = ["dep:kms", "dep:kovan-map"]
+kms = ["dep:kms"]
 iroh-transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets", "dep:noq", "dep:rand", "dep:blake3", "dep:lru"]
+# Host an iroh relay server next to the endpoint. Pulls in the relay's HTTP,
+# WebSocket, and TLS stack, so it stays out of plain iroh builds.
+iroh-relay-server = ["iroh-transport", "dep:iroh-relay", "dep:rustls"]
+
+# iroh links noq only off-wasm, so the feature pin preserving its bloom token
+# log and ring provider belongs here, not in the shared dependency list. tokio's
+# fs driver has no wasm implementation and only the secret-key loader wants it.
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+noq = { version = "1.1", features = ["bloom", "rustls-ring"], optional = true }
+tokio = { workspace = true, features = ["fs"] }
+
+# rand reaches getrandom 0.3, which refuses to build for the browser without an
+# explicit backend. The matching --cfg lives in .cargo/config.toml.
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 
 [package.metadata.cargo-machete]
-ignored = ["multiaddr", "noq", "rand"]
+ignored = ["getrandom", "multiaddr", "noq", "rand"]
 
 [lints]
 workspace = true

@@ -86,7 +86,7 @@ crates/
 ├── query/              # Query engine (GraphQL, BM25)
 ├── replication-filter/ # Query-filter-backed replication matcher
 ├── schema/             # Schema validation
-├── sourcehub/          # On-chain ACP client (Cosmos/EVM)
+├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
 ├── storage/            # Storage layer over regolith, the one engine
 ├── telemetry/          # OpenTelemetry exporter setup
 ├── wasm/               # Browser client (WebAssembly)
@@ -181,7 +181,7 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | Identity | `--test identity` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `--test backup` | dev_mode, dump, purge, restore |
 | Cursor | `--test cursor` | composite_index, error_paths, reindex_datetime_visibility, smoke |
-| SourceHub | `--test sourcehub` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
+| Vera | `--test vera` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
 | Hub.rs | `--test hubrs` | compartments, p2p_acp, policy_lifecycle, smoke |
 
 Single-purpose binaries, each its own `[[test]]` with no submodules:
@@ -199,17 +199,18 @@ Single-purpose binaries, each its own `[[test]]` with no submodules:
 | `--test issue1194_repro` | concurrent updates to distinct documents must not conflict |
 | `--test issue1211_repro` | same, through a branchable collection's head set |
 | `--test issue1294_bytes_json` | Blob-as-Bytes create+query must return lowercase hex |
-| `--test client_authored` | client-signed commit fragments pushed to `/sync`, and verified reads via `/block/signed` |
 
 ### Rust Commands
 
 ```bash
 cargo test                         # Run all unit tests
 cargo test -p crdt                 # Test specific crate
-cargo clippy --all -- -D warnings  # Lint
+cargo clippy --all --all-targets -- -D warnings  # Lint, benches included
 just check-node-graph              # Feature-graph contracts for defra-node
 cargo fmt --all                    # Format
 cargo build --release              # Build release
+just test-wasm                     # Browser wasm tests in headless Firefox
+just test-browser-p2p              # Browser peer ↔ native node through a hosted iroh relay
 ```
 
 ### Build Profile in Worktrees
@@ -269,7 +270,7 @@ git worktree remove ../defradb.rs-foo              # Remove worktree
 ## Before Committing
 
 1. `cargo test` passes
-2. `cargo clippy --all -- -D warnings` clean
+2. `cargo clippy --all --all-targets -- -D warnings` clean
 3. `cargo fmt --all` applied
 4. If touching core behavior: `cargo test -p integration-test` passes
 
@@ -297,7 +298,8 @@ file keeps loading.
 
 Profiles come from regolith itself: `Options::default()` for a server,
 `Options::embedded()` for a 1-4 MiB working set, and `Options::wasm()` for a
-browser or wasi module. Transactions run at `Serializable` with
+browser or wasi module. Transactions run at `RepeatableRead` (every point read
+validated, scans recorded per stretch and never per key) with
 `DurabilityMode::Immediate`.
 
 ## Goal

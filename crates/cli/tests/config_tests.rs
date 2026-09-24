@@ -28,21 +28,21 @@ fn cli_with_defaults() -> Cli {
         keyring_backend: None,
         keyring_path: None,
         no_keyring: None,
-        #[cfg(feature = "sourcehub")]
-        source_hub_address: None,
-        #[cfg(feature = "sourcehub")]
-        source_hub_grpc_address: None,
-        #[cfg(feature = "sourcehub")]
-        source_hub_comet_address: None,
-        #[cfg(feature = "sourcehub")]
-        source_hub_events_ws: None,
-        #[cfg(feature = "sourcehub")]
-        source_hub_chain_id: None,
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
+        vera_address: None,
+        #[cfg(feature = "vera")]
+        vera_grpc_address: None,
+        #[cfg(feature = "vera")]
+        vera_comet_address: None,
+        #[cfg(feature = "vera")]
+        vera_events_ws: None,
+        #[cfg(feature = "vera")]
+        vera_chain_id: None,
+        #[cfg(feature = "vera")]
         hub_rs_address: None,
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         vera_consensus_key: None,
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         vera_deployment_id: None,
         secret_file: None,
         no_telemetry: None,
@@ -158,14 +158,16 @@ fn test_apply_cli_flags_valid_values_succeed() {
     cli.development = Some(true);
     cli.acp_node_enable = Some(true);
     cli.acp_document_type = Some("local".to_string());
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
     {
-        cli.source_hub_address = Some("http://localhost:1317".to_string());
-        cli.source_hub_grpc_address = Some("http://localhost:9090".to_string());
-        cli.source_hub_comet_address = Some("http://localhost:26657".to_string());
-        cli.source_hub_events_ws = Some("ws://localhost:26657/websocket".to_string());
-        cli.source_hub_chain_id = Some("sourcehub-test".to_string());
+        cli.vera_address = Some("http://localhost:1317".to_string());
+        cli.vera_grpc_address = Some("http://localhost:9090".to_string());
+        cli.vera_comet_address = Some("http://localhost:26657".to_string());
+        cli.vera_events_ws = Some("ws://localhost:26657/websocket".to_string());
+        cli.vera_chain_id = Some("vera-test".to_string());
         cli.hub_rs_address = Some("http://localhost:8545".to_string());
+        cli.vera_consensus_key = Some("trusted-key".to_string());
+        cli.vera_deployment_id = Some(9001);
     }
 
     let result = config.apply_cli_flags(&cli);
@@ -187,17 +189,16 @@ fn test_apply_cli_flags_valid_values_succeed() {
     assert!(config.development);
     assert!(config.acp.node_enable);
     assert_eq!(config.acp.document_type, AcpDocumentType::Local);
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
     {
-        assert_eq!(config.acp.sourcehub_address, "http://localhost:1317");
-        assert_eq!(config.acp.sourcehub_grpc_address, "http://localhost:9090");
-        assert_eq!(config.acp.sourcehub_comet_address, "http://localhost:26657");
-        assert_eq!(
-            config.acp.sourcehub_events_ws,
-            "ws://localhost:26657/websocket"
-        );
-        assert_eq!(config.acp.sourcehub_chain_id, "sourcehub-test");
+        assert_eq!(config.acp.vera_address, "http://localhost:1317");
+        assert_eq!(config.acp.vera_grpc_address, "http://localhost:9090");
+        assert_eq!(config.acp.vera_comet_address, "http://localhost:26657");
+        assert_eq!(config.acp.vera_events_ws, "ws://localhost:26657/websocket");
+        assert_eq!(config.acp.vera_chain_id, "vera-test");
         assert_eq!(config.acp.hub_rs_address, "http://localhost:8545");
+        assert_eq!(config.acp.vera_consensus_key, "trusted-key");
+        assert_eq!(config.acp.vera_deployment_id, Some(9001));
     }
 }
 
@@ -215,18 +216,22 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "keyring-backend",
     "keyring-path",
     "no-keyring",
-    #[cfg(feature = "sourcehub")]
-    "source-hub-address",
-    #[cfg(feature = "sourcehub")]
-    "source-hub-grpc-address",
-    #[cfg(feature = "sourcehub")]
-    "source-hub-comet-address",
-    #[cfg(feature = "sourcehub")]
-    "source-hub-events-ws",
-    #[cfg(feature = "sourcehub")]
-    "source-hub-chain-id",
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
+    "vera-address",
+    #[cfg(feature = "vera")]
+    "vera-grpc-address",
+    #[cfg(feature = "vera")]
+    "vera-comet-address",
+    #[cfg(feature = "vera")]
+    "vera-events-ws",
+    #[cfg(feature = "vera")]
+    "vera-chain-id",
+    #[cfg(feature = "vera")]
     "hub-rs-address",
+    #[cfg(feature = "vera")]
+    "vera-consensus-key",
+    #[cfg(feature = "vera")]
+    "vera-deployment-id",
     "secret-file",
     "no-telemetry",
     "development",
@@ -442,7 +447,7 @@ fn test_config_serialization_roundtrip() {
     assert_eq!(original.keyring.backend, deserialized.keyring.backend);
 }
 
-#[cfg(feature = "sourcehub")]
+#[cfg(feature = "vera")]
 #[test]
 fn vera_consensus_key_survives_config_and_cli_override() {
     use clap::Parser as _;

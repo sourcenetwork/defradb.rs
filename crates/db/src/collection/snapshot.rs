@@ -1,6 +1,6 @@
 //! Immutable collection snapshot for transaction isolation.
 
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use crate::collection::Collection;
@@ -14,7 +14,7 @@ use crate::collection::Collection;
 /// The snapshot is wrapped in `Arc` internally for efficient cloning and sharing.
 #[derive(Debug, Clone)]
 pub struct CollectionSnapshot {
-    pub collections: Arc<HashMap<String, Collection>>,
+    pub collections: Arc<RapidHashMap<String, Collection>>,
 }
 
 impl CollectionSnapshot {
@@ -23,8 +23,8 @@ impl CollectionSnapshot {
         Arc::ptr_eq(&self.collections, &other.collections)
     }
 
-    /// Create a new collection snapshot from a HashMap.
-    pub fn new(collections: HashMap<String, Collection>) -> Self {
+    /// Create a new collection snapshot from a RapidHashMap.
+    pub fn new(collections: RapidHashMap<String, Collection>) -> Self {
         Self {
             collections: Arc::new(collections),
         }
@@ -61,8 +61,8 @@ impl CollectionSnapshot {
     }
 }
 
-impl From<HashMap<String, Collection>> for CollectionSnapshot {
-    fn from(collections: HashMap<String, Collection>) -> Self {
+impl From<RapidHashMap<String, Collection>> for CollectionSnapshot {
+    fn from(collections: RapidHashMap<String, Collection>) -> Self {
         Self::new(collections)
     }
 }

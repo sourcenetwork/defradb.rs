@@ -21,7 +21,11 @@ use crate::merge::head_provider::DbHeadProvider;
 use crate::merge::merge_handler::DbMergeHandler;
 use crate::merge::txn_broadcaster::SyncTxnBroadcaster;
 
-pub struct ReplicationStack<S: Store, B: Blockstore + Send + Sync, T: P2PTransport> {
+pub struct ReplicationStack<
+    S: Store,
+    B: Blockstore + defra_core::thread_bounds::MaybeSendSync,
+    T: P2PTransport,
+> {
     pub merge_handler_inner: Arc<DbMergeHandler<S, B>>,
     pub merge_handler: Arc<AcpMergeHandler<S, B>>,
     pub broadcast_mutator: Arc<BroadcastMutator<S, B, T>>,
@@ -35,14 +39,17 @@ pub fn create_head_provider<S: Store>(db: Arc<DB<S>>) -> DbHeadProvider<S> {
     DbHeadProvider::new(db)
 }
 
-pub fn create_merge_handler<S: Store, B: Blockstore + Send + Sync>(
+pub fn create_merge_handler<S: Store, B: Blockstore + defra_core::thread_bounds::MaybeSendSync>(
     db: Arc<DB<S>>,
     blockstore: Arc<B>,
 ) -> DbMergeHandler<S, B> {
     DbMergeHandler::new(db, blockstore)
 }
 
-pub fn create_acp_merge_handler<S: Store, B: Blockstore + Send + Sync>(
+pub fn create_acp_merge_handler<
+    S: Store,
+    B: Blockstore + defra_core::thread_bounds::MaybeSendSync,
+>(
     inner: Arc<DbMergeHandler<S, B>>,
 ) -> AcpMergeHandler<S, B> {
     AcpMergeHandler::new(inner)
@@ -57,7 +64,7 @@ pub fn create_broadcast_mutator<S: Store, B: Blockstore + 'static, T: P2PTranspo
 
 pub fn create_replication_stack<
     S: Store,
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 >(
     db: Arc<DB<S>>,
@@ -74,7 +81,7 @@ pub fn create_replication_stack<
 
 pub fn create_replication_stack_with_max_merge_depth<
     S: Store,
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + defra_core::thread_bounds::MaybeSendSync + 'static,
     T: P2PTransport + 'static,
 >(
     db: Arc<DB<S>>,

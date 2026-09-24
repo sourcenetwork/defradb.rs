@@ -16,6 +16,7 @@ use db::merge::merge_handler::hook::CompositeMergeHook;
 use db::merge::merge_handler::hook::CompositePostCommitAction;
 use db::merge::merge_handler::*;
 use db::DbTransactionRegistry;
+use db::IndexManager;
 use defra_core::block::Block;
 use defra_core::block::CollectionDefinitionDeltaPayload;
 use defra_core::block::CollectionDeltaPayload;
@@ -41,15 +42,16 @@ use events::Bus;
 use events::ChannelBus;
 use events::EventName;
 use query::txn::TransactionRegistry;
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CType;
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
-use std::collections::HashSet;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use storage::corekv::Key;
+use storage::index::IndexIterator;
 use storage::keys::systemstore::CollectionID;
 use storage::RegolithStore;
 use tokio::time::timeout;
@@ -326,7 +328,7 @@ impl CompositeMergeHook for FailingCompositeHook {
     }
 }
 
-async fn build_merge_block(
+pub(super) async fn build_merge_block(
     blockstore: &Arc<DefraBlockstore<RegolithStore>>,
     name: &str,
     age: i64,
@@ -1122,7 +1124,7 @@ async fn interactive_counter_increment_conflicts_with_concurrent_same_doc_merge(
     let mut update_doc = Document::from_json_str(r#"{"score": 13}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("score".to_string(), NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("score".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -1188,7 +1190,7 @@ async fn interactive_counter_increment_conflicts_with_concurrent_same_doc_merge(
     let mut retry_doc = Document::from_json_str(r#"{"score": 18}"#).unwrap();
     retry_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     retry_doc.set_counter_delta("score".to_string(), NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("score".to_string());
     mutator
         .update("Counters", retry_doc, modified)
@@ -2155,7 +2157,7 @@ async fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
     let doc_id_str = doc_id.to_string();
 
     doc.set("age", NormalValue::Int(60));
-    let mut modified_fields = HashSet::new();
+    let mut modified_fields = RapidHashSet::new();
     modified_fields.insert("age".to_string());
     {
         let txn = handler.db().new_txn(false).await.unwrap();
@@ -2570,14 +2572,7 @@ async fn deep_collection_parent_chain_merges_on_worker_stack() {
     .expect("collection merge task should not overflow its worker stack");
 
     assert!(outcome.is_terminal_skip());
-    assert_eq!(
-        handler
-            .merged_collections()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .len(),
-        256
-    );
+    assert_eq!(handler.merged_collections().len(), 256);
 }
 
 #[tokio::test]
@@ -2902,11 +2897,7 @@ async fn dek_prefetch_can_restart_after_completion() {
         timeout(Duration::from_secs(1), async {
             loop {
                 let calls = kms.calls.load(std::sync::atomic::Ordering::SeqCst);
-                let finished = !handler
-                    .prefetched_dek_cids()
-                    .lock()
-                    .unwrap()
-                    .contains(&enc_cid);
+                let finished = !handler.prefetched_dek_cids().contains_key(&enc_cid);
                 if calls == expected_calls && finished {
                     break;
                 }
@@ -3081,6 +3072,36 @@ async fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canon
         "a live twin unique conflict on a replicated merge must converge via \
              #1126's canonical pick, not classify as Rejected: {:?}",
         outcome_b
+    );
+
+    handler
+        .db()
+        .materialize_collection("Sessions")
+        .await
+        .expect("reindexing must preserve the merge-time canonical unique winner");
+
+    let txn = handler.db().new_txn(true).await.unwrap();
+    let datastore = txn.datastore().unwrap();
+    let systemstore = txn.systemstore().unwrap();
+    let index_manager =
+        IndexManager::from_collection(collection.resolved_root_id(), collection.schema()).unwrap();
+    let mut entries = index_manager
+        .get_index("idx_session_id_unique")
+        .unwrap()
+        .get(
+            &datastore,
+            &[NormalValue::String("dup-session".to_string())],
+        )
+        .await
+        .unwrap();
+    let entries = entries.collect_all().await.unwrap();
+    assert_eq!(entries.len(), 1);
+    let indexed_doc_id = db::docid::map::get_doc_id(&systemstore, entries[0].doc_short_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        indexed_doc_id,
+        Some(std::cmp::min(doc_a_id.to_string(), doc_b_id.to_string()))
     );
 
     // Both documents persist — the CRDT merge never drops data, even

@@ -145,7 +145,7 @@ fn test_truncate_rejects_null_filter_and_selection() {
         );
     }
 
-    let mut variables = HashMap::new();
+    let mut variables = RapidHashMap::new();
     variables.insert("filter".to_string(), JsonValue::Null);
     let error = parse_mutations_with_variables(
         r#"mutation ($filter: UsersFilterArg) { truncate_Users(filter: $filter) }"#,
@@ -245,7 +245,7 @@ fn test_parse_mutation_selection_directives() {
             included: add_User(input: {name: "Included"}) { name }
         }
     "#;
-    let variables = HashMap::from([
+    let variables = RapidHashMap::from_iter([
         ("includeFragment".to_string(), JsonValue::Bool(true)),
         ("skipInline".to_string(), JsonValue::Bool(true)),
     ]);

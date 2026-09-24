@@ -1,10 +1,10 @@
 //! Lossless invalidation of current document state, not a revision stream.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
-use parking_lot::Mutex;
+use kovan::Atom;
+use rapidhash::RapidHashMap;
 
 use crate::{TryRecvError, Update};
 
@@ -28,15 +28,16 @@ pub struct DocumentChangeBatch {
     pub updates: u64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Pending {
-    documents: HashMap<(String, String), bool>,
+    documents: RapidHashMap<(String, String), bool>,
     resync_required: bool,
     updates: u64,
 }
 
+#[derive(Clone)]
 pub(crate) struct ChangePublisher {
-    pending: Arc<Mutex<Pending>>,
+    pending: Arc<Atom<Pending>>,
     wake: Sender<()>,
     capacity: usize,
 }
@@ -46,32 +47,48 @@ impl ChangePublisher {
         self.publish_batch(std::iter::once(update));
     }
 
+    /// Coalesces `updates` into the shared `Pending` state in one RCU update.
+    /// The whole apply-capacity-and-maybe-resync transition must commit
+    /// atomically, so it lives in the `rcu` closure rather than split across
+    /// independent primitives.
     pub(crate) fn publish_batch<'a>(&self, updates: impl Iterator<Item = &'a Update>) {
-        let mut pending = self.pending.lock();
-        let mut changed = false;
-        for update in updates {
-            changed = true;
-            pending.updates = pending.updates.saturating_add(1);
-            if !pending.resync_required {
-                let key = (update.collection_id.clone(), update.doc_id.clone());
-                if let Some(local) = pending.documents.get_mut(&key) {
-                    *local |= !update.is_relay;
-                } else if pending.documents.len() < self.capacity {
-                    pending.documents.insert(key, !update.is_relay);
-                } else {
-                    pending.documents.clear();
-                    pending.resync_required = true;
+        let updates: Vec<&Update> = updates.collect();
+        if updates.is_empty() {
+            return;
+        }
+        let capacity = self.capacity;
+        self.pending.rcu(|current| {
+            let mut next = current.clone();
+            for update in &updates {
+                next.updates = next.updates.saturating_add(1);
+                if !next.resync_required {
+                    let key = (update.collection_id.clone(), update.doc_id.clone());
+                    if let Some(local) = next.documents.get_mut(&key) {
+                        *local |= !update.is_relay;
+                    } else if next.documents.len() < capacity {
+                        next.documents.insert(key, !update.is_relay);
+                    } else {
+                        next.documents.clear();
+                        next.resync_required = true;
+                    }
                 }
             }
-        }
+            next
+        });
         // One pending wake is sufficient; the state above is authoritative.
-        if changed {
-            let _ = self.wake.try_send(());
-        }
+        let _ = self.wake.try_send(());
     }
 
     pub(crate) fn is_closed(&self) -> bool {
         self.wake.is_closed()
+    }
+
+    /// Explicitly closes the wake channel. Removal from the bus's observer
+    /// map only drops a clone: the map's own reclamation keeps the original
+    /// sender alive for a while longer, so a waiting `recv` would never see
+    /// it close without this.
+    pub(crate) fn close(&self) {
+        self.wake.close();
     }
 }
 
@@ -81,13 +98,13 @@ impl ChangePublisher {
 /// Raw update/merge subscriptions and their CID/payload semantics are unchanged.
 pub struct DocumentChangeSubscription {
     id: u64,
-    pending: Arc<Mutex<Pending>>,
+    pending: Arc<Atom<Pending>>,
     wake: Receiver<()>,
 }
 
 impl DocumentChangeSubscription {
     pub(crate) fn new(id: u64, capacity: usize) -> (ChangePublisher, Self) {
-        let pending = Arc::new(Mutex::new(Pending::default()));
+        let pending = Arc::new(Atom::new(Pending::default()));
         let (tx, rx) = async_channel::bounded(1);
         (
             ChangePublisher {
@@ -113,28 +130,42 @@ impl DocumentChangeSubscription {
     }
 
     pub async fn recv(&mut self) -> Option<DocumentChangeBatch> {
-        self.wake.recv().await.ok()?;
-        Some(self.take_pending())
+        loop {
+            self.wake.recv().await.ok()?;
+            let batch = self.take_pending();
+            // The wake and the pending update are two separate lock-free
+            // writes (no single lock spans both), so a wake can occasionally
+            // arrive just ahead of the update it announced: this drain then
+            // races a concurrent one, takes nothing, and the announced data
+            // lands right after. Waiting for the next wake recovers it.
+            if batch.updates != 0 {
+                return Some(batch);
+            }
+        }
     }
 
     pub fn try_recv(&mut self) -> Result<DocumentChangeBatch, TryRecvError> {
-        self.wake.try_recv().map_err(|error| match error {
-            async_channel::TryRecvError::Empty => TryRecvError::Empty,
-            async_channel::TryRecvError::Closed => TryRecvError::Disconnected,
-        })?;
-        Ok(self.take_pending())
+        loop {
+            self.wake.try_recv().map_err(|error| match error {
+                async_channel::TryRecvError::Empty => TryRecvError::Empty,
+                async_channel::TryRecvError::Closed => TryRecvError::Disconnected,
+            })?;
+            let batch = self.take_pending();
+            if batch.updates != 0 {
+                return Ok(batch);
+            }
+        }
     }
 
     fn take_pending(&self) -> DocumentChangeBatch {
-        let mut pending = self.pending.lock();
-        // A publisher may have filled the wake slot between recv and this lock.
+        let taken = self.pending.swap(Pending::default());
+        // A publisher may have filled the wake slot between recv and this swap.
         // Its changes are included below, so consume that redundant wake too.
         let _ = self.wake.try_recv();
-        let taken = std::mem::take(&mut *pending);
-        drop(pending);
         DocumentChangeBatch {
             changes: taken
                 .documents
+                .clone()
                 .into_iter()
                 .map(
                     |((collection_id, doc_id), has_local_write)| DocumentChange {

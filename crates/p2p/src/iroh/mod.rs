@@ -10,6 +10,8 @@
 //! - Communication via `IrohCommand` enum over mpsc channel
 
 mod addr;
+#[cfg(test)]
+mod allowlist_tests;
 mod command;
 mod config;
 mod endpoint;
@@ -22,7 +24,12 @@ mod gossip_heal;
 mod mux_tests;
 mod peer_map;
 mod protocols;
+#[cfg(feature = "iroh-relay-server")]
+mod relay_server;
+#[cfg(all(test, feature = "iroh-relay-server"))]
+mod relay_server_tests;
 mod secret_key;
+mod task_registry;
 mod transport;
 #[cfg(test)]
 mod two_stream_tests;
@@ -32,9 +39,13 @@ pub use addr::{
     endpoint_ticket_string, format_public_listen_addrs, is_ticket_string, parse_canonical_peer_id,
     parse_public_peer_addr,
 };
-pub use config::{IrohDiscoveryConfig, IrohRelayModeConfig};
+pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::spawn_endpoint;
-pub use endpoint_config::IrohEndpointConfig;
+pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
 pub use gossip_heal::GossipHealConfig;
+#[cfg(feature = "iroh-relay-server")]
+pub use relay_server::{IrohRelayServer, IrohRelayServerConfig, IrohRelayTlsConfig};
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use secret_key::load_or_generate_secret_key;
+pub use secret_key::{generate_secret_key, secret_key_from_bytes};
 pub use transport::IrohTransport;

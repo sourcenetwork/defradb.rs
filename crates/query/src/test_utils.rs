@@ -4,9 +4,11 @@
 
 use async_trait::async_trait;
 use document::Document;
-use std::collections::HashMap;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::error::{Result, TransactionError};
 use crate::fetcher::{DocFetcher, FetchByIdsResult};
@@ -16,21 +18,33 @@ use crate::txn::{
 
 /// Mock fetcher for testing that stores documents in memory.
 pub struct MockFetcher {
-    docs: Mutex<HashMap<String, Vec<Document>>>,
+    docs: HopscotchMap<String, Arc<Atom<Vec<Document>>>, RandomState>,
 }
 
 impl MockFetcher {
     /// Create a new empty mock fetcher.
     pub fn new() -> Self {
         Self {
-            docs: Mutex::new(HashMap::new()),
+            docs: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
 
     /// Add a document to a collection.
     pub fn add_doc(&self, collection: &str, doc: Document) {
-        let mut docs = self.docs.lock().unwrap();
-        docs.entry(collection.to_string()).or_default().push(doc);
+        self.docs
+            .get_or_insert(collection.to_string(), Arc::new(Atom::new(Vec::new())))
+            .rcu(|docs| {
+                let mut docs = docs.clone();
+                docs.push(doc.clone());
+                docs
+            });
+    }
+
+    fn collection_docs(&self, collection: &str) -> Vec<Document> {
+        self.docs
+            .get(collection)
+            .map(|docs| docs.load_clone())
+            .unwrap_or_default()
     }
 }
 
@@ -61,8 +75,7 @@ impl DocFetcher for MockFetcher {
         Ok(Box::new(crate::doc_stream::VecStream::new(picked)))
     }
     async fn get_all(&self, collection_name: &str) -> Result<Vec<Document>> {
-        let docs = self.docs.lock().unwrap();
-        Ok(docs.get(collection_name).cloned().unwrap_or_default())
+        Ok(self.collection_docs(collection_name))
     }
 
     /// In-memory mock: there is no storage to stream from.
@@ -82,8 +95,7 @@ impl DocFetcher for MockFetcher {
         collection_name: &str,
         doc_ids: &[String],
     ) -> Result<FetchByIdsResult> {
-        let docs = self.docs.lock().unwrap();
-        let all = docs.get(collection_name).cloned().unwrap_or_default();
+        let all = self.collection_docs(collection_name);
 
         let mut found = Vec::new();
         let mut missing = Vec::new();
@@ -109,8 +121,7 @@ impl DocFetcher for MockFetcher {
         field_name: &str,
         value: &str,
     ) -> Result<Vec<Document>> {
-        let docs = self.docs.lock().unwrap();
-        let all = docs.get(collection_name).cloned().unwrap_or_default();
+        let all = self.collection_docs(collection_name);
 
         let matching: Vec<Document> = all
             .into_iter()
@@ -172,7 +183,7 @@ impl TransactionContext for MockTxnContext {
 /// Mock transaction registry for testing.
 pub struct MockTxnRegistry {
     counter: AtomicU64,
-    transactions: Mutex<HashMap<String, Arc<dyn TransactionContext>>>,
+    transactions: HopscotchMap<String, Arc<dyn TransactionContext>, RandomState>,
     fetcher: Arc<MockFetcher>,
 }
 
@@ -181,7 +192,7 @@ impl MockTxnRegistry {
     pub fn new(fetcher: MockFetcher) -> Self {
         Self {
             counter: AtomicU64::new(0),
-            transactions: Mutex::new(HashMap::new()),
+            transactions: HopscotchMap::with_hasher(RandomState::default()),
             fetcher: Arc::new(fetcher),
         }
     }
@@ -191,7 +202,7 @@ impl MockTxnRegistry {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl TransactionRegistry for MockTxnRegistry {
     fn abandon(&self, handle: &TransactionHandle) {
-        self.transactions.lock().unwrap().remove(handle.as_str());
+        self.transactions.remove(handle.as_str());
     }
 
     async fn begin(
@@ -208,21 +219,12 @@ impl TransactionRegistry for MockTxnRegistry {
             Arc::new(async_lock::Mutex::new(())),
         ));
 
-        self.transactions
-            .lock()
-            .unwrap()
-            .insert(txn_id.clone(), ctx);
+        self.transactions.insert(txn_id.clone(), ctx);
         Ok(TransactionHandle::new(txn_id))
     }
 
     fn get(&self, handle: &TransactionHandle) -> GetTransactionResult {
-        match self
-            .transactions
-            .lock()
-            .unwrap()
-            .get(handle.as_str())
-            .cloned()
-        {
+        match self.transactions.get(handle.as_str()) {
             Some(ctx) => GetTransactionResult::Found(ctx),
             None => GetTransactionResult::NotFound,
         }
@@ -232,7 +234,7 @@ impl TransactionRegistry for MockTxnRegistry {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        match self.transactions.lock().unwrap().remove(handle.as_str()) {
+        match self.transactions.remove(handle.as_str()) {
             Some(_) => Ok(()),
             None => Err(TransactionError::not_found(format!(
                 "transaction '{}' not found",
@@ -245,7 +247,7 @@ impl TransactionRegistry for MockTxnRegistry {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        match self.transactions.lock().unwrap().remove(handle.as_str()) {
+        match self.transactions.remove(handle.as_str()) {
             Some(_) => Ok(()),
             None => Err(TransactionError::not_found(format!(
                 "transaction '{}' not found",

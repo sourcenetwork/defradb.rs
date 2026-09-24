@@ -9,23 +9,26 @@ use crate::node_tasks::BackgroundTasks;
 use crate::IrohConfig;
 #[cfg(feature = "libp2p")]
 use crate::Libp2pConfig;
-#[cfg(feature = "sourcehub")]
-use crate::{DocumentAcpConfig, SourceHubConfig};
+#[cfg(feature = "vera")]
+use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{
     EmbeddedNodeConfig, EmbeddedStore, ManagedP2PSystem, Persistence, SigningConfig, SigningKey,
     TransportConfig,
 };
 use anyhow::{anyhow, Context, Result};
+#[cfg(feature = "libp2p")]
+use kovan_queue::seg_queue::SegQueue;
 #[cfg(any(feature = "libp2p", feature = "iroh"))]
 use p2p::sync::SyncConfig;
-#[cfg(feature = "iroh")]
-use p2p::P2PTransport;
 use tokio::sync::Notify;
 
+#[cfg(feature = "libp2p")]
 pub(crate) type EmbeddedBlockstore<S> = blockstore::DefraBlockstore<S>;
+#[cfg(feature = "libp2p")]
 pub(crate) type EmbeddedMergeHandler<S> = db::merge::AcpMergeHandler<S, EmbeddedBlockstore<S>>;
 type EmbeddedTxnRegistry<S> = db::DbTransactionRegistry<S>;
-pub(crate) type WireDocumentAcpCallback = Box<dyn FnOnce(Arc<dyn acp::DocumentACP>)>;
+#[cfg(feature = "libp2p")]
+pub(crate) type WireDocumentAcpCallback = Box<dyn FnOnce(Arc<dyn acp::DocumentACP>, bool)>;
 pub(crate) type WireKmsCallback = Box<dyn FnOnce(Arc<dyn kms::KmsService>) + Send>;
 
 /// Resolve the ambient (scoped, then process) identity into a creator DID for
@@ -45,7 +48,7 @@ fn resolve_creator_identity() -> Result<Option<identity::Did>> {
 }
 
 /// Embedded DefraDB node assembled for native/mobile embedding.
-pub struct EmbeddedNode<S: storage::corekv::Store> {
+pub struct EmbeddedNode<S: storage::corekv::Store + 'static> {
     pub database: Arc<db::DB<S>>,
     background_tasks: Arc<BackgroundTasks>,
     pub txn_registry: Arc<EmbeddedTxnRegistry<S>>,
@@ -55,8 +58,8 @@ pub struct EmbeddedNode<S: storage::corekv::Store> {
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     pub event_bus: Arc<dyn events::Bus>,
     pub node_identity_did: Option<String>,
-    #[cfg(feature = "sourcehub")]
-    pub sourcehub_acp: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+    #[cfg(feature = "vera")]
+    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     pub query_limits: query::QueryLimits,
     pub p2p: Option<Arc<ManagedP2PSystem>>,
     /// Idempotency guard for [`EmbeddedNode::shutdown`]. Set to `true`
@@ -303,20 +306,16 @@ impl NodeBuilder {
         self
     }
 
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub(mut self, config: SourceHubConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::SourceHub(config);
+    #[cfg(feature = "vera")]
+    pub fn with_vera(mut self, config: VeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
-    /// Configure SourceHub ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub_lcd(
-        mut self,
-        config: SourceHubConfig,
-        lcd_address: impl Into<String>,
-    ) -> Self {
-        self.config.document_acp = DocumentAcpConfig::SourceHubWithLcd {
+    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
+    #[cfg(feature = "vera")]
+    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
+        self.config.document_acp = DocumentAcpConfig::VeraWithLcd {
             config,
             lcd_address: lcd_address.into(),
         };
@@ -404,14 +403,10 @@ enum ShutdownKind {
     Libp2p {
         handle: Box<p2p::P2PHostHandle>,
         coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: std::sync::Mutex<Option<Vec<tokio::task::JoinHandle<()>>>>,
+        tasks: SegQueue<tokio::task::JoinHandle<()>>,
     },
     #[cfg(feature = "iroh")]
-    Iroh {
-        transport: p2p::iroh::IrohTransport,
-        coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: std::sync::Mutex<Option<Vec<tokio::task::JoinHandle<()>>>>,
-    },
+    Iroh(defra_p2p_adapter::IrohPeerShutdown),
 }
 
 impl ShutdownHandle {
@@ -421,27 +416,23 @@ impl ShutdownHandle {
         coordinator: p2p::sync::SyncShutdownHandle,
         tasks: Vec<tokio::task::JoinHandle<()>>,
     ) -> Self {
+        let pending = SegQueue::new();
+        for task in tasks {
+            pending.push(task);
+        }
         Self {
             inner: ShutdownKind::Libp2p {
                 handle: Box::new(handle),
                 coordinator,
-                tasks: std::sync::Mutex::new(Some(tasks)),
+                tasks: pending,
             },
         }
     }
 
     #[cfg(feature = "iroh")]
-    pub(crate) fn iroh(
-        transport: p2p::iroh::IrohTransport,
-        coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: Vec<tokio::task::JoinHandle<()>>,
-    ) -> Self {
+    pub(crate) fn iroh(peer: defra_p2p_adapter::IrohPeerShutdown) -> Self {
         Self {
-            inner: ShutdownKind::Iroh {
-                transport,
-                coordinator,
-                tasks: std::sync::Mutex::new(Some(tasks)),
-            },
+            inner: ShutdownKind::Iroh(peer),
         }
     }
 
@@ -459,32 +450,21 @@ impl ShutdownHandle {
                 let _ = handle.shutdown().await;
             }
             #[cfg(feature = "iroh")]
-            ShutdownKind::Iroh {
-                transport,
-                coordinator,
-                tasks,
-            } => {
-                coordinator.shutdown().await;
-                let _ = transport.shutdown().await;
-                abort_and_join(tasks).await;
-            }
+            ShutdownKind::Iroh(peer) => peer.shutdown().await,
         }
 
         defra_core::signing::clear_identity_store();
     }
 }
 
-#[cfg(any(feature = "libp2p", feature = "iroh"))]
-async fn abort_and_join(tasks: &std::sync::Mutex<Option<Vec<tokio::task::JoinHandle<()>>>>) {
-    let tasks = tasks
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .take()
-        .unwrap_or_default();
-    for task in &tasks {
+#[cfg(feature = "libp2p")]
+async fn abort_and_join(tasks: &SegQueue<tokio::task::JoinHandle<()>>) {
+    let mut aborted = Vec::with_capacity(tasks.len());
+    while let Some(task) = tasks.pop() {
         task.abort();
+        aborted.push(task);
     }
-    for task in tasks {
+    for task in aborted {
         let _ = task.await;
     }
 }
@@ -534,7 +514,18 @@ where
         ..Default::default()
     };
 
-    let p2p_setup: Result<Option<crate::node_p2p::P2PSetup<S>>> = match &config.transport {
+    let acp_setup =
+        create_document_acp(store.clone(), config.persistence, &config.document_acp).await?;
+    let document_acp = acp_setup.document_acp;
+    let local_zanzibar_store = acp_setup.local_zanzibar_store;
+    #[cfg(feature = "vera")]
+    let vera_acp = acp_setup.vera_acp;
+    #[cfg(all(feature = "vera", any(feature = "libp2p", feature = "iroh")))]
+    let strict_replicated_doc_access = vera_acp.is_some();
+    #[cfg(all(not(feature = "vera"), any(feature = "libp2p", feature = "iroh")))]
+    let strict_replicated_doc_access = false;
+
+    let p2p_setup: Result<Option<crate::node_p2p::P2PSetup>> = match &config.transport {
         TransportConfig::None => Ok(None),
         #[cfg(feature = "libp2p")]
         TransportConfig::Libp2p(libp2p) => crate::node_p2p::setup_libp2p(
@@ -554,6 +545,8 @@ where
             iroh,
             sync_config.clone(),
             raw_identity.clone(),
+            document_acp.clone(),
+            strict_replicated_doc_access,
         )
         .await
         .map(Some),
@@ -569,12 +562,6 @@ where
         }
     };
 
-    let acp_setup =
-        create_document_acp(store.clone(), config.persistence, &config.document_acp).await?;
-    let document_acp = acp_setup.document_acp;
-    let local_zanzibar_store = acp_setup.local_zanzibar_store;
-    #[cfg(feature = "sourcehub")]
-    let sourcehub_acp = acp_setup.sourcehub_acp;
     let nac_manager = create_nac_manager(store.clone(), config.persistence).await?;
 
     // Wire the NAC manager into the DB so DB-layer `check_node_access` calls go
@@ -583,15 +570,9 @@ where
     database.set_nac_manager(nac_manager.clone());
 
     if let Some(ref mut setup) = p2p_setup {
-        setup.merge_handler.set_document_acp(document_acp.clone());
-        #[cfg(feature = "sourcehub")]
-        setup
-            .merge_handler
-            .set_strict_replicated_doc_access(sourcehub_acp.is_some());
-        #[cfg(not(feature = "sourcehub"))]
-        setup.merge_handler.set_strict_replicated_doc_access(false);
+        #[cfg(feature = "libp2p")]
         if let Some(wire_document_acp) = setup.wire_document_acp.take() {
-            wire_document_acp(document_acp.clone());
+            wire_document_acp(document_acp.clone(), strict_replicated_doc_access);
         }
         // Populate the manage-channel serve deps now that the controller and
         // NAC manager exist; until this fires the event loop drops inbound
@@ -606,9 +587,8 @@ where
             });
     }
 
-    // Build the KMS once document ACP + NAC manager exist (PR #4778 ordering:
-    // the P2P transport was created earlier; the policy needs ACP/NAC which
-    // initialize here).
+    // Build the KMS once the NAC manager exists (PR #4778 ordering: the policy
+    // needs document ACP, created before P2P, and NAC, which initializes here).
     let kms: Arc<dyn kms::KmsService> = {
         // Blockstore-backed KeyStore (mirrors Go's internal/kms/enc_store.go):
         // the KMS serves DEKs for ANY encrypted write by reading/writing the
@@ -736,8 +716,8 @@ where
         local_zanzibar_store,
         event_bus,
         node_identity_did,
-        #[cfg(feature = "sourcehub")]
-        sourcehub_acp,
+        #[cfg(feature = "vera")]
+        vera_acp,
         query_limits: config.query_limits,
         p2p: p2p_setup.map(|setup| setup.system),
         shutdown_started: AtomicBool::new(false),

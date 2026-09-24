@@ -1,6 +1,6 @@
 //! Scan mapping construction for join child plans.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use schema::CollectionVersion;
 
@@ -47,7 +47,7 @@ impl Planner {
         }
 
         // Track which schema indices already have render_keys assigned
-        let mut indices_with_render_keys = HashSet::new();
+        let mut indices_with_render_keys = RapidHashSet::new();
 
         // Map render_keys from render_mapping to schema indices.
         // render_mapping uses sparse indices (0, 1, 2, ...) for only selected fields,

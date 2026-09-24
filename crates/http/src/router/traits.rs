@@ -2,31 +2,6 @@
 
 use thiserror::Error;
 
-pub use defra_core::browser_sync::{BrowserSyncRequest, BrowserSyncResponse};
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[non_exhaustive]
-pub enum BrowserSyncError {
-    #[error("invalid request: {0}")]
-    InvalidInput(String),
-    #[error("forbidden: {0}")]
-    Forbidden(String),
-    #[error("internal error: {0}")]
-    Internal(String),
-}
-
-pub type BrowserSyncResult<T> = Result<T, BrowserSyncError>;
-
-#[async_trait::async_trait]
-pub trait BrowserSyncOperations: Send + Sync {
-    async fn sync(
-        &self,
-        request: BrowserSyncRequest,
-        caller_did: Option<&str>,
-        bypass_dac: bool,
-    ) -> BrowserSyncResult<BrowserSyncResponse>;
-}
-
 pub type ReplicationFilters = std::collections::BTreeMap<String, ReplicationFilter>;
 
 /// HTTP wire shape for a per-collection replication filter.
@@ -182,8 +157,9 @@ impl std::fmt::Display for TransportPeerId {
 ///
 /// Abstracts P2P host functionality to decouple HTTP handlers from the
 /// actual P2P implementation, enabling both dependency injection and testing.
-#[async_trait::async_trait]
-pub trait P2POperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     /// Get the local peer ID.
     async fn local_peer_id(&self) -> P2PResult<String>;
 
@@ -238,6 +214,51 @@ pub trait P2POperations: Send + Sync {
 
     /// Disconnect the live connection to the peer at the given address.
     async fn disconnect_peer(&self, addr: &str) -> P2PResult<()>;
+
+    /// Authorize a peer to open an inbound connection to this node while it
+    /// is running, without a restart.
+    ///
+    /// Widens who may connect in: it does not itself dial, connect to, or
+    /// disconnect from the peer, and it is a no-op when the transport already
+    /// accepts every inbound peer. The input is a canonical raw transport
+    /// peer ID, never an address returned by `connected_peers`. Transports
+    /// without an inbound allowlist concept return an unsupported error.
+    async fn allow_peer(&self, _peer_id: &TransportPeerId) -> P2PResult<()> {
+        Err(P2PError::unsupported(
+            "inbound peer allowlisting is unavailable",
+        ))
+    }
+
+    /// Bar a peer from this node in both directions, while it is running and
+    /// without a restart.
+    ///
+    /// Symmetric with [`Self::allow_peer`] in intent but not in reach, and
+    /// deliberately stronger. Narrowing who may connect IN is not enough to
+    /// count as a revocation: a node dials peers on its own initiative, so an
+    /// implementation must also refuse its OWN outbound connections to the
+    /// peer, or its reconnect logic undoes the revocation on the next sweep.
+    /// It must additionally close every connection the peer currently holds,
+    /// and it must record the bar BEFORE closing anything, so a reconnect
+    /// racing the call cannot be re-admitted in between.
+    ///
+    /// It does not guarantee an in-flight request already being served over
+    /// such a connection is aborted mid-exchange.
+    ///
+    /// Revocation is expected to be durable rather than cosmetic: an
+    /// implementation should also drop state that would make this node reach
+    /// for the peer again on a timer, such as a replicator registration.
+    /// That makes the call destructive, and NOT the inverse of `allow_peer`:
+    /// re-admitting a peer restores its ability to connect, not whatever was
+    /// deregistered.
+    ///
+    /// The input is a canonical raw transport peer ID, never an address
+    /// returned by `connected_peers`. Transports without an inbound
+    /// allowlist concept return an unsupported error.
+    async fn deny_peer(&self, _peer_id: &TransportPeerId) -> P2PResult<()> {
+        Err(P2PError::unsupported(
+            "inbound peer allowlisting is unavailable",
+        ))
+    }
 
     /// Notify the transport that local network conditions may have changed.
     ///
@@ -457,8 +478,9 @@ pub const MANAGE_UNAUTHORIZED: &str = "unauthorized";
 /// port. To manage B, a caller hits this node's (A's) HTTP API; this node then
 /// sends a signed P2P management request to B, relaying the caller-minted actor
 /// token (a JWT with `aud` = B's peer-id).
-#[async_trait::async_trait]
-pub trait ManageRequester: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait ManageRequester: defra_core::thread_bounds::MaybeSendSync {
     /// Relay a mutating management request to the peer at `target_addr`.
     ///
     /// `target_addr` is the peer's shareable address (this node dials it).
@@ -488,8 +510,9 @@ pub trait ManageRequester: Send + Sync {
 ///
 /// Policies should be provided in YAML or JSON format following the ACP
 /// policy specification.
-#[async_trait::async_trait]
-pub trait AcpOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait AcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Add a new policy. Returns the policy ID on success.
     ///
     /// The policy should be valid YAML or JSON. Returns an error string
@@ -518,8 +541,8 @@ pub trait AcpOperations: Send + Sync {
     /// from the caller's perspective.
     ///
     /// The default impl returns `Ok(())` (permissive) so backends that don't
-    /// query a policy store — test mocks, SourceHub light-client placeholders —
-    /// don't break. Production impls (`AcpAdapter`, `SourceHubAcpAdapter`)
+    /// query a policy store — test mocks, Vera light-client placeholders —
+    /// don't break. Production impls (`AcpAdapter`, `VeraAcpAdapter`)
     /// override with real validation.
     async fn validate_resource_interface(
         &self,
@@ -565,8 +588,9 @@ pub struct AcpLightClientStatus {
 ///
 /// Indexes improve query performance for specific fields. Creating unique
 /// indexes also enforces uniqueness constraints on the indexed fields.
-#[async_trait::async_trait]
-pub trait IndexOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait IndexOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Create an index on a collection. Returns the created index info.
     ///
     /// `name` of `None` auto-generates one. `vector` makes this a vector index,
@@ -617,8 +641,9 @@ pub struct IndexFieldInfo {
 }
 
 /// Trait for encrypted index (searchable encryption) operations.
-#[async_trait::async_trait]
-pub trait EncryptedIndexOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait EncryptedIndexOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Add an encrypted index on a collection field.
     async fn add_encrypted_index(
         &self,
@@ -656,8 +681,9 @@ pub struct EncryptedIndexInfo {
 ///
 /// Block operations provide signature verification capabilities for
 /// DAG-CBOR blocks stored in the blockstore.
-#[async_trait::async_trait]
-pub trait BlockOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait BlockOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Return canonical bytes for an authorized signed block and its detached
     /// signature so clients can verify content addressing and authorship
     /// locally.
@@ -702,8 +728,9 @@ pub use acp::nac::{NacStatus, NodePermission};
 ///
 /// NAC provides node-level access control using the Zanzibar permission model.
 /// When enabled, node operations require authentication and authorization.
-#[async_trait::async_trait]
-pub trait NodeAcpOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait NodeAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Check if an identity has a specific node permission.
     ///
     /// Returns `true` if:
@@ -797,8 +824,9 @@ pub struct NacStatusInfo {
 /// Trait for schema operations.
 ///
 /// Enables adding and managing collection schemas via SDL.
-#[async_trait::async_trait]
-pub trait SchemaOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait SchemaOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Add a schema from SDL string.
     ///
     /// Parses the SDL and creates collections for each type defined.
@@ -810,8 +838,9 @@ pub trait SchemaOperations: Send + Sync {
 ///
 /// Kept separate from collection management so embedded consumers can resolve
 /// collection names to IDs without enabling schema or data mutation routes.
-#[async_trait::async_trait]
-pub trait CollectionVersionOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait CollectionVersionOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Get all collection versions (active + inactive) from the system store.
     async fn get_all_collections(&self) -> Result<Vec<schema::CollectionVersion>, String>;
 
@@ -835,8 +864,9 @@ pub trait CollectionVersionOperations: Send + Sync {
 ///
 /// Provides schema patching, version activation, and truncation operations
 /// that operate at the collection level rather than the document level.
-#[async_trait::async_trait]
-pub trait CollectionManagementOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait CollectionManagementOperations: defra_core::thread_bounds::MaybeSendSync {
     /// List actions that have not completed successfully.
     async fn list_actions(&self) -> Result<Vec<defra_core::ActionExecution>, String>;
 
@@ -921,8 +951,9 @@ pub trait CollectionManagementOperations: Send + Sync {
 /// Trait for lens migration operations.
 ///
 /// Enables setting up migrations between schema versions using WASM transforms.
-#[async_trait::async_trait]
-pub trait LensOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait LensOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Set a migration between schema versions.
     ///
     /// The config should be a JSON string containing:
@@ -952,8 +983,9 @@ pub trait LensOperations: Send + Sync {
 ///
 /// Manages per-document access control relationships (e.g., granting a user
 /// read or write access to a specific document).
-#[async_trait::async_trait]
-pub trait DocumentAcpOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait DocumentAcpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Check whether an actor has a document permission.
     ///
     /// This is a read-only preview of the current document ACP decision and
@@ -1006,8 +1038,9 @@ pub trait DocumentAcpOperations: Send + Sync {
 /// For export, the JSON includes document metadata and relationships.
 /// For import, the JSON must match the expected structure with valid document
 /// IDs and collection references.
-#[async_trait::async_trait]
-pub trait BackupOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait BackupOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Export database to JSON.
     ///
     /// If `collections` is `None`, exports all collections.
@@ -1031,8 +1064,9 @@ pub trait BackupOperations: Send + Sync {
 /// Provides access to operations that must execute within an existing transaction,
 /// such as setting migrations, adding schemas, or reading collection versions
 /// including uncommitted writes.
-#[async_trait::async_trait]
-pub trait TransactionOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait TransactionOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Set a migration within an existing transaction.
     ///
     /// Registers a lens migration configuration within the specified transaction.
@@ -1065,8 +1099,9 @@ pub trait TransactionOperations: Send + Sync {
 ///
 /// Views are virtual collections backed by a GQL query. Materialized views
 /// cache their results and may also expose explicit maintenance operations.
-#[async_trait::async_trait]
-pub trait ViewOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait ViewOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Add a view from a GQL query and SDL schema.
     ///
     /// Returns the created collection versions for the view.
@@ -1091,8 +1126,9 @@ pub trait ViewOperations: Send + Sync {
 }
 
 /// Trait for debug dump operations.
-#[async_trait::async_trait]
-pub trait DumpOperations: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+pub trait DumpOperations: defra_core::thread_bounds::MaybeSendSync {
     /// Dump all database key/value pairs as a list of human-readable strings.
     async fn print_dump(&self) -> Result<Vec<String>, String>;
 }

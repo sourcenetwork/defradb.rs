@@ -94,6 +94,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             collection_store,
             filter_matcher,
             Arc::new(DefaultBlockClassifier),
+            #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
             Arc::new(LateBoundServeAcp::new()),
         )
         .await
@@ -151,6 +152,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             head_provider,
             filter_matcher,
             Arc::new(DefaultBlockClassifier),
+            #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
             Arc::new(LateBoundServeAcp::new()),
         )
         .await
@@ -195,8 +197,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         } else {
             config.push_send_timeout.max(Duration::from_millis(1))
         };
-        let subscribed_collections =
-            Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new()));
         let (manager, events) =
             SyncManager::new(Arc::clone(&blockstore), peer_state.clone(), config);
 
@@ -213,8 +213,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             Arc::clone(&authorizer) as Arc<dyn AccessAuthorizer>,
         );
 
-        let failure_tx: Arc<parking_lot::Mutex<Option<mpsc::Sender<super::PushFailure>>>> =
-            Arc::new(parking_lot::Mutex::new(None));
+        let failure_tx: Arc<kovan::AtomOption<mpsc::Sender<super::PushFailure>>> =
+            Arc::new(kovan::AtomOption::none());
         let shutdown = super::SyncShutdownHandle::new(max_dag_fetches);
         super::push_worker::spawn_push_workers(
             Arc::new(super::push_worker::PushWorkerContext {
@@ -260,7 +260,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     gossip_direction_filtered: AtomicU64::new(0),
                 },
                 subscriptions: SyncSubscriptionState {
-                    subscribed_collections,
+                    mutation: Arc::new(tokio::sync::Mutex::new(())),
+                    subscribed_collections: super::collection_set(),
+                    retrying_subscribes: super::collection_set(),
+                    retrying_unsubscribes: super::collection_set(),
                     collection_store,
                     head_provider,
                 },
@@ -279,7 +282,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     /// Set the failure channel for reporting push failures to the FFI layer.
     pub fn set_failure_channel(&mut self, tx: tokio::sync::mpsc::Sender<super::PushFailure>) {
-        *self.runtime.failure_tx.lock() = Some(tx);
+        self.runtime.failure_tx.store_some(tx);
     }
 }
 

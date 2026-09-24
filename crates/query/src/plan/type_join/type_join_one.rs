@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use document::NormalValue;
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -54,7 +54,7 @@ struct IndexedInvertedChildFetch {
 /// # Optimization
 ///
 /// Child documents are pre-loaded and indexed during `init()` to avoid
-/// O(N * M) nested loop scans. Lookups are O(1) via HashMap.
+/// O(N * M) nested loop scans. Lookups are O(1) via RapidHashMap.
 ///
 /// # Memory Considerations
 ///
@@ -83,7 +83,7 @@ pub struct TypeJoinOne {
     /// Cached child documents indexed by lookup key.
     /// For Primary joins: key is child's _docID
     /// For Inverted joins: key is child's FK field value
-    child_cache: HashMap<String, Doc>,
+    child_cache: RapidHashMap<String, Doc>,
     /// Optional relation filter to apply during join.
     /// This filter is evaluated against the child document and determines
     /// whether the parent document should be included in results.
@@ -228,7 +228,7 @@ impl TypeJoinOne {
             current_doc: Doc::default(),
             direction,
             initialized: false,
-            child_cache: HashMap::new(),
+            child_cache: RapidHashMap::new(),
             relation_filter: None,
             exec_info: ExecInfo::default(),
             child_exec_info: ExecInfo::default(),
@@ -267,9 +267,9 @@ impl TypeJoinOne {
     }
 
     /// Record a yielded parent docID in the shared set (for orphan exclusion).
-    async fn record_yielded_id(&self, doc_id: &str) {
-        if let Some(ref ids) = self.shared_yielded_ids {
-            ids.write().await.insert(doc_id.to_string());
+    fn record_yielded_id(&self, doc_id: &str) {
+        if let Some(ids) = &self.shared_yielded_ids {
+            ids.insert_if_absent(doc_id.to_string(), ());
         }
     }
 
@@ -702,7 +702,7 @@ impl TypeJoinOne {
             if !self.docs_to_yield.is_empty() {
                 let doc = self.docs_to_yield.remove(0);
                 if let Some(pid) = doc.doc_id() {
-                    self.record_yielded_id(pid).await;
+                    self.record_yielded_id(pid);
                 }
                 self.current_doc = doc;
                 return Ok(true);
@@ -829,7 +829,7 @@ impl TypeJoinOne {
             }
 
             if let Some(pid) = parent_doc.doc_id() {
-                self.record_yielded_id(pid).await;
+                self.record_yielded_id(pid);
             }
             self.merge_child(&mut parent_doc, Some(child_doc));
             self.current_doc = parent_doc;

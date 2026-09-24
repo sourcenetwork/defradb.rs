@@ -68,7 +68,7 @@ impl<T: P2PTransport> ManageClient<T> {
         p2p::signing::sign_with_transport(&self.transport, &mut req)?;
 
         let mut pending = self.correlator.register(req.message_id.clone());
-        let reply = tokio::time::timeout(MANAGE_REQUEST_TIMEOUT, async {
+        let reply = n0_future::time::timeout(MANAGE_REQUEST_TIMEOUT, async {
             self.transport.send_manage_request(peer_id, req).await?;
             pending.recv().await.map_err(|_| Error::ResponseTimeout)
         })
@@ -91,7 +91,7 @@ impl<T: P2PTransport> ManageClient<T> {
         p2p::signing::sign_with_transport(&self.transport, &mut req)?;
 
         let mut pending = self.query_correlator.register(req.message_id.clone());
-        let reply = tokio::time::timeout(MANAGE_REQUEST_TIMEOUT, async {
+        let reply = n0_future::time::timeout(MANAGE_REQUEST_TIMEOUT, async {
             self.transport
                 .send_manage_query_request(peer_id, req)
                 .await?;

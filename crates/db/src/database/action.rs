@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::Arc;
 
 use defra_core::{Action, ActionExecution, ActionStatus};
-use parking_lot::Mutex;
 use storage::corekv::{IterOptions, Key, Store};
-use storage::keys::systemstore::{ActionReasonKey, ActionStatusKey};
+use storage::keys::systemstore::{ActionProgressKey, ActionReasonKey, ActionStatusKey};
 
 use crate::error::{Error, Result};
 
@@ -43,15 +44,22 @@ pub struct ActionKey {
     subject: String,
 }
 
-#[derive(Debug, Default)]
 pub struct ActionRegistry {
-    pub active: Mutex<HashSet<ActionKey>>,
+    pub active: HopscotchMap<ActionKey, (), RandomState>,
+}
+
+impl Default for ActionRegistry {
+    fn default() -> Self {
+        Self {
+            active: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl ActionRegistry {
     /// True when no process-local action claim is held.
     pub(crate) fn is_empty(&self) -> bool {
-        self.active.lock().is_empty()
+        self.active.is_empty()
     }
 }
 
@@ -78,7 +86,7 @@ impl ActionExecutionLease {
             action,
             subject: subject.to_string(),
         };
-        if !registry.active.lock().insert(key.clone()) {
+        if registry.active.insert_if_absent(key.clone(), ()).is_some() {
             return Err(Error::ActionInProgress {
                 collection_id: collection_id.to_string(),
                 action: action.value(),
@@ -100,9 +108,25 @@ impl ActionExecutionLease {
     }
 }
 
+/// Every key an action's record is spread over.
+fn action_record_keys(collection_id: &str, action: Action, subject: &str) -> [Vec<u8>; 3] {
+    [
+        ActionStatusKey::with_subject(collection_id, action, subject).bytes(),
+        ActionReasonKey::new(collection_id, action, subject).bytes(),
+        ActionProgressKey::new(collection_id, action, subject).bytes(),
+    ]
+}
+
+async fn delete_keys(systemstore: &datastore::NamespaceView, keys: &[Vec<u8>]) -> Result<()> {
+    for key in keys {
+        systemstore.delete(key).await.map_err(Error::Storage)?;
+    }
+    Ok(())
+}
+
 impl Drop for ActionExecutionLease {
     fn drop(&mut self) {
-        self.registry.active.lock().remove(&self.key);
+        self.registry.active.remove(&self.key);
     }
 }
 
@@ -146,18 +170,29 @@ impl<S: Store> crate::database::DB<S> {
             action,
             subject,
         )?;
+        let [status, reason, progress] = action_record_keys(collection_id, action, subject);
         systemstore
-            .set(
-                &ActionStatusKey::with_subject(collection_id, action, subject).bytes(),
-                &encode_status(ActionStatus::IN_PROGRESS),
-            )
+            .set(&status, &encode_status(ActionStatus::IN_PROGRESS))
             .await
             .map_err(Error::Storage)?;
-        systemstore
-            .delete(&ActionReasonKey::new(collection_id, action, subject).bytes())
-            .await
-            .map_err(Error::Storage)?;
+        delete_keys(systemstore, &[reason, progress]).await?;
         Ok(lease)
+    }
+
+    /// The process-local lease of an action whose in-progress record outlived
+    /// the process that started it; the record itself stays as it is.
+    pub(crate) fn resume_action(
+        &self,
+        collection_id: &str,
+        action: Action,
+        subject: &str,
+    ) -> Result<ActionExecutionLease> {
+        ActionExecutionLease::acquire(
+            Arc::clone(&self.active_actions),
+            collection_id,
+            action,
+            subject,
+        )
     }
 
     pub fn publish_started_action(&self, lease: &ActionExecutionLease) {
@@ -176,20 +211,16 @@ impl<S: Store> crate::database::DB<S> {
         let subject = lease.subject();
         let txn = self.new_txn(false).await?;
         let systemstore = txn.systemstore()?;
+        let [status_key, reason_key, progress] = action_record_keys(collection_id, action, subject);
         systemstore
-            .set(
-                &ActionStatusKey::with_subject(collection_id, action, subject).bytes(),
-                &encode_status(ActionStatus::ERRORED),
-            )
+            .set(&status_key, &encode_status(ActionStatus::ERRORED))
             .await
             .map_err(Error::Storage)?;
         systemstore
-            .set(
-                &ActionReasonKey::new(collection_id, action, subject).bytes(),
-                reason.as_bytes(),
-            )
+            .set(&reason_key, reason.as_bytes())
             .await
             .map_err(Error::Storage)?;
+        delete_keys(&systemstore, &[progress]).await?;
         drop(systemstore);
         txn.commit().await?;
 
@@ -209,14 +240,11 @@ impl<S: Store> crate::database::DB<S> {
         let subject = lease.subject();
         let txn = self.new_txn(false).await?;
         let systemstore = txn.systemstore()?;
-        systemstore
-            .delete(&ActionStatusKey::with_subject(collection_id, action, subject).bytes())
-            .await
-            .map_err(Error::Storage)?;
-        systemstore
-            .delete(&ActionReasonKey::new(collection_id, action, subject).bytes())
-            .await
-            .map_err(Error::Storage)?;
+        delete_keys(
+            &systemstore,
+            &action_record_keys(collection_id, action, subject),
+        )
+        .await?;
         drop(systemstore);
         txn.commit().await?;
 
@@ -238,14 +266,11 @@ impl<S: Store> crate::database::DB<S> {
     ) -> Result<()> {
         let txn = self.new_txn(false).await?;
         let systemstore = txn.systemstore()?;
-        systemstore
-            .delete(&ActionStatusKey::with_subject(collection_id, action, subject).bytes())
-            .await
-            .map_err(Error::Storage)?;
-        systemstore
-            .delete(&ActionReasonKey::new(collection_id, action, subject).bytes())
-            .await
-            .map_err(Error::Storage)?;
+        delete_keys(
+            &systemstore,
+            &action_record_keys(collection_id, action, subject),
+        )
+        .await?;
         drop(systemstore);
         txn.commit().await
     }
@@ -257,42 +282,7 @@ impl<S: Store> crate::database::DB<S> {
 
         let txn = self.new_txn(true).await?;
         let systemstore = txn.systemstore()?;
-        let mut iter = systemstore
-            .iterator(IterOptions::new().with_prefix(ActionStatusKey::prefix()))
-            .await
-            .map_err(Error::Storage)?;
-        let pairs = iter.collect_all().await.map_err(Error::Storage)?;
-        iter.close().await.map_err(Error::Storage)?;
-
-        let mut executions = Vec::with_capacity(pairs.len());
-        for pair in pairs {
-            let key = ActionStatusKey::parse(&pair.key).ok_or_else(|| {
-                Error::Serialization(format!(
-                    "invalid action status key: {}",
-                    String::from_utf8_lossy(&pair.key)
-                ))
-            })?;
-            let status = decode_status(&pair.value).ok_or_else(|| {
-                Error::Serialization(format!(
-                    "invalid action status for collection '{}'",
-                    key.collection_id
-                ))
-            })?;
-            let reason = systemstore
-                .get(&ActionReasonKey::new(&key.collection_id, key.action, &key.subject).bytes())
-                .await
-                .map_err(Error::Storage)?
-                .map(|value| String::from_utf8_lossy(&value).into_owned())
-                .unwrap_or_default();
-            executions.push(ActionExecution {
-                collection_id: key.collection_id,
-                action: key.action,
-                subject: key.subject,
-                status,
-                reason,
-            });
-        }
-
+        let executions = action_executions(&systemstore).await?;
         drop(systemstore);
         txn.discard()?;
         Ok(executions)
@@ -301,7 +291,7 @@ impl<S: Store> crate::database::DB<S> {
     pub async fn list_index_actions(
         &self,
         collection_id: &str,
-    ) -> Result<HashMap<u32, ActionExecution>> {
+    ) -> Result<RapidHashMap<u32, ActionExecution>> {
         self.check_node_access(None, acp::nac::NodePermission::IndexList)
             .await?;
 
@@ -320,10 +310,52 @@ impl<S: Store> crate::database::DB<S> {
     }
 }
 
+/// Every action record in the store, in progress or ended with an error.
+pub(crate) async fn action_executions(
+    systemstore: &datastore::NamespaceView,
+) -> Result<Vec<ActionExecution>> {
+    let mut iter = systemstore
+        .iterator(IterOptions::new().with_prefix(ActionStatusKey::prefix()))
+        .await
+        .map_err(Error::Storage)?;
+    let pairs = iter.collect_all().await.map_err(Error::Storage)?;
+    iter.close().await.map_err(Error::Storage)?;
+
+    let mut executions = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        let key = ActionStatusKey::parse(&pair.key).ok_or_else(|| {
+            Error::Serialization(format!(
+                "invalid action status key: {}",
+                String::from_utf8_lossy(&pair.key)
+            ))
+        })?;
+        let status = decode_status(&pair.value).ok_or_else(|| {
+            Error::Serialization(format!(
+                "invalid action status for collection '{}'",
+                key.collection_id
+            ))
+        })?;
+        let reason = systemstore
+            .get(&ActionReasonKey::new(&key.collection_id, key.action, &key.subject).bytes())
+            .await
+            .map_err(Error::Storage)?
+            .map(|value| String::from_utf8_lossy(&value).into_owned())
+            .unwrap_or_default();
+        executions.push(ActionExecution {
+            collection_id: key.collection_id,
+            action: key.action,
+            subject: key.subject,
+            status,
+            reason,
+        });
+    }
+    Ok(executions)
+}
+
 pub(crate) async fn index_action_statuses(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
-) -> Result<HashMap<u32, ActionStatus>> {
+) -> Result<RapidHashMap<u32, ActionStatus>> {
     Ok(index_action_executions(systemstore, collection_id)
         .await?
         .into_iter()
@@ -334,7 +366,7 @@ pub(crate) async fn index_action_statuses(
 async fn index_action_executions(
     systemstore: &datastore::NamespaceView,
     collection_id: &str,
-) -> Result<HashMap<u32, ActionExecution>> {
+) -> Result<RapidHashMap<u32, ActionExecution>> {
     let mut iter = systemstore
         .iterator(IterOptions::new().with_prefix(ActionStatusKey::collection_prefix(collection_id)))
         .await
@@ -342,7 +374,7 @@ async fn index_action_executions(
     let pairs = iter.collect_all().await.map_err(Error::Storage)?;
     iter.close().await.map_err(Error::Storage)?;
 
-    let mut executions = HashMap::new();
+    let mut executions = RapidHashMap::new();
     for pair in pairs {
         let Some(key) = ActionStatusKey::parse(&pair.key) else {
             continue;

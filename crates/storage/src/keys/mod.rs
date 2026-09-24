@@ -68,8 +68,7 @@ pub use headstore::{
     HeadstorePriorityKey,
 };
 pub use peerstore::{
-    BrowserSyncHeadKey, PeerstoreSERetry, ReplicatorKey, ReplicatorRetryDocIDKey,
-    ReplicatorRetryIDKey,
+    PeerstoreSERetry, ReplicatorKey, ReplicatorRetryDocIDKey, ReplicatorRetryIDKey,
 };
 pub use systemstore::{
     CollectionID, CollectionIDSequenceKey, CollectionKey, CollectionNameKey, CollectionVersionKey,

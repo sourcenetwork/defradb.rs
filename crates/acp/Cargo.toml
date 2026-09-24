@@ -26,10 +26,11 @@ async-lock.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-parking_lot.workspace = true
+rapidhash.workspace = true
 tracing.workspace = true
 sha2.workspace = true
 serde_yaml = "0.9"
+kovan.workspace = true
 
 [dev-dependencies]
 bytes = { workspace = true }

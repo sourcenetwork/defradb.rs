@@ -1,22 +1,25 @@
-#[cfg(any(feature = "libp2p", feature = "iroh"))]
+#[cfg(feature = "libp2p")]
 use std::sync::Arc;
 
-#[cfg(any(feature = "libp2p", feature = "iroh"))]
-use p2p::sync::{ReplicationConfig, ReplicationLoop, ReplicationResult};
-#[cfg(feature = "iroh")]
-use p2p::P2PTransport;
+use kovan_queue::seg_queue::SegQueue;
+#[cfg(feature = "libp2p")]
+use p2p::sync::{ReplicationConfig, ReplicationLoop};
 
-#[cfg(any(feature = "libp2p", feature = "iroh"))]
+#[cfg(feature = "libp2p")]
 use crate::node::EmbeddedMergeHandler;
 
 pub struct BackgroundTasks {
-    downsample_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    downsample_task: SegQueue<tokio::task::JoinHandle<()>>,
 }
 
 impl BackgroundTasks {
     pub(crate) fn new(downsample_task: Option<tokio::task::JoinHandle<()>>) -> Self {
+        let slot = SegQueue::new();
+        if let Some(task) = downsample_task {
+            slot.push(task);
+        }
         Self {
-            downsample_task: std::sync::Mutex::new(downsample_task),
+            downsample_task: slot,
         }
     }
 
@@ -26,12 +29,7 @@ impl BackgroundTasks {
     /// task can retain the final database handle until Tokio next polls it,
     /// which otherwise leaves the on-disk database lock held after close.
     pub async fn shutdown(&self) {
-        let task = self
-            .downsample_task
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        if let Some(task) = task {
+        if let Some(task) = self.downsample_task.pop() {
             task.abort();
             let _ = task.await;
         }
@@ -40,12 +38,7 @@ impl BackgroundTasks {
 
 impl Drop for BackgroundTasks {
     fn drop(&mut self) {
-        let task = self
-            .downsample_task
-            .get_mut()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        if let Some(task) = task {
+        if let Some(task) = self.downsample_task.pop() {
             task.abort();
         }
     }
@@ -203,147 +196,7 @@ pub(crate) fn spawn_libp2p_event_handler<B: blockstore::Blockstore + 'static>(
     })
 }
 
-#[cfg(feature = "iroh")]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_iroh_event_handler<B: blockstore::Blockstore + 'static>(
-    events: tokio::sync::mpsc::Receiver<
-        p2p::TransportEvent<<p2p::iroh::IrohTransport as P2PTransport>::ResponseToken>,
-    >,
-    coordinator: Arc<p2p::sync::IrohSyncCoordinator<B>>,
-    store: Arc<impl storage::corekv::Store + 'static>,
-    event_bus: Arc<dyn events::Bus>,
-    se_correlator: p2p::SeQueryCorrelator,
-    se_transport: p2p::iroh::IrohTransport,
-    manage_hooks: defra_p2p_adapter::manage::hooks::ManageHooksCell,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let handler_coordinator = coordinator.clone();
-        coordinator.run_event_dispatcher(events, move |event, admission| {
-            let coordinator = handler_coordinator.clone();
-            let store = store.clone();
-            let event_bus = event_bus.clone();
-            let se_correlator = se_correlator.clone();
-            let se_transport = se_transport.clone();
-            let manage_hooks = manage_hooks.clone();
-            async move {
-            match &event {
-                p2p::TransportEvent::PeerConnected(peer_id) => {
-                    defra_p2p_adapter::activate_retry_peer(store.clone(), peer_id).await;
-                }
-                p2p::TransportEvent::PeerSubscribed { peer_id, topic } => {
-                    event_bus.publish(events::Message::topic_peer_event(
-                        events::TopicPeerEventData {
-                            peer_id: peer_id.to_string(),
-                            topic: topic.clone(),
-                            event_type: "JOINED".to_string(),
-                        },
-                    ));
-                }
-                p2p::TransportEvent::PeerUnsubscribed { peer_id, topic } => {
-                    event_bus.publish(events::Message::topic_peer_event(
-                        events::TopicPeerEventData {
-                            peer_id: peer_id.to_string(),
-                            topic: topic.clone(),
-                            event_type: "LEFT".to_string(),
-                        },
-                    ));
-                }
-                _ => {}
-            }
-
-            if admission == p2p::sync::DispatchAdmission::Saturated {
-                if let Err(error) = coordinator
-                    .handle_transport_event_with_admission(event, admission)
-                    .await
-                {
-                    tracing::debug!(%error, "rejected saturated embedded Iroh request");
-                }
-                return;
-            }
-            let event = match event {
-                p2p::TransportEvent::SEArtifactsReceived { peer_id, data } => {
-                    handle_se_artifacts_received(
-                        store.clone(),
-                        event_bus.clone(),
-                        peer_id.to_string(),
-                        data,
-                    )
-                    .await;
-                    return;
-                }
-                p2p::TransportEvent::SEQueryRequest { peer_id, request } => {
-                    // Serve SE queries over iroh: byte-match the pushed artifacts
-                    // and return a signed reply (mirrors the libp2p loop, #976).
-                    db::merge::se::serve::handle_query_request(
-                        store.as_ref(),
-                        &se_transport,
-                        peer_id,
-                        request,
-                    )
-                    .await;
-                    return;
-                }
-                p2p::TransportEvent::SEQueryReply { reply, .. } => {
-                    // Deliver inbound replies so the owner/querier transport's
-                    // awaiting correlator slot resolves (#976).
-                    se_correlator.deliver(reply);
-                    return;
-                }
-                p2p::TransportEvent::ManageRequest { peer_id, request } => {
-                    if let Some(hooks) = manage_hooks.get() {
-                        defra_p2p_adapter::manage::serve::serve_manage_request(
-                            hooks,
-                            &se_transport,
-                            &peer_id,
-                            request,
-                        )
-                        .await;
-                    } else {
-                        tracing::debug!(%peer_id, "manage request before hooks ready; dropping");
-                    }
-                    return;
-                }
-                p2p::TransportEvent::ManageQueryRequest { peer_id, request } => {
-                    if let Some(hooks) = manage_hooks.get() {
-                        defra_p2p_adapter::manage::serve::serve_manage_query_request(
-                            hooks,
-                            &se_transport,
-                            &peer_id,
-                            request,
-                        )
-                        .await;
-                    } else {
-                        tracing::debug!(%peer_id, "manage query request before hooks ready; dropping");
-                    }
-                    return;
-                }
-                p2p::TransportEvent::ManageReply { reply, .. } => {
-                    if let Some(hooks) = manage_hooks.get() {
-                        hooks.correlator.deliver(reply);
-                    }
-                    return;
-                }
-                p2p::TransportEvent::ManageQueryReply { reply, .. } => {
-                    if let Some(hooks) = manage_hooks.get() {
-                        hooks.query_correlator.deliver(reply);
-                    }
-                    return;
-                }
-                other => other,
-            };
-            if let Err(error) = coordinator
-                .handle_transport_event_with_admission(event, admission)
-                .await
-            {
-                tracing::error!(error = %error, "error handling iroh event");
-            }
-            }
-        })
-        .await;
-    })
-}
-
-#[cfg(any(feature = "libp2p", feature = "iroh"))]
+#[cfg(feature = "libp2p")]
 async fn handle_se_artifacts_received<S: storage::corekv::Store + 'static>(
     store: Arc<S>,
     event_bus: Arc<dyn events::Bus>,
@@ -386,7 +239,7 @@ async fn handle_se_artifacts_received<S: storage::corekv::Store + 'static>(
     }
 }
 
-#[cfg(any(feature = "libp2p", feature = "iroh"))]
+#[cfg(feature = "libp2p")]
 pub(crate) fn spawn_replication_loop<B, T, S>(
     coordinator: Arc<p2p::sync::SyncCoordinator<B, T>>,
     sync_events_rx: tokio::sync::mpsc::Receiver<p2p::sync::SyncEvent>,
@@ -405,86 +258,12 @@ where
             sync_events_rx,
             merge_handler,
             ReplicationConfig::default(),
-            move |result| match result {
-                ReplicationResult::Merged {
-                    cid,
-                    doc_id,
-                    collection_id,
-                }
-                | ReplicationResult::MergedButBroadcastFailed {
-                    cid,
-                    doc_id,
-                    collection_id,
-                    ..
-                } => {
-                    event_bus.publish(events::Message::merge_complete(events::MergeCompleteData {
-                        doc_id: doc_id.clone(),
-                        subject_doc_id: None,
-                        cid: *cid,
-                        collection_id: collection_id.clone(),
-                        by_peer: local_peer.clone(),
-                    }));
-                    if !doc_id.is_empty() {
-                        event_bus.publish(events::Message::se_artifact_received(
-                            events::SEArtifactReceivedData {
-                                doc_id: doc_id.clone(),
-                            },
-                        ));
-                    }
-                }
-                ReplicationResult::Failed { cid, error } => {
-                    tracing::error!(cid = %cid, error = %error, "block merge failed");
-                }
-                ReplicationResult::Skipped {
-                    cid,
-                    doc_id,
-                    collection_id,
-                    reason,
-                    terminal,
-                } => {
-                    let is_document_terminal_skip = !doc_id.is_empty()
-                        && matches!(
-                            reason.as_str(),
-                            "already applied" | "nonce already applied" | "already merged"
-                        );
-                    let is_collection_terminal_skip =
-                        doc_id.is_empty() && reason == "no linked composites needed merging";
-                    if *terminal && (is_document_terminal_skip || is_collection_terminal_skip) {
-                        event_bus.publish(events::Message::merge_complete(
-                            events::MergeCompleteData {
-                                doc_id: doc_id.clone(),
-                                subject_doc_id: None,
-                                cid: *cid,
-                                collection_id: collection_id.clone(),
-                                by_peer: local_peer.clone(),
-                            },
-                        ));
-                    }
-                    tracing::debug!(cid = %cid, reason = %reason, "replication loop skipped block");
-                }
-                ReplicationResult::Quarantined {
-                    cid,
-                    doc_id,
-                    collection_id,
-                    reason,
-                } => {
-                    tracing::warn!(
-                        cid = %cid,
-                        doc_id = %doc_id,
-                        collection_id = %collection_id,
-                        reason = %reason,
-                        "Block quarantined: merge deterministically rejected, will not be re-driven locally"
-                    );
-                    event_bus.publish(events::Message::pending_dag_quarantined(
-                        events::PendingDagQuarantinedData {
-                            cid: *cid,
-                            doc_id: doc_id.clone(),
-                            collection_id: collection_id.clone(),
-                            reason: reason.clone(),
-                        },
-                    ));
-                }
-                _ => {}
+            move |result| {
+                defra_p2p_adapter::publish_replication_result(
+                    event_bus.as_ref(),
+                    &local_peer,
+                    result,
+                )
             },
         )
         .await;

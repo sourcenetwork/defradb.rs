@@ -246,7 +246,8 @@ mod tests {
     use blockstore::DefraBlockstore;
     use bytes::Bytes;
     use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
-    use std::sync::{Arc, Mutex};
+    use kovan_queue::seg_queue::SegQueue;
+    use std::sync::Arc;
     use std::time::Duration;
     use storage::RegolithStore;
 
@@ -271,7 +272,7 @@ mod tests {
     struct TestTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
-        sync_calls: Arc<Mutex<Vec<SyncCall>>>,
+        sync_calls: Arc<SegQueue<SyncCall>>,
     }
 
     impl TestTransport {
@@ -279,16 +280,17 @@ mod tests {
             Self {
                 peer_id: PeerId::new("local-peer".to_string()),
                 pubkey: vec![1, 2, 3],
-                sync_calls: Arc::new(Mutex::new(Vec::new())),
+                sync_calls: Arc::new(SegQueue::new()),
             }
         }
 
         fn sync_calls(&self) -> Vec<SyncCall> {
-            self.sync_calls.lock().unwrap().clone()
+            std::iter::from_fn(|| self.sync_calls.pop()).collect()
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl P2PTransport for TestTransport {
         type ResponseToken = ();
 
@@ -458,7 +460,7 @@ mod tests {
             providers: Vec<PeerId>,
             missing: Vec<Cid>,
         ) -> P2PResult<QueryId> {
-            self.sync_calls.lock().unwrap().push(SyncCall {
+            self.sync_calls.push(SyncCall {
                 root,
                 providers,
                 missing,
@@ -583,7 +585,7 @@ mod tests {
             .await
             .expect("bitswap block received");
 
-        match tokio::time::timeout(Duration::from_secs(1), events.recv())
+        match n0_future::time::timeout(Duration::from_secs(1), events.recv())
             .await
             .expect("event")
             .expect("channel open")
@@ -622,7 +624,7 @@ mod tests {
             .try_acquire_nowait(&cid)
             .expect("test owns CID");
 
-        tokio::time::timeout(
+        n0_future::time::timeout(
             Duration::from_millis(100),
             coordinator.handle_bitswap_block_received(QueryId(42), cid, block.clone()),
         )
@@ -667,7 +669,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let now = tokio::time::Instant::now();
+        let now = n0_future::time::Instant::now();
         assert!(coordinator
             .manager()
             .try_claim_pending_dag_dispatch(&root, now));
@@ -684,7 +686,7 @@ mod tests {
         tokio::time::advance(Duration::from_secs(4)).await;
         assert!(coordinator
             .manager()
-            .try_claim_pending_dag_dispatch(&root, tokio::time::Instant::now()));
+            .try_claim_pending_dag_dispatch(&root, n0_future::time::Instant::now()));
     }
 
     /// #1116 stage 2 (#1112): registration and failed completion only update
@@ -721,7 +723,7 @@ mod tests {
         );
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(tokio::time::Instant::now());
+            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert_eq!(due.len(), 1);
         coordinator.dispatch_pending_dag_fetch_for_test(due[0].0, &due[0].1);
         match events.try_recv().expect("clock-driven DagNeedsFetch event") {
@@ -757,7 +759,7 @@ mod tests {
         tokio::time::advance(std::time::Duration::from_secs(4)).await;
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(tokio::time::Instant::now());
+            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert_eq!(due.len(), 1);
         for (due_root, dag) in &due {
             coordinator.dispatch_pending_dag_fetch_for_test(*due_root, dag);
@@ -820,7 +822,7 @@ mod tests {
         );
         let initial_due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(tokio::time::Instant::now());
+            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert_eq!(initial_due.len(), 2);
         for (due_root, dag) in &initial_due {
             coordinator.dispatch_pending_dag_fetch_for_test(*due_root, dag);
@@ -849,7 +851,7 @@ mod tests {
         assert!(
             coordinator
                 .manager()
-                .claim_due_pending_dag_retries(tokio::time::Instant::now())
+                .claim_due_pending_dag_retries(n0_future::time::Instant::now())
                 .is_empty(),
             "neither root is due before the clock rung elapses"
         );
@@ -879,7 +881,7 @@ mod tests {
         tokio::time::advance(std::time::Duration::from_secs(4)).await;
         let due = coordinator
             .manager()
-            .claim_due_pending_dag_retries(tokio::time::Instant::now());
+            .claim_due_pending_dag_retries(n0_future::time::Instant::now());
         assert!(
             due.iter().any(|(cid, _)| *cid == root1_cid),
             "root1 should be due after its second rung elapses"

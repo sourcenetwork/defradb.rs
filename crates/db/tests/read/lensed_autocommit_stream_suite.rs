@@ -11,6 +11,7 @@ use db::DB;
 use document::DocID;
 use document::Document;
 use document::NormalValue;
+use kovan_map::HopscotchMap;
 use lens::LensConfig;
 use lens::LensDocResultStream;
 use lens::LensDocStream;
@@ -19,12 +20,11 @@ use lens::TransformId;
 use lens::TransformStore;
 use query::doc_stream::DocStream;
 use query::runner::DocFetcher;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use rapidhash::fast::RandomState;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::RwLock;
 use storage::RegolithStore;
 
 fn wrapped_stream(
@@ -89,26 +89,33 @@ async fn explicit_close_closes_the_inner_stream() {
 
 /// A `TransformStore` that always fails, so the persist-side re-transform
 /// inside `persist_migrated_document_batch` fails deterministically.
-#[derive(Default)]
 struct AlwaysFailingTransformStore {
-    transforms: RwLock<HashSet<TransformId>>,
+    transforms: HopscotchMap<TransformId, (), RandomState>,
+}
+
+impl Default for AlwaysFailingTransformStore {
+    fn default() -> Self {
+        Self {
+            transforms: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 #[async_trait]
 impl TransformStore for AlwaysFailingTransformStore {
     async fn add(&self, config: LensConfig) -> lens::Result<TransformId> {
         let id = TransformId::new(format!("always-failing-transform-{}", config.lenses.len()));
-        self.transforms.write().unwrap().insert(id.clone());
+        self.transforms.insert(id.clone(), ());
         Ok(id)
     }
 
     async fn add_with_id(&self, id: TransformId, _config: LensConfig) -> lens::Result<()> {
-        self.transforms.write().unwrap().insert(id);
+        self.transforms.insert(id, ());
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(
@@ -124,11 +131,11 @@ impl TransformStore for AlwaysFailingTransformStore {
     }
 
     fn has_transform(&self, id: &TransformId) -> bool {
-        self.transforms.read().unwrap().contains(id)
+        self.transforms.contains_key(id)
     }
 
     async fn remove(&self, id: &TransformId) -> lens::Result<()> {
-        self.transforms.write().unwrap().remove(id);
+        self.transforms.remove(id);
         Ok(())
     }
 }

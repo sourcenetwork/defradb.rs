@@ -12,26 +12,26 @@ use db::{DEFAULT_TRANSACTION_CLEANUP_INTERVAL, DEFAULT_TRANSACTION_IDLE_TIMEOUT}
 pub enum DocumentAcpConfig {
     #[default]
     Local,
-    /// On-chain document ACP via SourceHub.
+    /// On-chain document ACP via Vera.
     ///
-    /// Requires the `sourcehub` feature (on by default).
-    #[cfg(feature = "sourcehub")]
-    SourceHub(SourceHubConfig),
-    /// On-chain document ACP via SourceHub with distinct LCD and gRPC
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    Vera(VeraConfig),
+    /// On-chain document ACP via Vera with distinct LCD and gRPC
     /// endpoints.
-    #[cfg(feature = "sourcehub")]
-    SourceHubWithLcd {
-        config: SourceHubConfig,
+    #[cfg(feature = "vera")]
+    VeraWithLcd {
+        config: VeraConfig,
         lcd_address: String,
     },
 }
 
-/// SourceHub document ACP configuration.
+/// Vera document ACP configuration.
 ///
-/// Requires the `sourcehub` feature (on by default).
-#[cfg(feature = "sourcehub")]
+/// Requires the `vera` feature (on by default).
+#[cfg(feature = "vera")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceHubConfig {
+pub struct VeraConfig {
     pub grpc_address: String,
     pub comet_rpc_address: String,
     pub chain_id: String,
@@ -113,6 +113,10 @@ pub struct P2PConfig {
     pub relay_mode: p2p::iroh::IrohRelayModeConfig,
     /// Address publishing / lookup behavior.
     pub discovery: p2p::iroh::IrohDiscoveryConfig,
+    /// Inbound-connection authorization. Defaults to accepting every peer;
+    /// restrict to an explicit set of iroh endpoint ids once this node is
+    /// reachable from the internet (relay-enabled).
+    pub allowlist: p2p::iroh::IrohAllowlistConfig,
     /// Maximum concurrent QUIC paths per connection. None keeps iroh's default.
     pub max_concurrent_multipath_paths: Option<u32>,
     /// Path to persist secret key. None = ephemeral (new identity each restart).

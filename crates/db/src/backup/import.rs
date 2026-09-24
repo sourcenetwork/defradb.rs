@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use document::{DocID, Document};
@@ -58,8 +58,8 @@ pub async fn import_database<S: Store + 'static>(
     };
 
     let mut documents_imported: u64 = 0;
-    let mut collections_affected: HashSet<String> = HashSet::new();
-    let mut imported_doc_ids: HashMap<String, String> = HashMap::new();
+    let mut collections_affected: RapidHashSet<String> = RapidHashSet::new();
+    let mut imported_doc_ids: RapidHashMap<String, String> = RapidHashMap::new();
     let mut pending_relations: Vec<PendingRelation> = Vec::new();
     let mutator = AutoCommitMutator::new(database.clone());
 
@@ -242,7 +242,7 @@ pub async fn import_database<S: Store + 'static>(
                 )
             })?;
         doc.set(pending.fk_name.clone(), target);
-        let mut modified_fields = HashSet::new();
+        let mut modified_fields = RapidHashSet::new();
         modified_fields.insert(pending.fk_name.clone());
 
         mutator

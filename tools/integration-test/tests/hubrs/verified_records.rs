@@ -3,7 +3,7 @@ use std::sync::Arc;
 use acp::{DocumentACP as _, DocumentPermission, Identity};
 use commonware_codec::Encode as _;
 use integration_test::USER_ACP_POLICY;
-use sourcehub::{AcpTuning, SourceHubDocumentACP, SourceHubProvider, VeraRsProvider};
+use vera::{AcpTuning, VeraDocumentACP, VeraProvider, VeraRsProvider};
 
 use super::helpers;
 
@@ -21,7 +21,7 @@ async fn archived_owner_record_does_not_authorize_access() {
     let keyring =
         keyring::FileKeyring::open(worker_dir.path().join("keys"), b"test-password").unwrap();
     let worker =
-        sourcehub::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
+        vera::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
             .unwrap();
     let owner = helpers::funded_identity();
     let private_key = hex::decode(&owner.private_key_hex).expect("owner key");
@@ -54,7 +54,7 @@ async fn archived_owner_record_does_not_authorize_access() {
         .verify_access(&policy, "users", "archived-document", "owner", &owner_did)
         .await
         .expect("owner proof"));
-    let document_acp = SourceHubDocumentACP::without_access_cache(provider.clone());
+    let document_acp = VeraDocumentACP::without_access_cache(provider.clone());
     assert_eq!(
         document_acp
             .get_doc_owner(&policy, "users", "archived-document")
@@ -130,7 +130,7 @@ async fn archived_owner_record_does_not_authorize_access() {
 #[tokio::test]
 #[serial_test::serial]
 async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
-    use sourcehub::SubjectRef;
+    use vera::SubjectRef;
     let mut hub = helpers::start_hub_cluster().await;
     let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
@@ -142,7 +142,7 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
     let keyring =
         keyring::FileKeyring::open(worker_dir.path().join("keys"), b"test-password").unwrap();
     let worker =
-        sourcehub::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
+        vera::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
             .unwrap();
     let owner = helpers::funded_identity();
     let provider = Arc::new(
@@ -263,7 +263,7 @@ resources:
         .verify_access(&policy, "file", "report", "read", &owner_did)
         .await
         .unwrap());
-    let document_acp = SourceHubDocumentACP::without_access_cache(provider.clone());
+    let document_acp = VeraDocumentACP::without_access_cache(provider.clone());
     let identity = Identity::authenticated(identity::Did::new(reader).unwrap());
     assert!(!document_acp
         .check_doc_access(

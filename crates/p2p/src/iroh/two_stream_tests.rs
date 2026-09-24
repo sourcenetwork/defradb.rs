@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
@@ -6,9 +6,9 @@ use bytes::Bytes;
 use crypto::generate_ed25519;
 use identity::{Identity, RawIdentity};
 use iroh::SecretKey;
+use n0_future::task::JoinHandle;
+use n0_future::time::timeout;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
-use tokio::time::timeout;
 
 use super::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
 use crate::message::{PushLogReply, PushLogRequest};
@@ -35,6 +35,7 @@ impl TestNode {
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
             gossip_heal: Default::default(),
+            allowlist: Default::default(),
         };
         let (command_tx, events, _replicators, task) = spawn_endpoint(config).await.unwrap();
         Self {
@@ -110,7 +111,7 @@ async fn two_stream_request_receives_reply_on_request_stream() {
     let message_id = request.message_id.clone();
     let target = receiver.transport.local_peer_id().clone();
     let sender_transport = sender.transport.clone();
-    let send_task = tokio::spawn(async move {
+    let send_task = n0_future::task::spawn(async move {
         sender_transport
             .send_two_stream_request(&target, request)
             .await
@@ -171,7 +172,7 @@ async fn two_stream_request_carries_cached_explicit_replay_capability() {
     );
     let sender_transport = sender.transport.clone();
     let send_target = target.clone();
-    let send_task = tokio::spawn(async move {
+    let send_task = n0_future::task::spawn(async move {
         sender_transport
             .send_two_stream_request(&send_target, request)
             .await
@@ -205,7 +206,7 @@ async fn two_stream_request_still_accepts_legacy_reverse_stream_reply() {
     let message_id = request.message_id.clone();
     let target = receiver.transport.local_peer_id().clone();
     let sender_transport = sender.transport.clone();
-    let send_task = tokio::spawn(async move {
+    let send_task = n0_future::task::spawn(async move {
         sender_transport
             .send_two_stream_request(&target, request)
             .await
@@ -245,7 +246,7 @@ async fn disconnected_two_stream_requests_release_send_slots_before_reply_timeou
         let request = signed_request(&sender.transport, &format!("disconnect-{index}"));
         let transport = sender.transport.clone();
         let peer = receiver.transport.local_peer_id().clone();
-        sends.push(tokio::spawn(async move {
+        sends.push(n0_future::task::spawn(async move {
             transport.send_two_stream_request(&peer, request).await
         }));
     }
@@ -291,7 +292,7 @@ async fn concurrent_two_stream_fan_in_replies_on_request_streams() {
         let request = signed_request(&sender.transport, &format!("fan-in-{index}"));
         let target = receiver.transport.local_peer_id().clone();
         let sender_transport = sender.transport.clone();
-        let send_task = tokio::spawn(async move {
+        let send_task = n0_future::task::spawn(async move {
             sender_transport
                 .send_two_stream_request(&target, request)
                 .await
@@ -299,7 +300,7 @@ async fn concurrent_two_stream_fan_in_replies_on_request_streams() {
         senders.push((sender, send_task));
     }
 
-    let mut peers = HashSet::with_capacity(SENDERS);
+    let mut peers = RapidHashSet::with_capacity(SENDERS);
     for _ in 0..SENDERS {
         let (peer_id, request, token) = next_two_stream_request(&mut receiver.events).await;
         peers.insert(peer_id);

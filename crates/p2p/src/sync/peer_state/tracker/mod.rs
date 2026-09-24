@@ -8,12 +8,15 @@
 mod memory;
 mod operations;
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
-
-use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use web_time::Instant;
 
 use cid::Cid;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+use rapidhash::fast::RandomState;
 
 /// Default maximum number of CIDs to track per peer.
 /// This prevents unbounded memory growth in long-running nodes.
@@ -26,73 +29,66 @@ const DEFAULT_MAX_TOTAL_CIDS: usize = 1_000_000;
 /// Default maximum number of tracked peers.
 const DEFAULT_MAX_PEERS: usize = 1_000;
 
-/// Information about a single peer's sync state.
-#[derive(Debug)]
+pub(super) type PeerTable = HopscotchMap<Arc<str>, Arc<PeerInfo>, RandomState>;
+
+/// Information about a single peer's sync state. Every field is updated in
+/// place, so an entry is shared rather than copied.
 pub(super) struct PeerInfo {
     /// CIDs this peer has announced or we've sent to them
-    pub(super) known_cids: HashSet<Cid>,
+    pub(super) known_cids: HopscotchMap<Cid, (), RandomState>,
     /// Insertion order for LRU eviction (oldest first)
-    pub(super) cid_order: VecDeque<Cid>,
+    pub(super) cid_order: SegQueue<Cid>,
     /// Collections this peer is subscribed to
-    pub(super) subscribed_collections: HashSet<String>,
-    /// When we last heard from this peer
-    pub(super) last_seen: Instant,
+    pub(super) subscribed_collections: HopscotchMap<String, (), RandomState>,
+    /// When we last heard from this peer, in nanoseconds since the tracker's epoch
+    pub(super) last_seen: AtomicU64,
     /// Whether peer is currently connected
-    pub(super) connected: bool,
+    pub(super) connected: AtomicBool,
 }
 
 impl PeerInfo {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(now: u64) -> Self {
         Self {
-            known_cids: HashSet::new(),
-            cid_order: VecDeque::new(),
-            subscribed_collections: HashSet::new(),
-            last_seen: Instant::now(),
-            connected: false,
+            known_cids: HopscotchMap::with_hasher(RandomState::default()),
+            cid_order: SegQueue::new(),
+            subscribed_collections: HopscotchMap::with_hasher(RandomState::default()),
+            last_seen: AtomicU64::new(now),
+            connected: AtomicBool::new(false),
         }
     }
 
-    #[cfg(debug_assertions)]
-    pub(super) fn debug_assert_cid_tracking_consistent(&self) {
-        debug_assert_eq!(
-            self.known_cids.len(),
-            self.cid_order.len(),
-            "known_cids and cid_order must remain in lockstep"
-        );
-        debug_assert!(
-            self.cid_order
-                .iter()
-                .all(|cid| self.known_cids.contains(cid)),
-            "cid_order must not contain CIDs missing from known_cids"
-        );
+    pub(super) fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
     }
 
-    #[cfg(not(debug_assertions))]
-    pub(super) fn debug_assert_cid_tracking_consistent(&self) {}
+    pub(super) fn last_seen(&self) -> u64 {
+        self.last_seen.load(Ordering::Relaxed)
+    }
 
-    /// Add a CID with LRU eviction if at capacity.
-    pub(super) fn add_cid(&mut self, cid: Cid, max_cids: usize) {
-        self.debug_assert_cid_tracking_consistent();
-
-        // If already present, don't add again (maintains LRU order)
-        if self.known_cids.contains(&cid) {
-            self.debug_assert_cid_tracking_consistent();
-            return;
+    /// Add a CID with LRU eviction if at capacity. Returns `true` when the
+    /// CID was not already known.
+    pub(super) fn add_cid(&self, cid: Cid, max_cids: usize) -> bool {
+        if self.known_cids.insert_if_absent(cid, ()).is_some() {
+            return false;
         }
-
-        // Evict oldest if at capacity
-        while self.known_cids.len() >= max_cids {
-            if let Some(oldest) = self.cid_order.pop_front() {
-                self.known_cids.remove(&oldest);
-            } else {
+        self.cid_order.push(cid);
+        while self.known_cids.len() > max_cids {
+            let Some(oldest) = self.cid_order.pop() else {
                 break;
+            };
+            self.known_cids.remove(&oldest);
+        }
+        true
+    }
+
+    /// Drop the oldest known CID. Returns `false` once none is left.
+    pub(super) fn evict_oldest_cid(&self) -> bool {
+        while let Some(oldest) = self.cid_order.pop() {
+            if self.known_cids.remove(&oldest).is_some() {
+                return true;
             }
         }
-
-        // Add the new CID
-        self.known_cids.insert(cid);
-        self.cid_order.push_back(cid);
-        self.debug_assert_cid_tracking_consistent();
+        false
     }
 }
 
@@ -108,7 +104,13 @@ impl PeerInfo {
 /// - `max_peers`: Maximum number of tracked peers (oldest disconnected peers evicted)
 pub struct PeerStateTracker {
     /// Per-peer state
-    pub(super) peers: RwLock<HashMap<String, PeerInfo>>,
+    pub(super) peers: PeerTable,
+    /// Origin of every `last_seen` timestamp
+    pub(super) epoch: Instant,
+    /// CIDs known across all peers, kept as an upper bound: a peer removed
+    /// while still receiving CIDs leaves the count high, never low, and the
+    /// next limit sweep recomputes it exactly.
+    pub(super) total_cids: AtomicUsize,
     /// How long to keep peer info after disconnect
     pub(super) peer_ttl: Duration,
     /// Maximum CIDs to track per peer (prevents memory exhaustion)
@@ -128,24 +130,17 @@ impl Default for PeerStateTracker {
 impl PeerStateTracker {
     /// Create a new peer state tracker with default settings.
     pub fn new() -> Self {
-        Self {
-            peers: RwLock::new(HashMap::new()),
-            peer_ttl: Duration::from_secs(3600), // 1 hour default
-            max_cids_per_peer: DEFAULT_MAX_CIDS_PER_PEER,
-            max_total_cids: DEFAULT_MAX_TOTAL_CIDS,
-            max_peers: DEFAULT_MAX_PEERS,
-        }
+        Self::with_ttl(Duration::from_secs(3600))
     }
 
     /// Create with custom peer TTL.
     pub fn with_ttl(peer_ttl: Duration) -> Self {
-        Self {
-            peers: RwLock::new(HashMap::new()),
+        Self::with_full_config(
             peer_ttl,
-            max_cids_per_peer: DEFAULT_MAX_CIDS_PER_PEER,
-            max_total_cids: DEFAULT_MAX_TOTAL_CIDS,
-            max_peers: DEFAULT_MAX_PEERS,
-        }
+            DEFAULT_MAX_CIDS_PER_PEER,
+            DEFAULT_MAX_TOTAL_CIDS,
+            DEFAULT_MAX_PEERS,
+        )
     }
 
     /// Create with custom configuration.
@@ -159,22 +154,12 @@ impl PeerStateTracker {
     ///
     /// Logs a warning if `max_cids_per_peer` is 0 (falls back to default).
     pub fn with_config(peer_ttl: Duration, max_cids_per_peer: usize) -> Self {
-        let max_cids = if max_cids_per_peer == 0 {
-            tracing::warn!(
-                "max_cids_per_peer was 0, using default value {}",
-                DEFAULT_MAX_CIDS_PER_PEER
-            );
-            DEFAULT_MAX_CIDS_PER_PEER
-        } else {
-            max_cids_per_peer
-        };
-        Self {
-            peers: RwLock::new(HashMap::new()),
+        Self::with_full_config(
             peer_ttl,
-            max_cids_per_peer: max_cids,
-            max_total_cids: DEFAULT_MAX_TOTAL_CIDS,
-            max_peers: DEFAULT_MAX_PEERS,
-        }
+            max_cids_per_peer,
+            DEFAULT_MAX_TOTAL_CIDS,
+            DEFAULT_MAX_PEERS,
+        )
     }
 
     /// Create with full custom configuration including global limits.
@@ -216,11 +201,39 @@ impl PeerStateTracker {
             max_peers
         };
         Self {
-            peers: RwLock::new(HashMap::new()),
+            peers: HopscotchMap::with_hasher(RandomState::default()),
+            epoch: Instant::now(),
+            total_cids: AtomicUsize::new(0),
             peer_ttl,
             max_cids_per_peer: max_cids,
             max_total_cids: max_total,
             max_peers: max_p,
+        }
+    }
+
+    pub(super) fn now(&self) -> u64 {
+        self.epoch.elapsed().as_nanos() as u64
+    }
+
+    /// The peer's entry, created on first sight.
+    pub(super) fn peer_entry(&self, peer_id: &str) -> Arc<PeerInfo> {
+        match self.peers.get(peer_id) {
+            Some(info) => info,
+            None => self
+                .peers
+                .get_or_insert(Arc::from(peer_id), Arc::new(PeerInfo::new(self.now()))),
+        }
+    }
+
+    /// Remove a peer entry and release its CIDs from the global count.
+    pub(super) fn remove_peer(&self, peer_id: &str) {
+        if let Some(info) = self.peers.remove(peer_id) {
+            let released = info.known_cids.len();
+            self.total_cids
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+                    Some(total.saturating_sub(released))
+                })
+                .ok();
         }
     }
 }

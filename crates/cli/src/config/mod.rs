@@ -6,6 +6,7 @@
 //! 3. Config file (config.yaml in rootdir)
 //! 4. Default values
 
+mod iroh_relay_server;
 mod secret_file;
 mod sections;
 mod types;
@@ -19,6 +20,7 @@ use crate::cli::Cli;
 use crate::error::{Error, Result};
 
 // Re-export types and sections for external use
+pub use iroh_relay_server::{IrohRelayServerConfig, IrohRelayServerTlsConfig};
 pub use sections::{
     AcpConfig, ApiConfig, DatastoreConfig, EmbeddingConfig, KeyringConfig, LogConfig, NetConfig,
 };
@@ -224,38 +226,58 @@ impl Config {
             self.acp.document_type = doc_type.parse()?;
         }
 
-        // SourceHub
-        #[cfg(feature = "sourcehub")]
-        if let Some(ref addr) = cli.source_hub_address {
-            self.acp.sourcehub_address = addr.clone();
+        // Vera
+        #[cfg(feature = "vera")]
+        if let Some(addr) = cli
+            .vera_address
+            .clone()
+            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_ADDRESS").ok())
+        {
+            self.acp.vera_address = addr;
         }
-        #[cfg(feature = "sourcehub")]
-        if let Some(ref addr) = cli.source_hub_grpc_address {
-            self.acp.sourcehub_grpc_address = addr.clone();
+        #[cfg(feature = "vera")]
+        if let Some(addr) = cli
+            .vera_grpc_address
+            .clone()
+            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_GRPC_ADDRESS").ok())
+        {
+            self.acp.vera_grpc_address = addr;
         }
-        #[cfg(feature = "sourcehub")]
-        if let Some(ref addr) = cli.source_hub_comet_address {
-            self.acp.sourcehub_comet_address = addr.clone();
+        #[cfg(feature = "vera")]
+        if let Some(addr) = cli
+            .vera_comet_address
+            .clone()
+            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_COMET_ADDRESS").ok())
+        {
+            self.acp.vera_comet_address = addr;
         }
-        #[cfg(feature = "sourcehub")]
-        if let Some(ref addr) = cli.source_hub_events_ws {
-            self.acp.sourcehub_events_ws = addr.clone();
+        #[cfg(feature = "vera")]
+        if let Some(addr) = cli
+            .vera_events_ws
+            .clone()
+            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_EVENTS_WS").ok())
+        {
+            self.acp.vera_events_ws = addr;
         }
-        #[cfg(feature = "sourcehub")]
-        if let Some(ref id) = cli.source_hub_chain_id {
-            self.acp.sourcehub_chain_id = id.clone();
+        #[cfg(feature = "vera")]
+        if let Some(id) = cli
+            .vera_chain_id
+            .clone()
+            .or_else(|| std::env::var("DEFRA_SOURCE_HUB_CHAIN_ID").ok())
+        {
+            self.acp.vera_chain_id = id;
         }
 
         // hub.rs
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         if let Some(ref addr) = cli.hub_rs_address {
             self.acp.hub_rs_address = addr.clone();
         }
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         if let Some(ref key) = cli.vera_consensus_key {
             self.acp.vera_consensus_key = key.clone();
         }
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         if let Some(id) = cli.vera_deployment_id {
             self.acp.vera_deployment_id = Some(id);
         }
@@ -283,6 +305,10 @@ impl Config {
         }
         if !self.api.privkey_path.is_empty() && !Path::new(&self.api.privkey_path).is_absolute() {
             self.api.privkey_path = rootdir.join(&self.api.privkey_path).display().to_string();
+        }
+
+        if let Some(relay_server) = &mut self.net.iroh_relay_server {
+            relay_server.resolve_paths(rootdir);
         }
     }
 

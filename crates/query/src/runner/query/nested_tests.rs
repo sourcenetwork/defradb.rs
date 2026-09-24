@@ -4,31 +4,59 @@ use async_trait::async_trait;
 use bm25::{Document as Bm25Document, Language, SearchEngineBuilder};
 use document::Document;
 use identity::Did;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use rapidhash::RapidHashMap;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
-use std::collections::HashMap;
-use std::sync::Mutex;
 
 use super::super::nested_profile::ScopedFulltextProfile;
 use crate::fetcher::FetchByIdsResult;
 use crate::planner::Planner;
 use schema::PolicyDescription;
 
-type ScoreMap = HashMap<(String, String, String), HashMap<String, f64>>;
+type ScoreKey = (String, String, String);
 
-#[derive(Default)]
 struct FullTextTestFetcher {
-    docs: Mutex<HashMap<String, Vec<Document>>>,
-    scores: Mutex<ScoreMap>,
+    docs: HopscotchMap<String, Arc<Atom<Vec<Document>>>, RandomState>,
+    scores: HopscotchMap<ScoreKey, RapidHashMap<String, f64>, RandomState>,
+}
+
+impl Default for FullTextTestFetcher {
+    fn default() -> Self {
+        Self {
+            docs: HopscotchMap::with_hasher(RandomState::default()),
+            scores: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl FullTextTestFetcher {
     fn add_doc(&self, collection: &str, doc: Document) {
-        let mut docs = self.docs.lock().unwrap();
-        docs.entry(collection.to_string()).or_default().push(doc);
+        self.docs
+            .get_or_insert(collection.to_string(), Arc::new(Atom::new(Vec::new())))
+            .rcu(|docs| {
+                let mut docs = docs.clone();
+                docs.push(doc.clone());
+                docs
+            });
     }
 
-    fn set_scores(&self, collection: &str, field: &str, query: &str, scores: HashMap<String, f64>) {
-        self.scores.lock().unwrap().insert(
+    fn collection_docs(&self, collection: &str) -> Vec<Document> {
+        self.docs
+            .get(collection)
+            .map(|docs| docs.load_clone())
+            .unwrap_or_default()
+    }
+
+    fn set_scores(
+        &self,
+        collection: &str,
+        field: &str,
+        query: &str,
+        scores: RapidHashMap<String, f64>,
+    ) {
+        self.scores.insert(
             (collection.to_string(), field.to_string(), query.to_string()),
             scores,
         );
@@ -56,8 +84,7 @@ impl DocFetcher for FullTextTestFetcher {
         Ok(Box::new(crate::doc_stream::VecStream::new(picked)))
     }
     async fn get_all(&self, collection_name: &str) -> Result<Vec<Document>> {
-        let docs = self.docs.lock().unwrap();
-        Ok(docs.get(collection_name).cloned().unwrap_or_default())
+        Ok(self.collection_docs(collection_name))
     }
 
     /// In-memory mock: there is no storage to stream from.
@@ -77,8 +104,7 @@ impl DocFetcher for FullTextTestFetcher {
         collection_name: &str,
         doc_ids: &[String],
     ) -> Result<FetchByIdsResult> {
-        let docs = self.docs.lock().unwrap();
-        let all = docs.get(collection_name).cloned().unwrap_or_default();
+        let all = self.collection_docs(collection_name);
 
         let mut found = Vec::new();
         let mut missing = Vec::new();
@@ -104,8 +130,7 @@ impl DocFetcher for FullTextTestFetcher {
         field_name: &str,
         value: &str,
     ) -> Result<Vec<Document>> {
-        let docs = self.docs.lock().unwrap();
-        let all = docs.get(collection_name).cloned().unwrap_or_default();
+        let all = self.collection_docs(collection_name);
 
         Ok(all
             .into_iter()
@@ -123,15 +148,14 @@ impl DocFetcher for FullTextTestFetcher {
         collection_name: &str,
         field_name: &str,
         query: &str,
-    ) -> Result<HashMap<String, f64>> {
-        let scores = self.scores.lock().unwrap();
-        Ok(scores
+    ) -> Result<RapidHashMap<String, f64>> {
+        Ok(self
+            .scores
             .get(&(
                 collection_name.to_string(),
                 field_name.to_string(),
                 query.to_string(),
             ))
-            .cloned()
             .unwrap_or_default())
     }
 }
@@ -139,7 +163,7 @@ impl DocFetcher for FullTextTestFetcher {
 fn relation_collections() -> (
     CollectionVersion,
     CollectionVersion,
-    HashMap<String, Arc<CollectionVersion>>,
+    RapidHashMap<String, Arc<CollectionVersion>>,
 ) {
     let file_collection = CollectionVersion::new(
         "File",
@@ -172,7 +196,7 @@ fn relation_collections() -> (
 
     let file_collection = Arc::new(file_collection);
     let function_collection = Arc::new(function_collection);
-    let collections_map = HashMap::from([
+    let collections_map = RapidHashMap::from_iter([
         (file_collection.name.clone(), file_collection.clone()),
         (
             function_collection.name.clone(),
@@ -190,7 +214,7 @@ fn relation_collections() -> (
 fn parsed_relation_collections() -> (
     CollectionVersion,
     CollectionVersion,
-    HashMap<String, Arc<CollectionVersion>>,
+    RapidHashMap<String, Arc<CollectionVersion>>,
 ) {
     let collections = crate::parse_sdl(
         r#"
@@ -224,7 +248,7 @@ fn parsed_relation_collections() -> (
         .clone();
     let file_collection = Arc::new(file_collection);
     let function_collection = Arc::new(function_collection);
-    let collections_map = HashMap::from([
+    let collections_map = RapidHashMap::from_iter([
         (file_collection.name.clone(), file_collection.clone()),
         (
             function_collection.name.clone(),
@@ -242,7 +266,7 @@ fn parsed_relation_collections() -> (
 fn relation_collections_resolved_by_id() -> (
     CollectionVersion,
     CollectionVersion,
-    HashMap<String, Arc<CollectionVersion>>,
+    RapidHashMap<String, Arc<CollectionVersion>>,
 ) {
     let file_collection = CollectionVersion::new(
         "File",
@@ -269,7 +293,7 @@ fn relation_collections_resolved_by_id() -> (
 
     let file_collection = Arc::new(file_collection);
     let function_collection = Arc::new(function_collection);
-    let collections_map = HashMap::from([
+    let collections_map = RapidHashMap::from_iter([
         (file_collection.name.clone(), file_collection.clone()),
         (
             function_collection.name.clone(),
@@ -289,7 +313,7 @@ fn doc(json: &str) -> Document {
 }
 
 struct MockDocumentAcp {
-    private_docs: HashMap<String, Did>,
+    private_docs: RapidHashMap<String, Did>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -410,7 +434,7 @@ async fn compute_fulltext_path_scores_lifts_parent_relation_scores() {
         "File",
         "name",
         "auth",
-        HashMap::from([(file_1.to_string(), 1.5)]),
+        RapidHashMap::from_iter([(file_1.to_string(), 1.5)]),
     );
 
     let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
@@ -510,7 +534,7 @@ async fn nested_acp_relations_keep_public_join_targets() {
     );
 
     let acp = Arc::new(MockDocumentAcp {
-        private_docs: HashMap::from([
+        private_docs: RapidHashMap::from_iter([
             (company_private.to_string(), employee_owner.clone()),
             (emp_private_public.to_string(), employee_owner.clone()),
             (emp_private_private.to_string(), employee_owner),
@@ -545,7 +569,7 @@ async fn nested_acp_relations_keep_public_join_targets() {
 
     assert_eq!(employees.len(), 2);
 
-    let by_name: HashMap<_, _> = employees
+    let by_name: RapidHashMap<_, _> = employees
         .iter()
         .map(|employee| {
             (
@@ -596,7 +620,7 @@ async fn compute_fulltext_path_scores_lifts_reverse_relation_scores() {
         "Function",
         "name",
         "parse_token",
-        HashMap::from([(fn_1.to_string(), 2.0)]),
+        RapidHashMap::from_iter([(fn_1.to_string(), 2.0)]),
     );
 
     let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
@@ -647,7 +671,7 @@ async fn compute_fulltext_path_scores_with_parsed_sdl_schema() {
         "File",
         "content",
         "auth",
-        HashMap::from([(file_1.to_string(), 0.7)]),
+        RapidHashMap::from_iter([(file_1.to_string(), 0.7)]),
     );
 
     let runner = QueryRunner::new(fetcher, vec![]);
@@ -684,7 +708,7 @@ async fn compute_fulltext_path_scores_resolves_target_collection_by_collection_i
         "File",
         "name",
         "auth",
-        HashMap::from([(file_1.to_string(), 1.25)]),
+        RapidHashMap::from_iter([(file_1.to_string(), 1.25)]),
     );
 
     let runner = QueryRunner::new(fetcher, vec![file_collection, function_collection]);
@@ -719,7 +743,7 @@ async fn precompute_fulltext_scores_scopes_nested_bm25_aliases() {
         "File",
         "name",
         "auth",
-        HashMap::from([(file_1.to_string(), 1.0)]),
+        RapidHashMap::from_iter([(file_1.to_string(), 1.0)]),
     );
 
     let select = crate::parse_query(
@@ -769,7 +793,7 @@ async fn precompute_fulltext_scores_skips_nested_local_bm25_fields() {
         "Function",
         "name",
         "handle",
-        HashMap::from([(fn_1.to_string(), 1.75)]),
+        RapidHashMap::from_iter([(fn_1.to_string(), 1.75)]),
     );
 
     let select = crate::parse_query(
@@ -909,7 +933,7 @@ fn compute_scoped_fulltext_scores_matches_bm25_crate_scores() {
         .search("cargo cargo bm25", None)
         .into_iter()
         .map(|result| (result.document.id, result.score as f64))
-        .collect::<HashMap<_, _>>();
+        .collect::<RapidHashMap<_, _>>();
 
     assert_eq!(scoped_scores.len(), items.len());
     for (doc_id, expected_score) in expected_scores {

@@ -36,6 +36,7 @@ fn test_p2p_config() -> P2PConfig {
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+        allowlist: p2p::iroh::IrohAllowlistConfig::AcceptAll,
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
         load_persisted_collections: false,
@@ -119,6 +120,26 @@ async fn wait_for_connected_peer(node: &EmbeddedNode) {
         assert!(
             Instant::now() < deadline,
             "node never reported a connected peer"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn wait_for_no_connected_peer(node: &EmbeddedNode) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let peers = node
+            .p2p()
+            .expect("P2P should be enabled")
+            .connected_peers()
+            .await
+            .expect("connected_peers should succeed");
+        if peers.is_empty() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "node still reports a connected peer: {peers:?}"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -1479,6 +1500,112 @@ async fn p2p_replicator_survives_embedded_restart() {
     let _ = tokio::fs::remove_dir_all(data_path1).await;
 }
 
+#[tokio::test]
+async fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
+    init_tracing();
+
+    let data_path0 = unique_data_path("filtered-p2p-replicator-node0");
+    let data_path1 = unique_data_path("filtered-p2p-replicator-node1");
+    let secret_key_path0 = data_path0.join("p2p.key");
+    let secret_key_path1 = data_path1.join("p2p.key");
+
+    let expected = {
+        let node0 = build_persistent_p2p_node(data_path0.clone(), secret_key_path0.clone()).await;
+        let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
+
+        node0
+            .add_schema(AGENT_SCHEMA)
+            .await
+            .expect("schema on node0");
+        node1
+            .add_schema(AGENT_SCHEMA)
+            .await
+            .expect("schema on node1");
+
+        install_filtered_one_way_replicator(
+            &node0,
+            &node1,
+            &["AgentDoc"],
+            agent_did_in_filter(&["did:key:phone"]),
+        )
+        .await;
+        let replicators = node0
+            .p2p()
+            .expect("node0 p2p")
+            .get_replicators()
+            .await
+            .expect("list replicators before restart");
+        let expected = replicators
+            .into_iter()
+            .find(|replicator| !replicator.filters.is_empty())
+            .expect("filtered replicator before restart");
+
+        node0.shutdown().await;
+        node1.shutdown().await;
+        expected
+    };
+
+    {
+        let node0 = build_persistent_p2p_node(data_path0.clone(), secret_key_path0).await;
+        let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1).await;
+        let restored = node0
+            .p2p()
+            .expect("node0 p2p")
+            .get_replicators()
+            .await
+            .expect("list replicators after restart")
+            .into_iter()
+            .find(|replicator| replicator.id == expected.id)
+            .expect("replicator restored into live registry");
+
+        assert_eq!(restored.collections, expected.collections);
+        assert_eq!(restored.address, expected.address);
+        assert_eq!(
+            restored.filters, expected.filters,
+            "startup must preserve filters so an idempotent add does not trigger full replay"
+        );
+
+        install_filtered_one_way_replicator(
+            &node0,
+            &node1,
+            &["AgentDoc"],
+            agent_did_in_filter(&["did:key:phone"]),
+        )
+        .await;
+
+        for (agent_did, body) in [
+            ("did:key:phone", "allowed after restart"),
+            ("did:key:other", "denied after restart"),
+        ] {
+            let response = node0
+                .execute(&format!(
+                    r#"mutation {{ add_AgentDoc(input: {{agent_did: "{agent_did}", body: "{body}"}}) {{ _docID }} }}"#
+                ))
+                .await;
+            assert!(
+                response.errors.is_empty(),
+                "add_AgentDoc({agent_did}) returned errors: {:?}",
+                response.errors
+            );
+        }
+
+        wait_for_agent_doc_dids(&node1, &["did:key:phone"]).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let present = query_agent_doc_dids(&node1).await;
+        assert_eq!(
+            present,
+            vec!["did:key:phone"],
+            "restored filter must still govern live replication after idempotent re-add"
+        );
+
+        node0.shutdown().await;
+        node1.shutdown().await;
+    }
+
+    let _ = tokio::fs::remove_dir_all(data_path0).await;
+    let _ = tokio::fs::remove_dir_all(data_path1).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "stress test for same-session follow-up replication under desktop-like load"]
 async fn live_replicator_same_session_followup_turn_converges() {
@@ -1986,4 +2113,162 @@ async fn encrypted_create_replicates_plaintext_to_replicator() {
 
     writer.shutdown().await;
     replica.shutdown().await;
+}
+
+/// `EmbeddedNode::allow_p2p_peer` is the only reachable way to widen an
+/// already-running node's inbound allowlist: it must actually flow through
+/// `p2p-adapter` down to `IrohTransport::allow_peer`, not stop at the
+/// transport layer, or an operator admitting a new peer at runtime would
+/// have no way to do so short of a restart.
+#[tokio::test]
+async fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
+    init_tracing();
+
+    let node_a = EmbeddedNode::builder()
+        .with_p2p(test_p2p_config())
+        .build()
+        .await
+        .expect("build node_a");
+
+    // node_b starts with an explicit allowlist that excludes node_a.
+    let mut config_b = test_p2p_config();
+    config_b.allowlist = p2p::iroh::IrohAllowlistConfig::Explicit(Default::default());
+    let node_b = EmbeddedNode::builder()
+        .with_p2p(config_b)
+        .build()
+        .await
+        .expect("build node_b");
+
+    let addr_b = wait_for_listen_addr(&node_b).await;
+    let p2p_a = node_a.p2p().expect("node_a p2p");
+    let p2p_b = node_b.p2p().expect("node_b p2p");
+    let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
+
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("dial reaches node_b");
+
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        let connected = p2p_b
+            .connected_peers()
+            .await
+            .expect("node_b connected_peers");
+        assert!(
+            connected.is_empty(),
+            "a peer refused by the allowlist must never appear connected"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Clear node_a's stale local view of the refused attempt before
+    // redialing, so the next connect cannot short-circuit as "already
+    // connected".
+    p2p_a
+        .disconnect_peer(&addr_b)
+        .await
+        .expect("clear stale attempt");
+
+    node_b
+        .allow_p2p_peer(&peer_a)
+        .await
+        .expect("authorize node_a at runtime");
+
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("connect after authorization");
+    wait_for_connected_peer(&node_a).await;
+    wait_for_connected_peer(&node_b).await;
+
+    node_a.shutdown().await;
+    node_b.shutdown().await;
+}
+
+/// `EmbeddedNode::deny_p2p_peer` is the reachable way to cut off an
+/// already-admitted device without a restart: this is the shape a customer
+/// logout takes. Mirrors `allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist`
+/// and must actually flow through `p2p-adapter` down to
+/// `IrohTransport::deny_peer`, and it must close the connection node_a
+/// already holds, not just stop the next one.
+#[tokio::test]
+async fn deny_p2p_peer_revokes_an_already_connected_peer() {
+    init_tracing();
+
+    let node_a = EmbeddedNode::builder()
+        .with_p2p(test_p2p_config())
+        .build()
+        .await
+        .expect("build node_a");
+
+    // node_b starts with an explicit allowlist that admits node_a up front,
+    // so the connection this test revokes is established normally rather
+    // than through the runtime `allow_p2p_peer` path already covered above.
+    let p2p_a = node_a.p2p().expect("node_a p2p");
+    let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
+    let mut config_b = test_p2p_config();
+    config_b.allowlist =
+        p2p::iroh::IrohAllowlistConfig::Explicit([peer_a.clone()].into_iter().collect());
+    let node_b = EmbeddedNode::builder()
+        .with_p2p(config_b)
+        .build()
+        .await
+        .expect("build node_b");
+
+    let addr_b = wait_for_listen_addr(&node_b).await;
+    let p2p_b = node_b.p2p().expect("node_b p2p");
+
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("connect while authorized");
+    wait_for_connected_peer(&node_a).await;
+    wait_for_connected_peer(&node_b).await;
+
+    node_b
+        .deny_p2p_peer(&peer_a)
+        .await
+        .expect("revoke node_a at runtime");
+
+    // The revoke must close the connection node_a already holds, not just
+    // refuse the next one: both sides converge on no connected peers.
+    wait_for_no_connected_peer(&node_b).await;
+    wait_for_no_connected_peer(&node_a).await;
+
+    // And the next connection attempt is refused: reconnecting does not
+    // slip back in.
+    p2p_a
+        .connect_peer(&addr_b)
+        .await
+        .expect("dial reaches node_b again");
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        let connected = p2p_b
+            .connected_peers()
+            .await
+            .expect("node_b connected_peers");
+        assert!(
+            connected.is_empty(),
+            "a denied peer must not be able to reconnect"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // The other half, and the one that decides whether this is a revocation
+    // at all: node_b must also refuse to dial node_a. Barring only the
+    // inbound side leaves node_b's own reconnect sweep free to redial the
+    // peer it just revoked, which would restore node_a's full stream service
+    // over a connection node_b opened itself. node_a would accept happily;
+    // the refusal has to come from node_b.
+    let addr_a = wait_for_listen_addr(&node_a).await;
+    let outbound = p2p_b.connect_peer(&addr_a).await;
+    assert!(
+        outbound.is_err(),
+        "node_b must refuse to dial a peer it revoked, got {outbound:?}"
+    );
+    wait_for_no_connected_peer(&node_b).await;
+
+    node_a.shutdown().await;
+    node_b.shutdown().await;
 }

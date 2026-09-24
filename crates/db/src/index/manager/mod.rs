@@ -10,11 +10,11 @@ pub mod value_extraction;
 use crate::index::error::{Error, Result};
 use datastore::NamespaceView;
 use document::Document;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{
     CollectionVersion, FieldDescription, IndexDescription, IndexKind, IndexedFieldDescription,
     OrderedIndexDescription, VectorIndexDescription,
 };
-use std::collections::HashMap;
 use storage::corekv::Key;
 use storage::index::FullTextIndex;
 
@@ -25,7 +25,7 @@ use storage::keys::IndexIDSequenceKey;
 pub mod doc_source;
 pub use doc_source::{DocumentSource, SliceSource};
 
-/// How a live unique conflict was resolved during merge (#1111).
+/// How a live unique conflict was resolved during merge or index rebuild (#1111/#1308).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeConflictOutcome {
     /// No conflict, or the stale-entry heal handled it.
@@ -45,6 +45,19 @@ pub struct BulkIndexResult {
     pub indexed: usize,
     /// Number of documents skipped (e.g., missing document ID).
     pub skipped: usize,
+}
+
+/// One batch of [`IndexManager::index_batch_from`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchIndexResult {
+    /// Documents indexed by this batch.
+    pub indexed: usize,
+    /// Documents skipped (unset short id).
+    pub skipped: usize,
+    /// The short id of the last document indexed, if any.
+    pub last_doc_short_id: Option<u64>,
+    /// The source yielded nothing more.
+    pub exhausted: bool,
 }
 
 /// Generate an index name matching Go's `{Col}_{firstField}_ASC` pattern.
@@ -117,7 +130,7 @@ pub struct IndexManager {
     /// schema, in which case stale-entry healing is disabled.
     collection_id: String,
     /// Active index instances keyed by index name
-    indexes: HashMap<String, IndexType>,
+    indexes: RapidHashMap<String, IndexType>,
 }
 
 impl IndexManager {
@@ -147,7 +160,7 @@ impl IndexManager {
         Self {
             collection_short_id,
             collection_id: String::new(),
-            indexes: HashMap::new(),
+            indexes: RapidHashMap::new(),
         }
     }
 
@@ -409,14 +422,23 @@ impl IndexManager {
         let seq_key = IndexIDSequenceKey::new(format!("{}", self.collection_short_id));
         let key_bytes = seq_key.bytes();
 
-        let current = match datastore.get(&key_bytes).await.map_err(Error::Storage)? {
+        let counter = match datastore.get(&key_bytes).await.map_err(Error::Storage)? {
             Some(bytes) if bytes.len() == 4 => {
                 u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
             }
             _ => 0,
         };
+        // The schema is the authority on which ids exist: a counter advanced
+        // through another store, or lost, must never hand out an id an index
+        // already owns.
+        let highest = self
+            .indexes
+            .values()
+            .map(|index| index.description().id)
+            .max()
+            .unwrap_or(0);
 
-        let next_id = current + 1;
+        let next_id = counter.max(highest) + 1;
         datastore
             .set(&key_bytes, &next_id.to_be_bytes())
             .await
@@ -457,45 +479,145 @@ impl IndexManager {
         source: &mut S,
         schema: &CollectionVersion,
     ) -> Result<BulkIndexResult> {
-        let index = self
-            .indexes
-            .get(index_name)
-            .ok_or_else(|| Error::Other(format!("index '{}' not found", index_name)))?;
+        let batch = self
+            .index_batch_from(datastore, index_name, source, schema, usize::MAX)
+            .await?;
+        self.build_index(datastore, index_name).await?;
+        Ok(BulkIndexResult {
+            indexed: batch.indexed,
+            skipped: batch.skipped,
+        })
+    }
 
-        let mut indexed_count = 0;
-        let mut skipped_count = 0;
+    /// Index up to `max_docs` documents from `source`, without building.
+    ///
+    /// An entry the document already holds is left as it is: a write that
+    /// landed between the definition and this batch maintained the index
+    /// itself, and a batch re-run after a conflict meets its own work.
+    pub async fn index_batch_from<S: DocumentSource + ?Sized>(
+        &self,
+        datastore: &NamespaceView,
+        index_name: &str,
+        source: &mut S,
+        schema: &CollectionVersion,
+        max_docs: usize,
+    ) -> Result<BatchIndexResult> {
+        let index = self.index_named(index_name)?;
+        let mut batch = BatchIndexResult {
+            indexed: 0,
+            skipped: 0,
+            last_doc_short_id: None,
+            exhausted: false,
+        };
         let mut mutable_datastore = datastore.clone();
 
-        while let Some((doc_short_id, doc)) = source.next().await? {
+        while batch.indexed + batch.skipped < max_docs {
+            let Some((doc_short_id, doc)) = source.next().await? else {
+                batch.exhausted = true;
+                break;
+            };
             if doc_short_id == 0 {
-                skipped_count += 1;
+                batch.skipped += 1;
                 continue;
             }
-
-            let value_sets = self.extract_index_values(&doc, index.description(), schema)?;
-
-            for values in &value_sets {
-                index
-                    .save(&mut mutable_datastore, doc_short_id, values)
+            for values in &self.extract_index_values(&doc, index.description(), schema)? {
+                self.save_healing_stale_unique(&mut mutable_datastore, index, doc_short_id, values)
                     .await
                     .map_err(Error::Storage)?;
             }
+            batch.indexed += 1;
+            batch.last_doc_short_id = Some(doc_short_id);
+        }
+        Ok(batch)
+    }
 
-            indexed_count += 1;
+    /// One chance to train and build, taken once a bulk load has landed
+    /// rather than asked per document. A no-op for every index kind but
+    /// vector.
+    pub async fn build_index(&self, datastore: &NamespaceView, index_name: &str) -> Result<()> {
+        self.index_named(index_name)?
+            .build_if_needed(&mut datastore.clone())
+            .await
+            .map_err(Error::Storage)
+    }
+
+    fn index_named(&self, index_name: &str) -> Result<&IndexType> {
+        self.indexes
+            .get(index_name)
+            .ok_or_else(|| Error::Other(format!("index '{}' not found", index_name)))
+    }
+
+    /// Rebuild an index, preserving existing conflicts but rejecting migration-created ones.
+    pub(crate) async fn bulk_index_resolving_unique_conflicts(
+        &self,
+        datastore: &NamespaceView,
+        systemstore: &NamespaceView,
+        index_name: &str,
+        documents: &[(u64, Document)],
+        schema: &CollectionVersion,
+        original_keys: &RapidHashMap<u64, rapidhash::RapidHashSet<Vec<u8>>>,
+    ) -> Result<()> {
+        let index = self.index_named(index_name)?;
+
+        let IndexType::Unique(unique) = index else {
+            self.bulk_index(datastore, index_name, documents, schema)
+                .await?;
+            return Ok(());
+        };
+
+        let mut mutable_datastore = datastore.clone();
+
+        // Conflict resolution is a read-modify-write operation on the shared
+        // transaction. Running these writes concurrently can make the winner
+        // depend on scheduling instead of the public DocID ordering.
+        for (doc_short_id, doc) in documents {
+            if *doc_short_id == 0 {
+                continue;
+            }
+            let doc_id = doc
+                .id()
+                .ok_or_else(|| Error::InvalidDocument("document must have an ID".to_string()))?
+                .to_string();
+            let value_sets = self.extract_index_values(doc, index.description(), schema)?;
+            for values in &value_sets {
+                let holder = if original_keys.is_empty() {
+                    None
+                } else {
+                    unique
+                        .conflicting_doc_id(&mutable_datastore, values)
+                        .await
+                        .map_err(Error::Storage)?
+                };
+                if let Some(holder) = holder {
+                    let key = self.encode_index_key(index.description(), values)?;
+                    // Both documents must have held this value before the lens ran.
+                    // Missing snapshots denote documents with no transform to apply.
+                    if holder != *doc_short_id
+                        && [holder, *doc_short_id].iter().any(|id| {
+                            original_keys
+                                .get(id)
+                                .is_some_and(|keys| !keys.contains(&key))
+                        })
+                    {
+                        return Err(Error::Storage(
+                            storage::corekv::Error::UniqueConstraintViolation,
+                        ));
+                    }
+                }
+                self.save_resolving_unique_conflict(
+                    &mut mutable_datastore,
+                    systemstore,
+                    index,
+                    *doc_short_id,
+                    &doc_id,
+                    values,
+                )
+                .await
+                .map_err(Error::Storage)?;
+            }
         }
 
-        // One chance to build here, rather than leaving a vector index to
-        // notice on its own: the loop above would otherwise ask the same
-        // per-write question for every document a bulk load lands at once.
-        index
-            .build_if_needed(&mut mutable_datastore)
-            .await
-            .map_err(Error::Storage)?;
-
-        Ok(BulkIndexResult {
-            indexed: indexed_count,
-            skipped: skipped_count,
-        })
+        Ok(())
     }
 
     /// Save an index entry, healing stale unique conflicts (#1111/#700).
@@ -550,8 +672,7 @@ impl IndexManager {
         }
     }
 
-    /// Save an index entry on the MERGE path, resolving live unique conflicts
-    /// deterministically instead of failing the merge (#1111).
+    /// Save an index entry while resolving live unique conflicts deterministically (#1111/#1308).
     ///
     /// A CRDT merge cannot preserve cross-replica uniqueness: two nodes that
     /// each locally accepted the same unique value must still converge when
@@ -604,7 +725,7 @@ impl IndexManager {
                         index = %index.description().name,
                         winner_doc_id = %doc_id,
                         unindexed_doc_id = %holder_doc_id,
-                        "unique index conflict during merge: incoming document wins the \
+                        "unique index conflict: incoming document wins the \
                          deterministic pick; the previous holder is no longer indexed"
                     );
                     Ok(MergeConflictOutcome::IncomingIndexed)
@@ -614,7 +735,7 @@ impl IndexManager {
                         index = %index.description().name,
                         winner_doc_id = %holder_doc_id,
                         unindexed_doc_id = %doc_id,
-                        "unique index conflict during merge: existing holder wins the \
+                        "unique index conflict: existing holder wins the \
                          deterministic pick; the incoming document is persisted unindexed"
                     );
                     Ok(MergeConflictOutcome::IncomingUnindexed)

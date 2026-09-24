@@ -26,10 +26,7 @@ impl TwoStreamHandler {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         // Register pending response against the expected peer as well as the message ID.
-        {
-            let mut pending = self.pending.lock();
-            pending.doc_sync_channels.insert(pending_key.clone(), tx);
-        }
+        self.pending.register_doc_sync(pending_key.clone(), tx);
 
         // Open stream and send request
         let mut stream = self
@@ -38,15 +35,13 @@ impl TwoStreamHandler {
             .await
             .map_err(|e| {
                 // Clean up pending on failure
-                let mut pending = self.pending.lock();
-                pending.doc_sync_channels.remove(&pending_key);
+                drop(self.pending.take_doc_sync(&pending_key));
                 Error::Transport(format!("failed to open stream: {}", e))
             })?;
 
         write_message(&mut stream, &request).await.map_err(|e| {
             // Clean up pending on failure
-            let mut pending = self.pending.lock();
-            pending.doc_sync_channels.remove(&pending_key);
+            drop(self.pending.take_doc_sync(&pending_key));
             Error::CborSerialization(format!("failed to write request: {}", e))
         })?;
 
@@ -61,13 +56,11 @@ impl TwoStreamHandler {
         match timeout(RESPONSE_TIMEOUT, rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {
-                let mut pending = self.pending.lock();
-                pending.doc_sync_channels.remove(&pending_key);
+                drop(self.pending.take_doc_sync(&pending_key));
                 Err(Error::Transport("response channel closed".into()))
             }
             Err(_) => {
-                let mut pending = self.pending.lock();
-                pending.doc_sync_channels.remove(&pending_key);
+                drop(self.pending.take_doc_sync(&pending_key));
                 Err(Error::Transport("timeout waiting for response".into()))
             }
         }
@@ -86,10 +79,7 @@ impl TwoStreamHandler {
         let message_id = request.message_id.clone();
         let pending_key = PendingResponseKey::new(peer_id, message_id.clone());
 
-        {
-            let mut pending = self.pending.lock();
-            pending.register_doc_sync_request(pending_key.clone());
-        }
+        self.pending.register_doc_sync_request(pending_key);
 
         // Open stream and send request
         let mut stream = self

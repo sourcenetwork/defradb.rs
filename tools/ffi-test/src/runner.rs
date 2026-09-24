@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::path::Path;
 use std::time::Instant;
 
@@ -114,8 +114,8 @@ pub async fn run_tests(
 
     // Accumulate test results
     let mut package_output = Vec::new();
-    let mut test_outputs: HashMap<String, Vec<String>> = HashMap::new();
-    let mut test_results: HashMap<String, TestResult> = HashMap::new();
+    let mut test_outputs: RapidHashMap<String, Vec<String>> = RapidHashMap::new();
+    let mut test_results: RapidHashMap<String, TestResult> = RapidHashMap::new();
 
     while let Some(line) = lines.next_line().await? {
         if line.is_empty() {
@@ -247,7 +247,7 @@ pub async fn run_tests(
 }
 
 fn record_package_failure(
-    test_results: &mut HashMap<String, TestResult>,
+    test_results: &mut RapidHashMap<String, TestResult>,
     package: &str,
     package_output: &[String],
     stderr: &str,
@@ -307,8 +307,8 @@ fn gocache_dir(rust_path: &std::path::Path, package: &str) -> std::path::PathBuf
 }
 
 /// Build environment variables for Go test
-fn build_env(ctx: &WorktreeContext, package: &str) -> HashMap<String, String> {
-    let mut env = HashMap::new();
+fn build_env(ctx: &WorktreeContext, package: &str) -> RapidHashMap<String, String> {
+    let mut env = RapidHashMap::new();
 
     // CGO flags
     let ffi_include = ctx.rust_path.join(FFI_CRATE_PATH);
@@ -351,11 +351,11 @@ fn build_env(ctx: &WorktreeContext, package: &str) -> HashMap<String, String> {
 
     // Pass through Go test framework configuration from the environment.
     // These control the test matrix: which ACP type, mutation type, etc.
-    // Example: DEFRA_DOCUMENT_ACP_TYPE=source-hub ffi-test run encryption
+    // Example: DEFRA_DOCUMENT_ACP_TYPE=vera ffi-test run encryption
     for key in &[
         "DEFRA_DOCUMENT_ACP_TYPE",
         "DEFRA_MUTATION_TYPE",
-        "DEFRA_SOURCEHUB_IMAGE",
+        "DEFRA_VERA_IMAGE",
     ] {
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), val);
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn nonzero_exit_cannot_leave_named_results_green() {
-        let mut results = HashMap::from([(
+        let mut results = RapidHashMap::from_iter([(
             "TestPassed".to_string(),
             TestResult {
                 name: "TestPassed".to_string(),

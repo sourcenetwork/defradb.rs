@@ -37,13 +37,24 @@ real. The flag has since been removed rather than left as a no-op, because one
 that silently grants nothing is a promise about serializability that no backend
 keeps.
 
-## Why relaxing isolation is not the fix
+## Why relaxing isolation is not the fix, and what the level does decide
 
 regolith validates a transaction's write set at commit under every isolation
 level. Measured on this tree, the sibling-head test fails identically under
 `ReadCommitted`, `SnapshotIsolation` and `Serializable`. The model therefore
-takes no isolation parameter: a write-write overlap is refused at all three, and
-the Lean companion states `Conflict` with no level argument for the same reason.
+takes no isolation parameter for the write-write question: an overlap is
+refused at every level, and the Lean companion states `Conflict` with no level
+argument for the same reason.
+
+The read side is a different question. regolith 0.1.6 made `Serializable`
+validate every key a transactional scan yields. The head scan yields the
+superseded keys reclamation deletes, so a sweep committing under an open append
+aborted the append: a spurious abort, since the live set the append derived was
+unchanged, and an inversion of the design, in which the sweep is the side that
+loses. `RepeatableRead` is the level regolith grew for this read: point reads
+validated as at `Serializable`, scans recorded per stretch and never per key.
+DefraDB runs its store at `RepeatableRead`. `ScanReads` models both behaviours, and
+`MC_HeadSet_Red_PerKeyScan.cfg` is the per-key one going red.
 
 ## The two configurations
 
@@ -56,6 +67,7 @@ the Lean companion states `Conflict` with no level argument for the same reason.
 | `MC_HeadSet_Red_EagerDelete.cfg` | `EagerDelete` | `Together` | **RED** | Both writers write the seed's head key. `INV_NoWriteConflict` is violated: one writer aborts. |
 | `MC_HeadSet_Green.cfg` | `Derived` | `Together` | **GREEN** | Every key a writer writes names that writer, so write sets are disjoint. Both commit; both are heads; the seed is not. Reclamation runs throughout and changes no answer. |
 | `MC_HeadSet_Red_MarkersOnly.cfg` | `Derived` | `MarkersOnly` | **RED** | Reclamation that drops a head's markers but keeps its head key makes the superseded head read as live. `INV_HeadsExact` is violated. |
+| `MC_HeadSet_Red_PerKeyScan.cfg` | `Derived` | `Together`, `ScanReads = PerKey` | **RED** | The head scan validated per key. A sweep reclaims a key a writer's scan yielded and the writer aborts on a read set whose answer did not change. `INV_NoWriteConflict` is violated. |
 
 RED is the point of each pair. GREEN alone would not show that the derived
 strategy is load-bearing rather than incidentally true in this configuration,

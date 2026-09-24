@@ -4,13 +4,14 @@
 //! - `validate_types()` - Validates parsed type definitions
 
 use crate::error::{QueryError, Result};
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use super::parser::SdlParser;
 
 impl<'a> SdlParser<'a> {
     pub(super) fn validate_types(&self) -> Result<()> {
-        let type_names: std::collections::HashSet<_> = self.type_defs.keys().cloned().collect();
-        let all_type_names: std::collections::HashSet<String> = type_names
+        let type_names: RapidHashSet<_> = self.type_defs.keys().cloned().collect();
+        let all_type_names: RapidHashSet<String> = type_names
             .iter()
             .cloned()
             .chain(self.known_external_types.iter().cloned())
@@ -59,7 +60,7 @@ impl<'a> SdlParser<'a> {
         // Relations with explicit @relation(name:) on both sides using DIFFERENT
         // names are separate relations and skip this check.
         {
-            let mut checked_pairs = std::collections::HashSet::new();
+            let mut checked_pairs = RapidHashSet::new();
 
             for type_def in self.type_defs.values() {
                 for field in &type_def.fields {

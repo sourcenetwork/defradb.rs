@@ -6,9 +6,11 @@
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use parking_lot::RwLock;
-use std::collections::HashMap;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use rapidhash::RapidHashMap;
 use std::path::Path;
+use std::sync::Arc;
 use wasmtime::{Config, Engine, Module, StoreLimits, StoreLimitsBuilder};
 
 use tracing::{info, warn};
@@ -49,8 +51,8 @@ impl WasmSandboxConfig {
 /// Manages WASM module instances and executes transforms.
 pub struct WasmTransformStore {
     engine: Engine,
-    modules: RwLock<HashMap<TransformId, Vec<CompiledModule>>>,
-    configs: RwLock<HashMap<TransformId, LensConfig>>,
+    modules: HopscotchMap<TransformId, Arc<Vec<CompiledModule>>, RandomState>,
+    configs: HopscotchMap<TransformId, LensConfig, RandomState>,
     sandbox: Option<WasmSandboxConfig>,
 }
 
@@ -92,8 +94,8 @@ impl WasmTransformStore {
 
         Ok(Self {
             engine,
-            modules: RwLock::new(HashMap::new()),
-            configs: RwLock::new(HashMap::new()),
+            modules: HopscotchMap::with_hasher(RandomState::default()),
+            configs: HopscotchMap::with_hasher(RandomState::default()),
             sandbox,
         })
     }
@@ -147,16 +149,14 @@ impl WasmTransformStore {
         id: &TransformId,
         values: Vec<serde_json::Value>,
     ) -> Result<Vec<serde_json::Value>> {
-        let modules = self.modules.read();
-        let compiled_modules = modules
+        let compiled_modules = self
+            .modules
             .get(id)
-            .cloned()
             .ok_or_else(|| Error::TransformNotFound(id.to_string()))?;
-        drop(modules);
 
         execute_pipeline_values(
             &self.engine,
-            compiled_modules,
+            (*compiled_modules).clone(),
             values,
             self.sandbox.clone(),
             false,
@@ -169,16 +169,14 @@ impl WasmTransformStore {
         id: &TransformId,
         values: Vec<serde_json::Value>,
     ) -> Result<Vec<serde_json::Value>> {
-        let modules = self.modules.read();
-        let compiled_modules = modules
+        let compiled_modules = self
+            .modules
             .get(id)
-            .cloned()
             .ok_or_else(|| Error::TransformNotFound(id.to_string()))?;
-        drop(modules);
 
         execute_pipeline_values(
             &self.engine,
-            compiled_modules,
+            (*compiled_modules).clone(),
             values,
             self.sandbox.clone(),
             true,
@@ -237,20 +235,18 @@ impl TransformStore for WasmTransformStore {
 
         info!(transform_id = %id, "Computed transform ID");
 
-        {
-            let modules = self.modules.read();
-            if modules.contains_key(&id) {
-                info!(transform_id = %id, "Transform already exists, returning existing ID");
-                return Ok(id);
-            }
+        if self.modules.contains_key(&id) {
+            info!(transform_id = %id, "Transform already exists, returning existing ID");
+            return Ok(id);
         }
 
         info!("Loading WASM modules");
         let compiled_modules = self.compile_modules(&config.lenses)?;
         info!(transform_id = %id, "WASM module compiled successfully");
 
-        self.modules.write().insert(id.clone(), compiled_modules);
-        self.configs.write().insert(id.clone(), config);
+        self.modules
+            .insert_if_absent(id.clone(), Arc::new(compiled_modules));
+        self.configs.insert_if_absent(id.clone(), config);
 
         info!(transform_id = %id, "Transform added to store");
 
@@ -260,26 +256,24 @@ impl TransformStore for WasmTransformStore {
     async fn add_with_id(&self, id: TransformId, config: LensConfig) -> Result<()> {
         info!(transform_id = %id, "Adding transform to WASM store with explicit ID");
 
-        {
-            let modules = self.modules.read();
-            if modules.contains_key(&id) {
-                info!(transform_id = %id, "Transform already exists");
-                return Ok(());
-            }
+        if self.modules.contains_key(&id) {
+            info!(transform_id = %id, "Transform already exists");
+            return Ok(());
         }
 
         let compiled_modules = self.compile_modules(&config.lenses)?;
 
-        self.modules.write().insert(id.clone(), compiled_modules);
-        self.configs.write().insert(id.clone(), config);
+        self.modules
+            .insert_if_absent(id.clone(), Arc::new(compiled_modules));
+        self.configs.insert_if_absent(id.clone(), config);
 
         info!(transform_id = %id, "Transform added with explicit ID");
         Ok(())
     }
 
-    async fn list(&self) -> Result<std::collections::HashMap<String, crate::LensModule>> {
-        let configs = self.configs.read();
-        let result = configs
+    async fn list(&self) -> Result<RapidHashMap<String, crate::LensModule>> {
+        let result = self
+            .configs
             .iter()
             .filter_map(|(id, config)| config.lens().cloned().map(|l| (id.to_string(), l)))
             .collect();
@@ -289,16 +283,14 @@ impl TransformStore for WasmTransformStore {
     fn transform(&self, id: &TransformId, docs: LensDocStream) -> Result<LensDocResultStream> {
         info!(transform_id = %id, "WasmTransformStore::transform called");
 
-        let modules = self.modules.read();
-        let compiled_modules = modules.get(id).cloned().ok_or_else(|| {
+        let compiled_modules = self.modules.get(id).ok_or_else(|| {
             warn!(
                 transform_id = %id,
-                stored_ids = ?modules.keys().map(|k| k.to_string()).collect::<Vec<_>>(),
+                stored_ids = ?self.modules.keys().map(|k| k.to_string()).collect::<Vec<_>>(),
                 "Transform not found in WASM store"
             );
             Error::TransformNotFound(id.to_string())
         })?;
-        drop(modules);
 
         info!(
             transform_id = %id,
@@ -309,7 +301,7 @@ impl TransformStore for WasmTransformStore {
         info!(transform_id = %id, "Executing forward WASM transform (batch mode)");
         Ok(execute_pipeline_stream(
             self.engine.clone(),
-            compiled_modules,
+            (*compiled_modules).clone(),
             docs,
             self.sandbox.clone(),
             false,
@@ -317,16 +309,14 @@ impl TransformStore for WasmTransformStore {
     }
 
     fn inverse(&self, id: &TransformId, docs: LensDocStream) -> Result<LensDocResultStream> {
-        let modules = self.modules.read();
-        let compiled_modules = modules
+        let compiled_modules = self
+            .modules
             .get(id)
-            .cloned()
             .ok_or_else(|| Error::TransformNotFound(id.to_string()))?;
-        drop(modules);
 
         Ok(execute_pipeline_stream(
             self.engine.clone(),
-            compiled_modules,
+            (*compiled_modules).clone(),
             docs,
             self.sandbox.clone(),
             true,
@@ -334,14 +324,14 @@ impl TransformStore for WasmTransformStore {
     }
 
     fn has_transform(&self, id: &TransformId) -> bool {
-        self.modules.read().contains_key(id)
+        self.modules.contains_key(id)
     }
 
     async fn remove(&self, id: &TransformId) -> Result<()> {
-        if self.modules.write().remove(id).is_none() {
+        if self.modules.remove(id).is_none() {
             return Err(Error::TransformNotFound(id.to_string()));
         }
-        self.configs.write().remove(id);
+        self.configs.remove(id);
         Ok(())
     }
 }

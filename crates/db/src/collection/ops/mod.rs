@@ -19,6 +19,7 @@ use crate::collection::{populate_collection_root_id, Collection};
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
 use datastore::NamespaceView;
+use rapidhash::HashMapExt;
 use schema::CollectionVersion;
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::systemstore::{
@@ -57,9 +58,9 @@ impl<S: Store> crate::database::DB<S> {
     pub async fn load_collections(&self) -> Result<()> {
         let txn = self.new_txn(true).await?;
         let prefix = CollectionNameKey::name_prefix();
-        let mut schemas: std::collections::HashMap<String, CollectionVersion> =
-            std::collections::HashMap::new();
-        let mut index_actions = std::collections::HashMap::new();
+        let mut schemas: rapidhash::RapidHashMap<String, CollectionVersion> =
+            rapidhash::RapidHashMap::new();
+        let mut index_actions = rapidhash::RapidHashMap::new();
 
         // Block ensures systemstore reference is dropped before discard
         {
@@ -197,27 +198,31 @@ impl<S: Store> crate::database::DB<S> {
 
         // Update cache
         {
-            let mut cache = self.collections.write().map_err(|e| {
-                tracing::error!(error = ?e, "Collection cache lock poisoned during load");
-                Error::LockPoisoned("collection cache lock poisoned during load".into())
-            })?;
+            let loaded: Vec<(String, Collection)> = schemas
+                .into_iter()
+                .map(|(name, schema)| {
+                    tracing::trace!(
+                        collection_name = %name,
+                        version_id = %schema.version_id,
+                        collection_id = %schema.collection_id,
+                        field_count = schema.fields.len(),
+                        "Loaded collection"
+                    );
+                    let actions = index_actions
+                        .get(&schema.collection_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    (name, Collection::with_index_actions(schema, &actions))
+                })
+                .collect();
 
-            for (name, schema) in schemas {
-                tracing::trace!(
-                    collection_name = %name,
-                    version_id = %schema.version_id,
-                    collection_id = %schema.collection_id,
-                    field_count = schema.fields.len(),
-                    "Loaded collection"
-                );
-                let actions = index_actions
-                    .get(&schema.collection_id)
-                    .cloned()
-                    .unwrap_or_default();
-                cache.insert(name, Collection::with_index_actions(schema, &actions));
-            }
+            self.collections.rcu(|old| {
+                let mut cache = old.clone();
+                cache.extend(loaded.iter().cloned());
+                cache
+            });
 
-            tracing::info!(collection_count = cache.len(), "Loaded collections");
+            tracing::info!(collection_count = loaded.len(), "Loaded collections");
         }
 
         // Reconstruct schema_heads from loaded collections.
@@ -226,21 +231,14 @@ impl<S: Store> crate::database::DB<S> {
         {
             let all_versions = self.get_all_collection_versions().await?;
             // Group versions by collection_id
-            let mut versions_by_collection: std::collections::HashMap<
-                &str,
-                Vec<&CollectionVersion>,
-            > = std::collections::HashMap::new();
+            let mut versions_by_collection: rapidhash::RapidHashMap<&str, Vec<&CollectionVersion>> =
+                rapidhash::RapidHashMap::new();
             for v in &all_versions {
                 versions_by_collection
                     .entry(v.collection_id.as_str())
                     .or_default()
                     .push(v);
             }
-
-            let mut heads_map = self.schema_heads.write().map_err(|e| {
-                tracing::error!(error = ?e, "schema_heads lock poisoned during load");
-                Error::LockPoisoned("schema_heads lock poisoned during load".into())
-            })?;
 
             for versions in versions_by_collection.values() {
                 // Count only non-placeholder versions for height computation.
@@ -250,7 +248,8 @@ impl<S: Store> crate::database::DB<S> {
                 // Find the active version to use as head
                 if let Some(active) = versions.iter().find(|v| v.is_active) {
                     if let Ok(cid) = cid::Cid::try_from(active.version_id.as_str()) {
-                        heads_map.insert(active.name.clone(), (vec![cid], height));
+                        self.schema_heads
+                            .insert(active.name.clone(), (vec![cid], height));
                     }
                 }
             }

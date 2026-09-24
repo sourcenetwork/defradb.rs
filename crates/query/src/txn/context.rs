@@ -7,7 +7,7 @@ use acp::Identity;
 use defra_core::thread_bounds::MaybeBoxFuture;
 use futures::FutureExt;
 use identity::Did;
-use std::collections::HashMap;
+use rapidhash::RapidHashMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ struct DeferredAcpHookEntry {
 
 #[derive(Default)]
 struct DeferredAcpState {
-    projected_registrations: HashMap<DocRegistrationKey, ProjectedDocRegistration>,
+    projected_registrations: RapidHashMap<DocRegistrationKey, ProjectedDocRegistration>,
     hooks: Vec<DeferredAcpHookEntry>,
 }
 

@@ -1,3 +1,16 @@
+/// Generate an ephemeral iroh secret key.
+pub fn generate_secret_key() -> iroh::SecretKey {
+    iroh::SecretKey::generate()
+}
+
+/// Adopt an externally held 32-byte iroh secret key.
+///
+/// The browser has no filesystem to persist an endpoint key to, so it supplies
+/// one from whatever store it already trusts with the node identity.
+pub fn secret_key_from_bytes(bytes: [u8; 32]) -> iroh::SecretKey {
+    iroh::SecretKey::from_bytes(&bytes)
+}
+
 /// Load an iroh secret key from disk, or generate and persist a new one.
 ///
 /// - If `path` is `Some` and the file exists, reads the 32-byte key from it.
@@ -5,6 +18,7 @@
 ///   creates parent directories as needed, writes the key, and restricts
 ///   file permissions to owner-only (0o600 on Unix).
 /// - If `path` is `None`, generates an ephemeral key (not persisted).
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub async fn load_or_generate_secret_key(
     path: Option<&std::path::Path>,
 ) -> anyhow::Result<iroh::SecretKey> {
@@ -18,10 +32,10 @@ pub async fn load_or_generate_secret_key(
             let array: [u8; 32] = bytes
                 .try_into()
                 .map_err(|_| anyhow!("iroh secret key file must contain exactly 32 bytes"))?;
-            Ok(iroh::SecretKey::from_bytes(&array))
+            Ok(secret_key_from_bytes(array))
         }
         Some(path) => {
-            let key = iroh::SecretKey::generate();
+            let key = generate_secret_key();
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await.with_context(|| {
                     format!("failed to create iroh key directory '{}'", parent.display())
@@ -41,6 +55,6 @@ pub async fn load_or_generate_secret_key(
             }
             Ok(key)
         }
-        None => Ok(iroh::SecretKey::generate()),
+        None => Ok(generate_secret_key()),
     }
 }

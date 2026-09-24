@@ -1,6 +1,6 @@
 //! Thin mobile-oriented FFI wrappers for Swift/Xcode embedding.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::ffi::{c_char, CString};
 use std::ptr;
 
@@ -26,7 +26,7 @@ use crate::types::{c_str_to_string, defra_free_string, FfiResult, NewNodeResult,
 use crate::{ffi_async, ffi_entry, try_ffi, ERR_INVALID_NODE_HANDLE};
 
 fn default_identity_cstring(node_ptr: usize) -> Result<Option<CString>, String> {
-    let Some(identity_did) = NODES.get(node_ptr, |state| state.node_identity_did.clone()) else {
+    let Some(identity_did) = NODES.get(node_ptr, |state| state.identity_did()) else {
         return Err(ERR_INVALID_NODE_HANDLE.to_string());
     };
     maybe_cstring(identity_did.as_deref(), "default identity")
@@ -93,29 +93,29 @@ pub extern "C" fn defra_mobile_open_node(config_json: *const c_char) -> NewNodeR
             .and_then(|signing| signing.enable)
             .unwrap_or(!signing_key_bytes.is_empty());
 
-        let (sourcehub_grpc_address, sourcehub_comet_rpc_address, sourcehub_chain_id, sourcehub_signer_key) =
-            if let Some(sourcehub) = config.sourcehub.as_ref() {
-                let grpc = match maybe_cstring(Some(sourcehub.grpc_address.as_str()), "sourcehub.grpcAddress") {
+        let (vera_grpc_address, vera_comet_rpc_address, vera_chain_id, vera_signer_key) =
+            if let Some(vera) = config.vera.as_ref() {
+                let grpc = match maybe_cstring(Some(vera.grpc_address.as_str()), "vera.grpcAddress") {
                     Ok(Some(value)) => Some(value),
                     Ok(None) => None,
                     Err(error) => return NewNodeResult::error(error),
                 };
                 let comet = match maybe_cstring(
-                    Some(sourcehub.comet_rpc_address.as_str()),
-                    "sourcehub.cometRpcAddress",
+                    Some(vera.comet_rpc_address.as_str()),
+                    "vera.cometRpcAddress",
                 ) {
                     Ok(Some(value)) => Some(value),
                     Ok(None) => None,
                     Err(error) => return NewNodeResult::error(error),
                 };
-                let chain = match maybe_cstring(Some(sourcehub.chain_id.as_str()), "sourcehub.chainId")
+                let chain = match maybe_cstring(Some(vera.chain_id.as_str()), "vera.chainId")
                 {
                     Ok(Some(value)) => Some(value),
                     Ok(None) => None,
                     Err(error) => return NewNodeResult::error(error),
                 };
                 let signer_key =
-                    match decode_hex_field(Some(sourcehub.signer_key_hex.as_str()), "sourcehub.signerKeyHex")
+                    match decode_hex_field(Some(vera.signer_key_hex.as_str()), "vera.signerKeyHex")
                     {
                         Ok(bytes) => bytes,
                         Err(error) => return NewNodeResult::error(error),
@@ -245,15 +245,15 @@ pub extern "C" fn defra_mobile_open_node(config_json: *const c_char) -> NewNodeR
                 signing_key_bytes.as_ptr()
             },
             signing_private_key_len: signing_key_bytes.len(),
-            sourcehub_grpc_address: c_string_ptr(&sourcehub_grpc_address),
-            sourcehub_comet_rpc_address: c_string_ptr(&sourcehub_comet_rpc_address),
-            sourcehub_chain_id: c_string_ptr(&sourcehub_chain_id),
-            sourcehub_signer_key: if sourcehub_signer_key.is_empty() {
+            vera_grpc_address: c_string_ptr(&vera_grpc_address),
+            vera_comet_rpc_address: c_string_ptr(&vera_comet_rpc_address),
+            vera_chain_id: c_string_ptr(&vera_chain_id),
+            vera_signer_key: if vera_signer_key.is_empty() {
                 ptr::null()
             } else {
-                sourcehub_signer_key.as_ptr()
+                vera_signer_key.as_ptr()
             },
-            sourcehub_signer_key_len: sourcehub_signer_key.len(),
+            vera_signer_key_len: vera_signer_key.len(),
             p2p_transport: c_string_ptr(&p2p_transport),
             iroh_relay_url: c_string_ptr(&iroh_relay_url),
             iroh_relay_mode: c_string_ptr(&iroh_relay_mode),
@@ -383,7 +383,7 @@ pub extern "C" fn defra_mobile_ensure_schema(
                 state.database.clone(),
                 state.policy_store.clone(),
                 state.document_acp.clone(),
-                state.node_identity_did.clone(),
+                state.identity_did(),
             )
         }) {
             Some(value) => value,
@@ -407,7 +407,7 @@ pub extern "C" fn defra_mobile_ensure_schema(
             defra_core::current_identity::scoped_current_identity(node_identity_did);
 
         ffi_async!(rt, {
-            let existing_collections: HashSet<String> =
+            let existing_collections: RapidHashSet<String> =
                 database.list_collections().unwrap_or_default().into_iter().collect();
             let known_types = existing_collections.clone();
             let collections = query::parse_sdl_with_known_types(&schema_str, known_types)

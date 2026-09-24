@@ -1,7 +1,6 @@
-use std::collections::HashSet;
-
 use cid::Cid;
 use events::Subscription;
+use rapidhash::RapidHashSet;
 use tokio::time::{timeout_at, Instant};
 
 use crate::{P2PError, P2PErrorExt as _, P2PResult};
@@ -10,7 +9,7 @@ pub(super) async fn wait_for_heads<B: blockstore::Blockstore>(
     blockstore: &B,
     sub: &mut Subscription,
     collection_id: &str,
-    pending: HashSet<Cid>,
+    pending: RapidHashSet<Cid>,
     deadline: Instant,
 ) -> P2PResult<()> {
     let mut pending: Vec<_> = pending.into_iter().collect();
@@ -39,7 +38,7 @@ pub(super) async fn wait_for_heads<B: blockstore::Blockstore>(
                         ));
                     }
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                _ = n0_future::time::sleep(std::time::Duration::from_millis(100)) => {}
             }
         }
     })

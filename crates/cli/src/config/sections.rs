@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use query::{DEFAULT_MAX_FILTER_DEPTH, DEFAULT_MAX_QUERY_DEPTH, DEFAULT_MAX_QUERY_WIDTH};
 use storage::backends::DurabilityMode;
 
+use super::iroh_relay_server::IrohRelayServerConfig;
 use super::types::{
     AcpDocumentType, DatastoreType, KeyringBackend, LogFormat, LogLevel, LogOutput, TransportType,
 };
@@ -328,6 +329,19 @@ pub struct NetConfig {
     /// LAN addresses to peers on different networks. None = 0.0.0.0 (all interfaces).
     #[serde(default)]
     pub iroh_bind_addr: Option<std::net::IpAddr>,
+    /// Endpoint ids allowed to open an inbound iroh connection. Empty (the
+    /// default) accepts every peer, which is the behaviour this option was
+    /// added alongside and is fine on a private network. Listing any id
+    /// switches the transport to accepting only the ids listed, which is
+    /// what a node reachable over relays needs: a gossip topic is named by a
+    /// content-derived collection id, identical for anyone holding the same
+    /// schema, so an open endpoint hands its documents to any peer that can
+    /// name a collection.
+    #[serde(default)]
+    pub iroh_allowed_peers: Vec<String>,
+    /// Host an iroh relay server on this node. Unset hosts none.
+    #[serde(default)]
+    pub iroh_relay_server: Option<IrohRelayServerConfig>,
     /// Maximum concurrent QUIC paths per iroh connection. None keeps iroh's
     /// default; custom values must be at least 9.
     #[serde(default)]
@@ -439,6 +453,8 @@ impl Default for NetConfig {
             iroh_pkarr_relay_url: None,
             iroh_bind_port: None,
             iroh_bind_addr: None,
+            iroh_allowed_peers: Vec::new(),
+            iroh_relay_server: None,
             iroh_max_concurrent_multipath_paths: None,
             p2p_rate_limit_burst: default_rate_limit_burst(),
             p2p_rate_limit_rate: default_rate_limit_rate(),
@@ -457,6 +473,21 @@ impl NetConfig {
     pub fn validate(&self) -> Result<()> {
         if self.p2p_disabled {
             return Ok(());
+        }
+
+        if let Some(relay_server) = &self.iroh_relay_server {
+            if self.transport != TransportType::Iroh {
+                return Err(Error::InvalidConfig(
+                    "net.iroh_relay_server requires net.transport: iroh".into(),
+                ));
+            }
+            if !cfg!(feature = "iroh-relay-server") {
+                return Err(Error::InvalidConfig(
+                    "net.iroh_relay_server requires a defra binary built with the iroh-relay-server feature"
+                        .into(),
+                ));
+            }
+            relay_server.validate()?;
         }
 
         // Multiaddr validation only applies to libp2p transport
@@ -509,46 +540,46 @@ pub struct AcpConfig {
     ///
     /// - `none`: No document-level access control (default)
     /// - `local`: Local Zanzibar-based access control
-    /// - `source-hub`: Remote SourceHub access control
+    /// - `vera`: Remote Vera access control
     pub document_type: AcpDocumentType,
 
-    /// SourceHub LCD endpoint (e.g., "http://localhost:1317")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_address: String,
+    /// Vera LCD endpoint (e.g., "http://localhost:1317")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_address")]
+    pub vera_address: String,
 
-    /// SourceHub gRPC endpoint (e.g., "http://localhost:9090")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_grpc_address: String,
+    /// Vera gRPC endpoint (e.g., "http://localhost:9090")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_grpc_address")]
+    pub vera_grpc_address: String,
 
-    /// SourceHub CometBFT RPC endpoint (e.g., "http://localhost:26657")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_comet_address: String,
+    /// Vera CometBFT RPC endpoint (e.g., "http://localhost:26657")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_comet_address")]
+    pub vera_comet_address: String,
 
-    /// SourceHub CometBFT WebSocket endpoint for ACP cache invalidation.
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_events_ws: String,
+    /// Vera CometBFT WebSocket endpoint for ACP cache invalidation.
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_events_ws")]
+    pub vera_events_ws: String,
 
-    /// SourceHub chain ID (e.g., "sourcehub-test")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_chain_id: String,
+    /// Vera chain ID (e.g., "vera-test")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_chain_id")]
+    pub vera_chain_id: String,
 
     /// hub.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
     #[serde(default)]
     pub hub_rs_address: String,
 
     /// Trusted Vera consensus public key from operator configuration (hex).
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
     #[serde(default)]
     pub vera_consensus_key: String,
 
     /// Vera deployment identifier used to bind native submissions.
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
     #[serde(default)]
     pub vera_deployment_id: Option<u64>,
 
@@ -560,7 +591,7 @@ pub struct AcpConfig {
     #[serde(default = "default_acp_cb_reset_timeout")]
     pub circuit_breaker_reset_timeout: u64,
 
-    /// Request timeout in seconds for SourceHub/hub.rs network calls. Default: 5.
+    /// Request timeout in seconds for Vera/hub.rs network calls. Default: 5.
     #[serde(default = "default_acp_request_timeout")]
     pub request_timeout: u64,
 
@@ -594,21 +625,21 @@ impl Default for AcpConfig {
         Self {
             node_enable: false,
             document_type: AcpDocumentType::None,
-            #[cfg(feature = "sourcehub")]
-            sourcehub_address: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_grpc_address: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_comet_address: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_events_ws: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_chain_id: String::new(),
-            #[cfg(feature = "sourcehub")]
+            #[cfg(feature = "vera")]
+            vera_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_grpc_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_comet_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_events_ws: String::new(),
+            #[cfg(feature = "vera")]
+            vera_chain_id: String::new(),
+            #[cfg(feature = "vera")]
             hub_rs_address: String::new(),
-            #[cfg(feature = "sourcehub")]
+            #[cfg(feature = "vera")]
             vera_consensus_key: String::new(),
-            #[cfg(feature = "sourcehub")]
+            #[cfg(feature = "vera")]
             vera_deployment_id: None,
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),

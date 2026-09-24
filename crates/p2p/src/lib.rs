@@ -33,7 +33,7 @@
 //!     let (host, handle, mut events) = P2PHost::new(bitswap_store)?;
 //!
 //!     // Spawn the host event loop
-//!     tokio::spawn(host.run());
+//!     n0_future::task::spawn(host.run());
 //!
 //!     // Start listening
 //!     handle.listen("/ip4/0.0.0.0/tcp/9000".parse().unwrap()).await?;
@@ -79,6 +79,7 @@ pub mod sync;
 #[cfg(all(any(test, feature = "test-utils"), feature = "libp2p-transport"))]
 pub mod testutil;
 pub mod topics;
+pub mod tracked_task;
 pub mod transport;
 #[cfg(feature = "libp2p-transport")]
 pub mod two_stream;

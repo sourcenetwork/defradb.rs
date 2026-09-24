@@ -6,38 +6,17 @@
 //! it, as Go does (`cbindings/node_new.go` sets it independently of signing).
 #![cfg(feature = "libp2p")]
 
+mod support;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use acp::StorePolicyOptions;
 use anyhow::{anyhow, bail, Context, Result};
-use defra_core::current_identity::with_scoped_identity;
-use embedded::{EmbeddedNode, EmbeddedNodeConfig, Libp2pConfig, SigningConfig, TransportConfig};
-use identity::{Did, Identity};
-use query::QueryRequest;
+use embedded::{EmbeddedNodeConfig, Libp2pConfig, SigningConfig, TransportConfig};
+use identity::Did;
 use tokio::time::{sleep, Instant};
 
-const POLICY: &str = r#"name: test-user-policy
-description: A test policy for user document access control
-
-resources:
-  - name: users
-    permissions:
-      - name: read
-        expr: writer + reader
-      - name: update
-        expr: writer
-      - name: delete
-        expr: writer
-    relations:
-      - name: writer
-        types:
-          - actor
-      - name: reader
-        types:
-          - actor"#;
-
-type Node = EmbeddedNode<storage::RegolithStore>;
+use support::{add_policy, add_schema, grant_collection_reader, new_identity, wait_for_fred, Node};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn branchable_grant_syncs_plain_doc_to_peer() -> Result<()> {
@@ -123,25 +102,6 @@ async fn scenario(
     wait_for_fred(node1, jack).await
 }
 
-fn new_identity() -> Result<Did> {
-    let raw = identity::RawIdentity::from_ed25519(crypto::generate_ed25519()?)?;
-    let did = raw.did()?;
-    defra_core::signing::store_identity(
-        did.as_ref(),
-        defra_core::signing::SigningConfig {
-            key_type: defra_core::signing::SigningKeyType::Ed25519,
-            private_key_bytes: defra_core::signing::SigningConfig::private_key_bytes_from_vec(
-                raw.private_key_bytes().to_vec(),
-            ),
-            public_key_bytes: raw.public_key_bytes().to_vec(),
-            public_key_hex: hex::encode(raw.public_key_bytes()),
-            remote_signer: None,
-            signing_authorization: None,
-        },
-    );
-    Ok(did)
-}
-
 async fn build_node(signing: SigningConfig) -> Result<Node> {
     let config = EmbeddedNodeConfig {
         transport: TransportConfig::Libp2p(Libp2pConfig {
@@ -151,62 +111,6 @@ async fn build_node(signing: SigningConfig) -> Result<Node> {
         ..Default::default()
     };
     embedded::build_with_store(Arc::new(storage::RegolithStore::in_memory()?), config).await
-}
-
-async fn add_policy(node: &Node) -> Result<String> {
-    let store = node
-        .local_zanzibar_store
-        .as_ref()
-        .context("local zanzibar store missing")?;
-    let parsed = acp::policy_yaml::parse_policy_yaml(POLICY).map_err(|e| anyhow!(e))?;
-    let counter = store.next_policy_counter().await?;
-    let policy = acp::policy_yaml::build_policy(&parsed, counter).map_err(|e| anyhow!(e))?;
-    let options = StorePolicyOptions::new()
-        .with_validation()
-        .with_dpi_enforcement();
-    store.store_policy_with_options(&policy, &options).await?;
-    Ok(policy.id)
-}
-
-async fn add_schema(node: &Node, sdl: &str, creator: &Did) -> Result<()> {
-    let collections = query::parse_sdl(sdl).map_err(|e| anyhow!("SDL parse error: {e}"))?;
-    schema::definition_validation::validate_new_collections(&collections)
-        .map_err(|e| anyhow!("schema validation error: {e}"))?;
-    with_scoped_identity(Some(creator.to_string()), async {
-        node.database
-            .create_collections_atomic_with_acp_registration(
-                collections,
-                node.document_acp.clone(),
-                Some(creator.clone()),
-            )
-            .await
-    })
-    .await?;
-    Ok(())
-}
-
-async fn grant_collection_reader(
-    node: &Node,
-    requestor: &Did,
-    target: &Did,
-    policy_id: &str,
-    collection_id: &str,
-) -> Result<()> {
-    with_scoped_identity(Some(requestor.to_string()), async {
-        node.document_acp
-            .add_actor_relationship(
-                requestor,
-                target,
-                policy_id,
-                "users",
-                collection_id,
-                "reader",
-                &[],
-            )
-            .await
-    })
-    .await?;
-    Ok(())
 }
 
 async fn wait_for_listen_addr(system: &embedded::ManagedP2PSystem) -> Result<String> {
@@ -228,33 +132,5 @@ async fn wait_for_listen_addr(system: &embedded::ManagedP2PSystem) -> Result<Str
             bail!("timed out waiting for a libp2p listen address");
         }
         sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn wait_for_fred(node: &Node, reader: &Did) -> Result<()> {
-    let expected = serde_json::json!([{ "name": "Fred" }]);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let response = with_scoped_identity(Some(reader.to_string()), async {
-            node.query_runner
-                .execute(
-                    QueryRequest::new("query { Users { name } }")
-                        .with_identity(Some(reader.clone())),
-                )
-                .await
-        })
-        .await;
-        let users = response.data.as_ref().and_then(|data| data.get("Users"));
-        if users == Some(&expected) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "node 1 never returned Fred as jack; last response: data={:?} errors={:?}",
-                response.data,
-                response.errors
-            );
-        }
-        sleep(Duration::from_millis(250)).await;
     }
 }

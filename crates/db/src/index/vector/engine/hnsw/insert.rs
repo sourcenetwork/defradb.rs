@@ -2,7 +2,6 @@
 
 use super::Hnsw;
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::AdmitAll;
 use crate::index::vector::store::{Meta, Node, NodeId, VectorNodeStore};
 use defra_core::vector::Element;
 
@@ -21,6 +20,13 @@ impl<S: VectorNodeStore> Hnsw<S> {
                 .put_meta(Meta {
                     entry_point: id,
                     top_layer: top_level,
+                    live: 1,
+                    waste: 0,
+                    // One, not zero: this graph was created by code that
+                    // already refuses self-links, so it is owed no healing
+                    // rebuild. Zero is reserved for graphs last written
+                    // before that, which the background task rebuilds once.
+                    rebuilds: 1,
                 })
                 .await;
         };
@@ -59,12 +65,21 @@ impl<S: VectorNodeStore> Hnsw<S> {
         // reads each from the store; a node that is not there yet reads as
         // absent and loses the back-link it was just given. The layers are
         // filled in by the second write below.
-        self.store
-            .put_node(Node::new(id, vector.clone(), top_level))
-            .await?;
+        // Replacing an entry point must not erase the routes used to find its
+        // new neighbors. Keep the old links until the replacement is complete.
+        let existing = self.store.get_node(id).await?;
+        let existed = existing.is_some();
+        let mut pending = existing.unwrap_or_else(|| Node::new(id, vector.clone(), top_level));
+        pending.vector = vector.clone();
+        pending.deleted = false;
+        self.store.put_node(pending).await?;
 
         let mut layers: Vec<Vec<NodeId>> = vec![Vec::new(); top_level + 1];
-        let mut entry_points = vec![current];
+        let mut entry_points = vec![current.clone()];
+        // Stale self-links a lazy purge below finds in a graph written before
+        // this code: they are waste a rebuild reclaims, so they feed its
+        // trigger even before anything counts them wholesale.
+        let mut purged_self_links: u64 = 0;
         for layer in (0..=meta.top_layer.min(top_level)).rev() {
             let found = self
                 .search_layer(
@@ -72,7 +87,7 @@ impl<S: VectorNodeStore> Hnsw<S> {
                     entry_points,
                     self.params.ef_construction,
                     layer,
-                    &AdmitAll,
+                    &|candidate| candidate != id,
                 )
                 .await?;
 
@@ -81,12 +96,19 @@ impl<S: VectorNodeStore> Hnsw<S> {
 
             let max_links = self.params.max_links(layer);
             for neighbor in &selected {
-                self.add_link(neighbor.id, id, layer, max_links).await?;
+                purged_self_links +=
+                    u64::from(self.add_link(neighbor.id, id, layer, max_links).await?);
             }
 
             // Every neighbor found here seeds the next layer down, not just the
             // closest: narrowing to one point too early costs recall.
-            entry_points = found;
+            // The replacement may be alone on an upper layer. It still routes
+            // to lower layers even though it cannot be its own neighbor.
+            entry_points = if found.is_empty() {
+                vec![current.clone()]
+            } else {
+                found
+            };
         }
 
         let isolated = layers[0].is_empty();
@@ -109,6 +131,10 @@ impl<S: VectorNodeStore> Hnsw<S> {
         if isolated {
             meta.entry_point = id;
         }
+        if !existed {
+            meta.live += 1;
+        }
+        meta.waste += purged_self_links;
         self.store.put_meta(meta).await
     }
 
@@ -121,16 +147,21 @@ impl<S: VectorNodeStore> Hnsw<S> {
         to: NodeId,
         layer: usize,
         max_links: usize,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(mut node) = self.store.get_node(from).await? else {
-            return Ok(());
+            return Ok(false);
         };
 
         // `from`'s own height was drawn at random and may be below `layer`.
         while node.layers.len() <= layer {
             node.layers.push(Vec::new());
         }
-        node.layers[layer].push(to);
+        let before = node.layers[layer].len();
+        node.layers[layer].retain(|id| *id != from);
+        let purged_self_link = node.layers[layer].len() != before;
+        if !node.layers[layer].contains(&to) {
+            node.layers[layer].push(to);
+        }
 
         if node.layers[layer].len() > max_links {
             let links = node.layers[layer].clone();
@@ -139,6 +170,7 @@ impl<S: VectorNodeStore> Hnsw<S> {
             node.layers[layer] = selected.iter().map(|c| c.id).collect();
         }
 
-        self.store.put_node(node).await
+        self.store.put_node(node).await?;
+        Ok(purged_self_link)
     }
 }

@@ -5,6 +5,7 @@
 //! - If filter matches 1 document: UPDATE with `update` fields
 //! - If filter matches >1 document: Return error
 
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -26,14 +27,14 @@ use super::create_conversions::{json_to_normal_value_with_kind_and_time, normal_
 #[derive(Debug, Clone)]
 pub struct UpsertInput {
     /// Field values keyed by field name (used for both create and update operations)
-    pub fields: std::collections::HashMap<String, JsonValue>,
+    pub fields: RapidHashMap<String, JsonValue>,
 }
 
 impl UpsertInput {
     /// Create a new empty input.
     pub fn new() -> Self {
         Self {
-            fields: std::collections::HashMap::new(),
+            fields: RapidHashMap::new(),
         }
     }
 
@@ -282,8 +283,7 @@ impl UpsertNode {
             input.apply_to(&mut doc, collection_ref, utc_now)?;
 
             // Collect the modified field names for block creation
-            let modified_fields: std::collections::HashSet<String> =
-                input.fields.keys().cloned().collect();
+            let modified_fields: RapidHashSet<String> = input.fields.keys().cloned().collect();
 
             let result = self
                 .mutator

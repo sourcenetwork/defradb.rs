@@ -5,6 +5,7 @@ use pgwire::api::results::Response;
 use pgwire::api::ClientInfo;
 use pgwire::error::PgWireResult;
 use pgwire::messages::PgWireBackendMessage;
+use rapidhash::HashMapExt;
 use tracing::{debug, warn};
 
 use crate::bridge::{
@@ -52,12 +53,9 @@ impl DefraQueryHandler {
                 kind,
             } => {
                 if kind == MutationKind::Delete {
-                    let has_cascade = !self
+                    let has_cascade = self
                         .ddl_metadata
-                        .read()
-                        .await
-                        .cascade_children_of(&table_name)
-                        .is_empty();
+                        .peek(|meta| !meta.cascade_children_of(&table_name).is_empty());
                     if has_cascade {
                         return self
                             .handle_delete_with_cascade(
@@ -110,18 +108,19 @@ impl DefraQueryHandler {
                 primary_key_columns,
                 inline_foreign_keys,
             } => {
-                {
-                    let mut meta = self.ddl_metadata.write().await;
+                self.ddl_metadata.rcu(|current| {
+                    let mut next = current.clone();
                     if !primary_key_columns.is_empty() {
-                        meta.add_primary_key(PrimaryKeyInfo {
+                        next.add_primary_key(PrimaryKeyInfo {
                             table_name: table_name.clone(),
-                            columns: primary_key_columns,
+                            columns: primary_key_columns.clone(),
                         });
                     }
                     for fk in &inline_foreign_keys {
-                        meta.add_foreign_key(&table_name, fk);
+                        next.add_foreign_key(&table_name, fk);
                     }
-                }
+                    next
+                });
                 self.handle_create_table(&sdl).await
             }
             SqlStatement::CreateIndex {
@@ -130,10 +129,14 @@ impl DefraQueryHandler {
                 columns,
             } => {
                 if let Some(name) = &index_name {
-                    self.ddl_metadata.write().await.add_index(IndexInfo {
-                        index_name: name.clone(),
-                        table_name: table_name.clone(),
-                        columns: columns.clone(),
+                    self.ddl_metadata.rcu(|current| {
+                        let mut next = current.clone();
+                        next.add_index(IndexInfo {
+                            index_name: name.clone(),
+                            table_name: table_name.clone(),
+                            columns: columns.clone(),
+                        });
+                        next
                     });
                 }
                 debug!(sql, "DDL CREATE INDEX accepted");
@@ -143,12 +146,13 @@ impl DefraQueryHandler {
                 table_name,
                 foreign_keys,
             } => {
-                {
-                    let mut meta = self.ddl_metadata.write().await;
+                self.ddl_metadata.rcu(|current| {
+                    let mut next = current.clone();
                     for fk in &foreign_keys {
-                        meta.add_foreign_key(&table_name, fk);
+                        next.add_foreign_key(&table_name, fk);
                     }
-                }
+                    next
+                });
                 debug!(sql, "DDL ALTER TABLE accepted");
                 Ok(encode::encode_empty_response("ALTER TABLE"))
             }

@@ -15,7 +15,7 @@
 //! index is present, because index maintenance is paid per write and per
 //! indexed field and is invisible in a bench that has no index.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,7 +27,10 @@ use defra_perf::measure::repeat;
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use query::DocFetcher;
-use schema::{CollectionVersion, FieldDescription, FieldKind};
+use schema::{
+    CollectionVersion, FieldDescription, FieldKind, IndexKind, IndexedFieldDescription,
+    OrderedIndexDescription,
+};
 use storage::RegolithStore;
 
 mod common;
@@ -264,7 +267,7 @@ fn update(c: &mut Criterion) {
                                 "field_0",
                                 NormalValue::String(format!("updated-{}", next_seq())),
                             );
-                            let modified: HashSet<String> =
+                            let modified: RapidHashSet<String> =
                                 ["field_0".to_string()].into_iter().collect();
                             black_box(
                                 mutator
@@ -306,5 +309,114 @@ fn delete(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, create, create_many, update, delete);
+/// A branchable collection appends every write to the collection DAG, so it
+/// scans the head set first: the live heads, the superseded heads reclamation
+/// has not reached yet, and the markers between them. Parameterized by the
+/// appends already in the collection: one, and the most the prune interval
+/// lets accumulate before the next sweep.
+const PRIOR_APPENDS: [usize; 2] = [1, 14];
+
+async fn branchable_fixture(prior: usize) -> Mutator {
+    let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
+    let db = Arc::new(DB::from_arc(store).expect("a database over it"));
+    db.create_collection(collection_version(4).as_branchable())
+        .await
+        .expect("the collection to register");
+    let mutator = Mutator::new(db);
+    for _ in 0..prior {
+        mutator
+            .create(COLLECTION, document(4, next_seq()))
+            .await
+            .expect("the seed append to succeed");
+    }
+    mutator
+}
+
+fn create_branchable(c: &mut Criterion) {
+    let rt = common::owned_runtime();
+    let mut group = c.benchmark_group("document_create_branchable");
+    for prior in PRIOR_APPENDS {
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(BenchmarkId::from_parameter(prior), &prior, |b, &prior| {
+            b.iter_batched_ref(
+                || rt.block_on(branchable_fixture(prior)),
+                |mutator| {
+                    rt.block_on(async {
+                        black_box(
+                            mutator
+                                .create(COLLECTION, document(4, next_seq()))
+                                .await
+                                .expect("the append to succeed"),
+                        );
+                    })
+                },
+                BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+const BACKFILL_DOCS: [usize; 2] = [1_000, 10_000];
+
+/// A database holding `docs` documents of four fields and no index yet.
+async fn populated(docs: usize) -> Arc<DB<RegolithStore>> {
+    let store = Arc::new(RegolithStore::in_memory().expect("an in-memory store"));
+    let db = Arc::new(DB::from_arc(store).expect("a database over it"));
+    db.create_collection(collection_version(4))
+        .await
+        .expect("the collection to register");
+    let mutator = Mutator::new(db.clone());
+    let base = next_seq() * docs;
+    for seq in 0..docs {
+        mutator
+            .create(COLLECTION, document(4, base + seq))
+            .await
+            .expect("the seed create to succeed");
+    }
+    db
+}
+
+/// `DB::create_index` over a populated collection: the definition, then
+/// every existing document indexed in batches. Reported per document, so
+/// the number is the backfill's throughput.
+fn index_backfill(c: &mut Criterion) {
+    let rt = common::owned_runtime();
+    let mut group = c.benchmark_group("index_backfill");
+    group.sample_size(10);
+    for docs in BACKFILL_DOCS {
+        group.throughput(Throughput::Elements(docs as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(docs), &docs, |b, &docs| {
+            b.iter_batched_ref(
+                || rt.block_on(populated(docs)),
+                |db| {
+                    rt.block_on(async {
+                        let fields = vec![IndexedFieldDescription {
+                            name: "field_0".to_string(),
+                            descending: false,
+                        }];
+                        let kind = IndexKind::Ordered(OrderedIndexDescription { unique: false });
+                        black_box(
+                            db.create_index(COLLECTION, Some("by_field_0"), fields, kind)
+                                .await
+                                .expect("the index to build"),
+                        );
+                    })
+                },
+                BatchSize::PerIteration,
+            );
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    create,
+    create_many,
+    update,
+    delete,
+    create_branchable,
+    index_backfill
+);
 criterion_main!(benches);

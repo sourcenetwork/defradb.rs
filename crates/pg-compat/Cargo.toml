@@ -26,8 +26,11 @@ pgwire = "0.38"
 sqlparser = { version = "0.55", features = ["visitor"] }
 
 # Async runtime
-tokio = { workspace = true, features = ["rt", "net", "sync"] }
+tokio = { workspace = true, features = ["rt", "net"] }
 async-trait = { workspace = true }
+
+# Lock-free shared state
+kovan.workspace = true
 
 # Serialization
 serde_json = { workspace = true }
@@ -43,6 +46,9 @@ thiserror = { workspace = true }
 
 # Async streams
 futures = { workspace = true }
+
+# Hashing
+rapidhash.workspace = true
 
 [lints]
 workspace = true

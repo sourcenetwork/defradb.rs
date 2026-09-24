@@ -13,24 +13,27 @@ pub struct RegolithStoreOptions {
     /// needs a different memory budget picks it up by construction rather
     /// than by a caller remembering to tune it.
     pub engine: Options,
-    /// Commit-time validation. Defaults to
-    /// [`IsolationLevel::Serializable`], which validates the whole read
-    /// set: what DefraDB needs, because a merge that reads a head and
-    /// writes a block against it must not commit if the head moved.
+    /// Commit-time validation. Defaults to [`IsolationLevel::RepeatableRead`]:
+    /// every point read is validated, which is what the index and docid
+    /// paths need, and a scan is recorded per stretch rather than per key.
+    /// The head set is a scan over entries that concurrent appends add to
+    /// and reclamation removes by design; recorded per key it would abort
+    /// appends no serial order needed to abort, and hold one commit check
+    /// per head and marker walked.
     pub isolation: IsolationLevel,
     /// How long `close` waits for in-flight transactions to finish.
     pub close_timeout: Duration,
 }
 
 impl RegolithStoreOptions {
-    /// Server defaults: serializable, fsync on every commit.
+    /// Server defaults: repeatable read, fsync on every commit.
     pub fn new() -> Self {
         Self {
             engine: Options {
                 durability: EngineDurability::Immediate,
                 ..Options::default()
             },
-            isolation: IsolationLevel::Serializable,
+            isolation: IsolationLevel::RepeatableRead,
             close_timeout: Duration::from_secs(30),
         }
     }
@@ -80,9 +83,9 @@ impl RegolithStoreOptions {
         opts
     }
 
-    /// Relax commit validation. Serializable is the default because it is
-    /// what the merge and index paths need; a caller that knows its unit
-    /// of work is a blind write can ask for less.
+    /// Change commit validation. `RepeatableRead` is the default because it is
+    /// what the merge, index and head-set paths need together; a caller
+    /// that knows its unit of work is a blind write can ask for less.
     pub fn with_isolation(mut self, isolation: IsolationLevel) -> Self {
         self.isolation = isolation;
         self

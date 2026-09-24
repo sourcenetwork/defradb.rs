@@ -69,7 +69,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all -- -D warnings
+      - run: cargo clippy --all --all-targets -- -D warnings
 
   feature-checks:
     name: Feature checks (${{ matrix.group }})
@@ -155,11 +155,12 @@ jobs:
             packages: >-
               -p defra-core -p crdt -p storage -p blockstore -p schema
               -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-              -p identity -p zanzibar -p acp -p defra-version -p events -p lens
+              -p "path+file://$PWD/crates/identity" -p "path+file://$PWD/crates/zanzibar"
+              -p "path+file://$PWD/crates/acp" -p defra-version -p events -p lens
               -p replication-filter -p telemetry
           - os: ubuntu-latest
             group: data
-            packages: -p query -p db -p sourcehub -p pg-compat
+            packages: -p query -p db -p vera -p pg-compat
           - os: ubuntu-latest
             group: network
             packages: -p p2p -p defra-p2p-adapter -p orbis
@@ -173,11 +174,12 @@ jobs:
             packages: >-
               -p defra-core -p crdt -p storage -p blockstore -p schema
               -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-              -p identity -p zanzibar -p acp -p defra-version -p events -p lens
+              -p "path+file://$PWD/crates/identity" -p "path+file://$PWD/crates/zanzibar"
+              -p "path+file://$PWD/crates/acp" -p defra-version -p events -p lens
               -p replication-filter -p telemetry
           - os: macos-latest
             group: data
-            packages: -p query -p db -p sourcehub -p pg-compat
+            packages: -p query -p db -p vera -p pg-compat
           - os: macos-latest
             group: network
             packages: -p p2p -p defra-p2p-adapter -p orbis
@@ -282,7 +284,7 @@ jobs:
         run: command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
       - name: Build WASM
         run: >-
-          CARGO_PROFILE_RELEASE_OPT_LEVEL=z RUSTFLAGS="-C target-feature=+simd128"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL=z
           wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
       - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1
       - uses: browser-actions/setup-geckodriver@eb8b0670366f719ca31703766a8cb7e3ea2c56ed # v0.0.0
@@ -296,7 +298,6 @@ jobs:
       - name: Run wasm tests
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-          RUSTFLAGS: -C target-feature=+simd128
         run: |
           cargo test -p defra-wasm --target wasm32-unknown-unknown --lib --tests 2>&1 | tee wasm-test.log
           if grep -q "running 0 tests" wasm-test.log; then
@@ -304,6 +305,8 @@ jobs:
             exit 1
           fi
           grep -qE "^test result: ok\. [1-9][0-9]* passed" wasm-test.log
+      - name: Browser peer replicates through a hosted relay
+        run: tools/browser-p2p-e2e.sh
 
   lean-conformance:
     name: Lean Conformance
@@ -474,7 +477,7 @@ jobs:
         run: >-
           cargo test --profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
-          --test backup --test fts
+          --test backup --test fts --test acp_replay_outage_repro
           -- --test-threads=1 --skip ::go_
       - name: Run rust P2P integration tests
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
@@ -486,7 +489,7 @@ jobs:
         run: >-
           cargo test --profile super-dev -p integration-test
           --test basic --test query --test acp --test nac --test backup --test p2p --test identity
-          --test encryption --test sourcehub
+          --test encryption --test vera
           -- --test-threads=1 go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject
@@ -500,8 +503,9 @@ jobs:
         run: >-
           cargo test --profile super-dev -p conformance --test tla_conformance
           -- --ignored --test-threads=1
-          parity_counter_3node parity_counter_storm_go_go parity_indexed_lww
-          parity_mixed_fields_3node parity_lww_tie_partition
+          parity_counter_3node parity_counter_storm_go_go parity_delete_update
+          parity_indexed_lww parity_mixed_fields_3node parity_lww_tie_partition
+          parity_samedoc_mixed_restart
           parity_unique_twins_rust_rust parity_unique_twins_go_go parity_unique_twins_mixed
       - name: Run iroh integration tests
         if: matrix.suite == 'iroh'

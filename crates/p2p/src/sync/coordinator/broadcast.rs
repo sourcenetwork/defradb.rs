@@ -56,7 +56,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         let collection_id = job.collection_id.clone();
         let root_cid = job.root_cid;
         let head_priority = job.head_priority();
-        let outcome = self.runtime.push_backlog.try_enqueue(job.clone());
+        let outcome = self.runtime.push_backlog.try_enqueue(job.clone()).await;
         match outcome {
             EnqueueOutcome::Enqueued => {}
             EnqueueOutcome::Coalesced | EnqueueOutcome::RetiredStale => {}
@@ -344,7 +344,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 for doc_id in artifacts
                     .iter()
                     .map(|artifact| artifact.doc_id.clone())
-                    .collect::<std::collections::HashSet<_>>()
+                    .collect::<rapidhash::RapidHashSet<_>>()
                 {
                     let _ = report_push_failure(
                         &self.runtime.failure_tx,
@@ -410,7 +410,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 for doc_id in artifacts
                     .iter()
                     .map(|artifact| artifact.doc_id.clone())
-                    .collect::<std::collections::HashSet<_>>()
+                    .collect::<rapidhash::RapidHashSet<_>>()
                 {
                     let _ = report_push_failure(
                         &self.runtime.failure_tx,

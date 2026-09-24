@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use datastore::NamespaceView;
 use document::Document;
 use query::doc_stream::DocStream;
-use storage::corekv::Iterator as KvIterator;
-use storage::keys::doc_id_index::decode_doc_short_id;
+use storage::corekv::{IterOptions, Iterator as KvIterator};
+use storage::keys::doc_id_index::{decode_doc_short_id, encode_doc_short_id};
 
 use crate::collection::Collection;
 
@@ -229,10 +229,34 @@ impl BackfillSource {
         datastore: NamespaceView,
         systemstore: NamespaceView,
     ) -> crate::error::Result<Self> {
+        Self::open_range(collection, datastore, systemstore, None, None).await
+    }
+
+    /// [`open`](Self::open) over the documents whose short id is above
+    /// `after` and below `before`, either bound optional.
+    pub async fn open_range(
+        collection: Collection,
+        datastore: NamespaceView,
+        systemstore: NamespaceView,
+        after: Option<u64>,
+        before: Option<u64>,
+    ) -> crate::error::Result<Self> {
         let prefix = collection.collection_key_prefix();
         let prefix_len = prefix.len();
+        let mut options = IterOptions::new().with_prefix(prefix.clone());
+        if let Some(after) = after {
+            let mut start = prefix.clone();
+            start.extend_from_slice(&encode_doc_short_id(after));
+            start.push(0);
+            options = options.with_start(start);
+        }
+        if let Some(before) = before {
+            let mut end = prefix;
+            end.extend_from_slice(&encode_doc_short_id(before));
+            options = options.with_end(end);
+        }
         let iter = datastore
-            .iterator(storage::corekv::IterOptions::new().with_prefix(prefix))
+            .iterator(options)
             .await
             .map_err(crate::error::Error::Storage)?;
 
@@ -265,6 +289,13 @@ impl crate::index::manager::DocumentSource for BackfillSource {
         };
         // Set immediately before the document was yielded.
         let short_id = self.inner.last_short_id().unwrap_or(0);
+        // The scan alone is not validated at commit; this point read is, so
+        // a batch that indexed a value the document no longer has aborts.
+        self.inner
+            .datastore
+            .has(&self.inner.collection.doc_key(short_id))
+            .await
+            .map_err(|e| crate::index::error::Error::Other(e.to_string()))?;
         Ok(Some((short_id, doc)))
     }
 }

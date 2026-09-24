@@ -4,14 +4,14 @@
 //! matching the Go DefraDB pattern. Each transaction gets its own cache
 //! that is populated lazily from the SystemStore.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::collection::Collection;
 
 /// A transaction-scoped cache for collection metadata.
 ///
 /// This cache lives within a transaction and provides:
-/// - O(1) average-case lookups by collection name (HashMap-backed)
+/// - O(1) average-case lookups by collection name (RapidHashMap-backed)
 /// - Lazy loading from SystemStore on cache miss
 /// - Isolation between transactions (each txn has its own cache)
 ///
@@ -20,7 +20,7 @@ use crate::collection::Collection;
 #[derive(Debug, Clone)]
 pub struct CollectionCache {
     /// Collections indexed by name
-    by_name: HashMap<String, Collection>,
+    by_name: RapidHashMap<String, Collection>,
 
     /// Whether the full collection set has been loaded from store
     is_fully_populated: bool,
@@ -30,7 +30,7 @@ impl CollectionCache {
     /// Create a new empty collection cache.
     pub fn new() -> Self {
         Self {
-            by_name: HashMap::new(),
+            by_name: RapidHashMap::new(),
             is_fully_populated: false,
         }
     }

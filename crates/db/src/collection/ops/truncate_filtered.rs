@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 
 use storage::keys::{
@@ -105,9 +105,9 @@ impl<S: Store> crate::database::DB<S> {
                 collection.schema(),
                 collection.write_indexes(),
             )?;
-            let mut seen = HashSet::new();
+            let mut seen = RapidHashSet::new();
             let mut targets = Vec::with_capacity(doc_ids.len());
-            let mut aliases_to_delete = HashSet::new();
+            let mut aliases_to_delete = RapidHashSet::new();
 
             for doc_id in doc_ids {
                 let parsed = document::DocID::from_string(doc_id)?;

@@ -1,5 +1,6 @@
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
@@ -577,14 +578,14 @@ pub struct CodingRetrievalTask {
 }
 
 impl CodingRetrievalTask {
-    pub fn support_ids(&self) -> HashSet<String> {
+    pub fn support_ids(&self) -> RapidHashSet<String> {
         self.supporting_items
             .iter()
             .map(|item| item.id.clone())
             .collect()
     }
 
-    pub fn distractor_ids(&self) -> HashSet<String> {
+    pub fn distractor_ids(&self) -> RapidHashSet<String> {
         self.distractors
             .iter()
             .map(|item| item.id.clone())
@@ -1216,7 +1217,7 @@ fn fuse_rankings_rrf(
 ) -> Vec<CodingRankedResult> {
     const RRF_RANK_BIAS: f64 = 60.0;
 
-    let mut fused = HashMap::<String, CodingRankedResult>::new();
+    let mut fused = RapidHashMap::<String, CodingRankedResult>::new();
 
     for (index, hit) in bm25.iter().enumerate() {
         let entry = fused.entry(hit.id.clone()).or_insert_with(|| hit.clone());
@@ -1323,7 +1324,7 @@ async fn seed_coding_session_fixture_with_schema(
     config: &CodingSessionFixtureConfig,
     sdl: &str,
 ) -> Result<CodingSessionFixture> {
-    let mut project_doc_ids: HashMap<String, String> = HashMap::new();
+    let mut project_doc_ids: RapidHashMap<String, String> = RapidHashMap::new();
     node.add_schema(sdl).await?;
 
     let fixture = config.layout();

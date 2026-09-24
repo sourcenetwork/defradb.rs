@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use blockstore::{Blockstore, DefraBlockstore};
 use events::{Bus, ChannelBus, EventName, MergeCompleteData, Message};
+use rapidhash::HashSetExt;
 use std::sync::Arc;
 use storage::RegolithStore;
 
@@ -45,7 +46,7 @@ async fn waits_for_all_advertised_heads_despite_idle_gaps() {
         &store,
         &mut sub,
         "collection",
-        HashSet::from([first, second]),
+        RapidHashSet::from_iter([first, second]),
         Instant::now() + Duration::from_secs(30),
     ));
     let mut context = Context::from_waker(Waker::noop());
@@ -81,7 +82,7 @@ async fn partial_completion_does_not_reset_deadline_or_report_success() {
         &store,
         &mut sub,
         "collection",
-        HashSet::from([first, second]),
+        RapidHashSet::from_iter([first, second]),
         deadline,
     ));
     let mut context = Context::from_waker(Waker::noop());
@@ -110,7 +111,7 @@ async fn closed_event_bus_does_not_report_unmerged_heads_as_complete() {
         &store,
         &mut sub,
         "collection",
-        HashSet::from(heads()),
+        RapidHashSet::from_iter(heads()),
         Instant::now() + Duration::from_secs(30),
     )
     .await
@@ -129,7 +130,7 @@ async fn already_merged_heads_need_no_events_or_remaining_time() {
         &store,
         &mut sub,
         "collection",
-        HashSet::new(),
+        RapidHashSet::new(),
         Instant::now(),
     )
     .await

@@ -4,6 +4,7 @@ use bytes::Bytes;
 use db::AutoCommitMutator;
 use db::DB;
 use futures::StreamExt;
+use kovan_map::HopscotchMap;
 use lens::LensConfig;
 use lens::LensDocResultStream;
 use lens::LensDocStream;
@@ -16,42 +17,68 @@ use query::DocFetcher;
 use query::DocMutator;
 use query::QueryExecutor;
 use query::QueryRequest;
+use rapidhash::fast::RandomState;
+use rapidhash::RapidHashSet;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::RwLock;
 use storage::corekv::IterOptions;
 use storage::index::IndexIterator;
 use storage::RegolithStore;
 use tokio::sync::Notify;
 
+mod unique_conflicts;
+
 #[derive(Default)]
 struct SetVerifiedStore {
-    transforms: RwLock<HashSet<TransformId>>,
+    transforms: TransformIdSet,
     transform_calls: AtomicUsize,
+    verified_value: Option<serde_json::Value>,
+}
+
+/// The set of transform ids a test double has registered.
+struct TransformIdSet(HopscotchMap<TransformId, (), RandomState>);
+
+impl Default for TransformIdSet {
+    fn default() -> Self {
+        Self(HopscotchMap::with_hasher(RandomState::default()))
+    }
+}
+
+impl TransformIdSet {
+    fn insert(&self, id: TransformId) {
+        self.0.insert(id, ());
+    }
+
+    fn contains(&self, id: &TransformId) -> bool {
+        self.0.contains_key(id)
+    }
+
+    fn remove(&self, id: &TransformId) {
+        self.0.remove(id);
+    }
 }
 
 #[async_trait]
 impl TransformStore for SetVerifiedStore {
     async fn add(&self, config: LensConfig) -> lens::Result<TransformId> {
         let id = TransformId::new(format!("test-transform-{}", config.lenses.len()));
-        self.transforms.write().unwrap().insert(id.clone());
+        self.transforms.insert(id.clone());
         Ok(id)
     }
 
     async fn add_with_id(&self, id: TransformId, _config: LensConfig) -> lens::Result<()> {
-        self.transforms.write().unwrap().insert(id);
+        self.transforms.insert(id);
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(
@@ -63,8 +90,12 @@ impl TransformStore for SetVerifiedStore {
             return Err(lens::Error::TransformNotFound(id.to_string()));
         }
         self.transform_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::pin(docs.map(|mut doc| {
-            doc.insert("verified".to_string(), serde_json::Value::Bool(true));
+        let value = self
+            .verified_value
+            .clone()
+            .unwrap_or(serde_json::Value::Bool(true));
+        Ok(Box::pin(docs.map(move |mut doc| {
+            doc.insert("verified".to_string(), value.clone());
             Ok(doc)
         })))
     }
@@ -74,18 +105,18 @@ impl TransformStore for SetVerifiedStore {
     }
 
     fn has_transform(&self, id: &TransformId) -> bool {
-        self.transforms.read().unwrap().contains(id)
+        self.transforms.contains(id)
     }
 
     async fn remove(&self, id: &TransformId) -> lens::Result<()> {
-        self.transforms.write().unwrap().remove(id);
+        self.transforms.remove(id);
         Ok(())
     }
 }
 
 #[derive(Default)]
 struct BlockingVerifiedStore {
-    transforms: RwLock<HashSet<TransformId>>,
+    transforms: TransformIdSet,
     transform_calls: AtomicUsize,
     block_on_call: AtomicUsize,
     entered: Arc<Notify>,
@@ -106,17 +137,17 @@ impl BlockingVerifiedStore {
 impl TransformStore for BlockingVerifiedStore {
     async fn add(&self, config: LensConfig) -> lens::Result<TransformId> {
         let id = TransformId::new(format!("blocking-transform-{}", config.lenses.len()));
-        self.transforms.write().unwrap().insert(id.clone());
+        self.transforms.insert(id.clone());
         Ok(id)
     }
 
     async fn add_with_id(&self, id: TransformId, _config: LensConfig) -> lens::Result<()> {
-        self.transforms.write().unwrap().insert(id);
+        self.transforms.insert(id);
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(
@@ -150,19 +181,27 @@ impl TransformStore for BlockingVerifiedStore {
     }
 
     fn has_transform(&self, id: &TransformId) -> bool {
-        self.transforms.read().unwrap().contains(id)
+        self.transforms.contains(id)
     }
 
     async fn remove(&self, id: &TransformId) -> lens::Result<()> {
-        self.transforms.write().unwrap().remove(id);
+        self.transforms.remove(id);
         Ok(())
     }
 }
 
-#[derive(Default)]
 struct StepTransformStore {
     next_id: AtomicUsize,
-    fields: RwLock<HashMap<TransformId, String>>,
+    fields: HopscotchMap<TransformId, String, RandomState>,
+}
+
+impl Default for StepTransformStore {
+    fn default() -> Self {
+        Self {
+            next_id: AtomicUsize::new(0),
+            fields: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 #[async_trait]
@@ -171,23 +210,17 @@ impl TransformStore for StepTransformStore {
         let sequence = self.next_id.fetch_add(1, Ordering::SeqCst);
         let id = TransformId::new(format!("step-transform-{sequence}"));
         let field = if sequence == 0 { "latest" } else { "middle" };
-        self.fields
-            .write()
-            .unwrap()
-            .insert(id.clone(), field.to_string());
+        self.fields.insert(id.clone(), field.to_string());
         Ok(id)
     }
 
     async fn add_with_id(&self, id: TransformId, _config: LensConfig) -> lens::Result<()> {
-        self.fields
-            .write()
-            .unwrap()
-            .insert(id, "restored".to_string());
+        self.fields.insert(id, "restored".to_string());
         Ok(())
     }
 
-    async fn list(&self) -> lens::Result<HashMap<String, LensModule>> {
-        Ok(HashMap::new())
+    async fn list(&self) -> lens::Result<RapidHashMap<String, LensModule>> {
+        Ok(RapidHashMap::new())
     }
 
     fn transform(
@@ -197,10 +230,7 @@ impl TransformStore for StepTransformStore {
     ) -> lens::Result<LensDocResultStream> {
         let field = self
             .fields
-            .read()
-            .unwrap()
             .get(id)
-            .cloned()
             .ok_or_else(|| lens::Error::TransformNotFound(id.to_string()))?;
         Ok(Box::pin(docs.map(move |mut doc| {
             doc.insert(field.clone(), serde_json::Value::String("set".to_string()));
@@ -213,11 +243,11 @@ impl TransformStore for StepTransformStore {
     }
 
     fn has_transform(&self, id: &TransformId) -> bool {
-        self.fields.read().unwrap().contains_key(id)
+        self.fields.contains_key(id)
     }
 
     async fn remove(&self, id: &TransformId) -> lens::Result<()> {
-        self.fields.write().unwrap().remove(id);
+        self.fields.remove(id);
         Ok(())
     }
 }
@@ -957,7 +987,11 @@ async fn concurrent_update_wins_over_stale_lazy_write_back() {
     update.set_id(doc_id.clone());
     update.set("name", document::NormalValue::String("Bob".to_string()));
     AutoCommitMutator::new(db.clone())
-        .update("Users", update, HashSet::from(["name".to_string()]))
+        .update(
+            "Users",
+            update,
+            RapidHashSet::from_iter(["name".to_string()]),
+        )
         .await
         .unwrap();
 

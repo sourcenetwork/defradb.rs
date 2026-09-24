@@ -1,7 +1,6 @@
 use std::ffi::c_char;
 
 use acp::nac::NodePermission;
-use storage::corekv::Key;
 
 use crate::helpers::{get_node_database, get_rt, require_c_str};
 use crate::nac_check::check_nac_for_node;
@@ -71,13 +70,6 @@ pub unsafe extern "C" fn create_index(
         );
 
         ffi_async!(rt, {
-            // Get the collection
-            let collection = database
-                .get_collection(&collection_name_str)
-                .map_err(|e| format!("failed to get collection: {}", e))?
-                .ok_or_else(|| format!("collection '{}' not found", collection_name_str))?;
-
-            // Build the fields list
             let fields: Vec<schema::IndexedFieldDescription> = index_input
                 .fields
                 .into_iter()
@@ -86,165 +78,14 @@ pub unsafe extern "C" fn create_index(
                     descending: f.descending,
                 })
                 .collect();
-
-            let collection_id = collection.collection_id().to_string();
-            let txn = database
-                .new_txn(false)
+            let kind = db::IndexManager::requested_kind(&fields, index_input.unique, None)
+                .map_err(|e| format!("{}", e))?;
+            let index_desc = database
+                .create_index(&collection_name_str, Some(&index_input.name), fields, kind)
                 .await
-                .map_err(|e| format!("failed to create transaction: {}", e))?;
-
-            let (index_desc, action_lease) = {
-                let datastore = txn
-                    .datastore()
-                    .map_err(|e| format!("failed to get datastore: {}", e))?;
-
-                // Create the index manager
-                let mut index_manager = db::index::IndexManager::from_collection(
-                    collection.schema().resolved_root_id(),
-                    collection.schema(),
-                )
-                .map_err(|e| format!("failed to create index manager: {}", e))?;
-
-                // Create the index
-                let index_desc = index_manager
-                    .create_index(
-                        &datastore,
-                        &collection_name_str,
-                        index_input.name,
-                        fields,
-                        index_input.unique,
-                        &collection.schema().fields,
-                    )
-                    .await
-                    .map_err(|e| format!("{}", e))?;
-
-                // Update the collection schema with the new index
-                let mut updated_schema = collection.schema().clone();
-                updated_schema.indexes.push(index_desc.clone());
-
-                // Save the updated schema at /collection/id/{version_id}
-                let collection_key =
-                    storage::keys::systemstore::CollectionKey::new(&updated_schema.version_id);
-                let schema_data = serde_json::to_vec(&updated_schema)
-                    .map_err(|e| format!("failed to serialize schema: {}", e))?;
-
-                let systemstore = txn
-                    .systemstore()
-                    .map_err(|e| format!("failed to get systemstore: {}", e))?;
-
-                systemstore
-                    .set(&collection_key.bytes(), &schema_data)
-                    .await
-                    .map_err(|e| format!("failed to save schema: {}", e))?;
-
-                // Update the name → version_id mapping at /collection/name/{name}
-                let name_key = storage::keys::systemstore::CollectionNameKey::new(&collection_name_str);
-                systemstore
-                    .set(&name_key.bytes(), updated_schema.version_id.as_bytes())
-                    .await
-                    .map_err(|e| format!("failed to save name mapping: {}", e))?;
-
-                let action_lease = database
-                    .stage_action(
-                        &systemstore,
-                        &collection_id,
-                        defra_core::Action::BACKFILL_INDEX,
-                        &index_desc.id.to_string(),
-                    )
-                    .await
-                    .map_err(|e| format!("failed to record index backfill: {}", e))?;
-
-                (index_desc, action_lease)
-            };
-
-            txn.commit()
-                .await
-                .map_err(|e| format!("failed to commit: {}", e))?;
-            database.publish_started_action(&action_lease);
-
-            database
-                .reload_cache()
-                .await
-                .map_err(|e| format!("failed to reload cache: {}", e))?;
-
-            let backfill_result: Result<(), String> = async {
-                let collection = database
-                    .get_collection(&collection_name_str)
-                    .map_err(|e| format!("failed to get collection: {}", e))?
-                    .ok_or_else(|| format!("collection '{}' not found", collection_name_str))?;
-                let txn = database
-                    .new_txn(false)
-                    .await
-                    .map_err(|e| format!("failed to create backfill transaction: {}", e))?;
-
-                let result: Result<(), String> = async {
-                    let datastore = txn
-                        .datastore()
-                        .map_err(|e| format!("failed to get datastore: {}", e))?;
-                    let systemstore = txn
-                        .systemstore()
-                        .map_err(|e| format!("failed to get systemstore: {}", e))?;
-                    let index_manager = db::index::IndexManager::from_collection(
-                        collection.schema().resolved_root_id(),
-                        collection.schema(),
-                    )
-                    .map_err(|e| format!("failed to create index manager: {}", e))?;
-                    let mut source = db::BackfillSource::open(
-                        collection.clone(),
-                        datastore.clone(),
-                        systemstore.clone(),
-                    )
-                    .await
-                    .map_err(|e| format!("failed to open the collection: {}", e))?;
-
-                    index_manager
-                        .bulk_index_from(
-                            &datastore,
-                            &index_desc.name,
-                            &mut source,
-                            collection.schema(),
-                        )
-                        .await
-                        .map_err(|e| format!("{}", e))?;
-                    Ok(())
-                }
-                .await;
-
-                if let Err(error) = result {
-                    txn.discard()
-                        .map_err(|e| format!("failed to discard backfill: {}", e))?;
-                    return Err(error);
-                }
-                txn.commit()
-                    .await
-                    .map_err(|e| format!("failed to commit backfill: {}", e))?;
-
-                database
-                    .reindex_collection_with_migrations(&collection_name_str)
-                    .await
-                    .map_err(|e| format!("failed to reindex after migration: {}", e))
-            }
-            .await;
-
-            match backfill_result {
-                Ok(()) => database
-                    .complete_action(action_lease)
-                    .await
-                    .map_err(|e| format!("failed to complete index backfill: {}", e))?,
-                Err(reason) => database
-                    .fail_action(action_lease, &reason)
-                    .await
-                    .map_err(|e| format!("failed to record index backfill failure: {}", e))?,
-            }
-
-            database
-                .reload_cache()
-                .await
-                .map_err(|e| format!("failed to reload cache: {}", e))?;
-
+                .map_err(|e| format!("{}", e))?;
             let json = serde_json::to_string(&index_desc)
                 .map_err(|e| format!("failed to serialize result: {}", e))?;
-
             Ok(json)
         })
     }

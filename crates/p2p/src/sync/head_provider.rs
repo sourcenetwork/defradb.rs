@@ -12,8 +12,9 @@ use crate::error::Result;
 ///
 /// This is used by the SyncCoordinator to respond to DocSync and BranchableSync requests.
 /// The implementation should query the headstore for composite heads.
-#[async_trait]
-pub trait DocumentHeadProvider: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait DocumentHeadProvider: defra_core::thread_bounds::MaybeSendSync {
     /// Get the composite head CIDs for a document.
     ///
     /// Returns the CIDs stored at /d/{doc_id}/C/{cid} in the headstore.
@@ -32,7 +33,8 @@ pub trait DocumentHeadProvider: Send + Sync {
 /// Use this when head lookup is not needed.
 pub struct NoOpHeadProvider;
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentHeadProvider for NoOpHeadProvider {
     async fn get_document_heads(&self, _doc_id: &str) -> Result<Vec<Cid>> {
         Ok(Vec::new())

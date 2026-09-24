@@ -719,6 +719,24 @@ pub(crate) fn ensure_collection_is_active<S: Store>(
 }
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
+    /// The collection's read guard, then its definition: resolved after the
+    /// guard, so a patch or an index committed under the write guard is the
+    /// definition this write uses.
+    pub(super) async fn guarded_collection(
+        &self,
+        collection_name: &str,
+    ) -> query::error::Result<(async_lock::RwLockReadGuardArc<()>, Collection)> {
+        let guard = self
+            .db
+            .collection_read_guard_by_name(collection_name)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+            .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
+        let collection = self.get_collection_or_err(collection_name)?;
+        ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        Ok((guard, collection))
+    }
+
     /// Get collection from DB cache or return a not-found error.
     pub(super) fn get_collection_or_err(
         &self,

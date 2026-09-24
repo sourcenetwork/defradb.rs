@@ -69,16 +69,20 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 }
 
                 if !updated_destination.name.is_empty() {
-                    if let Ok(mut cache) = db.collections.write() {
-                        if let Some(cached) = cache.get(&updated_destination.name) {
-                            if cached.schema().version_id == destination_version_id {
-                                cache.insert(
-                                    updated_destination.name.clone(),
-                                    Collection::new(updated_destination.clone()),
-                                );
-                            }
+                    db.collections.rcu(|old| {
+                        let mut cache = old.clone();
+                        let matches_destination =
+                            cache.get(&updated_destination.name).is_some_and(|cached| {
+                                cached.schema().version_id == destination_version_id
+                            });
+                        if matches_destination {
+                            cache.insert(
+                                updated_destination.name.clone(),
+                                Collection::new(updated_destination.clone()),
+                            );
                         }
-                    }
+                        cache
+                    });
 
                     if let Err(error) = db
                         .maybe_reindex_after_migration(
@@ -137,7 +141,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         let mut txn_guard = shared_txn.lock().await;
         let txn = txn_guard.as_mut().ok_or(Error::TxnNotActive)?;
 
-        let known_types: std::collections::HashSet<String> = self
+        let known_types: rapidhash::RapidHashSet<String> = self
             .db
             .list_collections()
             .map_err(|e| Error::Other(format!("failed to list collections: {}", e)))?
@@ -173,11 +177,13 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             for schema in &schemas_for_cache {
                 let _ = db.unforbid_collection_id(&schema.collection_id);
             }
-            if let Ok(mut cache) = db.collections.write() {
+            db.collections.rcu(|old| {
+                let mut cache = old.clone();
                 for schema in &schemas_for_cache {
                     cache.insert(schema.name.clone(), Collection::new(schema.clone()));
                 }
-            }
+                cache
+            });
         }))?;
 
         Ok(finalized)

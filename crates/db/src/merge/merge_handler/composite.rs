@@ -51,10 +51,10 @@ impl<'a, 'b> CompositeMergeContext<'a, 'b> {
 
 #[derive(Default)]
 pub struct CompositeMergeState {
-    pub(crate) field_values: HashMap<String, NormalValue>,
+    pub(crate) field_values: RapidHashMap<String, NormalValue>,
     pub(crate) any_field_applied: bool,
     pub(crate) encrypted_policy_checked: bool,
-    pub(crate) field_block_heads: HashMap<String, Vec<Cid>>,
+    pub(crate) field_block_heads: RapidHashMap<String, Vec<Cid>>,
     pub(crate) owned_field_cids: Vec<Cid>,
     pub(crate) linked_field_cids: Vec<Cid>,
     pub(crate) linked_encryption_cids: Vec<Cid>,
@@ -110,17 +110,27 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // hit here is the common case. Skip identity resolution and the
         // per-document guard for an already-merged block; the guarded re-check
         // below still covers the concurrent-first-delivery race.
-        {
-            let merged = self.merged_composites.lock().unwrap_or_else(|e| {
-                tracing::warn!("merged_composites lock poisoned, recovering");
-                e.into_inner()
-            });
-            if merged.contains(cid) {
-                return Ok(MergeOutcome::terminal_skip("already merged"));
-            }
+        if self.merged_composites.contains_key(cid) {
+            return Ok(MergeOutcome::terminal_skip("already merged"));
         }
 
         let doc_id_str = self.resolve_composite_doc_id(cid, block, depth).await?;
+
+        let collection = self
+            .block_collection(&payload.schema_version_id, metadata.collection_id)
+            .await?;
+        // Lock order: collection read guard, then merge queue, then transaction
+        // (matches local writes via DB::collection_read_guard); reversed, a
+        // truncate waiting on the write lock can deadlock against a write that
+        // holds this read guard while waiting on the merge queue.
+        let _collection_guard = match collection.as_ref() {
+            Some(collection) => Some(
+                self.db
+                    .collection_read_guard(collection.collection_id())
+                    .await?,
+            ),
+            None => None,
+        };
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 
         self.process_composite_delta_locked(
@@ -136,26 +146,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     }
 
     fn has_merged_composite(&self, cid: &Cid) -> bool {
-        self.merged_composites
-            .lock()
-            .unwrap_or_else(|error| {
-                tracing::warn!("merged_composites lock poisoned, recovering");
-                error.into_inner()
-            })
-            .contains(cid)
+        self.merged_composites.contains_key(cid)
     }
 
-    fn has_batch_merged_composite(
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        cid: &Cid,
-    ) -> bool {
-        batch_merged
-            .lock()
-            .unwrap_or_else(|error| {
-                tracing::warn!("batch_merged lock poisoned, recovering");
-                error.into_inner()
-            })
-            .contains(cid)
+    fn has_batch_merged_composite(batch_merged: &CidSet, cid: &Cid) -> bool {
+        batch_merged.contains_key(cid)
     }
 
     async fn load_parent_composite(&self, parent_cid: &Cid, child_cid: &Cid) -> Option<Block> {
@@ -212,15 +207,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         let collection = self
-            .db
-            .find_collection_by_id(&payload.schema_version_id)
-            .ok()
-            .flatten()
-            .or_else(|| {
-                metadata
-                    .collection_id
-                    .and_then(|cid| self.db.find_collection_by_id(cid).ok().flatten())
-            });
+            .block_collection(&payload.schema_version_id, metadata.collection_id)
+            .await?;
 
         if let Some(collection) = collection.as_ref() {
             if let Some(reason) = self
@@ -245,6 +233,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 {
                     return Ok(CompositeMergePreparation::Complete(outcome));
                 }
+            }
+
+            if let Some(outcome) = self
+                .check_protected_update(cid, block, payload, doc_id, collection.schema())
+                .await?
+            {
+                return Ok(CompositeMergePreparation::Complete(outcome));
             }
         }
 
@@ -376,6 +371,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             &payload,
                             metadata,
                             from_collection,
+                            is_root,
                             &doc_id,
                             collection.map(|collection| *collection),
                         )
@@ -398,6 +394,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &defra_core::block::CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
         from_collection: bool,
+        is_root: bool,
         doc_id_str: &str,
         collection_lookup: Option<Collection>,
     ) -> std::result::Result<MergeOutcome, MergeError> {
@@ -540,13 +537,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 self.best_effort_finalize_linked_field_blocks(&state.linked_field_cids)
                     .await;
 
-                {
-                    let mut merged = self.merged_composites.lock().unwrap_or_else(|e| {
-                        tracing::warn!("merged_composites lock poisoned, recovering");
-                        e.into_inner()
-                    });
-                    merged.insert(*cid);
-                }
+                self.merged_composites.insert(*cid, ());
 
                 tracing::info!(
                     cid = %cid,
@@ -567,6 +558,24 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 doc_id = %doc_id_str,
                                 error = %e,
                                 "Post-commit composite merge action failed"
+                            );
+                        }
+                    }
+                }
+
+                // Once per inbound head, as Go's SendUpdate after merge: the
+                // parent walk merges older composites of the same document
+                // first, and each would otherwise re-push the current document.
+                if let Some(collection) = context.collection.as_ref().filter(|_| is_root) {
+                    if let Some(action) =
+                        self.se_post_commit_action(doc_id_str, collection.schema())
+                    {
+                        if let Err(e) = action.run().await {
+                            tracing::warn!(
+                                cid = %cid,
+                                doc_id = %doc_id_str,
+                                error = %e,
+                                "Post-commit SE artifact push failed"
                             );
                         }
                     }
@@ -646,11 +655,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &defra_core::block::CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
         from_collection: bool,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        _batch_merged_collections: &std::sync::Mutex<HashSet<Cid>>,
-        pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
-        pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
-        pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
+        batch_merged: &CidSet,
+        _batch_merged_collections: &CidSet,
+        pending_events: &SegQueue<PendingMergeEvent>,
+        pending_post_commit_actions: &SegQueue<PendingPostCommitAction>,
+        pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
         depth: usize,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         self.ensure_merge_depth(cid, depth)?;
@@ -788,6 +797,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             &payload,
                             metadata,
                             from_collection,
+                            is_root,
                             batch_merged,
                             pending_events,
                             pending_post_commit_actions,
@@ -817,10 +827,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &defra_core::block::CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
         from_collection: bool,
-        batch_merged: &std::sync::Mutex<HashSet<Cid>>,
-        pending_events: &std::sync::Mutex<Vec<PendingMergeEvent>>,
-        pending_post_commit_actions: &std::sync::Mutex<Vec<PendingPostCommitAction>>,
-        pending_field_block_finalizations: &std::sync::Mutex<Vec<PendingFieldBlockFinalization>>,
+        is_root: bool,
+        batch_merged: &CidSet,
+        pending_events: &SegQueue<PendingMergeEvent>,
+        pending_post_commit_actions: &SegQueue<PendingPostCommitAction>,
+        pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
         doc_id_str: &str,
         collection_lookup: Option<Collection>,
     ) -> std::result::Result<MergeOutcome, MergeError> {
@@ -900,15 +911,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             .to_string(),
                         by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                     };
-                    pending_events
-                        .lock()
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("pending_events lock poisoned, recovering");
-                            e.into_inner()
-                        })
-                        .push(PendingMergeEvent {
-                            message: Message::merge_complete(merge_complete),
-                        });
+                    pending_events.push(PendingMergeEvent {
+                        message: Message::merge_complete(merge_complete),
+                    });
                 }
                 Ok(outcome)
             }
@@ -924,26 +929,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 )
                 .await?;
 
-                {
-                    let mut batch_merged_guard = batch_merged.lock().unwrap_or_else(|e| {
-                        tracing::warn!("batch_merged lock poisoned, recovering");
-                        e.into_inner()
-                    });
-                    batch_merged_guard.insert(*cid);
-                }
+                batch_merged.insert(*cid, ());
 
                 if !state.linked_field_cids.is_empty() {
-                    pending_field_block_finalizations
-                        .lock()
-                        .unwrap_or_else(|e| {
-                            tracing::warn!(
-                                "pending_field_block_finalizations lock poisoned, recovering"
-                            );
-                            e.into_inner()
-                        })
-                        .push(PendingFieldBlockFinalization {
-                            cids: state.linked_field_cids.clone(),
-                        });
+                    pending_field_block_finalizations.push(PendingFieldBlockFinalization {
+                        cids: state.linked_field_cids.clone(),
+                    });
                 }
 
                 if let (Some(collection), Some(hook)) =
@@ -952,24 +943,22 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     if let Some(action) =
                         hook.post_commit_action(doc_id_str, collection.schema(), metadata)
                     {
-                        pending_post_commit_actions
-                            .lock()
-                            .unwrap_or_else(|e| {
-                                tracing::warn!(
-                                    "pending_post_commit_actions lock poisoned, recovering"
-                                );
-                                e.into_inner()
-                            })
-                            .push(PendingPostCommitAction { action });
+                        pending_post_commit_actions.push(PendingPostCommitAction { action });
+                    }
+                }
+
+                // Once per inbound head, as Go's SendUpdate after merge: the
+                // parent walk merges older composites of the same document
+                // first, and each would otherwise re-push the current document.
+                if let Some(collection) = context.collection.as_ref().filter(|_| is_root) {
+                    if let Some(action) =
+                        self.se_post_commit_action(doc_id_str, collection.schema())
+                    {
+                        pending_post_commit_actions.push(PendingPostCommitAction { action });
                     }
                 }
 
                 {
-                    let mut pending_events_guard = pending_events.lock().unwrap_or_else(|e| {
-                        tracing::warn!("pending_events lock poisoned, recovering");
-                        e.into_inner()
-                    });
-
                     let update = Update::new(
                         doc_id_str.to_string(),
                         *cid,
@@ -983,7 +972,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         false,
                         true,
                     );
-                    pending_events_guard.push(PendingMergeEvent {
+                    pending_events.push(PendingMergeEvent {
                         message: Message::update(update),
                     });
 
@@ -998,7 +987,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 .to_string(),
                             by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                         };
-                        pending_events_guard.push(PendingMergeEvent {
+                        pending_events.push(PendingMergeEvent {
                             message: Message::merge_complete(merge_complete),
                         });
                     }
@@ -1014,7 +1003,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 .to_string(),
                             by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                         };
-                        pending_events_guard.push(PendingMergeEvent {
+                        pending_events.push(PendingMergeEvent {
                             message: Message::merge_complete(merge_complete),
                         });
                     }

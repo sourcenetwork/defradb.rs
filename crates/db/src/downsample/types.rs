@@ -1,6 +1,6 @@
 use chrono::{DateTime, FixedOffset};
+use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AggregateField {
@@ -20,7 +20,7 @@ pub(super) enum SourceKind {
 #[derive(Debug, Clone)]
 pub(super) struct ParsedSourceQuery {
     pub collection_name: String,
-    pub selected_fields: HashSet<String>,
+    pub selected_fields: RapidHashSet<String>,
 }
 
 #[derive(Debug, Clone)]

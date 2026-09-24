@@ -1,8 +1,7 @@
-use std::collections::HashSet;
-
 use cid::Cid;
 use defra_http::P2PResult;
 use p2p::message::pubsub::DocSyncReply;
+use rapidhash::RapidHashSet;
 
 use crate::{P2PError, P2PErrorExt as _};
 
@@ -26,7 +25,7 @@ use crate::{P2PError, P2PErrorExt as _};
 /// for are dropped.
 pub(crate) fn advertised_heads(
     expected_peers: usize,
-    requested_doc_ids: &HashSet<String>,
+    requested_doc_ids: &RapidHashSet<String>,
     replies: &[(String, DocSyncReply)],
 ) -> P2PResult<Vec<Cid>> {
     let heads: Vec<Cid> = replies
@@ -40,7 +39,7 @@ pub(crate) fn advertised_heads(
     // Peers are counted by authenticated sender, mirroring the way Go clears
     // one entry of `pendingPeers` per peer: two replies from the same peer
     // still leave the rest of the network pending.
-    let responded: HashSet<&str> = replies.iter().map(|(peer, _)| peer.as_str()).collect();
+    let responded: RapidHashSet<&str> = replies.iter().map(|(peer, _)| peer.as_str()).collect();
     if responded.len() < expected_peers && heads.is_empty() {
         return Err(P2PError::transport("timeout while syncing doc"));
     }
@@ -50,10 +49,9 @@ pub(crate) fn advertised_heads(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use cid::Cid;
     use p2p::message::pubsub::{DocSyncItem, DocSyncReply};
+    use rapidhash::RapidHashSet;
 
     use super::advertised_heads;
 
@@ -63,8 +61,8 @@ mod tests {
         Cid::try_from("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy").unwrap()
     }
 
-    fn requested() -> HashSet<String> {
-        HashSet::from([DOC_ID.to_string()])
+    fn requested() -> RapidHashSet<String> {
+        RapidHashSet::from_iter([DOC_ID.to_string()])
     }
 
     fn reply(peer: &str, items: Vec<DocSyncItem>) -> (String, DocSyncReply) {

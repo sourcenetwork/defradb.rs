@@ -1,35 +1,20 @@
 //! DAG sync state tracking.
 
-use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cid::Cid;
-use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+use rapidhash::fast::RandomState;
+use tracing::debug;
 
 /// Default maximum number of synced CIDs to track before eviction.
 const DEFAULT_MAX_SYNCED_CIDS: usize = 100_000;
 
-/// Internal state for DagSyncState, protected by a single lock.
-struct SyncStateInner {
-    /// CIDs currently being synced
-    syncing: HashSet<Cid>,
-    /// CIDs that have been synced in this session
-    synced: HashSet<Cid>,
-    /// Order of synced CIDs for FIFO eviction (oldest first)
-    synced_order: VecDeque<Cid>,
-    /// Maximum number of synced CIDs before eviction
-    max_synced: usize,
-}
-
-impl Default for SyncStateInner {
-    fn default() -> Self {
-        Self {
-            syncing: HashSet::new(),
-            synced: HashSet::new(),
-            synced_order: VecDeque::new(),
-            max_synced: DEFAULT_MAX_SYNCED_CIDS,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncPhase {
+    Syncing,
+    Synced,
 }
 
 /// Tracks ongoing DAG sync operations.
@@ -43,11 +28,15 @@ impl Default for SyncStateInner {
 /// the oldest synced CIDs are evicted to make room for new ones. This prevents
 /// unbounded memory growth in long-running nodes.
 ///
-/// All state is protected by a single lock to prevent race conditions
-/// between checking and modifying sync state.
+/// One map holds both phases, so claiming a CID is a single insert that fails
+/// whether the CID is syncing or already synced.
 pub struct DagSyncState {
-    /// Combined state protected by a single lock
-    state: RwLock<SyncStateInner>,
+    phases: HopscotchMap<Cid, SyncPhase, RandomState>,
+    /// Order of synced CIDs for FIFO eviction (oldest first)
+    synced_order: SegQueue<Cid>,
+    synced_count: AtomicUsize,
+    /// Maximum number of synced CIDs before eviction
+    max_synced: usize,
 }
 
 impl Default for DagSyncState {
@@ -59,9 +48,7 @@ impl Default for DagSyncState {
 impl DagSyncState {
     /// Create a new sync state tracker with default settings.
     pub fn new() -> Self {
-        Self {
-            state: RwLock::new(SyncStateInner::default()),
-        }
+        Self::with_max_synced(DEFAULT_MAX_SYNCED_CIDS)
     }
 
     /// Create a new sync state tracker with custom max synced limit.
@@ -72,16 +59,16 @@ impl DagSyncState {
     ///   the oldest synced CIDs are evicted.
     pub fn with_max_synced(max_synced: usize) -> Self {
         Self {
-            state: RwLock::new(SyncStateInner {
-                max_synced,
-                ..Default::default()
-            }),
+            phases: HopscotchMap::with_hasher(RandomState::default()),
+            synced_order: SegQueue::new(),
+            synced_count: AtomicUsize::new(0),
+            max_synced,
         }
     }
 
     /// Check if a CID is currently being synced.
     pub async fn is_syncing(&self, cid: &Cid) -> bool {
-        self.state.read().await.syncing.contains(cid)
+        self.phases.get(cid) == Some(SyncPhase::Syncing)
     }
 
     /// Check if a CID has recently been synced.
@@ -90,7 +77,7 @@ impl DagSyncState {
     /// session, not a persistent claim. A `false` result may mean the CID was
     /// never synced or that it was evicted from the recent synced cache.
     pub async fn is_synced(&self, cid: &Cid) -> bool {
-        self.state.read().await.synced.contains(cid)
+        self.phases.get(cid) == Some(SyncPhase::Synced)
     }
 
     /// Mark a CID as currently syncing.
@@ -98,14 +85,9 @@ impl DagSyncState {
     /// Returns false if already syncing or synced.
     /// This operation is atomic - no race condition between check and insert.
     pub async fn start_sync(&self, cid: Cid) -> bool {
-        let mut state = self.state.write().await;
-
-        // Atomically check both conditions and insert
-        if state.synced.contains(&cid) || state.syncing.contains(&cid) {
-            return false;
-        }
-
-        state.syncing.insert(cid)
+        self.phases
+            .insert_if_absent(cid, SyncPhase::Syncing)
+            .is_none()
     }
 
     /// Mark a CID as successfully synced.
@@ -113,55 +95,59 @@ impl DagSyncState {
     /// If the synced set exceeds the maximum size, the oldest synced CIDs
     /// are evicted to make room.
     pub async fn complete_sync(&self, cid: Cid) {
-        let mut state = self.state.write().await;
-        state.syncing.remove(&cid);
+        if self.phases.insert(cid, SyncPhase::Synced) == Some(SyncPhase::Synced) {
+            return;
+        }
+        self.synced_order.push(cid);
+        self.synced_count.fetch_add(1, Ordering::Relaxed);
 
-        // Only add if not already synced (avoid duplicate in order queue)
-        if state.synced.insert(cid) {
-            state.synced_order.push_back(cid);
-
-            // Evict oldest synced CIDs if over limit
-            while state.synced.len() > state.max_synced {
-                if let Some(old_cid) = state.synced_order.pop_front() {
-                    state.synced.remove(&old_cid);
+        while self.synced_count.load(Ordering::Relaxed) > self.max_synced {
+            let Some(old_cid) = self.synced_order.pop() else {
+                break;
+            };
+            match self.phases.remove(&old_cid) {
+                Some(SyncPhase::Synced) => {
+                    let remaining = self.synced_count.fetch_sub(1, Ordering::Relaxed) - 1;
                     debug!(
                         cid = %old_cid,
-                        synced_count = state.synced.len(),
-                        max_synced = state.max_synced,
+                        synced_count = remaining,
+                        max_synced = self.max_synced,
                         "Evicted old synced CID to stay within memory limit"
                     );
-                } else {
-                    // Order queue is empty but synced set isn't - shouldn't happen
-                    // but handle gracefully by clearing everything
-                    warn!("Synced order queue empty but synced set is not - clearing synced set");
-                    state.synced.clear();
-                    break;
                 }
+                Some(SyncPhase::Syncing) => {
+                    self.phases.insert_if_absent(old_cid, SyncPhase::Syncing);
+                }
+                None => {}
             }
         }
     }
 
     /// Cancel a sync operation (e.g., on error).
     pub async fn cancel_sync(&self, cid: &Cid) {
-        let mut state = self.state.write().await;
-        state.syncing.remove(cid);
+        if self.phases.remove(cid) == Some(SyncPhase::Synced) {
+            self.phases.insert_if_absent(*cid, SyncPhase::Synced);
+        }
     }
 
     /// Get all CIDs currently being synced.
     pub async fn syncing_cids(&self) -> Vec<Cid> {
-        self.state.read().await.syncing.iter().cloned().collect()
+        self.phases
+            .iter()
+            .filter(|(_, phase)| *phase == SyncPhase::Syncing)
+            .map(|(cid, _)| cid)
+            .collect()
     }
 
     /// Get the number of synced CIDs being tracked.
     pub async fn synced_count(&self) -> usize {
-        self.state.read().await.synced.len()
+        self.synced_count.load(Ordering::Relaxed)
     }
 
     /// Clear all state (for testing or reset).
     pub async fn clear(&self) {
-        let mut state = self.state.write().await;
-        state.syncing.clear();
-        state.synced.clear();
-        state.synced_order.clear();
+        self.phases.clear();
+        while self.synced_order.pop().is_some() {}
+        self.synced_count.store(0, Ordering::Relaxed);
     }
 }

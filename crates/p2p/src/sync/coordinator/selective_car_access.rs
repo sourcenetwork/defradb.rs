@@ -4,13 +4,15 @@
 //! on its lifetime: the CAR serve path re-derives exact-root authority from the
 //! durable replicator configuration and DB-backed root classification.
 
-use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use cid::Cid;
-use parking_lot::Mutex;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
 
 use crate::transport::PeerId;
 
@@ -20,32 +22,54 @@ const POST_ACK_RECOVERY_WINDOW: Duration = Duration::from_secs(10 * 60);
 const MAX_SELECTIVE_CAR_GRANTS: usize = 65_536;
 const MAX_SELECTIVE_CAR_GRANTS_PER_PEER: usize = 4096;
 
-#[derive(Debug)]
+type PeerGrants = HopscotchMap<u64, Arc<PushGrant>, rapidhash::fast::RandomState>;
+
+fn rapid_map<K, V>() -> HopscotchMap<K, V, rapidhash::fast::RandomState>
+where
+    K: Hash + Eq + Clone + 'static,
+    V: Clone + 'static,
+{
+    HopscotchMap::with_hasher(rapidhash::fast::RandomState::default())
+}
+
 struct PushGrant {
     root_cid: Cid,
     /// Active pushes have no expiry. Dropping the registration starts the
     /// bounded post-ack recovery window instead of revoking access immediately.
-    expires_at: Option<Instant>,
+    expires_at: Atom<Option<Instant>>,
 }
 
-#[derive(Debug)]
+impl PushGrant {
+    fn is_live(&self, now: Instant) -> bool {
+        self.expires_at
+            .peek(|expiry| expiry.is_none_or(|expiry| expiry > now))
+    }
+}
+
 pub(in crate::sync) struct SelectiveCarAccess {
     next_id: AtomicU64,
     recovery_window: Duration,
-    grants: Mutex<HashMap<PeerId, HashMap<u64, PushGrant>>>,
+    /// A peer's map is never removed once created: removing it races with a
+    /// grant registering into that same map. A departed peer leaves one empty
+    /// map behind, bounded by the peers ever pushed to.
+    grants: HopscotchMap<PeerId, Arc<PeerGrants>, rapidhash::fast::RandomState>,
 }
 
 impl Default for SelectiveCarAccess {
     fn default() -> Self {
-        Self {
-            next_id: AtomicU64::new(0),
-            recovery_window: POST_ACK_RECOVERY_WINDOW,
-            grants: Mutex::new(HashMap::new()),
-        }
+        Self::with_recovery_window(POST_ACK_RECOVERY_WINDOW)
     }
 }
 
 impl SelectiveCarAccess {
+    fn with_recovery_window(recovery_window: Duration) -> Self {
+        Self {
+            next_id: AtomicU64::new(0),
+            recovery_window,
+            grants: rapid_map(),
+        }
+    }
+
     pub(super) fn register(
         self: &Arc<Self>,
         peer_id: PeerId,
@@ -53,29 +77,34 @@ impl SelectiveCarAccess {
     ) -> Option<SelectiveCarAccessGuard> {
         let grant_id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
-        let mut grants = self.grants.lock();
-        Self::remove_expired(&mut grants, Instant::now());
-        let peer_grants = grants.get(&peer_id).map_or(0, HashMap::len);
-        let total_grants: usize = grants.values().map(HashMap::len).sum();
-        if peer_grants >= MAX_SELECTIVE_CAR_GRANTS_PER_PEER
-            || total_grants >= MAX_SELECTIVE_CAR_GRANTS
+        self.remove_expired(Instant::now());
+        let peer_grants = match self.grants.get(&peer_id) {
+            Some(peer_grants) => peer_grants,
+            None => self
+                .grants
+                .get_or_insert(peer_id.clone(), Arc::new(rapid_map())),
+        };
+        peer_grants.insert(
+            grant_id,
+            Arc::new(PushGrant {
+                root_cid,
+                expires_at: Atom::new(None),
+            }),
+        );
+        let peer_count = peer_grants.len();
+        let total_grants: usize = self.grants.values().map(|grants| grants.len()).sum();
+        if peer_count > MAX_SELECTIVE_CAR_GRANTS_PER_PEER || total_grants > MAX_SELECTIVE_CAR_GRANTS
         {
+            peer_grants.remove(&grant_id);
             tracing::warn!(
                 peer_id = %peer_id,
                 root_cid = %root_cid,
-                peer_grants,
-                total_grants,
+                peer_grants = peer_count - 1,
+                total_grants = total_grants - 1,
                 "Selective CAR authority capacity reached; retaining durable head marker"
             );
             return None;
         }
-        grants.entry(peer_id.clone()).or_default().insert(
-            grant_id,
-            PushGrant {
-                root_cid,
-                expires_at: None,
-            },
-        );
 
         Some(SelectiveCarAccessGuard {
             access: Arc::clone(self),
@@ -85,40 +114,36 @@ impl SelectiveCarAccess {
     }
 
     pub(super) fn allows_root(&self, peer_id: &PeerId, root_cid: &Cid) -> bool {
-        let mut grants = self.grants.lock();
-        Self::remove_expired(&mut grants, Instant::now());
-        grants.get(peer_id).is_some_and(|peer_grants| {
+        let now = Instant::now();
+        self.remove_expired(now);
+        self.grants.get(peer_id).is_some_and(|peer_grants| {
             peer_grants
                 .values()
-                .any(|grant| grant.root_cid == *root_cid)
+                .any(|grant| grant.root_cid == *root_cid && grant.is_live(now))
         })
     }
 
     fn finish_push(&self, peer_id: &PeerId, grant_id: u64) {
-        let mut grants = self.grants.lock();
-        let Some(grant) = grants
-            .get_mut(peer_id)
-            .and_then(|peer_grants| peer_grants.get_mut(&grant_id))
+        let Some(grant) = self
+            .grants
+            .get(peer_id)
+            .and_then(|peer_grants| peer_grants.get(&grant_id))
         else {
             return;
         };
-        grant.expires_at = Some(Instant::now() + self.recovery_window);
-        Self::remove_expired(&mut grants, Instant::now());
+        grant
+            .expires_at
+            .store(Some(Instant::now() + self.recovery_window));
+        self.remove_expired(Instant::now());
     }
 
-    fn remove_expired(grants: &mut HashMap<PeerId, HashMap<u64, PushGrant>>, now: Instant) {
-        grants.retain(|_, peer_grants| {
-            peer_grants.retain(|_, grant| grant.expires_at.is_none_or(|expiry| expiry > now));
-            !peer_grants.is_empty()
-        });
-    }
-
-    #[cfg(test)]
-    fn with_recovery_window(recovery_window: Duration) -> Self {
-        Self {
-            next_id: AtomicU64::new(0),
-            recovery_window,
-            grants: Mutex::new(HashMap::new()),
+    fn remove_expired(&self, now: Instant) {
+        for peer_grants in self.grants.values() {
+            for (grant_id, grant) in peer_grants.iter() {
+                if !grant.is_live(now) {
+                    peer_grants.remove(&grant_id);
+                }
+            }
         }
     }
 }

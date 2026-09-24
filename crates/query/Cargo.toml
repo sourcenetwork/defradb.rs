@@ -13,6 +13,15 @@ bench = false
 [dependencies]
 bytes.workspace = true
 web-time.workspace = true
+
+# Hashing
+rapidhash.workspace = true
+
+# Lock-free shared state
+kovan.workspace = true
+kovan-map.workspace = true
+kovan-queue.workspace = true
+
 # Internal crates
 cursor = { path = "../cursor" }
 defra-core = { path = "../defra-core" }
@@ -27,6 +36,7 @@ lens = { path = "../lens", default-features = false }
 async-trait.workspace = true
 async-lock.workspace = true
 futures.workspace = true
+sync_wrapper = "1"
 
 # Serialization
 serde.workspace = true

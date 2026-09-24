@@ -1,6 +1,5 @@
 use super::helpers::{
-    ensure_collection_is_active, register_block_doc_id_mappings, write_branchable_collection_block,
-    write_local_update,
+    register_block_doc_id_mappings, write_branchable_collection_block, write_local_update,
 };
 use super::*;
 
@@ -14,20 +13,14 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         collection_name: &str,
         expected: Option<Document>,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let collection = self.get_collection_or_err(collection_name)?;
-        let _collection_guard = self
-            .db
-            .collection_read_guard(collection.collection_id())
-            .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
         // Generate embeddings if source fields were modified
         let mut doc = doc;

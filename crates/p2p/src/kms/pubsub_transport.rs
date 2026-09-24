@@ -27,9 +27,10 @@ use kms::{
     EncodedFetchRequest, FetchEncryptionKeyReply, FetchEncryptionKeyRequest, IncomingHandler,
     KeyTransport, Result as KmsResult, TransportReplyStream,
 };
-use std::sync::{Arc, OnceLock, RwLock, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
 use cid::Cid;
+use kovan::AtomOption;
 use kovan_map::HopscotchMap;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -79,7 +80,7 @@ const PENDING_CAP: usize = 32;
 pub struct PubsubKeyTransport<T: P2PTransport> {
     transport: T,
     identity_resolver: Arc<dyn PeerIdentityResolver>,
-    handler: RwLock<Option<Arc<dyn IncomingHandler>>>,
+    handler: AtomOption<Arc<dyn IncomingHandler>>,
     correlator: Correlator,
     /// This node's libp2p peer id (gossip source string form).
     local_peer_id: String,
@@ -92,7 +93,7 @@ pub struct PubsubKeyTransport<T: P2PTransport> {
     /// before the KMS itself exists, and a requester's retries give up after
     /// a few seconds — dropping that window's requests turns into
     /// `KeyUnavailable` on the requester for no lasting reason.
-    pending_requests: HopscotchMap<Cid, (String, Vec<u8>)>,
+    pending_requests: HopscotchMap<Cid, (String, Vec<u8>), rapidhash::fast::RandomState>,
     /// Back-reference so `install_handler` can replay the buffer through the
     /// normal dispatch path.
     self_ref: OnceLock<Weak<Self>>,
@@ -138,11 +139,11 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
         let transport = Arc::new(Self {
             transport,
             identity_resolver,
-            handler: RwLock::new(None),
+            handler: AtomOption::none(),
             correlator: Correlator::new(),
             local_peer_id,
             self_response_topic,
-            pending_requests: HopscotchMap::new(),
+            pending_requests: HopscotchMap::with_hasher(rapidhash::fast::RandomState::default()),
             self_ref: OnceLock::new(),
         });
         let _ = transport.self_ref.set(Arc::downgrade(&transport));
@@ -212,7 +213,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
         if from == self.local_peer_id {
             return;
         }
-        let handler = self.handler.read().ok().and_then(|g| g.clone());
+        let handler = self.handler.load().map(|handler| Arc::clone(&handler));
         let Some(handler) = handler else {
             if self.pending_requests.len() >= PENDING_CAP {
                 warn!("KMS request buffer full before a handler was installed; dropping");
@@ -321,7 +322,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
     /// [`SUBSCRIBER_WAIT_TIMEOUT`]. Timing out is not fatal: the caller still
     /// attempts the publish (it may yet succeed, or surface a clear error).
     async fn wait_for_subscriber(&self) {
-        let deadline = tokio::time::Instant::now() + SUBSCRIBER_WAIT_TIMEOUT;
+        let deadline = n0_future::time::Instant::now() + SUBSCRIBER_WAIT_TIMEOUT;
         loop {
             match self.transport.topic_peers(DefraTopic::Encryption).await {
                 Ok(peers) if !peers.is_empty() => return,
@@ -331,14 +332,14 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
                     return;
                 }
             }
-            if tokio::time::Instant::now() >= deadline {
+            if n0_future::time::Instant::now() >= deadline {
                 warn!(
                     "no encryption-topic subscriber appeared within {:?}; publishing anyway",
                     SUBSCRIBER_WAIT_TIMEOUT
                 );
                 return;
             }
-            tokio::time::sleep(SUBSCRIBER_POLL_INTERVAL).await;
+            n0_future::time::sleep(SUBSCRIBER_POLL_INTERVAL).await;
         }
     }
 
@@ -348,7 +349,7 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
     /// the mesh graft (gossipsub heartbeat). Retry within the same bounded
     /// window rather than failing outright.
     async fn publish_with_graft_retry(&self, topic: String, payload: Vec<u8>) -> KmsResult<()> {
-        let deadline = tokio::time::Instant::now() + SUBSCRIBER_WAIT_TIMEOUT;
+        let deadline = n0_future::time::Instant::now() + SUBSCRIBER_WAIT_TIMEOUT;
         loop {
             match self
                 .transport
@@ -357,10 +358,11 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
             {
                 Ok(_) => return Ok(()),
                 Err(ref e @ crate::error::Error::GossipSubPublish(ref message))
-                    if message == "InsufficientPeers" && tokio::time::Instant::now() < deadline =>
+                    if message == "InsufficientPeers"
+                        && n0_future::time::Instant::now() < deadline =>
                 {
                     debug!(topic = %topic, error = %e, "publish not yet ready; retrying");
-                    tokio::time::sleep(SUBSCRIBER_POLL_INTERVAL).await;
+                    n0_future::time::sleep(SUBSCRIBER_POLL_INTERVAL).await;
                 }
                 Err(e) => return Err(kms::Error::Internal(format!("publish KMS message: {e}"))),
             }
@@ -368,7 +370,8 @@ impl<T: P2PTransport> PubsubKeyTransport<T> {
     }
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
     fn name(&self) -> &'static str {
         "pubsub"
@@ -418,9 +421,9 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
         let (tx, rx) = kms::transport_reply_channel(16);
         let transport = self.transport.clone();
         let correlator = self.correlator.clone();
-        tokio::spawn(async move {
-            let deadline = tokio::time::Instant::now() + RESPONSE_TIMEOUT;
-            let mut republish_at = tokio::time::Instant::now() + REPUBLISH_INTERVAL;
+        n0_future::task::spawn(async move {
+            let deadline = n0_future::time::Instant::now() + RESPONSE_TIMEOUT;
+            let mut republish_at = n0_future::time::Instant::now() + REPUBLISH_INTERVAL;
             loop {
                 tokio::select! {
                     // Prefer an already-delivered reply over a concurrent
@@ -460,8 +463,8 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
                             break;
                         }
                     }
-                    _ = tokio::time::sleep_until(republish_at) => {
-                        if tokio::time::Instant::now() >= deadline {
+                    _ = n0_future::time::sleep_until(republish_at) => {
+                        if n0_future::time::Instant::now() >= deadline {
                             warn!(
                                 request_id = %prep.id,
                                 timeout = ?RESPONSE_TIMEOUT,
@@ -504,9 +507,7 @@ impl<T: P2PTransport> KeyTransport for PubsubKeyTransport<T> {
     }
 
     fn install_handler(&self, handler: Arc<dyn IncomingHandler>) {
-        if let Ok(mut slot) = self.handler.write() {
-            *slot = Some(handler);
-        }
+        self.handler.store_some(handler);
         // Requests stop entering the buffer once the handler is visible, so
         // this drain terminates; looping covers inserts racing installation.
         let mut buffered: Vec<(String, Vec<u8>)> = Vec::new();
@@ -558,11 +559,11 @@ mod tests {
     use crate::transport::{MessageId, PeerAddr, PeerId};
     use crate::{QueryId, ReplicatorInfo};
     use async_trait::async_trait;
-    use parking_lot::Mutex;
+    use kovan::Atom;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
-    type PublishedRawMessages = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+    type PublishedRawMessages = Arc<Atom<Vec<(String, Vec<u8>)>>>;
 
     fn a_libp2p_peer() -> libp2p::PeerId {
         libp2p::PeerId::from_public_key(&libp2p::identity::Keypair::generate_ed25519().public())
@@ -591,7 +592,7 @@ mod tests {
                 topic_peers_calls: Arc::new(AtomicUsize::new(0)),
                 subscriber_visible_after,
                 publish_attempts: Arc::new(AtomicUsize::new(0)),
-                published: Arc::new(Mutex::new(Vec::new())),
+                published: Arc::new(Atom::new(Vec::new())),
                 closed: Arc::new(AtomicBool::new(false)),
             }
         }
@@ -605,7 +606,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl crate::transport::P2PTransport for RacyTransport {
         type ResponseToken = ();
 
@@ -665,7 +667,11 @@ mod tests {
                 return Err(Error::ChannelSend);
             }
             if self.subscriber_known() {
-                self.published.lock().push((t, d));
+                self.published.rcu(|published| {
+                    let mut published = published.clone();
+                    published.push((t.clone(), d.clone()));
+                    published
+                });
                 Ok(MessageId::new("ok".to_string()))
             } else {
                 Err(Error::GossipSubPublish("InsufficientPeers".to_string()))
@@ -794,7 +800,7 @@ mod tests {
             1,
             "publish should fire exactly once, after the subscriber is known"
         );
-        let pubs = published.lock();
+        let pubs = published.load();
         assert_eq!(pubs.len(), 1);
         assert_eq!(pubs[0].0, ENCRYPTION_TOPIC, "request must go on base topic");
         assert_eq!(pubs[0].1, b"fetch");
@@ -813,7 +819,7 @@ mod tests {
             payload: b"fetch".to_vec(),
             request_id: "r1".to_string(),
         };
-        let result = tokio::time::timeout(Duration::from_secs(1), kt.send_request(request))
+        let result = n0_future::time::timeout(Duration::from_secs(1), kt.send_request(request))
             .await
             .expect("a closed transport must not consume the subscriber retry window");
 
@@ -861,7 +867,7 @@ mod tests {
         )
         .await;
 
-        let (got_reply, responder_id) = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        let (got_reply, responder_id) = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("reply must arrive within timeout")
             .expect("reply present")
@@ -926,7 +932,7 @@ mod tests {
         )
         .await;
 
-        let (got_reply, responder_id) = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        let (got_reply, responder_id) = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("key reply must arrive within timeout")
             .expect("reply present")
@@ -981,12 +987,12 @@ mod tests {
             .await;
         }
 
-        let first = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        let first = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("first partial reply must arrive")
             .expect("first partial reply present")
             .expect("first partial reply succeeds");
-        let second = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        let second = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("second partial reply must arrive")
             .expect("second partial reply present")
@@ -994,7 +1000,7 @@ mod tests {
         assert_eq!(first.0.links, vec![first_link]);
         assert_eq!(second.0.links, vec![second_link]);
         drop(rx);
-        tokio::time::timeout(Duration::from_secs(1), async {
+        n0_future::time::timeout(Duration::from_secs(1), async {
             while kt.correlator.in_flight() != 0 {
                 tokio::task::yield_now().await;
             }
@@ -1047,12 +1053,12 @@ mod tests {
             .await;
         }
 
-        let first = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        let first = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("first claimed reply must arrive")
             .expect("first claimed reply present")
             .expect("first claimed reply succeeds");
-        let second = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        let second = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("later candidate must arrive")
             .expect("later candidate present")
@@ -1082,9 +1088,9 @@ mod tests {
         let mut rx = kt.send_request(req).await.expect("send_request");
 
         // Two republish intervals with no reply → initial + 2 republishes.
-        tokio::time::sleep(REPUBLISH_INTERVAL * 2 + Duration::from_millis(100)).await;
+        n0_future::time::sleep(REPUBLISH_INTERVAL * 2 + Duration::from_millis(100)).await;
         {
-            let pubs = published.lock();
+            let pubs = published.load();
             assert_eq!(
                 pubs.len(),
                 3,
@@ -1116,7 +1122,7 @@ mod tests {
         )
         .await;
 
-        let (got, _) = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        let (got, _) = n0_future::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("reply within timeout")
             .expect("reply present")
@@ -1140,7 +1146,7 @@ mod tests {
         };
         let mut rx = kt.send_request(req).await.expect("send_request");
 
-        let error = tokio::time::timeout(RESPONSE_TIMEOUT + Duration::from_secs(1), rx.recv())
+        let error = n0_future::time::timeout(RESPONSE_TIMEOUT + Duration::from_secs(1), rx.recv())
             .await
             .expect("stream must resolve at the response timeout, not hang")
             .expect("timeout result present")
@@ -1154,7 +1160,8 @@ mod tests {
     #[tokio::test]
     async fn inbound_request_publishes_reply_on_caller_response_topic() {
         struct FixedIdentityResolver(identity::Did);
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl PeerIdentityResolver for FixedIdentityResolver {
             async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
                 Some(self.0.clone())
@@ -1162,16 +1169,17 @@ mod tests {
         }
 
         struct EchoHandler {
-            seen: Arc<Mutex<Option<kms::PeerIdentity>>>,
+            seen: Arc<AtomOption<kms::PeerIdentity>>,
         }
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl IncomingHandler for EchoHandler {
             async fn handle(
                 &self,
                 from: kms::PeerIdentity,
                 _req: FetchEncryptionKeyRequest,
             ) -> KmsResult<FetchEncryptionKeyReply> {
-                *self.seen.lock() = Some(from);
+                self.seen.store_some(from);
                 Ok(FetchEncryptionKeyReply {
                     links: vec![vec![9]],
                     blocks: vec![vec![8]],
@@ -1198,7 +1206,7 @@ mod tests {
         )
         .unwrap();
         let resolved_did: identity::Did = "did:key:zalice".parse().unwrap();
-        let seen = Arc::new(Mutex::new(None));
+        let seen = Arc::new(AtomOption::none());
         let kt = PubsubKeyTransport::new(
             transport,
             Arc::new(FixedIdentityResolver(resolved_did.clone())),
@@ -1218,7 +1226,7 @@ mod tests {
         kt.dispatch_incoming(caller.to_string(), ENCRYPTION_TOPIC.to_string(), req_bytes)
             .await;
 
-        let pubs = published.lock();
+        let pubs = published.load();
         let expected_topic = response_topic(ENCRYPTION_TOPIC, &caller);
         let reply_pub = pubs
             .iter()
@@ -1228,7 +1236,10 @@ mod tests {
         let reply: FetchEncryptionKeyReply =
             defra_core::cbor::from_slice(&env.data).expect("decode reply");
         assert_eq!(reply.blocks, vec![vec![8]]);
-        let from = seen.lock().clone().expect("handler must see peer identity");
+        let from = seen
+            .load()
+            .map(|seen| (*seen).clone())
+            .expect("handler must see peer identity");
         assert_eq!(from.peer_id, caller.to_string());
         assert_eq!(from.authenticated_did, Some(resolved_did));
         let authorization = from
@@ -1245,7 +1256,8 @@ mod tests {
     #[tokio::test]
     async fn request_before_handler_is_served_after_install() {
         struct FixedIdentityResolver(identity::Did);
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl PeerIdentityResolver for FixedIdentityResolver {
             async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
                 Some(self.0.clone())
@@ -1253,16 +1265,17 @@ mod tests {
         }
 
         struct EchoHandler {
-            seen: Arc<Mutex<Option<kms::PeerIdentity>>>,
+            seen: Arc<AtomOption<kms::PeerIdentity>>,
         }
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl IncomingHandler for EchoHandler {
             async fn handle(
                 &self,
                 from: kms::PeerIdentity,
                 _req: FetchEncryptionKeyRequest,
             ) -> KmsResult<FetchEncryptionKeyReply> {
-                *self.seen.lock() = Some(from);
+                self.seen.store_some(from);
                 Ok(FetchEncryptionKeyReply {
                     links: vec![vec![9]],
                     blocks: vec![vec![8]],
@@ -1275,7 +1288,7 @@ mod tests {
         let published = transport.published.clone();
         let caller = a_libp2p_peer();
         let resolved_did: identity::Did = "did:key:zalice".parse().unwrap();
-        let seen = Arc::new(Mutex::new(None));
+        let seen = Arc::new(AtomOption::none());
         let kt = PubsubKeyTransport::new(
             transport,
             Arc::new(FixedIdentityResolver(resolved_did.clone())),
@@ -1298,18 +1311,18 @@ mod tests {
         let expected_topic = response_topic(ENCRYPTION_TOPIC, &caller);
         let mut served = false;
         for _ in 0..100 {
-            if published.lock().iter().any(|(t, _)| *t == expected_topic) {
+            if published.load().iter().any(|(t, _)| *t == expected_topic) {
                 served = true;
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            n0_future::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(
             served,
             "buffered request must be served after install_handler"
         );
         assert_eq!(
-            seen.lock().clone().map(|f: kms::PeerIdentity| f.peer_id),
+            seen.load().map(|seen| seen.peer_id.clone()),
             Some(caller.to_string())
         );
     }

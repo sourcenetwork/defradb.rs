@@ -90,6 +90,10 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.inner.iterate_nodes(visit).await
     }
 
+    async fn clear(&mut self) -> Result<()> {
+        self.inner.clear().await
+    }
+
     async fn get_aux(&self, kind: u8, key: &[u8]) -> Result<Option<bytes::Bytes>> {
         self.inner.get_aux(kind, key).await
     }
@@ -659,6 +663,68 @@ async fn reinserting_an_id_replaces_its_vector() {
     );
 }
 
+#[tokio::test]
+async fn updating_the_only_upper_layer_node_preserves_lower_layer_routes() {
+    let params = Params::new(4);
+    let sampler = LevelSampler::new(GRAPH_SEED);
+    let lower = (0..1000)
+        .find(|id| sampler.level(*id, params.ml) == 0)
+        .unwrap();
+    let upper = (0..1000)
+        .find(|id| sampler.level(*id, params.ml) > 0)
+        .unwrap();
+    let mut index = Hnsw::new(
+        MemoryNodeStore::new(),
+        Metric::Euclidean,
+        params,
+        GRAPH_SEED,
+    );
+    index.insert(NodeId(lower), &[0.0, 1.0]).await.unwrap();
+    index.insert(NodeId(upper), &[1.0, 1.0]).await.unwrap();
+    index.insert(NodeId(upper), &[2.0, 1.0]).await.unwrap();
+    let hits = index.search_with_ef(&[0.0, 1.0], 2, 4).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].id, NodeId(lower));
+}
+
+#[tokio::test]
+async fn repeated_updates_keep_distinct_neighbors_and_entry_connectivity() {
+    let mut index = Hnsw::new(
+        MemoryNodeStore::new(),
+        Metric::Euclidean,
+        Params::new(4),
+        GRAPH_SEED,
+    );
+    for id in 0..8 {
+        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+    }
+    let entry = index.store().get_meta().await.unwrap().unwrap().entry_point;
+    for _ in 0..3 {
+        for id in [NodeId(3), entry] {
+            index.insert(id, &[id.0 as f32, 1.0]).await.unwrap();
+            let hits = index.search_with_ef(&[1.0, 1.0], 8, 32).await.unwrap();
+            assert_eq!(hits.len(), 8, "updating {id:?} disconnected the graph");
+            index
+                .store()
+                .iterate_nodes(|node| {
+                    for links in &node.layers {
+                        assert!(!links.contains(&node.id), "self-link at {:?}", node.id);
+                        let unique: std::collections::BTreeSet<_> = links.iter().collect();
+                        assert_eq!(
+                            unique.len(),
+                            links.len(),
+                            "duplicate links at {:?}",
+                            node.id
+                        );
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+    }
+}
+
 /// A meta pointing at a node that is not stored is corruption. Continuing would
 /// quietly build a second component that no search can reach, so it fails loud.
 #[tokio::test]
@@ -672,6 +738,9 @@ async fn a_dangling_entry_point_fails_the_insert() {
         .put_meta(Meta {
             entry_point: NodeId(4242),
             top_layer: 0,
+            live: 0,
+            waste: 0,
+            rebuilds: 0,
         })
         .await
         .unwrap();
@@ -788,4 +857,128 @@ fn out_of_range_parameters_are_refused() {
     ] {
         assert!(over.validate().is_err(), "{over:?} should be refused");
     }
+}
+
+/// A graph written before self-link-free inserts is owed one healing
+/// rebuild: the sweep's trigger fires on it, and the rebuild purges every
+/// stale self-link in a single pass (#1468).
+#[tokio::test]
+async fn rebuild_purges_stale_self_links_from_an_older_graph() {
+    let store = MemoryNodeStore::new();
+    let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
+    for id in 0..8 {
+        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+    }
+    // Forge what the pre-fix code left behind: a node pointing at itself.
+    let mut node = index
+        .store()
+        .get_node(NodeId(3))
+        .await
+        .unwrap()
+        .expect("inserted");
+    node.layers[0].push(NodeId(3));
+    index.store_mut().put_node(node).await.unwrap();
+
+    // The meta records the graph as never rebuilt, so the trigger fires.
+    let meta = index.store().get_meta().await.unwrap().unwrap();
+    index
+        .store_mut()
+        .put_meta(Meta {
+            rebuilds: 0,
+            ..meta
+        })
+        .await
+        .unwrap();
+    assert!(index.should_rebuild().await.unwrap());
+
+    index.rebuild().await.unwrap();
+
+    let graph = index.store();
+    for id in 0..8 {
+        let node = graph.get_node(NodeId(id)).await.unwrap().expect("live");
+        assert!(
+            !node.layers.iter().any(|layer| layer.contains(&node.id)),
+            "node {id} still carries a self-link after the rebuild"
+        );
+    }
+    let meta = graph.get_meta().await.unwrap().unwrap();
+    assert_eq!(meta.live, 8, "the rebuild recounts the live corpus");
+    assert_eq!(meta.waste, 0);
+    assert!(meta.rebuilds > 0, "the rebuilt graph reads as built");
+    assert!(!index.should_rebuild().await.unwrap());
+
+    // The healed graph still answers: every node stays reachable.
+    for id in 0..8u64 {
+        let hits = index.search_with_ef(&[id as f32, 1.0], 1, 8).await.unwrap();
+        assert_eq!(hits.first().map(|hit| hit.id), Some(NodeId(id)));
+    }
+}
+
+/// A rebuild drops links to tombstoned nodes and reclaims their records: the
+/// waste they charged to search is gone in one pass.
+#[tokio::test]
+async fn rebuild_drops_tombstoned_nodes_and_links() {
+    let store = MemoryNodeStore::new();
+    let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
+    for id in 0..8 {
+        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+    }
+    index.delete(NodeId(2)).await.unwrap();
+    index.delete(NodeId(5)).await.unwrap();
+
+    let meta = index.store().get_meta().await.unwrap().unwrap();
+    assert_eq!(meta.live, 6);
+    assert_eq!(meta.waste, 2);
+
+    index.rebuild().await.unwrap();
+
+    let graph = index.store();
+    assert!(
+        graph.get_node(NodeId(2)).await.unwrap().is_none(),
+        "a tombstoned record is reclaimed by the rebuild"
+    );
+    for id in [0u64, 1, 3, 4, 6, 7] {
+        let node = graph.get_node(NodeId(id)).await.unwrap().expect("live");
+        assert!(
+            !node.layers.iter().any(|layer| layer.contains(&NodeId(2))),
+            "a live node still links the tombstoned id"
+        );
+    }
+    let hits = index.search_with_ef(&[2.0, 1.0], 6, 8).await.unwrap();
+    assert!(hits
+        .iter()
+        .all(|hit| hit.id != NodeId(2) && hit.id != NodeId(5)));
+}
+
+/// A fresh graph is owed nothing: inserts stamp it as built, and waste below
+/// the trigger does not call for a rebuild.
+#[tokio::test]
+async fn fresh_graphs_and_light_waste_do_not_trigger_a_rebuild() {
+    let store = MemoryNodeStore::new();
+    let mut index = Hnsw::new(store, Metric::Euclidean, Params::new(4), GRAPH_SEED);
+    for id in 0..8 {
+        index.insert(NodeId(id), &[id as f32, 1.0]).await.unwrap();
+    }
+    assert!(
+        !index.should_rebuild().await.unwrap(),
+        "a graph created by self-link-free inserts is owed no healing rebuild"
+    );
+
+    index.delete(NodeId(1)).await.unwrap();
+    assert!(
+        !index.should_rebuild().await.unwrap(),
+        "waste below the minimum does not pay for a whole reinsert"
+    );
+
+    for id in 100..200 {
+        index
+            .insert(NodeId(id), &[f32::from(id as u16), 1.0])
+            .await
+            .unwrap();
+    }
+    index.delete(NodeId(101)).await.unwrap();
+    assert!(
+        !index.should_rebuild().await.unwrap(),
+        "waste far below a quarter of the live corpus does not trigger"
+    );
 }

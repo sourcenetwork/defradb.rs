@@ -11,21 +11,21 @@ use global_validators::*;
 use update_validators::*;
 
 use crate::{CollectionVersion, FieldKind};
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 /// Snapshot of all collection versions for validation.
 pub struct DefinitionState {
     pub collections: Vec<CollectionVersion>,
-    pub collections_by_id: HashMap<String, CollectionVersion>,
-    pub active_by_name: HashMap<String, CollectionVersion>,
-    pub active_by_collection_id: HashMap<String, CollectionVersion>,
+    pub collections_by_id: RapidHashMap<String, CollectionVersion>,
+    pub active_by_name: RapidHashMap<String, CollectionVersion>,
+    pub active_by_collection_id: RapidHashMap<String, CollectionVersion>,
 }
 
 impl DefinitionState {
     pub fn new(collections: &[CollectionVersion]) -> Self {
-        let mut by_id = HashMap::new();
-        let mut active_by_name = HashMap::new();
-        let mut active_by_collection_id = HashMap::new();
+        let mut by_id = RapidHashMap::new();
+        let mut active_by_name = RapidHashMap::new();
+        let mut active_by_collection_id = RapidHashMap::new();
 
         for col in collections {
             by_id.insert(col.version_id.clone(), col.clone());

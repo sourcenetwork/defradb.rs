@@ -152,7 +152,8 @@ struct DocSyncHandler {
     ctx: Arc<HandlerContext>,
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageHandler for DocSyncHandler {
     async fn handle(&self, from: libp2p::PeerId, data: Vec<u8>) -> Result<Vec<u8>, String> {
         if !self.ctx.peer_may_doc_sync(&from).await {
@@ -192,7 +193,8 @@ struct BranchableSyncHandler {
     ctx: Arc<HandlerContext>,
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageHandler for BranchableSyncHandler {
     async fn handle(&self, from: libp2p::PeerId, data: Vec<u8>) -> Result<Vec<u8>, String> {
         let req: wire::BranchableSyncRequest =
@@ -249,7 +251,8 @@ mod tests {
 
     struct AllowAllAuthorizer;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl AccessAuthorizer for AllowAllAuthorizer {
         fn peer_connected(&self, _peer_id_str: &str) -> bool {
             true
@@ -269,7 +272,8 @@ mod tests {
 
     struct DenyAllAuthorizer;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl AccessAuthorizer for DenyAllAuthorizer {
         fn peer_connected(&self, _peer_id_str: &str) -> bool {
             false
@@ -293,7 +297,7 @@ mod tests {
     struct RecordingAuthorizer {
         allow_any: AtomicBool,
         allow_collection: AtomicBool,
-        seen_collection: parking_lot::Mutex<Option<String>>,
+        seen_collection: kovan::AtomOption<String>,
     }
 
     impl RecordingAuthorizer {
@@ -301,12 +305,13 @@ mod tests {
             Self {
                 allow_any: AtomicBool::new(allow_any),
                 allow_collection: AtomicBool::new(allow_collection),
-                seen_collection: parking_lot::Mutex::new(None),
+                seen_collection: kovan::AtomOption::none(),
             }
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl AccessAuthorizer for RecordingAuthorizer {
         fn peer_connected(&self, _peer_id_str: &str) -> bool {
             false
@@ -320,7 +325,7 @@ mod tests {
             _peer_id_str: &str,
             collection_id: &str,
         ) -> bool {
-            *self.seen_collection.lock() = Some(collection_id.to_string());
+            self.seen_collection.store_some(collection_id.to_string());
             self.allow_collection.load(Ordering::SeqCst)
         }
     }
@@ -382,7 +387,8 @@ mod tests {
         use cid::Cid;
 
         struct HeadProviderStub;
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl DocumentHeadProvider for HeadProviderStub {
             async fn get_document_heads(&self, doc_id: &str) -> crate::error::Result<Vec<Cid>> {
                 if doc_id == "known" {
@@ -455,7 +461,8 @@ mod tests {
         struct DocAHeadProvider {
             head: Cid,
         }
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl DocumentHeadProvider for DocAHeadProvider {
             async fn get_document_heads(&self, doc_id: &str) -> crate::error::Result<Vec<Cid>> {
                 if doc_id == "docA" {
@@ -651,8 +658,9 @@ mod tests {
             envelope.err, "",
             "authorizer::peer_authorized_for_collection=true must let branchable-sync through"
         );
+        let seen_collection = authorizer.seen_collection.load().as_deref().cloned();
         assert_eq!(
-            authorizer.seen_collection.lock().as_deref(),
+            seen_collection.as_deref(),
             Some("collectionA"),
             "handler must forward the collection id to the authorizer"
         );

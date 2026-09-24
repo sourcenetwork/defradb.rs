@@ -12,7 +12,9 @@ use identity::Identity as _;
 use schema::CollectionVersion;
 use storage::corekv::Store;
 
-use crate::merge::merge_handler::hook::{CompositeMergeHook, CompositePostCommitAction};
+use crate::merge::merge_handler::hook::{
+    CompositeFrame, CompositeMergeHook, CompositePostCommitAction,
+};
 use crate::merge::merge_handler::{DbMergeHandler, MergeError};
 
 pub type AcpMergeError = MergeError;
@@ -68,11 +70,90 @@ impl AcpCompositeMergeHook {
     fn document_acp(&self) -> Option<&Arc<dyn DocumentACP>> {
         self.document_acp.get()
     }
+
+    async fn signer_may(
+        &self,
+        acp: &dyn DocumentACP,
+        signer: identity::Did,
+        permission: DocumentPermission,
+        policy: &schema::PolicyDescription,
+        doc_id: &str,
+    ) -> Result<bool, MergeError> {
+        let signer = Identity::Authenticated(signer);
+        // The node's own key has full access locally, as on the write path.
+        if self.local_identity.as_ref() == Some(&signer) {
+            return Ok(true);
+        }
+        acp.check_doc_access(
+            &signer,
+            permission,
+            &policy.id,
+            &policy.resource_name,
+            doc_id,
+        )
+        .await
+        .map_err(|e| MergeError::MergeFailed(format!("ACP access check failed: {}", e)))
+    }
 }
+
+const DELETED_STATUS: u8 = 2;
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl CompositeMergeHook for AcpCompositeMergeHook {
+    fn guards_protected_updates(&self) -> bool {
+        self.document_acp().is_some() && !self.strict_replicated_doc_access.load(Ordering::Relaxed)
+    }
+
+    async fn on_protected_update(
+        &self,
+        doc_id: &str,
+        collection: &CollectionVersion,
+        frame: CompositeFrame<'_>,
+    ) -> Result<Option<MergeOutcome>, MergeError> {
+        let Some(acp) = self.document_acp() else {
+            return Ok(None);
+        };
+        let Some(policy) = &collection.policy else {
+            return Ok(None);
+        };
+        // Strict ACP keeps its own replicated-access rules in on_protected_composite.
+        if frame.is_genesis || self.strict_replicated_doc_access.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let is_registered = acp
+            .is_doc_registered(&policy.id, &policy.resource_name, doc_id)
+            .await
+            .map_err(|e| {
+                MergeError::MergeFailed(format!("ACP registration lookup failed: {}", e))
+            })?;
+        if !is_registered {
+            return Ok(None);
+        }
+
+        let permission = if frame.status == DELETED_STATUS {
+            DocumentPermission::Delete
+        } else {
+            DocumentPermission::Update
+        };
+        let allowed = match frame.signer.and_then(|s| identity::Did::new(s).ok()) {
+            Some(signer) => {
+                self.signer_may(acp.as_ref(), signer, permission, policy, doc_id)
+                    .await?
+            }
+            None => false,
+        };
+        if allowed {
+            return Ok(None);
+        }
+        Ok(Some(MergeOutcome::rejected(format!(
+            "signer {} lacks {} permission on protected document {}",
+            frame.signer.unwrap_or("unsigned"),
+            permission.as_str(),
+            doc_id
+        ))))
+    }
+
     async fn on_protected_composite(
         &self,
         doc_id: &str,
@@ -181,7 +262,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         metadata: &BlockMetadata<'_>,
     ) -> Option<Box<dyn CompositePostCommitAction>> {
         // Only register a replicated document's owner on the receiving node under
-        // strict (SourceHub) ACP, where cross-node access control is authoritative
+        // strict (Vera) ACP, where cross-node access control is authoritative
         // via shared on-chain state. Under Local ACP we match Go: a replicated
         // document is NOT registered on the peer (unregistered == public), so the
         // peer does not gate it. Cross-node Local ACP gating was a Rust-only
@@ -236,6 +317,16 @@ impl<S: Store, B: blockstore::Blockstore> AcpMergeHandler<S, B> {
 
     pub fn set_strict_replicated_doc_access(&self, strict: bool) {
         self.hook.set_strict_replicated_doc_access(strict);
+    }
+
+    pub fn document_acp(&self) -> Option<&Arc<dyn DocumentACP>> {
+        self.hook.document_acp()
+    }
+
+    pub fn strict_replicated_doc_access(&self) -> bool {
+        self.hook
+            .strict_replicated_doc_access
+            .load(Ordering::Relaxed)
     }
 
     pub fn inner(&self) -> &Arc<DbMergeHandler<S, B>> {

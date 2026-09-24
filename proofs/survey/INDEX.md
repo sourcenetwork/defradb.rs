@@ -16,7 +16,7 @@ map onto. This is a sanity cross-check that the surveys agree with what is built
 - **acp** — Tuple revocation + stale positive cache (TLA+)
 - **acp** — NAC management-channel auth gate (TLA+)
 - **db-nac** — NAC lifecycle auth gate, live-vs-persisted admin asymmetry (TLA+)
-- **sourcehub** — Access-decision cache stale-revocation (TLA+) — `MC_Acp_StaleCache_Red`
+- **vera** — Access-decision cache stale-revocation (TLA+) — `MC_Acp_StaleCache_Red`
 - **zanzibar** — Check soundness / no-escalation (Lean) — `Acp/Soundness.lean`
 - **zanzibar** — Cycle-detection safety (Lean)
 
@@ -140,7 +140,7 @@ integration tests, Go FFI parity, or unit tests. One line each on why.
 - **pg-compat** — stateless SQL→GraphQL transpiler + pgwire IO; auth check is a one-line DID==username guard; translation pinned by integration tests.
 - **query** — deterministic single-node dataflow + trait-seam glue; every security/replication concern delegated to already-modeled crates.
 - **schema** — pure deterministic definition logic; content-addressing core lives in defra-core; validation = "matches Go" via FFI parity.
-- **sourcehub** — on-chain ACP client plumbing; the security-critical cache state machine is already in the Acp slice; light-client trust is external.
+- **vera** — on-chain ACP client plumbing; the security-critical cache state machine is already in the Acp slice; light-client trust is external.
 - **telemetry** — OpenTelemetry exporter glue; only a once-per-process latch + dedup string filter, covered by unit tests.
 - **wasm** — wasm-bindgen JS-boundary shim; only a 2-state open/closed lifecycle; substantive logic re-exported from already-modeled crates.
 - **zanzibar** — entire correctness surface already proven by the acp Lean slice (`Acp/Soundness.lean`); remaining modules are deterministic glue.

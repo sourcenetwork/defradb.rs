@@ -4,12 +4,13 @@
 //! `IrohTransport` puts on the wire: connections opened, and tags muxed.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use iroh::SecretKey;
-use parking_lot::Mutex;
-use tokio::task::JoinHandle;
+use kovan_queue::seg_queue::SegQueue;
+use n0_future::task::JoinHandle;
 
 use super::protocols;
 use super::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
@@ -19,9 +20,15 @@ use crate::message::{
 };
 use crate::transport::{P2PTransport, PeerAddr, PeerId};
 
-/// What the bare peer saw: how many QUIC connections were opened to it, and the
-/// protocol tag of every stream that arrived.
-#[derive(Default, Clone)]
+/// What the bare peer records: how many QUIC connections were opened to it,
+/// and the protocol tag of every stream that arrived.
+#[derive(Default)]
+struct ObservedLog {
+    connections: AtomicUsize,
+    tags: SegQueue<Vec<u8>>,
+}
+
+/// The log drained once for assertions.
 struct Observed {
     connections: usize,
     tags: Vec<Vec<u8>>,
@@ -43,13 +50,20 @@ impl Observed {
 struct BarePeer {
     peer_id: PeerId,
     addr: SocketAddr,
-    observed: Arc<Mutex<Observed>>,
+    observed: Arc<ObservedLog>,
     accept_task: JoinHandle<()>,
 }
 
 impl BarePeer {
     fn observed(&self) -> Observed {
-        self.observed.lock().clone()
+        let mut tags = Vec::new();
+        while let Some(tag) = self.observed.tags.pop() {
+            tags.push(tag);
+        }
+        Observed {
+            connections: self.observed.connections.load(Ordering::Relaxed),
+            tags,
+        }
     }
 }
 
@@ -73,8 +87,8 @@ async fn spawn_bare_peer() -> BarePeer {
         .copied()
         .expect("listener direct address");
 
-    let observed = Arc::new(Mutex::new(Observed::default()));
-    let accept_task = tokio::spawn({
+    let observed = Arc::new(ObservedLog::default());
+    let accept_task = n0_future::task::spawn({
         let endpoint = endpoint.clone();
         let observed = Arc::clone(&observed);
         async move {
@@ -84,12 +98,12 @@ async fn spawn_bare_peer() -> BarePeer {
                 let Ok(connection) = incoming.await else {
                     continue;
                 };
-                observed.lock().connections += 1;
+                observed.connections.fetch_add(1, Ordering::Relaxed);
                 let observed = Arc::clone(&observed);
-                tokio::spawn(async move {
+                n0_future::task::spawn(async move {
                     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
                         match protocols::read_stream_tag(&mut recv).await {
-                            Ok(tag) => observed.lock().tags.push(tag),
+                            Ok(tag) => observed.tags.push(tag),
                             Err(_) => break,
                         }
                         let _ = send.finish();
@@ -118,6 +132,7 @@ async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         max_concurrent_multipath_paths: None,
         gossip_heal: Default::default(),
+        allowlist: Default::default(),
     };
     let (command_tx, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();
     (IrohTransport::new(command_tx, secret_key), task)
@@ -249,7 +264,7 @@ async fn a_failed_stream_does_not_tear_down_the_connection() {
 
     // A CAR *request* expects bytes back; the bare peer never sends any, so this
     // stream fails on read. The connection itself stays healthy.
-    let _ = tokio::time::timeout(
+    let _ = n0_future::time::timeout(
         Duration::from_secs(2),
         transport.send_car_request(&peer.peer_id, cid_for_test()),
     )

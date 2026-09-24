@@ -1,4 +1,5 @@
 use super::*;
+use rapidhash::HashSetExt;
 
 const TRUNCATE_CHUNK_SIZE: usize = 1000;
 
@@ -85,11 +86,11 @@ impl<S: Store> crate::database::DB<S> {
                 txn.commit().await?;
 
                 // Update the process-wide cache after successful commit
-                let mut cache = self.collections.write().map_err(|e| {
-                    tracing::error!(error = ?e, collection_name = %name, "Collection cache lock poisoned after delete");
-                    Error::CacheUpdateFailedAfterCommit(name.to_string())
-                })?;
-                cache.remove(name);
+                self.collections.rcu(|old| {
+                    let mut cache = old.clone();
+                    cache.remove(name);
+                    cache
+                });
 
                 Ok(())
             }
@@ -129,14 +130,14 @@ impl<S: Store> crate::database::DB<S> {
             return Err(Error::InvalidPatch("collection name can't be empty".into()));
         }
 
-        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_names = rapidhash::RapidHashSet::new();
         let unique_names: Vec<String> = names
             .into_iter()
             .filter(|n| seen_names.insert(n.clone()))
             .collect();
 
         let mut version_ids: Vec<String> = Vec::new();
-        let mut seen_versions = std::collections::HashSet::new();
+        let mut seen_versions = rapidhash::RapidHashSet::new();
 
         if active_only {
             for name in &unique_names {

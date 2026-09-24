@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use document::Document;
 use identity::Did;
+use rapidhash::{HashMapExt, RapidHashMap};
 use storage::corekv::MaybeSendSync;
 
 use crate::doc_stream::DocStream;
@@ -395,9 +396,9 @@ pub trait DocFetcher: MaybeSendSync {
         collection_name: &str,
         field_name: &str,
         query: &str,
-    ) -> Result<std::collections::HashMap<String, f64>> {
+    ) -> Result<RapidHashMap<String, f64>> {
         let _ = (collection_name, field_name, query);
-        Ok(std::collections::HashMap::new())
+        Ok(RapidHashMap::new())
     }
 }
 

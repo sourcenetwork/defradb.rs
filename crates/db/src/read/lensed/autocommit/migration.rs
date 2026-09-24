@@ -1,6 +1,6 @@
 //! Migration context loading and document migration logic.
 
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use document::Document;
 use lens::{build_targeted_history, CollectionHistoryLink, Lens, LensDoc, TargetedHistoryLink};
@@ -34,7 +34,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
     pub(super) async fn load_migration_context(
         &self,
         collection: &Collection,
-    ) -> query::error::Result<(u64, bool, Option<HashMap<String, TargetedHistoryLink>>)> {
+    ) -> query::error::Result<(u64, bool, Option<RapidHashMap<String, TargetedHistoryLink>>)> {
         let collection_id = collection.schema().collection_id.clone();
         let target_version_id = &collection.schema().version_id;
 
@@ -101,7 +101,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
     pub(super) fn build_collection_history(
         versions: &[schema::CollectionVersion],
         target_version_id: &str,
-    ) -> Option<HashMap<String, TargetedHistoryLink>> {
+    ) -> Option<RapidHashMap<String, TargetedHistoryLink>> {
         debug!(
             version_count = versions.len(),
             target_version_id = %target_version_id,
@@ -113,7 +113,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
             return None;
         }
 
-        let mut full_history: HashMap<String, CollectionHistoryLink> = HashMap::new();
+        let mut full_history: RapidHashMap<String, CollectionHistoryLink> = RapidHashMap::new();
         for version in versions {
             let mut link = CollectionHistoryLink::new(&version.version_id, &version.collection_id);
             if let Some(ref prev) = version.previous_version {
@@ -206,7 +206,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
     pub(super) async fn load_collection_history(
         &self,
         collection: &Collection,
-    ) -> query::error::Result<HashMap<String, TargetedHistoryLink>> {
+    ) -> query::error::Result<RapidHashMap<String, TargetedHistoryLink>> {
         let collection_id = &collection.schema().collection_id;
         let target_version_id = &collection.schema().version_id;
 
@@ -245,7 +245,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
         doc: Document,
         collection: &Collection,
         has_migrations: bool,
-        preloaded_history: &Option<HashMap<String, TargetedHistoryLink>>,
+        preloaded_history: &Option<RapidHashMap<String, TargetedHistoryLink>>,
     ) -> query::error::Result<MigrationOutcome> {
         let target_version_id = &collection.schema().version_id;
 

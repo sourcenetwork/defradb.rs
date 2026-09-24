@@ -5,8 +5,8 @@ use super::types::*;
 use crate::error::{Error, Result};
 use datastore::NamespaceView;
 use document::Document;
+use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
-use std::collections::HashSet;
 use storage::corekv::Store;
 
 impl<S: Store + 'static> crate::database::DB<S> {
@@ -16,7 +16,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         systemstore: &NamespaceView,
         source_collection: &CollectionVersion,
         source_doc: &Document,
-        modified_fields: Option<&HashSet<String>>,
+        modified_fields: Option<&RapidHashSet<String>>,
     ) -> Result<()> {
         let plans = self.downsample_plans(None, Some(&source_collection.name))?;
         if plans.is_empty() {

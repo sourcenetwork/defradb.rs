@@ -10,6 +10,7 @@ mod registry;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use kovan::AtomOption;
 use storage::RegolithStore;
 use zeroize::Zeroizing;
 
@@ -98,31 +99,36 @@ pub struct NodeState {
     pub p2p: Option<Arc<P2PState>>,
     /// Node identity DID (set when signing is enabled).
     /// Used as fallback identity for signing blocks when no explicit identity is provided.
-    pub node_identity_did: Option<String>,
+    pub node_identity_did: AtomOption<String>,
     /// Whether block signing is enabled on this node.
     /// When true, anonymous requests still sign with node identity (matching Go).
     pub signing_enabled: bool,
-    /// SourceHub ACP (optional - only set when using SourceHub for document ACP).
-    /// Used by add_dac_policy to route policy creation through SourceHub transactions.
-    #[cfg(feature = "sourcehub")]
-    pub sourcehub_acp: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+    /// Vera ACP (optional - only set when using Vera for document ACP).
+    /// Used by add_dac_policy to route policy creation through Vera transactions.
+    #[cfg(feature = "vera")]
+    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     /// Query parsing and filter evaluation limits configured for this node.
     pub query_limits: query::QueryLimits,
     /// Searchable encryption key (32-byte AES-256 key). Zeroized on drop.
     /// Set via `set_se_encryption_key` FFI when SE is enabled in test config.
-    pub se_encryption_key: Option<Zeroizing<Vec<u8>>>,
+    pub se_encryption_key: AtomOption<Zeroizing<Vec<u8>>>,
 }
 
 impl NodeState {
+    /// The node's default signing identity DID, if one is configured.
+    pub fn identity_did(&self) -> Option<String> {
+        self.node_identity_did.load().map(|did| did.to_string())
+    }
+
     pub fn replicator_push_options(&self) -> embedded::ReplicatorPushOptions {
         embedded::ReplicatorPushOptions {
             se_encryption_key: self
                 .se_encryption_key
-                .as_ref()
+                .load()
                 .map(|key| Zeroizing::new(key.to_vec())),
             se_identity_pubkey: self
                 .node_identity_did
-                .as_ref()
+                .load()
                 .map(|identity| identity.as_bytes().to_vec()),
         }
     }
@@ -138,8 +144,9 @@ impl NodeState {
 
 /// State held for each FFI subscription.
 pub struct SubscriptionState {
-    /// The underlying events subscription.
-    pub subscription: events::Subscription,
+    /// The underlying events subscription. `events::Subscription::try_recv`
+    /// takes `&mut self`, so polling needs exclusive access to this one value.
+    pub subscription: parking_lot::Mutex<events::Subscription>,
     /// The node handle this subscription belongs to.
     pub node_handle: NodeHandle,
     /// Optional collection name filter (None = all collections).
@@ -154,7 +161,7 @@ pub struct SubscriptionState {
 /// buffers the full GraphQL JSON results for polling.
 pub struct GraphQLSubscriptionState {
     /// Receiver for fully-processed GraphQL result JSON strings.
-    pub result_receiver: tokio::sync::mpsc::Receiver<String>,
+    pub result_receiver: kovan_channel::bounded::Receiver<String>,
     /// The node handle this subscription belongs to.
     pub node_handle: NodeHandle,
     /// The event bus subscription ID (for cleanup/unsubscribe).

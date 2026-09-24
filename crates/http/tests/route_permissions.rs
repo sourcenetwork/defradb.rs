@@ -88,10 +88,6 @@ fn dynamic_routes() {
         route_permission("/api/v0/batch/sign", &Method::POST),
         RoutePermission::Dynamic
     );
-    assert_eq!(
-        route_permission("/api/v1/sync", &Method::POST),
-        RoutePermission::Dynamic
-    );
 }
 
 #[test]
@@ -248,7 +244,6 @@ fn all_registered_routes_return_expected_permission() {
             RoutePermission::Required(NodePermission::DocumentRead),
         ),
         ("/api/v0/graphql", Method::POST, RoutePermission::Dynamic),
-        ("/api/v0/sync", Method::POST, RoutePermission::Dynamic),
         (
             "/api/v0/actions",
             Method::GET,

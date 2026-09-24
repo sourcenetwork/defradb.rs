@@ -94,6 +94,8 @@ impl QueryExecutor for NoopExecutor {
         Ok(())
     }
 
+    fn abandon_txn(&self, _handle: &TransactionHandle) {}
+
     async fn schema(&self) -> query::Result<String> {
         Ok(String::new())
     }

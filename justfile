@@ -58,7 +58,7 @@ elan_bin  := env('ELAN_HOME', home_directory() / ".elan") / "bin"
 export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + elan_bin + ":" + env('PATH')
 
 # Integration areas, each a [[test]] binary in tools/integration-test.
-integration_suites := "basic query acp nac p2p encryption identity backup sourcehub hubrs fts p2p_iroh cursor"
+integration_suites := "basic query acp nac p2p encryption identity backup vera hubrs fts p2p_iroh cursor"
 
 # Cargo profile for the build and test recipes. `dev` is the stock debug
 # profile and the default; `just profile=super-dev test` opts into the lean
@@ -478,11 +478,12 @@ build-fast:
 # Browser client, via wasm-pack, into pkg/wasm. The opt-level override
 # matches CI's `Build WASM` step; without it the local artifact differs.
 #
-# simd128 is not on by default; without it the vector kernels' SIMD tier is
-# compiled out. Baseline in Chrome 91, Firefox 89, Safari 16.4.
+# The wasm rustflags (simd128, and getrandom's browser backend) come from
+# .cargo/config.toml. Setting RUSTFLAGS here would replace that table, not add
+# to it, and the build would fail on getrandom.
 [group('build')]
 build-wasm:
-    CARGO_PROFILE_RELEASE_OPT_LEVEL=z RUSTFLAGS="-C target-feature=+simd128" \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
         wasm-pack build crates/wasm --release --target web --out-dir ../../pkg/wasm
 
 # Regenerate the C header for the FFI surface.
@@ -507,7 +508,7 @@ test:
     cargo test --workspace --profile {{ profile }} --exclude integration-test --exclude conformance
 
 # The only place the wasm SIMD kernels execute; they are compiled out of every
-# host build.
+# host build. Their target-feature flag lives in .cargo/config.toml.
 [doc("Browser wasm tests in headless Firefox (needs `just setup-browser`).")]
 [group('test')]
 test-wasm:
@@ -519,8 +520,18 @@ test-wasm:
     fi
     command -v firefox >/dev/null 2>&1 || { echo "error: no firefox; run: just setup-browser" >&2; exit 1; }
     export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
-    export RUSTFLAGS="-C target-feature=+simd128"
     cargo test -p defra-wasm --target wasm32-unknown-unknown --lib --tests
+
+[doc("A browser peer replicating with a native node through its hosted relay (needs `just setup-browser`).")]
+[group('test')]
+test-browser-p2p:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v firefox >/dev/null 2>&1 && [ -x "{{ tooling }}/firefox/firefox" ]; then
+        export PATH="{{ tooling }}/firefox:$PATH"
+    fi
+    export PATH="{{ tooling_bin }}:$PATH"
+    tools/browser-p2p-e2e.sh
 
 # Unit tests for one crate: `just test-crate crdt`.
 [group('test')]

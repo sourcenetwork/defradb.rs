@@ -11,10 +11,53 @@ use db::index::vector::params::DEFAULT_M;
 use db::index::vector::store::MemoryNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::vector::Metric;
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 const SEED: u64 = 0x0559_6EED;
 const DIMENSIONS: usize = 16;
+
+#[tokio::test]
+async fn saturated_backlinks_preserve_reachability() {
+    for initial in [2, 32] {
+        let mut graph = index(SsgParams {
+            r: 1,
+            ..SsgParams::default()
+        });
+        let vector = [1.0f32; DIMENSIONS];
+        for id in 0..initial {
+            graph.insert(NodeId(id), &vector).await.unwrap();
+        }
+        graph.build().await.unwrap();
+        for count in initial..initial + 12 {
+            graph.insert(NodeId(count), &vector).await.unwrap();
+            let found = graph
+                .search(&vector, count as usize + 1, None)
+                .await
+                .unwrap();
+            assert_eq!(
+                found.len(),
+                count as usize + 1,
+                "initial={initial}, inserted={count}"
+            );
+            for id in 0..=count {
+                let edges = graph.neighbours(NodeId(id)).await.unwrap();
+                assert!(edges.len() <= 1);
+                assert!(!edges.contains(&NodeId(id)));
+            }
+        }
+        for id in 0..initial {
+            graph.insert(NodeId(id), &vector).await.unwrap();
+        }
+        assert_eq!(
+            graph
+                .search(&vector, initial as usize + 12, None)
+                .await
+                .unwrap()
+                .len(),
+            initial as usize + 12
+        );
+    }
+}
 
 fn index(params: SsgParams) -> Ssg<MemoryNodeStore> {
     Ssg::try_new(
@@ -141,7 +184,7 @@ async fn every_node_is_reachable_from_the_entry_point() {
     let mut index = filled(SsgParams::default(), &vectors).await;
     let report = index.build().await.unwrap();
 
-    let mut visited: HashSet<NodeId> = HashSet::new();
+    let mut visited: RapidHashSet<NodeId> = RapidHashSet::new();
     let mut stack = vec![report.state.entry_point];
     while let Some(id) = stack.pop() {
         if !visited.insert(id) {

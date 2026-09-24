@@ -58,7 +58,7 @@ pub const PROPERTIES: &[Property] = &[
         name: "INV_NoWriteConflict — concurrent appends to one collection both commit and form siblings",
         axis: Tla,
         anchor: "crates/db/src/block/builder/collection.rs write_collection_block; crates/storage/src/backends/regolith/transaction.rs",
-        model_ref: "MC_HeadSet_Green.cfg (GREEN) / MC_HeadSet_Red_EagerDelete.cfg (RED)",
+        model_ref: "MC_HeadSet_Green.cfg (GREEN) / MC_HeadSet_Red_EagerDelete.cfg (RED) / MC_HeadSet_Red_PerKeyScan.cfg (RED)",
         tiers: &[Behavioral],
     },
     Property {

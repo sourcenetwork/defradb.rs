@@ -281,7 +281,8 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
 ///
 /// The sync coordinator is generic over this trait, allowing different transport
 /// implementations (libp2p, iroh) without modifying coordinator logic.
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait P2PTransport: Clone + Send + Sync + 'static {
     type ResponseToken: Send + 'static;
 

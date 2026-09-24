@@ -15,9 +15,11 @@ use document::DocID;
 use document::Document;
 use document::NormalValue;
 use events::EventName;
+use kovan_queue::seg_queue::SegQueue;
 use query::mutator::DocMutator;
 use query::runner::DocFetcher;
 use query::txn::TransactionRegistry;
+use rapidhash::HashSetExt;
 use schema::CType;
 use schema::CollectionVersion;
 use schema::FieldDescription;
@@ -349,7 +351,7 @@ async fn explicit_txn_counter_increment_advances_accumulation_store() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -422,7 +424,7 @@ async fn explicit_txn_pcounter_increment_no_double_apply() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("PCounters", update_doc, modified)
@@ -484,7 +486,7 @@ async fn explicit_txn_multi_doc_counter_finalize_advances_both_stores() {
     let mut up_a = Document::from_json_str(r#"{"count": 11}"#).unwrap();
     up_a.set_id(document::DocID::from_string(&doc_a).unwrap());
     up_a.set_counter_delta("count".to_string(), document::NormalValue::Int(1));
-    let mut mod_a = std::collections::HashSet::new();
+    let mut mod_a = rapidhash::RapidHashSet::new();
     mod_a.insert("count".to_string());
     mutator
         .update("Counters", up_a, mod_a)
@@ -494,7 +496,7 @@ async fn explicit_txn_multi_doc_counter_finalize_advances_both_stores() {
     let mut up_b = Document::from_json_str(r#"{"count": 25}"#).unwrap();
     up_b.set_id(document::DocID::from_string(&doc_b).unwrap());
     up_b.set_counter_delta("count".to_string(), document::NormalValue::Int(5));
-    let mut mod_b = std::collections::HashSet::new();
+    let mut mod_b = rapidhash::RapidHashSet::new();
     mod_b.insert("count".to_string());
     mutator
         .update("Counters", up_b, mod_b)
@@ -604,7 +606,7 @@ async fn explicit_txn_pcounter_create_then_update_same_txn() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("PCounters", update_doc, modified)
@@ -706,7 +708,7 @@ async fn update_seeds_absent_store_from_committed_base_load_bearing() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).expect("doc");
     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -753,7 +755,7 @@ async fn explicit_txn_pncounter_create_then_decrement_same_txn() {
     let mut update_doc = Document::from_json_str(r#"{"count": -2}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(-5));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -799,7 +801,7 @@ async fn explicit_txn_discard_drops_pending_counter_ops() {
     let mut update_doc = Document::from_json_str(r#"{"count": 9}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("Counters", update_doc, modified)
@@ -856,14 +858,14 @@ async fn explicit_txn_multiple_updates_same_field_sum_once() {
     let mut up1 = Document::from_json_str(r#"{"count": 3}"#).unwrap();
     up1.set_id(document::DocID::from_string(&doc_id).unwrap());
     up1.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut m1 = std::collections::HashSet::new();
+    let mut m1 = rapidhash::RapidHashSet::new();
     m1.insert("count".to_string());
     mutator.update("Counters", up1, m1).await.expect("update 1");
 
     let mut up2 = Document::from_json_str(r#"{"count": 5}"#).unwrap();
     up2.set_id(document::DocID::from_string(&doc_id).unwrap());
     up2.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
-    let mut m2 = std::collections::HashSet::new();
+    let mut m2 = rapidhash::RapidHashSet::new();
     m2.insert("count".to_string());
     mutator.update("Counters", up2, m2).await.expect("update 2");
 
@@ -929,7 +931,7 @@ async fn explicit_txn_indexed_counter_index_reflects_post_rmw_value() {
     let mut update_doc = Document::from_json_str(r#"{"count": 8}"#).unwrap();
     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
     update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
-    let mut modified = std::collections::HashSet::new();
+    let mut modified = rapidhash::RapidHashSet::new();
     modified.insert("count".to_string());
     mutator
         .update("IdxCounters", update_doc, modified)
@@ -1125,14 +1127,24 @@ async fn delete_missing_doc_publishes_no_event_and_writes_no_block() {
 /// `TxnBroadcaster` test double: captures every event it's asked to
 /// broadcast for inspection.
 struct CapturingBroadcaster {
-    events: Arc<std::sync::Mutex<Vec<db::event::emission::TxnBroadcastEvent>>>,
+    events: Arc<SegQueue<db::event::emission::TxnBroadcastEvent>>,
 }
 
 #[async_trait::async_trait]
 impl db::event::emission::TxnBroadcaster for CapturingBroadcaster {
     async fn broadcast_update(&self, event: db::event::emission::TxnBroadcastEvent) {
-        self.events.lock().unwrap().push(event);
+        self.events.push(event);
     }
+}
+
+fn drain(
+    events: &SegQueue<db::event::emission::TxnBroadcastEvent>,
+) -> Vec<db::event::emission::TxnBroadcastEvent> {
+    let mut drained = Vec::with_capacity(events.len());
+    while let Some(event) = events.pop() {
+        drained.push(event);
+    }
+    drained
 }
 
 #[tokio::test]
@@ -1145,8 +1157,7 @@ async fn create_in_tx_forwards_to_broadcaster_on_commit() {
         .await
         .expect("schema");
 
-    let captured: Arc<std::sync::Mutex<Vec<db::event::emission::TxnBroadcastEvent>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured: Arc<SegQueue<db::event::emission::TxnBroadcastEvent>> = Arc::new(SegQueue::new());
     let broadcaster: Arc<dyn db::event::emission::TxnBroadcaster> =
         Arc::new(CapturingBroadcaster {
             events: Arc::clone(&captured),
@@ -1161,10 +1172,7 @@ async fn create_in_tx_forwards_to_broadcaster_on_commit() {
     let result = mutator.create("TestDoc", doc).await.expect("create");
 
     // Broadcaster must NOT see anything before commit
-    assert!(
-        captured.lock().unwrap().is_empty(),
-        "no broadcast before commit"
-    );
+    assert!(captured.is_empty(), "no broadcast before commit");
 
     let txn = mutator.take_txn().await.expect("take txn");
     txn.commit().await.expect("commit");
@@ -1172,7 +1180,7 @@ async fn create_in_tx_forwards_to_broadcaster_on_commit() {
     // Wait briefly for the on_success_async callback to fire
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let events = captured.lock().unwrap().clone();
+    let events = drain(&captured);
     assert_eq!(events.len(), 1, "exactly one broadcast after commit");
     let event = &events[0];
     assert_eq!(event.doc_id, result.doc_id.to_string());
@@ -1193,8 +1201,7 @@ async fn create_in_tx_does_not_broadcast_on_discard() {
         .await
         .expect("schema");
 
-    let captured: Arc<std::sync::Mutex<Vec<db::event::emission::TxnBroadcastEvent>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured: Arc<SegQueue<db::event::emission::TxnBroadcastEvent>> = Arc::new(SegQueue::new());
     let broadcaster: Arc<dyn db::event::emission::TxnBroadcaster> =
         Arc::new(CapturingBroadcaster {
             events: Arc::clone(&captured),
@@ -1212,8 +1219,5 @@ async fn create_in_tx_does_not_broadcast_on_discard() {
     txn.discard().expect("discard");
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert!(
-        captured.lock().unwrap().is_empty(),
-        "discard should not trigger broadcast"
-    );
+    assert!(captured.is_empty(), "discard should not trigger broadcast");
 }

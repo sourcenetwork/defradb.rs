@@ -93,12 +93,12 @@ pub trait NacManagerApi: defra_core::thread_bounds::MaybeSendSync {
 /// - Initialization based on configuration
 /// - Permission checking with config-aware fallbacks
 /// - Admin management with authorization
-pub struct NacManager<S: ZanzibarStore> {
+pub struct NacManager<S: ZanzibarStore + Send + Sync + 'static> {
     nac: NodeACP<S>,
     config: NacConfig,
 }
 
-impl<S: ZanzibarStore> NacManager<S> {
+impl<S: ZanzibarStore + Send + Sync + 'static> NacManager<S> {
     /// Create a new NAC manager with the given store and config.
     pub fn new(store: Arc<S>, config: NacConfig) -> Self {
         Self {

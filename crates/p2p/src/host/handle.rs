@@ -14,6 +14,7 @@ use crate::QueryId;
 
 use super::command::HostCommand;
 use super::ResponseChannel;
+use rapidhash::HashSetExt;
 
 /// Handle to interact with the P2P host.
 #[derive(Clone)]
@@ -898,7 +899,7 @@ impl P2PHostHandle {
         get_cached: impl Fn(&str) -> Option<String>,
     ) -> Result<Vec<String>> {
         let mut host_addrs = Vec::new();
-        let mut covered = std::collections::HashSet::new();
+        let mut covered = rapidhash::RapidHashSet::new();
 
         for attempt in 0..5 {
             host_addrs = self.peer_addresses().await?;

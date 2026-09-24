@@ -28,5 +28,6 @@ pub type ManageHooksCell = Arc<tokio::sync::OnceCell<ManageHooks>>;
 
 /// Create an empty, unpopulated hooks cell.
 pub fn new_manage_hooks_cell() -> ManageHooksCell {
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     Arc::new(tokio::sync::OnceCell::new())
 }

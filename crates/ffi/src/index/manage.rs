@@ -31,7 +31,7 @@ struct IndexResult {
 
 fn index_results(
     collection: &db::Collection,
-    actions: &std::collections::HashMap<u32, ActionExecution>,
+    actions: &rapidhash::RapidHashMap<u32, ActionExecution>,
 ) -> Vec<IndexResult> {
     visible_indexes(collection)
         .into_iter()
@@ -330,8 +330,8 @@ pub unsafe extern "C" fn list_all_indexes(
                 .map_err(|e| format!("failed to list collections: {}", e))?;
 
             // Build a map of collection name -> indexes
-            let mut all_indexes: std::collections::HashMap<String, Vec<IndexResult>> =
-                std::collections::HashMap::new();
+            let mut all_indexes: rapidhash::RapidHashMap<String, Vec<IndexResult>> =
+                rapidhash::RapidHashMap::default();
 
             for name in names {
                 match database.get_collection(&name) {

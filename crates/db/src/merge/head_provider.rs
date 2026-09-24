@@ -32,7 +32,8 @@ impl<S: Store> DbHeadProvider<S> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocumentHeadProvider for DbHeadProvider<S> {
     async fn get_document_heads(&self, doc_id: &str) -> p2p::error::Result<Vec<Cid>> {
         // Create a read-only transaction to access the headstore

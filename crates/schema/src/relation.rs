@@ -6,7 +6,8 @@
 use crate::{
     CType, CollectionVersion, FieldDescription, FieldKind, IndexDescription, Result, SchemaError,
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
+use std::collections::BTreeMap;
 
 impl CollectionVersion {
     /// Generate the `_id` field name for a relation field
@@ -128,9 +129,9 @@ impl CollectionVersion {
         &mut self,
         mut next_field_id: impl FnMut() -> String,
     ) -> Result<()> {
-        let existing_ids: HashSet<&str> = self.fields.iter().map(|f| f.id.as_str()).collect();
+        let existing_ids: RapidHashSet<&str> = self.fields.iter().map(|f| f.id.as_str()).collect();
         let mut fields_to_add = Vec::new();
-        let mut new_ids = HashSet::new();
+        let mut new_ids = RapidHashSet::new();
 
         for field in &self.fields {
             // Only process non-array relation fields
@@ -304,7 +305,7 @@ impl CollectionVersion {
     /// then converts back. Use `finalize_relations` directly with BTreeMap
     /// for better performance with large schemas.
     pub fn finalize_relations_hashmap(
-        collections: &mut HashMap<String, CollectionVersion>,
+        collections: &mut RapidHashMap<String, CollectionVersion>,
         next_field_id: impl FnMut() -> String,
         next_index_id: impl FnMut() -> u32,
     ) -> Result<()> {

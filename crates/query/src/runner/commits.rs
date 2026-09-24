@@ -8,8 +8,8 @@
 //! - `commit_to_fields()` / `compare_json_values()`
 
 use identity::Did;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
 
 use crate::error::Result;
 use crate::mapper::{Requestable, Select};
@@ -94,8 +94,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Fetch commits using the fetcher
         let mut commits = Vec::new();
         if let Some(ref cids) = select.cid {
-            let mut seen_commit_cids = HashSet::new();
-            let mut seen_input_cids = HashSet::new();
+            let mut seen_commit_cids = RapidHashSet::new();
+            let mut seen_input_cids = RapidHashSet::new();
 
             for cid in cids {
                 if !seen_input_cids.insert(cid.clone()) {
@@ -136,18 +136,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             // now-inactive version (after a schema migration) are NOT in this
             // map and are resolved on demand below — never left ungated.
             let collections = self.collections_map().await?;
-            let by_version: std::collections::HashMap<
-                String,
-                std::sync::Arc<schema::CollectionVersion>,
-            > = collections
-                .values()
-                .map(|c| (c.version_id.clone(), c.clone()))
-                .collect();
+            let by_version: RapidHashMap<String, std::sync::Arc<schema::CollectionVersion>> =
+                collections
+                    .values()
+                    .map(|c| (c.version_id.clone(), c.clone()))
+                    .collect();
             let provider = self.effective_provider();
-            let mut resolved_versions: std::collections::HashMap<
+            let mut resolved_versions: RapidHashMap<
                 String,
                 Option<std::sync::Arc<schema::CollectionVersion>>,
-            > = std::collections::HashMap::new();
+            > = RapidHashMap::new();
 
             let mut keep = Vec::with_capacity(commits.len());
             for commit in &mut commits {
@@ -236,8 +234,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 if !group_by.fields.is_empty() {
                     let mut groups: Vec<(String, document::Document, Vec<document::Document>)> =
                         Vec::new();
-                    let mut group_map: std::collections::HashMap<String, usize> =
-                        std::collections::HashMap::new();
+                    let mut group_map: RapidHashMap<String, usize> = RapidHashMap::new();
 
                     for commit in commits.drain(..) {
                         let key = Self::generate_commit_group_key(&commit, &group_by.fields);

@@ -168,7 +168,7 @@ async fn inheritance_resolves_the_key_through_the_kms() {
         "secret",
         NormalValue::String("still classified".to_string()),
     );
-    let modified: std::collections::HashSet<String> = ["secret".to_string()].into_iter().collect();
+    let modified: rapidhash::RapidHashSet<String> = ["secret".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,
@@ -235,7 +235,7 @@ async fn document_policy_fallback_mints_through_the_kms() {
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
     doc.set("bio", NormalValue::String("ssn 123-45-6789".to_string()));
-    let modified: std::collections::HashSet<String> = ["bio".to_string()].into_iter().collect();
+    let modified: rapidhash::RapidHashSet<String> = ["bio".to_string()].into_iter().collect();
 
     let updated = write_document_blocks(
         &blockstore,

@@ -10,8 +10,8 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use n0_future::task::{JoinError, JoinSet};
 use tokio::sync::{mpsc, Semaphore};
-use tokio::task::JoinSet;
 
 use crate::transport::TransportEvent;
 
@@ -215,9 +215,12 @@ pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
     diagnostics: Arc<DispatchDiagnostics>,
     handler: Handler,
 ) where
-    E: DispatchEvent + Send + 'static,
-    Handler: Fn(E, DispatchAdmission) -> HandlerFuture + Clone + Send + 'static,
-    HandlerFuture: Future<Output = ()> + Send + 'static,
+    E: DispatchEvent + defra_core::thread_bounds::MaybeSend + 'static,
+    Handler: Fn(E, DispatchAdmission) -> HandlerFuture
+        + Clone
+        + defra_core::thread_bounds::MaybeSend
+        + 'static,
+    HandlerFuture: Future<Output = ()> + defra_core::thread_bounds::MaybeSend + 'static,
 {
     let request_slots = Arc::new(Semaphore::new(MAX_ACTIVE_REQUESTS));
     let recovery_slots = Arc::new(Semaphore::new(MAX_ACTIVE_RECOVERY));
@@ -228,7 +231,8 @@ pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
     loop {
         tokio::select! {
             biased;
-            result = tasks.join_next(), if !tasks.is_empty() => {
+            // The browser JoinSet has no join_next; poll_join_next exists on both.
+            result = std::future::poll_fn(|cx| tasks.poll_join_next(cx)), if !tasks.is_empty() => {
                 report_join_result(result.expect("dispatcher task set was non-empty"));
             }
             event = events.recv() => {
@@ -309,12 +313,12 @@ pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
     }
 
     tasks.abort_all();
-    while let Some(result) = tasks.join_next().await {
+    while let Some(result) = std::future::poll_fn(|cx| tasks.poll_join_next(cx)).await {
         report_join_result(result);
     }
 }
 
-fn report_join_result(result: Result<(), tokio::task::JoinError>) {
+fn report_join_result(result: Result<(), JoinError>) {
     if let Err(error) = result {
         if !error.is_cancelled() {
             tracing::error!(%error, "transport request task panicked");
@@ -380,7 +384,7 @@ mod tests {
             let observed = Arc::clone(&observed);
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
-            tokio::spawn(run_event_dispatcher(
+            n0_future::task::spawn(run_event_dispatcher(
                 rx,
                 Arc::new(DispatchDiagnostics::default()),
                 move |event, admission| {
@@ -408,7 +412,7 @@ mod tests {
             .unwrap();
         tx.send(TestEvent::Completion).await.unwrap();
 
-        tokio::time::timeout(
+        n0_future::time::timeout(
             std::time::Duration::from_secs(1),
             started.acquire_many(MAX_ACTIVE_REQUESTS as u32),
         )
@@ -417,7 +421,7 @@ mod tests {
         .unwrap()
         .forget();
 
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        n0_future::time::timeout(std::time::Duration::from_secs(1), async {
             loop {
                 let events = observed.lock().await;
                 let rejected = events.contains(&(
@@ -453,7 +457,7 @@ mod tests {
             let requests_started = Arc::clone(&requests_started);
             let release_requests = Arc::clone(&release_requests);
             let recovery_observed = Arc::clone(&recovery_observed);
-            tokio::spawn(run_event_dispatcher(
+            n0_future::task::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -486,7 +490,7 @@ mod tests {
             .forget();
         tx.send(TestEvent::Recovery(0)).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(1), recovery_observed.acquire())
+        n0_future::time::timeout(Duration::from_secs(1), recovery_observed.acquire())
             .await
             .expect("ownership admission saturation must not block CAR serving")
             .unwrap()
@@ -513,7 +517,7 @@ mod tests {
             let started = Arc::clone(&started);
             let release = Arc::clone(&release);
             let rejected = Arc::clone(&rejected);
-            tokio::spawn(run_event_dispatcher(
+            n0_future::task::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -548,7 +552,7 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(1), rejected.acquire())
+        n0_future::time::timeout(Duration::from_secs(1), rejected.acquire())
             .await
             .expect("recovery overflow must produce an actionable rejection")
             .unwrap()
@@ -577,7 +581,7 @@ mod tests {
             let release_requests = Arc::clone(&release_requests);
             let release_rejection = Arc::clone(&release_rejection);
             let completion = Arc::clone(&completion);
-            tokio::spawn(run_event_dispatcher(
+            n0_future::task::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -619,7 +623,7 @@ mod tests {
         }
         tx.send(TestEvent::Completion).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(1), completion.acquire())
+        n0_future::time::timeout(Duration::from_secs(1), completion.acquire())
             .await
             .expect("a stalled nack must not park the transport drain")
             .unwrap()
@@ -633,7 +637,7 @@ mod tests {
 
         release_rejection.add_permits(MAX_ACTIVE_REJECTIONS);
         release_requests.add_permits(MAX_ACTIVE_REQUESTS);
-        tokio::time::timeout(Duration::from_secs(1), async {
+        n0_future::time::timeout(Duration::from_secs(1), async {
             loop {
                 let snapshot = diagnostics.snapshot();
                 if snapshot.active_requests == 0 && snapshot.active_rejections == 0 {
@@ -660,7 +664,7 @@ mod tests {
             let completion_started = Arc::clone(&completion_started);
             let release_completion = Arc::clone(&release_completion);
             let request_observed = Arc::clone(&request_observed);
-            tokio::spawn(run_event_dispatcher(
+            n0_future::task::spawn(run_event_dispatcher(
                 rx,
                 Arc::clone(&diagnostics),
                 move |event, admission| {
@@ -687,7 +691,7 @@ mod tests {
         completion_started.acquire().await.unwrap().forget();
         tx.send(TestEvent::Recovery(0)).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(1), request_observed.acquire())
+        n0_future::time::timeout(Duration::from_secs(1), request_observed.acquire())
             .await
             .expect("durable completion work must not head-of-line block CAR serving")
             .unwrap()

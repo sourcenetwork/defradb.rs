@@ -39,6 +39,9 @@ base64 = "0.22"
 # Error handling
 thiserror = { workspace = true }
 
+# Hashing
+rapidhash = { workspace = true }
+
 [dev-dependencies]
 multihash = { workspace = true }
 sha2 = { workspace = true }

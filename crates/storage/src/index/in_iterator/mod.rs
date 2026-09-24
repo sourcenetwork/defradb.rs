@@ -3,10 +3,9 @@
 //! Provides efficient iteration over multiple exact match values,
 //! supporting the _in filter operator.
 
-use std::collections::HashSet;
-
 use async_trait::async_trait;
 use document::NormalValue;
+use rapidhash::{HashSetExt, RapidHashSet};
 use schema::IndexDescription;
 
 use super::eq_iterator::ExactMatchIterator;
@@ -29,7 +28,7 @@ pub struct InIterator {
     /// Whether this is a unique index
     is_unique: bool,
     /// Set of already-seen doc short IDs for deduplication
-    seen_doc_ids: HashSet<u64>,
+    seen_doc_ids: RapidHashSet<u64>,
     /// Whether the iterator has been exhausted
     exhausted: bool,
     /// Cached results since we can't hold a reference to the transaction
@@ -50,7 +49,7 @@ impl InIterator {
             values: values.to_vec(),
             desc: desc.clone(),
             is_unique: false,
-            seen_doc_ids: HashSet::new(),
+            seen_doc_ids: RapidHashSet::new(),
             exhausted: false,
             cached_results: Vec::new(),
             cache_position: 0,
@@ -72,7 +71,7 @@ impl InIterator {
             values: values.to_vec(),
             desc: desc.clone(),
             is_unique: true,
-            seen_doc_ids: HashSet::new(),
+            seen_doc_ids: RapidHashSet::new(),
             exhausted: false,
             cached_results: Vec::new(),
             cache_position: 0,

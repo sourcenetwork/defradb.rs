@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use alloy_sol_types::SolCall;
 use keyring::{FileKeyring, Keyring};
-use sourcehub::hub_rs::NativeWorker;
+use vera::hub_rs::NativeWorker;
 use vera_client::{VeraClient, ACP_ADDRESS};
 use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse};
 use vera_modules::acp::abi::IAcp;
@@ -140,7 +140,7 @@ async fn native_worker_recovers_pending_and_rejected_submissions() {
 #[serial_test::serial]
 async fn native_provider_recovers_pending_before_concurrent_requests() {
     use commonware_codec::Encode as _;
-    use sourcehub::{AcpTuning, SourceHubProvider, VeraRsProvider};
+    use vera::{AcpTuning, VeraProvider, VeraRsProvider};
 
     let hub = super::helpers::start_hub_cluster().await;
     let trusted = *vera_harness::cluster::KeySet::builder()

@@ -26,7 +26,8 @@ impl StubPusher {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl TransportDocPusher for StubPusher {
     async fn push_existing_docs(
         &self,
@@ -72,6 +73,10 @@ impl TransportDocPusher for StubPusher {
     }
 
     fn get_collection_id(&self, _name: &str) -> Option<String> {
+        unimplemented!("not reached by doc-sync tests")
+    }
+
+    fn get_collection_name(&self, _collection_id: &str) -> P2PResult<Option<String>> {
         unimplemented!("not reached by doc-sync tests")
     }
 
@@ -125,7 +130,8 @@ impl FailingDispatch {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocSyncDispatch for FailingDispatch {
     type Peer = String;
 
@@ -167,7 +173,8 @@ impl<const CONFIRMS: bool> MixedDispatch<CONFIRMS> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<const CONFIRMS: bool> DocSyncDispatch for MixedDispatch<CONFIRMS> {
     type Peer = String;
 
@@ -211,7 +218,8 @@ impl SlowDispatch {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocSyncDispatch for SlowDispatch {
     type Peer = String;
 
@@ -230,7 +238,7 @@ impl DocSyncDispatch for SlowDispatch {
         _peer: &Self::Peer,
         _request: DocSyncRequest,
     ) -> P2PResult<()> {
-        tokio::time::sleep(self.delay).await;
+        n0_future::time::sleep(self.delay).await;
         Ok(())
     }
 }

@@ -5,7 +5,7 @@ use db::block::builder::*;
 use document::CType;
 use document::Document;
 use document::NormalValue;
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use storage::corekv::Store;
 use storage::namespace::Namespace;
 use storage::RegolithStore;
@@ -38,7 +38,7 @@ async fn first_counter_update() -> Cid {
     doc.set_with_crdt("count", CType::PnCounter, NormalValue::Int(1))
         .unwrap();
     doc.set_counter_delta("count".to_string(), NormalValue::Int(1));
-    let modified = HashSet::from(["count".to_string()]);
+    let modified = RapidHashSet::from_iter(["count".to_string()]);
 
     write_document_blocks(
         &blockstore,

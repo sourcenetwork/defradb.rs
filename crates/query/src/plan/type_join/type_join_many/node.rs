@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use crate::document::DocumentMapping;
@@ -28,7 +28,7 @@ pub(super) struct IndexedChildFetch {
 /// # Optimization
 ///
 /// Child documents are pre-loaded and indexed during `init()` to avoid
-/// O(N * M) nested loop scans. Lookups are O(1) via HashMap.
+/// O(N * M) nested loop scans. Lookups are O(1) via RapidHashMap.
 ///
 /// # Memory Considerations
 ///
@@ -57,7 +57,7 @@ pub struct TypeJoinMany {
     pub(super) initialized: bool,
     /// Cached child documents indexed by FK field value.
     /// Key is the child's FK value (points to parent's _docID).
-    pub(super) child_cache: HashMap<String, Vec<Doc>>,
+    pub(super) child_cache: RapidHashMap<String, Vec<Doc>>,
     /// Per-parent limit on children (None = no limit)
     pub(super) child_limit: Option<u64>,
     /// Per-parent offset on children
@@ -105,7 +105,7 @@ pub struct TypeJoinMany {
     /// This matches Go's inverted index join behavior.
     pub(super) filter_child_plan: Option<Box<dyn PlanNode>>,
     /// Cache of children from filter_child_plan, indexed by FK value.
-    pub(super) filter_child_cache: HashMap<String, Vec<Doc>>,
+    pub(super) filter_child_cache: RapidHashMap<String, Vec<Doc>>,
     /// FK field index in the filter child plan's documents.
     pub(super) filter_child_fk_index: Option<usize>,
     /// When true, pre-scan parent doc IDs and only retain matching children in caches.
@@ -174,7 +174,7 @@ impl TypeJoinMany {
             current_doc: Doc::default(),
             child_fk_index,
             initialized: false,
-            child_cache: HashMap::new(),
+            child_cache: RapidHashMap::new(),
             child_limit: None,
             child_offset: 0,
             child_order_by: None,
@@ -192,7 +192,7 @@ impl TypeJoinMany {
             child_plan_provides_ordering: false,
             child_scan_order: Vec::new(),
             filter_child_plan: None,
-            filter_child_cache: HashMap::new(),
+            filter_child_cache: RapidHashMap::new(),
             filter_child_fk_index: None,
             parent_scoped_child_cache: false,
             indexed_child_fetch: None,
@@ -334,8 +334,8 @@ impl TypeJoinMany {
         self
     }
 
-    pub(super) async fn collect_parent_doc_ids(&mut self) -> Result<HashSet<String>> {
-        let mut parent_doc_ids = HashSet::new();
+    pub(super) async fn collect_parent_doc_ids(&mut self) -> Result<RapidHashSet<String>> {
+        let mut parent_doc_ids = RapidHashSet::new();
 
         self.parent_plan.init().await?;
         self.parent_plan.start().await?;

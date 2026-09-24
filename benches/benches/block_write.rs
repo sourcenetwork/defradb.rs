@@ -9,7 +9,7 @@
 //! `write.rs` (guarded by `tracing::enabled!(DEBUG)`) stays disabled and does not
 //! pollute the measurement.
 
-use std::collections::HashSet;
+use rapidhash::RapidHashSet;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
@@ -37,7 +37,7 @@ fn make_document(field_count: usize, value_size: usize) -> Document {
     doc
 }
 
-fn modified_fields(field_count: usize) -> HashSet<String> {
+fn modified_fields(field_count: usize) -> RapidHashSet<String> {
     (0..field_count).map(|i| format!("field_{i}")).collect()
 }
 

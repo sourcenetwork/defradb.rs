@@ -68,4 +68,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     pub fn set_document_acp(&self, acp: Arc<dyn DocumentACP>) {
         let _ = self.document_acp.set(acp);
     }
+
+    pub fn document_acp(&self) -> Option<&Arc<dyn DocumentACP>> {
+        self.document_acp.get()
+    }
 }

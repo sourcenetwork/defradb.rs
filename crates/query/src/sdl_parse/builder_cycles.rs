@@ -1,8 +1,9 @@
 //! Cycle detection for SDL builder (Tarjan's SCC algorithm).
 
 use super::parser::SdlParser;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
-type PrimaryDirectiveMap = std::collections::HashMap<(String, String, String), bool>;
+type PrimaryDirectiveMap = RapidHashMap<(String, String, String), bool>;
 
 impl<'a> SdlParser<'a> {
     /// Detect types that form circular relation sets.
@@ -18,12 +19,9 @@ impl<'a> SdlParser<'a> {
     #[allow(clippy::type_complexity)]
     pub(super) fn detect_collection_set(
         &self,
-        type_names: &std::collections::HashSet<String>,
+        type_names: &RapidHashSet<String>,
         primary_directives: &PrimaryDirectiveMap,
-    ) -> (
-        std::collections::HashMap<String, (i32, usize)>,
-        Vec<Vec<String>>,
-    ) {
+    ) -> (RapidHashMap<String, (i32, usize)>, Vec<Vec<String>>) {
         // Helper to check if a relation field from source->target is actually primary
         // (will be included in CID calculation)
         let is_field_primary =
@@ -68,11 +66,10 @@ impl<'a> SdlParser<'a> {
             };
 
         // Build relation graph: which types reference which other types via PRIMARY relations only
-        let mut references: std::collections::HashMap<String, std::collections::HashSet<String>> =
-            std::collections::HashMap::new();
+        let mut references: RapidHashMap<String, RapidHashSet<String>> = RapidHashMap::new();
 
         for (type_name, type_def) in &self.type_defs {
-            let mut refs = std::collections::HashSet::new();
+            let mut refs = RapidHashSet::new();
             for field in &type_def.fields {
                 let target = &field.field_type.base_type;
                 // Only consider relations to other types that are:
@@ -95,11 +92,11 @@ impl<'a> SdlParser<'a> {
         let components = find_sccs(&references);
 
         if components.is_empty() {
-            return (std::collections::HashMap::new(), Vec::new());
+            return (RapidHashMap::new(), Vec::new());
         }
 
         // Build result: each type gets (relative_id, group_index)
-        let mut relative_ids = std::collections::HashMap::new();
+        let mut relative_ids = RapidHashMap::new();
         let mut groups = Vec::new();
         for mut members in components {
             members.sort(); // Sort alphabetically within component
@@ -116,13 +113,11 @@ impl<'a> SdlParser<'a> {
 
 /// Find strongly connected components in a directed graph using Tarjan's algorithm.
 /// Returns only SCCs that represent actual cycles (2+ members, or self-referencing singletons).
-fn find_sccs(
-    graph: &std::collections::HashMap<String, std::collections::HashSet<String>>,
-) -> Vec<Vec<String>> {
+fn find_sccs(graph: &RapidHashMap<String, RapidHashSet<String>>) -> Vec<Vec<String>> {
     struct TarjanState<'a> {
-        graph: &'a std::collections::HashMap<String, std::collections::HashSet<String>>,
+        graph: &'a RapidHashMap<String, RapidHashSet<String>>,
         type_list: Vec<String>,
-        idx_map: std::collections::HashMap<String, usize>,
+        idx_map: RapidHashMap<String, usize>,
         index_counter: usize,
         stack: Vec<usize>,
         on_stack: Vec<bool>,
@@ -178,7 +173,7 @@ fn find_sccs(
     let mut type_list: Vec<String> = graph.keys().cloned().collect();
     type_list.sort();
     let n = type_list.len();
-    let idx_map: std::collections::HashMap<String, usize> = type_list
+    let idx_map: RapidHashMap<String, usize> = type_list
         .iter()
         .enumerate()
         .map(|(i, s)| (s.clone(), i))

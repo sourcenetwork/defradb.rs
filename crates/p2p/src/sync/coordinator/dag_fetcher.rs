@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use blockstore::Blockstore;
 use cid::Cid;
+use n0_future::time::Instant;
 use tokio::sync::mpsc;
-use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use super::dag_context::DagFetchContext;
@@ -31,6 +31,14 @@ const SELECTIVE_FETCH_BATCH_SIZE: usize = 2048;
 /// outlive that bound so the transport completion event, rather than a racing
 /// shorter poll window, decides when a productive CAR stream is reaped.
 const BLOCK_SYNC_COMPLETION_WATCHDOG: Duration = Duration::from_secs(35);
+
+/// How long a successful transport completion may wait for its blocks to
+/// become durable locally. The libp2p host reports success once it has
+/// forwarded every block event, and the coordinator stores those events on
+/// independent tasks, so the completion regularly overtakes the puts (B0
+/// rust-0: 4 ms lead, ~25 ms per put). Reading that as a stall cost the
+/// dispatch a 2 s retry backoff while it held a fetch slot.
+const SUCCESS_LANDING_GRACE: Duration = Duration::from_secs(1);
 /// Defensive ceiling on selective-fetch DAG-walk iterations.
 ///
 /// Each iteration reveals and fetches the next frontier of missing blocks
@@ -155,7 +163,7 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
                 backoff_ms = backoff.as_millis() as u64,
                 "DAG fetch incomplete, retrying after backoff"
             );
-            tokio::time::sleep(backoff).await;
+            n0_future::time::sleep(backoff).await;
         }
 
         let Some(_permits) = limiter.acquire(&context.source_peer).await else {
@@ -222,8 +230,62 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
         remaining_count = remaining_count,
         attempts = MAX_FETCH_ATTEMPTS,
         providers = ?providers.peers(),
-        "DAG fetch failed after exhausting retries and providers; document will not converge until the root is re-announced"
+        "DAG fetch failed after exhausting retries and providers; the per-root retry clock owns convergence from here, and any provider reconnect expedites it"
     );
+    drop_dead_bitswap_connection(&transport, &providers, &context, &root_cid).await;
+}
+
+/// Hang up on a connection whose Bitswap is dead while the connection lives.
+///
+/// A partition that never closes the socket leaves the libp2p per-peer
+/// message queue stopped on the outbound substream timeout
+/// (`iroh-bitswap/src/client/message_queue.rs`: a failed send ends the queue
+/// actor). Every later want is dropped before it is transmitted, and only a
+/// fresh connection rebuilds the queue, so the per-root clock would refetch
+/// over the same dead connection forever.
+///
+/// This is defence in depth for the half of the mesh the beetle fix cannot
+/// reach — Go peers, and send failures on transports that keep their own
+/// queues — so it is deliberately narrow. Every gate must hold:
+///
+/// - **libp2p only.** Iroh has no Bitswap message queue and retires its own
+///   unresponsive connections (#1751).
+/// - **The announcing publisher only.** It advertised this root, so it holds
+///   the DAG; an alternate provider is any connected peer and serves nothing
+///   simply because it has nothing to serve.
+/// - **Positive transport-level liveness.** The peer answered a rooted CAR
+///   request on its own substreams during this fetch. Bitswap silence alone
+///   is not evidence: a want that never left and a want the peer cannot
+///   satisfy are indistinguishable from here.
+/// - **Still connected**, so the hang-up is the repair and not a race with a
+///   connection that is already going away.
+async fn drop_dead_bitswap_connection<T: P2PTransport>(
+    transport: &T,
+    providers: &ProviderRotation,
+    context: &DagFetchContext,
+    root_cid: &Cid,
+) {
+    if transport.supports_cancellable_rooted_sync() {
+        return;
+    }
+    let provider = &context.source_peer;
+    if !providers.is_responsive_but_silent(provider) {
+        return;
+    }
+    let Ok(connected) = transport.connected_peers().await else {
+        return;
+    };
+    if !connected.contains(provider) {
+        return;
+    }
+    warn!(
+        root_cid = %root_cid,
+        provider = %provider,
+        "Publisher answered on its own substreams but served no block for the root it announced; dropping the connection so Bitswap is rebuilt"
+    );
+    if let Err(error) = transport.disconnect(provider).await {
+        debug!(root_cid = %root_cid, provider = %provider, error = %error, "Failed to drop the dead Bitswap connection");
+    }
 }
 
 /// Return true only when the transport positively reports that none of the
@@ -306,6 +368,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     let rooted_wants = car_missing_watch
         .as_deref()
         .unwrap_or(std::slice::from_ref(&root_cid));
+    let mut car_answered = false;
     let rooted_outcome = if providers.cannot_serve(rooted_wants) {
         ProviderWindowOutcome::SendFailed
     } else if let Some(rooted_watch) = car_missing_watch.as_deref() {
@@ -328,6 +391,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
                     blockstore,
                     providers.current(),
                     context,
+                    &mut car_answered,
                 )
                 .await
             }
@@ -342,9 +406,13 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
             blockstore,
             providers.current(),
             context,
+            &mut car_answered,
         )
         .await
     };
+    if car_answered {
+        providers.record_responsive();
+    }
     if let ProviderWindowOutcome::SizeLimit(cid) = rooted_outcome {
         // libp2p can fall back to Bitswap, whose limits are independent of CAR.
         if transport.supports_cancellable_rooted_sync() {
@@ -358,6 +426,7 @@ async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
         rooted_outcome,
         ProviderWindowOutcome::Complete | ProviderWindowOutcome::Partial
     ) {
+        providers.record_progress();
         if let Ok(Some(root_data)) = blockstore.get(&root_cid).await {
             let missing = find_all_missing_links(blockstore.as_ref(), &root_data)
                 .await
@@ -521,6 +590,10 @@ async fn emit_dag_ready(
 /// block-sync primitive cannot express a recursive root request.  Sending the
 /// request and receiving its CAR response are separate streams on libp2p, so
 /// completion is established from the bounded rooted frontier in blockstore.
+///
+/// `answered` is set when the peer's CAR response reaches this node, with or
+/// without blocks in it. That round trip is the only transport-level liveness
+/// evidence this fetch collects.
 async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
     root_cid: &Cid,
     watch_cids: &[Cid],
@@ -528,6 +601,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
     blockstore: &Arc<B>,
     source_peer: &PeerId,
     context: &DagFetchContext,
+    answered: &mut bool,
 ) -> ProviderWindowOutcome {
     let mut initially_missing = 0usize;
     for cid in watch_cids {
@@ -541,7 +615,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
 
     let mut completion = context.track_rooted_car(*root_cid, source_peer);
 
-    match tokio::time::timeout(
+    match n0_future::time::timeout(
         Duration::from_secs(10),
         transport.send_car_request(source_peer, *root_cid),
     )
@@ -575,7 +649,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
     }
 
     if let Some(receiver) = completion.as_mut() {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = n0_future::time::Instant::now() + Duration::from_secs(10);
         loop {
             if !context.is_current() {
                 context.cancel_rooted_car_tracking(*root_cid);
@@ -583,6 +657,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
             }
             tokio::select! {
                 result = &mut *receiver => {
+                    *answered = result.is_ok();
                     if matches!(result, Ok(FetchCompletion::Deferred)) {
                         context.cancel_rooted_car_tracking(*root_cid);
                         return ProviderWindowOutcome::Deferred;
@@ -592,10 +667,10 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
                     }
                     break;
                 },
-                _ = tokio::time::sleep_until(deadline) => break,
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                _ = n0_future::time::sleep_until(deadline) => break,
+                _ = n0_future::time::sleep(Duration::from_millis(100)) => {}
             }
-            if tokio::time::Instant::now() >= deadline {
+            if n0_future::time::Instant::now() >= deadline {
                 break;
             }
         }
@@ -606,7 +681,7 @@ async fn poll_fetch_rooted_car<B: Blockstore, T: P2PTransport>(
             if remaining < initially_missing {
                 return observe(remaining);
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            n0_future::time::sleep(Duration::from_millis(100)).await;
         }
     }
     context.cancel_rooted_car_tracking(*root_cid);
@@ -714,10 +789,10 @@ async fn poll_fetch_rooted_provider<B: Blockstore, T: P2PTransport>(
                         }
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                _ = n0_future::time::sleep(Duration::from_millis(100)) => {}
             }
         } else {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            n0_future::time::sleep(Duration::from_millis(100)).await;
         }
     }
     context.cancel_block_sync_tracking(query_id);
@@ -779,8 +854,14 @@ async fn poll_fetch_blocks_rotating<B: Blockstore, T: P2PTransport>(
         }
         let provider = state.providers.current().clone();
         match poll_fetch_blocks(root_cid, cids, transport, blockstore, &provider, context).await {
-            ProviderWindowOutcome::Complete => return FetchBatchOutcome::Complete,
-            ProviderWindowOutcome::Partial => return FetchBatchOutcome::Partial,
+            ProviderWindowOutcome::Complete => {
+                state.providers.record_progress();
+                return FetchBatchOutcome::Complete;
+            }
+            ProviderWindowOutcome::Partial => {
+                state.providers.record_progress();
+                return FetchBatchOutcome::Partial;
+            }
             ProviderWindowOutcome::Stalled => {
                 *state.stall_budget -= 1;
                 state.providers.advance();
@@ -863,14 +944,17 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
     };
     let mut completion = context.track_block_sync(query_id);
     let completion_is_observable = completion.is_some();
-    let mut transport_complete = false;
+    let mut landing_deadline: Option<Instant> = None;
     let mut deferred = false;
     let mut size_limit = None;
 
     let timeout = BLOCK_SYNC_COMPLETION_WATCHDOG;
     let start = Instant::now();
     let mut outcome = ProviderWindowOutcome::Stalled;
-    while start.elapsed() < timeout {
+    // Once Success has been seen the landing deadline, not the watchdog,
+    // bounds the loop: a completion that arrives in the watchdog's last
+    // moments must still get the whole grace for its blocks to land.
+    while landing_deadline.is_some() || start.elapsed() < timeout {
         if !context.is_current() {
             break;
         }
@@ -895,7 +979,7 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                 break;
             }
         }
-        if transport_complete {
+        if landing_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             break;
         }
         if let Some(receiver) = completion.as_mut() {
@@ -903,9 +987,11 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                 result = receiver => {
                     let fetch_completion = result.unwrap_or(FetchCompletion::Failure);
                     completion = None;
-                    transport_complete = true;
                     match fetch_completion {
-                        FetchCompletion::Success => {}
+                        FetchCompletion::Success => {
+                            landing_deadline =
+                                Some(Instant::now() + SUCCESS_LANDING_GRACE);
+                        }
                         FetchCompletion::Failure => break,
                         FetchCompletion::Deferred => {
                             deferred = true;
@@ -917,10 +1003,10 @@ async fn poll_fetch_blocks<B: Blockstore, T: P2PTransport>(
                         }
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                _ = n0_future::time::sleep(Duration::from_millis(100)) => {}
             }
         } else {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            n0_future::time::sleep(Duration::from_millis(100)).await;
         }
     }
 

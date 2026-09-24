@@ -40,17 +40,6 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
             .await
             .map_err(|e| format!("{}", e))?;
 
-        let col = self
-            .database
-            .require_collection(collection)
-            .map_err(|e| format!("{}", e))?;
-
-        let schema = col.schema().clone();
-        let short_id = schema.resolved_root_id();
-
-        let mut index_manager =
-            IndexManager::from_collection(short_id, &schema).map_err(|e| format!("{}", e))?;
-
         let indexed_fields: Vec<IndexedFieldDescription> = fields
             .iter()
             .map(|f| IndexedFieldDescription {
@@ -58,51 +47,19 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
                 descending: false,
             })
             .collect();
-
-        let txn = self
+        let kind = IndexManager::requested_kind(&indexed_fields, unique, vector)
+            .map_err(|e| format!("{}", e))?;
+        let index_desc = self
             .database
-            .new_txn(false)
+            .create_index(collection, name, indexed_fields, kind)
             .await
             .map_err(|e| format!("{}", e))?;
-
-        // Scope the systemstore so its Arc<SharedTxn> is dropped before commit
-        let (index_desc, updated_schema) = {
-            let systemstore = txn.systemstore().map_err(|e| format!("{}", e))?;
-
-            let kind = IndexManager::requested_kind(&indexed_fields, unique, vector)
-                .map_err(|e| format!("{}", e))?;
-            let index_desc = index_manager
-                .create_index_of_kind(
-                    &systemstore,
-                    collection,
-                    name.unwrap_or("").to_string(),
-                    indexed_fields,
-                    kind,
-                    &schema.fields,
-                )
-                .await
-                .map_err(|e| format!("{}", e))?;
-
-            let mut updated_schema = schema;
-            updated_schema.indexes.push(index_desc.clone());
-
-            let collection_key = CollectionKey::new(&updated_schema.version_id);
-            let data = serde_json::to_vec(&updated_schema)
-                .map_err(|e| format!("failed to serialize schema: {}", e))?;
-            systemstore
-                .set(&collection_key.bytes(), &data)
-                .await
-                .map_err(|e| format!("{}", e))?;
-
-            (index_desc, updated_schema)
-        };
-
-        txn.commit().await.map_err(|e| format!("{}", e))?;
-
-        let collection_id = updated_schema.collection_id.clone();
-        self.database
-            .add_collection_to_cache(updated_schema)
-            .map_err(|e| format!("{}", e))?;
+        let collection_id = self
+            .database
+            .require_collection(collection)
+            .map_err(|e| format!("{}", e))?
+            .collection_id()
+            .to_string();
 
         Ok(IndexInfo {
             kind: index_desc.kind,

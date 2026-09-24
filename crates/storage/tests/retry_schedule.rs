@@ -86,7 +86,10 @@ async fn configured_schedule_survives_scope_updates_and_reopen() {
         first.next_retry_unix
     );
     let before = now();
-    peerstore.reschedule_retry_peer("peer", None).await.unwrap();
+    peerstore
+        .reschedule_retry_peer("peer", None, 1)
+        .await
+        .unwrap();
     let second = info(&peerstore).await;
     assert!(second.next_retry_unix >= before + 300 && second.next_retry_unix <= now() + 600);
     drop(peerstore);
@@ -105,7 +108,10 @@ async fn configured_schedule_survives_scope_updates_and_reopen() {
         2
     );
     let before = now();
-    peerstore.reschedule_retry_peer("peer", None).await.unwrap();
+    peerstore
+        .reschedule_retry_peer("peer", None, 1)
+        .await
+        .unwrap();
     let third = info(&peerstore).await;
     assert!(third.next_retry_unix > before && third.next_retry_unix <= now() + 1);
     assert_eq!(third.num_retries, 3);

@@ -155,28 +155,45 @@ mod tests {
     use crate::peer_identity::AnonymousResolver;
     use crate::replicator::{ReplicationFilter, ReplicationFilters, ReplicatorInfo};
     use async_trait::async_trait;
+    use bytes::Bytes;
     use defra_core::Block as DefraBlock;
     use iroh_bitswap::{Block, Store};
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use kovan_map::HopscotchMap;
 
-    #[derive(Debug, Default, Clone)]
+    #[derive(Clone)]
     struct InMemoryStore {
-        inner: Arc<Mutex<HashMap<Cid, Vec<u8>>>>,
+        inner: Arc<HopscotchMap<Cid, Bytes, rapidhash::fast::RandomState>>,
+    }
+
+    impl Default for InMemoryStore {
+        fn default() -> Self {
+            Self {
+                inner: Arc::new(HopscotchMap::with_hasher(
+                    rapidhash::fast::RandomState::default(),
+                )),
+            }
+        }
+    }
+
+    impl std::fmt::Debug for InMemoryStore {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("InMemoryStore")
+                .field("blocks", &self.inner.len())
+                .finish()
+        }
     }
 
     impl InMemoryStore {
         fn put(&self, cid: Cid, data: Vec<u8>) {
-            self.inner.lock().unwrap().insert(cid, data);
+            self.inner.insert(cid, Bytes::from(data));
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl Store for InMemoryStore {
         async fn get_size(&self, cid: &Cid) -> anyhow::Result<usize> {
             self.inner
-                .lock()
-                .unwrap()
                 .get(cid)
                 .map(|b| b.len())
                 .ok_or_else(|| anyhow::anyhow!("not found"))
@@ -185,16 +202,13 @@ mod tests {
         async fn get(&self, cid: &Cid) -> anyhow::Result<Block> {
             let data = self
                 .inner
-                .lock()
-                .unwrap()
                 .get(cid)
-                .cloned()
                 .ok_or_else(|| anyhow::anyhow!("not found"))?;
-            Ok(Block::new(data.into(), *cid))
+            Ok(Block::new(data, *cid))
         }
 
         async fn has(&self, cid: &Cid) -> anyhow::Result<bool> {
-            Ok(self.inner.lock().unwrap().contains_key(cid))
+            Ok(self.inner.contains_key(cid))
         }
     }
 
@@ -555,7 +569,8 @@ mod tests {
     #[derive(Clone)]
     struct StaticClassifier(BlockClass);
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl BlockClassifier for StaticClassifier {
         async fn classify(&self, _cid: &Cid, _data: &[u8]) -> BlockClass {
             self.0.clone()

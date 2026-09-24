@@ -24,7 +24,7 @@ pub enum KeyScope {
 }
 
 /// Outcome of an `AccessPolicy` decision. M1 ships only `Allow` / `Deny`.
-/// `AllowAttested` lands with M4 SourceHub.
+/// `AllowAttested` lands with M4 Vera.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyDecision {

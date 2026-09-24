@@ -90,7 +90,7 @@ pub fn generate_doc_artifacts(
     doc_id: &str,
     encrypted_indexes: &[EncryptedIndexDescription],
     field_names: &[String],
-    field_values: &std::collections::HashMap<String, NormalValue>,
+    field_values: &rapidhash::RapidHashMap<String, NormalValue>,
     identity_pubkey: Option<&[u8]>,
     enc_key: &[u8],
 ) -> Result<Vec<Artifact>> {

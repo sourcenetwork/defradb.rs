@@ -1,11 +1,14 @@
 //! Command handlers for the iroh endpoint event loop.
 
-use std::collections::{HashMap, HashSet};
+use rapidhash::fast::RandomState;
+use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use iroh_gossip::net::Gossip;
 use iroh_gossip::proto::TopicId;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
@@ -19,8 +22,10 @@ use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
 use super::endpoint::{
     peer_direct_addr, snapshot_subscription_senders, spawn_task, ActiveSync, EndpointResources,
-    PendingPushLogReplies, SpawnedTasks, SubscriptionSenders, TopicSubscription,
+    Neighbors, PendingPushLogReplies, RawTopics, SpawnedTasks, SubscriptionSenders,
+    TopicSubscription,
 };
+use super::endpoint_config::PeerAdmission;
 use super::endpoint_rpc::{
     close_peer_connections, handle_block_sync, handle_car_request_response, handle_fire_and_forget,
     handle_request_response, handle_send_only, handle_two_stream_request, remember_connection,
@@ -28,7 +33,7 @@ use super::endpoint_rpc::{
 };
 use super::endpoint_streams::ConnectionStreamContext;
 use super::gossip_heal;
-use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id, PeerMap};
+use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 
 /// Authenticate the endpoint that originated a PushLog gossip envelope.
@@ -88,10 +93,10 @@ pub(super) async fn handle_command(
     cmd: IrohCommand,
     resources: &EndpointResources,
     pending_pushlog_replies: &PendingPushLogReplies,
-    subscriptions: &mut HashMap<String, TopicSubscription>,
-    raw_topics: &Arc<parking_lot::Mutex<HashSet<String>>>,
+    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
+    raw_topics: &RawTopics,
     replicators: &Arc<ReplicatorRegistry>,
-    active_syncs: &mut HashMap<u64, ActiveSync>,
+    active_syncs: &mut RapidHashMap<u64, ActiveSync>,
     next_query_id: &mut u64,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> bool {
@@ -131,12 +136,29 @@ pub(super) async fn handle_command(
             let result = handle_disconnect(peer_id, resources);
             let _ = reply.send(result);
         }
+        IrohCommand::AllowPeer {
+            peer_id,
+            authority,
+            reply,
+        } => {
+            let result =
+                parse_endpoint_id(&peer_id).and_then(|id| resources.admission.allow(id, authority));
+            let _ = reply.send(result);
+        }
+        IrohCommand::DenyPeer { peer_id, reply } => {
+            let result = handle_deny_peer(peer_id, resources);
+            let _ = reply.send(result);
+        }
+        IrohCommand::IsPeerRevoked { peer_id, reply } => {
+            let result = parse_endpoint_id(&peer_id).map(|id| resources.admission.is_revoked(&id));
+            let _ = reply.send(result);
+        }
         IrohCommand::Listen { addr: _, reply } => {
             // iroh endpoint is already listening after bind
             let _ = reply.send(Ok(()));
         }
         IrohCommand::ConnectedPeers { reply } => {
-            let _ = reply.send(Ok(peer_map.lock().connected_peers()));
+            let _ = reply.send(Ok(peer_map.connected_peers()));
         }
         IrohCommand::ListenAddresses { reply } => {
             let endpoint_addr = endpoint.addr();
@@ -153,7 +175,7 @@ pub(super) async fn handle_command(
             let _ = reply.send(Ok(addrs));
         }
         IrohCommand::PeerAddresses { reply } => {
-            let _ = reply.send(Ok(peer_map.lock().peer_addresses()));
+            let _ = reply.send(Ok(peer_map.peer_addresses()));
         }
         IrohCommand::NetworkChange { reply } => {
             endpoint.network_change().await;
@@ -167,6 +189,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_request_response(
                     &endpoint,
@@ -175,15 +198,23 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
             });
         }
         IrohCommand::Subscribe { topic, reply } => {
-            let result =
-                handle_subscribe(gossip, subscriptions, peer_map, raw_topics, topic, event_tx)
-                    .await;
+            let result = handle_subscribe(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                raw_topics,
+                topic,
+                event_tx,
+            )
+            .await;
             let _ = reply.send(result);
         }
         IrohCommand::Unsubscribe { topic, reply } => {
@@ -196,26 +227,48 @@ pub(super) async fn handle_command(
             }
         }
         IrohCommand::Publish { topic, msg, reply } => {
-            let result = handle_publish(gossip, subscriptions, peer_map, topic, msg, spawned_tasks);
+            let result = handle_publish(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                topic,
+                msg,
+                spawned_tasks,
+            );
             let _ = reply.send(result);
         }
         IrohCommand::RegisterRawTopic { topic, reply } => {
-            raw_topics.lock().insert(topic);
+            raw_topics.insert_if_absent(topic, ());
             let _ = reply.send(Ok(()));
         }
         IrohCommand::SubscribeRaw { topic, reply } => {
             // Mark as raw-routed first so the reader spawned below emits
             // GossipRawMessage (not a decoded PushLogBroadcast) for it, then
             // join the gossip mesh with a real reader task.
-            raw_topics.lock().insert(topic.clone());
-            let result =
-                subscribe_topic_str(gossip, subscriptions, peer_map, raw_topics, topic, event_tx)
-                    .await;
+            raw_topics.insert_if_absent(topic.clone(), ());
+            let result = subscribe_topic_str(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                raw_topics,
+                topic,
+                event_tx,
+            )
+            .await;
             let _ = reply.send(result);
         }
         IrohCommand::PublishRaw { topic, data, reply } => {
-            let result =
-                handle_publish_raw(gossip, subscriptions, peer_map, topic, data, spawned_tasks);
+            let result = handle_publish_raw(
+                gossip,
+                subscriptions,
+                peer_map,
+                &resources.admission,
+                topic,
+                data,
+                spawned_tasks,
+            );
             let _ = reply.send(result);
         }
         IrohCommand::TopicPeers { topic, reply } => {
@@ -223,8 +276,10 @@ pub(super) async fn handle_command(
             let peers = subscriptions
                 .get(&topic_str)
                 .map(|sub| {
-                    let snapshot: Vec<_> = sub.neighbors.lock().iter().copied().collect();
-                    snapshot.iter().map(endpoint_id_to_peer_id).collect()
+                    sub.neighbors
+                        .keys()
+                        .map(|id| endpoint_id_to_peer_id(&id))
+                        .collect()
                 })
                 .unwrap_or_default();
             let _ = reply.send(Ok(peers));
@@ -255,15 +310,16 @@ pub(super) async fn handle_command(
             let endpoint = endpoint.clone();
             let pending_pushlog_replies = pending_pushlog_replies.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let message_id = request.message_id.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let request_peer_id = peer_id.clone();
                 let request_message_id = message_id.clone();
                 let result = async move {
                     let (reply_tx, reply_rx) = oneshot::channel();
-                    pending_pushlog_replies
-                        .lock()
-                        .insert(request_message_id.clone(), reply_tx);
+                    let slot = SegQueue::new();
+                    slot.push(reply_tx);
+                    pending_pushlog_replies.insert(request_message_id.clone(), Arc::new(slot));
 
                     let result = handle_two_stream_request(
                         &endpoint,
@@ -272,9 +328,12 @@ pub(super) async fn handle_command(
                         direct_addr,
                         &connection_cache,
                         reply_rx,
+                        &admission,
                     )
                     .await;
-                    pending_pushlog_replies.lock().remove(&request_message_id);
+                    if let Some(slot) = pending_pushlog_replies.remove(&request_message_id) {
+                        drop(slot.pop());
+                    }
                     result
                 }
                 .await;
@@ -291,6 +350,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_send_only(
                     &endpoint,
@@ -299,6 +359,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -312,6 +373,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let result: crate::error::Result<crate::message::DocSyncReply> =
@@ -322,6 +384,7 @@ pub(super) async fn handle_command(
                         &request,
                         direct_addr,
                         &connection_cache,
+                        &admission,
                     )
                     .await;
                 match result {
@@ -348,6 +411,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let result: crate::error::Result<crate::message::BranchableSyncReply> =
@@ -358,6 +422,7 @@ pub(super) async fn handle_command(
                         &request,
                         direct_addr,
                         &connection_cache,
+                        &admission,
                     )
                     .await;
                 match result {
@@ -384,6 +449,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -392,6 +458,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -405,6 +472,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -413,6 +481,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -460,6 +529,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_car_request_response(
@@ -469,6 +539,7 @@ pub(super) async fn handle_command(
                     direct_addr,
                     &connection_cache,
                     &event_tx,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -482,6 +553,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -490,6 +562,7 @@ pub(super) async fn handle_command(
                     &car_data,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -503,6 +576,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -511,6 +585,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -524,6 +599,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -532,6 +608,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -545,6 +622,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -553,6 +631,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -566,6 +645,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -574,6 +654,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -587,6 +668,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -595,6 +677,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -608,6 +691,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -616,6 +700,7 @@ pub(super) async fn handle_command(
                     &request,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -629,6 +714,7 @@ pub(super) async fn handle_command(
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
+            let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_fire_and_forget(
                     &endpoint,
@@ -637,6 +723,7 @@ pub(super) async fn handle_command(
                     &reply_msg,
                     direct_addr,
                     &connection_cache,
+                    &admission,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -656,6 +743,7 @@ pub(super) async fn handle_command(
                 Arc::clone(peer_map),
                 Arc::clone(connection_cache),
                 event_tx.clone(),
+                Arc::clone(&resources.admission),
             );
             let task = spawn_task(spawned_tasks, async move {
                 handle_block_sync(resources, query_id, root, providers, missing).await;
@@ -735,6 +823,20 @@ async fn handle_dial(
     addrs: Vec<PeerAddr>,
 ) -> crate::error::Result<()> {
     let endpoint_id = parse_endpoint_id(peer_id)?;
+
+    // A revoked peer must not be dialled. Refusing only its inbound
+    // connections is not a revocation: this node dials on its own initiative
+    // (the replicator reconnect sweep dials exactly the registered peers
+    // missing from `connected_peers`, and cutting a peer's connection is what
+    // marks it missing), so without this check a revoked peer is re-dialled
+    // BY US within seconds and regains full stream service over the
+    // connection we opened.
+    if !ctx.resources.admission.admits_outbound(&endpoint_id) {
+        return Err(crate::error::Error::Dial(format!(
+            "refusing to dial {peer_id}: peer is revoked"
+        )));
+    }
+
     let mut endpoint_addr = endpoint_addr_from_parts(peer_id, &addrs)?;
 
     // Fix B (#511 reverse-edge dial): the advertised address may be
@@ -765,13 +867,29 @@ async fn handle_dial(
     // on the first message.
     remember_connection(&ctx.resources.connection_cache, peer_id, &connection)?;
 
-    let is_new = ctx.resources.peer_map.lock().increment_connections(
+    let is_new = ctx.resources.peer_map.increment_connections(
         endpoint_id,
         direct_addresses.first().copied(),
         connection.clone(),
     );
 
-    if is_new
+    // Re-check AFTER registering. The dial above can run for many seconds, and
+    // a revoke landing inside that window read `peer_map` and the connection
+    // cache before this connection was in either, so it closed nothing.
+    // Registering first and re-checking second means one of the two always
+    // sees the other.
+    let admitted = ctx.resources.admission.admits_outbound(&endpoint_id);
+    if !admitted {
+        close_peer_connections(
+            &ctx.resources.peer_map,
+            &ctx.resources.connection_cache,
+            &endpoint_id,
+        );
+        connection.close(0u32.into(), b"peer revoked");
+    }
+
+    if admitted
+        && is_new
         && ctx
             .event_tx
             .send(TransportEvent::PeerConnected(peer_id.clone()))
@@ -781,7 +899,7 @@ async fn handle_dial(
         warn!("Event channel closed, cannot emit PeerConnected");
     }
 
-    if is_new {
+    if admitted && is_new {
         gossip_heal::spawn_peer_connected_heal(
             &ctx.resources,
             &ctx.subscription_senders,
@@ -790,6 +908,13 @@ async fn handle_dial(
     }
 
     // Keep connection alive by spawning a handler for incoming streams.
+    //
+    // Spawned even when the re-check above refused the peer, and deliberately:
+    // `increment_connections` has already counted this connection, and it is
+    // this task's cleanup that decrements it. Returning early instead would
+    // leave the count stuck above zero, which is worse than the race it was
+    // meant to close: the revoked peer would sit in `connected_peers` forever,
+    // looking connected when it holds nothing.
     let stream_context = ConnectionStreamContext::new(
         &ctx.resources,
         Arc::clone(&ctx.pending_pushlog_replies),
@@ -799,6 +924,12 @@ async fn handle_dial(
         super::endpoint_streams::handle_connection_streams(connection, endpoint_id, stream_context)
             .await;
     });
+
+    if !admitted {
+        return Err(crate::error::Error::Dial(format!(
+            "dial to {peer_id} raced a revoke: connection closed"
+        )));
+    }
 
     Ok(())
 }
@@ -823,7 +954,61 @@ fn handle_disconnect(peer_id: PeerId, resources: &EndpointResources) -> crate::e
     if let Some(connection) = resources.healer.take_conn(&endpoint_id) {
         connection.close(0u32.into(), b"disconnect");
     }
+    // Gossip connections this node accepted live in none of the above: they
+    // are handed to the gossip layer before the peer ever reaches `peer_map`.
+    for connection in resources.healer.take_accepted(&endpoint_id) {
+        connection.close(0u32.into(), b"disconnect");
+    }
     Ok(())
+}
+
+/// Bar a peer in both directions and hang up every connection it holds.
+///
+/// Order matters, and it is bar-then-close, never close-then-bar. Every
+/// admission check reads the bar, so once it is recorded no accept and no
+/// dial can bring the peer back; only then is it safe to close what is
+/// already open. Closing first would leave a window in which a reconnect,
+/// or this node's own reconnect sweep, re-establishes the peer while it is
+/// still admissible.
+///
+/// Closing is not enough on its own either, which is why both halves exist:
+/// a connection being established concurrently with this call was not yet
+/// visible to `handle_disconnect` when it looked. The accept and dial paths
+/// therefore re-check the bar after publishing their connection handle, so
+/// that a connection racing this call is closed by whichever side observes
+/// the other. See `endpoint_streams::handle_incoming` and `handle_dial`.
+///
+/// Unlike the old allowlist-only withdrawal this is meaningful under
+/// `AcceptAll`: the bar is a separate set, so one peer can be revoked
+/// without narrowing who else may connect.
+fn handle_deny_peer(peer_id: PeerId, resources: &EndpointResources) -> crate::error::Result<()> {
+    let endpoint_id = parse_endpoint_id(&peer_id)?;
+    resources.admission.revoke(endpoint_id);
+    handle_disconnect(peer_id, resources)
+}
+
+/// The connected peers that may be handed to gossip as mesh neighbours.
+///
+/// Filtered, because seeding gossip with a peer id is not passive: iroh-gossip
+/// holds the raw endpoint and dials its own mesh, so a revoked peer named here
+/// is a revoked peer this node asks gossip to go and connect to, over a path
+/// neither `handle_dial` nor the accept check ever sees. `peer_map` alone is
+/// not safe to use for this: `take_connections` deliberately leaves the count
+/// entry behind for the stream tasks to clear, so a peer revoked a moment ago
+/// is still listed there with no live handles.
+///
+/// One function rather than a filter repeated at each call site, so the
+/// subscribe and publish paths cannot drift apart on who counts as a
+/// neighbour.
+fn admitted_neighbours(
+    peer_map: &SharedPeerMap,
+    admission: &PeerAdmission,
+) -> Vec<iroh::EndpointId> {
+    peer_map
+        .endpoint_ids()
+        .into_iter()
+        .filter(|id| admission.admits_outbound(id))
+        .collect()
 }
 
 /// Subscribe to a gossip topic.
@@ -831,11 +1016,13 @@ fn handle_disconnect(peer_id: PeerId, resources: &EndpointResources) -> crate::e
 /// Passes all currently connected peers as initial neighbors so gossip messages
 /// are immediately deliverable. iroh-gossip requires explicit neighbors unlike
 /// libp2p-gossipsub which discovers them automatically.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_subscribe(
     gossip: &Gossip,
-    subscriptions: &mut HashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
-    raw_topics: &Arc<parking_lot::Mutex<HashSet<String>>>,
+    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
+    peer_map: &SharedPeerMap,
+    admission: &PeerAdmission,
+    raw_topics: &RawTopics,
     topic: crate::topics::DefraTopic,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
@@ -843,6 +1030,7 @@ pub(super) async fn handle_subscribe(
         gossip,
         subscriptions,
         peer_map,
+        admission,
         raw_topics,
         topic.to_string(),
         event_tx,
@@ -859,11 +1047,13 @@ pub(super) async fn handle_subscribe(
 /// same string topic meet on the same iroh-gossip `TopicId`. The reader emits
 /// [`TransportEvent::GossipRawMessage`] for any topic present in `raw_topics`,
 /// and a decoded [`TransportEvent::GossipMessage`] otherwise.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn subscribe_topic_str(
     gossip: &Gossip,
-    subscriptions: &mut HashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
-    raw_topics: &Arc<parking_lot::Mutex<HashSet<String>>>,
+    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
+    peer_map: &SharedPeerMap,
+    admission: &PeerAdmission,
+    raw_topics: &RawTopics,
     topic_str: String,
     event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
@@ -874,28 +1064,27 @@ pub(super) async fn subscribe_topic_str(
     }
 
     let topic_id = topic_to_id(&topic_str);
-    let initial_peers: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
+    let initial_peers = admitted_neighbours(peer_map, admission);
     let gossip_topic = gossip
         .subscribe(topic_id, initial_peers)
         .await
         .map_err(|e| crate::error::Error::GossipSubSubscription(e.to_string()))?;
 
     let (sender, mut receiver) = gossip_topic.split();
-    let neighbors = Arc::new(parking_lot::Mutex::new(
-        receiver.neighbors().collect::<HashSet<_>>(),
-    ));
+    let neighbors: Neighbors = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
+    neighbors.extend(receiver.neighbors().map(|id| (id, ())));
 
     let event_tx = event_tx.clone();
     let topic_str_clone = topic_str.clone();
     let reader_neighbors = Arc::clone(&neighbors);
     let raw_topics_reader = Arc::clone(raw_topics);
-    let reader_task = tokio::spawn(async move {
+    let reader_task = n0_future::task::spawn(async move {
         while let Some(result) = receiver.next().await {
             match result {
                 Ok(event) => match event {
                     iroh_gossip::api::Event::Received(msg) => {
                         let sender_peer_id = endpoint_id_to_peer_id(&msg.delivered_from);
-                        if raw_topics_reader.lock().contains(&topic_str_clone) {
+                        if raw_topics_reader.contains_key(&topic_str_clone) {
                             let msg_id = MessageId::new(uuid::Uuid::new_v4().to_string());
                             if event_tx
                                 .send(TransportEvent::GossipRawMessage {
@@ -1013,7 +1202,7 @@ pub(super) async fn subscribe_topic_str(
                         }
                     }
                     iroh_gossip::api::Event::NeighborUp(id) => {
-                        reader_neighbors.lock().insert(id);
+                        reader_neighbors.insert_if_absent(id, ());
                         if event_tx
                             .send(TransportEvent::PeerSubscribed {
                                 peer_id: endpoint_id_to_peer_id(&id),
@@ -1026,7 +1215,7 @@ pub(super) async fn subscribe_topic_str(
                         }
                     }
                     iroh_gossip::api::Event::NeighborDown(id) => {
-                        reader_neighbors.lock().remove(&id);
+                        reader_neighbors.remove(&id);
                         if event_tx
                             .send(TransportEvent::PeerUnsubscribed {
                                 peer_id: endpoint_id_to_peer_id(&id),
@@ -1066,8 +1255,9 @@ pub(super) async fn subscribe_topic_str(
 
 fn handle_publish(
     gossip: &Gossip,
-    subscriptions: &HashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
+    peer_map: &SharedPeerMap,
+    admission: &PeerAdmission,
     topic: crate::topics::DefraTopic,
     msg: PushLogBroadcast,
     spawned_tasks: &SpawnedTasks,
@@ -1076,7 +1266,7 @@ fn handle_publish(
     let topic_id = topic_to_id(&topic_str);
     let sender = subscriptions.get(&topic_str).map(|sub| sub.sender.clone());
     let gossip = gossip.clone();
-    let initial_peers: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
+    let initial_peers = admitted_neighbours(peer_map, admission);
     let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
     let payload = msg
         .encode_gossip_payload()
@@ -1120,8 +1310,9 @@ fn handle_publish(
 /// `data` directly instead of encoding a `PushLogBroadcast`.
 fn handle_publish_raw(
     gossip: &Gossip,
-    subscriptions: &HashMap<String, TopicSubscription>,
-    peer_map: &Arc<parking_lot::Mutex<PeerMap>>,
+    subscriptions: &RapidHashMap<String, TopicSubscription>,
+    peer_map: &SharedPeerMap,
+    admission: &PeerAdmission,
     topic_str: String,
     data: Vec<u8>,
     spawned_tasks: &SpawnedTasks,
@@ -1129,7 +1320,7 @@ fn handle_publish_raw(
     let topic_id = topic_to_id(&topic_str);
     let sender = subscriptions.get(&topic_str).map(|sub| sub.sender.clone());
     let gossip = gossip.clone();
-    let initial_peers: Vec<iroh::EndpointId> = peer_map.lock().endpoint_ids().collect();
+    let initial_peers = admitted_neighbours(peer_map, admission);
     let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
 
     let _ = spawn_task(spawned_tasks, async move {
@@ -1145,7 +1336,7 @@ fn handle_publish_raw(
             match gossip.subscribe(topic_id, initial_peers).await {
                 Ok(mut topic) => {
                     if let Err(error) =
-                        tokio::time::timeout(RAW_PUBLISH_JOIN_TIMEOUT, topic.joined()).await
+                        n0_future::time::timeout(RAW_PUBLISH_JOIN_TIMEOUT, topic.joined()).await
                     {
                         warn!(
                             topic = %topic_str,

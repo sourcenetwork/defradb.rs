@@ -13,7 +13,8 @@ use crate::{P2PError, P2PErrorExt as _};
 /// send is a request-response with a 30s timeout, so `Ok` means the peer
 /// replied; libp2p's send is fire-and-forget, so `Ok` only means the bytes
 /// left. This asymmetry is pre-existing and is not normalised here.
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub(crate) trait DocSyncDispatch: Send + Sync {
     /// Peer identifier, which differs per transport: iroh uses
     /// `p2p::transport::PeerId`, libp2p uses `libp2p::PeerId`.
@@ -40,7 +41,8 @@ pub(crate) trait DocSyncDispatch: Send + Sync {
 }
 
 #[cfg(feature = "iroh")]
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocSyncDispatch for p2p::iroh::IrohTransport {
     type Peer = p2p::transport::PeerId;
 
@@ -69,7 +71,8 @@ impl DocSyncDispatch for p2p::iroh::IrohTransport {
 }
 
 #[cfg(feature = "libp2p")]
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocSyncDispatch for p2p::P2PHostHandle {
     type Peer = libp2p::PeerId;
 

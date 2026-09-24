@@ -154,6 +154,12 @@ impl Node {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
         }
 
+        if let Some(task) = self.vector_rebuild_task.take() {
+            info!("Stopping vector index rebuild worker...");
+            task.abort();
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
+        }
+
         if let Some(task) = self.txn_cleanup_task.take() {
             info!("Stopping transaction idle cleanup worker...");
             task.abort();
@@ -163,22 +169,51 @@ impl Node {
         // Shutdown P2P tasks first, then the handle
         if let Some(tasks) = self.p2p_tasks.take() {
             info!("Stopping P2P background tasks...");
-
-            tasks.coordinator.shutdown().await;
-
-            // Abort all tasks - they will stop when the channel closes
-            tasks.replication_task.abort();
-            tasks.host_task.abort();
-            tasks.failure_recorder_task.abort();
-            tasks.retry_loop_task.abort();
-            if let Some(event_task) = tasks.event_handler_task {
-                event_task.abort();
-            }
-
-            // Wait briefly for tasks to complete with timeout
             let timeout = std::time::Duration::from_secs(2);
-            let _ = tokio::time::timeout(timeout, tasks.replication_task).await;
-            let _ = tokio::time::timeout(timeout, tasks.host_task).await;
+
+            match tasks {
+                super::node::P2PTasks::Libp2p {
+                    coordinator,
+                    host_task,
+                    replication_task,
+                    event_handler_task,
+                    failure_recorder_task,
+                    retry_loop_task,
+                } => {
+                    coordinator.shutdown().await;
+
+                    // Abort all tasks - they will stop when the channel closes
+                    replication_task.abort();
+                    host_task.abort();
+                    failure_recorder_task.abort();
+                    retry_loop_task.abort();
+                    if let Some(event_task) = event_handler_task {
+                        event_task.abort();
+                    }
+
+                    let _ = tokio::time::timeout(timeout, replication_task).await;
+                    let _ = tokio::time::timeout(timeout, host_task).await;
+                }
+                #[cfg(feature = "iroh")]
+                super::node::P2PTasks::Iroh {
+                    peer,
+                    #[cfg(feature = "iroh-relay-server")]
+                    relay_server,
+                } => {
+                    peer.shutdown().await;
+
+                    #[cfg(feature = "iroh-relay-server")]
+                    if let Some(relay_server) = relay_server {
+                        match tokio::time::timeout(timeout, relay_server.shutdown()).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                warn!("iroh relay server shutdown encountered an issue: {}", e)
+                            }
+                            Err(_) => warn!("iroh relay server did not stop within {:?}", timeout),
+                        }
+                    }
+                }
+            }
 
             info!("P2P background tasks stopped");
         }

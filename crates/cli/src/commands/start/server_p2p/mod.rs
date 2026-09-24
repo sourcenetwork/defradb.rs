@@ -30,9 +30,9 @@ pub(super) struct P2PSetup {
     /// to the DefraKms transports list and installs the serve handler. `None`
     /// on the non-P2P fallback path.
     pub(super) kms_transport: Option<Arc<dyn kms::KeyTransport>>,
-    /// Defers wiring the late-built KMS into the inner merge handler (mirrors
-    /// `wire_merge_acp`). NAC/document_acp aren't available when the P2P system
-    /// is created, so the KMS is built later in server.rs.
+    /// Defers wiring the late-built KMS into the inner merge handler. NAC isn't
+    /// available when the P2P system is created, so the KMS is built later in
+    /// server.rs.
     pub(super) wire_kms: WireKms,
     /// This node's transport-level peer id (stringified). server.rs binds it
     /// into the KMS so served ECIES replies carry the correct AAD peer id.
@@ -64,6 +64,7 @@ pub(super) struct P2PSetup {
 }
 
 impl Node {
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn setup_p2p(
         store: Arc<storage::DynStore>,
         database: Arc<db::DB<storage::DynStore>>,
@@ -72,6 +73,7 @@ impl Node {
         peer_keypair: Option<p2p::Keypair>,
         node_identity: Option<Arc<identity::RawIdentity>>,
         se_key: Option<[u8; 32]>,
+        document_acp: Arc<dyn acp::DocumentACP>,
     ) -> Result<P2PSetup> {
         if config.net.p2p_disabled {
             return Ok(Self::p2p_disabled(database));
@@ -88,6 +90,7 @@ impl Node {
                     peer_keypair,
                     node_identity,
                     se_key,
+                    document_acp,
                 )
                 .await;
             }
@@ -100,6 +103,7 @@ impl Node {
                     peer_keypair,
                     node_identity,
                     se_key,
+                    document_acp,
                 );
                 return Err(Error::InvalidTransport(
                     "iroh transport not enabled. Rebuild with --features iroh".into(),

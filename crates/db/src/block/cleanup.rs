@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use crate::{Error, Result};
 use cid::Cid;
@@ -139,9 +139,9 @@ pub async fn delete_owned_dag_for_owners(
     doc_ids: &[String],
 ) -> Result<()> {
     let mut stack = roots.to_vec();
-    let mut edges: HashMap<Cid, Vec<Cid>> = HashMap::new();
-    let mut signatures: HashMap<Cid, Cid> = HashMap::new();
-    let mut visited = HashSet::new();
+    let mut edges: RapidHashMap<Cid, Vec<Cid>> = RapidHashMap::new();
+    let mut signatures: RapidHashMap<Cid, Cid> = RapidHashMap::new();
+    let mut visited = RapidHashSet::new();
 
     while let Some(cid) = stack.pop() {
         if !visited.insert(cid) {
@@ -161,7 +161,7 @@ pub async fn delete_owned_dag_for_owners(
         edges.insert(cid, children);
     }
 
-    let mut retained = HashSet::new();
+    let mut retained = RapidHashSet::new();
     for cid in &visited {
         let mut has_owner = true;
         for doc_id in doc_ids {

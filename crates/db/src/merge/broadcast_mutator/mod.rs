@@ -15,6 +15,7 @@ pub mod broadcast;
 use async_trait::async_trait;
 use blockstore::Blockstore;
 use document::{DocID, Document};
+use kovan::Atom;
 use p2p::message::SEArtifact;
 use p2p::sync::SyncCoordinator;
 use p2p::transport::P2PTransport;
@@ -22,10 +23,9 @@ use query::mutator::{
     BroadcastStatus, CreateResult, DeleteResult, DocMutator, MutationBatch,
     MutationBatchController, UpdateResult,
 };
+use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::RwLock;
 use storage::corekv::Store;
 use zeroize::Zeroizing;
 
@@ -69,7 +69,7 @@ pub struct BroadcastSeOptions {
 /// re-push without naming the transport type.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait SeArtifactRepusher: Send + Sync {
+pub trait SeArtifactRepusher: defra_core::thread_bounds::MaybeSendSync {
     /// Regenerate SE artifacts for `doc_id` in `collection_id` and push them to
     /// the collection's replicators. A no-op when the collection has no encrypted
     /// indexes, no SE key is provisioned, or the document is absent.
@@ -96,7 +96,7 @@ pub struct BroadcastMutator<S: Store, B: Blockstore, T: P2PTransport> {
     inner: AutoCommitMutator<S>,
     sync: Arc<SyncCoordinator<B, T>>,
     db: Arc<DB<S>>,
-    se_options: Arc<RwLock<BroadcastSeOptions>>,
+    se_options: Atom<BroadcastSeOptions>,
 }
 
 impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, T> {
@@ -106,7 +106,7 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, 
             inner: AutoCommitMutator::new(db.clone()),
             sync,
             db,
-            se_options: Arc::new(RwLock::new(BroadcastSeOptions::default())),
+            se_options: Atom::new(BroadcastSeOptions::default()),
         }
     }
 
@@ -115,19 +115,12 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, 
     }
 
     pub fn set_se_options(&self, options: BroadcastSeOptions) -> Result<(), String> {
-        let mut guard = self
-            .se_options
-            .write()
-            .map_err(|_| "broadcast SE options lock poisoned".to_string())?;
-        *guard = options;
+        self.se_options.store(options);
         Ok(())
     }
 
     fn load_se_options(&self) -> BroadcastSeOptions {
-        self.se_options
-            .read()
-            .map(|options| options.clone())
-            .unwrap_or_default()
+        self.se_options.load_clone()
     }
 
     fn generate_se_artifacts(
@@ -152,7 +145,7 @@ impl<S: Store, B: Blockstore + 'static, T: P2PTransport> BroadcastMutator<S, B, 
             }
             None => crate::merge::se::SECoordinator::with_key(se_key.to_vec()),
         };
-        let field_values: HashMap<String, document::NormalValue> = doc
+        let field_values: RapidHashMap<String, document::NormalValue> = doc
             .values()
             .iter()
             .map(|(key, value)| (key.clone(), value.value().clone()))
@@ -240,8 +233,22 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> SeArtifactRep
         }
         let document_json =
             serde_json::Value::Object(document.to_map().unwrap_or_default().into_iter().collect());
+        // The merge path calls this while holding the document's merge guard,
+        // and the retry sweep while walking a peer's markers. The fan-out is
+        // per-replicator network I/O, so it runs detached, as the live
+        // broadcast paths above do. Unlike those, nothing durable would replay
+        // a shed SE push, so a full pool runs it inline rather than dropping it.
+        let sync = self.sync.clone();
+        let collection_id = collection_id.to_string();
         self.sync
-            .push_se_artifacts_to_replicators_for_document(collection_id, artifacts, &document_json)
+            .spawn_or_run_non_authoritative_broadcast("se_artifact_repush", async move {
+                sync.push_se_artifacts_to_replicators_for_document(
+                    &collection_id,
+                    artifacts,
+                    &document_json,
+                )
+                .await;
+            })
             .await;
     }
 }
@@ -802,7 +809,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         &self,
         collection_name: &str,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         let se_fields: Vec<String> = modified_fields.iter().cloned().collect();
         let result = self
@@ -818,7 +825,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
         collection_name: &str,
         expected: Document,
         doc: Document,
-        modified_fields: std::collections::HashSet<String>,
+        modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         let se_fields: Vec<String> = modified_fields.iter().cloned().collect();
         let result = self

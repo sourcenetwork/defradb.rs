@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::str::FromStr;
 
 use cid::Cid;
@@ -13,7 +13,7 @@ pub async fn load_push_dag_blocks<R: Reader + ?Sized, E: Reader + ?Sized>(
     root_data: Bytes,
 ) -> Vec<(Cid, Bytes)> {
     let mut ordered = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = RapidHashSet::new();
     let mut stack = vec![(root_cid, root_data, false)];
 
     while let Some((cid, data, expanded)) = stack.pop() {
@@ -152,7 +152,6 @@ pub async fn load_latest_composite_head_cids<R: Reader + ?Sized, B: Reader + ?Si
     cids
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn load_collection_head_cids<R: Reader + ?Sized>(
     head_reader: &R,
     collection_short_id: u32,
@@ -163,7 +162,6 @@ pub(crate) async fn load_collection_head_cids<R: Reader + ?Sized>(
     Ok(found.live)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn resolve_collection_id_for_doc<S: storage::corekv::Store>(
     db: &crate::DB<S>,
     doc_id: &str,
@@ -195,7 +193,6 @@ pub(crate) async fn resolve_collection_id_for_doc<S: storage::corekv::Store>(
     Ok(None)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub async fn complete_document_retry_if_current<S: storage::corekv::Store>(
     db: &crate::DB<S>,
     peer_id: &str,
@@ -229,7 +226,6 @@ pub async fn complete_document_retry_if_current<S: storage::corekv::Store>(
         .map_err(|error| format!("failed to clear current document retry marker: {error}"))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn complete_document_retry_if_absent<S: storage::corekv::Store>(
     db: &crate::DB<S>,
     peer_id: &str,
@@ -262,7 +258,6 @@ pub(crate) async fn complete_document_retry_if_absent<S: storage::corekv::Store>
         .map_err(|error| format!("failed to clear absent document retry marker: {error}"))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn complete_collection_retry_if_current<S: storage::corekv::Store>(
     db: &crate::DB<S>,
     peer_id: &str,

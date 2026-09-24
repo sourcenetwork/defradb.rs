@@ -9,9 +9,13 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use embedded::{EmbeddedNodeConfig, NodeBuilder};
+#[cfg(feature = "iroh")]
+use embedded::IrohConfig;
 #[cfg(feature = "libp2p")]
-use embedded::{Libp2pConfig, Persistence, TransportConfig};
+use embedded::Libp2pConfig;
+use embedded::{EmbeddedNodeConfig, NodeBuilder};
+#[cfg(any(feature = "libp2p", feature = "iroh"))]
+use embedded::{Persistence, TransportConfig};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -104,6 +108,35 @@ async fn p2p_shutdown_releases_persistent_store() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "iroh")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn iroh_shutdown_releases_persistent_store() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("data.regolith");
+    let config = EmbeddedNodeConfig {
+        persistence: Persistence::Persistent,
+        transport: TransportConfig::Iroh(IrohConfig {
+            bind_addr: Some(std::net::Ipv4Addr::LOCALHOST.into()),
+            bind_port: Some(0),
+            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
+            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let node =
+        embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config).await?;
+
+    node.shutdown().await;
+    drop(node);
+
+    let reopened = storage::RegolithStore::open(&path)?;
+    storage::Store::close(&reopened).await?;
+
+    Ok(())
+}
+
+#[cfg(feature = "libp2p")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
     let dir = tempfile::tempdir()?;

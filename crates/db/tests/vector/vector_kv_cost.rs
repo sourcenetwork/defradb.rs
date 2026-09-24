@@ -26,23 +26,22 @@ use db::index::vector::store::NodeId;
 use db::index::vector::store::VectorNodeStore;
 use defra_core::thread_bounds::MaybeSend;
 use defra_core::vector::Metric;
-use std::collections::HashSet;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
 use storage::corekv::Store;
 use storage::corekv::Txn;
 use storage::RegolithStore;
 
 /// Counts every key read and write reaching the store, node and aux alike.
-#[derive(Debug, Default)]
 struct Counting<S> {
     inner: S,
     reads: AtomicUsize,
     writes: AtomicUsize,
     /// Distinct keys read, so a repeat read of the same node is visible
     /// separately from a genuinely new one.
-    distinct: Mutex<HashSet<u64>>,
+    distinct: HopscotchMap<u64, (), RandomState>,
     /// Entries handed to an `iterate_aux` visitor: what a list scan actually
     /// touches, as opposed to the number of `iterate_aux` calls (one per
     /// probed list) or the corpus size.
@@ -58,7 +57,7 @@ impl<S> Counting<S> {
             inner,
             reads: AtomicUsize::new(0),
             writes: AtomicUsize::new(0),
-            distinct: Mutex::new(HashSet::new()),
+            distinct: HopscotchMap::with_hasher(RandomState::default()),
             aux_entries_visited: AtomicUsize::new(0),
             max_aux_write_bytes: AtomicUsize::new(0),
         }
@@ -66,12 +65,8 @@ impl<S> Counting<S> {
 
     /// Reads, writes, distinct keys read.
     fn take(&self) -> (usize, usize, usize) {
-        let distinct = {
-            let mut seen = self.distinct.lock().unwrap();
-            let count = seen.len();
-            seen.clear();
-            count
-        };
+        let distinct = self.distinct.len();
+        self.distinct.clear();
         (
             self.reads.swap(0, Ordering::Relaxed),
             self.writes.swap(0, Ordering::Relaxed),
@@ -93,7 +88,7 @@ impl<S> Counting<S> {
 impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
     async fn get_node(&self, id: NodeId) -> Result<Option<Node>> {
         self.reads.fetch_add(1, Ordering::Relaxed);
-        self.distinct.lock().unwrap().insert(id.0);
+        self.distinct.insert(id.0, ());
         self.inner.get_node(id).await
     }
 
@@ -117,6 +112,10 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         F: FnMut(Node) -> Result<()> + MaybeSend,
     {
         self.inner.iterate_nodes(visit).await
+    }
+
+    async fn clear(&mut self) -> Result<()> {
+        self.inner.clear().await
     }
 
     async fn get_aux(&self, kind: u8, key: &[u8]) -> Result<Option<bytes::Bytes>> {

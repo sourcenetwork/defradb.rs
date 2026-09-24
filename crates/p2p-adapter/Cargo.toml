@@ -19,12 +19,14 @@ acp = { path = "../acp" }
 blockstore = { path = "../blockstore" }
 db = { path = "../db", default-features = false }
 defra-core = { path = "../defra-core" }
-defra-http = { path = "../http" }
+defra-http = { path = "../http", default-features = false }
 document = { path = "../document" }
 events = { path = "../events" }
 identity = { path = "../identity" }
 lens = { path = "../lens", default-features = false }
 p2p = { path = "../p2p", default-features = false }
+kms = { path = "../kms", optional = true }
+query = { path = "../query" }
 replication-filter = { path = "../replication-filter" }
 schema = { path = "../schema" }
 storage = { path = "../storage" }
@@ -34,13 +36,19 @@ bytes.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 cid.workspace = true
 hex.workspace = true
+kovan.workspace = true
+kovan-map.workspace = true
+kovan-queue.workspace = true
+n0-future.workspace = true
 libp2p = { workspace = true, optional = true }
+rapidhash.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
 serde_ipld_dagcbor.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 tracing.workspace = true
+web-time.workspace = true
 zeroize = "1"
 
 [dev-dependencies]
@@ -54,6 +62,9 @@ default = ["native", "wasmtime-runtime", "iroh", "libp2p"]
 native = ["db/native", ]
 wasmtime-runtime = ["db/wasmtime-runtime", "lens/wasmtime-runtime"]
 iroh = ["p2p/iroh-transport"]
+# Encryption key distribution over the iroh peer's gossip, and the pubsub_rpc
+# services that come with it.
+kms = ["dep:kms", "p2p/kms"]
 libp2p = ["dep:libp2p", "p2p/libp2p-transport", "db/p2p"]
 
 [lints]

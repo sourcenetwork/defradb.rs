@@ -12,10 +12,10 @@ use std::sync::LazyLock;
 
 use crate::error::{QueryError, Result};
 use graphql_parser::schema::{Directive, Type};
+use rapidhash::RapidHashMap;
 use regex::Regex;
 use schema::{CType, FieldDescription, FieldKind, ScalarKind};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 
 use super::directives::get_directive_arg;
 use super::parser::{ParsedType, PolicyConfig, EMPTY_TYPE_PLACEHOLDER};
@@ -299,7 +299,7 @@ pub(super) fn hash_to_hex(hash: &[u8]) -> String {
 pub(super) fn generate_collection_id(
     type_name: &str,
     fields: &[FieldDescription],
-    headstore: &HashMap<String, (Cid, u64)>,
+    headstore: &RapidHashMap<String, (Cid, u64)>,
 ) -> String {
     // Sort fields to match Go's order: _docID first, then alphabetically by name
     // Include fields with non-empty FieldID in the CID.

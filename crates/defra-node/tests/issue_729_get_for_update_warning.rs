@@ -1,5 +1,6 @@
+use kovan::Atom;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use defra_node::EmbeddedNode;
@@ -14,22 +15,26 @@ type User {
 
 #[derive(Clone, Default)]
 struct SharedLogBuffer {
-    inner: Arc<Mutex<Vec<u8>>>,
+    inner: Arc<Atom<Vec<u8>>>,
 }
 
 impl SharedLogBuffer {
     fn contents(&self) -> String {
-        String::from_utf8(self.inner.lock().unwrap().clone()).expect("log buffer should be utf-8")
+        String::from_utf8(self.inner.load_clone()).expect("log buffer should be utf-8")
     }
 }
 
 struct SharedLogWriter {
-    inner: Arc<Mutex<Vec<u8>>>,
+    inner: Arc<Atom<Vec<u8>>>,
 }
 
 impl io::Write for SharedLogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.lock().unwrap().extend_from_slice(buf);
+        self.inner.rcu(|logged| {
+            let mut next = logged.clone();
+            next.extend_from_slice(buf);
+            next
+        });
         Ok(buf.len())
     }
 

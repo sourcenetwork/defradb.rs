@@ -15,8 +15,12 @@ use super::endpoint::{
     spawn_task, EndpointResources, PendingPushLogReplies, SpawnedTasks, SubscriptionSenders,
 };
 use super::gossip_heal;
-use super::peer_map::{endpoint_id_to_peer_id, PeerMap};
+use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
+
+/// QUIC application error code closing a connection refused by the inbound
+/// allowlist. Distinct from the disconnect code (0) used elsewhere.
+const REFUSED_CONNECTION_CODE: u32 = 1;
 
 /// Handle an incoming QUIC connection.
 pub(super) async fn handle_incoming(
@@ -59,25 +63,70 @@ pub(super) async fn handle_incoming(
         }
     };
 
+    // Establish identity from the accepted connection itself (the iroh
+    // endpoint id authenticated by the QUIC/TLS handshake), never from
+    // anything the caller sends in a payload. A refused peer is closed here,
+    // before it reaches the gossip layer or the mux layer below.
+    let remote_id = connection.remote_id();
+    if !resources.admission.admits_inbound(&remote_id) {
+        warn!(
+            peer_id = %endpoint_id_to_peer_id(&remote_id),
+            "Refused inbound Iroh connection: peer is not admitted"
+        );
+        connection.close(REFUSED_CONNECTION_CODE.into(), b"peer not authorized");
+        return;
+    }
+
     let conn_alpn = connection.alpn().to_vec();
 
     // If it's a gossip ALPN, hand off to the gossip layer
     if conn_alpn == iroh_gossip::net::GOSSIP_ALPN {
+        // Retain a handle BEFORE gossip takes ownership, and re-check after.
+        // Gossip connections never reach `peer_map`, so this handle is the
+        // only thing a later revoke can close; retaining it first means a
+        // revoke racing this accept either finds the handle here, or is seen
+        // by the re-check below.
+        resources
+            .healer
+            .retain_accepted(remote_id, connection.clone());
+        if !resources.admission.admits_inbound(&remote_id) {
+            warn!(
+                peer_id = %endpoint_id_to_peer_id(&remote_id),
+                "Refused inbound gossip connection: peer was revoked while it was being accepted"
+            );
+            for conn in resources.healer.take_accepted(&remote_id) {
+                conn.close(REFUSED_CONNECTION_CODE.into(), b"peer not authorized");
+            }
+            return;
+        }
         if let Err(e) = resources.gossip.handle_connection(connection).await {
             debug!("Gossip handle_connection error: {}", e);
         }
         return;
     }
 
-    let remote_id = connection.remote_id();
-
     let is_new =
         resources
             .peer_map
-            .lock()
             .increment_connections(remote_id, remote_addr, connection.clone());
 
-    if is_new
+    // Re-check AFTER registering, not only before. A revoke that ran between
+    // the check above and this registration scanned `peer_map` while this
+    // connection was still absent from it, so it closed nothing. Publishing
+    // the handle first and re-checking second means one of the two always
+    // sees the other. The stream task is still spawned below on the refused
+    // path, so its cleanup decrements the count this registration added.
+    let admitted = resources.admission.admits_inbound(&remote_id);
+    if !admitted {
+        warn!(
+            peer_id = %endpoint_id_to_peer_id(&remote_id),
+            "Closing inbound Iroh connection: peer was revoked while it was being accepted"
+        );
+        connection.close(REFUSED_CONNECTION_CODE.into(), b"peer not authorized");
+    }
+
+    if admitted
+        && is_new
         && event_tx
             .send(TransportEvent::PeerConnected(endpoint_id_to_peer_id(
                 &remote_id,
@@ -88,7 +137,7 @@ pub(super) async fn handle_incoming(
         warn!("Event channel closed, cannot emit PeerConnected");
     }
 
-    if is_new {
+    if admitted && is_new {
         gossip_heal::spawn_peer_connected_heal(resources, subscription_senders, remote_id);
     }
 
@@ -107,7 +156,7 @@ pub(super) async fn handle_incoming(
 #[derive(Clone)]
 pub(super) struct ConnectionStreamContext {
     event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
-    peer_map: Arc<parking_lot::Mutex<PeerMap>>,
+    peer_map: Arc<SharedPeerMap>,
     pending_pushlog_replies: PendingPushLogReplies,
     node_identity: Option<Arc<identity::RawIdentity>>,
     spawned_tasks: SpawnedTasks,
@@ -171,7 +220,7 @@ pub(super) async fn handle_connection_streams(
         });
     }
 
-    let fully_disconnected = context.peer_map.lock().decrement_connections(&remote_id);
+    let fully_disconnected = context.peer_map.decrement_connections(&remote_id);
     debug!(peer_id = %peer_id, fully_disconnected, "Connection closed");
 
     if fully_disconnected
@@ -264,11 +313,10 @@ async fn dispatch_stream(
             // same-stream reply support.
             let reply: PushLogReply =
                 protocols::read_message(recv, protocols::MAX_MESSAGE_SIZE).await?;
-            let (sender, pending_len_after_remove) = {
-                let mut pending = pending_pushlog_replies.lock();
-                let sender = pending.remove(&reply.message_id);
-                (sender, pending.len())
-            };
+            let sender = pending_pushlog_replies
+                .remove(&reply.message_id)
+                .and_then(|slot| slot.pop());
+            let pending_len_after_remove = pending_pushlog_replies.len();
             if let Some(sender) = sender {
                 let _ = sender.send(reply);
             } else {

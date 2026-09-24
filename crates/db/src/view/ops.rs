@@ -6,9 +6,9 @@
 use crate::collection::selector::CollectionSelector;
 use crate::error::{Error, Result};
 use datastore::NamespaceView;
-use schema::CollectionVersion;
 #[cfg(not(target_arch = "wasm32"))]
-use std::collections::{HashMap, HashSet};
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
+use schema::CollectionVersion;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 use std::time::Duration;
@@ -186,7 +186,7 @@ impl<S: Store> crate::database::DB<S> {
         tokio::spawn(async move {
             let mut ticker = time::interval(Duration::from_millis(250));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            let mut schedules: HashMap<String, ScheduledViewState> = HashMap::new();
+            let mut schedules: RapidHashMap<String, ScheduledViewState> = RapidHashMap::new();
 
             loop {
                 ticker.tick().await;
@@ -203,7 +203,7 @@ impl<S: Store> crate::database::DB<S> {
                 };
 
                 let now = Instant::now();
-                let active_names: HashSet<String> = scheduled_views
+                let active_names: RapidHashSet<String> = scheduled_views
                     .iter()
                     .map(|view| view.name.clone())
                     .collect();
@@ -399,15 +399,13 @@ impl<S: Store> crate::database::DB<S> {
 
     /// Get all active collections as CollectionVersion objects (internal helper).
     pub(crate) fn get_all_active_collections_internal(&self) -> Result<Vec<CollectionVersion>> {
-        let cache = self
-            .collections
-            .read()
-            .map_err(|_| Error::Other("failed to acquire collections lock".to_string()))?;
-        Ok(cache
-            .values()
-            .map(|collection| collection.schema())
-            .filter(|schema| schema.is_active)
-            .cloned()
-            .collect())
+        Ok(self.collections.peek(|cache| {
+            cache
+                .values()
+                .map(|collection| collection.schema())
+                .filter(|schema| schema.is_active)
+                .cloned()
+                .collect()
+        }))
     }
 }

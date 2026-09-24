@@ -23,7 +23,7 @@ members = [
     "crates/zanzibar",
     "crates/acp",
     "crates/defra-version",
-    "crates/sourcehub",
+    "crates/vera",
     "crates/events",
     "crates/ffi",
     "crates/lens",
@@ -67,6 +67,19 @@ await_holding_refcell_ref = "warn"
 [workspace.dependencies]
 defra-p2p-adapter = { path = "crates/p2p-adapter", default-features = false }
 
+# Hashing for every map that needs no synchronization: the `fast` profile,
+# `unsafe` for unchecked reads (stable toolchain, so `nightly` is out).
+rapidhash = { version = "4.5.1", features = ["unsafe"] }
+
+# Lock-free shared state: kovan's wait-free reclamation under Atom (RCU) and
+# AtomOption, HopscotchMap for shared maps, SegQueue and ArrayQueue for
+# shared queues, kovan-channel for owner tasks. Nothing shared sits behind a
+# Mutex or RwLock.
+kovan = "0.1.20"
+kovan-map = "0.1.20"
+kovan-queue = "0.1.20"
+kovan-channel = "0.1.20"
+
 # Async runtime
 tokio = { version = "1.35" }
 async-trait = "0.1"
@@ -83,22 +96,25 @@ serde_bytes = "0.11"
 ciborium = "0.2"
 
 web-time = "1.1"
+# Task and timer shims: tokio natively, wasm-bindgen-futures in a browser.
+n0-future = "0.3"
 
 # P2P networking
 # Keep these on the same libp2p-swarm release line.
 libp2p = { version = "0.56", features = ["tcp", "noise", "yamux", "gossipsub", "kad", "identify", "relay", "dns", "quic", "websocket", "secp256k1"] }
-iroh-bitswap = { git = "https://github.com/sourcenetwork/beetle", rev = "255e4cfee016697c77ec92136dbe5d57225eb2d5" }
+iroh-bitswap = { git = "https://github.com/sourcenetwork/beetle", rev = "7317b52707dfcbb1e8408d79ec571df5af5b2f99" }
 libp2p-stream = "0.4.0-alpha"
 multiaddr = "0.18"
 
 # Iroh P2P transport (alternative to libp2p)
 iroh = "1.0.1"
 iroh-gossip = "0.101.0"
+iroh-relay = { version = "1.0.1", features = ["server"] }
 iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Storage
-regolith = { git = "https://github.com/sourcenetwork/regolith", rev = "c9582821be559014535dc0ca092c19d40341e6b0" }
+regolith = "0.1.7"
 
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["serde", "zeroize"] }
@@ -284,3 +300,18 @@ opt-level = "z"
 opt-level = "z"
 [profile.release.package."hickory-net"]
 opt-level = "z"
+
+[patch.crates-io]
+commonware-p2p = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-utils = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-codec = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-runtime = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-consensus = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-cryptography = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-parallel = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-storage = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-broadcast = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-resolver = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-macros = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-glue = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-stream = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }

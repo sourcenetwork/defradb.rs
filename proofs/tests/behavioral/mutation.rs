@@ -4,6 +4,10 @@ use serde_json::Value;
 use std::process::Command;
 use std::time::Duration;
 
+/// Both runtimes end a conflict message with corekv's wording; Go emits it
+/// bare, Rust prefixes it with the commit-error chain.
+const TXN_CONFLICT: &str = "transaction conflict. Please retry";
+
 /// Go can exit successfully with both mutation data and a commit error.
 /// Retry only explicit transaction aborts, never a failed convergence assertion.
 pub async fn execute(cluster: &TestCluster, node: usize, query: &str) -> Result<Value> {
@@ -36,7 +40,9 @@ fn mutation_result(stdout: &str) -> Result<Option<Value>> {
         let errors = errors.as_array().context("invalid GraphQL errors")?;
         if !errors.is_empty() {
             if errors.iter().all(|error| {
-                error["message"].as_str() == Some("Transaction Conflict. Please retry")
+                error["message"]
+                    .as_str()
+                    .is_some_and(|message| message.ends_with(TXN_CONFLICT))
             }) {
                 return Ok(None);
             }
@@ -52,8 +58,16 @@ fn mutation_result(stdout: &str) -> Result<Option<Value>> {
 
 #[test]
 fn commit_conflict_is_not_success_even_with_mutation_data() {
-    let response = r#"{"data":{"update_User":[{"_docID":"doc"}]},"errors":[{"message":"Transaction Conflict. Please retry"}]}"#;
-    assert!(mutation_result(response).unwrap().is_none());
+    for message in [
+        "transaction conflict. Please retry",
+        "commit error: datastore error: storage error: transaction conflict. Please retry",
+    ] {
+        let response = serde_json::json!({
+            "data": {"update_User": [{"_docID": "doc"}]},
+            "errors": [{"message": message}]
+        });
+        assert!(mutation_result(&response.to_string()).unwrap().is_none());
+    }
 }
 
 #[test]
@@ -61,7 +75,7 @@ fn unrelated_errors_are_not_retried_or_hidden_by_data() {
     for errors in [
         serde_json::json!([{"message": "invalid field"}]),
         serde_json::json!([
-            {"message": "Transaction Conflict. Please retry"},
+            {"message": "transaction conflict. Please retry"},
             {"message": "invalid field"}
         ]),
     ] {

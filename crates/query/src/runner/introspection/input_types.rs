@@ -1,20 +1,20 @@
 use async_graphql::dynamic::*;
+use rapidhash::{RapidHashMap, RapidHashSet};
 use schema::{CollectionVersion, FieldKind, ScalarArrayKind, ScalarKind};
-use std::collections::HashMap;
 
 use super::collection::scalar_to_gql_name;
 
 /// Build filter input type for a collection.
 pub(super) fn build_filter_input_type(
     collection: &CollectionVersion,
-    id_to_name: &HashMap<String, String>,
+    id_to_name: &RapidHashMap<String, String>,
 ) -> InputObject {
     let type_name = format!("{}FilterArg", collection.name);
     let mut fields: Vec<(String, InputValue)> = Vec::new();
 
     // Collect relation backing field names (e.g., `_authorID` for a `author` relation field)
     // These fields store foreign keys and should use IDOperatorBlock in filters
-    let relation_backing_fields: std::collections::HashSet<String> = collection
+    let relation_backing_fields: RapidHashSet<String> = collection
         .fields
         .iter()
         .filter_map(|f| {
@@ -78,7 +78,7 @@ pub(super) fn build_filter_input_type(
 /// Build order input type for a collection.
 pub(super) fn build_order_input_type(
     collection: &CollectionVersion,
-    _id_to_name: &HashMap<String, String>,
+    _id_to_name: &RapidHashMap<String, String>,
 ) -> InputObject {
     let type_name = format!("{}OrderArg", collection.name);
     let mut fields: Vec<(String, InputValue)> = Vec::new();
@@ -204,7 +204,7 @@ pub(super) fn field_kind_to_input_type_ref(kind: &FieldKind) -> TypeRef {
 /// Get the filter type name for a field kind.
 pub(super) fn get_filter_type_for_field(
     kind: &FieldKind,
-    id_to_name: &HashMap<String, String>,
+    id_to_name: &RapidHashMap<String, String>,
     current_name: &str,
 ) -> String {
     match kind {

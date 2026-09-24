@@ -23,7 +23,6 @@ pub(super) struct HttpServerArgs<'a> {
     pub(super) p2p_adapter: Option<Arc<dyn defra_http::router::P2POperations>>,
     pub(super) manage_requester: Option<Arc<dyn defra_http::router::ManageRequester>>,
     pub(super) nac_adapter: Option<Arc<crate::nac_adapter::NacAdapter>>,
-    pub(super) txn_broadcaster: Option<Arc<dyn db::event::emission::TxnBroadcaster>>,
     pub(super) acp_setup: &'a DocumentAcpSetup,
     pub(super) zanzibar_store: Arc<dyn acp::ZanzibarStore>,
     pub(super) user_did: Option<&'a Did>,
@@ -40,7 +39,6 @@ impl Node {
             p2p_adapter,
             manage_requester,
             nac_adapter,
-            txn_broadcaster,
             acp_setup,
             zanzibar_store,
             user_did,
@@ -223,14 +221,6 @@ impl Node {
         );
         server = server.with_block_arc(block_adapter);
         info!("Block HTTP endpoints enabled");
-
-        let browser_sync_adapter = crate::browser_sync_adapter::BrowserSyncAdapter::new_arc(
-            database,
-            acp_setup.document_acp.clone(),
-            txn_broadcaster,
-        );
-        server = server.with_browser_sync_arc(browser_sync_adapter);
-        info!("Browser synchronization endpoint enabled");
 
         server = server.with_event_bus_arc(event_bus);
         info!("Subscription event bus enabled");

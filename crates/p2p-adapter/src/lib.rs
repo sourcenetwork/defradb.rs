@@ -1,18 +1,24 @@
 //! Shared P2P adapters implementing the HTTP P2P operation surface.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
+use kovan::Atom;
+use rapidhash::{RapidHashMap, RapidHashSet};
 use zeroize::Zeroizing;
 
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod doc_sync;
 #[cfg(feature = "iroh")]
 mod iroh;
+#[cfg(feature = "iroh")]
+mod iroh_peer;
+#[cfg(feature = "iroh")]
+mod iroh_restore;
 #[cfg(feature = "libp2p")]
 mod libp2p;
 pub mod manage;
 mod read_gate;
+mod replication_events;
 mod replicator_status;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod retry;
@@ -25,9 +31,17 @@ mod version_syncer;
 
 #[cfg(feature = "iroh")]
 pub use iroh::IrohP2PAdapter;
+#[cfg(feature = "iroh")]
+pub use iroh_peer::{
+    IrohBlockstore, IrohCoordinator, IrohPeer, IrohPeerConfig, IrohPeerShutdown,
+    IrohReplicationStack, ManageChannel,
+};
+#[cfg(feature = "iroh")]
+pub use iroh_restore::restore_iroh_p2p_state;
 #[cfg(feature = "libp2p")]
 pub use libp2p::{CollectionLookup, P2PAdapter, VersionSyncer};
 pub use read_gate::{DbBlockClassifier, DbBlockReadGate};
+pub use replication_events::publish_replication_result;
 pub use replicator_status::{load_persisted_replicators, set_persisted_replicator_status};
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 pub use retry::{activate_retry_peer, run_retry_pass, spawn_failure_recorder, spawn_retry_loop};
@@ -69,10 +83,10 @@ where
 pub fn collections_requiring_replay(
     effective_collections: &[String],
     collection_cids: &[String],
-    existing_collection_ids: &std::collections::HashSet<String>,
+    existing_collection_ids: &RapidHashSet<String>,
     existing_filters: &p2p::ReplicationFilters,
     requested_filters: &p2p::ReplicationFilters,
-    collections_with_changed_capabilities: &std::collections::HashSet<String>,
+    collections_with_changed_capabilities: &RapidHashSet<String>,
 ) -> Vec<String> {
     effective_collections
         .iter()
@@ -91,8 +105,8 @@ fn collections_with_changed_capabilities(
     collection_cids: &[String],
     validated_capabilities: &[(String, String)],
     capability_matches: impl Fn(&str, Option<&str>) -> bool,
-) -> HashSet<String> {
-    let requested_capabilities: HashMap<&str, &str> = validated_capabilities
+) -> RapidHashSet<String> {
+    let requested_capabilities: RapidHashMap<&str, &str> = validated_capabilities
         .iter()
         .map(|(collection_id, capability)| (collection_id.as_str(), capability.as_str()))
         .collect();
@@ -113,7 +127,7 @@ fn collections_with_changed_capabilities(
 fn validate_explicit_replay_capabilities(
     capabilities: Vec<ExplicitReplayCapabilityInput>,
     expected_authorizer_did: Option<&str>,
-    requested_collections: &std::collections::HashSet<String>,
+    requested_collections: &RapidHashSet<String>,
     source_peer_id: &str,
     target_peer_id: &str,
 ) -> P2PResult<Vec<(String, String)>> {
@@ -174,8 +188,7 @@ pub fn merge_live_replicators_with_persisted_metadata(
         return live;
     };
 
-    let live_peers: std::collections::HashSet<&str> =
-        live.iter().map(|info| info.peer_id_str()).collect();
+    let live_peers: RapidHashSet<&str> = live.iter().map(|info| info.peer_id_str()).collect();
     for persisted_info in &persisted {
         if !live_peers.contains(persisted_info.peer_id_str()) {
             tracing::debug!(
@@ -214,29 +227,29 @@ mod resolve_remove_collections_tests {
         collections_requiring_replay, collections_with_changed_capabilities,
         merge_live_replicators_with_persisted_metadata, resolve_remove_collections,
     };
-    use std::collections::{HashMap, HashSet};
+    use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 
-    fn resolver(map: HashMap<&'static str, &'static str>) -> impl Fn(&str) -> Option<String> {
+    fn resolver(map: RapidHashMap<&'static str, &'static str>) -> impl Fn(&str) -> Option<String> {
         move |name| map.get(name).map(|cid| cid.to_string())
     }
 
     #[test]
     fn resolves_name_to_cid() {
-        let map = HashMap::from([("AgentDoc", "bafyCID")]);
+        let map = RapidHashMap::from_iter([("AgentDoc", "bafyCID")]);
         let out = resolve_remove_collections(vec!["AgentDoc".to_string()], resolver(map));
         assert_eq!(out, vec!["bafyCID".to_string()]);
     }
 
     #[test]
     fn keeps_unresolved_string_lenient() {
-        let map = HashMap::new();
+        let map = RapidHashMap::new();
         let out = resolve_remove_collections(vec!["bafyAlreadyCID".to_string()], resolver(map));
         assert_eq!(out, vec!["bafyAlreadyCID".to_string()]);
     }
 
     #[test]
     fn empty_is_untouched_full_delete() {
-        let map = HashMap::from([("AgentDoc", "bafyCID")]);
+        let map = RapidHashMap::from_iter([("AgentDoc", "bafyCID")]);
         let out = resolve_remove_collections(Vec::new(), resolver(map));
         assert!(out.is_empty());
     }
@@ -245,8 +258,8 @@ mod resolve_remove_collections_tests {
     fn collections_requiring_replay_replays_existing_collection_when_capability_changes() {
         let effective_collections = vec!["User".to_string()];
         let collection_cids = vec!["cid-user".to_string()];
-        let existing_collection_ids = HashSet::from(["cid-user".to_string()]);
-        let changed_capabilities = HashSet::from(["cid-user".to_string()]);
+        let existing_collection_ids = RapidHashSet::from_iter(["cid-user".to_string()]);
+        let changed_capabilities = RapidHashSet::from_iter(["cid-user".to_string()]);
 
         let replay_collections = collections_requiring_replay(
             &effective_collections,
@@ -264,8 +277,8 @@ mod resolve_remove_collections_tests {
     fn collections_requiring_replay_skips_existing_collection_when_capability_matches() {
         let effective_collections = vec!["User".to_string()];
         let collection_cids = vec!["cid-user".to_string()];
-        let existing_collection_ids = HashSet::from(["cid-user".to_string()]);
-        let changed_capabilities = HashSet::new();
+        let existing_collection_ids = RapidHashSet::from_iter(["cid-user".to_string()]);
+        let changed_capabilities = RapidHashSet::default();
 
         let replay_collections = collections_requiring_replay(
             &effective_collections,
@@ -281,7 +294,7 @@ mod resolve_remove_collections_tests {
 
     #[test]
     fn removing_a_cached_capability_counts_as_a_change() {
-        let cached_capabilities = HashMap::from([("cid-user", "old-capability")]);
+        let cached_capabilities = RapidHashMap::from_iter([("cid-user", "old-capability")]);
 
         let changed = collections_with_changed_capabilities(
             &["cid-user".to_string()],
@@ -289,7 +302,7 @@ mod resolve_remove_collections_tests {
             |collection_id, requested| cached_capabilities.get(collection_id).copied() == requested,
         );
 
-        assert_eq!(changed, HashSet::from(["cid-user".to_string()]));
+        assert_eq!(changed, RapidHashSet::from_iter(["cid-user".to_string()]));
     }
 
     #[test]
@@ -324,7 +337,7 @@ mod resolve_remove_collections_tests {
             &existing_collection_ids,
             &existing_filters,
             &requested_filters,
-            &HashSet::new(),
+            &RapidHashSet::default(),
         );
 
         assert_eq!(replay_collections, vec!["User".to_string()]);
@@ -439,29 +452,22 @@ impl Eq for ReplicatorPushOptions {}
 
 #[derive(Debug, Clone, Default)]
 pub struct ReplicatorPushOptionsState {
-    inner: Arc<RwLock<ReplicatorPushOptions>>,
+    inner: Arc<Atom<ReplicatorPushOptions>>,
 }
 
 impl ReplicatorPushOptionsState {
     pub fn new(options: ReplicatorPushOptions) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(options)),
+            inner: Arc::new(Atom::new(options)),
         }
     }
 
     pub fn load(&self) -> ReplicatorPushOptions {
-        self.inner
-            .read()
-            .map(|options| options.clone())
-            .unwrap_or_default()
+        self.inner.load_clone()
     }
 
     pub fn store(&self, options: ReplicatorPushOptions) -> Result<(), String> {
-        let mut guard = self
-            .inner
-            .write()
-            .map_err(|_| "replicator push options lock poisoned".to_string())?;
-        *guard = options;
+        self.inner.store(options);
         Ok(())
     }
 }

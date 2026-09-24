@@ -9,7 +9,8 @@ const IROH_IDENTITY_CACHE_TTL: std::time::Duration = std::time::Duration::from_s
 #[cfg(feature = "iroh-transport")]
 const IROH_IDENTITY_CACHE_CAPACITY: usize = 1024;
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait PeerIdentityResolver: Send + Sync {
     async fn resolve(&self, peer_id: &PeerId) -> Option<identity::Did>;
 }
@@ -28,7 +29,8 @@ impl HandlePeerIdentityResolver {
 }
 
 #[cfg(feature = "libp2p-transport")]
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl PeerIdentityResolver for HandlePeerIdentityResolver {
     async fn resolve(&self, peer_id: &PeerId) -> Option<identity::Did> {
         let peer_id = peer_id.as_str().parse::<libp2p::PeerId>().ok()?;
@@ -49,21 +51,24 @@ pub struct IrohPeerIdentityResolver {
 }
 
 #[cfg(feature = "iroh-transport")]
+#[derive(Clone)]
 struct CachedIrohPeerIdentity {
     did: identity::Did,
-    verified_at: std::time::Instant,
+    verified_at: web_time::Instant,
 }
 
 #[cfg(feature = "iroh-transport")]
 type IrohIdentityFlight = std::sync::Arc<tokio::sync::OnceCell<Option<identity::Did>>>;
 
 #[cfg(feature = "iroh-transport")]
-type IrohIdentityFlights =
-    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<PeerId, IrohIdentityFlight>>>;
+type IrohIdentityFlights = std::sync::Arc<
+    kovan_map::HopscotchMap<PeerId, IrohIdentityFlight, rapidhash::fast::RandomState>,
+>;
 
 /// Bounded positive cache matching the established libp2p peer-identity
 /// behavior without retaining stale endpoint-to-DID bindings indefinitely.
 #[cfg(feature = "iroh-transport")]
+#[derive(Clone)]
 struct IrohPeerIdentityCache {
     entries: lru::LruCache<PeerId, CachedIrohPeerIdentity>,
     ttl: std::time::Duration,
@@ -72,7 +77,7 @@ struct IrohPeerIdentityCache {
 #[cfg(feature = "iroh-transport")]
 #[derive(Clone)]
 struct IrohPeerIdentityState {
-    cache: std::sync::Arc<parking_lot::Mutex<IrohPeerIdentityCache>>,
+    cache: std::sync::Arc<kovan::Atom<IrohPeerIdentityCache>>,
     in_flight: IrohIdentityFlights,
 }
 
@@ -80,12 +85,12 @@ struct IrohPeerIdentityState {
 impl IrohPeerIdentityState {
     fn new() -> Self {
         Self {
-            cache: std::sync::Arc::new(parking_lot::Mutex::new(IrohPeerIdentityCache::new(
+            cache: std::sync::Arc::new(kovan::Atom::new(IrohPeerIdentityCache::new(
                 IROH_IDENTITY_CACHE_TTL,
                 IROH_IDENTITY_CACHE_CAPACITY,
             ))),
-            in_flight: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
+            in_flight: std::sync::Arc::new(kovan_map::HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
             )),
         }
     }
@@ -95,41 +100,46 @@ impl IrohPeerIdentityState {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Option<identity::Did>>,
     {
-        if let Some(did) = self.cache.lock().get(peer_id, std::time::Instant::now()) {
+        let now = web_time::Instant::now();
+        if let Some(did) = self.cache.peek(|cache| cache.get(peer_id, now)) {
             tracing::trace!(%peer_id, "using cached authenticated Iroh peer identity");
             return Some(did);
         }
 
-        let flight = {
-            let mut in_flight = self.in_flight.lock().await;
-            if let Some(flight) = in_flight.get(peer_id) {
-                std::sync::Arc::clone(flight)
-            } else {
-                if in_flight.len() >= IROH_IDENTITY_CACHE_CAPACITY {
-                    tracing::debug!(%peer_id, "Iroh peer identity single-flight capacity reached");
-                    return None;
-                }
-                let flight = std::sync::Arc::new(tokio::sync::OnceCell::new());
-                in_flight.insert(peer_id.clone(), std::sync::Arc::clone(&flight));
-                flight
+        let flight = match self.in_flight.get(peer_id) {
+            Some(flight) => flight,
+            None if self.in_flight.len() >= IROH_IDENTITY_CACHE_CAPACITY => {
+                tracing::debug!(%peer_id, "Iroh peer identity single-flight capacity reached");
+                return None;
             }
+            None => self.in_flight.get_or_insert(
+                peer_id.clone(),
+                std::sync::Arc::new(tokio::sync::OnceCell::new()),
+            ),
         };
 
         // Every concurrent request for one authenticated endpoint observes the
-        // same challenge result. A negative result is shared only by current
-        // waiters and is removed immediately; it is never cached for retries.
-        let result = flight.get_or_init(resolve).await.clone();
+        // same challenge result. Only the task whose challenge ran removes the
+        // flight, so a negative result is shared by current waiters and never
+        // reused for retries.
+        let mut resolved_here = false;
+        let result = flight
+            .get_or_init(|| {
+                resolved_here = true;
+                resolve()
+            })
+            .await
+            .clone();
         if let Some(did) = result.as_ref() {
-            self.cache
-                .lock()
-                .insert(peer_id.clone(), did.clone(), std::time::Instant::now());
+            let verified_at = web_time::Instant::now();
+            self.cache.rcu(|cache| {
+                let mut cache = cache.clone();
+                cache.insert(peer_id.clone(), did.clone(), verified_at);
+                cache
+            });
         }
-        let mut in_flight = self.in_flight.lock().await;
-        if in_flight
-            .get(peer_id)
-            .is_some_and(|current| std::sync::Arc::ptr_eq(current, &flight))
-        {
-            in_flight.remove(peer_id);
+        if resolved_here {
+            self.in_flight.remove(peer_id);
         }
         result
     }
@@ -146,16 +156,12 @@ impl IrohPeerIdentityCache {
         }
     }
 
-    fn get(&mut self, peer_id: &PeerId, now: std::time::Instant) -> Option<identity::Did> {
+    fn get(&self, peer_id: &PeerId, now: web_time::Instant) -> Option<identity::Did> {
         let entry = self.entries.peek(peer_id)?;
-        if now.duration_since(entry.verified_at) >= self.ttl {
-            self.entries.pop(peer_id);
-            return None;
-        }
-        Some(entry.did.clone())
+        (now.duration_since(entry.verified_at) < self.ttl).then(|| entry.did.clone())
     }
 
-    fn insert(&mut self, peer_id: PeerId, did: identity::Did, now: std::time::Instant) {
+    fn insert(&mut self, peer_id: PeerId, did: identity::Did, now: web_time::Instant) {
         self.entries.put(
             peer_id,
             CachedIrohPeerIdentity {
@@ -177,7 +183,8 @@ impl IrohPeerIdentityResolver {
 }
 
 #[cfg(feature = "iroh-transport")]
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl PeerIdentityResolver for IrohPeerIdentityResolver {
     async fn resolve(&self, peer_id: &PeerId) -> Option<identity::Did> {
         self.state
@@ -197,7 +204,8 @@ impl PeerIdentityResolver for IrohPeerIdentityResolver {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AnonymousResolver;
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl PeerIdentityResolver for AnonymousResolver {
     async fn resolve(&self, _peer_id: &PeerId) -> Option<identity::Did> {
         None
@@ -214,7 +222,7 @@ mod tests {
 
     #[test]
     fn iroh_identity_cache_is_positive_bounded_and_expiring() {
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         let ttl = std::time::Duration::from_secs(10);
         let mut cache = IrohPeerIdentityCache::new(ttl, 2);
         let peer_a = PeerId::new("peer-a".to_string());

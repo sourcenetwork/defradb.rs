@@ -3,8 +3,8 @@
 //! Defines types for CREATE, UPDATE, and DELETE mutations following
 //! Go DefraDB's mutation patterns.
 
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 use super::{Filter, Requestable};
 use crate::document::DocumentMapping;
@@ -69,9 +69,9 @@ pub struct Mutation {
     /// GraphQL alias for this mutation (e.g., "john" in `john: update_Users(...)`)
     pub alias: Option<String>,
     /// For CREATE: Array of documents to create (each is a field-value map)
-    pub create_input: Vec<HashMap<String, JsonValue>>,
+    pub create_input: Vec<RapidHashMap<String, JsonValue>>,
     /// For UPDATE: Fields to update (patch)
-    pub update_input: HashMap<String, JsonValue>,
+    pub update_input: RapidHashMap<String, JsonValue>,
     /// For UPDATE/DELETE: Specific document IDs to target
     pub doc_ids: Option<Vec<String>>,
     /// For UPDATE/DELETE: Filter to find documents to target
@@ -94,7 +94,7 @@ impl Mutation {
             collection_name: collection_name.into(),
             alias: None,
             create_input: Vec::new(),
-            update_input: HashMap::new(),
+            update_input: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -111,7 +111,7 @@ impl Mutation {
             collection_name: collection_name.into(),
             alias: None,
             create_input: Vec::new(),
-            update_input: HashMap::new(),
+            update_input: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -128,7 +128,7 @@ impl Mutation {
             collection_name: collection_name.into(),
             alias: None,
             create_input: Vec::new(),
-            update_input: HashMap::new(),
+            update_input: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -145,7 +145,7 @@ impl Mutation {
             collection_name: collection_name.into(),
             alias: None,
             create_input: Vec::new(),
-            update_input: HashMap::new(),
+            update_input: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -162,7 +162,7 @@ impl Mutation {
             collection_name: collection_name.into(),
             alias: None,
             create_input: Vec::new(),
-            update_input: HashMap::new(),
+            update_input: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -192,13 +192,13 @@ impl Mutation {
     }
 
     /// Set create input (array of documents to create).
-    pub fn with_create_input(mut self, input: Vec<HashMap<String, JsonValue>>) -> Self {
+    pub fn with_create_input(mut self, input: Vec<RapidHashMap<String, JsonValue>>) -> Self {
         self.create_input = input;
         self
     }
 
     /// Set update input (fields to update).
-    pub fn with_update_input(mut self, input: HashMap<String, JsonValue>) -> Self {
+    pub fn with_update_input(mut self, input: RapidHashMap<String, JsonValue>) -> Self {
         self.update_input = input;
         self
     }
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn test_mutation_builders() {
         let create = Mutation::create("Users").with_create_input(vec![{
-            let mut m = HashMap::new();
+            let mut m = RapidHashMap::new();
             m.insert("name".to_string(), JsonValue::String("Alice".to_string()));
             m
         }]);
@@ -349,7 +349,7 @@ mod tests {
         let update = Mutation::update("Users")
             .with_doc_ids(vec!["bae-123".to_string()])
             .with_update_input({
-                let mut m = HashMap::new();
+                let mut m = RapidHashMap::new();
                 m.insert(
                     "email".to_string(),
                     JsonValue::String("new@example.com".to_string()),

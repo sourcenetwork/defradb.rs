@@ -17,7 +17,7 @@ use std::sync::Arc;
 struct RecordingFetcher {
     scans: AtomicUsize,
     seeks: AtomicUsize,
-    sought: std::sync::Mutex<Vec<u64>>,
+    sought: kovan::Atom<Vec<u64>>,
 }
 
 impl RecordingFetcher {
@@ -75,7 +75,11 @@ impl DocFetcher for RecordingFetcher {
         _show_deleted: bool,
     ) -> Result<Box<dyn DocStream>> {
         self.seeks.fetch_add(1, Ordering::Relaxed);
-        self.sought.lock().unwrap().extend_from_slice(doc_short_ids);
+        self.sought.rcu(|sought| {
+            let mut next = sought.clone();
+            next.extend_from_slice(doc_short_ids);
+            next
+        });
         Ok(Box::new(VecStream::new(
             doc_short_ids
                 .iter()
@@ -134,7 +138,7 @@ async fn a_restricted_scan_seeks_instead_of_scanning() {
         0,
         "a restricted scan must not read the collection"
     );
-    assert_eq!(*fetcher.sought.lock().unwrap(), vec![2, 5, 9]);
+    assert_eq!(fetcher.sought.load_clone(), vec![2, 5, 9]);
 }
 
 #[tokio::test]

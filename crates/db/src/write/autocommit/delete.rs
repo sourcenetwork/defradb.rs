@@ -1,4 +1,4 @@
-use super::helpers::{ensure_collection_is_active, write_branchable_collection_block};
+use super::helpers::write_branchable_collection_block;
 use super::*;
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
@@ -12,13 +12,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let collection = self.get_collection_or_err(collection_name)?;
-        let _collection_guard = self
-            .db
-            .collection_read_guard(collection.collection_id())
-            .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
         let txn = self.new_mutation_txn().await?;
 
@@ -177,13 +171,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 .map(|r| vec![r]);
         }
 
-        let collection = self.get_collection_or_err(collection_name)?;
-        let _collection_guard = self
-            .db
-            .collection_read_guard(collection.collection_id())
-            .await
-            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
         let short_id = collection.resolved_root_id();
         let schema_version_id = collection.version_id().to_string();
         let sign_config = get_signing_config();

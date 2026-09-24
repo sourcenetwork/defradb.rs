@@ -120,22 +120,29 @@ impl KeyStore for BlockstoreKeyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_lock::RwLock;
-    use std::collections::HashMap;
+    use kovan_map::HopscotchMap;
+    use rapidhash::fast::RandomState;
     use std::sync::Arc;
 
-    #[derive(Default)]
     struct FakeEncBlockStore {
-        inner: RwLock<HashMap<EncryptionCid, Bytes>>,
+        inner: HopscotchMap<EncryptionCid, Bytes, RandomState>,
+    }
+
+    impl Default for FakeEncBlockStore {
+        fn default() -> Self {
+            Self {
+                inner: HopscotchMap::with_hasher(RandomState::default()),
+            }
+        }
     }
 
     #[async_trait]
     impl EncBlockStore for FakeEncBlockStore {
         async fn get_block(&self, cid: &EncryptionCid) -> Result<Option<Bytes>> {
-            Ok(self.inner.read().await.get(cid).cloned())
+            Ok(self.inner.get(cid))
         }
         async fn put_block(&self, cid: EncryptionCid, bytes: Bytes) -> Result<()> {
-            self.inner.write().await.insert(cid, bytes);
+            self.inner.insert(cid, bytes);
             Ok(())
         }
     }

@@ -104,6 +104,40 @@ fn kernels_agree_with_a_scalar_reference() {
     }
 }
 
+/// A slice taken at an odd element offset from a 16-byte-aligned buffer is
+/// 8- but not 16-byte aligned: the alignment `load_direct` may not assume.
+#[repr(align(16))]
+struct Aligned(Vec<f64>);
+
+#[wasm_bindgen_test]
+fn kernels_agree_on_an_oddly_offset_slice() {
+    let mut corpus = Corpus(0x0DD_1655);
+
+    for dimensions in [2usize, 4, 6, 16, 30, 64] {
+        let a_padded = Aligned(corpus.vector(dimensions + 1));
+        let b_padded = Aligned(corpus.vector(dimensions + 1));
+        let a = &a_padded.0[1..];
+        let b = &b_padded.0[1..];
+        assert_eq!(a.as_ptr() as usize % 16, 8, "fixture must stay unaligned");
+
+        let products: Vec<f64> = a.iter().zip(b).map(|(x, y)| x * y).collect();
+        let got = dot(a, b);
+        let want = reference_dot(a, b);
+        assert!(
+            (got - want).abs() <= tolerance(&products),
+            "dot disagreed on an unaligned {dimensions}-slice: {got} vs {want}"
+        );
+
+        let squares: Vec<f64> = a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).collect();
+        let got = squared_euclidean(a, b);
+        let want = reference_squared_euclidean(a, b);
+        assert!(
+            (got - want).abs() <= tolerance(&squares),
+            "squared euclidean disagreed on an unaligned {dimensions}-slice: {got} vs {want}"
+        );
+    }
+}
+
 #[wasm_bindgen_test]
 fn integral_widths_are_exact() {
     let a32 = [3i32, -4, 12, 0, 5];

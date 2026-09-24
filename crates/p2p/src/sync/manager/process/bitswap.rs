@@ -1,14 +1,30 @@
 //! Bitswap query tracking and block storage.
 
+use std::sync::Arc;
+
 use cid::Cid;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
+use rapidhash::fast::RandomState;
+use rapidhash::HashMapExt;
 
 use blockstore::{verify_block_cid, Blockstore};
 
 use crate::error::{Error, Result};
-use crate::sync::manager::events::SyncEvent;
 use crate::QueryId;
 
 use super::SyncManager;
+
+/// A completion sender parked in a queue so whoever resolves the query can
+/// take ownership of it.
+type CompletionSlot = Arc<SegQueue<tokio::sync::oneshot::Sender<FetchCompletion>>>;
+
+fn completion_slot(sender: tokio::sync::oneshot::Sender<FetchCompletion>) -> CompletionSlot {
+    let slot = SegQueue::new();
+    slot.push(sender);
+    Arc::new(slot)
+}
 
 /// Terminal observation for one transport fetch query.
 ///
@@ -37,17 +53,31 @@ impl FetchCompletion {
 /// Completion signal for poll-owned exact-CID queries. Transport completion
 /// already exists; this tracker lets the same fetch owner stop its blockstore
 /// poll immediately when a provider failed instead of burning the full window.
+///
+/// A completion either finds its waiter or is latched for a waiter that has
+/// not registered yet, and registration must see exactly one of the two, so
+/// the state is replaced as one unit; it holds only in-flight queries.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BlockSyncCompletionTracker {
-    state: std::sync::Arc<parking_lot::Mutex<BlockSyncCompletionState>>,
+    state: Arc<Atom<BlockSyncCompletionState>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 struct BlockSyncCompletionState {
-    waiters: std::collections::HashMap<QueryId, tokio::sync::oneshot::Sender<FetchCompletion>>,
-    early: std::collections::HashMap<QueryId, FetchCompletion>,
+    waiters: rapidhash::RapidHashMap<QueryId, CompletionSlot>,
+    early: rapidhash::RapidHashMap<QueryId, FetchCompletion>,
     early_order: std::collections::VecDeque<QueryId>,
     capacity: usize,
+}
+
+impl std::fmt::Debug for BlockSyncCompletionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockSyncCompletionState")
+            .field("waiters", &self.waiters.keys().collect::<Vec<_>>())
+            .field("early", &self.early)
+            .field("capacity", &self.capacity)
+            .finish()
+    }
 }
 
 impl Default for BlockSyncCompletionState {
@@ -59,8 +89,8 @@ impl Default for BlockSyncCompletionState {
 impl BlockSyncCompletionState {
     fn new(capacity: usize) -> Self {
         Self {
-            waiters: std::collections::HashMap::new(),
-            early: std::collections::HashMap::new(),
+            waiters: rapidhash::RapidHashMap::new(),
+            early: rapidhash::RapidHashMap::new(),
             early_order: std::collections::VecDeque::new(),
             capacity: capacity.max(1),
         }
@@ -74,41 +104,55 @@ impl BlockSyncCompletionState {
         result
     }
 
-    fn latch(&mut self, query_id: QueryId, completion: FetchCompletion) {
+    /// Returns the unclaimed completion evicted to make room, if any.
+    fn latch(&mut self, query_id: QueryId, completion: FetchCompletion) -> Option<QueryId> {
         if let std::collections::hash_map::Entry::Occupied(mut entry) = self.early.entry(query_id) {
             entry.insert(completion);
-            return;
+            return None;
         }
+        let mut evicted = None;
         while self.early.len() >= self.capacity {
             let Some(oldest) = self.early_order.pop_front() else {
                 break;
             };
             if self.early.remove(&oldest).is_some() {
-                tracing::warn!(
-                    query_id = oldest.0,
-                    capacity = self.capacity,
-                    "Evicting unclaimed block-sync completion at bounded capacity"
-                );
+                evicted = Some(oldest);
                 break;
             }
         }
         self.early.insert(query_id, completion);
         self.early_order.push_back(query_id);
+        evicted
     }
 }
 
 /// Completion signal for libp2p's two-stream rooted CAR protocol.  Request
 /// dispatch and response arrival are separate streams, so blockstore polling
 /// alone adds avoidable ownership latency at small admission capacities.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct RootedCarCompletionTracker {
-    waiters: std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<Cid, RootedCarWaiter>>>,
+    waiters: Arc<HopscotchMap<Cid, Arc<RootedCarWaiter>, RandomState>>,
 }
 
-#[derive(Debug)]
+impl Default for RootedCarCompletionTracker {
+    fn default() -> Self {
+        Self {
+            waiters: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
+        }
+    }
+}
+
+impl std::fmt::Debug for RootedCarCompletionTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootedCarCompletionTracker")
+            .field("waiters", &self.waiters.len())
+            .finish()
+    }
+}
+
 struct RootedCarWaiter {
     peer: crate::transport::PeerId,
-    completion: tokio::sync::oneshot::Sender<FetchCompletion>,
+    completion: SegQueue<tokio::sync::oneshot::Sender<FetchCompletion>>,
 }
 
 impl RootedCarCompletionTracker {
@@ -118,12 +162,14 @@ impl RootedCarCompletionTracker {
         peer_id: crate::transport::PeerId,
     ) -> tokio::sync::oneshot::Receiver<FetchCompletion> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.waiters.lock().insert(
+        let completion = SegQueue::new();
+        completion.push(tx);
+        self.waiters.insert(
             root_cid,
-            RootedCarWaiter {
+            Arc::new(RootedCarWaiter {
                 peer: peer_id,
-                completion: tx,
-            },
+                completion,
+            }),
         );
         rx
     }
@@ -147,31 +193,50 @@ impl RootedCarCompletionTracker {
         peer_id: &crate::transport::PeerId,
         completion: FetchCompletion,
     ) -> bool {
-        let mut waiters = self.waiters.lock();
-        if !waiters
+        let Some(expected) = self
+            .waiters
             .get(&root_cid)
-            .is_some_and(|waiter| &waiter.peer == peer_id)
-        {
-            return false;
-        }
-        let Some(waiter) = waiters.remove(&root_cid) else {
+            .filter(|waiter| &waiter.peer == peer_id)
+        else {
             return false;
         };
-        let _ = waiter.completion.send(completion);
+        let Some(waiter) = self.waiters.remove(&root_cid) else {
+            return false;
+        };
+        if !Arc::ptr_eq(&waiter, &expected) {
+            self.waiters.insert_if_absent(root_cid, waiter);
+            return false;
+        }
+        if let Some(sender) = waiter.completion.pop() {
+            let _ = sender.send(completion);
+        }
         true
     }
 
     pub(crate) fn cancel(&self, root_cid: Cid) {
-        self.waiters.lock().remove(&root_cid);
+        if let Some(waiter) = self.waiters.remove(&root_cid) {
+            drop(waiter.completion.pop());
+        }
     }
 }
 
 impl BlockSyncCompletionTracker {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
-            state: std::sync::Arc::new(parking_lot::Mutex::new(BlockSyncCompletionState::new(
-                capacity,
-            ))),
+            state: Arc::new(Atom::new(BlockSyncCompletionState::new(capacity))),
+        }
+    }
+
+    /// Apply `f` to a copy of the state and publish it. `f` may run more than
+    /// once under contention, so it must stay pure.
+    fn update<R>(&self, mut f: impl FnMut(&mut BlockSyncCompletionState) -> R) -> R {
+        loop {
+            let current = self.state.load();
+            let mut next = BlockSyncCompletionState::clone(&current);
+            let result = f(&mut next);
+            if self.state.compare_and_swap(&current, next).is_ok() {
+                return result;
+            }
         }
     }
 
@@ -180,11 +245,18 @@ impl BlockSyncCompletionTracker {
         query_id: QueryId,
     ) -> tokio::sync::oneshot::Receiver<FetchCompletion> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let mut state = self.state.lock();
-        if let Some(success) = state.remove_early(query_id) {
-            let _ = tx.send(success);
-        } else {
-            state.waiters.insert(query_id, tx);
+        let slot = completion_slot(tx);
+        let early = self.update(|state| {
+            let early = state.remove_early(query_id);
+            if early.is_none() {
+                state.waiters.insert(query_id, Arc::clone(&slot));
+            }
+            early
+        });
+        if let Some(completion) = early {
+            if let Some(sender) = slot.pop() {
+                let _ = sender.send(completion);
+            }
         }
         rx
     }
@@ -202,28 +274,43 @@ impl BlockSyncCompletionTracker {
     }
 
     fn complete_with(&self, query_id: QueryId, completion: FetchCompletion) -> bool {
-        let mut state = self.state.lock();
-        if let Some(waiter) = state.waiters.remove(&query_id) {
-            let _ = waiter.send(completion);
-            true
-        } else {
-            // Iroh allocates and dispatches the transport query before
-            // sync_blocks returns its ID. A fast failure can therefore arrive
-            // before the poll owner installs its waiter. Latch the terminal
-            // result so registration observes state, not a lossy edge.
-            state.latch(query_id, completion);
-            false
+        // Iroh allocates and dispatches the transport query before
+        // sync_blocks returns its ID. A fast failure can therefore arrive
+        // before the poll owner installs its waiter. Latch the terminal
+        // result so registration observes state, not a lossy edge.
+        let (waiter, evicted, capacity) =
+            self.update(|state| match state.waiters.remove(&query_id) {
+                Some(waiter) => (Some(waiter), None, state.capacity),
+                None => (None, state.latch(query_id, completion), state.capacity),
+            });
+        if let Some(oldest) = evicted {
+            tracing::warn!(
+                query_id = oldest.0,
+                capacity,
+                "Evicting unclaimed block-sync completion at bounded capacity"
+            );
         }
+        let Some(waiter) = waiter else {
+            return false;
+        };
+        if let Some(sender) = waiter.pop() {
+            let _ = sender.send(completion);
+        }
+        true
     }
 
     pub(crate) fn cancel(&self, query_id: QueryId) {
-        let mut state = self.state.lock();
-        state.waiters.remove(&query_id);
-        state.remove_early(query_id);
+        let waiter = self.update(|state| {
+            state.remove_early(query_id);
+            state.waiters.remove(&query_id)
+        });
+        if let Some(waiter) = waiter {
+            drop(waiter.pop());
+        }
     }
 
     pub(crate) fn take_early(&self, query_id: QueryId) -> Option<FetchCompletion> {
-        self.state.lock().remove_early(query_id)
+        self.update(|state| state.remove_early(query_id))
     }
 }
 
@@ -244,107 +331,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         query_id: QueryId,
         root_cid: Cid,
     ) -> Option<FetchCompletion> {
-        self.query_to_root.write().insert(query_id, root_cid);
+        self.query_to_root.insert(query_id, root_cid);
         self.block_sync_completions.take_early(query_id)
     }
 
     /// Remove and return the root CID associated with a Bitswap query.
     pub fn take_query_root(&self, query_id: QueryId) -> Option<Cid> {
-        self.query_to_root.write().remove(&query_id)
-    }
-
-    /// Handle Bitswap query completion.
-    ///
-    /// Called when a Bitswap sync completes (success or failure).
-    pub async fn handle_bitswap_complete(
-        &self,
-        query_id: QueryId,
-        success: bool,
-        error: Option<String>,
-    ) -> Result<()> {
-        // Find the root CID for this query
-        let root_cid = match self.query_to_root.write().remove(&query_id) {
-            Some(cid) => cid,
-            None => {
-                tracing::debug!(
-                    query_id = ?query_id,
-                    "Bitswap complete for unknown query, ignoring"
-                );
-                return Ok(());
-            }
-        };
-
-        if success {
-            // All blocks fetched - emit BlockReceived for the root
-            let dag = self.pending_dags.write().remove(&root_cid);
-            match dag {
-                Some(dag) => {
-                    tracing::info!(
-                        cid = %root_cid,
-                        doc_id = %dag.doc_id,
-                        "Bitswap sync complete, emitting BlockReceived"
-                    );
-
-                    if self
-                        .event_tx
-                        .send(SyncEvent::BlockReceived {
-                            cid: root_cid,
-                            doc_id: dag.doc_id,
-                            collection_id: dag.collection_id,
-                            creator: dag.creator,
-                            sender_peer: dag.source_peer,
-                            is_explicit_replicator: dag.is_explicit_replicator,
-                            explicit_replay_authorization: dag.explicit_replay_authorization,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        tracing::error!(
-                            cid = %root_cid,
-                            "Failed to send BlockReceived after Bitswap complete - receiver dropped"
-                        );
-                        return Err(Error::ChannelSend);
-                    }
-                }
-                None => {
-                    // This can happen if the DAG was processed by another path,
-                    // cleaned up, or if there's a race condition
-                    tracing::warn!(
-                        cid = %root_cid,
-                        "Bitswap sync completed but no pending DAG found - \
-                         DAG may have been processed by another path or cleaned up"
-                    );
-                }
-            }
-        } else {
-            // Sync failed - emit error, clean up
-            self.pending_dags.write().remove(&root_cid);
-
-            let error_msg = error.unwrap_or_else(|| "Bitswap sync failed".to_string());
-            tracing::warn!(
-                cid = %root_cid,
-                error = %error_msg,
-                "Bitswap sync failed"
-            );
-
-            if self
-                .event_tx
-                .send(SyncEvent::SyncError {
-                    cid: root_cid,
-                    error: error_msg,
-                })
-                .await
-                .is_err()
-            {
-                tracing::warn!(
-                    cid = %root_cid,
-                    "Failed to send SyncError event - receiver dropped"
-                );
-                return Err(Error::ChannelSend);
-            }
-        }
-
-        Ok(())
+        self.query_to_root.remove(&query_id)
     }
 
     /// Store a block received via Bitswap and check if pending DAGs can now proceed.
@@ -409,7 +402,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             "Stored Bitswap block in blockstore"
         );
 
-        for root_cid in self.pending_dags.read().waiting_roots(cid) {
+        for root_cid in self.pending_dags.read(|pending| pending.waiting_roots(cid)) {
             tracing::debug!(
                 root_cid = %root_cid,
                 received_cid = %cid,

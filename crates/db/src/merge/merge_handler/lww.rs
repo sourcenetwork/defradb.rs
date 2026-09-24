@@ -42,13 +42,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc_id_str: &str,
         doc_short_id: u64,
     ) -> std::result::Result<bool, MergeError> {
-        let collection = self
-            .db
-            .find_collection_by_id(&payload.schema_version_id)?
-            .or(fallback_collection_id
-                .and_then(|cid| self.db.find_collection_by_id(cid).ok().flatten()));
-
-        let Some(collection) = collection else {
+        let Some(collection) = self
+            .block_collection(&payload.schema_version_id, fallback_collection_id)
+            .await?
+        else {
             return Ok(false);
         };
 
@@ -148,6 +145,18 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(MergeOutcome::terminal_skip(
                 "field block has no unambiguous owner; merged via its composite",
             ));
+        };
+
+        let collection = self
+            .block_collection(&payload.schema_version_id, metadata.collection_id)
+            .await?;
+        let _collection_guard = match collection.as_ref() {
+            Some(collection) => Some(
+                self.db
+                    .collection_read_guard(collection.collection_id())
+                    .await?,
+            ),
+            None => None,
         };
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 

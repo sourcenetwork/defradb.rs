@@ -161,7 +161,7 @@ impl Collection {
 
     pub(crate) fn with_index_actions(
         def: CollectionVersion,
-        actions: &std::collections::HashMap<u32, ActionStatus>,
+        actions: &rapidhash::RapidHashMap<u32, ActionStatus>,
     ) -> Self {
         let write_indexes = def
             .indexes

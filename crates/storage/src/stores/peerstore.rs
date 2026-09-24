@@ -10,9 +10,10 @@ use async_trait::async_trait;
 /// The Peerstore handles storage of replicator configuration, replication
 /// retry tracking, and search engine retry tracking for P2P operations.
 use bytes::Bytes;
-use std::collections::HashMap;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::future::Future;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 use tracing;
 
 const PUSH_RETRY_TXN_MAX_ATTEMPTS: usize = 4;
@@ -35,20 +36,27 @@ fn legacy_retry_commit_key(peer_id: &str, collection_id: &str, cid: &str) -> Vec
 type RetryPeerLock = RwLock<()>;
 
 fn retry_peer_lock(peer_id: &str) -> Arc<RetryPeerLock> {
-    static LOCKS: OnceLock<Mutex<HashMap<String, Weak<RetryPeerLock>>>> = OnceLock::new();
+    static LOCKS: OnceLock<HopscotchMap<String, Weak<RetryPeerLock>, RandomState>> =
+        OnceLock::new();
+    let locks = LOCKS.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()));
 
-    let mut locks = LOCKS
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    locks.retain(|_, lock| lock.upgrade().is_some());
-    if let Some(lock) = locks.get(peer_id).and_then(Weak::upgrade) {
-        return lock;
+    loop {
+        if let Some(lock) = locks.get(peer_id).and_then(|weak| weak.upgrade()) {
+            return lock;
+        }
+        let candidate = Arc::new(RetryPeerLock::new(()));
+        // get_or_insert is the atomic decision point: concurrent callers racing
+        // on an absent key all receive the same freshly inserted Weak.
+        let weak = locks.get_or_insert(peer_id.to_string(), Arc::downgrade(&candidate));
+        if let Some(lock) = weak.upgrade() {
+            return lock;
+        }
+        // vertexia: no table-wide sweep of dead entries for other peers
+        // (HopscotchMap has no retain); each peer's entry self-heals lazily on
+        // its next lookup instead. If per-peer churn grows unbounded, revisit
+        // with a periodic sweep over locks.iter().
+        locks.remove(peer_id);
     }
-
-    let lock = Arc::new(RetryPeerLock::new(()));
-    locks.insert(peer_id.to_string(), Arc::downgrade(&lock));
-    lock
 }
 
 /// Keeps a retry pass or failure-recording operation coordinated with forget.
@@ -603,10 +611,15 @@ impl<S: Store> Peerstore<S> {
     /// This method owns the per-peer writer and reads the current value inside
     /// the write transaction.  Callers never blind-write a stale snapshot over
     /// reconnect activation or a concurrent marker registration.
+    ///
+    /// `advance_cursor_by` is the number of markers the finished pass consumed:
+    /// a bounded pass must resume past them, or the tail of a large marker set
+    /// is never reached.
     pub async fn reschedule_retry_peer(
         &self,
         peer_id: &str,
         defer_for: Option<std::time::Duration>,
+        advance_cursor_by: u64,
     ) -> Result<bool> {
         let _retry_guard = retry_peer_lock(peer_id).write_arc().await;
         retry_push_txn_conflicts(|| async {
@@ -620,12 +633,39 @@ impl<S: Store> Peerstore<S> {
             };
             let mut info =
                 super::RetryInfo::from_bytes(&bytes).map_err(crate::corekv::Error::Other)?;
-            info.advance_dispatch_cursor();
+            info.advance_dispatch_cursor(advance_cursor_by);
             if let Some(delay) = defer_for {
                 info.defer_for(delay);
             } else {
                 info.bump_with_schedule(peer_id, &self.retry_schedule);
             }
+            txn.set(&key, &info.to_bytes().map_err(crate::corekv::Error::Other)?)
+                .await?;
+            txn.commit().await?;
+            Ok(true)
+        })
+        .await
+    }
+
+    /// Return a peer to the first ladder rung after a pass that delivered
+    /// documents. Escalation is evidence of an unreachable peer; a peer that
+    /// is taking documents has refuted it.
+    pub async fn restart_retry_peer(&self, peer_id: &str, advance_cursor_by: u64) -> Result<bool> {
+        let _retry_guard = retry_peer_lock(peer_id).write_arc().await;
+        retry_push_txn_conflicts(|| async {
+            let mut txn = self.store.new_txn(false).await?;
+            if !txn.has(&ReplicatorKey::new(peer_id).bytes()).await? {
+                return Ok(false);
+            }
+            let key = ReplicatorRetryIDKey::new(peer_id).bytes();
+            let Some(bytes) = txn.get(&key).await? else {
+                return Ok(false);
+            };
+            let mut info =
+                super::RetryInfo::from_bytes(&bytes).map_err(crate::corekv::Error::Other)?;
+            info.advance_dispatch_cursor(advance_cursor_by);
+            info.num_retries = 0;
+            info.bump_with_schedule(peer_id, &self.retry_schedule);
             txn.set(&key, &info.to_bytes().map_err(crate::corekv::Error::Other)?)
                 .await?;
             txn.commit().await?;

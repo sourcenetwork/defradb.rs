@@ -1,10 +1,8 @@
-//! The key this browser authors with. It signs the blocks the tab writes and
-//! mints the token that authenticates them, and it never leaves the tab.
-//!
-//! Without one, blocks go out unsigned: `/sync` derives ownership from the
-//! verified genesis signer, so an unsigned document is owned by nobody and its
-//! author can never grant access to it.
+//! The key this browser authors with. It signs the blocks the tab writes,
+//! names the caller for document ACP, proves this peer's identity to others,
+//! and never leaves the tab.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use defra_core::signing::{SigningConfig, SigningKeyType};
@@ -13,7 +11,7 @@ use zeroize::Zeroize;
 
 use crate::error::{Result, WasmError};
 
-/// How long a minted token stays valid. Long enough to outlive a page's sync
+/// How long a minted token stays valid. Long enough to outlive a page's
 /// session, short enough that a leaked one expires.
 const TOKEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -21,7 +19,7 @@ const TOKEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const ED25519_SEED_BYTES: usize = 32;
 
 pub(crate) struct ClientIdentity {
-    raw: RawIdentity,
+    raw: Arc<RawIdentity>,
     did: String,
     signing: SigningConfig,
 }
@@ -59,17 +57,20 @@ impl ClientIdentity {
             signing_authorization: None,
         };
 
-        Ok(Self { raw, did, signing })
+        Ok(Self {
+            raw: Arc::new(raw),
+            did,
+            signing,
+        })
     }
 
     pub(crate) fn did(&self) -> &str {
         &self.did
     }
 
-    /// How this client appears in a signature header: Go's
-    /// `PublicKey().String()`, the hex-encoded key as bytes.
-    pub(crate) fn signer_identity(&self) -> Vec<u8> {
-        self.signing.public_key_hex.as_bytes().to_vec()
+    /// The key as the identity a peer challenge proves.
+    pub(crate) fn raw(&self) -> Arc<RawIdentity> {
+        Arc::clone(&self.raw)
     }
 
     pub(crate) fn signing_config(&self) -> SigningConfig {
@@ -77,9 +78,9 @@ impl ClientIdentity {
     }
 
     /// A self-signed JWT naming this identity. The node verifies it against the
-    /// request's Host header, so the audience is the server being synced with.
+    /// request's Host header, so the audience is the server it is sent to.
     pub(crate) fn auth_token(&self, audience: Option<String>) -> Result<String> {
-        let token = identity::new_token(&self.raw, TOKEN_TTL, audience, None)
+        let token = identity::new_token(self.raw.as_ref(), TOKEN_TTL, audience, None)
             .map_err(|error| WasmError::Identity(error.to_string()))?;
         String::from_utf8(token)
             .map_err(|error| WasmError::Identity(format!("token is not valid UTF-8: {error}")))
@@ -109,7 +110,7 @@ fn parse_key_type(key_type: &str) -> Result<(IdentityKeyType, SigningKeyType)> {
 /// Installs a signing config for as long as it is held.
 ///
 /// The config is a thread-local the write path reads, and blocks arriving from
-/// the server must not be signed with this key, so it is installed around a
+/// peers must not be signed with this key, so it is installed around a
 /// local write and taken away again.
 ///
 /// One writer at a time: the caller holds the mutation lock, because a guard

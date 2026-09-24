@@ -5,8 +5,8 @@
 //! document's score by doc_id and injects it into the output.
 
 use async_trait::async_trait;
+use rapidhash::RapidHashMap;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
 
 use crate::document::DocumentMapping;
 use crate::error::Result;
@@ -21,7 +21,7 @@ pub struct BM25Node {
     document_mapping: DocumentMapping,
     score_index: usize,
     query: String,
-    precomputed_scores: HashMap<String, f64>,
+    precomputed_scores: RapidHashMap<String, f64>,
     current_doc: Doc,
     exec_info: ExecInfo,
 }
@@ -32,7 +32,7 @@ impl BM25Node {
         document_mapping: DocumentMapping,
         score_index: usize,
         query: String,
-        precomputed_scores: HashMap<String, f64>,
+        precomputed_scores: RapidHashMap<String, f64>,
     ) -> Self {
         Self {
             source,

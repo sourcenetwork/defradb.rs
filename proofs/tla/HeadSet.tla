@@ -65,6 +65,24 @@
 \*
 \* The second pair exists for the same reason as the first: "they leave
 \* together" is a claim, and a claim has to be able to fail.
+\*
+\* A THIRD KNOB, for what the engine records about the head scan. regolith
+\* 0.1.6 made `Serializable` validate every key a transactional scan yields.
+\* The head scan yields the superseded head keys and markers the sweep
+\* deletes, so a sweep committing under an open append aborted the append at
+\* commit, although the live set the append derived from that scan was
+\* unchanged. The abort is spurious, and it inverts the design: the sweep is
+\* the side that is meant to lose. `RepeatableRead` is the regolith level for this
+\* read: a point read is validated as at `Serializable`, a scan is recorded
+\* per stretch and never per key. DefraDB runs its store at `RepeatableRead`.
+\*
+\*   ScanReads = "Stretch" - RepeatableRead: what a scan walked is not in the read
+\*                           set, so a sweep cannot abort an append.  [GREEN]
+\*             = "PerKey"  - Serializable since regolith 0.1.6: every key the
+\*                           scan yielded is validated, so a sweep that
+\*                           reclaims one of them after the append's snapshot
+\*                           aborts the append. INV_NoWriteConflict fails.
+\*                                                                     [RED]
 
 EXTENDS Naturals, FiniteSets, TLC
 
@@ -72,12 +90,14 @@ CONSTANTS
   Writers,   \* finite set of concurrent writer ids; each writes one block
   Seed,      \* the block id already established as the collection's head
   Strategy,  \* "EagerDelete" | "Derived"
-  Reclaim    \* "Together" | "MarkersOnly"
+  Reclaim,   \* "Together" | "MarkersOnly"
+  ScanReads  \* "Stretch" | "PerKey"
 
 ASSUME Writers # {}
 ASSUME Seed \notin Writers
 ASSUME Strategy \in {"EagerDelete", "Derived"}
 ASSUME Reclaim \in {"Together", "MarkersOnly"}
+ASSUME ScanReads \in {"Stretch", "PerKey"}
 
 \* Every block id in the model: the seed plus one per writer.
 Blocks == Writers \cup {Seed}
@@ -87,14 +107,16 @@ VARIABLES
   committed,   \* SUBSET Writers - writers whose transaction committed
   aborted,     \* SUBSET Writers - writers whose transaction hit a write conflict
   observed,    \* [Writers -> SUBSET Blocks] - heads each writer read at snapshot
+  walked,      \* [Writers -> SUBSET Blocks] - every stored head key each
+               \* writer's scan yielded at snapshot, live or superseded
   snapshotted, \* SUBSET Writers - writers that have taken their snapshot
   headKeys,    \* SUBSET Blocks - stored head keys
   supersedes,  \* SUBSET (Blocks \X Blocks) - <<parent, child>> markers
   parents,     \* [Blocks -> SUBSET Blocks] - each block's recorded parents
   writeLog     \* SUBSET (Writers \X STRING) - which key each committed writer wrote
 
-vars == <<committed, aborted, observed, snapshotted, headKeys, supersedes,
-          parents, writeLog, pruned>>
+vars == <<committed, aborted, observed, walked, snapshotted, headKeys,
+          supersedes, parents, writeLog, pruned>>
 
 ----------------------------------------------------------------------------
 \* Key space. A key is modeled as a string tag paired with the block it names,
@@ -123,7 +145,14 @@ CommittedKeys == {k \in {HeadKey(b) : b \in Blocks}
 \* writes was written by a transaction that committed after its snapshot. Both
 \* writers snapshot before either commits, so "since its snapshot" is simply
 \* "by anyone already committed".
-Conflicts(w) == \E k \in WriteSet(w) : \E v \in committed : k \in WriteSet(v)
+\*
+\* Under PerKey the head keys the writer's scan yielded are validated too, and
+\* a sweep that reclaimed one of them is a write to a key in the read set. Every
+\* key in walked[w] was stored at the snapshot and a block is never stored
+\* twice, so any of them in `pruned` was reclaimed after the snapshot.
+Conflicts(w) ==
+  \/ \E k \in WriteSet(w) : \E v \in committed : k \in WriteSet(v)
+  \/ (ScanReads = "PerKey" /\ walked[w] \cap pruned # {})
 
 ----------------------------------------------------------------------------
 \* The head set a reader observes.
@@ -148,6 +177,7 @@ Init ==
   /\ committed   = {}
   /\ aborted     = {}
   /\ observed    = [w \in Writers |-> {}]
+  /\ walked      = [w \in Writers |-> {}]
   /\ snapshotted = {}
   /\ headKeys    = {Seed}
   /\ supersedes  = {}
@@ -159,6 +189,7 @@ Snapshot(w) ==
   /\ w \notin snapshotted
   /\ snapshotted' = snapshotted \cup {w}
   /\ observed'    = [observed EXCEPT ![w] = Heads]
+  /\ walked'      = [walked EXCEPT ![w] = headKeys]
   /\ UNCHANGED <<committed, aborted, headKeys, supersedes, parents, writeLog, pruned>>
 
 \* The writer commits. regolith checks the write set first.
@@ -187,12 +218,13 @@ Commit(w) ==
                                ELSE supersedes \cup {<<h, w>> : h \in observed[w]}
             /\ writeLog'  = writeLog \cup {<<w, "block">>}
             /\ pruned'    = pruned
-  /\ UNCHANGED <<observed, snapshotted>>
+  /\ UNCHANGED <<observed, walked, snapshotted>>
 
-\* Reclaim one superseded head key. Its own transaction, so it neither aborts a
-\* writer nor can be aborted by one: an appending writer's scan is not part of
-\* its read set, and the keys removed here were superseded before the sweep
-\* began, so nothing an in-flight append writes is touched.
+\* Reclaim one superseded head key. Its own transaction, so nothing an in-flight
+\* append writes is touched: the keys removed here were superseded before the
+\* sweep began. Whether it can abort an append is ScanReads: under Stretch what
+\* the append's scan walked is not in its read set, under PerKey it is, and
+\* Conflicts(w) refuses the append at commit.
 \*
 \* Enabled only under the derived strategy, which is the only one that leaves
 \* anything behind.
@@ -204,7 +236,7 @@ Prune(b) ==
   /\ pruned' = pruned \cup {b}
   /\ supersedes' = supersedes \ {<<p, c>> \in supersedes : p = b}
   /\ headKeys' = IF Reclaim = "Together" THEN headKeys \ {b} ELSE headKeys
-  /\ UNCHANGED <<committed, aborted, observed, snapshotted, parents, writeLog>>
+  /\ UNCHANGED <<committed, aborted, observed, walked, snapshotted, parents, writeLog>>
 
 Next ==
   \/ \E w \in Writers : Snapshot(w)
@@ -229,7 +261,10 @@ TypeOK ==
 \*
 \* RED under EagerDelete: the second writer deletes the same seed head key and
 \* aborts.
-\* GREEN under Derived: write sets are disjoint by construction.
+\* RED under PerKey: a sweep reclaims a head key the writer's scan yielded, and
+\* the writer aborts on a read set whose answer did not change.
+\* GREEN under Derived with Stretch: write sets are disjoint by construction and
+\* the scan holds no key.
 INV_NoWriteConflict == aborted = {}
 
 \* The mechanical reason. Two distinct writers never write the same key.

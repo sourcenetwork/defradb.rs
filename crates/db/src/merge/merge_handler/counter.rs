@@ -14,6 +14,35 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 "field block has no unambiguous owner; merged via its composite",
             ));
         };
+
+        // A replay of a finalized block ends here, before it needs the
+        // collection; the check after the queue covers a concurrent delivery.
+        if self.blockstore.is_merged(cid).await.unwrap_or(false) {
+            return Ok(MergeOutcome::terminal_skip("already merged"));
+        }
+
+        // Look up the collection to determine field kind and counter type,
+        // with fallback to metadata's collection_id for cross-version sync
+        let missing_collection = || {
+            MergeError::MissingMetadata(format!(
+                "Collection not found for schema_version_id: {}",
+                payload.schema_version_id
+            ))
+        };
+        let collection = self
+            .block_collection(&payload.schema_version_id, metadata.collection_id)
+            .await?
+            .ok_or_else(missing_collection)?;
+        let _collection_guard = self
+            .db
+            .collection_read_guard(collection.collection_id())
+            .await?;
+        // Resolved again under the guard: a definition committed under the
+        // write guard since is the one this merge writes with.
+        let collection = self
+            .block_collection(&payload.schema_version_id, metadata.collection_id)
+            .await?
+            .ok_or_else(missing_collection)?;
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 
         tracing::debug!(
@@ -33,21 +62,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             );
             return Ok(MergeOutcome::terminal_skip("already merged"));
         }
-
-        // Look up the collection to determine field kind and counter type,
-        // with fallback to metadata's collection_id for cross-version sync
-        let collection = self
-            .db
-            .find_collection_by_id(&payload.schema_version_id)?
-            .or(metadata
-                .collection_id
-                .and_then(|cid| self.db.find_collection_by_id(cid).ok().flatten()))
-            .ok_or_else(|| {
-                MergeError::MissingMetadata(format!(
-                    "Collection not found for schema_version_id: {}",
-                    payload.schema_version_id
-                ))
-            })?;
 
         // Get field definition to determine numeric kind and allow_decrement
         let field = collection
@@ -200,10 +214,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Look up the collection to determine field kind and counter type,
         // with fallback to metadata's collection_id for cross-version sync
         let collection = self
-            .db
-            .find_collection_by_id(&payload.schema_version_id)?
-            .or(fallback_collection_id
-                .and_then(|cid| self.db.find_collection_by_id(cid).ok().flatten()))
+            .block_collection(&payload.schema_version_id, fallback_collection_id)
+            .await?
             .ok_or_else(|| {
                 MergeError::MissingMetadata(format!(
                     "Collection not found for schema_version_id: {}",

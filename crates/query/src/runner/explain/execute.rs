@@ -1,8 +1,8 @@
 use acp::Identity;
 use identity::Did;
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::{Map, Value as JsonValue};
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::document::documents_to_plan_docs;
@@ -28,7 +28,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         query: &str,
         caller_identity: Option<Did>,
-        variables: Option<&std::collections::HashMap<String, JsonValue>>,
+        variables: Option<&RapidHashMap<String, JsonValue>>,
     ) -> Result<JsonValue> {
         let mut selects = parse_query_with_limits(query, variables, self.query_limits)?;
         if query.contains("@exhaustive") {
@@ -322,7 +322,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 plan::ScanSource::Fetcher(Arc::new(FetcherWrapper::new(fetcher)))
             } else if let Some(ref doc_ids) = select.doc_ids {
                 // Deduplicate doc_ids while preserving order (Go compatibility)
-                let mut seen = HashSet::new();
+                let mut seen = RapidHashSet::new();
                 let unique_ids: Vec<String> = doc_ids
                     .iter()
                     .filter(|id| seen.insert((*id).clone()))

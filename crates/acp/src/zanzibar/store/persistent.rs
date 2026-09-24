@@ -1,10 +1,10 @@
 //! Persistent Zanzibar store backed by any Store implementation.
 
-use async_trait::async_trait;
 use std::sync::Arc;
 
 use storage::corekv::{IterOptions, Reader, Store, Writer};
 use storage::namespace::{Namespace, NamespacedStore};
+#[cfg(not(target_arch = "wasm32"))]
 use storage::RegolithStore;
 
 use identity::Did;
@@ -28,6 +28,8 @@ impl<S: Store> PersistentZanzibarStore<S> {
     }
 }
 
+// A path is only openable off-wasm; a browser store comes from OPFS or memory.
+#[cfg(not(target_arch = "wasm32"))]
 impl PersistentZanzibarStore<RegolithStore> {
     /// Open a persistent store at the given path.
     pub fn open(path: &std::path::Path) -> Result<Self> {
@@ -68,8 +70,9 @@ impl<S: Store> PersistentZanzibarStore<S> {
     }
 }
 
-#[async_trait]
-impl<S: Store + Send + Sync> ZanzibarStore for PersistentZanzibarStore<S> {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
     async fn store_policy(&self, policy: &Policy) -> Result<()> {
         let mut txn = self.store.new_txn(false).await.map_err(|e| {
             Error::Serialization(format!("store_policy: create transaction: {}", e))

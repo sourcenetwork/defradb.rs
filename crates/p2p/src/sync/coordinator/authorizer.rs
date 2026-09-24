@@ -20,7 +20,8 @@ use crate::transport::{P2PTransport, PeerId};
 /// Implemented by [`RuntimeAuthorizer`] in production; tests provide
 /// their own fakes so the pubsub path can be exercised without a real
 /// transport.
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub(super) trait AccessAuthorizer: Send + Sync {
     /// Returns `true` when the transport has observed the peer as connected.
     fn peer_connected(&self, peer_id_str: &str) -> bool;
@@ -81,7 +82,8 @@ impl<T: P2PTransport> RuntimeAuthorizer<T> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<T: P2PTransport> AccessAuthorizer for RuntimeAuthorizer<T> {
     fn peer_connected(&self, peer_id_str: &str) -> bool {
         self.peer_state.is_connected(peer_id_str)

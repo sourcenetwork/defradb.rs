@@ -3,13 +3,15 @@ use crate::benchmark_queries::{
     format_vector, render_action_ranked_query, render_message_ranked_query, RankedQueryOrder,
 };
 use axum::{extract::State, routing::post, Json, Router};
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use kovan::Atom;
 
 #[tokio::test]
 async fn coding_session_fixture_smoke_test() {
@@ -121,7 +123,7 @@ async fn coding_session_fixture_exports_context1_style_tasks() {
 
 #[derive(Clone, Default)]
 struct MockEmbeddingState {
-    requests: Arc<Mutex<Vec<EmbeddingRequest>>>,
+    requests: Arc<Atom<Vec<EmbeddingRequest>>>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -172,7 +174,7 @@ impl MockEmbeddingServer {
     }
 
     fn requests(&self) -> Vec<EmbeddingRequest> {
-        self.state.requests.lock().unwrap().clone()
+        self.state.requests.load_clone()
     }
 }
 
@@ -186,7 +188,11 @@ async fn mock_embedding_handler(
     State(state): State<MockEmbeddingState>,
     Json(request): Json<EmbeddingRequest>,
 ) -> Json<EmbeddingResponse> {
-    state.requests.lock().unwrap().push(request.clone());
+    state.requests.rcu(|requests| {
+        let mut requests = requests.clone();
+        requests.push(request.clone());
+        requests
+    });
 
     Json(EmbeddingResponse {
         data: vec![EmbeddingResponseItem {
@@ -740,16 +746,16 @@ fn compare_rankings(
     let bm25_ids = bm25
         .iter()
         .map(|hit| hit.doc_id.as_str())
-        .collect::<HashSet<_>>();
+        .collect::<RapidHashSet<_>>();
     let dense_ids = dense
         .iter()
         .map(|hit| hit.doc_id.as_str())
-        .collect::<HashSet<_>>();
+        .collect::<RapidHashSet<_>>();
     let overlap = bm25_ids.intersection(&dense_ids).count();
     let bm25_only = bm25_ids.difference(&dense_ids).count();
     let dense_only = dense_ids.difference(&bm25_ids).count();
 
-    let mut fused = HashMap::<String, FusedRankedHit>::new();
+    let mut fused = RapidHashMap::<String, FusedRankedHit>::new();
 
     for (index, hit) in bm25.iter().enumerate() {
         let rank = index + 1;

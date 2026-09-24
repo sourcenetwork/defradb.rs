@@ -1,5 +1,6 @@
 //! Relation-based aggregate computation.
 
+use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 
@@ -20,7 +21,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         &self,
         mut results: Vec<JsonValue>,
         select: &Select,
-        aggregate_internal_keys: &std::collections::HashMap<String, (String, String)>,
+        aggregate_internal_keys: &RapidHashMap<String, (String, String)>,
     ) -> Result<Vec<JsonValue>> {
         use crate::mapper::AggregateType;
 
@@ -55,7 +56,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
 
         // Collect which relation fields are explicitly selected and their requested fields (for cleanup later)
-        let _selected_relations: std::collections::HashSet<String> = select
+        let _selected_relations: RapidHashSet<String> = select
             .fields
             .iter()
             .filter_map(|f| {
@@ -69,15 +70,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         // For each selected relation, collect the fields that were explicitly requested.
         // Any fields NOT in this set were added for aggregate filter evaluation and should be cleaned up.
-        let selected_relation_fields: std::collections::HashMap<
-            String,
-            std::collections::HashSet<String>,
-        > = select
+        let selected_relation_fields: RapidHashMap<String, RapidHashSet<String>> = select
             .fields
             .iter()
             .filter_map(|f| {
                 if let Requestable::Select(s) = f {
-                    let mut fields = std::collections::HashSet::new();
+                    let mut fields = RapidHashSet::new();
                     // Always include _docID as it's implicit
                     fields.insert("_docID".to_string());
                     for requestable in &s.fields {
@@ -107,8 +105,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .collect();
 
         // Collect all relation names used by aggregates (for deferred cleanup)
-        let mut aggregate_relation_names: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut aggregate_relation_names: RapidHashSet<String> = RapidHashSet::new();
         for (_, _, targets) in &aggregates_info {
             for target in targets {
                 aggregate_relation_names.insert(target.host_name.clone());
@@ -118,7 +115,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Build a mapping from relation field name → output name for aliased relation selections.
         // When a query uses `NewestPublishersBook: book(...)`, the JSON key is "NewestPublishersBook"
         // but the aggregate target references "book". We need to resolve these aliases.
-        let relation_alias_map: std::collections::HashMap<&str, &str> = select
+        let relation_alias_map: RapidHashMap<&str, &str> = select
             .fields
             .iter()
             .filter_map(|f| {
@@ -427,7 +424,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // filter during plan execution since aggregate values don't exist yet.
         // Example: filter: {_alias: {publishedCount: {_gt: 0}}}
         if let Some(ref filter) = select.filter {
-            let aggregate_output_names: std::collections::HashSet<&str> = aggregates_info
+            let aggregate_output_names: RapidHashSet<&str> = aggregates_info
                 .iter()
                 .map(|(name, _, _)| name.as_str())
                 .collect();
@@ -516,7 +513,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // When order references aggregate aliases (e.g., order: {_alias: {total: DESC}}),
         // the OrderByNode can't sort during plan execution since values don't exist yet.
         if let Some(ref order_by) = select.order_by {
-            let aggregate_output_names: std::collections::HashSet<&str> = aggregates_info
+            let aggregate_output_names: RapidHashSet<&str> = aggregates_info
                 .iter()
                 .map(|(name, _, _)| name.as_str())
                 .collect();
@@ -590,7 +587,7 @@ fn distinct_group_count(items: &[&JsonValue], group_by: &crate::mapper::GroupBy)
                 .collect::<Vec<_>>()
                 .join("\u{1}")
         })
-        .collect::<std::collections::HashSet<_>>()
+        .collect::<RapidHashSet<_>>()
         .len() as i64
 }
 

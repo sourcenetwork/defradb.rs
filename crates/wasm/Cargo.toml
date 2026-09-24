@@ -21,18 +21,7 @@ bytes = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = [
-    "console",
-    "Headers",
-    "ReadableStream",
-    "Request",
-    "RequestInit",
-    "Response",
-    "Url",
-    "Window",
-] }
-wasm-streams = "0.4"
-gloo-timers = { version = "0.3", features = ["futures"] }
+web-sys = { version = "0.3", features = ["console"] }
 
 # Serialization for JS interop
 serde-wasm-bindgen = "0.6"
@@ -69,15 +58,33 @@ crypto = { path = "../crypto" }
 identity = { path = "../identity" }
 zeroize = "1.8"
 events = { path = "../events", features = ["channel"] }
+# The browser is a P2P peer over a relay-only iroh endpoint, running the same
+# coordinator, replication stack, and document ACP a native node does.
+acp = { path = "../acp", default-features = false }
+defra-p2p-adapter = { path = "../p2p-adapter", default-features = false, features = ["iroh"] }
+p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"] }
+iroh.workspace = true
+hkdf = "0.12"
 
 # IPLD
 cid.workspace = true
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+# The relay end-to-end test drives a native node's HTTP API with fetch and
+# waits on replication with browser timers.
+web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
 # The browser benchmark reports through the same contract the native suite
 # does, so the two describe a measurement identically.
 defra-perf = { path = "../../tools/perf" }
+
+# Built only for tools/browser-p2p-e2e.sh, which supplies the node it talks to.
+# Behind a feature so a plain `--tests` run cannot report it as passing.
+[[test]]
+name = "p2p_relay"
+path = "tests/p2p_relay/main.rs"
+required-features = ["relay-e2e"]
 
 [features]
 # The shipped browser artifact depends on this default. Building with
@@ -86,6 +93,8 @@ defra-perf = { path = "../../tools/perf" }
 default = ["debug"]
 # Enable console_error_panic_hook for better error messages in debug builds
 debug = ["dep:console_error_panic_hook"]
+# The browser-to-node relay test; see tools/browser-p2p-e2e.sh.
+relay-e2e = []
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz", "--enable-mutable-globals", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-simd"]

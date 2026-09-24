@@ -3,7 +3,8 @@
 //! CARv1 (Content ARchive) packs a set of IPLD blocks with their CIDs into a
 //! single byte stream, enabling single-round-trip DAG transfer over P2P.
 
-use std::collections::{HashSet, VecDeque};
+use rapidhash::{HashSetExt, RapidHashSet};
+use std::collections::VecDeque;
 
 use blockstore::Blockstore;
 use bytes::Bytes;
@@ -201,7 +202,7 @@ pub async fn collect_dag_blocks_from_roots<B: Blockstore>(
     roots: &[Cid],
 ) -> Result<CarCollectOutcome> {
     let mut outcome = CarCollectOutcome::default();
-    let mut visited = HashSet::new();
+    let mut visited = RapidHashSet::new();
     let mut total_bytes: usize = 0;
     let mut queue: VecDeque<Cid> = roots.iter().copied().collect();
 
@@ -243,7 +244,7 @@ pub async fn collect_exact_blocks<B: Blockstore>(
     cids: &[Cid],
 ) -> Result<CarCollectOutcome> {
     let mut outcome = CarCollectOutcome::default();
-    let mut visited = HashSet::new();
+    let mut visited = RapidHashSet::new();
     let mut total_bytes: usize = 0;
 
     for cid in cids {
@@ -735,12 +736,13 @@ mod tests {
             collect_dag_blocks_from_roots(&blockstore, &[left_cid, right_cid, left_cid])
                 .await
                 .unwrap();
-        let collected_cids: HashSet<Cid> = collected.blocks.iter().map(|(cid, _)| *cid).collect();
+        let collected_cids: RapidHashSet<Cid> =
+            collected.blocks.iter().map(|(cid, _)| *cid).collect();
 
         assert_eq!(collected.blocks.len(), 3);
         assert_eq!(
             collected_cids,
-            HashSet::from([left_cid, right_cid, shared_cid])
+            RapidHashSet::from_iter([left_cid, right_cid, shared_cid])
         );
         assert!(!collected.truncated());
     }

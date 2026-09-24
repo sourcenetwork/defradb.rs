@@ -21,8 +21,8 @@ pub(crate) use pending_dag::PendingDagLease;
 
 use crate::QueryId;
 use cid::Cid;
-use parking_lot::RwLock;
-use std::collections::HashMap;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -34,7 +34,7 @@ use super::super::queue::ProcessQueue;
 use super::config::SyncConfig;
 use super::diagnostics::SyncDiagnostics;
 use super::events::SyncEvent;
-use super::pending::PendingDagRegistry;
+use super::pending::SharedPendingDags;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct PersistedScopeKey {
@@ -101,13 +101,13 @@ pub struct SyncManager<B: Blockstore> {
 
     /// Pending DAGs waiting for Bitswap to complete, indexed by root and each
     /// missing CID.
-    pub(super) pending_dags: Arc<RwLock<PendingDagRegistry>>,
+    pub(super) pending_dags: Arc<SharedPendingDags>,
 
     /// Coalesced wakeup for the sole bounded receiver dispatch owner.
     pub(super) pending_dag_ready: tokio::sync::Notify,
 
     /// Maps Bitswap QueryId → root CID for tracking completions.
-    pub(super) query_to_root: Arc<RwLock<HashMap<QueryId, Cid>>>,
+    pub(super) query_to_root: HopscotchMap<QueryId, Cid, RandomState>,
 
     /// Completion waiters for poll-owned exact-CID queries.
     pub(super) block_sync_completions: BlockSyncCompletionTracker,
@@ -135,12 +135,15 @@ pub struct SyncManager<B: Blockstore> {
     /// Roots with a durable registration. Superset guard so the merge path
     /// only pays a delete transaction for roots that actually have records,
     /// and admission can bound durable growth without hitting storage.
-    pub(super) persisted_roots: Arc<RwLock<std::collections::HashSet<Cid>>>,
+    /// Every writer runs under `pending_metadata_writer`, which is what keeps
+    /// the durable cap's check-and-reserve atomic.
+    pub(super) persisted_roots: HopscotchMap<Cid, (), RandomState>,
 
     /// Current durable root for each sender/document-or-collection scope.
     /// This survives pending TTL eviction and is hydrated before the first
-    /// post-restart PushLog.
-    pub(super) persisted_scope_heads: Arc<RwLock<HashMap<PersistedScopeKey, PersistedHeadVersion>>>,
+    /// post-restart PushLog. Written under `pending_metadata_writer` only.
+    pub(super) persisted_scope_heads:
+        HopscotchMap<PersistedScopeKey, PersistedHeadVersion, RandomState>,
 
     /// Single-flight guard for the durable resync sweep.
     pub(super) pending_resync_in_flight: std::sync::atomic::AtomicBool,
@@ -202,10 +205,10 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             priority,
             cid: root_cid,
         };
-        match self.persisted_scope_heads.read().get(&key) {
+        match self.persisted_scope_heads.get(&key) {
             None => PersistedScopeDecision::Current,
             Some(current) if current.cid == root_cid => PersistedScopeDecision::Current,
-            Some(current) if version <= *current => PersistedScopeDecision::CoveredByCurrent,
+            Some(current) if version <= current => PersistedScopeDecision::CoveredByCurrent,
             Some(current) => PersistedScopeDecision::Supersedes(current.cid),
         }
     }
@@ -235,13 +238,15 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         ) {
             return true;
         }
-        self.pending_dags.read().scope_head_is_covered_by_current(
-            root_cid,
-            source_peer,
-            collection_id,
-            doc_id,
-            head_priority,
-        )
+        self.pending_dags.read(|pending| {
+            pending.scope_head_is_covered_by_current(
+                root_cid,
+                source_peer,
+                collection_id,
+                doc_id,
+                head_priority,
+            )
+        })
     }
 
     pub(super) fn scope_head_is_refresh_or_newer(
@@ -262,16 +267,17 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             cid: root_cid,
         };
         self.persisted_scope_heads
-            .read()
             .get(&key)
-            .is_some_and(|current| current.cid == root_cid || version > *current)
-            || self.pending_dags.read().scope_head_is_refresh_or_newer(
-                root_cid,
-                source_peer,
-                collection_id,
-                doc_id,
-                head_priority,
-            )
+            .is_some_and(|current| current.cid == root_cid || version > current)
+            || self.pending_dags.read(|pending| {
+                pending.scope_head_is_refresh_or_newer(
+                    root_cid,
+                    source_peer,
+                    collection_id,
+                    doc_id,
+                    head_priority,
+                )
+            })
     }
 
     pub(super) fn remember_persisted_scope_head(
@@ -291,16 +297,25 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             priority,
             cid: root_cid,
         };
-        let mut heads = self.persisted_scope_heads.write();
-        if heads.get(&key).is_none_or(|current| version >= *current) {
-            heads.insert(key, version);
+        if self
+            .persisted_scope_heads
+            .get(&key)
+            .is_none_or(|current| version >= current)
+        {
+            self.persisted_scope_heads.insert(key, version);
         }
     }
 
     pub(super) fn forget_persisted_scope_root(&self, root_cid: &Cid) {
-        self.persisted_scope_heads
-            .write()
-            .retain(|_, version| version.cid != *root_cid);
+        let stale: Vec<PersistedScopeKey> = self
+            .persisted_scope_heads
+            .iter()
+            .filter(|(_, version)| version.cid == *root_cid)
+            .map(|(key, _)| key)
+            .collect();
+        for key in stale {
+            self.persisted_scope_heads.remove(&key);
+        }
     }
 
     /// Create a new SyncManager.
@@ -324,9 +339,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             process_queue: ProcessQueue::new(),
             event_tx,
             peer_state,
-            pending_dags: Arc::new(RwLock::new(PendingDagRegistry::default())),
+            pending_dags: Arc::new(SharedPendingDags::default()),
             pending_dag_ready: tokio::sync::Notify::new(),
-            query_to_root: Arc::new(RwLock::new(HashMap::new())),
+            query_to_root: HopscotchMap::with_hasher(RandomState::default()),
             block_sync_completions: BlockSyncCompletionTracker::with_capacity(
                 config.max_pending_dags.max(1),
             ),
@@ -337,8 +352,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             max_pending_dags: config.max_pending_dags.max(1),
             pending_store: std::sync::OnceLock::new(),
             pending_metadata_writer: tokio::sync::Mutex::new(()),
-            persisted_roots: Arc::new(RwLock::new(std::collections::HashSet::new())),
-            persisted_scope_heads: Arc::new(RwLock::new(HashMap::new())),
+            persisted_roots: HopscotchMap::with_hasher(RandomState::default()),
+            persisted_scope_heads: HopscotchMap::with_hasher(RandomState::default()),
             pending_resync_in_flight: std::sync::atomic::AtomicBool::new(false),
             pending_resync_tick: std::sync::atomic::AtomicUsize::new(0),
             quarantined_pending_count: std::sync::atomic::AtomicUsize::new(0),
@@ -411,9 +426,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// merged bit.
     async fn reconcile_merged_pending_inner(&self, cid: &Cid) {
         self.clear_pending_dag(cid);
-        if self.persisted_roots.read().contains(cid) {
+        if self.persisted_roots.contains_key(cid) {
             self.remove_persisted_pending_inner(cid).await;
-            if !self.persisted_roots.read().contains(cid) {
+            if !self.persisted_roots.contains_key(cid) {
                 self.diagnostics.record_pending_dag_terminal_merged();
             }
         }
@@ -471,7 +486,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
 
     /// Number of durable pending-DAG registrations currently held.
     pub fn persisted_pending_count(&self) -> usize {
-        self.persisted_roots.read().len()
+        self.persisted_roots.len()
     }
 
     /// Cap on durable pending-DAG registrations; admission nacks beyond it.
@@ -502,9 +517,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         }
         match store.load_all().await {
             Ok(records) => {
-                self.persisted_roots
-                    .write()
-                    .extend(records.iter().map(|(cid, _)| *cid));
+                for (cid, _) in &records {
+                    self.persisted_roots.insert_if_absent(*cid, ());
+                }
                 for (cid, record) in &records {
                     self.remember_persisted_scope_head(
                         *cid,
@@ -515,7 +530,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     );
                 }
                 self.diagnostics
-                    .observe_persisted_pending_dag_depth(self.persisted_roots.read().len());
+                    .observe_persisted_pending_dag_depth(self.persisted_roots.len());
             }
             Err(error) => {
                 tracing::warn!(
@@ -559,7 +574,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         if let Some(store) = self.pending_store() {
             match store.remove(root_cid).await {
                 Ok(()) => {
-                    self.persisted_roots.write().remove(root_cid);
+                    self.persisted_roots.remove(root_cid);
                     self.forget_persisted_scope_root(root_cid);
                 }
                 Err(error) => {

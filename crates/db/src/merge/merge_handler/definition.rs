@@ -85,7 +85,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // For initial versions, prev_fields is empty so fields = new_fields.
         // For patched versions, combine existing fields + newly added fields.
         let mut fields = prev_fields;
-        let existing_names: HashSet<String> = fields.iter().map(|f| f.name.clone()).collect();
+        let existing_names: RapidHashSet<String> = fields.iter().map(|f| f.name.clone()).collect();
         for field in new_fields {
             if !existing_names.contains(&field.name) {
                 fields.push(field);

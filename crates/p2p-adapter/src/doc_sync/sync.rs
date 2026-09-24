@@ -1,7 +1,7 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use defra_http::P2PResult;
+use rapidhash::RapidHashSet;
 
 use crate::doc_sync::dispatch::DocSyncDispatch;
 use crate::{P2PError, P2PErrorExt as _};
@@ -37,8 +37,8 @@ where
     let mut last_unanswered = 0;
     let mut dispatched = false;
     let idle_timeout = std::time::Duration::from_secs(3);
-    let start = std::time::Instant::now();
-    let doc_set: HashSet<String> = doc_ids.iter().cloned().collect();
+    let start = web_time::Instant::now();
+    let doc_set: RapidHashSet<String> = doc_ids.iter().cloned().collect();
 
     for _attempt in 0..3 {
         // Completion first: an empty `doc_ids` makes `total_expected` zero, and
@@ -87,18 +87,19 @@ where
         // count held HTTP handlers for the full overall timeout when peers had
         // nothing to contribute — e.g. source-side explicit sync while
         // collection replication delivers the doc out of band.
-        let mut last_merge = std::time::Instant::now();
+        let mut last_merge = web_time::Instant::now();
         while total_received < total_expected && start.elapsed() < overall_timeout {
             if last_merge.elapsed() > idle_timeout {
                 break;
             }
 
-            match tokio::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await {
+            match n0_future::time::timeout(std::time::Duration::from_millis(100), sub.recv()).await
+            {
                 Ok(Some(msg)) => {
                     if let Some(data) = msg.as_merge_complete() {
                         if doc_set.contains(&data.doc_id) {
                             total_received += 1;
-                            last_merge = std::time::Instant::now();
+                            last_merge = web_time::Instant::now();
                         }
                     }
                 }
@@ -148,8 +149,8 @@ where
     D::Peer: Clone + std::fmt::Display + 'static,
 {
     let mut peer_iter = peers.iter().cloned();
-    let mut tasks = tokio::task::JoinSet::new();
-    let now = tokio::time::Instant::now();
+    let mut tasks = n0_future::task::JoinSet::new();
+    let now = n0_future::time::Instant::now();
     let deadline = now
         .checked_add(remaining)
         .unwrap_or_else(|| now + std::time::Duration::from_secs(86_400 * 365));
@@ -166,8 +167,8 @@ where
             let dispatch = Arc::clone(dispatch);
             let request = request.clone();
             tasks.spawn(async move {
-                let result = tokio::time::timeout_at(
-                    deadline,
+                let result = n0_future::time::timeout(
+                    deadline.saturating_duration_since(n0_future::time::Instant::now()),
                     dispatch.send_doc_sync_request(&peer, request),
                 )
                 .await;
@@ -179,7 +180,8 @@ where
             break;
         }
 
-        match tasks.join_next().await {
+        // The browser JoinSet has no join_next; poll_join_next exists on both.
+        match std::future::poll_fn(|cx| tasks.poll_join_next(cx)).await {
             Some(Ok((peer, Ok(Ok(()))))) => {
                 outcome.any_sent = true;
                 tracing::debug!(peer_id = %peer, "sent DocSync request");
@@ -250,7 +252,7 @@ mod tests {
     async fn dispatch_is_bounded_by_the_caller_deadline() {
         let dispatch = Arc::new(SlowDispatch::new(2, Duration::from_secs(30)));
         let bus = Arc::new(events::ChannelBus::default());
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
 
         let result = super::sync_documents(
             Arc::clone(&dispatch),
@@ -279,7 +281,7 @@ mod tests {
     async fn the_deadline_covers_the_whole_round_not_each_wave() {
         let dispatch = Arc::new(SlowDispatch::new(3, Duration::from_millis(500)));
         let bus = Arc::new(events::ChannelBus::default());
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
 
         let _ = super::sync_documents(
             Arc::clone(&dispatch),

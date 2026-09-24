@@ -1,6 +1,6 @@
 //! DAG synchronizer implementation.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::sync::Arc;
 
 use cid::Cid;
@@ -129,7 +129,7 @@ impl DagSync {
     ///
     /// Returns peers that might have the blocks, based on peer state tracking.
     fn get_providers(&self, cids: &[Cid]) -> Vec<String> {
-        let mut providers = HashSet::new();
+        let mut providers = RapidHashSet::new();
 
         // Add peers known to have any of the missing CIDs
         for cid in cids {

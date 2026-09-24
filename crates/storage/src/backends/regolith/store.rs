@@ -101,15 +101,29 @@ impl RegolithStore {
     /// bounded rather than unlimited.
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     pub async fn open_opfs(db_name: &str) -> Result<Self> {
+        Self::open_opfs_with(db_name, false).await
+    }
+
+    /// [`open_opfs`](Self::open_opfs), optionally refusing the mirror.
+    ///
+    /// With `require_sync_handles`, a mount that cannot take synchronous
+    /// access handles fails instead of falling back to the resident mirror.
+    /// The probe cannot tell "not in a Worker" from "another Worker still
+    /// holds these files", so without this a Worker that takes over a
+    /// database from one that has not yet released it silently mounts an
+    /// empty mirror beside the real data. Failing lets the caller retry.
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    pub async fn open_opfs_with(db_name: &str, require_sync_handles: bool) -> Result<Self> {
         use std::sync::Arc;
 
+        let mut mount_options = regolith::env::opfs::OpfsOptions::default();
+        if require_sync_handles {
+            mount_options.force_mode = Some(regolith::env::opfs::OpfsMode::Sah);
+        }
         let env = Arc::new(
-            regolith::env::opfs::OpfsEnv::mount(
-                db_name,
-                regolith::env::opfs::OpfsOptions::default(),
-            )
-            .await
-            .map_err(|error| Error::Backend(format!("failed to mount OPFS: {error}")))?,
+            regolith::env::opfs::OpfsEnv::mount(db_name, mount_options)
+                .await
+                .map_err(|error| Error::Backend(format!("failed to mount OPFS: {error}")))?,
         );
 
         let mut options = RegolithStoreOptions::wasm();

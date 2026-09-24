@@ -14,16 +14,28 @@ use crate::{QueryId, ReplicatorInfo};
 use async_trait::async_trait;
 use blockstore::{Blockstore, DefraBlockstore};
 use ipld_core::{codec::Codec, ipld, ipld::Ipld};
+use kovan::{Atom, AtomOption};
+use kovan_map::HopscotchMap;
+use kovan_queue::seg_queue::SegQueue;
 use multihash_codetable::{Code, MultihashDigest};
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use serde_ipld_dagcbor::codec::DagCborCodec;
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use storage::RegolithStore;
 use tokio::sync::mpsc;
 
-type StreamedBlocks = Arc<Mutex<Option<Vec<(Cid, Vec<u8>)>>>>;
+type StreamedBlocks = Arc<AtomOption<Vec<(Cid, Vec<u8>)>>>;
+type CompletionSlot = Arc<AtomOption<crate::sync::manager::BlockSyncCompletionTracker>>;
+
+fn rapid_map<K, V>() -> HopscotchMap<K, V, rapidhash::fast::RandomState>
+where
+    K: std::hash::Hash + Eq + Clone + 'static,
+    V: Clone + 'static,
+{
+    HopscotchMap::with_hasher(rapidhash::fast::RandomState::default())
+}
 
 fn make_cid(data: &[u8]) -> Cid {
     let hash = Code::Sha2_256.digest(data);
@@ -45,26 +57,35 @@ struct TestTransport {
     blockstore: Arc<DefraBlockstore<RegolithStore>>,
     root_cid: Cid,
     root_data: Vec<u8>,
-    car_blocks: Arc<HashMap<Cid, Vec<u8>>>,
-    selective_blocks: Arc<HashMap<Cid, Vec<u8>>>,
+    car_blocks: Arc<RapidHashMap<Cid, Vec<u8>>>,
+    selective_blocks: Arc<RapidHashMap<Cid, Vec<u8>>>,
     car_requests: Arc<AtomicUsize>,
-    sync_batches: Arc<Mutex<Vec<Vec<Cid>>>>,
-    sync_providers: Arc<Mutex<Vec<String>>>,
-    dead_providers: Arc<Mutex<HashSet<String>>>,
+    sync_batches: Arc<Atom<Vec<Vec<Cid>>>>,
+    sync_providers: Arc<SegQueue<String>>,
+    dead_providers: Arc<HopscotchMap<String, (), rapidhash::fast::RandomState>>,
     skip_serving_syncs: Arc<AtomicUsize>,
     fail_connected_peers: Arc<AtomicBool>,
-    connected_peers: Arc<Mutex<Vec<PeerId>>>,
-    cancelled_queries: Arc<Mutex<Vec<u64>>>,
+    connected_peers: Arc<Atom<Vec<PeerId>>>,
+    cancelled_queries: Arc<SegQueue<u64>>,
     hang_car_requests: Arc<AtomicBool>,
     streamed_rooted_blocks: StreamedBlocks,
-    stream_completion: Arc<Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
-    early_failure_completion: Arc<Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
-    early_deferred_completion: Arc<Mutex<Option<crate::sync::manager::BlockSyncCompletionTracker>>>,
-    stream_block_delay: Arc<Mutex<Duration>>,
+    stream_completion: CompletionSlot,
+    early_failure_completion: CompletionSlot,
+    early_deferred_completion: CompletionSlot,
+    early_success_completion: CompletionSlot,
+    stream_block_delay_nanos: Arc<AtomicU64>,
     stream_completed: Arc<AtomicBool>,
     cancelled_before_stream_complete: Arc<AtomicBool>,
-    size_limited_providers:
-        Arc<Mutex<HashMap<String, (Cid, crate::sync::manager::BlockSyncCompletionTracker)>>>,
+    size_limited_providers: Arc<
+        HopscotchMap<
+            String,
+            (Cid, crate::sync::manager::BlockSyncCompletionTracker),
+            rapidhash::fast::RandomState,
+        >,
+    >,
+    disconnected_peers: Arc<Atom<Vec<String>>>,
+    empty_car_answer: Arc<AtomOption<crate::sync::manager::RootedCarCompletionTracker>>,
+    force_rooted_sync: Arc<AtomicBool>,
 }
 
 impl TestTransport {
@@ -72,8 +93,8 @@ impl TestTransport {
         blockstore: Arc<DefraBlockstore<RegolithStore>>,
         root_cid: Cid,
         root_data: Vec<u8>,
-        car_blocks: HashMap<Cid, Vec<u8>>,
-        selective_blocks: HashMap<Cid, Vec<u8>>,
+        car_blocks: RapidHashMap<Cid, Vec<u8>>,
+        selective_blocks: RapidHashMap<Cid, Vec<u8>>,
     ) -> Self {
         Self {
             peer_id: PeerId::new("local-peer".to_string()),
@@ -84,28 +105,49 @@ impl TestTransport {
             car_blocks: Arc::new(car_blocks),
             selective_blocks: Arc::new(selective_blocks),
             car_requests: Arc::new(AtomicUsize::new(0)),
-            sync_batches: Arc::new(Mutex::new(Vec::new())),
-            sync_providers: Arc::new(Mutex::new(Vec::new())),
-            dead_providers: Arc::new(Mutex::new(HashSet::new())),
+            sync_batches: Arc::new(Atom::new(Vec::new())),
+            sync_providers: Arc::new(SegQueue::new()),
+            dead_providers: Arc::new(rapid_map()),
             skip_serving_syncs: Arc::new(AtomicUsize::new(0)),
             fail_connected_peers: Arc::new(AtomicBool::new(false)),
-            connected_peers: Arc::new(Mutex::new(vec![
+            connected_peers: Arc::new(Atom::new(vec![
                 PeerId::new("remote-peer".to_string()),
                 PeerId::new("dead-peer".to_string()),
                 PeerId::new("alt-peer".to_string()),
                 PeerId::new("other-peer".to_string()),
             ])),
-            cancelled_queries: Arc::new(Mutex::new(Vec::new())),
+            cancelled_queries: Arc::new(SegQueue::new()),
             hang_car_requests: Arc::new(AtomicBool::new(false)),
-            streamed_rooted_blocks: Arc::new(Mutex::new(None)),
-            stream_completion: Arc::new(Mutex::new(None)),
-            early_failure_completion: Arc::new(Mutex::new(None)),
-            early_deferred_completion: Arc::new(Mutex::new(None)),
-            stream_block_delay: Arc::new(Mutex::new(Duration::from_millis(10))),
+            streamed_rooted_blocks: Arc::new(AtomOption::none()),
+            stream_completion: Arc::new(AtomOption::none()),
+            early_failure_completion: Arc::new(AtomOption::none()),
+            early_deferred_completion: Arc::new(AtomOption::none()),
+            early_success_completion: Arc::new(AtomOption::none()),
+            stream_block_delay_nanos: Arc::new(AtomicU64::new(
+                Duration::from_millis(10).as_nanos() as u64,
+            )),
             stream_completed: Arc::new(AtomicBool::new(false)),
             cancelled_before_stream_complete: Arc::new(AtomicBool::new(false)),
-            size_limited_providers: Arc::new(Mutex::new(HashMap::new())),
+            size_limited_providers: Arc::new(rapid_map()),
+            disconnected_peers: Arc::new(Atom::new(Vec::new())),
+            empty_car_answer: Arc::new(AtomOption::none()),
+            force_rooted_sync: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn disconnected_peers(&self) -> Vec<String> {
+        self.disconnected_peers.load_clone()
+    }
+
+    /// Answer every rooted CAR request with an empty CAR: the peer replies on
+    /// its own substreams and hands back no block, which is how a live peer
+    /// with a dead Bitswap queue looks from the fetcher.
+    fn set_empty_car_answer(&self, tracker: crate::sync::manager::RootedCarCompletionTracker) {
+        self.empty_car_answer.store_some(tracker);
+    }
+
+    fn set_force_rooted_sync(&self) {
+        self.force_rooted_sync.store(true, Ordering::SeqCst);
     }
 
     fn car_request_count(&self) -> usize {
@@ -113,15 +155,15 @@ impl TestTransport {
     }
 
     fn sync_batches(&self) -> Vec<Vec<Cid>> {
-        self.sync_batches.lock().unwrap().clone()
+        self.sync_batches.load_clone()
     }
 
     fn sync_providers(&self) -> Vec<String> {
-        self.sync_providers.lock().unwrap().clone()
+        std::iter::from_fn(|| self.sync_providers.pop()).collect()
     }
 
     fn mark_provider_dead(&self, peer: &str) {
-        self.dead_providers.lock().unwrap().insert(peer.to_string());
+        self.dead_providers.insert(peer.to_string(), ());
     }
 
     fn set_skip_serving_syncs(&self, count: usize) {
@@ -133,11 +175,11 @@ impl TestTransport {
     }
 
     fn set_connected_peers(&self, peers: Vec<PeerId>) {
-        *self.connected_peers.lock().unwrap() = peers;
+        self.connected_peers.store(peers);
     }
 
     fn cancelled_queries(&self) -> Vec<u64> {
-        self.cancelled_queries.lock().unwrap().clone()
+        std::iter::from_fn(|| self.cancelled_queries.pop()).collect()
     }
 
     fn set_hang_car_requests(&self) {
@@ -149,30 +191,42 @@ impl TestTransport {
         blocks: Vec<(Cid, Vec<u8>)>,
         completion: crate::sync::manager::BlockSyncCompletionTracker,
     ) {
-        *self.streamed_rooted_blocks.lock().unwrap() = Some(blocks);
-        *self.stream_completion.lock().unwrap() = Some(completion);
+        self.streamed_rooted_blocks.store_some(blocks);
+        self.stream_completion.store_some(completion);
     }
 
     fn set_early_failure_completion(
         &self,
         completion: crate::sync::manager::BlockSyncCompletionTracker,
     ) {
-        *self.early_failure_completion.lock().unwrap() = Some(completion);
+        self.early_failure_completion.store_some(completion);
     }
 
     fn set_early_deferred_completion(
         &self,
         completion: crate::sync::manager::BlockSyncCompletionTracker,
     ) {
-        *self.early_deferred_completion.lock().unwrap() = Some(completion);
+        self.early_deferred_completion.store_some(completion);
+    }
+
+    fn set_early_success_completion(
+        &self,
+        completion: crate::sync::manager::BlockSyncCompletionTracker,
+    ) {
+        self.early_success_completion.store_some(completion);
     }
 
     fn cancelled_before_stream_complete(&self) -> bool {
         self.cancelled_before_stream_complete.load(Ordering::SeqCst)
     }
 
+    fn stream_block_delay(&self) -> Duration {
+        Duration::from_nanos(self.stream_block_delay_nanos.load(Ordering::SeqCst))
+    }
+
     fn set_stream_block_delay(&self, delay: Duration) {
-        *self.stream_block_delay.lock().unwrap() = delay;
+        self.stream_block_delay_nanos
+            .store(delay.as_nanos() as u64, Ordering::SeqCst);
     }
 }
 
@@ -185,7 +239,7 @@ impl P2PTransport for TestTransport {
     }
 
     fn supports_cancellable_rooted_sync(&self) -> bool {
-        self.streamed_rooted_blocks.lock().unwrap().is_some()
+        self.force_rooted_sync.load(Ordering::SeqCst) || self.streamed_rooted_blocks.is_some()
     }
 
     fn local_public_key_proto(&self) -> &[u8] {
@@ -200,7 +254,12 @@ impl P2PTransport for TestTransport {
         Ok(())
     }
 
-    async fn disconnect(&self, _peer_id: &PeerId) -> P2PResult<()> {
+    async fn disconnect(&self, peer_id: &PeerId) -> P2PResult<()> {
+        self.disconnected_peers.rcu(|peers| {
+            let mut next = peers.clone();
+            next.push(peer_id.to_string());
+            next
+        });
         Ok(())
     }
 
@@ -214,7 +273,7 @@ impl P2PTransport for TestTransport {
                 "peer listing unavailable".to_string(),
             ));
         }
-        Ok(self.connected_peers.lock().unwrap().clone())
+        Ok(self.connected_peers.load_clone())
     }
 
     async fn listen_addresses(&self) -> P2PResult<Vec<PeerAddr>> {
@@ -301,11 +360,15 @@ impl P2PTransport for TestTransport {
         Ok(())
     }
 
-    async fn send_car_request(&self, _peer_id: &PeerId, root_cid: Cid) -> P2PResult<()> {
+    async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> P2PResult<()> {
         assert_eq!(root_cid, self.root_cid);
         self.car_requests.fetch_add(1, Ordering::SeqCst);
+        if let Some(tracker) = self.empty_car_answer.load().map(|t| t.clone()) {
+            tracker.complete(root_cid, peer_id, false);
+            return Ok(());
+        }
         if self.hang_car_requests.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_secs(600)).await;
+            n0_future::time::sleep(Duration::from_secs(600)).await;
             return Ok(());
         }
         self.blockstore
@@ -363,44 +426,69 @@ impl P2PTransport for TestTransport {
         providers: Vec<PeerId>,
         missing: Vec<Cid>,
     ) -> P2PResult<QueryId> {
-        let call_index = {
-            let mut batches = self.sync_batches.lock().unwrap();
-            batches.push(missing.clone());
-            batches.len() - 1
-        };
-        self.sync_providers
-            .lock()
-            .unwrap()
-            .extend(providers.iter().map(|peer| peer.to_string()));
+        let mut call_index = 0;
+        self.sync_batches.rcu(|batches| {
+            let mut next = batches.clone();
+            next.push(missing.clone());
+            call_index = next.len() - 1;
+            next
+        });
+        for peer in &providers {
+            self.sync_providers.push(peer.to_string());
+        }
         let query_id = QueryId(call_index as u64 + 1);
         if let Some((cid, completion)) = providers.first().and_then(|peer| {
             self.size_limited_providers
-                .lock()
-                .unwrap()
                 .get(peer.as_str())
-                .cloned()
                 .filter(|(cid, _)| missing.contains(cid))
         }) {
             completion.size_limit(query_id, cid);
             return Ok(query_id);
         }
-        if let Some(completion) = self.early_failure_completion.lock().unwrap().clone() {
+        if let Some(completion) = self.early_failure_completion.load().as_deref().cloned() {
             completion.complete(query_id, false);
             return Ok(query_id);
         }
-        if let Some(completion) = self.early_deferred_completion.lock().unwrap().clone() {
+        if let Some(completion) = self.early_deferred_completion.load().as_deref().cloned() {
             completion.defer(query_id);
             return Ok(query_id);
         }
-        let streamed_blocks = self.streamed_rooted_blocks.lock().unwrap().take();
+        if let Some(completion) = self.early_success_completion.load().as_deref().cloned() {
+            // Production ordering on libp2p: the host reports success once it
+            // has forwarded every block *event*; the coordinator dispatches
+            // those events and the completion as independent tasks, so the
+            // poll owner can observe Success while the puts are still landing.
+            completion.complete(query_id, true);
+            let blockstore = Arc::clone(&self.blockstore);
+            let delay = self.stream_block_delay();
+            let blocks: Vec<(Cid, Vec<u8>)> = missing
+                .iter()
+                .filter_map(|cid| {
+                    self.selective_blocks
+                        .get(cid)
+                        .map(|data| (*cid, data.clone()))
+                })
+                .collect();
+            n0_future::task::spawn(async move {
+                n0_future::time::sleep(delay).await;
+                for (cid, data) in blocks {
+                    blockstore.put(&cid, &data).await.unwrap();
+                }
+            });
+            return Ok(query_id);
+        }
+        let streamed_blocks = self
+            .streamed_rooted_blocks
+            .take()
+            .map(|blocks| blocks.to_vec());
         if let Some(streamed_blocks) = streamed_blocks {
             let blockstore = Arc::clone(&self.blockstore);
-            let completion = self.stream_completion.lock().unwrap().clone();
-            let stream_block_delay = *self.stream_block_delay.lock().unwrap();
+            let completion = self.stream_completion.load().as_deref().cloned();
+            let stream_block_delay = self.stream_block_delay();
             let stream_completed = Arc::clone(&self.stream_completed);
-            tokio::spawn(async move {
+            n0_future::task::spawn(async move {
                 for (cid, data) in streamed_blocks {
-                    tokio::time::sleep(stream_block_delay).await;
+                    n0_future::time::sleep(stream_block_delay).await;
                     blockstore.put(&cid, &data).await.unwrap();
                 }
                 stream_completed.store(true, Ordering::SeqCst);
@@ -413,10 +501,9 @@ impl P2PTransport for TestTransport {
         if call_index < self.skip_serving_syncs.load(Ordering::SeqCst) {
             return Ok(query_id);
         }
-        let all_dead = {
-            let dead = self.dead_providers.lock().unwrap();
-            providers.iter().all(|peer| dead.contains(peer.as_str()))
-        };
+        let all_dead = providers
+            .iter()
+            .all(|peer| self.dead_providers.contains_key(peer.as_str()));
         if all_dead {
             return Ok(query_id);
         }
@@ -432,13 +519,11 @@ impl P2PTransport for TestTransport {
     }
 
     async fn cancel_sync(&self, query_id: QueryId) -> P2PResult<bool> {
-        if self.stream_completion.lock().unwrap().is_some()
-            && !self.stream_completed.load(Ordering::SeqCst)
-        {
+        if self.stream_completion.is_some() && !self.stream_completed.load(Ordering::SeqCst) {
             self.cancelled_before_stream_complete
                 .store(true, Ordering::SeqCst);
         }
-        self.cancelled_queries.lock().unwrap().push(query_id.0);
+        self.cancelled_queries.push(query_id.0);
         Ok(true)
     }
 
@@ -487,7 +572,7 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
     let root_data = encode_ipld(ipld!({ "children": [child_one_cid, child_two_cid] }));
     let root_cid = make_cid(&root_data);
 
-    let selective_blocks = HashMap::from([
+    let selective_blocks = RapidHashMap::from_iter([
         (child_one_cid, child_one_data.clone()),
         (child_two_cid, child_two_data.clone()),
     ]);
@@ -495,7 +580,7 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
+        RapidHashMap::new(),
         selective_blocks,
     );
 
@@ -546,8 +631,11 @@ async fn poll_fetch_dag_recovers_partial_car_with_batched_selective_fetch() {
     assert_eq!(batches.len(), 1);
     assert_eq!(batches[0].len(), 2);
 
-    let requested: HashSet<_> = batches[0].iter().copied().collect();
-    assert_eq!(requested, HashSet::from([child_one_cid, child_two_cid]));
+    let requested: RapidHashSet<_> = batches[0].iter().copied().collect();
+    assert_eq!(
+        requested,
+        RapidHashSet::from_iter([child_one_cid, child_two_cid])
+    );
 }
 
 #[tokio::test]
@@ -566,8 +654,8 @@ async fn poll_fetch_dag_uses_known_missing_frontier_without_recursive_car() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data.clone())]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data.clone())]),
     );
 
     let (event_tx, mut event_rx) = mpsc::channel(1);
@@ -615,8 +703,8 @@ async fn rooted_selective_response_drains_before_query_is_reaped() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(leaf_cid, leaf_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(leaf_cid, leaf_data)]),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport.set_streamed_rooted_blocks(vec![(child_cid, child_data)], completion.clone());
@@ -672,8 +760,8 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     let context = DagFetchContext::new(
@@ -683,7 +771,7 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
         PeerId::new("remote-peer".to_string()),
     )
     .with_block_sync_completions(completion);
-    let started = tokio::time::Instant::now();
+    let started = n0_future::time::Instant::now();
 
     let outcome = poll_fetch_blocks(
         &root_cid,
@@ -696,7 +784,7 @@ async fn exact_selective_batch_does_not_wait_for_a_lost_completion_signal() {
     .await;
 
     assert_eq!(outcome, ProviderWindowOutcome::Complete);
-    assert_eq!(tokio::time::Instant::now(), started);
+    assert_eq!(n0_future::time::Instant::now(), started);
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
 }
 
@@ -713,8 +801,8 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::new(),
+        RapidHashMap::new(),
+        RapidHashMap::new(),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport.set_early_failure_completion(completion.clone());
@@ -725,7 +813,7 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
         PeerId::new("remote-peer".to_string()),
     )
     .with_block_sync_completions(completion);
-    let started = tokio::time::Instant::now();
+    let started = n0_future::time::Instant::now();
 
     let outcome = poll_fetch_blocks(
         &root_cid,
@@ -739,7 +827,7 @@ async fn exact_selective_failure_before_waiter_registration_is_observed_immediat
 
     assert_eq!(outcome, ProviderWindowOutcome::Stalled);
     assert_eq!(
-        tokio::time::Instant::now(),
+        n0_future::time::Instant::now(),
         started,
         "an early terminal result must not burn the 30-second watchdog"
     );
@@ -757,8 +845,8 @@ async fn contended_car_ingest_defers_to_root_clock_without_fetch_exhaustion() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
     transport.set_early_deferred_completion(completion.clone());
@@ -808,7 +896,7 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
     let root_data = encode_ipld(ipld!({ "children": [mid_one_cid, mid_two_cid] }));
     let root_cid = make_cid(&root_data);
 
-    let selective_blocks = HashMap::from([
+    let selective_blocks = RapidHashMap::from_iter([
         (mid_one_cid, mid_one_data.clone()),
         (mid_two_cid, mid_two_data.clone()),
         (leaf_one_cid, leaf_one_data.clone()),
@@ -818,7 +906,7 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
+        RapidHashMap::new(),
         selective_blocks,
     );
 
@@ -849,12 +937,12 @@ async fn poll_fetch_dag_continues_after_partial_selective_batch_progress() {
     let batches = transport.sync_batches();
     assert_eq!(batches.len(), 2);
     assert_eq!(
-        batches[0].iter().copied().collect::<HashSet<_>>(),
-        HashSet::from([mid_one_cid, mid_two_cid])
+        batches[0].iter().copied().collect::<RapidHashSet<_>>(),
+        RapidHashSet::from_iter([mid_one_cid, mid_two_cid])
     );
     assert_eq!(
-        batches[1].iter().copied().collect::<HashSet<_>>(),
-        HashSet::from([leaf_one_cid, leaf_two_cid])
+        batches[1].iter().copied().collect::<RapidHashSet<_>>(),
+        RapidHashSet::from_iter([leaf_one_cid, leaf_two_cid])
     );
 }
 
@@ -886,7 +974,7 @@ async fn poll_fetch_dag_completes_dag_deeper_than_legacy_iteration_cap() {
     let (root_cid, root_data) = nodes.last().unwrap().clone();
 
     // Root arrives via CAR; every ancestor is fetched one layer per iteration.
-    let selective_blocks: HashMap<Cid, Vec<u8>> = nodes[..DEPTH - 1]
+    let selective_blocks: RapidHashMap<Cid, Vec<u8>> = nodes[..DEPTH - 1]
         .iter()
         .map(|(cid, data)| (*cid, data.clone()))
         .collect();
@@ -894,7 +982,7 @@ async fn poll_fetch_dag_completes_dag_deeper_than_legacy_iteration_cap() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
+        RapidHashMap::new(),
         selective_blocks,
     );
 
@@ -951,8 +1039,8 @@ async fn poll_fetch_dag_rotates_to_alternate_provider_on_no_progress() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -998,8 +1086,8 @@ async fn poll_fetch_dag_retries_incomplete_fetch_and_succeeds() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.set_skip_serving_syncs(1);
 
@@ -1043,8 +1131,8 @@ async fn poll_fetch_dag_exhausted_retries_do_not_emit_dag_ready() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -1076,6 +1164,141 @@ async fn poll_fetch_dag_exhausted_retries_do_not_emit_dag_ready() {
     assert_eq!(transport.sync_batches().len(), MAX_FETCH_ATTEMPTS as usize);
 }
 
+/// Set up a fetch whose publisher answers rooted CAR requests with an empty
+/// CAR and serves no Bitswap block: a live connection whose per-peer queue is
+/// dead. `alt-peer` is an alternate provider that is equally silent because
+/// it simply does not hold this DAG.
+async fn dead_bitswap_publisher_fetch(
+    blockstore: &Arc<DefraBlockstore<RegolithStore>>,
+) -> (TestTransport, Cid, DagFetchContext) {
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
+    );
+    transport.mark_provider_dead("dead-peer");
+    transport.mark_provider_dead("alt-peer");
+    let rooted_car = crate::sync::manager::RootedCarCompletionTracker::default();
+    transport.set_empty_car_answer(rooted_car.clone());
+    let context = DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        PeerId::new("dead-peer".to_string()),
+    )
+    .with_alternate_providers(vec![PeerId::new("alt-peer".to_string())])
+    .with_rooted_car_completions(rooted_car)
+    .with_rooted_provider_discovery();
+    (transport, root_cid, context)
+}
+
+/// A connection the transport still reports as connected can be dead for
+/// Bitswap: a partition that never closes the socket leaves the per-peer
+/// queue stopped, and only a fresh connection rebuilds it. The publisher
+/// answering the rooted CAR request while serving no block for the root it
+/// announced is what separates that from a peer that has nothing to serve,
+/// so the fetcher hangs up on the publisher — and only on the publisher.
+#[tokio::test(start_paused = true)]
+async fn dead_bitswap_publisher_is_disconnected_after_exhaustion() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (transport, root_cid, context) = dead_bitswap_publisher_fetch(&blockstore).await;
+    let diagnostics = diagnostics();
+
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        context,
+        DagFetchLimiter::new(2),
+        diagnostics.clone(),
+    )
+    .await;
+
+    assert!(event_rx.recv().await.is_none());
+    assert_eq!(diagnostics.snapshot().pending_dag_fetch_exhausted, 1);
+    assert_eq!(
+        transport.disconnected_peers(),
+        vec!["dead-peer".to_string()],
+        "only the publisher that answered yet served nothing may be hung up on"
+    );
+}
+
+/// The same fetch on a transport that owns its own connection retirement.
+/// The beetle message queue does not exist there, so the generic path must
+/// not hang up on an Iroh peer.
+#[tokio::test(start_paused = true)]
+async fn rooted_sync_transports_keep_their_connection_after_exhaustion() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (transport, root_cid, context) = dead_bitswap_publisher_fetch(&blockstore).await;
+    transport.set_force_rooted_sync();
+
+    let (event_tx, _event_rx) = mpsc::channel(1);
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        context,
+        DagFetchLimiter::new(2),
+        diagnostics(),
+    )
+    .await;
+
+    assert!(
+        transport.disconnected_peers().is_empty(),
+        "a transport that retires its own connections must not be hung up on here"
+    );
+}
+
+/// Without the CAR answer there is no evidence about the peer at all: the
+/// publisher may be unreachable, or busy, or simply slower than the budget.
+/// Silence is not grounds to discard a connection.
+#[tokio::test(start_paused = true)]
+async fn unanswered_publisher_keeps_its_connection_after_exhaustion() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
+    );
+    transport.mark_provider_dead("dead-peer");
+
+    let (event_tx, _event_rx) = mpsc::channel(1);
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        DagFetchContext::new(
+            "doc-id".to_string(),
+            "collection-id".to_string(),
+            "creator-id".to_string(),
+            PeerId::new("dead-peer".to_string()),
+        ),
+        DagFetchLimiter::new(2),
+        diagnostics(),
+    )
+    .await;
+
+    assert!(
+        transport.disconnected_peers().is_empty(),
+        "a peer that never answered gives no evidence its Bitswap queue is the fault"
+    );
+}
+
 /// A success-acked durable root can outlive its provider's live connection.
 /// That interval belongs to the existing per-root retry clock: it must not
 /// burn the inner fetch budget or be reported as terminal exhaustion. Once
@@ -1091,8 +1314,8 @@ async fn disconnected_provider_defers_until_reconnect_without_exhaustion() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.set_connected_peers(Vec::new());
     let diagnostics = diagnostics();
@@ -1157,8 +1380,8 @@ async fn poll_fetch_dag_cancels_every_issued_query() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -1213,8 +1436,8 @@ async fn poll_fetch_dag_stall_budget_caps_stalled_batches_per_attempt() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::new(),
+        RapidHashMap::new(),
+        RapidHashMap::new(),
     );
     transport.mark_provider_dead("dead-peer");
 
@@ -1264,8 +1487,8 @@ async fn poll_fetch_dag_bounds_hung_car_request() {
         blockstore.clone(),
         root_cid,
         root_data.clone(),
-        HashMap::new(),
-        HashMap::from([(root_cid, root_data), (child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(root_cid, root_data), (child_cid, child_data)]),
     );
     transport.set_hang_car_requests();
 
@@ -1314,8 +1537,8 @@ async fn poll_fetch_dag_completes_from_source_when_peer_listing_fails() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.set_fail_connected_peers();
 
@@ -1364,14 +1587,14 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
         blockstore.clone(),
         root_cid,
         root_data,
-        HashMap::new(),
-        HashMap::from([(child_cid, child_data)]),
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
     );
     transport.mark_provider_dead("dead-peer");
 
     let limiter = DagFetchLimiter::new(1);
     let (event_tx, mut event_rx) = mpsc::channel(1);
-    let fetch = tokio::spawn(poll_fetch_dag(
+    let fetch = n0_future::task::spawn(poll_fetch_dag(
         transport.clone(),
         blockstore.clone(),
         event_tx,
@@ -1389,7 +1612,7 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
     // Let attempt 1 start (and therefore hold the only permit) before
     // competing for it.
     while transport.sync_batches().is_empty() {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        n0_future::time::sleep(Duration::from_millis(10)).await;
     }
 
     // Resolves as soon as attempt 1's permit drops (start of backoff);
@@ -1410,4 +1633,161 @@ async fn poll_fetch_dag_releases_limiter_permit_during_backoff() {
 
     assert!(event_rx.recv().await.is_none());
     assert_eq!(transport.sync_batches().len(), MAX_FETCH_ATTEMPTS as usize);
+}
+
+/// B0 rust-0 16:25:10.256-10.294: `Bitswap fetch complete success=true` is
+/// processed 4 ms before the three `Stored Bitswap block` puts land, the poll
+/// owner reports `Timeout fetching selective block batch` after a 13 ms window,
+/// and the DAG then completes through the manager path 25 ms later. A Success
+/// completion means every block has already been handed to this node; it must
+/// not be read as a stall.
+#[tokio::test(start_paused = true)]
+async fn exact_selective_success_completion_waits_for_blocks_still_landing() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
+    );
+    let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
+    transport.set_early_success_completion(completion.clone());
+    let context = DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        PeerId::new("remote-peer".to_string()),
+    )
+    .with_block_sync_completions(completion);
+    let started = n0_future::time::Instant::now();
+
+    let outcome = poll_fetch_blocks(
+        &root_cid,
+        &[child_cid],
+        &transport,
+        &blockstore,
+        &PeerId::new("remote-peer".to_string()),
+        &context,
+    )
+    .await;
+
+    assert_eq!(
+        outcome,
+        ProviderWindowOutcome::Complete,
+        "a successful completion whose blocks are still being stored is not a stall"
+    );
+    assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
+    assert!(
+        n0_future::time::Instant::now().duration_since(started) < Duration::from_secs(1),
+        "the landing blocks are local; waiting for them must not cost a fetch window"
+    );
+}
+
+/// The same ordering, one level up: the spurious stall costs the whole
+/// dispatch a 2 s in-task backoff (`retry_backoff(2)`) while it holds one of
+/// the four fetch slots, and the root is usually resolved by the manager path
+/// before the retry even runs. At B0 saturation that sleep was ~70% of all
+/// fetch-slot time.
+#[tokio::test(start_paused = true)]
+async fn success_completion_racing_block_storage_does_not_burn_a_retry_backoff() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    blockstore.put(&root_cid, &root_data).await.unwrap();
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::from_iter([(child_cid, child_data)]),
+    );
+    let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
+    transport.set_early_success_completion(completion.clone());
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    let started = n0_future::time::Instant::now();
+
+    poll_fetch_dag(
+        transport.clone(),
+        blockstore.clone(),
+        event_tx,
+        root_cid,
+        DagFetchContext::new(
+            "doc-id".to_string(),
+            "collection-id".to_string(),
+            "creator-id".to_string(),
+            PeerId::new("remote-peer".to_string()),
+        )
+        .with_block_sync_completions(completion),
+        DagFetchLimiter::new(2),
+        diagnostics(),
+    )
+    .await;
+
+    assert!(matches!(
+        event_rx.recv().await,
+        Some(SyncEvent::DagReady { root_cid: ready_cid, .. }) if ready_cid == root_cid
+    ));
+    let elapsed = n0_future::time::Instant::now().duration_since(started);
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "fetch slot held {elapsed:?}: the first attempt slept through retry_backoff(2) \
+         for blocks that had already been delivered"
+    );
+}
+
+/// The same race, but the completion arrives in the watchdog's final moments:
+/// its blocks then land after `BLOCK_SYNC_COMPLETION_WATCHDOG` would have
+/// expired. The grace has to outlive the watchdog, or a Success arriving late
+/// in the window gets no grace at all and burns the retry backoff anyway.
+#[tokio::test(start_paused = true)]
+async fn late_success_completion_keeps_the_full_landing_grace() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, child_cid, child_data) = single_child_dag();
+    // The transport serves nothing: this test drives the completion and the
+    // block landing itself, on the production ordering.
+    let transport = TestTransport::new(
+        blockstore.clone(),
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+    let completion = crate::sync::manager::BlockSyncCompletionTracker::default();
+    let context = DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        PeerId::new("remote-peer".to_string()),
+    )
+    .with_block_sync_completions(completion.clone());
+
+    let landing_store = blockstore.clone();
+    n0_future::task::spawn(async move {
+        n0_future::time::sleep(BLOCK_SYNC_COMPLETION_WATCHDOG - Duration::from_millis(150)).await;
+        // First (and only) sync_blocks call of this poll window.
+        completion.complete(QueryId(1), true);
+        n0_future::time::sleep(SUCCESS_LANDING_GRACE / 2).await;
+        landing_store.put(&child_cid, &child_data).await.unwrap();
+    });
+
+    let outcome = poll_fetch_blocks(
+        &root_cid,
+        &[child_cid],
+        &transport,
+        &blockstore,
+        &PeerId::new("remote-peer".to_string()),
+        &context,
+    )
+    .await;
+
+    assert_eq!(
+        outcome,
+        ProviderWindowOutcome::Complete,
+        "a Success in the watchdog's last moments must still wait out the landing grace"
+    );
+    assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
 }

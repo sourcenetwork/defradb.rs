@@ -291,8 +291,8 @@ mod tests {
     };
     use defra_http::P2PResult;
     use identity::Did;
+    use kovan_queue::seg_queue::SegQueue;
     use p2p::message::Message;
-    use std::sync::Mutex;
 
     type RecordedReplicator = (
         Vec<String>,
@@ -300,12 +300,21 @@ mod tests {
         defra_http::router::ReplicationFilters,
     );
 
+    /// Pops every recorded call, oldest first.
+    fn drain<T: 'static>(queue: &SegQueue<T>) -> Vec<T> {
+        let mut items = Vec::new();
+        while let Some(item) = queue.pop() {
+            items.push(item);
+        }
+        items
+    }
+
     /// Records mutating calls so tests can prove no side effect occurred.
     struct MockOps {
         peer_id: String,
-        added_collections: Mutex<Vec<String>>,
-        added_replicators: Mutex<Vec<RecordedReplicator>>,
-        disconnected_peers: Mutex<Vec<String>>,
+        added_collections: SegQueue<String>,
+        added_replicators: SegQueue<RecordedReplicator>,
+        disconnected_peers: SegQueue<String>,
         documents: Vec<P2pDocumentInfo>,
     }
 
@@ -313,9 +322,9 @@ mod tests {
         fn new(peer_id: &str) -> Self {
             Self {
                 peer_id: peer_id.to_string(),
-                added_collections: Mutex::new(Vec::new()),
-                added_replicators: Mutex::new(Vec::new()),
-                disconnected_peers: Mutex::new(Vec::new()),
+                added_collections: SegQueue::new(),
+                added_replicators: SegQueue::new(),
+                disconnected_peers: SegQueue::new(),
                 documents: Vec::new(),
             }
         }
@@ -323,27 +332,28 @@ mod tests {
         fn with_documents(peer_id: &str, documents: Vec<P2pDocumentInfo>) -> Self {
             Self {
                 peer_id: peer_id.to_string(),
-                added_collections: Mutex::new(Vec::new()),
-                added_replicators: Mutex::new(Vec::new()),
-                disconnected_peers: Mutex::new(Vec::new()),
+                added_collections: SegQueue::new(),
+                added_replicators: SegQueue::new(),
+                disconnected_peers: SegQueue::new(),
                 documents,
             }
         }
 
         fn added_collections(&self) -> Vec<String> {
-            self.added_collections.lock().unwrap().clone()
+            drain(&self.added_collections)
         }
 
         fn added_replicators(&self) -> Vec<RecordedReplicator> {
-            self.added_replicators.lock().unwrap().clone()
+            drain(&self.added_replicators)
         }
 
         fn disconnected_peers(&self) -> Vec<String> {
-            self.disconnected_peers.lock().unwrap().clone()
+            drain(&self.disconnected_peers)
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl P2POperations for MockOps {
         async fn local_peer_id(&self) -> P2PResult<String> {
             Ok(self.peer_id.clone())
@@ -358,10 +368,7 @@ mod tests {
             unimplemented!()
         }
         async fn disconnect_peer(&self, addr: &str) -> P2PResult<()> {
-            self.disconnected_peers
-                .lock()
-                .unwrap()
-                .push(addr.to_string());
+            self.disconnected_peers.push(addr.to_string());
             Ok(())
         }
         async fn get_replicators(&self) -> P2PResult<Vec<ReplicatorInfo>> {
@@ -375,11 +382,8 @@ mod tests {
             _explicit_replay_capabilities: Vec<ExplicitReplayCapabilityInput>,
             _expected_authorizer_did: Option<&str>,
         ) -> P2PResult<()> {
-            self.added_replicators.lock().unwrap().push((
-                collections,
-                addr.map(|s| s.to_string()),
-                filters,
-            ));
+            self.added_replicators
+                .push((collections, addr.map(|s| s.to_string()), filters));
             Ok(())
         }
         async fn remove_replicator(
@@ -393,7 +397,9 @@ mod tests {
             unimplemented!()
         }
         async fn add_collections(&self, collections: Vec<String>) -> P2PResult<()> {
-            self.added_collections.lock().unwrap().extend(collections);
+            for collection in collections {
+                self.added_collections.push(collection);
+            }
             Ok(())
         }
         async fn remove_collections(&self, _collections: Vec<String>) -> P2PResult<()> {
@@ -429,7 +435,8 @@ mod tests {
     /// `BoolNac(true)` allows.
     struct BoolNac(bool);
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl db::NacManagerApi for BoolNac {
         async fn check_permission(
             &self,

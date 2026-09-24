@@ -37,8 +37,9 @@ pub struct TxnBroadcastEvent {
 /// Without a `TxnBroadcaster`, transactional writes commit locally
 /// and publish to the local bus only — P2P peers never see them.
 /// Mirrors Go's `db.sendUpdate` at `internal/db/p2p.go:23-25`.
-#[async_trait]
-pub trait TxnBroadcaster: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait TxnBroadcaster: defra_core::thread_bounds::MaybeSendSync {
     async fn broadcast_update(&self, event: TxnBroadcastEvent);
 }
 

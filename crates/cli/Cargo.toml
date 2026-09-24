@@ -20,6 +20,7 @@ name = "defra"
 path = "src/main.rs"
 
 [dependencies]
+rapidhash.workspace = true
 # Internal crates
 acp = { path = "../acp" }
 bytes.workspace = true
@@ -41,7 +42,7 @@ lens = { path = "../lens" }
 document = { path = "../document" }
 keyring = { path = "../keyring" }
 orbis = { path = "../orbis", optional = true }
-sourcehub = { path = "../sourcehub", optional = true }
+vera = { path = "../vera", optional = true }
 defra-version = { path = "../defra-version" }
 pg-compat = { path = "../pg-compat", optional = true }
 telemetry = { path = "../telemetry", default-features = false }
@@ -116,13 +117,16 @@ optional = true
 
 [features]
 default = []
-release-full = ["postgres", "sourcehub", "orbis"]
+release-full = ["postgres", "vera", "orbis"]
 postgres = ["dep:pg-compat"]
-# SourceHub/hub.rs on-chain document ACP (`--document-acp-type source-hub|hub-rs`).
-sourcehub = ["dep:sourcehub"]
+# Vera/hub.rs on-chain document ACP (`--document-acp-type vera|hub-rs`).
+vera = ["dep:vera"]
+sourcehub = ["vera"]
 # Orbis ring threshold signing (`--signer-type orbis`).
 orbis = ["dep:orbis"]
-iroh = ["p2p/iroh-transport", "defra-p2p-adapter/iroh", "dep:iroh-net", "dep:rand"]
+iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms", "dep:iroh-net", "dep:rand"]
+# Host an iroh relay server (`net.iroh_relay_server`) alongside the endpoint.
+iroh-relay-server = ["iroh", "p2p/iroh-relay-server"]
 profiling = ["dep:tracing-chrome"]
 # OpenTelemetry OTLP exporter. Mirrors Go's `//go:build telemetry`: compile-time
 # opt-in. When built with this feature, runtime default is on (Go parity); use
@@ -130,6 +134,7 @@ profiling = ["dep:tracing-chrome"]
 otel = ["telemetry/otlp"]
 
 [dev-dependencies]
+kovan.workspace = true
 cid.workspace = true
 tokio = { workspace = true, features = ["process"] }
 rcgen = "0.13"

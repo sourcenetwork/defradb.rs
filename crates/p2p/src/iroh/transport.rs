@@ -25,6 +25,7 @@ use crate::transport::{MessageId, P2PTransport, PeerAddr, PeerId};
 use crate::QueryId;
 
 use super::command::IrohCommand;
+use super::endpoint_config::AdmissionAuthority;
 
 /// Iroh-backed P2P transport.
 ///
@@ -104,6 +105,101 @@ impl IrohTransport {
             .await
     }
 
+    /// Authorize an inbound connection from `peer_id` while the endpoint is
+    /// running, without a restart.
+    ///
+    /// Widening the allowlist is only meaningful when the endpoint was
+    /// configured with an explicit inbound allowlist
+    /// (`IrohAllowlistConfig::Explicit`); it is a no-op when the endpoint
+    /// accepts every peer.
+    ///
+    /// Lifting a REVOCATION is different, and is why `authority` exists. That
+    /// transition reverses a security decision, so it is refused unless the
+    /// caller also holds the authority to revoke. The authority is resolved by
+    /// the caller and applied inside the admission lock rather than checked
+    /// beforehand, so a revoke racing this call cannot be undone by a decision
+    /// made against the state as it was a moment earlier.
+    pub async fn allow_peer(&self, peer_id: &PeerId, authority: AdmissionAuthority) -> Result<()> {
+        self.send_command(|reply| IrohCommand::AllowPeer {
+            peer_id: peer_id.clone(),
+            authority,
+            reply,
+        })
+        .await
+    }
+
+    /// Bar a peer from this node in both directions, while it is running and
+    /// without a restart.
+    ///
+    /// Three things happen, and all three are needed for this to be a
+    /// revocation rather than a pause:
+    ///
+    /// 1. The peer is recorded as revoked, which refuses its next inbound
+    ///    connection.
+    /// 2. The same record refuses this node's own outbound dials to it.
+    ///    Without that, revocation does not hold: the replicator reconnect
+    ///    sweep dials exactly the registered peers missing from
+    ///    `connected_peers`, and step 3 is what makes the peer missing, so a
+    ///    peer barred inbound-only is re-dialled BY US within seconds and
+    ///    regains full stream service over the connection we opened.
+    /// 3. Every connection it currently holds is closed: those retained in
+    ///    the peer map, the cached outbound ones, the injected gossip
+    ///    connection, and the gossip connections this node accepted.
+    ///
+    /// The bar is recorded before anything is closed, so a reconnect racing
+    /// this call cannot be re-admitted in between. A connection being
+    /// established concurrently is caught the other way round: the accept and
+    /// dial paths re-check the bar after publishing their connection handle,
+    /// so whichever of the two runs second observes the first.
+    ///
+    /// This closes the transport connection; it does not guarantee that a
+    /// request already being served over that connection is aborted mid
+    /// flight. A handler already reading or writing a stream when the close
+    /// lands may still complete that one in-flight exchange before it
+    /// observes the connection is gone.
+    ///
+    /// Meaningful under every allowlist configuration, including
+    /// `IrohAllowlistConfig::AcceptAll`: the bar is its own set, so revoking
+    /// one peer never narrows who else may connect.
+    ///
+    /// One residual, stated because it is a real limit and not a hypothetical.
+    /// `Gossip` is built on a clone of this endpoint and runs its own mesh
+    /// membership, so it can dial a peer without passing through any check
+    /// here. Every path by which THIS crate names a peer to gossip is gated
+    /// (the subscribe and publish neighbour lists, the per-peer topic rejoin,
+    /// and the heal), and an accepted gossip connection is retained so it can
+    /// be closed. What is not covered is gossip learning a revoked peer from
+    /// a third party through its own membership exchange and dialling it
+    /// itself: iroh-gossip 0.101 offers `join_peers` but no way to evict a
+    /// neighbour, so there is nothing to call. Closing that needs either an
+    /// upstream eviction API or an endpoint-level outbound filter; until then
+    /// a revoked peer can in principle be re-reached over gossip alone,
+    /// carrying gossip traffic but not the mux protocols.
+    pub async fn deny_peer(&self, peer_id: &PeerId) -> Result<()> {
+        self.send_command(|reply| IrohCommand::DenyPeer {
+            peer_id: peer_id.clone(),
+            reply,
+        })
+        .await
+    }
+
+    /// Whether `peer_id` is currently barred by [`Self::deny_peer`].
+    ///
+    /// For a caller that creates durable state for a peer and must undo it if
+    /// the peer was revoked while that work was in flight. Checking before
+    /// starting is the wrong end of the race: the bar can land at any point
+    /// during a multi-step registration, and only a check AFTER the state
+    /// exists can see it. Paired with a rollback, that gives the same
+    /// guarantee the accept and dial paths get from re-checking after they
+    /// publish a connection.
+    pub async fn is_peer_revoked(&self, peer_id: &PeerId) -> Result<bool> {
+        self.send_command(|reply| IrohCommand::IsPeerRevoked {
+            peer_id: peer_id.clone(),
+            reply,
+        })
+        .await
+    }
+
     /// Resolve a peer's Defra identity over its authenticated QUIC endpoint.
     ///
     /// The returned token is signed by the remote DID and audience-bound to
@@ -137,7 +233,8 @@ impl IrohTransport {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl P2PTransport for IrohTransport {
     type ResponseToken = iroh::endpoint::SendStream;
 
@@ -197,13 +294,13 @@ impl P2PTransport for IrohTransport {
                 if peers.contains(peer_id) {
                     return Ok(());
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                n0_future::time::sleep(Duration::from_millis(50)).await;
             }
         };
         tokio::select! {
             biased;
             _ = self.command_tx.closed() => Err(Error::ChannelSend),
-            result = tokio::time::timeout(timeout, wait_for_peer) => {
+            result = n0_future::time::timeout(timeout, wait_for_peer) => {
                 result.unwrap_or_else(|_| Err(Error::ConnectionTimeout(peer_id.to_string())))
             }
         }
@@ -569,7 +666,7 @@ impl P2PTransport for IrohTransport {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        let send_started = std::time::Instant::now();
+        let send_started = web_time::Instant::now();
         let (tx, rx) = oneshot::channel();
         self.command_tx
             .send(IrohCommand::Shutdown { reply: tx })
@@ -577,7 +674,7 @@ impl P2PTransport for IrohTransport {
             .map_err(|_| Error::ChannelSend)?;
         let send_elapsed = send_started.elapsed();
 
-        let reply_started = std::time::Instant::now();
+        let reply_started = web_time::Instant::now();
         let result = rx.await.map_err(|_| Error::ChannelReceive)?;
         tracing::warn!(
             send_elapsed_ms = send_elapsed.as_millis(),
@@ -599,7 +696,7 @@ mod tests {
     use std::time::Duration;
 
     use identity::Identity as _;
-    use tokio::time::timeout;
+    use n0_future::time::timeout;
 
     use crate::iroh::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig};
     use crate::message::{
@@ -621,6 +718,7 @@ mod tests {
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
             gossip_heal: Default::default(),
+            allowlist: Default::default(),
         }
     }
 
@@ -796,18 +894,18 @@ mod tests {
     }
 
     async fn poll_until_disconnected(transport: &IrohTransport, peer_id: &PeerId) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = web_time::Instant::now() + Duration::from_secs(5);
         loop {
             let peers = transport.connected_peers().await.unwrap_or_default();
             if !peers.iter().any(|p| p.as_str() == peer_id.as_str()) {
                 return;
             }
             assert!(
-                std::time::Instant::now() < deadline,
+                web_time::Instant::now() < deadline,
                 "timed out waiting for disconnection from {}",
                 peer_id
             );
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            n0_future::time::sleep(Duration::from_millis(50)).await;
         }
     }
 

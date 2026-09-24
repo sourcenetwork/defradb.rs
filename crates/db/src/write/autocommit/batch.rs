@@ -7,7 +7,8 @@ use parking_lot::Mutex as PlMutex;
 use query::mutator::{
     CreateResult, DeleteResult, DocMutator, MutationBatchController, UpdateResult,
 };
-use std::collections::{BTreeMap, HashSet};
+use rapidhash::RapidHashSet;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use storage::corekv::Store;
 
@@ -98,7 +99,7 @@ impl<S: Store> BatchMutator<S> {
         collection: &crate::collection::Collection,
     ) -> query::error::Result<()> {
         self.db
-            .acquire_collection_read_lock(&self.txn, collection.collection_id())
+            .acquire_collection_read_lock(&self.txn, collection)
             .await
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }
@@ -289,7 +290,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         &self,
         collection_name: &str,
         mut doc: Document,
-        mut modified_fields: HashSet<String>,
+        mut modified_fields: RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)

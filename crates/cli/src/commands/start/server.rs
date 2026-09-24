@@ -135,16 +135,8 @@ impl Node {
         let downsample_task = Some(database.clone().start_downsample_task());
         info!("Downsample worker enabled");
 
-        let mut p2p_setup = Self::setup_p2p(
-            store.clone(),
-            database.clone(),
-            event_bus.clone(),
-            config,
-            peer_keypair,
-            node_identity,
-            se_key,
-        )
-        .await?;
+        let vector_rebuild_task = Some(database.clone().start_vector_rebuild_task());
+        info!("Vector index rebuild worker enabled");
 
         let acp_setup = Self::setup_document_acp(
             config,
@@ -153,6 +145,18 @@ impl Node {
             zanzibar_store.clone(),
             event_bus.clone(),
             db::node_access_checker(database.clone()),
+        )
+        .await?;
+
+        let mut p2p_setup = Self::setup_p2p(
+            store.clone(),
+            database.clone(),
+            event_bus.clone(),
+            config,
+            peer_keypair,
+            node_identity,
+            se_key,
+            acp_setup.document_acp.clone(),
         )
         .await?;
 
@@ -317,7 +321,6 @@ impl Node {
             p2p_adapter: p2p_setup.http_adapter.clone(),
             manage_requester: p2p_setup.manage_requester.clone(),
             nac_adapter,
-            txn_broadcaster: p2p_setup.txn_broadcaster.clone(),
             acp_setup: &acp_setup,
             zanzibar_store,
             user_did: user_did.as_ref(),
@@ -336,6 +339,7 @@ impl Node {
             p2p_handle: p2p_setup.host_handle,
             p2p_tasks: p2p_setup.p2p_tasks,
             downsample_task,
+            vector_rebuild_task,
             txn_cleanup_task,
             http_server,
             #[cfg(feature = "postgres")]

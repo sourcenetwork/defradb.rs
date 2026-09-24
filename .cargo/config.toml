@@ -4,3 +4,14 @@ git-fetch-with-cli = true
 [build]
 # Auto-detect available cores (M3 Ultra = 32)
 # jobs defaults to logical CPU count when omitted
+
+# Both flags every wasm build needs, in one place. A RUSTFLAGS environment
+# variable replaces this table wholesale rather than adding to it, so callers
+# must not set RUSTFLAGS for this target — that is what these live here for.
+#
+# getrandom 0.3 refuses to build for wasm32-unknown-unknown until a backend is
+# named, and it is reached transitively (rand, via iroh), so no crate's feature
+# list can supply it. simd128 turns on the query engine's wasm SIMD kernels,
+# which only ever execute in this target.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"', "-C", "target-feature=+simd128"]

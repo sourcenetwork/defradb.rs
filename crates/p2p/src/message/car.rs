@@ -1,6 +1,6 @@
 //! CAR fetch request types used by transport-specific CAR transfer paths.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use cid::Cid;
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,6 @@ impl CarFetchRequest {
 }
 
 fn dedupe_cids(cids: Vec<Cid>) -> Vec<Cid> {
-    let mut seen = HashSet::with_capacity(cids.len());
+    let mut seen = RapidHashSet::with_capacity(cids.len());
     cids.into_iter().filter(|cid| seen.insert(*cid)).collect()
 }

@@ -1,15 +1,18 @@
 //! Bitswap sync and cancel command handling.
 
+use std::sync::Arc;
+
 use cid::Cid;
+use futures::FutureExt;
 use iroh_bitswap::Store;
 use libp2p::PeerId;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::error::Result;
 use crate::host::event::HostEvent;
 use crate::QueryId;
 
-use super::super::p2p_host::P2PHost;
+use super::super::p2p_host::{BitswapQuery, P2PHost};
 
 impl<S: Store> P2PHost<S> {
     /// Handle a Bitswap sync command.
@@ -44,10 +47,28 @@ impl<S: Store> P2PHost<S> {
         let missing_cids: Vec<Cid> = missing;
         let providers_list = providers;
 
+        // The session manager keeps every session, with its worker task and
+        // queues, until `Session::stop`; the fetch task stops its own session
+        // when it finishes, and the cancel path stops it by id (`bitswap.rs`
+        // `handle_bitswap_cancel`), so a session lives exactly as long as
+        // its query.
+        let session = client.new_session().await;
+        let session_id = session.id();
+        let queries = Arc::clone(&self.bitswap_queries);
+
+        // The fetch task removes its own registry entry when it ends, so a task
+        // that finished before the parent registered it would have that entry
+        // re-added with nothing left to remove it: the map would grow by one per
+        // fetch, and a long-gone query would still report as cancellable. Gate
+        // the task on registration having happened.
+        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel::<()>();
+
         // Spawn async task to fetch blocks (with cancellation support)
         let task_handle = tokio::spawn(async move {
-            // Create a session and add providers for each CID
-            let session = client.new_session().await;
+            let _ = registered_rx.await;
+
+            #[cfg(feature = "test-utils")]
+            crate::testutil::block_started_fetch();
 
             // Add each provider for each missing CID
             for cid in &missing_cids {
@@ -65,7 +86,7 @@ impl<S: Store> P2PHost<S> {
                     tracing::debug!("Bitswap get_blocks returned receiver, waiting for blocks");
                     // Use into_parts() to get the underlying channel
                     // BlockReceiver only implements Deref (not DerefMut), so we can't call recv() through it
-                    let (chan, _guard) = receiver.into_parts();
+                    let (chan, guard) = receiver.into_parts();
                     let mut fetched = 0;
 
                     // Timeout per block: 10 seconds. If no block arrives within this
@@ -125,6 +146,13 @@ impl<S: Store> P2PHost<S> {
                         success = success,
                         "Bitswap fetch complete"
                     );
+                    // The guard closes the get_blocks loop, which is the only
+                    // other holder of the session's channel; stop needs it gone.
+                    drop(chan);
+                    drop(guard);
+                    if let Err(e) = session.stop().await {
+                        warn!(query_id = query_id.0, error = %e, "Failed to stop Bitswap session");
+                    }
 
                     // Notify completion
                     let _ = event_tx
@@ -149,6 +177,9 @@ impl<S: Store> P2PHost<S> {
                         error = %e,
                         "Bitswap get_blocks failed"
                     );
+                    if let Err(e) = session.stop().await {
+                        warn!(query_id = query_id.0, error = %e, "Failed to stop Bitswap session");
+                    }
                     let _ = event_tx
                         .send(HostEvent::BitswapComplete {
                             query_id,
@@ -158,11 +189,23 @@ impl<S: Store> P2PHost<S> {
                         .await;
                 }
             }
+            queries.remove(&query_id);
         });
 
-        // Store the abort handle for cancellation support
-        self.bitswap_queries
-            .insert(query_id, task_handle.abort_handle());
+        #[cfg(feature = "test-utils")]
+        crate::testutil::stall_before_query_registration().await;
+
+        let abort = task_handle.abort_handle();
+        let joined = task_handle.map(|_| ()).boxed().shared();
+        self.bitswap_queries.insert(
+            query_id,
+            BitswapQuery {
+                abort,
+                joined,
+                session_id,
+            },
+        );
+        let _ = registered_tx.send(());
 
         if response.send(Ok(query_id)).is_err() {
             debug!(cid = %cid, "BitswapSync command response dropped - caller cancelled");
@@ -174,9 +217,19 @@ impl<S: Store> P2PHost<S> {
         query_id: QueryId,
         response: tokio::sync::oneshot::Sender<bool>,
     ) {
-        let cancelled = if let Some(abort_handle) = self.bitswap_queries.remove(&query_id) {
+        let cancelled = if let Some(query) = self.bitswap_queries.remove(&query_id) {
             debug!(query_id = ?query_id, "Cancelling Bitswap query");
-            abort_handle.abort();
+            query.abort.abort();
+            let client = self.swarm.behaviour().bitswap.client().clone();
+            tokio::spawn(async move {
+                // `abort` only schedules cancellation, and `Session::stop`
+                // refuses to run while any other handle to the session is
+                // alive. Joining the aborted task is what drops its clone.
+                query.joined.await;
+                if let Err(e) = client.stop_session(query.session_id).await {
+                    warn!(query_id = ?query_id, error = %e, "Failed to stop cancelled Bitswap session");
+                }
+            });
             true
         } else {
             debug!(query_id = ?query_id, "Bitswap query not found for cancellation");

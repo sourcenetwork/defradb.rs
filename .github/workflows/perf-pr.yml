@@ -179,7 +179,11 @@ jobs:
             --note "Quick check: \`$QUICK_FAMILIES\` on \`x86_64-unknown-linux-gnu\`, built with the \`$PERF_PROFILE\` profile. Both sides were built and measured in this job on this runner, so the deltas are real; the absolute figures are not the release-profile ones the dashboard publishes. The full matrix across Linux, macOS and the browser runs on a push to \`main\`, or on demand from the Performance workflow."
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
+      # A pull request from a fork runs with a read-only token whatever the
+      # permissions above say, so the comment cannot be posted there; the
+      # report still lands in the step summary and the artifact.
       - name: Comment on the pull request
+        if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v7
         with:
           script: |

@@ -18,7 +18,7 @@ pub use compute::{compute_document_blocks, insert_computed_blocks, ComputedBlock
 pub use write::{write_delete_block, write_document_blocks};
 
 use bytes::Bytes;
-use std::collections::HashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use tracing::warn;
 
@@ -309,8 +309,8 @@ pub async fn get_all_field_heads(
 /// of `/d/{doc_id}/`.
 pub struct DocHeadsSnapshot {
     max_priority: u64,
-    max_priority_by_field: HashMap<String, u64>,
-    entries_by_field: HashMap<String, Vec<FieldHeadEntry>>,
+    max_priority_by_field: RapidHashMap<String, u64>,
+    entries_by_field: RapidHashMap<String, Vec<FieldHeadEntry>>,
 }
 
 impl DocHeadsSnapshot {
@@ -328,8 +328,8 @@ impl DocHeadsSnapshot {
             .map_err(|e| format!("Failed to create headstore iterator: {}", e))?;
 
         let mut max_priority: u64 = 0;
-        let mut max_priority_by_field: HashMap<String, u64> = HashMap::new();
-        let mut entries_by_field: HashMap<String, Vec<FieldHeadEntry>> = HashMap::new();
+        let mut max_priority_by_field: RapidHashMap<String, u64> = RapidHashMap::new();
+        let mut entries_by_field: RapidHashMap<String, Vec<FieldHeadEntry>> = RapidHashMap::new();
 
         while let Some(kv_pair) = iter
             .next()

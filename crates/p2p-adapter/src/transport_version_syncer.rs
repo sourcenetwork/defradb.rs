@@ -1,16 +1,18 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use blockstore::Blockstore;
 use p2p::transport::PeerId;
 use p2p::P2PTransport;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use crate::{P2PError, P2PErrorExt as _, P2PResult};
 
 /// Trait for syncing collection versions via a generic transport.
-#[async_trait]
-pub trait TransportVersionSyncer: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait TransportVersionSyncer: defra_core::thread_bounds::MaybeSendSync {
     async fn sync_versions(
         &self,
         version_ids: Vec<String>,
@@ -70,12 +72,12 @@ async fn fetch_block<B: Blockstore, T: P2PTransport>(
         .map_err(|error| P2PError::transport(format!("block sync for {target_cid}: {error}")))?;
 
     let timeout = std::time::Duration::from_secs(timeout_secs);
-    let start = std::time::Instant::now();
+    let start = web_time::Instant::now();
     while start.elapsed() < timeout {
         if let Ok(Some(data)) = blockstore.get(&target_cid).await {
             return Ok(data);
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     Err(P2PError::transport(format!(
@@ -170,7 +172,8 @@ async fn sync_lens<S: storage::corekv::Store + 'static, B: Blockstore, T: P2PTra
     Ok(())
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTransport>
     TransportVersionSyncer for DbTransportVersionSyncer<S, B, T>
 {
@@ -195,7 +198,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
             }
 
             let timeout = std::time::Duration::from_secs(30);
-            let start = std::time::Instant::now();
+            let start = web_time::Instant::now();
             let mut block_found = false;
             while start.elapsed() < timeout {
                 let txn = match self.db.new_txn(true).await {
@@ -218,7 +221,9 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
                         block_found = true;
                         break;
                     }
-                    Ok(false) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+                    Ok(false) => {
+                        n0_future::time::sleep(std::time::Duration::from_millis(100)).await
+                    }
                     Err(error) => {
                         tracing::warn!(error = %error, "blockstore check failed");
                         break;
@@ -252,7 +257,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
             };
 
             let mut fetch_queue: VecDeque<cid::Cid> = linked_cids.into_iter().collect();
-            let mut fetched: HashSet<String> = HashSet::new();
+            let mut fetched: RapidHashSet<String> = RapidHashSet::new();
             fetched.insert(version_cid.to_string());
             while let Some(link_cid) = fetch_queue.pop_front() {
                 if fetched.contains(&link_cid.to_string()) {
@@ -280,7 +285,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
                     }
 
                     let link_timeout = std::time::Duration::from_secs(10);
-                    let link_start = std::time::Instant::now();
+                    let link_start = web_time::Instant::now();
                     let mut link_found = false;
                     while link_start.elapsed() < link_timeout {
                         match self.blockstore.get(&link_cid).await {
@@ -289,7 +294,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
                                 break;
                             }
                             Ok(None) => {
-                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
                             }
                             Err(error) => {
                                 tracing::warn!(cid = %link_cid, error = %error, "error waiting for link");

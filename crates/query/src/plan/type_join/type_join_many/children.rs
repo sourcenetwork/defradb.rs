@@ -1,6 +1,6 @@
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
 use web_time::Instant;
 
@@ -80,7 +80,7 @@ impl TypeJoinMany {
     /// Indexes children by their FK field value.
     pub(super) async fn build_child_cache(
         &mut self,
-        parent_scope: Option<&HashSet<String>>,
+        parent_scope: Option<&RapidHashSet<String>>,
     ) -> Result<()> {
         let build_start = Instant::now();
         self.child_cache.clear();
@@ -175,7 +175,7 @@ impl TypeJoinMany {
 
     async fn build_child_cache_from_index(
         &mut self,
-        parent_scope: &HashSet<String>,
+        parent_scope: &RapidHashSet<String>,
         indexed_child_fetch: &super::node::IndexedChildFetch,
     ) -> Result<()> {
         let build_start = Instant::now();
@@ -334,7 +334,7 @@ impl TypeJoinMany {
 
         // Group children by the groupBy field values
         let mut groups: Vec<(String, Vec<&Doc>)> = Vec::new();
-        let mut group_map: HashMap<String, usize> = HashMap::new();
+        let mut group_map: RapidHashMap<String, usize> = RapidHashMap::new();
 
         for child in children {
             let key = self.generate_group_key(child, group_by, child_mapping);

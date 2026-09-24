@@ -5,10 +5,12 @@
 //! with a full bucket of tokens; one token is consumed per allowed event.
 //! Tokens refill at a constant rate up to the bucket capacity.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
-use parking_lot::Mutex;
+use kovan::Atom;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use std::sync::Arc;
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::transport::PeerId;
 
@@ -22,9 +24,9 @@ use super::manager::{
 /// lazily on the next insertion when this limit is hit.
 const MAX_TRACKED_PEERS: usize = 10_000;
 
-/// A single token-bucket for one peer.
-#[derive(Debug)]
-struct Bucket {
+/// The token-bucket state of one peer; replaced as a unit on every check.
+#[derive(Debug, Clone, Copy)]
+struct BucketState {
     /// Current token count (may be fractional internally, stored as f64).
     tokens: f64,
     /// When tokens were last refilled.
@@ -35,7 +37,7 @@ struct Bucket {
     next_retry_after: Option<Instant>,
 }
 
-impl Bucket {
+impl BucketState {
     fn new(capacity: u32) -> Self {
         Self {
             tokens: capacity as f64,
@@ -45,21 +47,24 @@ impl Bucket {
         }
     }
 
-    /// Refill tokens based on elapsed time and return whether one token is
-    /// available to consume.
-    fn try_consume(
-        &mut self,
+    /// Refill tokens based on elapsed time and return the successor state
+    /// with whether one token was available to consume.
+    fn consume(
+        mut self,
         now: Instant,
         capacity: u32,
         refill_rate: f64,
         backoff_steps: &[Duration],
-    ) -> RateLimitDecision {
+    ) -> (Self, RateLimitDecision) {
         if let Some(next_retry_after) = self.next_retry_after {
             if next_retry_after > now {
-                return RateLimitDecision::Limited {
-                    retry_after: next_retry_after.duration_since(now),
-                    consecutive_failures: self.consecutive_failures,
-                };
+                return (
+                    self,
+                    RateLimitDecision::Limited {
+                        retry_after: next_retry_after.duration_since(now),
+                        consecutive_failures: self.consecutive_failures,
+                    },
+                );
             }
             self.next_retry_after = None;
         }
@@ -71,17 +76,27 @@ impl Bucket {
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
             self.consecutive_failures = 0;
-            RateLimitDecision::Allowed
+            (self, RateLimitDecision::Allowed)
         } else {
             self.consecutive_failures = self.consecutive_failures.saturating_add(1);
             let retry_after = backoff_for_failure(backoff_steps, self.consecutive_failures);
             self.next_retry_after = Some(now + retry_after);
-            RateLimitDecision::Limited {
-                retry_after,
-                consecutive_failures: self.consecutive_failures,
-            }
+            let consecutive_failures = self.consecutive_failures;
+            (
+                self,
+                RateLimitDecision::Limited {
+                    retry_after,
+                    consecutive_failures,
+                },
+            )
         }
     }
+}
+
+#[derive(Debug)]
+struct Bucket {
+    peer: String,
+    state: Atom<BucketState>,
 }
 
 fn backoff_for_failure(backoff_steps: &[Duration], consecutive_failures: u32) -> Duration {
@@ -120,12 +135,14 @@ pub(crate) enum RateLimitDecision {
 
 /// Per-peer rate limiter backed by token buckets.
 ///
-/// Thread-safe via an internal `Mutex`; designed to be held behind an `Arc`
-/// and shared across event-handler invocations.
+/// Lock-free: each peer's bucket is replaced atomically as one unit, so
+/// concurrent checks for the same peer never consume the same token twice.
+/// Designed to be held behind an `Arc` and shared across event-handler
+/// invocations.
 ///
 /// Uses string-based peer IDs to support both libp2p and iroh transports.
 pub struct PeerRateLimiter {
-    buckets: Mutex<HashMap<String, Bucket>>,
+    buckets: HopscotchMap<String, Arc<Bucket>, RandomState>,
     capacity: u32,
     refill_rate: f64,
     backoff_steps: Vec<Duration>,
@@ -140,8 +157,8 @@ impl Default for PeerRateLimiter {
 impl PeerRateLimiter {
     /// Create a new limiter with the given capacity and refill rate.
     ///
-    /// * `capacity`    – Maximum tokens per peer (burst size).
-    /// * `refill_rate` – Tokens added per second per peer.
+    /// * `capacity`: maximum tokens per peer (burst size).
+    /// * `refill_rate`: tokens added per second per peer.
     pub fn new(capacity: u32, refill_rate: f64) -> Self {
         Self::with_backoff_steps(capacity, refill_rate, default_rate_limit_backoff())
     }
@@ -177,7 +194,7 @@ impl PeerRateLimiter {
         backoff_steps: Vec<Duration>,
     ) -> Self {
         Self {
-            buckets: Mutex::new(HashMap::new()),
+            buckets: HopscotchMap::with_hasher(RandomState::default()),
             capacity,
             refill_rate,
             backoff_steps,
@@ -188,33 +205,46 @@ impl PeerRateLimiter {
     ///
     /// Returns backoff metadata when the peer is rate-limited.
     pub(crate) fn check(&self, peer: &PeerId) -> RateLimitDecision {
-        let key = peer.as_str().to_string();
-        let mut buckets = self.buckets.lock();
-
-        // Lazy eviction when the map is too large.
-        if buckets.len() >= MAX_TRACKED_PEERS && !buckets.contains_key(&key) {
-            // Remove the entry with the oldest last_refill time.
-            if let Some(oldest) = buckets
-                .iter()
-                .min_by_key(|(_, b)| b.last_refill)
-                .map(|(k, _)| k.clone())
-            {
-                buckets.remove(&oldest);
+        let bucket = self
+            .buckets
+            .get(peer.as_str())
+            .unwrap_or_else(|| self.admit(peer.as_str()));
+        loop {
+            let current = bucket.state.load();
+            let (next, decision) = (*current).consume(
+                Instant::now(),
+                self.capacity,
+                self.refill_rate,
+                &self.backoff_steps,
+            );
+            if bucket.state.compare_and_swap(&current, next).is_ok() {
+                return decision;
             }
         }
+    }
 
-        let capacity = self.capacity;
-        let refill_rate = self.refill_rate;
-        let now = Instant::now();
-        buckets
-            .entry(key)
-            .or_insert_with(|| Bucket::new(capacity))
-            .try_consume(now, capacity, refill_rate, &self.backoff_steps)
+    fn admit(&self, peer: &str) -> Arc<Bucket> {
+        if self.buckets.len() >= MAX_TRACKED_PEERS {
+            let oldest = self
+                .buckets
+                .values()
+                .min_by_key(|bucket| bucket.state.peek(|state| state.last_refill));
+            if let Some(oldest) = oldest {
+                self.buckets.remove(&oldest.peer);
+            }
+        }
+        self.buckets.get_or_insert(
+            peer.to_string(),
+            Arc::new(Bucket {
+                peer: peer.to_string(),
+                state: Atom::new(BucketState::new(self.capacity)),
+            }),
+        )
     }
 
     /// Discard the bucket for `peer` (called on disconnect to free memory).
     pub fn remove_peer(&self, peer: &PeerId) {
-        self.buckets.lock().remove(peer.as_str());
+        self.buckets.remove(peer.as_str());
     }
 }
 

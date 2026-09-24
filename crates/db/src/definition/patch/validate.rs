@@ -33,9 +33,9 @@ impl<S: Store> crate::database::DB<S> {
         // Existing fields (matched by FieldID) that were modified are "mutations"
         // which is not supported. New fields with Kind:0 or empty Name are separate errors.
         {
-            let old_field_ids: std::collections::HashSet<&str> =
+            let old_field_ids: rapidhash::RapidHashSet<&str> =
                 old_schema.fields.iter().map(|f| f.id.as_str()).collect();
-            let old_field_map: std::collections::HashMap<&str, &schema::FieldDescription> =
+            let old_field_map: rapidhash::RapidHashMap<&str, &schema::FieldDescription> =
                 old_schema
                     .fields
                     .iter()

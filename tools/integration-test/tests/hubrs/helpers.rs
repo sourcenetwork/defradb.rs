@@ -5,7 +5,7 @@ use commonware_codec::Encode as _;
 use identity::{Identity, IdentityKeyType, RawIdentity};
 use integration_test::{BinarySource, TestCluster, TestIdentity};
 
-pub use integration_test::sourcehub_cli_binary as defra_binary;
+pub use integration_test::vera_cli_binary as defra_binary;
 
 const FUNDED_PRIVATE_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 

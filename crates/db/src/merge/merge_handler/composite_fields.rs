@@ -29,7 +29,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // Load the prior value once (deleted-inclusive, so a delete+recreate cannot
         // change an immutable field) when the composite links any @immutable field.
-        let immutable_fields: HashSet<&str> = context
+        let immutable_fields: RapidHashSet<&str> = context
             .collection
             .as_ref()
             .map(|collection| {

@@ -13,8 +13,8 @@
 //! `input`, and assumes the returned query vectors are compatible with the
 //! vectors already stored in the collection.
 
+use rapidhash::{HashMapExt, RapidHashMap};
 use std::cmp::Ordering;
-use std::collections::HashMap;
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
@@ -472,7 +472,7 @@ fn fuse_rankings_rrf(
     dense_candidates: &[DenseHybridSearchHit],
     limit: usize,
 ) -> Vec<DenseHybridSearchHit> {
-    let mut fused = HashMap::<String, DenseHybridSearchHit>::new();
+    let mut fused = RapidHashMap::<String, DenseHybridSearchHit>::new();
 
     for hit in bm25_candidates {
         let rank = hit.bm25_rank.unwrap_or(usize::MAX);

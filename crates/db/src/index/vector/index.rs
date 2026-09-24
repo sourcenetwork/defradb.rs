@@ -10,7 +10,7 @@ use schema::{IndexDescription, VectorAlgorithm, VectorIndexDescription};
 use storage::corekv::{MaybeSend, Reader, Writer};
 use storage::index::CollectionIndex;
 
-use super::engine::ann::{Admit, Neighbor, VectorIndexEngine};
+use super::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
 use super::engine::dispatch::Engine;
 use super::engine::flat::Flat;
 use super::engine::hnsw::Hnsw;
@@ -19,7 +19,7 @@ use super::engine::ivfpq::{IvfPq, IvfPqParams};
 use super::engine::ssg::{Ssg, SsgParams};
 use super::kv_store::KvNodeStore;
 use super::params::Params;
-use super::store::NodeId;
+use super::store::{NodeId, VectorNodeStore};
 use crate::index::error::{Error, Result};
 use defra_core::vector::Element;
 use defra_core::vector::Metric;
@@ -54,9 +54,11 @@ impl VectorIndex {
         let mut params = Params::new(hnsw.m as usize);
         params.ef_construction = hnsw.ef_construction as usize;
         params.ef_search = hnsw.ef_search as usize;
-        // Each algorithm validates only its own block, so parameters belonging
-        // to another are inert rather than a reason to refuse the index.
-        if vector.algorithm == VectorAlgorithm::Hnsw {
+        // SSG uses HNSW to build its staging graph too.
+        if matches!(
+            vector.algorithm,
+            VectorAlgorithm::Hnsw | VectorAlgorithm::Ssg
+        ) {
             params.validate()?;
         }
 
@@ -90,6 +92,9 @@ impl VectorIndex {
         // Refused here rather than at query time, so a description that can
         // never answer is rejected where it is created.
         if vector.algorithm == VectorAlgorithm::IvfPq {
+            if vector.dimensions != 0 {
+                ivfpq.validate_dimensions(vector.dimensions as usize)?;
+            }
             IvfPq::try_new(super::store::MemoryNodeStore::new(), metric, ivfpq, 0)?;
         }
         if vector.algorithm == VectorAlgorithm::IvfFlat {
@@ -181,10 +186,26 @@ impl VectorIndex {
         txn: &mut T,
     ) -> storage::corekv::Result<()> {
         let mut engine = self.engine(txn).map_err(into_storage)?;
-        if engine.should_build().await.map_err(into_storage)? {
+        if engine.kind() != EngineKind::Hnsw && engine.should_build().await.map_err(into_storage)? {
             engine.build().await.map_err(into_storage)?;
         }
         Ok(())
+    }
+
+    /// Rebuilds this index if its engine judges a rebuild due, on the caller's
+    /// transaction. The background task's entry point for HNSW: it answers
+    /// whether the transaction did anything, so an idle sweep discards rather
+    /// than commits.
+    pub async fn rebuild_if_due<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+    ) -> storage::corekv::Result<bool> {
+        let mut engine = self.engine(txn).map_err(into_storage)?;
+        if !engine.should_build().await.map_err(into_storage)? {
+            return Ok(false);
+        }
+        engine.build().await.map_err(into_storage)?;
+        Ok(true)
     }
 
     /// The vector a document contributes, if any.
@@ -301,7 +322,10 @@ impl CollectionIndex for VectorIndex {
 
         // Once built, `should_build`'s trained/built check is an O(1) aux
         // lookup, so this costs one extra read per write and nothing else.
-        if engine.should_build().await.map_err(into_storage)? {
+        // HNSW is excluded: its build is a whole-graph reinsert, far too heavy
+        // to price into a single write. The background task owns that
+        // rebuild, through `rebuild_if_due`.
+        if engine.kind() != EngineKind::Hnsw && engine.should_build().await.map_err(into_storage)? {
             engine.build().await.map_err(into_storage)?;
         }
         Ok(())

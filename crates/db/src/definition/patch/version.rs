@@ -12,7 +12,7 @@ impl<S: Store> crate::database::DB<S> {
         old_schema: &CollectionVersion,
         collection_priority: u64,
         collection_heads: &[cid::Cid],
-        collection_id_map: &std::collections::HashMap<String, String>,
+        collection_id_map: &rapidhash::RapidHashMap<String, String>,
     ) -> (String, Option<Vec<u8>>, Option<cid::Cid>) {
         use cid::Cid;
         use sha2::{Digest, Sha256};
@@ -32,7 +32,7 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Build set of old field names for detecting which fields are new
-        let old_field_names: std::collections::HashSet<&str> = old_schema
+        let old_field_names: rapidhash::RapidHashSet<&str> = old_schema
             .fields
             .iter()
             .filter(|f| !f.id.is_empty())

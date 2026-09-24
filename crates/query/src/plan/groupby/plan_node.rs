@@ -1,6 +1,6 @@
 use async_trait::async_trait;
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
 
 use crate::document::DocumentMapping;
 use crate::error::Result;
@@ -46,10 +46,11 @@ impl PlanNode for GroupByNode {
             .as_ref()
             .is_some_and(|o| !o.is_empty() && self.inner_group_by_fields.is_empty());
         let mut ordered_keys: Vec<String> = Vec::new();
-        let mut key_set: HashSet<String> = HashSet::new();
+        let mut key_set: RapidHashSet<String> = RapidHashSet::new();
 
         if !has_simple_group_order {
-            let mut group_map: HashMap<String, usize> = HashMap::with_capacity(all_docs.len());
+            let mut group_map: RapidHashMap<String, usize> =
+                RapidHashMap::with_capacity(all_docs.len());
             self.groups.reserve(all_docs.len());
 
             for doc in all_docs {
@@ -117,7 +118,7 @@ impl PlanNode for GroupByNode {
         }
 
         // Pre-create groups in the determined order
-        let mut group_map: HashMap<String, usize> = HashMap::new();
+        let mut group_map: RapidHashMap<String, usize> = RapidHashMap::new();
         for key in &ordered_keys {
             let idx = self.groups.len();
             group_map.insert(key.clone(), idx);

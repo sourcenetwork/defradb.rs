@@ -55,13 +55,17 @@
 pub mod bindings;
 #[cfg(target_arch = "wasm32")]
 pub mod client;
+#[cfg(target_arch = "wasm32")]
+mod client_p2p;
+#[cfg(target_arch = "wasm32")]
+mod document_changes;
 pub mod error;
 #[cfg(target_arch = "wasm32")]
 mod identity;
 #[cfg(target_arch = "wasm32")]
-mod storage_tests;
+mod p2p;
 #[cfg(target_arch = "wasm32")]
-mod sync;
+mod storage_tests;
 #[cfg(target_arch = "wasm32")]
 mod transaction_tests;
 pub mod verification;
@@ -69,6 +73,8 @@ pub mod verification;
 // Re-export the main client class
 #[cfg(target_arch = "wasm32")]
 pub use client::DefraClient;
+#[cfg(target_arch = "wasm32")]
+pub use document_changes::DocumentChanges;
 
 // Re-export standalone verification functions
 pub use verification::{

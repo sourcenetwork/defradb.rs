@@ -1,9 +1,9 @@
 use db::collection::snapshot::*;
 use db::collection::Collection;
+use rapidhash::{HashMapExt, RapidHashMap};
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
-use std::collections::HashMap;
 
 fn test_collection() -> Collection {
     Collection::new(CollectionVersion::new(
@@ -16,7 +16,7 @@ fn test_collection() -> Collection {
 
 #[test]
 fn test_snapshot_get() {
-    let mut map = HashMap::new();
+    let mut map = RapidHashMap::new();
     map.insert("Users".to_string(), test_collection());
     let snapshot = CollectionSnapshot::new(map);
 
@@ -26,7 +26,7 @@ fn test_snapshot_get() {
 
 #[test]
 fn test_snapshot_contains() {
-    let mut map = HashMap::new();
+    let mut map = RapidHashMap::new();
     map.insert("Users".to_string(), test_collection());
     let snapshot = CollectionSnapshot::new(map);
 
@@ -36,7 +36,7 @@ fn test_snapshot_contains() {
 
 #[test]
 fn test_snapshot_len() {
-    let mut map = HashMap::new();
+    let mut map = RapidHashMap::new();
     map.insert("Users".to_string(), test_collection());
     let snapshot = CollectionSnapshot::new(map);
 
@@ -46,14 +46,14 @@ fn test_snapshot_len() {
 
 #[test]
 fn test_empty_snapshot() {
-    let snapshot = CollectionSnapshot::new(HashMap::new());
+    let snapshot = CollectionSnapshot::new(RapidHashMap::new());
     assert!(snapshot.is_empty());
     assert_eq!(snapshot.len(), 0);
 }
 
 #[test]
 fn test_snapshot_clone_is_cheap() {
-    let mut map = HashMap::new();
+    let mut map = RapidHashMap::new();
     map.insert("Users".to_string(), test_collection());
     let snapshot1 = CollectionSnapshot::new(map);
     let snapshot2 = snapshot1.clone();
@@ -64,7 +64,7 @@ fn test_snapshot_clone_is_cheap() {
 
 #[test]
 fn test_snapshot_names() {
-    let mut map = HashMap::new();
+    let mut map = RapidHashMap::new();
     map.insert("Users".to_string(), test_collection());
     map.insert(
         "Posts".to_string(),

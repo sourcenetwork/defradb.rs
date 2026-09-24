@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
-
-use async_lock::RwLock;
+use kovan_map::HopscotchMap;
+use rapidhash::fast::RandomState;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use crate::did::Did;
 
@@ -19,13 +19,13 @@ impl NodeId {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NodeTrail {
-    visited: HashSet<NodeId>,
+    visited: RapidHashSet<NodeId>,
 }
 
 impl NodeTrail {
     pub(crate) fn new() -> Self {
         Self {
-            visited: HashSet::new(),
+            visited: RapidHashSet::new(),
         }
     }
 
@@ -63,10 +63,18 @@ impl CheckKey {
     }
 }
 
-#[derive(Debug, Default)]
 pub(crate) struct CheckCache {
     pub(crate) budget: super::limits::EvaluationBudget,
-    results: RwLock<HashMap<CheckKey, bool>>,
+    results: HopscotchMap<CheckKey, bool, RandomState>,
+}
+
+impl Default for CheckCache {
+    fn default() -> Self {
+        Self {
+            budget: Default::default(),
+            results: HopscotchMap::with_hasher(RandomState::default()),
+        }
+    }
 }
 
 impl CheckCache {
@@ -74,12 +82,12 @@ impl CheckCache {
         Self::default()
     }
 
-    pub(crate) async fn get(&self, key: &CheckKey) -> Option<bool> {
-        self.results.read().await.get(key).copied()
+    pub(crate) fn get(&self, key: &CheckKey) -> Option<bool> {
+        self.results.get(key)
     }
 
-    pub(crate) async fn set(&self, key: CheckKey, result: bool) {
-        self.results.write().await.insert(key, result);
+    pub(crate) fn set(&self, key: CheckKey, result: bool) {
+        self.results.insert(key, result);
     }
 }
 

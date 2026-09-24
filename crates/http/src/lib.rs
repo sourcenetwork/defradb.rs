@@ -9,7 +9,6 @@
 //! ## Core
 //! - `GET /health-check` - Health check
 //! - `GET /api/v1/version` - Get version info
-//! - `POST /api/v1/sync` - Exchange browser CRDT document updates
 //!
 //! ## GraphQL
 //! - `POST /api/v1/graphql` - Execute GraphQL queries
@@ -93,35 +92,53 @@
 //! }
 //! ```
 
+#[cfg(feature = "server")]
 pub mod auth_error;
+#[cfg(feature = "server")]
 pub mod auth_middleware;
+#[cfg(feature = "server")]
 pub mod error;
+#[cfg(feature = "server")]
 pub mod go_paths;
+#[cfg(feature = "server")]
 pub mod handlers;
+#[cfg(feature = "server")]
 pub mod identity_extractor;
+#[cfg(feature = "server")]
 pub mod nac_guard;
+#[cfg(feature = "server")]
 pub mod query_context;
+#[cfg(feature = "server")]
 pub mod route_permissions;
 pub mod router;
+#[cfg(feature = "server")]
 pub mod server;
+#[cfg(feature = "server")]
 mod tls;
+#[cfg(feature = "server")]
 pub mod validation;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
 
+#[cfg(feature = "server")]
 pub use error::{HttpError, Result};
+#[cfg(feature = "server")]
 pub use identity_extractor::{ExtractIdentity, ExtractTokenIdentity, IdentityExtractionError};
+#[cfg(feature = "server")]
 pub use router::{
-    create_router, create_router_with_rest, create_router_with_state, AcpLightClientStatus,
-    AcpOperations, AppState, AppStateBuilder, BackupOperations, BlockOperations, BrowserSyncError,
-    BrowserSyncOperations, BrowserSyncRequest, BrowserSyncResponse, BrowserSyncResult,
-    DocumentAcpOperations, IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus,
-    NacStatusInfo, NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult,
-    PolicyInfo, RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
+    create_router, create_router_with_rest, create_router_with_state, AppState, AppStateBuilder,
+};
+pub use router::{
+    AcpLightClientStatus, AcpOperations, BackupOperations, BlockOperations, DocumentAcpOperations,
+    IndexFieldInfo, IndexInfo, IndexOperations, ManageRequester, NacStatus, NacStatusInfo,
+    NodeAcpOperations, NodePermission, P2PError, P2POperations, P2PResult, PolicyInfo,
+    RemoteManageDocRef, RemoteManageOp, RemoteManageQueryOp, RemoteManageQueryResult,
     ReplicatorInfo, TransactionOperations, TransportPeerId, ViewOperations, MANAGE_UNAUTHORIZED,
 };
+#[cfg(feature = "server")]
 pub use server::{Server, ServerConfig, DEFAULT_MAX_BACKUP_SIZE};
+#[cfg(feature = "server")]
 pub use tls::TlsConfig;
 
 #[cfg(any(test, feature = "test-utils"))]

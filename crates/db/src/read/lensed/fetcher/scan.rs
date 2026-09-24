@@ -1,6 +1,6 @@
 //! Index scan implementation for LensedDocFetcher.
 
-use std::collections::HashSet;
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use defra_core::thread_bounds::MaybeBoxFuture;
 use query::planner::index_selection::{IndexScanParams, IndexScanType};
@@ -114,7 +114,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
                         && suffix_values.len() == index.description().fields.len() - 1;
                     let mut all_doc_short_ids = Vec::new();
                     let mut group_lens = Vec::new();
-                    let mut seen_short_ids = HashSet::new();
+                    let mut seen_short_ids = RapidHashSet::new();
                     let mut raw_count = 0u64;
                     for value in values {
                         let entries = if has_full_key {
@@ -245,7 +245,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
                         total_raw_fetches += branch_result.raw_fetches();
                         all_doc_ids.extend(branch_result.doc_ids().iter().cloned());
                     }
-                    let mut seen = HashSet::new();
+                    let mut seen = RapidHashSet::new();
                     let doc_ids: Vec<String> = all_doc_ids
                         .into_iter()
                         .filter(|id| seen.insert(id.clone()))
@@ -258,7 +258,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
                 _ => unreachable!(),
             };
 
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         let doc_short_ids: Vec<u64> = raw_doc_short_ids
             .into_iter()
             .filter(|id| seen.insert(*id))
