@@ -345,8 +345,23 @@ one it was before.
 
 ## 6. Definitions over the network, and activation
 
-A definition block reaching a node is rebuilt into a version record and
-stored **inactive**. Activation is an explicit operator step.
+A definition block reaching a node is rebuilt into a version record,
+**judged** if the collection is governed, and stored **inactive**.
+Activation is an explicit operator step.
+
+The judgement is the validator's second entry point, `validate_definition`,
+with the same three verdicts and the same rules as a composite's. An
+initial definition is self-certifying: the collection ID commits to the
+root, so a definition claiming that root with other fields is a different
+collection, not a forgery of this one. A patch is not: it inherits the
+collection ID and changes what every later write is judged against, so who
+may publish one is the application's rule. The candidate carries the block,
+the version as rebuilt, and the version it patches, so the rule can be "the
+root's log names this version" (a lookup through the view, deferring on the
+value until it merges), or anything else a function of held bytes can say.
+A rejected definition is never stored and the sweep leaves it alone; a
+deferred one is indexed and re-driven like a composite, and swept if the
+index forgets it.
 
 ```mermaid
 sequenceDiagram
@@ -363,6 +378,10 @@ sequenceDiagram
   else
     H->>H: rebuild record: root, branchable, immutable flags from the delta
     H->>H: policy: restored if a held version of the same collection has the reference the policy CID names; else policy_cid recorded, policy absent
+    alt governed and claimed
+      H->>H: validate_definition(candidate, view)
+      Note over H: Reject → left unmerged, never stored · Defer → indexed, re-driven · Accept → continue
+    end
     H->>SS: store record, inactive
     alt local record of that name commits to more (a policy, a different root, a different collection ID under the same root; for ungoverned: immutable flags or branchability)
       H->>Cache: not admitted
@@ -399,6 +418,7 @@ honour them, or the commitment is decoration. This is the list.
 | Consumer | What it must honour | How |
 |---|---|---|
 | merge path | root and flags | resolved from the block's own version; immutable flags read from the record |
+| definition merge | who may publish a version | `validate_definition` before the record is stored |
 | name-keyed cache | a record never displaced by one committing to less | `uncarried_commitments` gate |
 | activation | a version never served without the policy it is bound to | `PolicyCID` + refusal |
 | query planner | the active record's policy and validators | reads the active record |
@@ -446,11 +466,10 @@ verifies, but this PR defines none. Until it does, auditability is: the
 - **Collection-block refusal** (#1790, on top of #1781): a governed
   collection merges no collection blocks and appends none locally, so a peer
   cannot install a head that no verdict was taken on.
-- **Definition-block judgement.** Definition deltas merge unjudged; who may
-  publish a new version is the operator's activation step, not a validator.
-  The ACP2 design asks for "collection access control to restrict the users
-  capable of upgrading a revision"; that needs a validator entry point for
-  definition deltas, which does not exist yet.
+- **Signed definition blocks.** A definition carries no signature; the
+  judgement above reads authority from held documents, not from a signer. A
+  signature would add provenance for an audit, and it needs the version ID to
+  stay the CID of the unsigned block, so it is a separate change.
 - **Governed-by-root.** "Governed" is decided by the application's name
   claim. A node holding a governed schema with no application installed
   treats the collection as ungoverned.
