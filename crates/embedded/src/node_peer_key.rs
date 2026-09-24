@@ -1,5 +1,12 @@
 //! The node's peer key: one Ed25519 seed that libp2p and iroh both use, so a
 //! node keeps one identity whichever transport it runs.
+//!
+//! The seed is stored in the peerstore, unencrypted. An embedded node has no
+//! keyring to put it in — the CLI keeps its peer key in one and this key is
+//! that key's counterpart here — and both things this replaces, the libp2p
+//! replicator entry and the `.iroh.key` file, were unencrypted in the same
+//! way. Protecting it at rest belongs with giving embedded nodes a keyring,
+//! which is #1832.
 
 use std::path::Path;
 
@@ -9,7 +16,7 @@ use zeroize::Zeroizing;
 
 /// Replicator slot where libp2p kept its keypair before the shared peer key.
 #[cfg(feature = "libp2p")]
-const LEGACY_LIBP2P_KEY_ID: &str = "__local_p2p_identity__";
+pub(crate) const LEGACY_LIBP2P_KEY_ID: &str = "__local_p2p_identity__";
 
 pub(crate) type Seed = Zeroizing<[u8; 32]>;
 
@@ -18,6 +25,11 @@ pub(crate) type Seed = Zeroizing<[u8; 32]>;
 /// A node that predates the shared key keeps the identity its transport
 /// already had: the iroh key file, else libp2p's peerstore entry, is imported
 /// once. `legacy_iroh_key` is only ever read.
+///
+/// The legacy libp2p entry is removed only when it was the key imported. A
+/// database that ran both transports has two identities and only one can win,
+/// but the one that loses is key material, and deleting it is unrecoverable.
+/// It stays where it is; `node_recovery` knows to pass over the slot.
 pub(crate) async fn load_or_create<S: storage::corekv::Store>(
     peerstore: &Peerstore<S>,
     legacy_iroh_key: Option<&Path>,
@@ -30,18 +42,20 @@ pub(crate) async fn load_or_create<S: storage::corekv::Store>(
         return seed_from_slice(&bytes).context("stored peer key is corrupt");
     }
 
-    let seed = match legacy_iroh_seed(legacy_iroh_key).await? {
-        Some(seed) => seed,
+    let (seed, from_legacy_libp2p) = match legacy_iroh_seed(legacy_iroh_key).await? {
+        Some(seed) => (seed, false),
         None => match legacy_libp2p_seed(peerstore).await? {
-            Some(seed) => seed,
-            None => generate()?,
+            Some(seed) => (seed, true),
+            None => (generate()?, false),
         },
     };
     peerstore
         .set_local_peer_key(seed.as_slice())
         .await
         .context("failed to store peer key")?;
-    remove_legacy_libp2p_key(peerstore).await?;
+    if from_legacy_libp2p {
+        remove_legacy_libp2p_key(peerstore).await?;
+    }
     Ok(seed)
 }
 
@@ -210,9 +224,11 @@ mod tests {
             .is_none());
     }
 
+    /// Only one of the two identities can win, but the loser is key material:
+    /// it is left where it is rather than deleted along with the import.
     #[cfg(feature = "libp2p")]
     #[tokio::test]
-    async fn iroh_key_file_wins_over_legacy_libp2p_key() {
+    async fn iroh_key_file_wins_without_discarding_the_libp2p_identity() {
         let peerstore = peerstore();
         peerstore
             .create_replicator(LEGACY_LIBP2P_KEY_ID, &legacy_libp2p_key_bytes([9u8; 32]))
@@ -225,6 +241,15 @@ mod tests {
         let imported = load_or_create(&peerstore, Some(&path)).await.unwrap();
 
         assert_eq!(*imported, [7u8; 32]);
+        assert_eq!(
+            peerstore
+                .get_replicator(LEGACY_LIBP2P_KEY_ID)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(legacy_libp2p_key_bytes([9u8; 32]).as_slice()),
+            "the identity that lost must still be recoverable"
+        );
     }
 
     #[cfg(feature = "libp2p")]
