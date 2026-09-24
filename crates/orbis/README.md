@@ -24,3 +24,10 @@ digest. Defra verifies the returned signature before storing it. Authorization
 comes from the registered derivation; per-request policy or access-decision
 overrides are rejected. The former ring-ID/derivation-label options and
 `UtilityService` protocol are no longer used.
+
+Current Orbis signatures use the public-key-augmented BLS suite and produce
+`BLS_AUG_V1` block headers (`bls_aug_v1` signing configuration). Verification never
+falls back to basic BLS. Existing `BLS` headers keep their basic-suite meaning;
+changing a header between these formats invalidates the signature. The public
+key and DID encoding are unchanged. Retire rings that exposed basic signatures
+under related derived keys; changing suites does not repair those old signatures.

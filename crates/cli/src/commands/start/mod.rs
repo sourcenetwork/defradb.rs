@@ -395,7 +395,7 @@ impl StartArgs {
         defra_core::signing::store_identity(
             &signer_did,
             defra_core::signing::SigningConfig {
-                key_type: defra_core::signing::SigningKeyType::Bls,
+                key_type: defra_core::signing::SigningKeyType::BlsAugV1,
                 private_key_bytes: vec![],
                 public_key_bytes,
                 public_key_hex,

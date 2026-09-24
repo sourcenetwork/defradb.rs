@@ -58,6 +58,8 @@ pub enum SigningKeyType {
     Secp256k1,
     Secp256r1,
     Bls,
+    #[serde(rename = "bls_aug_v1")]
+    BlsAugV1,
 }
 
 impl SigningKeyType {
@@ -71,6 +73,7 @@ impl SigningKeyType {
             SigningKeyType::Secp256k1 => "secp256k1",
             SigningKeyType::Secp256r1 => "secp256r1",
             SigningKeyType::Bls => "bls",
+            SigningKeyType::BlsAugV1 => "bls_aug_v1",
         }
     }
 
@@ -81,6 +84,7 @@ impl SigningKeyType {
             SigningKeyType::Secp256k1 => crate::block::SignatureType::ES256K,
             SigningKeyType::Secp256r1 => crate::block::SignatureType::ES256,
             SigningKeyType::Bls => crate::block::SignatureType::BLS,
+            SigningKeyType::BlsAugV1 => crate::block::SignatureType::BLSAugV1,
         }
     }
 }
@@ -92,6 +96,7 @@ impl fmt::Display for SigningKeyType {
             SigningKeyType::Secp256k1 => write!(f, "secp256k1"),
             SigningKeyType::Secp256r1 => write!(f, "secp256r1"),
             SigningKeyType::Bls => write!(f, "bls"),
+            SigningKeyType::BlsAugV1 => write!(f, "bls_aug_v1"),
         }
     }
 }
@@ -105,6 +110,7 @@ impl std::str::FromStr for SigningKeyType {
             "secp256k1" => Ok(SigningKeyType::Secp256k1),
             "secp256r1" => Ok(SigningKeyType::Secp256r1),
             "bls" => Ok(SigningKeyType::Bls),
+            "bls_aug_v1" => Ok(SigningKeyType::BlsAugV1),
             other => Err(format!("unsupported signing key type: {other}")),
         }
     }

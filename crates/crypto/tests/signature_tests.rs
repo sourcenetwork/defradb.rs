@@ -340,3 +340,32 @@ fn test_bls_invalid_signatures_return_err() {
 
     ikm.fill(0);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn bls_augmented_matches_orbis_and_rejects_scaled_signature() {
+    let vector: serde_json::Value =
+        serde_json::from_str(include_str!("orbis_aug_vector.json")).unwrap();
+    let decode = |name: &str| hex::decode(vector[name].as_str().unwrap()).unwrap();
+    let public = crypto::BlsPublicKey::from_bytes(&decode("public_key")).unwrap();
+    let message = decode("message");
+    let signature = decode("signature");
+    assert!(public.verify_augmented(&message, &signature).unwrap());
+    let uncompressed = blst::min_pk::Signature::from_bytes(&signature)
+        .unwrap()
+        .serialize();
+    assert!(public.verify_augmented(&message, &uncompressed).is_err());
+    let uncompressed_key = blst::min_pk::PublicKey::from_bytes(&decode("public_key"))
+        .unwrap()
+        .serialize();
+    assert!(crypto::BlsPublicKey::from_bytes(&uncompressed_key)
+        .unwrap()
+        .verify_augmented(&message, &signature)
+        .is_err());
+
+    assert!(public.verify(&message, &signature).is_err());
+    let scaled = crypto::BlsPublicKey::from_bytes(&decode("scaled_public_key")).unwrap();
+    assert!(scaled
+        .verify_augmented(&message, &decode("scaled_signature"))
+        .is_err());
+}

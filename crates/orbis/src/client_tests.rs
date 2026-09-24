@@ -9,7 +9,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
 
 const DERIVATION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_";
 
 fn key(seed: u8) -> blst::min_pk::SecretKey {
     blst::min_pk::SecretKey::key_gen(&[seed; 32], &[]).unwrap()
@@ -80,10 +80,13 @@ impl SignService for Service {
             status: "completed".into(),
             message: String::new(),
             created_at: 0,
-            signature: self
-                .response
-                .clone()
-                .unwrap_or_else(|| hex::encode(key(7).sign(&request.message, DST, &[]).compress())),
+            signature: self.response.clone().unwrap_or_else(|| {
+                hex::encode(
+                    key(7)
+                        .sign(&request.message, DST, &key(7).sk_to_pk().to_bytes())
+                        .compress(),
+                )
+            }),
         }))
     }
 }
@@ -134,7 +137,10 @@ async fn current_protocol_signs_with_distinct_message_bound_tokens() {
     let (client, task, tokens) = client(None).await;
     for message in [b"first".as_slice(), b"second"] {
         let signature = client.sign_sync(message, None).unwrap();
-        assert!(client.public_key.verify(message, &signature).unwrap());
+        assert!(client
+            .public_key
+            .verify_augmented(message, &signature)
+            .unwrap());
     }
     assert_eq!(tokens.lock().unwrap().len(), 2);
     let authorization = SigningAuthorization::Decision {
@@ -156,11 +162,28 @@ async fn current_protocol_signs_with_distinct_message_bound_tokens() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn current_protocol_rejects_invalid_signatures() {
     for signature in [
+        hex::encode(
+            key(7)
+                .sign(
+                    b"message",
+                    b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_",
+                    &[],
+                )
+                .compress(),
+        ),
         String::new(),
         "not hex".into(),
         "010203".into(),
-        hex::encode(key(7).sign(b"wrong message", DST, &[]).compress()),
-        hex::encode(key(8).sign(b"message", DST, &[]).compress()),
+        hex::encode(
+            key(7)
+                .sign(b"wrong message", DST, &key(7).sk_to_pk().to_bytes())
+                .compress(),
+        ),
+        hex::encode(
+            key(8)
+                .sign(b"message", DST, &key(8).sk_to_pk().to_bytes())
+                .compress(),
+        ),
     ] {
         let (client, task, _) = client(Some(signature)).await;
         assert!(client.sign_sync(b"message", None).is_err());
