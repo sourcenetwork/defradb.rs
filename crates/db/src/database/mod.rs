@@ -3,7 +3,6 @@
 /// The DB struct is the main entry point for DefraDB operations.
 /// It manages the root store, creates transactions, and provides
 /// access to collections.
-use crate::collection::Collection;
 use crate::error::{Error, Result};
 pub use crate::search::EmbeddingClientConfig;
 use crate::txn::DbTxn;
@@ -20,7 +19,6 @@ use lens::UnsupportedTransformStore;
 #[cfg(feature = "wasmtime-runtime")]
 use lens::WasmTransformStore;
 use rapidhash::fast::RandomState;
-use rapidhash::{HashMapExt, RapidHashMap};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -198,7 +196,7 @@ pub struct DB<S: Store> {
     /// Whether the database has been closed.
     closed: AtomicBool,
     /// In-memory collection cache (name -> Collection).
-    pub(crate) collections: Atom<RapidHashMap<String, Collection>>,
+    pub(crate) collections: Atom<crate::collection::CollectionMap>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -273,7 +271,7 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(RapidHashMap::new()),
+            collections: Atom::new(crate::collection::CollectionMap::default()),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -336,7 +334,7 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(RapidHashMap::new()),
+            collections: Atom::new(crate::collection::CollectionMap::default()),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),

@@ -1,19 +1,5 @@
 use super::*;
-
-/// Whether [`crate::database::DB::add_collection_to_cache`] took the schema.
-///
-/// The attribute sits on the type rather than on the method deliberately: a
-/// method's `#[must_use]` is satisfied by the `map_err` every caller applies,
-/// and the value falling out of `?` is then an ordinary expression statement
-/// that nothing lints. A `#[must_use]` type is linted wherever it is dropped.
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cached {
-    /// The schema is now the cached entry for its name.
-    Taken,
-    /// Another collection holds that name, so the cache was left alone.
-    NameHeldByAnother,
-}
+use crate::collection::Cached;
 
 impl<S: Store> crate::database::DB<S> {
     /// List all collection names using the transaction's cache.
@@ -31,7 +17,7 @@ impl<S: Store> crate::database::DB<S> {
     pub fn list_collections(&self) -> Result<Vec<String>> {
         Ok(self
             .collections
-            .peek(|cache| cache.keys().cloned().collect()))
+            .peek(|cache| cache.names().cloned().collect()))
     }
 
     /// Cache `schema` under its name, reporting whether the cache took it.
@@ -65,30 +51,22 @@ impl<S: Store> crate::database::DB<S> {
             let _ = txn.discard();
             Collection::with_index_actions(schema.clone(), &actions)
         };
-        // The cache is keyed by name, but a collection's identity is its
-        // collection ID. An entry naming a different collection must not be
-        // replaced: whatever that collection knows and the incoming schema
-        // does not carry would be dropped silently. A placeholder is a
-        // stand-in for a definition that has not arrived, so it always yields.
+
+        let offered = schema.collection_id.clone();
         let mut cached = Cached::Taken;
         self.collections.rcu(|old| {
-            if let Some(existing) = old.get(&name) {
-                let existing = existing.schema();
-                if existing.collection_id != schema.collection_id && !existing.is_placeholder {
-                    tracing::warn!(
-                        collection_name = %name,
-                        held = %existing.collection_id,
-                        offered = %schema.collection_id,
-                        "Refusing to displace a cached collection with a different collection ID"
-                    );
-                    cached = Cached::NameHeldByAnother;
-                    return old.clone();
-                }
-            }
             let mut cache = old.clone();
-            cache.insert(name.clone(), collection.clone());
+            cached = cache.offer(collection.clone());
             cache
         });
+        if cached == Cached::NameHeldByAnother {
+            tracing::warn!(
+                collection_name = %name,
+                held_by_name = "another collection id",
+                %offered,
+                "Refusing to displace a cached collection with a different collection ID"
+            );
+        }
         Ok(cached)
     }
 
@@ -123,7 +101,7 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Uses the process-wide cache. For transaction-scoped access, use `has_collection_with_txn`.
     pub fn has_collection(&self, name: &str) -> Result<bool> {
-        Ok(self.collections.peek(|cache| cache.contains_key(name)))
+        Ok(self.collections.peek(|cache| cache.contains_name(name)))
     }
 
     /// Find a collection by its collection ID (schema version ID).
@@ -133,12 +111,9 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Uses the process-wide cache.
     pub fn find_collection_by_id(&self, collection_id: &str) -> Result<Option<Collection>> {
-        Ok(self.collections.peek(|cache| {
-            cache
-                .values()
-                .find(|c| c.collection_id() == collection_id)
-                .cloned()
-        }))
+        Ok(self
+            .collections
+            .peek(|cache| cache.by_id(collection_id).cloned()))
     }
 
     pub(crate) fn forbid_collection_id(&self, collection_id: &str) -> Result<()> {
@@ -160,6 +135,8 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Returns an immutable snapshot that provides snapshot isolation for transactions.
     pub fn collections_snapshot(&self) -> Result<CollectionSnapshot> {
-        Ok(CollectionSnapshot::new(self.collections.load_clone()))
+        Ok(CollectionSnapshot::new(
+            self.collections.load_clone().by_name(),
+        ))
     }
 }

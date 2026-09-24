@@ -292,9 +292,9 @@ impl<S: Store> crate::database::DB<S> {
             self.collections.rcu(|old| {
                 let mut cache = old.clone();
                 if new_schema.is_active {
-                    cache.insert(actual_name.clone(), Collection::new(new_schema.clone()));
+                    cache.put_named(actual_name.as_str(), Collection::new(new_schema.clone()));
                 } else {
-                    cache.remove(&actual_name);
+                    cache.remove(actual_name.as_str());
                 }
                 cache
             });

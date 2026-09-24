@@ -201,7 +201,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             db.collections.rcu(|old| {
                 let mut cache = old.clone();
                 if committed.is_active {
-                    cache.insert(committed.name.clone(), Collection::new(committed.clone()));
+                    cache.put_named(&committed.name, Collection::new(committed.clone()));
                 } else if was_active {
                     cache.remove(&committed.name);
                 }

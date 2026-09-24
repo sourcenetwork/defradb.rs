@@ -230,10 +230,10 @@ impl<S: Store> DB<S> {
             self.collections.rcu(|old| {
                 let mut cache = old.clone();
                 let matches_dest = cache
-                    .get(&collection_name)
+                    .get(collection_name.as_str())
                     .is_some_and(|cached| cached.schema().version_id == dest_version_id);
                 if matches_dest {
-                    cache.insert(collection_name.clone(), Collection::new(dst_col.clone()));
+                    cache.put_named(collection_name.as_str(), Collection::new(dst_col.clone()));
                 }
                 cache
             });

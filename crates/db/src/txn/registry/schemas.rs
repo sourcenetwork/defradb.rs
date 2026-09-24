@@ -76,8 +76,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                                 cached.schema().version_id == destination_version_id
                             });
                         if matches_destination {
-                            cache.insert(
-                                updated_destination.name.clone(),
+                            cache.put_named(
+                                &updated_destination.name.clone(),
                                 Collection::new(updated_destination.clone()),
                             );
                         }
@@ -180,7 +180,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             db.collections.rcu(|old| {
                 let mut cache = old.clone();
                 for schema in &schemas_for_cache {
-                    cache.insert(schema.name.clone(), Collection::new(schema.clone()));
+                    cache.put(Collection::new(schema.clone()));
                 }
                 cache
             });
