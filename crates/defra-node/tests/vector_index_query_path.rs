@@ -14,6 +14,121 @@ use serde_json::Value;
 const DIMENSIONS: usize = 8;
 const CORPUS: usize = 40;
 
+#[tokio::test]
+async fn doc_id_restrictions_fill_vector_pages_after_offset() {
+    let node = node_with("FLAT").await;
+    seed(&node).await;
+    let documents = query_data(
+        &node,
+        &format!(
+            "{{ Note(order: {{_alias: {{sim: ASC}}}}) {{ _docID sim: SIMILARITY(embedding: {{vector: [{}]}}) }} }}",
+            render(&vector_for(0))
+        ),
+        "ids",
+    )
+    .await;
+    let ids = serde_json::to_string(
+        &documents["Note"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .take(8)
+            .map(|doc| doc["_docID"].clone())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let query = format!("{{ Note(docID: {ids}, limit: 4, offset: 2, order: {{_alias: {{sim: DESC}}}}) {{ title sim: SIMILARITY(embedding: {{vector: [{}]}}) }} }}", render(&vector_for(0)));
+    let exhaustive = query.replace("limit: 4, offset: 2,", "");
+    let expected = query_data(&node, &exhaustive, "exhaustive ids").await;
+    let expected = &expected["Note"].as_array().unwrap()[2..6];
+    for in_transaction in [false, true] {
+        let response = if in_transaction {
+            let handle = node.begin_transaction(true).await.unwrap();
+            let result = node
+                .execute_request_in_txn(QueryRequest::new(&query), &handle)
+                .await;
+            node.rollback_transaction(&handle).await.unwrap();
+            result
+        } else {
+            node.execute(&query).await
+        };
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(response.data.unwrap()["Note"].as_array().unwrap(), expected);
+    }
+    assert_routes(&node, &query, "restricted ids").await;
+}
+
+#[tokio::test]
+async fn protected_similarity_pages_count_only_authorized_documents() {
+    let node = EmbeddedNode::builder().build().await.unwrap();
+    let owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+    let reader = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
+    let policy = node
+        .add_dac_policy(
+            owner,
+            "name: Notes\nresources:\n  - name: notes\n    relations:\n      - name: reader\n    permissions:\n      - name: read\n        expr: reader\n      - name: update\n      - name: delete\n",
+        )
+        .await
+        .unwrap();
+    node.add_schema(&format!(
+        "type Note @policy(id: \"{policy}\", resource: \"notes\") {{
+            title: String
+            embedding: [Float32!] @index(vector: {{dimensions: 2, flat: {{metric: DOT}}}})
+        }}"
+    ))
+    .await
+    .unwrap();
+    for i in 0..20 {
+        let did = if i < 10 { reader } else { owner };
+        let request = QueryRequest::new(format!(
+            "mutation {{ add_Note(input: {{title: \"n{i}\", embedding: [{i}, 1]}}) {{ _docID }} }}"
+        ))
+        .with_identity(Some(identity::Did::new(did).unwrap()));
+        let response = node
+            .execute_request_with_retry(request, Default::default())
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+    }
+    let query = "{ Note(limit: 3, offset: 1, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [1, 0]}) } }";
+    for in_transaction in [false, true] {
+        let request =
+            QueryRequest::new(query).with_identity(Some(identity::Did::new(reader).unwrap()));
+        let response = if in_transaction {
+            let handle = node.begin_transaction(true).await.unwrap();
+            let result = node.execute_request_in_txn(request, &handle).await;
+            node.rollback_transaction(&handle).await.unwrap();
+            result
+        } else {
+            node.execute_request_with_retry(request, Default::default())
+                .await
+        };
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.unwrap();
+        let titles: Vec<_> = data["Note"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|doc| doc["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, ["n8", "n7", "n6"]);
+    }
+    let response = node
+        .execute_request_with_retry(
+            QueryRequest::new(format!("query @explain(type: execute) {query}"))
+                .with_identity(Some(identity::Did::new(reader).unwrap())),
+            Default::default(),
+        )
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    assert!(vector_index(&response.data.unwrap()).is_none());
+    let anonymous = node.execute(query).await;
+    assert!(anonymous.errors.is_empty(), "{:?}", anonymous.errors);
+    assert!(anonymous.data.unwrap()["Note"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
 /// No metric argument: `SIMILARITY` scores by whichever metric the index
 /// declares, so the default has to route like any other.
 fn schema(algorithm: &str) -> String {
