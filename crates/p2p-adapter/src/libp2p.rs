@@ -566,6 +566,11 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
+                // The event identifies the install: the requested set, not
+                // the replay subset. An install of [Note, User] that only
+                // replays User is a different install than one of [User],
+                // whatever the replay had to redo.
+                let requested_collections = effective_collections.to_vec();
                 n0_future::task::spawn(async move {
                     let result = push_pusher
                         .push_existing_docs(
@@ -584,7 +589,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                         bus.publish(events::Message::replicator_completed_with_data(
                             events::ReplicatorCompletedData {
                                 peer_id: peer_id.to_string(),
-                                collections: collection_names_requiring_replay,
+                                collections: requested_collections,
                                 skipped: false,
                                 error: result.err().map(|error| error.to_string()),
                             },
@@ -607,16 +612,10 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 peer_id = %peer_id,
                 "Replicator already exists with same collections and replay capability, skipping initial replay"
             );
-            if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed_with_data(
-                    events::ReplicatorCompletedData {
-                        peer_id: peer_id.to_string(),
-                        collections: effective_collections,
-                        skipped: true,
-                        error: None,
-                    },
-                ));
-            }
+            // No event here: the install that already holds this replicator
+            // owns the completion event, and its replay may still be running.
+            // A skip published now would let a waiter observe a completion
+            // that has not happened yet.
         }
 
         Ok(())
