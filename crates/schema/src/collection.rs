@@ -111,6 +111,19 @@ pub struct CollectionVersion {
     #[serde(rename = "Policy", default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<PolicyDescription>,
 
+    /// The CID this version's identity binds its policy by, when the record
+    /// was rebuilt from a synced definition block.
+    ///
+    /// The block carries the policy as a CID over its reference and not the
+    /// reference itself, so a rebuilt record may hold the binding without
+    /// the policy. Set alongside `policy` when a held version supplied the
+    /// reference the CID names, and without it otherwise; in that second
+    /// case the version must not be activated, since it would serve the
+    /// collection with no policy at all. Never set on a locally defined
+    /// version, whose policy is in hand.
+    #[serde(rename = "PolicyCID", default, skip_serializing_if = "Option::is_none")]
+    pub policy_cid: Option<String>,
+
     /// The governance root this collection is claimed by, from `@governed`.
     ///
     /// A self-addressing identifier rather than a bare public key, so one
@@ -228,6 +241,7 @@ impl CollectionVersion {
             encrypted_indexes: Vec::new(),
             fulltext_indexes: Vec::new(),
             policy: None,
+            policy_cid: None,
             governance_root: None,
             is_active: true,
             is_materialized: true,

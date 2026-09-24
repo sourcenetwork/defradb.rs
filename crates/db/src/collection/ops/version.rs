@@ -48,6 +48,16 @@ impl<S: Store> crate::database::DB<S> {
                 })?;
             crate::collection::populate_collection_root_id(&systemstore, &mut target_schema)
                 .await?;
+            // A synced version binds its policy by CID. Rebuilt without the
+            // reference, the record commits to less than its identity does,
+            // and activating it would serve the collection unpoliced,
+            // indistinguishable from one that never had a policy.
+            if let (None, Some(policy_cid)) = (&target_schema.policy, &target_schema.policy_cid) {
+                return Err(Error::CollectionVersionPolicyNotHeld {
+                    version_id: version_id.to_string(),
+                    policy_cid: policy_cid.clone(),
+                });
+            }
 
             let name = target_schema.name.clone();
             let collection_id = target_schema.collection_id.clone();

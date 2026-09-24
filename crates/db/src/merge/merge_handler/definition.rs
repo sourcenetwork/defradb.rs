@@ -25,7 +25,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 // version and not the collection, so a policied block is named
                 // by its version ID alone and the collection ID has to be
                 // derived from the same block without it.
-                (name.clone(), collection_id_of(cid, block)?, Vec::new(), None)
+                (
+                    name.clone(),
+                    collection_id_of(cid, block)?,
+                    Vec::new(),
+                    None,
+                )
             }
             None => {
                 // Patched version: look up previous version from heads
@@ -140,6 +145,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_branchable = payload.is_branchable;
             schema.governance_root.clone_from(&payload.governance_root);
         }
+        // The version ID binds the policy by a CID over its reference. The
+        // record keeps the binding, and the policy itself only when a version
+        // this node holds of the same collection supplies the reference the
+        // CID names; without it the record cannot be activated.
+        if let Some(policy_cid) = &payload.policy_cid {
+            schema.policy_cid = Some(policy_cid.to_string());
+            schema.policy = self.held_policy(
+                &collection_name,
+                &collection_id,
+                previous.as_ref().and_then(|prev| prev.policy.clone()),
+                policy_cid,
+            );
+        }
 
         // For patched versions, set previous_version to point to the head (previous version CID)
         if let Some(heads) = &block.heads {
@@ -209,13 +227,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // record committing to what the delta cannot carry is not rebuilt
         // from one: the synced version stays stored under its own version ID
         // either way.
-        let uncarried = self
-            .db
-            .get_collection(&collection_name)
-            .map_err(MergeError::Database)?
-            .as_ref()
-            .map(|existing| uncarried_commitments(existing.schema(), &schema))
-            .unwrap_or_default();
+        //
+        // A patch is already an overlay onto the version it supersedes, so it
+        // carries those commitments by construction and only a rebuild from
+        // scratch can strip them.
+        let uncarried = match previous {
+            Some(_) => Vec::new(),
+            None => self
+                .db
+                .get_collection(&collection_name)
+                .map_err(MergeError::Database)?
+                .as_ref()
+                .map(|existing| uncarried_commitments(existing.schema(), &schema))
+                .unwrap_or_default(),
+        };
         let cached = if uncarried.is_empty() {
             self.db
                 .add_collection_to_cache(schema.clone())
@@ -251,6 +276,29 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         );
 
         Ok(MergeOutcome::Merged)
+    }
+
+    /// The policy reference `policy_cid` names, if a version this node holds
+    /// of collection `collection_id` carries it: the version the block
+    /// patches, or the local record of the same name.
+    fn held_policy(
+        &self,
+        collection_name: &str,
+        collection_id: &str,
+        prev_policy: Option<schema::PolicyDescription>,
+        policy_cid: &Cid,
+    ) -> Option<schema::PolicyDescription> {
+        let local = self
+            .db
+            .get_collection(collection_name)
+            .ok()
+            .flatten()
+            .filter(|local| local.schema().collection_id == collection_id)
+            .and_then(|local| local.schema().policy.clone());
+        [prev_policy, local]
+            .into_iter()
+            .flatten()
+            .find(|policy| schema::generate_policy_cid(policy).ok().as_ref() == Some(policy_cid))
     }
 
     /// Convert a FieldDefinitionDeltaPayload to a FieldDescription.

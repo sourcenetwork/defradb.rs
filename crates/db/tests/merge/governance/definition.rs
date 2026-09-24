@@ -405,3 +405,88 @@ async fn a_policied_definition_block_reproduces_its_identity_on_a_fresh_node() {
         "the receiver must derive the same collection ID the author did"
     );
 }
+
+/// Carry the definition block named by `version_id`, with the field blocks it
+/// links, from `from` to `to`, and merge it there as a peer's delivery.
+async fn sync_definition(from: &Node, to: &Node, version_id: &str) -> MergeOutcome {
+    let cid: Cid = version_id.parse().expect("the version ID names the block");
+    let bytes = from.blockstore.get(&cid).await.unwrap().expect("block");
+    to.blockstore.put(&cid, &bytes).await.unwrap();
+    for link in Block::from_dag_cbor(&bytes).unwrap().links.iter().flatten() {
+        let field = from.blockstore.get(&link.link).await.unwrap().unwrap();
+        to.blockstore.put(&link.link, &field).await.unwrap();
+    }
+    to.handler
+        .handle_block(
+            &cid,
+            &bytes,
+            BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+        )
+        .await
+        .unwrap()
+}
+
+const POLICIED_LEDGERS: &str = r#"type Ledgers @governed(root: "root-a") @policy(id: "p1", resource: "ledgers") { writer: String @immutable }"#;
+
+/// The version ID binds the policy, but the delta carries only a CID over its
+/// reference, so a node that has never held the policy rebuilds a record
+/// without one. That record must not become the active version: activated,
+/// it would serve the collection with no policy at all, indistinguishable
+/// from one that never had one.
+#[tokio::test]
+async fn a_synced_version_bound_to_a_policy_this_node_does_not_hold_cannot_be_activated() {
+    let author = Node::bare().await;
+    let defined = query::parse_sdl(POLICIED_LEDGERS).unwrap().remove(0);
+    author.db.create_collection(defined.clone()).await.unwrap();
+
+    let fresh = Node::bare().await;
+    sync_definition(&author, &fresh, &defined.version_id).await;
+
+    let activated = fresh
+        .db
+        .set_active_collection_version(&defined.version_id)
+        .await;
+    assert!(
+        activated.is_err(),
+        "activated a version whose identity binds a policy the record does not hold"
+    );
+    let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
+    assert!(!synced.schema().is_active);
+}
+
+/// A node that holds the collection with its policy receives a patched
+/// version from a peer. The patch binds the same policy, by CID, and the
+/// node holds that reference, so the rebuilt version keeps it: activating
+/// the patch must not turn the collection into an unpoliced one.
+#[tokio::test]
+async fn a_synced_patch_keeps_the_policy_this_node_holds() {
+    let author = Node::bare().await;
+    let defined = query::parse_sdl(POLICIED_LEDGERS).unwrap().remove(0);
+    author.db.create_collection(defined.clone()).await.unwrap();
+    let peer = Node::bare().await;
+    peer.db.create_collection(defined.clone()).await.unwrap();
+
+    let patched = author
+        .db
+        .patch_collection(
+            "Ledgers",
+            r#"[{"op": "add", "path": "/Ledgers/Fields/-", "value": {"Name": "note", "Kind": "String"}}]"#,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_ne!(patched.version_id, defined.version_id);
+    sync_definition(&author, &peer, &patched.version_id).await;
+
+    peer.db
+        .set_active_collection_version(&patched.version_id)
+        .await
+        .unwrap();
+    let active = peer.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(active.schema().version_id, patched.version_id);
+    assert_eq!(
+        active.schema().policy,
+        defined.policy,
+        "activating the synced patch dropped the policy"
+    );
+}
