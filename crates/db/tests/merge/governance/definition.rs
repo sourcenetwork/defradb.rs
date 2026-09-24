@@ -13,9 +13,9 @@ const STRING_KIND: u8 = 11;
 
 /// A collection definition as a peer holds it before sending: the definition
 /// block and the field blocks it links.
-struct Definition {
-    cid: Cid,
-    blocks: Vec<(Cid, Vec<u8>)>,
+pub(super) struct Definition {
+    pub(super) cid: Cid,
+    pub(super) blocks: Vec<(Cid, Vec<u8>)>,
 }
 
 /// A definition naming `collection`, as a peer sends it. A field prefixed with
@@ -34,7 +34,7 @@ fn definition_with(
 }
 
 /// As `definition_with`, naming the rule the version is judged by.
-fn definition_block(
+pub(super) fn definition_block(
     collection: &str,
     fields: &[&str],
     governance_root: Option<&str>,
@@ -78,7 +78,7 @@ fn definition_block(
 }
 
 impl Definition {
-    async fn merge(&self, node: &Node) -> MergeOutcome {
+    pub(super) async fn merge(&self, node: &Node) -> MergeOutcome {
         for (cid, bytes) in &self.blocks {
             node.blockstore.put(cid, bytes).await.unwrap();
         }
@@ -725,7 +725,7 @@ impl Node {
         Self::assemble(db, store)
     }
 
-    async fn holds_version(&self, cid: &Cid) -> bool {
+    pub(super) async fn holds_version(&self, cid: &Cid) -> bool {
         self.db
             .get_collection_by_version_id_full(&cid.to_string())
             .await

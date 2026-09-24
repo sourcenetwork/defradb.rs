@@ -12,10 +12,13 @@ description = "DefraDB database and collection management"
 ignored = ["anyhow", "bytes", "libp2p", "multihash", "p2p", "rand", "serde", "serde_bytes", "serde_cbor", "zeroize"]
 
 [features]
-default = ["p2p", "native", "wasmtime-runtime"]
+default = ["p2p", "native", "wasmtime-runtime", "wasm-rules"]
 p2p = ["dep:libp2p", "p2p/libp2p-transport"]
 native = ["dep:tokio", "events/channel", "acp/native"]
 wasmtime-runtime = ["lens/wasmtime-runtime"]
+# Merge rules carried as wasm modules named by CID, run under a fuel budget.
+# Native only: the browser build judges nothing this way.
+wasm-rules = ["dep:wasmtime"]
 
 [lib]
 bench = false
@@ -101,6 +104,11 @@ telemetry = { path = "../telemetry" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 p2p = { path = "../p2p", default-features = false }
+wasmtime = { version = "46.0.2", optional = true, default-features = false, features = [
+    "runtime",
+    "cranelift",
+    "std",
+] }
 
 # A browser peer replicates over the relay-only iroh transport; libp2p has no
 # browser build.
@@ -111,6 +119,7 @@ wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+wat = "1"
 axum.workspace = true
 proptest.workspace = true
 blst = "0.3"
