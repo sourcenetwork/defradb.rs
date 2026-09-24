@@ -331,7 +331,11 @@ fn collection_id_of(version_id: &Cid, block: &Block) -> Result<String, MergeErro
 /// A differing governance root means the incoming definition describes a
 /// different collection that merely shares a name — their collection IDs
 /// differ by construction — and the name-keyed cache would otherwise let it
-/// take the local one's place.
+/// take the local one's place. The same root with a differing collection ID
+/// is the same situation: a governed identity also commits to the fields'
+/// immutability and to branchability, so a definition under the local root
+/// that drops either is a different collection too, and must not displace
+/// the record that holds them.
 ///
 /// An ungoverned collection commits to none of this in its identity, so its
 /// delta carries neither the immutable flags nor the branchable flag and a
@@ -346,6 +350,8 @@ fn uncarried_commitments(
     }
     if stored.governance_root != incoming.governance_root {
         commitments.push("a different governance root");
+    } else if stored.governance_root.is_some() && stored.collection_id != incoming.collection_id {
+        commitments.push("a different collection ID under the same root");
     }
     if stored.governance_root.is_none() {
         if stored.fields.iter().any(|field| field.immutable) {

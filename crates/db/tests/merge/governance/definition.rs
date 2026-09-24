@@ -258,6 +258,39 @@ async fn a_synced_definition_under_another_root_does_not_displace_a_local_one() 
     );
 }
 
+/// A governed identity commits to the fields' immutability and to
+/// branchability, so a definition under the same root without them names a
+/// different collection, and the name-keyed cache must not let it take the
+/// place of the record that holds them.
+#[tokio::test]
+async fn a_synced_definition_under_the_same_root_without_the_flags_does_not_displace() {
+    let node = Node::bare().await;
+    definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), true)
+        .merge(&node)
+        .await;
+    let held = node.db.get_collection("Ledgers").unwrap().unwrap();
+    let held_id = held.schema().collection_id.clone();
+
+    definition_with("Ledgers", &["_docID", "writer"], Some("root-a"), false)
+        .merge(&node)
+        .await;
+
+    let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
+    let schema = collection.schema();
+    assert_eq!(
+        schema.collection_id, held_id,
+        "the weaker definition displaced the record"
+    );
+    assert!(schema.is_branchable, "branchable history was stripped");
+    assert!(
+        schema
+            .fields
+            .iter()
+            .any(|field| field.name == "writer" && field.immutable),
+        "@immutable was stripped"
+    );
+}
+
 /// A definition block reproduces the identity it was built with on a node that
 /// has never seen the collection: the identity is a function of the block, and
 /// the block carries everything the identity commits to.
