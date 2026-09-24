@@ -162,9 +162,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             })?;
                         }
                         txn2.commit().await.map_err(MergeError::Database)?;
-                        self.db
+                        // The version is stored either way; the cache holds one
+                        // collection per name and keeps the one it has.
+                        let cached = self
+                            .db
                             .add_collection_to_cache(prev.clone())
+                            .await
                             .map_err(MergeError::Database)?;
+                        if cached == crate::collection::Cached::NameHeldByAnother {
+                            tracing::debug!(
+                                collection_id = %prev.collection_id,
+                                name = %prev.name,
+                                "Recovered previous version left out of the cache: the name \
+                                 holds another collection"
+                            );
+                        }
 
                         return Ok(Some(prev));
                     }

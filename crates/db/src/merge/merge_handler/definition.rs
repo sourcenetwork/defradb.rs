@@ -18,10 +18,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // For patched versions, payload.name is None (name didn't change).
         // Resolve name and collection_id from the previous version via block.heads.
-        let (collection_name, collection_id, prev_fields) = match &payload.name {
+        let (collection_name, collection_id, prev_fields, previous) = match &payload.name {
             Some(name) => {
                 // Initial version: name is explicit, collection_id = version_id
-                (name.clone(), version_id.clone(), Vec::new())
+                (name.clone(), version_id.clone(), Vec::new(), None)
             }
             None => {
                 // Patched version: look up previous version from heads
@@ -31,7 +31,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         let name = prev.name.clone();
                         let col_id = prev.collection_id.clone();
                         let fields = prev.fields.clone();
-                        (name, col_id, fields)
+                        (name, col_id, fields, Some(prev))
                     }
                     None => {
                         tracing::debug!(cid = %cid, "CollectionDefinition has no name and no resolvable previous version - skipping");
@@ -100,12 +100,32 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        // Build the CollectionVersion
-        // Synced collections come in as inactive (user must activate manually via SetActiveCollectionVersion)
-        // and materialized (matching Go's behavior)
-        let mut schema =
-            CollectionVersion::new(&collection_name, &version_id, &collection_id, fields);
+        // Build the CollectionVersion by overlaying the delta onto the version
+        // it supersedes, rather than by rebuilding from the delta alone.
+        //
+        // A delta carries a name, and per field a name, kind and CRDT type. It
+        // carries none of the rest — the policy, the indexes in all four of
+        // their flavours, the embeddings, the downsample configuration, the
+        // collection set, whether the history is branchable or the collection
+        // embedded-only. Listing what to rescue gets one more entry wrong every
+        // time `CollectionVersion` grows a field, so start from everything the
+        // previous version held and overlay only what this block actually says.
+        //
+        // Synced versions arrive inactive; a user activates one explicitly.
+        let mut schema = match &previous {
+            Some(previous) => {
+                let mut schema = previous.clone();
+                schema.name.clone_from(&collection_name);
+                schema.version_id.clone_from(&version_id);
+                schema.collection_id.clone_from(&collection_id);
+                schema.fields = fields;
+                schema
+            }
+            None => CollectionVersion::new(&collection_name, &version_id, &collection_id, fields),
+        };
         schema.is_active = false;
+        // This block is a definition, whatever stood in for it before.
+        schema.is_placeholder = false;
 
         // For patched versions, set previous_version to point to the head (previous version CID)
         if let Some(heads) = &block.heads {
@@ -130,7 +150,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     "Failed to decode query_select JSON bytes for view collection"
                 );
             }
-        } else {
+        } else if schema.query.is_none() {
             schema.is_materialized = true;
         }
 
@@ -169,23 +189,28 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Add to runtime cache so it's visible via list_collections/get_collection.
         // Synced collections are inactive but still need to be in the cache for
         // GetCollections with GetInactive=true to find them.
-        self.db
+        let cached = self
+            .db
             .add_collection_to_cache(schema.clone())
-            .map_err(MergeError::Database)?;
+            .await
+            .map_err(MergeError::Database)?
+            == crate::collection::Cached::Taken;
 
         tracing::debug!(
             collection_name = %collection_name,
             version_id = %version_id,
             is_active = schema.is_active,
             is_materialized = schema.is_materialized,
-            "Stored synced collection schema in cache"
+            "Stored synced collection schema"
         );
 
         tracing::info!(
             collection_name = %collection_name,
             version_id = %version_id,
             field_count = schema.fields.len(),
-            "Registered synced collection schema in systemstore and cache (inactive, requires manual activation)"
+            cached,
+            "Registered synced collection schema in systemstore (inactive, requires manual \
+             activation); cached unless the name already holds another collection"
         );
 
         Ok(MergeOutcome::Merged)
