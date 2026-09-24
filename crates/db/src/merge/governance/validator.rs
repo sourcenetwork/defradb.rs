@@ -96,6 +96,12 @@ pub trait MergeValidator: MaybeSendSync {
     /// already holds. A rejected definition is left unmerged and never
     /// stored; a deferred one is re-driven when what it awaits merges.
     ///
+    /// `candidate.version.governance_rule` is the rule tag the version
+    /// commits to. A validator that judges under one rule should refuse a
+    /// version naming another it does not recognise, so a rule change is an
+    /// upgrade this node either follows or declines, never one it judges
+    /// wrongly.
+    ///
     /// The default accepts every definition, which is the behaviour before
     /// this entry point existed: a version arriving over the network is
     /// stored inactive for an operator to activate.
