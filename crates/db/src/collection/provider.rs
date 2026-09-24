@@ -62,7 +62,7 @@ impl<S: Store + 'static> CollectionProvider for DbCollectionProvider<S> {
         version_id: &str,
     ) -> QueryResult<Option<Arc<CollectionVersion>>> {
         match self.db.get_collection_by_version_id_full(version_id).await {
-            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema().clone()))),
+            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema_for_queries()))),
             Ok(None) => Ok(None),
             Err(e) => Err(QueryError::execution(e.to_string())),
         }
@@ -207,7 +207,7 @@ impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
         // Committed history (active + inactive) is sufficient for the ACP-gated
         // `_commits` path; the DB full lookup scans all stored versions.
         match self.db.get_collection_by_version_id_full(version_id).await {
-            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema().clone()))),
+            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema_for_queries()))),
             Ok(None) => Ok(None),
             Err(e) => Err(QueryError::execution(e.to_string())),
         }

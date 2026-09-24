@@ -289,10 +289,13 @@ impl<S: Store> crate::database::DB<S> {
             txn.commit().await?;
 
             // Update cache
+            let cached_collection = self
+                .collection_with_index_actions(new_schema.clone())
+                .await?;
             self.collections.rcu(|old| {
                 let mut cache = old.clone();
                 if new_schema.is_active {
-                    cache.put_named(actual_name.as_str(), Collection::new(new_schema.clone()));
+                    cache.put_named(actual_name.as_str(), cached_collection.clone());
                 } else {
                     cache.remove(actual_name.as_str());
                 }

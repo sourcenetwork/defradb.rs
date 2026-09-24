@@ -115,11 +115,14 @@ impl<S: Store> crate::database::DB<S> {
         };
 
         txn.commit().await?;
+        let collection = self
+            .collection_with_index_actions(target_schema.clone())
+            .await?;
 
         // Update the process-wide cache (scoped to drop lock before reindex)
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cache.put_named(name.as_str(), Collection::new(target_schema.clone()));
+            cache.put_named(name.as_str(), collection.clone());
             cache
         });
 
