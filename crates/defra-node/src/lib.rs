@@ -333,7 +333,12 @@ impl EmbeddedNode {
     where
         F: std::future::Future<Output = T>,
     {
-        defra_core::current_identity::with_scoped_identity(self.node_identity_did.clone(), op).await
+        if self.node_identity_did.is_some() {
+            defra_core::current_identity::with_scoped_identity(self.node_identity_did.clone(), op)
+                .await
+        } else {
+            op.await
+        }
     }
 
     /// DID used as the embedded node identity for signing, when configured.
@@ -370,8 +375,7 @@ impl EmbeddedNode {
         cid: &str,
         transaction: &TransactionHandle,
     ) -> anyhow::Result<String> {
-        self.block_ops
-            .verified_signer_did_in_txn(cid, transaction)
+        self.as_node_identity(self.block_ops.verified_signer_did_in_txn(cid, transaction))
             .await
     }
 
@@ -491,7 +495,7 @@ impl EmbeddedNode {
         &self,
         readonly: bool,
     ) -> Result<TransactionHandle, query::TransactionError> {
-        self.runner.begin_txn(readonly).await
+        self.as_node_identity(self.runner.begin_txn(readonly)).await
     }
 
     /// Commit a transaction owned by this embedded node.
@@ -499,7 +503,8 @@ impl EmbeddedNode {
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
-        self.runner.commit_txn(transaction).await
+        self.as_node_identity(self.runner.commit_txn(transaction))
+            .await
     }
 
     /// Roll back a transaction owned by this embedded node.
@@ -507,7 +512,8 @@ impl EmbeddedNode {
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
-        self.runner.rollback_txn(transaction).await
+        self.as_node_identity(self.runner.rollback_txn(transaction))
+            .await
     }
 
     /// Access the raw query executor for advanced use.

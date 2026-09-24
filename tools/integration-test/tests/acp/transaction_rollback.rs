@@ -26,9 +26,10 @@ fn auth_token(identity_hex: &str, audience: &str) -> String {
     String::from_utf8(token).expect("token must be utf-8")
 }
 
-async fn tx_create(client: &reqwest::Client, api_url: &str) -> String {
+async fn tx_create(client: &reqwest::Client, api_url: &str, identity_hex: &str) -> String {
     let response = client
         .post(format!("{api_url}/api/v0/tx"))
+        .bearer_auth(auth_token(identity_hex, api_url))
         .send()
         .await
         .expect("create transaction request");
@@ -47,9 +48,10 @@ async fn tx_create(client: &reqwest::Client, api_url: &str) -> String {
         .to_string()
 }
 
-async fn tx_discard(client: &reqwest::Client, api_url: &str, tx_id: &str) {
+async fn tx_discard(client: &reqwest::Client, api_url: &str, tx_id: &str, identity_hex: &str) {
     let response = client
         .delete(format!("{api_url}/api/v0/tx/{tx_id}"))
+        .bearer_auth(auth_token(identity_hex, api_url))
         .send()
         .await
         .expect("discard transaction request");
@@ -145,7 +147,7 @@ async fn acp_transaction_rollback_test(cluster: TestCluster) {
     );
     assert_eq!(bob_before_docs[0]["_docID"], doc_id);
 
-    let tx_id = tx_create(&http, &api_url).await;
+    let tx_id = tx_create(&http, &api_url, &alice.private_key_hex).await;
     let delete_query = format!(
         r#"mutation {{ delete_User(docID: "{}") {{ _docID }} }}"#,
         doc_id
@@ -183,7 +185,7 @@ async fn acp_transaction_rollback_test(cluster: TestCluster) {
         "document should be absent inside the uncommitted delete transaction"
     );
 
-    tx_discard(&http, &api_url, &tx_id).await;
+    tx_discard(&http, &api_url, &tx_id, &alice.private_key_hex).await;
 
     let alice_after = node
         .query_with_identity(read_query, &alice.private_key_hex)
