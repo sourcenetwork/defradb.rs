@@ -715,6 +715,9 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
+                // The event identifies the install: the requested set, not
+                // the replay subset (same fix as the libp2p side).
+                let requested_collections = effective_collections.to_vec();
                 n0_future::task::spawn(async move {
                     let result = push_pusher
                         .push_existing_docs(
@@ -732,7 +735,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                         bus.publish(events::Message::replicator_completed_with_data(
                             events::ReplicatorCompletedData {
                                 peer_id: push_peer.to_string(),
-                                collections: collection_names_requiring_replay,
+                                collections: requested_collections,
                                 skipped: false,
                                 error: result.err().map(|error| error.to_string()),
                             },
@@ -754,16 +757,9 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 peer_id = %peer_id,
                 "Replicator already exists with same collections, filters, and replay capability; skipping initial replay"
             );
-            if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed_with_data(
-                    events::ReplicatorCompletedData {
-                        peer_id: peer_id.to_string(),
-                        collections: effective_collections,
-                        skipped: true,
-                        error: None,
-                    },
-                ));
-            }
+            // No event here, mirroring the libp2p side: the install that
+            // already holds this replicator owns the completion event, and
+            // its replay may still be running.
         }
 
         Ok(())
