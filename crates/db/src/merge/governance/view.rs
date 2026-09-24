@@ -95,6 +95,10 @@ pub(crate) struct DbMergeView<'a, S: Store, B: blockstore::Blockstore> {
     snapshot: Mutex<Option<DbTxn<S>>>,
     /// The index chosen for each (collection, field) looked up this verdict.
     pub(super) indexes: Mutex<ChosenIndexes>,
+    /// The deleted documents of each collection scanned this verdict, by
+    /// collection name: the snapshot is fixed, so one scan serves every
+    /// lookup the verdict makes.
+    deleted: Mutex<RapidHashMap<String, Arc<Vec<Document>>>>,
 }
 
 impl<'a, S: Store, B: blockstore::Blockstore> DbMergeView<'a, S, B> {
@@ -103,6 +107,7 @@ impl<'a, S: Store, B: blockstore::Blockstore> DbMergeView<'a, S, B> {
             handler,
             snapshot: Mutex::new(None),
             indexes: Mutex::new(RapidHashMap::default()),
+            deleted: Mutex::new(RapidHashMap::default()),
         }
     }
 
@@ -301,8 +306,25 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
     /// The deleted documents of `collection` on this verdict's snapshot: a
     /// scan of the deletion markers, whose cost follows the deleted rows and
     /// not the collection. An index drops a document's entries when it is
-    /// deleted, so a lookup through an index has to add these back.
+    /// deleted, so a lookup through an index has to add these back. Deletion
+    /// markers are never removed, so the scan is done once per collection
+    /// per verdict, however many lookups the verdict makes.
     pub(super) async fn deleted_documents(
+        &self,
+        collection: &Collection,
+    ) -> Result<Arc<Vec<Document>>, String> {
+        if let Some(cached) = self.deleted.lock().await.get(collection.name()).cloned() {
+            return Ok(cached);
+        }
+        let documents = Arc::new(self.scan_deleted_documents(collection).await?);
+        self.deleted
+            .lock()
+            .await
+            .insert(collection.name().to_string(), documents.clone());
+        Ok(documents)
+    }
+
+    async fn scan_deleted_documents(
         &self,
         collection: &Collection,
     ) -> Result<Vec<Document>, String> {

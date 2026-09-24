@@ -78,7 +78,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
         // A delete removes a document's index entries, and a governance read
         // must still see the document (`MergeView::find_documents`). The
         // caller filters by value, so the deleted rows join the candidates.
-        documents.extend(self.deleted_documents(collection).await?);
+        documents.extend(self.deleted_documents(collection).await?.iter().cloned());
         Ok(Some(documents))
     }
 }
