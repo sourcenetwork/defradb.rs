@@ -375,6 +375,7 @@ impl P2PTransport for IrohTransport {
         // Advertise that this iroh sender consumes the ACK from the request
         // stream. Re-sign because the capability is part of the wire message.
         req.supports_same_stream_reply = true;
+        req.supports_retry_after = true;
         sign_with_transport(self, &mut req)?;
         self.send_command(|reply| IrohCommand::SendTwoStreamRequest {
             peer_id: peer_id.clone(),

@@ -57,6 +57,70 @@ pub struct ReplayDocumentFailure {
     pub collection_id: String,
 }
 
+/// Persist the typed hint before crossing the legacy string error boundary.
+///
+/// The first history replay has no retry-info row yet — only the replicator
+/// exists — so a plain reschedule writes nothing and reports `Ok(false)`;
+/// the initial schedule is seeded with the hint's deadline instead. A
+/// replicator that is gone stays a success: no durable obligation to defer.
+pub async fn persist_retry_after<S: storage::corekv::Store>(
+    peerstore: &storage::stores::Peerstore<S>,
+    peer_id: &PeerId,
+    reply: &PushLogReply,
+) -> Result<(), String> {
+    let Some(delay) = reply.retry_after() else {
+        return Ok(());
+    };
+    match peerstore
+        .reschedule_retry_peer(peer_id.as_str(), Some(delay), 0)
+        .await
+    {
+        Ok(true) => Ok(()),
+        // A missing schedule row is the first history replay; seed it with the
+        // hint's deadline. A missing replicator stays a success: no durable
+        // obligation to defer.
+        Ok(false) => peerstore
+            .seed_retry_peer(peer_id.as_str(), delay)
+            .await
+            .map(|_| ())
+            .map_err(|error| format!("failed to persist receiver retry-after: {error}")),
+        Err(error) => Err(format!("failed to persist receiver retry-after: {error}")),
+    }
+}
+
+pub async fn remaining_retry_after<S: storage::corekv::Store>(
+    peerstore: &storage::stores::Peerstore<S>,
+    peer_id: &PeerId,
+) -> Result<Option<Duration>, String> {
+    let Some(bytes) = peerstore
+        .get_retry_info(peer_id.as_str())
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    let info = storage::stores::RetryInfo::from_bytes(&bytes)?;
+    let now = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .unwrap_or_default();
+    Ok(Duration::from_secs(info.not_before_unix)
+        .checked_sub(now)
+        .filter(|delay| !delay.is_zero()))
+}
+
+pub async fn check_retry_admission<S: storage::corekv::Store>(
+    peerstore: &storage::stores::Peerstore<S>,
+    peer_id: &PeerId,
+) -> Result<(), ReplayPushSendError> {
+    match remaining_retry_after(peerstore, peer_id)
+        .await
+        .map_err(ReplayPushSendError::Persistence)?
+    {
+        Some(retry_after) => Err(ReplayPushSendError::Backpressure { retry_after }),
+        None => Ok(()),
+    }
+}
+
 /// Persist documents that did not finish their initial replay so the normal
 /// retry sweep owns them after the bounded attempt. Replay intentionally does
 /// not hold the peer writer across network waits, so the failure handoff must
@@ -79,11 +143,10 @@ pub async fn persist_replay_failures<S: storage::corekv::Store>(
         // replicator no longer owns a durable delivery obligation.
         return Ok(());
     };
-    let retry_info = storage::stores::RetryInfo::new_initial()
-        .to_bytes()
-        .map_err(|error| format!("failed to serialize replay retry state: {error}"))?;
-
     for failure in failures {
+        let retry_info = storage::stores::RetryInfo::new_initial()
+            .to_bytes()
+            .map_err(|error| format!("failed to serialize replay retry state: {error}"))?;
         // Initial replay resolves the current document heads again on retry,
         // so this is deliberately a scope marker without a payload CID.
         peerstore
@@ -157,6 +220,8 @@ impl Default for ReplayPushConfig {
 
 #[derive(Debug)]
 pub enum ReplayPushSendError {
+    Backpressure { retry_after: Duration },
+    Persistence(String),
     SemaphoreClosed,
     Timeout { timeout: Duration },
     Transport(p2p::Error),
@@ -171,6 +236,10 @@ impl ReplayPushSendError {
 impl fmt::Display for ReplayPushSendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Persistence(error) => write!(f, "replay admission state: {error}"),
+            Self::Backpressure { .. } => {
+                f.write_str("receiver backpressure; deferred to persisted retry")
+            }
             Self::SemaphoreClosed => f.write_str("replay send semaphore closed"),
             Self::Timeout { timeout } => {
                 write!(f, "replay PushLog timed out after {}s", timeout.as_secs())
@@ -227,7 +296,26 @@ impl ReplayPushGate {
     where
         F: Future<Output = p2p::Result<PushLogReply>>,
     {
+        self.send_pushlog_with_admission(peer_id, async { Ok(()) }, send)
+            .await
+    }
+
+    /// Check durable admission after pacing and acquiring a send slot, so a
+    /// hint installed while waiting cannot be bypassed by a stale preflight.
+    pub async fn send_pushlog_with_admission<F, A>(
+        &self,
+        peer_id: &PeerId,
+        admission: A,
+        send: F,
+    ) -> Result<PushLogReply, ReplayPushSendError>
+    where
+        F: Future<Output = p2p::Result<PushLogReply>>,
+        A: Future<Output = Result<(), ReplayPushSendError>>,
+    {
         while let Some(delay) = self.peer_pacer.consume_or_delay(peer_id.as_str()) {
+            if let Some(retry_after) = self.peer_pacer.retry_after(peer_id.as_str()) {
+                return Err(ReplayPushSendError::Backpressure { retry_after });
+            }
             n0_future::time::sleep(delay).await;
         }
 
@@ -238,12 +326,32 @@ impl ReplayPushGate {
             .await
             .map_err(|_| ReplayPushSendError::SemaphoreClosed)?;
 
-        n0_future::time::timeout(self.send_timeout, send)
+        if let Some(retry_after) = self.peer_pacer.retry_after(peer_id.as_str()) {
+            return Err(ReplayPushSendError::Backpressure { retry_after });
+        }
+        admission.await?;
+        let reply = n0_future::time::timeout(self.send_timeout, send)
             .await
             .map_err(|_| ReplayPushSendError::Timeout {
                 timeout: self.send_timeout,
             })?
-            .map_err(ReplayPushSendError::Transport)
+            .map_err(ReplayPushSendError::Transport)?;
+        if let Some(delay) = reply.retry_after() {
+            let bucket = self.peer_pacer.bucket(peer_id.as_str());
+            loop {
+                let current = bucket.load();
+                let mut next = *current;
+                next.blocked_until = Some(
+                    next.blocked_until
+                        .unwrap_or_else(Instant::now)
+                        .max(Instant::now() + delay),
+                );
+                if bucket.compare_and_swap(&current, next).is_ok() {
+                    break;
+                }
+            }
+        }
+        Ok(reply)
     }
 }
 
@@ -254,6 +362,14 @@ struct ReplayPeerPacer {
 }
 
 impl ReplayPeerPacer {
+    fn retry_after(&self, peer_id: &str) -> Option<Duration> {
+        self.bucket(peer_id)
+            .load()
+            .blocked_until
+            .and_then(|until| until.checked_duration_since(Instant::now()))
+            .filter(|delay| !delay.is_zero())
+    }
+
     fn new(capacity: u32, refill_rate: f64) -> Self {
         Self {
             buckets: HopscotchMap::with_hasher(RandomState::default()),
@@ -289,6 +405,7 @@ impl ReplayPeerPacer {
 struct ReplayPeerBucket {
     tokens: f64,
     last_refill: Instant,
+    blocked_until: Option<Instant>,
 }
 
 impl ReplayPeerBucket {
@@ -296,6 +413,7 @@ impl ReplayPeerBucket {
         Self {
             tokens: capacity as f64,
             last_refill: Instant::now(),
+            blocked_until: None,
         }
     }
 

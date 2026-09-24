@@ -42,6 +42,9 @@ impl Default for RetrySchedule {
 pub struct RetryInfo {
     pub num_retries: u32,
     pub next_retry_unix: u64,
+    /// Receiver backpressure deadline, preserved across reconnects and ladder changes.
+    #[serde(default)]
+    pub not_before_unix: u64,
     /// Durable round-robin start for the peer's presence-only scope markers.
     ///
     /// All scopes share this peer clock.  Persisting the cursor prevents a
@@ -150,6 +153,7 @@ impl RetryInfo {
         Self {
             num_retries: 0,
             next_retry_unix: 0,
+            not_before_unix: 0,
             dispatch_cursor: 0,
         }
     }
@@ -160,7 +164,15 @@ impl RetryInfo {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        now >= self.next_retry_unix
+        now >= self.next_retry_unix.max(self.not_before_unix)
+    }
+
+    pub fn is_backpressure_elapsed(&self) -> bool {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            >= self.not_before_unix
     }
 
     /// Bump the retry counter and schedule the next retry with exponential backoff.
@@ -187,7 +199,7 @@ impl RetryInfo {
         retry_key.hash(&mut hasher);
         self.num_retries.hash(&mut hasher);
         let delay = floor + hasher.finish() % (cap - floor + 1);
-        self.next_retry_unix = now.saturating_add(delay);
+        self.next_retry_unix = now.saturating_add(delay).max(self.not_before_unix);
         self.num_retries = self.num_retries.saturating_add(1);
     }
 
@@ -200,9 +212,16 @@ impl RetryInfo {
     pub fn defer_for(&mut self, delay: Duration) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.next_retry_unix = now.saturating_add(delay.as_secs());
+            .unwrap_or_default();
+        if !delay.is_zero() {
+            let deadline = now.saturating_add(delay);
+            // The durable clock has second precision: round up, never retry early.
+            let deadline = deadline
+                .as_secs()
+                .saturating_add(u64::from(deadline.subsec_nanos() > 0));
+            self.not_before_unix = self.not_before_unix.max(deadline);
+        }
+        self.next_retry_unix = now.as_secs().max(self.not_before_unix);
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
@@ -230,6 +249,22 @@ mod tests {
         let info = RetryInfo::new_initial();
         assert!(info.is_due());
         assert_eq!(info.num_retries, 0);
+    }
+
+    #[test]
+    fn retry_after_rounds_up_and_survives_activation_and_restart() {
+        let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let mut info = RetryInfo::new_initial();
+        info.defer_for(Duration::from_millis(1500));
+        assert!(Duration::from_secs(info.next_retry_unix) >= before + Duration::from_millis(1500));
+        let deadline = info.not_before_unix;
+        info.defer_for(Duration::ZERO);
+        assert_eq!(info.next_retry_unix, deadline);
+        info.defer_for(Duration::from_millis(1));
+        assert_eq!(info.next_retry_unix, deadline);
+        let restarted = RetryInfo::from_bytes(&info.to_bytes().unwrap()).unwrap();
+        assert_eq!(restarted.not_before_unix, deadline);
+        assert!(!restarted.is_backpressure_elapsed());
     }
 
     #[test]

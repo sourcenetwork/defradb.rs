@@ -39,6 +39,8 @@ const RATE_LIMITED: &str =
 enum Outcome {
     Delivered,
     Failed(&'static str),
+    RateLimited(u64),
+    WaitForAck(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>),
     Hangs,
 }
 
@@ -83,6 +85,23 @@ impl TransportDocPusher for ScriptedPusher {
                 Ok(())
             }
             Outcome::Failed(message) => Err(P2PError::internal(message)),
+            Outcome::RateLimited(millis) => {
+                let mut reply = PushLogReply::error("request", p2p::error::RATE_LIMITED_MESSAGE);
+                reply.retry_after_ms = Some(millis);
+                db::merge::push_docs_replay::persist_retry_after(&self.peerstore, peer_id, &reply)
+                    .await
+                    .unwrap();
+                Err(P2PError::internal(RATE_LIMITED))
+            }
+            Outcome::WaitForAck(started, finish) => {
+                started.notify_one();
+                finish.notified().await;
+                self.peerstore
+                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false)
+                    .await
+                    .unwrap();
+                Ok(())
+            }
             Outcome::Hangs => std::future::pending().await,
         }
     }
@@ -528,10 +547,56 @@ async fn a_rate_limited_reply_is_backpressure_not_a_ladder_failure() {
         "a rate-limited reply advanced the failure ladder"
     );
     assert!(
-        sweep.seconds_until_due().await <= p2p::sync::PERSISTED_RETRY_SWEEP_INTERVAL.as_secs(),
+        sweep.seconds_until_due().await <= p2p::sync::PERSISTED_RETRY_SWEEP_INTERVAL.as_secs() + 1,
         "a rate-limited reply parked the peer past the paced sweep: due in {} s",
         sweep.seconds_until_due().await
     );
+}
+
+#[tokio::test]
+async fn retry_after_survives_reconnect_and_forced_sweep() {
+    let sweep = Sweep::with_markers(&["a", "b"], &[("a", Outcome::RateLimited(45_000))]).await;
+    let rung = sweep.retry_info().await.num_retries;
+    sweep.run().await;
+    assert_eq!(sweep.pusher.attempted(), vec!["a"]);
+    let info = sweep.retry_info().await;
+    assert_eq!(info.num_retries, rung);
+    assert!(sweep.seconds_until_due().await >= 45);
+    sweep.peerstore.activate_retry_peer(PEER).await.unwrap();
+    let pusher: Arc<dyn TransportDocPusher> = sweep.pusher.clone();
+    run_retry_pass(&sweep.peerstore, &sweep.transport, &pusher, None, true).await;
+    assert_eq!(sweep.pusher.attempted(), vec!["a"]);
+    assert_eq!(
+        sweep.retry_info().await.not_before_unix,
+        info.not_before_unix
+    );
+    assert_eq!(sweep.markers_for(PEER).await.len(), 2);
+}
+
+#[tokio::test]
+async fn retry_after_arriving_during_ack_blocks_next_marker() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let finish = Arc::new(tokio::sync::Notify::new());
+    let sweep = Arc::new(
+        Sweep::with_markers(
+            &["a", "b"],
+            &[("a", Outcome::WaitForAck(started.clone(), finish.clone()))],
+        )
+        .await,
+    );
+    let runner = sweep.clone();
+    let task = tokio::spawn(async move { runner.run().await });
+    started.notified().await;
+    sweep
+        .peerstore
+        .reschedule_retry_peer(PEER, Some(Duration::from_secs(45)), 0)
+        .await
+        .unwrap();
+    finish.notify_one();
+    task.await.unwrap();
+    assert_eq!(sweep.pusher.attempted(), vec!["a"]);
+    assert_eq!(sweep.markers_for(PEER).await.len(), 1);
+    assert!(!sweep.retry_info().await.is_backpressure_elapsed());
 }
 
 #[tokio::test]

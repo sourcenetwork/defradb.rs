@@ -89,6 +89,20 @@ pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
                 }
             };
 
+            if failure.admission_only {
+                let allowed = match peerstore.get_retry_info(&failure.peer_id).await {
+                    Ok(Some(bytes)) => storage::stores::RetryInfo::from_bytes(&bytes)
+                        .is_ok_and(|info| info.is_backpressure_elapsed()),
+                    Ok(None) => true,
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to read live push admission deadline");
+                        false
+                    }
+                };
+                let _ = durable_tx.map(|tx| tx.send(allowed));
+                continue;
+            }
+
             let result = if failure.acknowledged {
                 peerstore
                     .complete_retry_scope(
@@ -99,7 +113,15 @@ pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
                     )
                     .await
             } else if failure.create_retry {
-                let info_bytes = match storage::stores::RetryInfo::new_initial().to_bytes() {
+                let mut info = storage::stores::RetryInfo::new_initial();
+                if let Some(delay) = failure.retry_after {
+                    info.defer_for(delay);
+                    tracing::debug!(target: "p2p::retry_after", peer_id = %failure.peer_id,
+                        retry_after_ms = delay.as_millis() as u64,
+                        retry_not_before_unix = info.not_before_unix,
+                        "Persisting negotiated PushLog retry-after");
+                }
+                let info_bytes = match info.to_bytes() {
                     Ok(bytes) => bytes,
                     Err(error) => {
                         tracing::warn!(%error, "failed to serialize retry info");
@@ -318,7 +340,9 @@ pub async fn run_retry_pass<S, T>(
             finish_peer(peerstore, &peer_id_str, true).await;
             continue;
         }
-        if !force && !markers.iter().any(|marker| marker.retry_info.is_due()) {
+        if !markers.iter().any(|marker| {
+            marker.retry_info.is_backpressure_elapsed() && (force || marker.retry_info.is_due())
+        }) {
             continue;
         }
 
@@ -351,7 +375,22 @@ pub async fn run_retry_pass<S, T>(
         let mut deferred = false;
         let mut report = PassReport::default();
         for marker in &markers {
-            if !force && !marker.retry_info.is_due() {
+            // A live push can install a newer peer deadline while this pass
+            // awaits another document. The original marker snapshot is stale.
+            let current = match peerstore.get_retry_info(&peer_id_str).await {
+                Ok(Some(bytes)) => storage::stores::RetryInfo::from_bytes(&bytes).ok(),
+                _ => None,
+            };
+            if current
+                .as_ref()
+                .is_none_or(|info| !info.is_backpressure_elapsed())
+            {
+                deferred = true;
+                break;
+            }
+            if !marker.retry_info.is_backpressure_elapsed()
+                || (!force && !marker.retry_info.is_due())
+            {
                 continue;
             }
             if attempted >= MAX_MARKERS_PER_PEER_PASS || n0_future::time::Instant::now() >= deadline
@@ -360,6 +399,12 @@ pub async fn run_retry_pass<S, T>(
                 break;
             }
             attempted += 1;
+            if marker.retry_info.not_before_unix > 0 {
+                tracing::debug!(target: "p2p::retry_after", peer_id = %peer_id,
+                    retry_not_before_unix = marker.retry_info.not_before_unix,
+                    retry_started_unix = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                    "Dispatching deferred PushLog retry");
+            }
             let replay = async {
                 if marker.is_collection_commit() {
                     doc_pusher
@@ -387,6 +432,16 @@ pub async fn run_retry_pass<S, T>(
                     let error = error.to_string();
                     report.record(&marker.doc_id, &error);
                     if let Some(delay) = capacity_retry_delay(&error) {
+                        // Replay persists typed metadata before returning its legacy
+                        // error. Preserve that deadline rather than applying the fallback.
+                        let hinted = peerstore
+                            .get_retry_info(&peer_id_str)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|bytes| storage::stores::RetryInfo::from_bytes(&bytes).ok())
+                            .is_some_and(|info| !info.is_backpressure_elapsed());
+                        let delay = if hinted { Duration::ZERO } else { delay };
                         let _ = peerstore
                             .reschedule_retry_peer(&peer_id_str, Some(delay), attempted as u64)
                             .await;
@@ -1102,6 +1157,8 @@ mod tests {
             create_retry: false,
             acknowledged,
             durable_tx: None,
+            retry_after: None,
+            admission_only: false,
         }
     }
 
@@ -1145,5 +1202,42 @@ mod tests {
 
         drop(tx);
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn retry_after_live_admission_reads_persisted_state_after_recorder_restart() {
+        let store = Arc::new(storage::backends::RegolithStore::in_memory().unwrap());
+        let peerstore = storage::stores::Peerstore::new(store.clone());
+        let replicator =
+            p2p::ReplicatorInfo::from_raw("peer-a".into(), vec!["collection-a".into()], Vec::new());
+        peerstore
+            .create_replicator("peer-a", &replicator.to_bytes().unwrap())
+            .await
+            .unwrap();
+        peerstore
+            .observe_push_head("peer-a", "doc-a", "collection-a")
+            .await
+            .unwrap();
+        peerstore
+            .reschedule_retry_peer("peer-a", Some(Duration::from_secs(45)), 0)
+            .await
+            .unwrap();
+        for _ in 0..2 {
+            let (tx, rx) = tokio::sync::mpsc::channel(2);
+            let recorder =
+                spawn_failure_recorder(storage::stores::Peerstore::new(store.clone()), rx);
+            let (response, allowed) = tokio::sync::oneshot::channel();
+            let mut check = failure(false);
+            check.admission_only = true;
+            check.durable_tx = Some(response);
+            tx.send(check).await.unwrap();
+            assert!(!allowed.await.unwrap());
+            drop(tx);
+            recorder.await.unwrap();
+        }
+        assert_eq!(
+            peerstore.get_retry_documents("peer-a").await.unwrap().len(),
+            1
+        );
     }
 }
