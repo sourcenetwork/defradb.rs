@@ -588,7 +588,43 @@ across sweeps; the same fact is the same record on two nodes; a record into a
 claimed collection is judged and a signed look-alike refused; a chain stops
 at the bound; an unwritable emission never fails its verdict.
 
-## 10. Tests across nodes
+## 10. Rules as code
+
+The rule tag can be the CID of a wasm module, and `WasmRules`
+(`crates/db/src/merge/governance/rule.rs`, feature `wasm-rules`) is a
+validator that runs the module a version names. The module has no imports:
+it is a function of one request, the candidate and the inputs fetched so
+far, and answers with a verdict or with the keys it needs next
+(`fields:<cid>`, `genesis:<cid>`, `find:<collection>:<field>:<hex value>`,
+`immutable:<collection>:<doc_id>`). The host fetches through the merge
+view and runs it again, up to a step budget, with fuel per step and a
+memory limit per instance; a key it cannot satisfy is a defer naming it,
+in the vocabulary the deferral index re-drives on. A trap, an exhausted
+budget or a malformed answer is an error, not a verdict.
+
+```mermaid
+sequenceDiagram
+  participant H as WasmRules
+  participant M as Module
+  participant V as MergeView
+  H->>M: judge(step 0, candidate, inputs {})
+  M-->>H: need [keys]
+  H->>V: fetch each key
+  alt all held
+    H->>M: judge(step 1, candidate, inputs {...})
+    M-->>H: accept | reject | defer
+  else one not held
+    H-->>H: defer naming it
+  end
+```
+
+So the rule is part of what replicas agree on, a rule change is a version
+in the DAG judged under the rule it supersedes, execution is bounded, and
+the inputs a verdict consumed are the closure an audit would replay it
+over. There is no order, no consensus and no value here; a write is still
+judged on what the replica holds and settles when the rest arrives.
+
+## 11. Tests across nodes
 
 Everything that judges writes is also tested single-node, driving the merge
 handler directly (`crates/db/tests/merge/governance/`). What that cannot show
@@ -604,7 +640,7 @@ author; two peers emitting one record for one fact, and meeting leaving one
 document; and a deferred note merging after the peer restarts, where the
 defer index is gone and only the sweep can reach it.
 
-## 11. What is not in this PR
+## 12. What is not in this PR
 
 - **Replication policy** (#1781, on top of this PR): what a node sends to or
   accepts from a peer, per collection and document. Narrowing only; it can
