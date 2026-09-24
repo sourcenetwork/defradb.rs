@@ -490,3 +490,50 @@ async fn a_synced_patch_keeps_the_policy_this_node_holds() {
         "activating the synced patch dropped the policy"
     );
 }
+
+/// Splitting the collection ID from the version ID is a governed collection's
+/// rule, and the root is what declares it. A `policy` link on a definition that
+/// declares no root is not this tree's to write, so a receiver must read the
+/// collection ID off the block's own CID rather than derive one its author
+/// never derived and stop being that collection's replica.
+#[tokio::test]
+async fn an_ungoverned_policy_link_does_not_move_the_collection_id() {
+    let node = Node::bare().await;
+    let policy_cid = schema::generate_policy_cid(&PolicyDescription {
+        id: "p1".to_string(),
+        resource_name: "ledgers".to_string(),
+    })
+    .unwrap();
+    let block = Block::new(
+        CrdtDelta::CollectionDefinition(
+            CollectionDefinitionDeltaPayload::new(1)
+                .with_name("Ledgers")
+                .with_policy_cid(policy_cid),
+        ),
+        vec![],
+        vec![],
+    );
+    let cid = block.generate_cid().unwrap();
+    let bytes = block.to_dag_cbor().unwrap();
+    node.blockstore.put(&cid, &bytes).await.unwrap();
+
+    assert_eq!(
+        node.handler
+            .handle_block(
+                &cid,
+                &bytes,
+                BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+            )
+            .await
+            .unwrap(),
+        MergeOutcome::Merged
+    );
+
+    let synced = node.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(
+        synced.schema().collection_id,
+        cid.to_string(),
+        "an ungoverned definition names its collection by its own CID"
+    );
+    assert_eq!(synced.schema().version_id, cid.to_string());
+}

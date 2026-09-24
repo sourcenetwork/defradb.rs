@@ -349,11 +349,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 /// the version ID. The collection ID is the CID of the same delta without it,
 /// which is what the author derived and what peers must agree on: a policy
 /// mints a new version of the same collection, never a different one.
+///
+/// Only a governed block splits the two. A policy reaches the delta solely
+/// under a declared root, so an ungoverned block carries no `policy_cid` from
+/// this tree and reads its collection ID off its own CID exactly as it always
+/// has. Requiring the root as well as the policy keeps that true of a block
+/// from anywhere else: a writer that put a `policy` link on an ungoverned
+/// definition would otherwise have us derive a collection ID no author ever
+/// derived, and silently stop being its replica.
 fn collection_id_of(version_id: &Cid, block: &Block) -> Result<String, MergeError> {
     let CrdtDelta::CollectionDefinition(payload) = &block.delta else {
         return Ok(version_id.to_string());
     };
-    if payload.policy_cid.is_none() {
+    if payload.governance_root.is_none() || payload.policy_cid.is_none() {
         return Ok(version_id.to_string());
     }
     let mut without_policy = block.clone();

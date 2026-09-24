@@ -254,3 +254,30 @@ async fn the_sweep_leaves_ungoverned_composites_alone() {
     assert_eq!(node.handler.sweep_unmerged_governed().await, 0);
     assert!(node.forwarded().is_empty());
 }
+
+/// Claiming a collection by name is not installing a merge validator. An
+/// application that installs a read or write validator alone claims names too,
+/// and until a merge validator exists no composite of a claimed collection can
+/// be judged, so the sweep must not walk the unmerged set on its behalf.
+#[tokio::test]
+async fn the_sweep_does_not_walk_a_claimed_collection_without_a_validator() {
+    let writer = signer();
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        MergeGovernance::new(["Notes"]),
+        true,
+    )
+    .await;
+
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    assert_eq!(
+        note.merge(&node, &writer.did).await,
+        MergeOutcome::retryable_skip(
+            "collection Notes is governed but no merge validator is installed"
+        )
+    );
+
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 0);
+    assert!(node.doc_ids("Notes").await.is_empty());
+    assert!(node.forwarded().is_empty());
+}

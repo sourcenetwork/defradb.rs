@@ -26,8 +26,20 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     /// a pass follows the number of unmerged blocks and not the number of
     /// merged ones. A node that has merged everything pays one empty prefix
     /// scan.
+    ///
+    /// A pass costs nothing until a merge validator is installed. Claiming a
+    /// collection by name is not enough: `governs` answers only that the name
+    /// was claimed, and an application installing a read or write validator
+    /// alone claims names too, so gating on it would have this walk the
+    /// unmerged set every interval to re-drive composites no validator can
+    /// judge. That is the gate `judge_governed` and `defer_unresolved_document`
+    /// already apply.
     pub async fn sweep_unmerged_governed(&self) -> usize {
-        if self.db.merge_governance().is_none() {
+        let has_validator = self
+            .db
+            .merge_governance()
+            .is_some_and(|governance| governance.validator().is_some());
+        if !has_validator {
             return 0;
         }
         let unmerged = match self.blockstore.get_unmerged().await {
