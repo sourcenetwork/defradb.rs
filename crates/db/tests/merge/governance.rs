@@ -33,6 +33,8 @@ mod definition;
 mod emission;
 mod local_write;
 mod lookup;
+#[cfg(feature = "wasm-rules")]
+mod rules;
 mod sweep;
 
 type Blocks = DefraBlockstore<RegolithStore>;
