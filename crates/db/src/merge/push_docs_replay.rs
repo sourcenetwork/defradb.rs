@@ -58,18 +58,34 @@ pub struct ReplayDocumentFailure {
 }
 
 /// Persist the typed hint before crossing the legacy string error boundary.
+///
+/// The first history replay has no retry-info row yet — only the replicator
+/// exists — so a plain reschedule writes nothing and reports `Ok(false)`;
+/// the initial schedule is seeded with the hint's deadline instead. A
+/// replicator that is gone stays a success: no durable obligation to defer.
 pub async fn persist_retry_after<S: storage::corekv::Store>(
     peerstore: &storage::stores::Peerstore<S>,
     peer_id: &PeerId,
     reply: &PushLogReply,
 ) -> Result<(), String> {
-    if let Some(delay) = reply.retry_after() {
-        peerstore
-            .reschedule_retry_peer(peer_id.as_str(), Some(delay), 0)
+    let Some(delay) = reply.retry_after() else {
+        return Ok(());
+    };
+    match peerstore
+        .reschedule_retry_peer(peer_id.as_str(), Some(delay), 0)
+        .await
+    {
+        Ok(true) => Ok(()),
+        // A missing schedule row is the first history replay; seed it with the
+        // hint's deadline. A missing replicator stays a success: no durable
+        // obligation to defer.
+        Ok(false) => peerstore
+            .seed_retry_peer(peer_id.as_str(), delay)
             .await
-            .map_err(|error| format!("failed to persist receiver retry-after: {error}"))?;
+            .map(|_| ())
+            .map_err(|error| format!("failed to persist receiver retry-after: {error}")),
+        Err(error) => Err(format!("failed to persist receiver retry-after: {error}")),
     }
-    Ok(())
 }
 
 pub async fn remaining_retry_after<S: storage::corekv::Store>(

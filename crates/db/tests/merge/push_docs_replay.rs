@@ -315,3 +315,51 @@ async fn unfinished_replay_uses_the_peer_retry_writer() {
         .unwrap()
         .unwrap();
 }
+
+/// The first history replay has a replicator row but no retry schedule yet.
+/// A backpressure hint arriving then must still land: reschedule reports
+/// "nothing written", and the hint is seeded as the initial schedule instead
+/// of being dropped. A gone replicator stays a success with no row written.
+#[tokio::test]
+async fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
+    use storage::stores::Peerstore;
+    use storage::RegolithStore;
+
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let peerstore = Peerstore::new(store.clone());
+    let peer = PeerId::new("peer-seed".to_string());
+    peerstore
+        .create_replicator("peer-seed", b"replicator")
+        .await
+        .unwrap();
+
+    // retry_after only fires on a backpressure reply, never on plain success.
+    let mut reply = PushLogReply::success("message");
+    reply.err_message = Some(p2p::error::RATE_LIMITED_MESSAGE.to_string());
+    reply.retry_after_ms = Some(45_000);
+    persist_retry_after(&peerstore, &peer, &reply)
+        .await
+        .unwrap();
+
+    let remaining = remaining_retry_after(&peerstore, &peer)
+        .await
+        .unwrap()
+        .expect("the hint landed as a schedule");
+    assert!(
+        remaining > Duration::from_secs(40),
+        "the seeded deadline honors the hint; got {remaining:?}"
+    );
+
+    // A replicator that is gone: no row written, still a success.
+    peerstore.delete_replicator("peer-seed").await.unwrap();
+    peerstore.delete_replicator("peer-gone").await.unwrap();
+    let gone = PeerId::new("peer-gone".to_string());
+    persist_retry_after(&peerstore, &gone, &reply)
+        .await
+        .unwrap();
+    assert!(peerstore
+        .get_retry_info("peer-gone")
+        .await
+        .unwrap()
+        .is_none());
+}

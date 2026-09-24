@@ -686,6 +686,34 @@ impl<S: Store> Peerstore<S> {
         .await
     }
 
+    /// Insert the initial retry schedule for `peer_id`, deferred by `delay`.
+    ///
+    /// The counterpart to `reschedule_retry_peer` for a peer whose replicator
+    /// exists but whose schedule row does not yet: the first backpressure hint
+    /// of a history replay. Returns false when the replicator is gone — no
+    /// replicator, no durable obligation — and leaves any existing schedule
+    /// untouched rather than overwriting it.
+    pub async fn seed_retry_peer(&self, peer_id: &str, delay: std::time::Duration) -> Result<bool> {
+        let _retry_guard = retry_peer_lock(peer_id).write_arc().await;
+        retry_push_txn_conflicts(|| async {
+            let mut txn = self.store.new_txn(false).await?;
+            if !txn.has(&ReplicatorKey::new(peer_id).bytes()).await? {
+                return Ok(false);
+            }
+            let key = ReplicatorRetryIDKey::new(peer_id).bytes();
+            if txn.get(&key).await?.is_some() {
+                return Ok(true);
+            }
+            let mut info = super::RetryInfo::new_initial();
+            info.defer_for(delay);
+            txn.set(&key, &info.to_bytes().map_err(crate::corekv::Error::Other)?)
+                .await?;
+            txn.commit().await?;
+            Ok(true)
+        })
+        .await
+    }
+
     /// Make an existing peer retry schedule immediately due without changing
     /// its failure-ladder rung.  A connection-established event is new
     /// delivery evidence: retaining an old connection-failure deadline after
