@@ -203,6 +203,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         let cached = self
             .database
             .add_collection_to_cache(updated_schema)
+            .await
             .map_err(|e| format!("{}", e))?;
         if cached == db::Cached::NameHeldByAnother {
             return Err(format!(

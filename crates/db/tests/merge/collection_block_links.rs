@@ -17,7 +17,7 @@ use db::merge::merge_handler::DbMergeHandler;
 use defra_core::block::{
     Block, CollectionDeltaPayload, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload,
 };
-use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
+use defra_core::merge::{BlockMetadata, MergeBlock, MergeHandler, MergeOutcome};
 use document::NormalValue;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::corekv::IterOptions;
@@ -224,5 +224,125 @@ async fn an_ancestor_missing_a_link_does_not_abort_the_root() {
     assert!(
         heads.iter().any(|key| key.contains(&root_cid.to_string())),
         "the root's head must install: {heads:?}"
+    );
+}
+
+/// Tolerating an incomplete ancestor must not discharge it. The ancestor
+/// records no head and is not marked merged, so a later delivery of that same
+/// ancestor block walks it again and merges the document it names.
+///
+/// The root is a separate question: its own links were all held, so it merges
+/// and is discharged. Re-driving the root therefore does not reach the
+/// ancestor — the walk prunes at a merged CID — which is why recovery depends
+/// on the ancestor block arriving again rather than on a retry of the root.
+#[tokio::test]
+async fn an_incomplete_ancestor_merges_once_its_missing_link_arrives() {
+    let (db, handler, blockstore) = node().await;
+
+    let (absent, absent_blocks) = document("historical");
+    let (ancestor_cid, ancestor_bytes) = collection_block(&[absent]);
+    blockstore
+        .put(&ancestor_cid, &ancestor_bytes)
+        .await
+        .unwrap();
+
+    let (present, blocks) = document("current");
+    for (cid, bytes) in &blocks {
+        blockstore.put(cid, bytes).await.unwrap();
+    }
+    let (root_cid, root_bytes) = collection_block_over(&[present], &[ancestor_cid]);
+    blockstore.put(&root_cid, &root_bytes).await.unwrap();
+
+    assert_eq!(
+        merge(&handler, &root_cid, &root_bytes).await,
+        MergeOutcome::Merged
+    );
+    assert!(
+        !collection_heads(&db)
+            .await
+            .iter()
+            .any(|key| key.contains(&ancestor_cid.to_string())),
+        "an ancestor whose link went unprocessed must install no head"
+    );
+
+    // The missing document arrives, and the ancestor is delivered again.
+    for (cid, bytes) in &absent_blocks {
+        blockstore.put(cid, bytes).await.unwrap();
+    }
+
+    merge(&handler, &ancestor_cid, &ancestor_bytes).await;
+
+    let heads = collection_heads(&db).await;
+    assert!(
+        heads
+            .iter()
+            .any(|key| key.contains(&ancestor_cid.to_string())),
+        "the ancestor was not discharged, so it merges when it arrives again: {heads:?}"
+    );
+}
+
+async fn merge_batch(handler: &Handler, cid: &Cid, bytes: &[u8]) -> MergeOutcome {
+    let results = handler
+        .handle_block_batch(&[MergeBlock {
+            cid: *cid,
+            block_data: bytes.to_vec().into(),
+            doc_id: String::new(),
+            collection_id: COLLECTION_ID.to_string(),
+            creator: "peer-did".to_string(),
+            sender_peer: Some("peer".to_string()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+            verified_creator: None,
+        }])
+        .await;
+    match results.into_iter().next() {
+        Some(Ok(outcome)) => outcome,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The batch walk carries its own already-merged set, committed into the
+/// process-wide one when the batch commits, so it needs the same rule: an
+/// ancestor whose link went unprocessed records nothing and stays mergeable.
+#[tokio::test]
+async fn the_batch_walk_leaves_an_incomplete_ancestor_mergeable() {
+    let (db, handler, blockstore) = node().await;
+
+    let (absent, absent_blocks) = document("historical");
+    let (ancestor_cid, ancestor_bytes) = collection_block(&[absent]);
+    blockstore
+        .put(&ancestor_cid, &ancestor_bytes)
+        .await
+        .unwrap();
+
+    let (present, blocks) = document("current");
+    for (cid, bytes) in &blocks {
+        blockstore.put(cid, bytes).await.unwrap();
+    }
+    let (root_cid, root_bytes) = collection_block_over(&[present], &[ancestor_cid]);
+    blockstore.put(&root_cid, &root_bytes).await.unwrap();
+
+    merge_batch(&handler, &root_cid, &root_bytes).await;
+
+    assert!(
+        !collection_heads(&db)
+            .await
+            .iter()
+            .any(|key| key.contains(&ancestor_cid.to_string())),
+        "the batch walk must install no head for an incomplete ancestor"
+    );
+
+    for (cid, bytes) in &absent_blocks {
+        blockstore.put(cid, bytes).await.unwrap();
+    }
+
+    merge_batch(&handler, &ancestor_cid, &ancestor_bytes).await;
+
+    let heads = collection_heads(&db).await;
+    assert!(
+        heads
+            .iter()
+            .any(|key| key.contains(&ancestor_cid.to_string())),
+        "the batch walk left the ancestor mergeable: {heads:?}"
     );
 }
