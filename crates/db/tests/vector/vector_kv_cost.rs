@@ -49,6 +49,8 @@ struct Counting<S> {
     /// Largest single value handed to `put_aux`, so a build's per-write cost
     /// can be checked against one vector's width rather than assumed.
     max_aux_write_bytes: AtomicUsize,
+    node_visits: AtomicUsize,
+    node_passes: AtomicUsize,
 }
 
 impl<S> Counting<S> {
@@ -60,6 +62,8 @@ impl<S> Counting<S> {
             distinct: HopscotchMap::with_hasher(RandomState::default()),
             aux_entries_visited: AtomicUsize::new(0),
             max_aux_write_bytes: AtomicUsize::new(0),
+            node_visits: AtomicUsize::new(0),
+            node_passes: AtomicUsize::new(0),
         }
     }
 
@@ -107,11 +111,17 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.inner.put_meta(meta).await
     }
 
-    async fn iterate_nodes<F>(&self, visit: F) -> Result<()>
+    async fn iterate_nodes<F>(&self, mut visit: F) -> Result<()>
     where
         F: FnMut(Node) -> Result<()> + MaybeSend,
     {
-        self.inner.iterate_nodes(visit).await
+        self.node_passes.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .iterate_nodes(|node| {
+                self.node_visits.fetch_add(1, Ordering::Relaxed);
+                visit(node)
+            })
+            .await
     }
 
     async fn clear(&mut self) -> Result<()> {
@@ -128,6 +138,25 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
         self.max_aux_write_bytes
             .fetch_max(value.len(), Ordering::Relaxed);
         self.inner.put_aux(kind, key, value).await
+    }
+
+    async fn write_aux_from_nodes<F>(&mut self, kind: u8, mut encode: F) -> Result<u64>
+    where
+        F: FnMut(Node) -> Result<(Vec<u8>, Vec<u8>)> + MaybeSend,
+    {
+        self.node_passes.fetch_add(1, Ordering::Relaxed);
+        let visits = &self.node_visits;
+        let writes = &self.writes;
+        let max_bytes = &self.max_aux_write_bytes;
+        self.inner
+            .write_aux_from_nodes(kind, |node| {
+                visits.fetch_add(1, Ordering::Relaxed);
+                let output = encode(node)?;
+                writes.fetch_add(1, Ordering::Relaxed);
+                max_bytes.fetch_max(output.1.len(), Ordering::Relaxed);
+                Ok(output)
+            })
+            .await
     }
 
     async fn delete_aux(&mut self, kind: u8, key: &[u8]) -> Result<()> {
@@ -147,6 +176,40 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
             })
             .await
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ivfpq_build_streams_two_passes_over_live_nodes() {
+    use db::index::vector::engine::ivfpq::{IvfPq, IvfPqParams};
+    let store = RegolithStore::in_memory().unwrap();
+    let mut txn: Box<dyn Txn> = store.new_txn(false).await.unwrap();
+    let counting = Counting::new(KvNodeStore::new(&mut txn, 1, 1, 0));
+    let mut index = IvfPq::try_new(
+        counting,
+        Metric::Euclidean,
+        IvfPqParams {
+            nlist: 2,
+            nprobe: 2,
+            m: 2,
+            sample_bytes: 16 * 4 * 32,
+        },
+        GRAPH_SEED,
+    )
+    .unwrap();
+    let vectors = Corpus::new(CORPUS_SEED).vectors(100, 16);
+    for (id, vector) in vectors.iter().enumerate() {
+        index.insert(NodeId(id as u64), vector).await.unwrap();
+    }
+    index.delete(NodeId(0)).await.unwrap();
+    let report = index.build().await.unwrap();
+    assert_eq!(report.indexed, 99);
+    assert_eq!(report.sampled, 32);
+    assert!(report.sample_bytes <= 16 * 4 * 32);
+    assert_eq!(index.store().node_passes.load(Ordering::Relaxed), 2);
+    assert_eq!(index.store().node_visits.load(Ordering::Relaxed), 198);
+    let hits = index.search(&vectors[10], 100, None).await.unwrap();
+    assert_eq!(hits.len(), 99);
+    assert!(hits.iter().all(|hit| hit.id != NodeId(0)));
 }
 
 #[tokio::test(flavor = "multi_thread")]

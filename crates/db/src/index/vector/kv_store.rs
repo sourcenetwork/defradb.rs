@@ -173,6 +173,27 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
         Ok(())
     }
 
+    async fn write_aux_from_nodes<F>(&mut self, kind: u8, mut encode: F) -> Result<u64>
+    where
+        F: FnMut(Node) -> Result<(Vec<u8>, Vec<u8>)> + MaybeSend,
+    {
+        let mut iter = self
+            .txn
+            .iterator(IterOptions::default().with_prefix(self.node_prefix()))
+            .await?;
+        let mut count = 0;
+        while let Some(pair) = iter.next().await? {
+            let node = decode_node(&pair.value)?;
+            if node.deleted {
+                continue;
+            }
+            let (key, value) = encode(node)?;
+            self.txn.set(&self.aux_key(kind, &key), &value).await?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// Streams one kind's entries, holding one at a time. The prefix stops at
     /// this epoch's discriminator, so a scan cannot reach the graph or another
     /// kind.

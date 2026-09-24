@@ -92,6 +92,19 @@ impl VectorNodeStore for MemoryNodeStore {
         Ok(())
     }
 
+    async fn write_aux_from_nodes<F>(&mut self, kind: u8, mut encode: F) -> Result<u64>
+    where
+        F: FnMut(Node) -> Result<(Vec<u8>, Vec<u8>)> + MaybeSend,
+    {
+        let mut count = 0;
+        for node in self.nodes.values().filter(|node| !node.deleted) {
+            let (key, value) = encode(node.clone())?;
+            self.aux.insert((kind, key), Bytes::from(value));
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// A range over the ordered map, not a full scan: an inverted-list probe
     /// is a prefix lookup and must cost what the prefix holds, not what the
     /// index holds.
