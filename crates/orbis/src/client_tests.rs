@@ -137,10 +137,7 @@ async fn current_protocol_signs_with_distinct_message_bound_tokens() {
     let (client, task, tokens) = client(None).await;
     for message in [b"first".as_slice(), b"second"] {
         let signature = client.sign_sync(message, None).unwrap();
-        assert!(client
-            .public_key
-            .verify_augmented(message, &signature)
-            .unwrap());
+        assert!(client.public_key.verify(message, &signature).unwrap());
     }
     assert_eq!(tokens.lock().unwrap().len(), 2);
     let authorization = SigningAuthorization::Decision {

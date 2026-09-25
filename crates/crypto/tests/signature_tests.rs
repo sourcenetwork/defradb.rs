@@ -14,7 +14,7 @@ fn assert_verify_err(result: crypto::Result<bool>, expected: &str) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_";
 
 // ===== Ed25519 Signature Tests =====
 
@@ -298,7 +298,10 @@ fn test_bls_sign_and_verify() {
     let public_key = crypto::BlsPublicKey::from_bytes(&secret_key.sk_to_pk().compress()).unwrap();
     let message = b"test message";
 
-    let signature = secret_key.sign(message, BLS_DST, &[]).compress().to_vec();
+    let signature = secret_key
+        .sign(message, BLS_DST, &secret_key.sk_to_pk().to_bytes())
+        .compress()
+        .to_vec();
     let valid = public_key.verify(message, &signature).unwrap();
 
     assert!(valid, "BLS signature should verify");
@@ -325,7 +328,10 @@ fn test_bls_invalid_signatures_return_err() {
         malformed_err
     );
 
-    let mut tampered = secret_key.sign(message, BLS_DST, &[]).compress().to_vec();
+    let mut tampered = secret_key
+        .sign(message, BLS_DST, &secret_key.sk_to_pk().to_bytes())
+        .compress()
+        .to_vec();
     tampered[0] ^= 0x01;
     let tampered_err = public_key
         .verify(message, &tampered)
@@ -350,22 +356,21 @@ fn bls_augmented_matches_orbis_and_rejects_scaled_signature() {
     let public = crypto::BlsPublicKey::from_bytes(&decode("public_key")).unwrap();
     let message = decode("message");
     let signature = decode("signature");
-    assert!(public.verify_augmented(&message, &signature).unwrap());
+    assert!(public.verify(&message, &signature).unwrap());
     let uncompressed = blst::min_pk::Signature::from_bytes(&signature)
         .unwrap()
         .serialize();
-    assert!(public.verify_augmented(&message, &uncompressed).is_err());
+    assert!(public.verify(&message, &uncompressed).is_err());
     let uncompressed_key = blst::min_pk::PublicKey::from_bytes(&decode("public_key"))
         .unwrap()
         .serialize();
     assert!(crypto::BlsPublicKey::from_bytes(&uncompressed_key)
         .unwrap()
-        .verify_augmented(&message, &signature)
+        .verify(&message, &signature)
         .is_err());
 
-    assert!(public.verify(&message, &signature).is_err());
     let scaled = crypto::BlsPublicKey::from_bytes(&decode("scaled_public_key")).unwrap();
     assert!(scaled
-        .verify_augmented(&message, &decode("scaled_signature"))
+        .verify(&message, &decode("scaled_signature"))
         .is_err());
 }

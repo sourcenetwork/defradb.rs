@@ -117,7 +117,7 @@ pub(crate) fn raw_identity_from_stored_config(
             identity::RawIdentity::from_secp256r1(private_key)
                 .map_err(|error| anyhow!("failed to create stored secp256r1 identity: {error}"))
         }
-        defra_core::signing::SigningKeyType::Bls => Err(anyhow!(
+        defra_core::signing::SigningKeyType::BlsAugV1 => Err(anyhow!(
             "stored identity bls cannot be used as a node identity"
         )),
         other => Err(anyhow!(

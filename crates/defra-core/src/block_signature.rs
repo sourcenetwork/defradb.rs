@@ -174,10 +174,7 @@ pub enum SignatureType {
     /// EdDSA with Ed25519 curve
     EdDSA,
 
-    /// Threshold BLS12-381 (Orbis ring signing)
-    BLS,
-
-    /// Public-key-augmented Orbis BLS, distinct from legacy basic BLS.
+    /// Public-key-augmented BLS12-381 threshold signing through Orbis.
     #[serde(rename = "BLS_AUG_V1")]
     BLSAugV1,
 }
@@ -195,9 +192,9 @@ impl SignatureType {
     pub fn is_go_verifiable(self) -> bool {
         match self {
             Self::ES256K | Self::EdDSA => true,
-            // Rust-only. `BLS` is the Orbis ring extension; `ES256` covers
+            // Rust-only. `BLSAugV1` is the Orbis ring extension; `ES256` covers
             // Secure Enclave and other secp256r1 keys.
-            Self::BLS | Self::BLSAugV1 | Self::ES256 => false,
+            Self::BLSAugV1 | Self::ES256 => false,
         }
     }
 }

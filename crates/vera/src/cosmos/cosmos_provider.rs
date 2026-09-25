@@ -129,7 +129,7 @@ fn resolve_cosmos_bearer_token(
         defra_core::signing::SigningKeyType::Ed25519 => crypto::KeyType::Ed25519,
         defra_core::signing::SigningKeyType::Secp256k1 => crypto::KeyType::Secp256k1,
         defra_core::signing::SigningKeyType::Secp256r1 => crypto::KeyType::Secp256r1,
-        defra_core::signing::SigningKeyType::Bls => {
+        defra_core::signing::SigningKeyType::BlsAugV1 => {
             return Err(ProviderError::Config(
                 "unsupported key type: bls".to_string(),
             ))

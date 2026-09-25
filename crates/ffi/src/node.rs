@@ -142,7 +142,7 @@ fn resolve_embedded_config(
             defra_core::signing::SigningKeyType::Ed25519 => {
                 embedded::SigningKey::Ed25519(key_bytes)
             }
-            defra_core::signing::SigningKeyType::Bls => {
+            defra_core::signing::SigningKeyType::BlsAugV1 => {
                 return Err("unsupported signing key type: bls".to_string())
             }
             other => return Err(format!("unsupported signing key type: {}", other)),
