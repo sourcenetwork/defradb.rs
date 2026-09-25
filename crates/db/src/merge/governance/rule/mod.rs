@@ -75,6 +75,15 @@
 //! error, not a verdict: the composite stays unmerged and the sweep will
 //! try again. A module that asks for more steps than the budget allows is
 //! the same.
+//!
+//! # Engines
+//!
+//! The ABI names no engine. [`RuleEngine::Wasmi`] interprets, builds for
+//! every target and is the only one a browser has;
+//! [`RuleEngine::Wasmtime`] compiles and is a native node's default. Their
+//! fuel units differ, so a budget is a bound on cost and never an input to
+//! a verdict; the `engine` module says why that costs liveness, not
+//! agreement.
 
 use std::sync::Arc;
 
@@ -85,7 +94,14 @@ use defra_core::thread_bounds::MaybeSendSync;
 use document::NormalValue;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
-use wasmtime::{Config, Engine, Instance, Module, Store, StoreLimits, StoreLimitsBuilder};
+
+mod engine;
+mod wasmi_engine;
+#[cfg(not(target_arch = "wasm32"))]
+mod wasmtime_engine;
+
+pub use engine::RuleEngine;
+use engine::{Compiled, Runtime};
 
 use super::awaited::Awaited;
 use super::signature::SignatureStatus;
@@ -96,6 +112,7 @@ use super::{Emission, Judged};
 
 /// Where rule modules come from, by the CID the version names.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait RuleModules: MaybeSendSync {
     /// The module's bytes, or `None` when this node does not hold them.
     async fn module(&self, cid: &Cid) -> Result<Option<Vec<u8>>, String>;
@@ -113,6 +130,7 @@ impl<B: blockstore::Blockstore> BlockstoreModules<B> {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<B: blockstore::Blockstore + 'static> RuleModules for BlockstoreModules<B> {
     async fn module(&self, cid: &Cid) -> Result<Option<Vec<u8>>, String> {
         self.blockstore
@@ -130,9 +148,14 @@ pub const MAX_KEYS_PER_STEP: usize = 64;
 pub const MAX_INPUTS: usize = 256;
 
 /// What one verdict may cost.
-#[derive(Debug, Clone, Copy)]
+///
+/// A bound, never an input: the verdict a module reaches within budget does
+/// not depend on the budget, and a module that exceeds it produces no
+/// verdict at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuleBudget {
-    /// Fuel per step: roughly one unit per wasm instruction.
+    /// Fuel per step: roughly one unit per wasm instruction, in the units of
+    /// the engine running it, which are not the same across engines.
     pub fuel: u64,
     /// Steps per verdict: how many times the module may ask for more input.
     pub steps: usize,
@@ -152,42 +175,48 @@ impl Default for RuleBudget {
 
 /// A validator whose rule is the wasm module the version names.
 pub struct WasmRules {
-    engine: Engine,
+    runtime: Runtime,
     modules: Arc<dyn RuleModules>,
-    compiled: HopscotchMap<Cid, Arc<Module>, RandomState>,
+    compiled: HopscotchMap<Cid, Arc<Compiled>, RandomState>,
     budget: RuleBudget,
 }
 
 impl WasmRules {
+    /// On this target's default engine, under the default budget.
     pub fn new(modules: Arc<dyn RuleModules>) -> Result<Self, String> {
         Self::with_budget(modules, RuleBudget::default())
     }
 
+    /// On this target's default engine.
     pub fn with_budget(modules: Arc<dyn RuleModules>, budget: RuleBudget) -> Result<Self, String> {
-        let mut config = Config::new();
-        config.consume_fuel(true);
-        #[cfg(target_os = "macos")]
-        {
-            // Wasmtime installs trap handling once per process and panics if a
-            // second engine asks for a different kind. `lens` embeds wasmtime
-            // too and turns Mach ports off (fork-capable embedders crash when
-            // the Mach-port exception handler is initialised before spawning),
-            // and both engines live in one process, so this engine has to
-            // agree with it.
-            config.macos_use_mach_ports(false);
-        }
-        let engine = Engine::new(&config).map_err(|error| error.to_string())?;
+        Self::with_engine(modules, RuleEngine::default(), budget)
+    }
+
+    /// On `engine`, which fails when this build cannot run it.
+    pub fn with_engine(
+        modules: Arc<dyn RuleModules>,
+        engine: RuleEngine,
+        budget: RuleBudget,
+    ) -> Result<Self, String> {
         Ok(Self {
-            engine,
+            runtime: Runtime::new(engine)?,
             modules,
             compiled: HopscotchMap::with_hasher(RandomState::default()),
             budget,
         })
     }
 
+    pub fn engine(&self) -> RuleEngine {
+        self.runtime.engine()
+    }
+
+    pub fn budget(&self) -> RuleBudget {
+        self.budget
+    }
+
     /// The compiled module a version names, `Ok(None)` when its bytes are
     /// not held here.
-    async fn module_for(&self, rule: &str) -> Result<Option<Arc<Module>>, String> {
+    async fn module_for(&self, rule: &str) -> Result<Option<Arc<Compiled>>, String> {
         let cid: Cid = rule
             .parse()
             .map_err(|_| format!("rule tag {rule} is not a CID"))?;
@@ -198,7 +227,8 @@ impl WasmRules {
             return Ok(None);
         };
         let module = Arc::new(
-            Module::new(&self.engine, &bytes)
+            self.runtime
+                .compile(&bytes)
                 .map_err(|error| format!("rule module {cid} does not compile: {error}"))?,
         );
         self.compiled.insert(cid, module.clone());
@@ -206,53 +236,8 @@ impl WasmRules {
     }
 
     /// One run of the module over `request`.
-    fn step(&self, module: &Module, request: &[u8]) -> Result<Value, String> {
-        let limits = StoreLimitsBuilder::new()
-            .memory_size(self.budget.memory_bytes)
-            .build();
-        let mut store: Store<StoreLimits> = Store::new(&self.engine, limits);
-        store.limiter(|limits| limits);
-        store
-            .set_fuel(self.budget.fuel)
-            .map_err(|error| error.to_string())?;
-        let instance = Instance::new(&mut store, module, &[])
-            .map_err(|error| format!("rule module does not instantiate: {error}"))?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or("rule module exports no memory")?;
-        let alloc = instance
-            .get_typed_func::<i32, i32>(&mut store, "alloc")
-            .map_err(|error| format!("rule module exports no alloc: {error}"))?;
-        let judge = instance
-            .get_typed_func::<(i32, i32), i32>(&mut store, "judge")
-            .map_err(|error| format!("rule module exports no judge: {error}"))?;
-
-        let len = i32::try_from(request.len()).map_err(|_| "request too large")?;
-        let ptr = alloc
-            .call(&mut store, len)
-            .map_err(|error| format!("rule module alloc failed: {error}"))?;
-        memory
-            .write(&mut store, ptr as usize, request)
-            .map_err(|error| format!("rule module memory write failed: {error}"))?;
-        let out = judge
-            .call(&mut store, (ptr, len))
-            .map_err(|error| format!("rule module trapped: {error}"))?;
-        let mut header = [0u8; 4];
-        memory
-            .read(&store, out as usize, &mut header)
-            .map_err(|error| format!("rule module response unreadable: {error}"))?;
-        let out_len = u32::from_le_bytes(header) as usize;
-        // The length is the guest's to write; a span past the memory is an
-        // error found here, before the host allocates for it.
-        let start =
-            usize::try_from(out).map_err(|_| "rule module response pointer is negative")? + 4;
-        if out_len > memory.data_size(&store).saturating_sub(start) {
-            return Err("rule module response runs past its memory".to_string());
-        }
-        let mut response = vec![0u8; out_len];
-        memory
-            .read(&store, start, &mut response)
-            .map_err(|error| format!("rule module response unreadable: {error}"))?;
+    fn step(&self, module: &Compiled, request: &[u8]) -> Result<Value, String> {
+        let response = self.runtime.run(module, request, &self.budget)?;
         ciborium::from_reader(response.as_slice())
             .map_err(|error| format!("rule module response is not CBOR: {error}"))
     }
@@ -324,6 +309,7 @@ impl WasmRules {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MergeValidator for WasmRules {
     async fn validate(
         &self,

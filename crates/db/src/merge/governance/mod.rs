@@ -9,7 +9,7 @@ mod judge;
 mod local_commit;
 mod local_write;
 mod redriven;
-#[cfg(all(feature = "wasm-rules", not(target_arch = "wasm32")))]
+#[cfg(feature = "wasm-rules")]
 pub mod rule;
 mod signature;
 mod sweep;

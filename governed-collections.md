@@ -591,7 +591,7 @@ at the bound; an unwritable emission never fails its verdict.
 ## 10. Rules as code
 
 The rule tag can be the CID of a wasm module, and `WasmRules`
-(`crates/db/src/merge/governance/rule.rs`, feature `wasm-rules`) is a
+(`crates/db/src/merge/governance/rule/`, feature `wasm-rules`) is a
 validator that runs the module a version names. The module has no imports:
 it is a function of one request, the candidate and the inputs fetched so
 far, and answers with a verdict or with the keys it needs next
@@ -631,6 +631,29 @@ names, so a patch cannot admit itself), execution is bounded, and
 the inputs a verdict consumed are the closure an audit would replay it
 over. There is no order, no consensus and no value here; a write is still
 judged on what the replica holds and settles when the rest arrives.
+
+### Engines, and what a budget is not
+
+The module runs on one of two engines behind the same ABI: wasmi, a
+pure-Rust interpreter that builds for every target and is the only one in
+the browser, and wasmtime, which compiles and is a native node's default
+(`RuleEngine`, `WasmRules::with_engine`). Both are configured to one wasm
+feature profile (the 2.0 core without SIMD, plus multi-memory, tail calls
+and extended constants, NaNs canonicalised), so a module one engine refuses
+to compile the other refuses too, and the same request answers the same
+bytes on either.
+
+**Their fuel units differ.** wasmi and wasmtime charge different amounts
+for the same instructions, and their stack limits differ too, so one
+`RuleBudget` admits more work on one engine than on the other. That is
+safe only because **a verdict never depends on the budget**: running out of
+fuel, steps or memory is an error, the composite stays unmerged, and the
+sweep tries again. A module near its budget can therefore judge on one
+engine and fail on the other, which costs that node liveness, never
+agreement: no node reaches a different verdict, one reaches none. A rule
+should use a small fraction of its budget, and nodes that must settle on
+the same schedule, a relay and the browsers it serves, should run the same
+engine.
 
 ## 11. Tests across nodes
 
