@@ -12,6 +12,7 @@
 #![cfg(target_arch = "wasm32")]
 
 mod browser;
+mod governed;
 mod key;
 mod node;
 mod protected;
@@ -55,6 +56,14 @@ async fn a_browser_and_a_node_replicate_through_the_hosted_relay() {
     .await;
 
     browser.client.close().await.unwrap();
+}
+
+/// A relay started `--governed` does not merge what its rule rejects from a
+/// browser, and a browser created with `governance` does not merge what its
+/// rule rejects from the relay.
+#[wasm_bindgen_test]
+async fn governance_holds_across_the_relay_in_both_directions() {
+    governed::run().await;
 }
 
 fn has_note(data: &serde_json::Value, text: &str) -> bool {

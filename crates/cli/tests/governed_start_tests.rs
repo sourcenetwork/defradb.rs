@@ -355,6 +355,16 @@ async fn a_governed_relay_does_not_merge_a_pushed_composite_its_rule_rejects() {
         "the relay merged a note its rule rejects"
     );
     assert_eq!(peer.texts("Notes", "text").await, ["forged"]);
+
+    // With P2P running, the relay's own HTTP writes are judged as well.
+    let refused = relay
+        .graphql(r#"mutation { add_Notes(input: {text: "forged"}) { _docID } }"#)
+        .await;
+    assert!(
+        refused["errors"].to_string().contains("forged"),
+        "not refused by the rule: {refused}"
+    );
+    assert!(relay.texts("Notes", "text").await.is_empty());
 }
 
 /// The control: the same push under a rule that accepts merges.

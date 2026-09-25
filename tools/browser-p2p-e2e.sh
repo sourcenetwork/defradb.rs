@@ -57,10 +57,19 @@ sed -i \
 sed -i "s|^net:$|net:\n  iroh_relay_server:\n    http_bind_addr: 127.0.0.1:${relay_port}\n    public_url: ${relay}|" \
     "$work/config.yaml"
 
+# The rule module the governed test names: it rejects every composite. Its
+# bytes are REJECT_MODULE_HEX in crates/wasm/tests/p2p_relay/governed.rs.
+module_hex="$(grep -o 'REJECT_MODULE_HEX: &str = "[0-9a-f]*"' \
+    "$root/crates/wasm/tests/p2p_relay/governed.rs" | grep -o '"[0-9a-f]*"' | tr -d '"')"
+python3 -c 'import sys; open(sys.argv[1], "wb").write(bytes.fromhex(sys.argv[2]))' \
+    "$work/reject.wasm" "$module_hex"
+
 # Local document ACP, so the browser tests can check which signer the node lets
 # update a protected document. Unprotected collections still replicate openly.
+# Ledger is governed by the rejecting module; nothing else is.
 "$defra" --rootdir "$work" --no-keyring --document-acp-type local start --store memory \
-    --no-telemetry --url "127.0.0.1:${api_port}" >"$work/node.log" 2>&1 &
+    --no-telemetry --url "127.0.0.1:${api_port}" \
+    --governed Ledger --rule-module "$work/reject.wasm" >"$work/node.log" 2>&1 &
 node_pid=$!
 for _ in $(seq 1 300); do
     curl -sf "${api}/api/v0/p2p/info" >/dev/null 2>&1 && break
@@ -78,7 +87,7 @@ DEFRA_E2E_API="$api" DEFRA_E2E_RELAY="$relay" WASM_BINDGEN_TEST_TIMEOUT=300 \
 
 # The runner can fail to kill a sandboxed geckodriver after the results print,
 # so the result line is the verdict, as it is for the other browser tests.
-if grep -qE "^test result: ok\. 4 passed" "$work/browser.log"; then
+if grep -qE "^test result: ok\. 5 passed" "$work/browser.log"; then
     exit 0
 fi
 echo "--- node log ---" >&2
