@@ -84,3 +84,80 @@ async fn a_local_write_the_validator_accepts_commits() {
     node.create_locally("Notes", r#"{"grant": "alice"}"#).await;
     assert_eq!(node.doc_ids("Notes").await.len(), 1);
 }
+
+/// The single-mutation path, which a GraphQL request with one mutation, a
+/// REST document write and a backup import take, is judged like the batch
+/// and `/tx` paths: create, create-many, update and delete.
+#[tokio::test]
+async fn a_single_mutation_is_judged_on_every_write_it_makes() {
+    let node = Node::with_immutable_grants(Arc::new(NotesNeedGrant)).await;
+    let mutator = AutoCommitMutator::new(node.db.clone());
+    mutator
+        .create(
+            "Grants",
+            Document::from_json_str(r#"{"writer": "alice", "label": "x"}"#).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let error = mutator
+        .create(
+            "Notes",
+            Document::from_json_str(r#"{"grant": "forged"}"#).unwrap(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("forged grant"), "create: {error}");
+    let error = mutator
+        .create_many(
+            "Notes",
+            vec![
+                Document::from_json_str(r#"{"grant": "alice"}"#).unwrap(),
+                Document::from_json_str(r#"{"grant": "forged"}"#).unwrap(),
+            ],
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("forged grant"), "create_many: {error}");
+    assert!(
+        node.doc_ids("Notes").await.is_empty(),
+        "a refused write, or its batch, was committed"
+    );
+
+    let created = mutator
+        .create(
+            "Notes",
+            Document::from_json_str(r#"{"grant": "alice"}"#).unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut forged = Document::from_json_str(r#"{"grant": "forged"}"#).unwrap();
+    forged.set_id(created.doc_id.clone());
+    let error = mutator
+        .update("Notes", forged, ["grant".to_string()].into_iter().collect())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("forged grant"), "update: {error}");
+
+    // A delete composite links no fields, so this validator finds no grant.
+    let error = mutator
+        .delete("Notes", &created.doc_id)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("names no grant"), "delete: {error}");
+    let error = mutator
+        .delete_many_impl("Notes", std::slice::from_ref(&created.doc_id))
+        .await
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("names no grant"), "delete_many: {error}");
+    assert_eq!(
+        node.doc_ids("Notes").await,
+        vec![created.doc_id.to_string()]
+    );
+}

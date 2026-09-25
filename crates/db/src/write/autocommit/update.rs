@@ -152,6 +152,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let headstore = txn.headstore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get headstore: {}", e))
         })?;
+        let pending = self.pending_view(&txn)?;
 
         let result: query::error::Result<CommitArtifacts> = async {
             // Create an IndexManager for index maintenance
@@ -248,6 +249,15 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &headstore,
                 block_result.cid,
                 sign_config.as_ref(),
+            )
+            .await?;
+
+            self.judge_pending(
+                pending,
+                collection_name,
+                &doc.id().map(|id| id.to_string()).unwrap_or_default(),
+                &block_result.cid,
+                &block_result.block,
             )
             .await?;
 
