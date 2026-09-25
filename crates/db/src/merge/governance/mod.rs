@@ -2,6 +2,7 @@
 //! has claimed, and re-drive of the composites it defers.
 
 mod awaited;
+mod collection_block;
 mod deferred;
 mod judge;
 mod local_commit;
@@ -15,6 +16,7 @@ mod view_index;
 
 pub use awaited::Awaited;
 pub(crate) use awaited::{is_immutable_scalar_field, WaitKey};
+pub(crate) use collection_block::{BatchMerged, CollectionBlockVerdict};
 pub(crate) use deferred::DeferredMerges;
 pub use deferred::{
     MAX_AWAITED_PER_COMPOSITE, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, REDRIVE_BUDGET,
