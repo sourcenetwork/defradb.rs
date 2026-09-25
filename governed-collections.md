@@ -341,12 +341,12 @@ sequenceDiagram
   Q->>DB: write, composite + field blocks + signature built in the transaction
   DB->>H: judge the built composite (merge validator, pending-aware view)
   alt Reject or Defer
-    H-->>App: refused, with the reason or the awaited input
+    H-->>App: refused, and the transaction cannot be committed
   else Accept
     DB->>DB: commit
     DB-->>H: committed-write callback
+    H->>H: release waiters on the new composite CID and on the immutable values it set
   end
-  H->>H: release waiters on the new composite CID and on the immutable values it set
 ```
 
 The composite a write builds is then judged, inside the writing transaction
@@ -358,6 +358,20 @@ a write the node cannot justify from what it holds would be stranded on
 every peer, so the client is told now rather than never. A claimed
 collection with no validator refuses every local write, as every peer would
 defer it.
+
+A refused write leaves its transaction uncommittable. The blocks and heads
+the write built are already in the transaction, so a caller that ignored the
+refusal could otherwise commit them; a batch or an interactive transaction
+that has had a write refused fails to commit, and nothing of it is kept. The
+judge reads through the writing transaction's own stores, so a batch that
+creates a grant and then a note under it is judged as every peer will judge
+it once both have merged; the one document it does not see is the one a
+create is making, which no peer holds either. It takes the collection the
+write path resolved, so a collection defined in the same transaction is
+judged too. Every write path is judged: the batch and `/tx` paths, and the
+single-mutation path a one-mutation request, a REST document write and a
+backup import take. A judge whose merge handler is gone refuses the write
+rather than letting it through.
 
 Before this, the write validator was the only gate, and the contract's rule
 (P-6) that it refuse whatever the merge validator would was two
@@ -392,7 +406,9 @@ root's log names this version" (a lookup through the view, deferring on the
 value until it merges), or anything else a function of held bytes can say.
 A rejected definition is never stored and the sweep leaves it alone; a
 deferred one is indexed and re-driven like a composite, and swept if the
-index forgets it.
+index forgets it. A patch that arrives before the version it supersedes
+waits on that version's CID, is swept meanwhile, and is stored once the
+version merges.
 
 ```mermaid
 sequenceDiagram
