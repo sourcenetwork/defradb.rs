@@ -597,7 +597,7 @@ fn patch_of(prev: &Definition, fields: &[&str]) -> Definition {
 }
 
 /// As `patch_of`, naming the rule the new version is judged by.
-fn patch_block(prev: &Definition, fields: &[&str], rule: Option<&str>) -> Definition {
+pub(super) fn patch_block(prev: &Definition, fields: &[&str], rule: Option<&str>) -> Definition {
     let mut blocks = Vec::new();
     let mut links = Vec::new();
     for field in fields {

@@ -351,15 +351,16 @@ impl MergeValidator for WasmRules {
                 ),
             ),
         ]);
-        // A patch is judged by the rule it names; an initial definition by
-        // its own. Either way the module is the one the version commits to.
-        self.judge(
-            candidate.version.governance_rule.as_deref(),
-            "definition",
-            value,
-            view,
-        )
-        .await
+        // The rule in force judges the change to it: a patch is judged by the
+        // module the version it supersedes names, so a patch cannot admit
+        // itself by naming a permissive module. An initial definition is
+        // self-certifying and judged by its own; so is a patch of a version
+        // that named no rule, since no code was in force.
+        let in_force = candidate
+            .previous
+            .and_then(|previous| previous.governance_rule.as_deref())
+            .or(candidate.version.governance_rule.as_deref());
+        self.judge(in_force, "definition", value, view).await
     }
 }
 
