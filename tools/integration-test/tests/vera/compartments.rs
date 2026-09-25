@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{
     generate_identity, interaction_schema_with_policy, peak_schema_with_policy,
     secret_schema_with_policy, tweet_schema_with_policy, workout_schema_with_policy, TestCluster,
     HIKING_ACP_POLICY, SECRET_ACP_POLICY, XARCHIVE_ACP_POLICY,
 };
+use integration_test::{vera_cli_binary, BinarySource};
 
 /// Helper to add a policy and return the policy ID.
 fn add_policy(node: &integration_test::DefraClient, policy: &str, identity: &str) -> String {
@@ -33,13 +33,12 @@ fn add_policy(node: &integration_test::DefraClient, policy: &str, identity: &str
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_vera_compartments() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let jack = generate_identity(&binary).expect("Jack identity");
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         .with_identity(&jack.private_key_hex)
         .build()

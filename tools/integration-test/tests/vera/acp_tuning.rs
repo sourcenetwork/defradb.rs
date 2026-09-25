@@ -1,21 +1,20 @@
 use std::time::Duration;
 
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, TestCluster, USER_ACP_POLICY};
+use integration_test::{vera_cli_binary, BinarySource};
 
 /// Circuit breaker with threshold=1 trips on the very first failure after
 /// Vera goes down, rather than requiring the default 3 failures.
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_circuit_breaker_threshold_1_trips_immediately() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let jack = generate_identity(&binary).expect("Jack identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
     let mut cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         .with_identity(&jack.private_key_hex)
         .with_acp_circuit_breaker_threshold(1)
@@ -92,14 +91,13 @@ async fn rust_circuit_breaker_threshold_1_trips_immediately() {
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_cache_ttl_expiry_with_short_ttl() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let alice = generate_identity(&binary).expect("Alice identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         .with_identity(&alice.private_key_hex)
         .with_acp_cache_ttl(2)
@@ -182,14 +180,13 @@ async fn rust_cache_ttl_expiry_with_short_ttl() {
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_short_request_timeout_fail_closed() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let jack = generate_identity(&binary).expect("Jack identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
     let mut cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         .with_identity(&jack.private_key_hex)
         .with_acp_request_timeout(1)
@@ -256,14 +253,13 @@ async fn rust_short_request_timeout_fail_closed() {
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_access_cache_grant_revoke_invalidation() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let alice = generate_identity(&binary).expect("Alice identity");
     let bob = generate_identity(&binary).expect("Bob identity");
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         .with_identity(&alice.private_key_hex)
         .with_acp_cache_ttl(300)

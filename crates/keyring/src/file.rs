@@ -5,6 +5,7 @@
 //! PBES2_HS512_A256KW algorithm.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use zeroize::Zeroizing;
@@ -83,26 +84,18 @@ impl Keyring for FileKeyring {
         let path = self.key_path(name)?;
         let cipher = self.encrypt(key)?;
 
-        // Set restrictive permissions on key files (owner only)
+        // Stage in a subdirectory so interrupted writes never appear as keys in list().
+        let staging = tempfile::tempdir_in(&self.dir)?;
+        #[cfg(windows)]
+        restrict_owner_access(staging.path(), WindowsObjectKind::Directory)?;
+        let mut file = tempfile::NamedTempFile::new_in(staging.path())?;
+        #[cfg(windows)]
+        restrict_owner_access(file.path(), WindowsObjectKind::File)?;
+        file.write_all(&cipher)?;
+        file.as_file().sync_all()?;
+        file.persist(&path).map_err(|e| Error::Io(e.error))?;
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&path)?;
-            std::io::Write::write_all(&mut file, &cipher)?;
-        }
-
-        #[cfg(not(unix))]
-        {
-            fs::write(&path, cipher)?;
-
-            #[cfg(windows)]
-            restrict_owner_access(&path, WindowsObjectKind::File)?;
-        }
+        fs::File::open(&self.dir)?.sync_all()?;
 
         Ok(())
     }
@@ -145,7 +138,6 @@ impl Keyring for FileKeyring {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 if let Some(name) = entry.file_name().to_str() {
-                    // Only include valid key names (filter out any hidden files etc.)
                     if KeyName::validate(name).is_ok() {
                         keys.push(name.to_string());
                     }

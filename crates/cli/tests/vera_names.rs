@@ -118,3 +118,31 @@ fn environment_values_use_vera_with_legacy_fallback() {
         );
     }
 }
+
+#[test]
+fn native_provider_flags_work_with_the_vera_feature() {
+    for provider in ["hub-rs", "vera-rs"] {
+        let cli = Cli::try_parse_from([
+            "defradb",
+            "--document-acp-type",
+            provider,
+            "--hub-rs-address",
+            "http://localhost:8545",
+            "--vera-consensus-key",
+            "aabb",
+            "--vera-deployment-id",
+            "9001",
+            "version",
+        ])
+        .unwrap();
+        let mut config = Config::default();
+        config.apply_cli_flags(&cli).unwrap();
+        assert_eq!(config.acp.document_type, AcpDocumentType::VeraRs);
+        assert_eq!(config.acp.hub_rs_address, "http://localhost:8545");
+        assert_eq!(config.acp.vera_consensus_key, "aabb");
+        assert_eq!(config.acp.vera_deployment_id, Some(9001));
+        let serialized = serde_json::to_value(&config.acp).unwrap();
+        let restored: AcpConfig = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored.document_type, AcpDocumentType::VeraRs);
+    }
+}

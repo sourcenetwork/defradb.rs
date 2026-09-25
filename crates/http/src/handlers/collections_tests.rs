@@ -45,7 +45,9 @@ async fn test_list_collections() {
     let response = result.unwrap();
     // The listing reads the stored versions, which is what the collection
     // management mock serves.
-    assert!(response.collections.contains(&"MockCollection".to_string()));
+    assert!(response
+        .iter()
+        .any(|version| version.name == "MockCollection"));
 }
 
 #[tokio::test]

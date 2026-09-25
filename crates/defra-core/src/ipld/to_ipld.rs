@@ -266,6 +266,7 @@ impl From<&SignatureHeader> for Ipld {
             SignatureType::ES256 => "ES256",
             SignatureType::EdDSA => "EdDSA",
             SignatureType::BLS => "BLS",
+            SignatureType::BLSAugV1 => "BLS_AUG_V1",
         };
         map.insert("type".to_string(), Ipld::String(type_str.to_string()));
         map.insert("identity".to_string(), Ipld::Bytes(header.identity.clone()));

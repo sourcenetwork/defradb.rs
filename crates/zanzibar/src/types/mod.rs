@@ -4,7 +4,7 @@ mod resource;
 mod subject;
 mod subject_codec;
 
-pub use policy::Policy;
+pub use policy::{Policy, PolicySpecification};
 pub use relationship::{ObjectRef, Relationship};
 pub use resource::{Relation, Resource};
 pub use subject::{Subject, SubjectRestriction};

@@ -45,6 +45,43 @@ impl BlsPublicKey {
     }
 }
 
+impl BlsPublicKey {
+    /// Verify the augmented suite used by current Orbis, without a basic-suite fallback.
+    pub fn verify_augmented(&self, data: &[u8], signature: &[u8]) -> Result<bool> {
+        if self.raw_bytes.len() != 48 || signature.len() != 96 {
+            return Err(crypto_error(
+                "augmented BLS requires a compressed 48-byte key and 96-byte signature",
+            ));
+        }
+        self.verify_suite(
+            data,
+            signature,
+            b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_",
+            &self.key.to_bytes(),
+        )
+    }
+
+    fn verify_suite(
+        &self,
+        data: &[u8],
+        signature: &[u8],
+        domain: &[u8],
+        augmentation: &[u8],
+    ) -> Result<bool> {
+        let sig = blst::min_pk::Signature::from_bytes(signature)
+            .map_err(|e| crypto_error(format!("invalid BLS12-381 signature: {:?}", e)))?;
+        let err = sig.verify(true, data, domain, augmentation, &self.key, true);
+        if err == blst::BLST_ERROR::BLST_SUCCESS {
+            Ok(true)
+        } else {
+            Err(crypto_error(format!(
+                "BLS12-381 signature verification failed: {:?}",
+                err
+            )))
+        }
+    }
+}
+
 impl Key for BlsPublicKey {
     fn equal(&self, other: &dyn Key) -> bool {
         if other.key_type() != KeyType::Bls12381 {
@@ -64,17 +101,7 @@ impl Key for BlsPublicKey {
 
 impl PublicKey for BlsPublicKey {
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<bool> {
-        let sig = blst::min_pk::Signature::from_bytes(signature)
-            .map_err(|e| crypto_error(format!("invalid BLS12-381 signature: {:?}", e)))?;
-        let err = sig.verify(true, data, DST, &[], &self.key, true);
-        if err == blst::BLST_ERROR::BLST_SUCCESS {
-            Ok(true)
-        } else {
-            Err(crypto_error(format!(
-                "BLS12-381 signature verification failed: {:?}",
-                err
-            )))
-        }
+        self.verify_suite(data, signature, DST, &[])
     }
 
     fn did(&self) -> Result<String> {

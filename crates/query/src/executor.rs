@@ -15,6 +15,9 @@ use crate::txn::TransactionHandle;
 /// Stable GraphQL extension code for retryable transaction conflicts.
 pub const TXN_CONFLICT_ERROR_CODE: &str = "TXN_CONFLICT";
 
+/// Stable conflict message recognized by the remote DefraDB client.
+pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
+
 /// Deserialize a string that may be empty as None.
 /// Go sends `"operationName": ""` for anonymous operations.
 fn deserialize_empty_string_as_none<'de, D>(

@@ -40,6 +40,10 @@ fn cli_with_defaults() -> Cli {
         vera_chain_id: None,
         #[cfg(feature = "vera")]
         hub_rs_address: None,
+        #[cfg(feature = "vera")]
+        vera_consensus_key: None,
+        #[cfg(feature = "vera")]
+        vera_deployment_id: None,
         secret_file: None,
         no_telemetry: None,
         development: None,
@@ -162,6 +166,8 @@ fn test_apply_cli_flags_valid_values_succeed() {
         cli.vera_events_ws = Some("ws://localhost:26657/websocket".to_string());
         cli.vera_chain_id = Some("vera-test".to_string());
         cli.hub_rs_address = Some("http://localhost:8545".to_string());
+        cli.vera_consensus_key = Some("trusted-key".to_string());
+        cli.vera_deployment_id = Some(9001);
     }
 
     let result = config.apply_cli_flags(&cli);
@@ -191,6 +197,8 @@ fn test_apply_cli_flags_valid_values_succeed() {
         assert_eq!(config.acp.vera_events_ws, "ws://localhost:26657/websocket");
         assert_eq!(config.acp.vera_chain_id, "vera-test");
         assert_eq!(config.acp.hub_rs_address, "http://localhost:8545");
+        assert_eq!(config.acp.vera_consensus_key, "trusted-key");
+        assert_eq!(config.acp.vera_deployment_id, Some(9001));
     }
 }
 
@@ -220,6 +228,10 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "vera-chain-id",
     #[cfg(feature = "vera")]
     "hub-rs-address",
+    #[cfg(feature = "vera")]
+    "vera-consensus-key",
+    #[cfg(feature = "vera")]
+    "vera-deployment-id",
     "secret-file",
     "no-telemetry",
     "development",
@@ -433,4 +445,29 @@ fn test_config_serialization_roundtrip() {
         deserialized.embedding.api_key_env
     );
     assert_eq!(original.keyring.backend, deserialized.keyring.backend);
+}
+
+#[cfg(feature = "vera")]
+#[test]
+fn vera_consensus_key_survives_config_and_cli_override() {
+    use clap::Parser as _;
+    let mut config = Config::default();
+    config.acp.vera_consensus_key = "configured-key".into();
+    config.acp.vera_deployment_id = Some(9001);
+    let encoded = toml::to_string(&config).expect("serialize config");
+    let mut config: Config = toml::from_str(&encoded).expect("deserialize config");
+    assert_eq!(config.acp.vera_consensus_key, "configured-key");
+    assert_eq!(config.acp.vera_deployment_id, Some(9001));
+    let cli = Cli::try_parse_from([
+        "defra",
+        "--vera-consensus-key",
+        "operator-key",
+        "--vera-deployment-id",
+        "9002",
+        "version",
+    ])
+    .expect("parse trusted key flag");
+    config.apply_cli_flags(&cli).expect("apply config override");
+    assert_eq!(config.acp.vera_consensus_key, "operator-key");
+    assert_eq!(config.acp.vera_deployment_id, Some(9002));
 }

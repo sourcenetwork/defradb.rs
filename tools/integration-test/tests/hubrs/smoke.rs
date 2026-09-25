@@ -1,4 +1,3 @@
-use integration_test::node::RustNode;
 use integration_test::{users_schema_with_policy, USER_ACP_POLICY};
 
 use super::helpers;
@@ -6,13 +5,12 @@ use super::helpers;
 /// Smoke test proving DefraDB -> hub.rs ACP pipeline works end-to-end.
 ///
 /// 1. Starts a hub.rs devnet + 1 Rust DefraDB node connected to it
-/// 2. Creates an ACP policy (on-chain via EVM precompile)
+/// 2. Creates an ACP policy through native Vera
 /// 3. Creates a protected document as Jack (owner)
 /// 4. Jack sees the document, anonymous sees nothing
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_hubrs_smoke() {
-    RustNode::build().expect("build rust binary");
     let jack = helpers::funded_identity();
 
     let hub = helpers::start_hub_cluster().await;
