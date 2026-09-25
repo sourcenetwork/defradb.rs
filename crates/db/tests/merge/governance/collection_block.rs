@@ -447,10 +447,12 @@ async fn a_governed_collections_composites_are_judged_as_before() {
 
 /// A node's own collection block links only composites it has merged, so it
 /// passes the judgement by construction: `@branchable` keeps its meaning for
-/// a governed collection.
+/// a governed collection. The validator has to accept the write itself,
+/// since a local write is judged before it commits (`local_write.rs`); what
+/// is pinned here is that the block is appended, not that the write is.
 #[tokio::test]
 async fn a_local_write_appends_a_collection_block_to_a_governed_collection() {
-    let node = Node::with_branchable_grants(Arc::new(RejectEverything)).await;
+    let node = Node::with_branchable_grants(Arc::new(AcceptEverything)).await;
     let writer = signer();
     let document = format!(r#"{{"writer": "{}"}}"#, writer.did);
 
