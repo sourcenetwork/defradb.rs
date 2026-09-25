@@ -338,16 +338,34 @@ sequenceDiagram
   Q->>WV: validate_write(request)
   WV-->>Q: Ok | Err(reason)
   Q->>ACP: mutation permission check (as before)
-  Q->>DB: write; composite + field blocks + signature built and stored
-  DB-->>H: committed-write callback
+  Q->>DB: write, composite + field blocks + signature built in the transaction
+  DB->>H: judge the built composite (merge validator, pending-aware view)
+  alt Reject or Defer
+    H-->>App: refused, with the reason or the awaited input
+  else Accept
+    DB->>DB: commit
+    DB-->>H: committed-write callback
+  end
   H->>H: release waiters on the new composite CID and on the immutable values it set
 ```
 
-The obligation this places on the application: its write validator must
-refuse anything a peer's merge validator would refuse. Otherwise a node can
-write what its own replica accepts and every other replica rejects. That
-split is confined to the misbehaving node, and it is the same split a
-compromised node could produce by writing to its store directly.
+The composite a write builds is then judged, inside the writing transaction
+and before it commits, by the merge validator with the same candidate every
+peer will see, through a view that reads the uncommitted blocks from the
+transaction first. Accept commits. Reject refuses the write with the
+validator's reason. Defer refuses it too, naming what the verdict awaited:
+a write the node cannot justify from what it holds would be stranded on
+every peer, so the client is told now rather than never. A claimed
+collection with no validator refuses every local write, as every peer would
+defer it.
+
+Before this, the write validator was the only gate, and the contract's rule
+(P-6) that it refuse whatever the merge validator would was two
+implementations kept in step by hand; a node whose write validator was
+weaker committed writes every peer then rejected, and kept a document state
+nobody else shared, silently. The write validator stays: it sees the
+mutation's inputs before any block exists, which is where an application
+refuses cheaply, and it is the only gate for an ungoverned collection.
 
 Reads compose by conjunction. A `ReadValidator` answers per document, and
 the permission filter node keeps a document only if ACP allows it *and* the
