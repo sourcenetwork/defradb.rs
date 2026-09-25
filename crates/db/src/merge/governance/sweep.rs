@@ -140,10 +140,15 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             // from the version it supersedes.
             let governed = match &definition.governance_root {
                 Some(_) => true,
-                None => self
-                    .resolve_previous_collection_version(&block)
-                    .await?
-                    .is_some_and(|previous| previous.governance_root.is_some()),
+                None => match self.resolve_previous_collection_version(&block).await? {
+                    Some(previous) => previous.governance_root.is_some(),
+                    // A patch of a version not held: re-driven so it waits
+                    // on that version again, since a restart forgot it did.
+                    None => block
+                        .heads
+                        .as_deref()
+                        .is_some_and(|heads| !heads.is_empty()),
+                },
             };
             if !governed {
                 return Ok(None);

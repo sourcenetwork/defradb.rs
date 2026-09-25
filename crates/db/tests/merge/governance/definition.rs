@@ -909,3 +909,28 @@ async fn a_patch_naming_another_rule_is_the_validators_to_refuse() {
     assert_eq!(same.merge(&node).await, MergeOutcome::Merged);
     assert!(node.holds_version(&same.cid).await);
 }
+
+/// A patch that arrives before the version it supersedes waits for it, is
+/// swept meanwhile rather than forgotten, and is stored once that version
+/// merges.
+#[tokio::test]
+async fn a_patch_that_arrives_before_its_version_is_stored_when_it_arrives() {
+    let node = Node::judging(&["Ledgers"], Arc::new(AcceptEverything)).await;
+    let initial = definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), false);
+    let patch = patch_of(&initial, &["note"]);
+
+    assert_eq!(
+        patch.merge(&node).await,
+        MergeOutcome::retryable_skip("collection definition patches a version not held")
+    );
+    assert!(!node.holds_version(&patch.cid).await);
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 1);
+    assert!(!node.holds_version(&patch.cid).await);
+
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+    assert!(node.holds_version(&initial.cid).await);
+    assert!(
+        node.holds_version(&patch.cid).await,
+        "the patch was not re-driven when its version arrived"
+    );
+}

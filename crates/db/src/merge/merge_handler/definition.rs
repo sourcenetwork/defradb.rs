@@ -43,7 +43,32 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         (name, col_id, fields, Some(prev))
                     }
                     None => {
-                        tracing::debug!(cid = %cid, "CollectionDefinition has no name and no resolvable previous version - skipping");
+                        // A patch of a version this node does not hold yet:
+                        // it waits for that version, and its arrival, or the
+                        // sweep after a restart, re-drives it. Left terminal
+                        // it would leave the unmerged set and never be
+                        // judged again.
+                        if let Some(previous) = block.heads.as_deref().and_then(<[Cid]>::first) {
+                            tracing::debug!(cid = %cid, %previous, "CollectionDefinition patches a version not held; waiting for it");
+                            self.deferred.defer(
+                                defra_core::merge::MergeBlock {
+                                    cid: *cid,
+                                    block_data: bytes::Bytes::new(),
+                                    doc_id: String::new(),
+                                    collection_id: String::new(),
+                                    creator: String::new(),
+                                    sender_peer: None,
+                                    is_explicit_replicator: false,
+                                    explicit_replay_authorization: None,
+                                    verified_creator: None,
+                                },
+                                vec![crate::merge::governance::WaitKey::Composite(*previous)],
+                            );
+                            return Ok(MergeOutcome::retryable_skip(
+                                "collection definition patches a version not held",
+                            ));
+                        }
+                        tracing::debug!(cid = %cid, "CollectionDefinition has no name and no previous version - skipping");
                         return Ok(MergeOutcome::terminal_skip(
                             "collection definition has no name and no previous version",
                         ));
@@ -341,6 +366,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             "Registered synced collection schema in systemstore (inactive, requires manual \
              activation); cached unless the name already holds another collection"
         );
+
+        // A patch that arrived first waits on this version's CID; the
+        // caller's re-drive picks it up.
+        self.deferred.release(std::iter::once(
+            crate::merge::governance::WaitKey::Composite(*cid),
+        ));
 
         Ok(MergeOutcome::Merged)
     }
