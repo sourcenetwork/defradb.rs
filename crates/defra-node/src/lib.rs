@@ -878,6 +878,7 @@ pub struct NodeBuilder {
     data_path: Option<PathBuf>,
     storage_backend: StorageBackend,
     storage_durability: storage::backends::DurabilityMode,
+    regolith_options: Option<storage::RegolithStoreOptions>,
     embedding_url: Option<String>,
     embedding_model: Option<String>,
     embedding_api_key: Option<String>,
@@ -894,6 +895,15 @@ pub struct NodeBuilder {
     p2p_config: Option<P2PConfig>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
+}
+
+/// Durability is a separate builder setting, so it is applied over the
+/// caller's options rather than being one of the values they replace.
+fn resolve_regolith_options(
+    explicit: Option<storage::RegolithStoreOptions>,
+    durability: storage::backends::DurabilityMode,
+) -> storage::RegolithStoreOptions {
+    explicit.unwrap_or_default().with_durability(durability)
 }
 
 struct StoreBuildArgs {
@@ -959,6 +969,19 @@ impl NodeBuilder {
         durability: storage::backends::DurabilityMode,
     ) -> Self {
         self.storage_durability = durability;
+        self
+    }
+
+    /// Set the regolith store options, including its memory budget.
+    ///
+    /// Defaults to [`storage::RegolithStoreOptions::default`], whose sizing
+    /// targets a server. An embedded host that opens the node in-process
+    /// pays that budget out of its own address space, so it picks a profile
+    /// here rather than inheriting one. Durability stays with
+    /// [`NodeBuilder::with_storage_durability`] and is applied over whatever
+    /// is set here.
+    pub fn with_regolith_options(mut self, options: storage::RegolithStoreOptions) -> Self {
+        self.regolith_options = Some(options);
         self
     }
 
@@ -1186,7 +1209,7 @@ impl NodeBuilder {
                 "embedded node starting"
             );
             let opts =
-                storage::RegolithStoreOptions::default().with_durability(self.storage_durability);
+                resolve_regolith_options(self.regolith_options.clone(), self.storage_durability);
             let store = storage::RegolithStore::open_with_options(&path, opts)
                 .map_err(|e| anyhow::anyhow!("failed to open regolith store: {}", e))?;
 
@@ -1782,6 +1805,50 @@ mod tests {
         );
 
         node.shutdown().await;
+    }
+
+    #[test]
+    fn node_builder_accepts_regolith_options() {
+        let builder = EmbeddedNode::builder()
+            .with_regolith_options(storage::RegolithStoreOptions::embedded());
+
+        assert_eq!(
+            builder
+                .regolith_options
+                .as_ref()
+                .map(|options| options.engine.write_buffer_size),
+            Some(256 * 1024)
+        );
+    }
+
+    #[test]
+    fn regolith_options_default_to_server_sizing() {
+        let resolved =
+            super::resolve_regolith_options(None, storage::backends::DurabilityMode::Immediate);
+        let server = storage::RegolithStoreOptions::default();
+
+        assert_eq!(
+            resolved.engine.write_buffer_size,
+            server.engine.write_buffer_size
+        );
+        assert_eq!(
+            resolved.engine.block_cache_size,
+            server.engine.block_cache_size
+        );
+    }
+
+    #[test]
+    fn explicit_regolith_options_survive_and_durability_stays_with_the_builder() {
+        let resolved = super::resolve_regolith_options(
+            Some(storage::RegolithStoreOptions::embedded()),
+            storage::backends::DurabilityMode::Eventual,
+        );
+        let expected = storage::RegolithStoreOptions::embedded()
+            .with_durability(storage::backends::DurabilityMode::Eventual);
+
+        assert_eq!(resolved.engine.write_buffer_size, 256 * 1024);
+        assert_eq!(resolved.engine.block_cache_size, 0);
+        assert_eq!(format!("{resolved:?}"), format!("{expected:?}"));
     }
 
     #[test]
