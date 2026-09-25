@@ -15,6 +15,7 @@ bench = false
 thiserror.workspace = true
 base64 = "0.22"
 zeroize = "1.8"
+tempfile = "3"
 
 # JWE encryption (PBES2-HS512+A256KW / A256GCM) - Go compatible format.
 # Pure Rust: keeps OpenSSL out of every cli graph. See crates/keyring/src/jwe.rs.
@@ -43,7 +44,6 @@ keyring_crate = { package = "keyring", version = "3", features = ["windows-nativ
 keyring_crate = { package = "keyring", version = "3" }
 
 [dev-dependencies]
-tempfile = "3"
 # Asserts our tokens are readable by the josekit/Go-jwx format. Dev-only, so
 # OpenSSL stays out of every shipped cli graph.
 josekit = "0.8"

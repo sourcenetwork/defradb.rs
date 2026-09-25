@@ -133,6 +133,16 @@ pub struct Cli {
     #[arg(long, global = true, env = "DEFRA_HUB_RS_ADDRESS")]
     pub hub_rs_address: Option<String>,
 
+    /// Trusted Vera consensus public key from operator configuration (hex)
+    #[cfg(feature = "vera")]
+    #[arg(long, global = true, env = "DEFRA_VERA_CONSENSUS_KEY")]
+    pub vera_consensus_key: Option<String>,
+
+    /// Vera deployment identifier from operator configuration
+    #[cfg(feature = "vera")]
+    #[arg(long, global = true, env = "DEFRA_VERA_DEPLOYMENT_ID")]
+    pub vera_deployment_id: Option<u64>,
+
     /// Path to the file containing secrets. Relative paths use the working directory.
     #[arg(long, global = true, env = "DEFRA_SECRET_FILE")]
     pub secret_file: Option<String>,

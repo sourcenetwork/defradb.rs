@@ -11,20 +11,14 @@ use crate::Error;
 /// The prefix for did:key DIDs.
 pub const DID_KEY_PREFIX: &str = "did:key:";
 
+/// The prefix for stable OpenPubkey actor identifiers.
+pub const DID_OPK_PREFIX: &str = "did:opk:";
+
 /// A validated DID (Decentralized Identifier).
 ///
-/// This newtype wraps a DID string and guarantees that it is properly formatted
-/// with the `did:key:` prefix. Construction validates the format, so any `Did`
-/// instance is guaranteed to be valid.
-///
-/// # Format
-///
-/// DIDs follow the did:key method format:
-/// ```text
-/// did:key:z<multibase-encoded-public-key>
-/// ```
-///
-/// The `z` prefix indicates base58btc encoding (multibase).
+/// Accepts key identities and stable provider actors. Provider identifiers contain
+/// a lowercase SHA-256 digest of the verified provider's user identifier.
+/// Parsing validates representation; it does not authenticate a provider claim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Did(String);
@@ -34,24 +28,29 @@ impl Did {
     ///
     /// # Errors
     ///
-    /// Returns an error if the string does not start with `did:key:`.
+    /// Rejects unsupported methods and malformed provider actor identifiers.
     pub fn new(s: impl Into<String>) -> Result<Self, Error> {
         let s = s.into();
-        if !s.starts_with(DID_KEY_PREFIX) {
-            return Err(Error::InvalidDid(format!(
-                "DID must start with '{}', got: {}",
-                DID_KEY_PREFIX, s
-            )));
+        let provider = s.strip_prefix(DID_OPK_PREFIX).is_some_and(|hash| {
+            hash.len() == 64
+                && hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
+        if !s.starts_with(DID_KEY_PREFIX) && !provider {
+            return Err(Error::InvalidDid(
+                "unsupported or malformed identity".into(),
+            ));
         }
         Ok(Self(s))
     }
 
     /// Creates a DID without validation.
     ///
-    /// The caller must ensure the string is a valid did:key DID or the
+    /// The caller must ensure the string is a supported DID or the
     /// wildcard `"*"`.
     pub fn new_unchecked(s: String) -> Self {
-        debug_assert!(s.starts_with(DID_KEY_PREFIX) || s == "*");
+        debug_assert!(s == "*" || Self::new(s.clone()).is_ok());
         Self(s)
     }
 
@@ -75,9 +74,9 @@ impl Did {
 
     /// Returns the multibase-encoded key portion of the DID.
     ///
-    /// For a DID like `did:key:z6Mk...`, this returns `z6Mk...`.
-    pub fn key_portion(&self) -> &str {
-        &self.0[DID_KEY_PREFIX.len()..]
+    /// Provider actors and wildcard subjects do not contain public keys.
+    pub fn key_portion(&self) -> Option<&str> {
+        self.0.strip_prefix(DID_KEY_PREFIX)
     }
 }
 
@@ -146,7 +145,7 @@ mod tests {
         let did = Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap();
         assert_eq!(
             did.key_portion(),
-            "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+            Some("z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")
         );
     }
 

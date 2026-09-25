@@ -96,10 +96,10 @@ impl Node {
         }
 
         #[cfg(feature = "vera")]
-        if config.acp.document_type == AcpDocumentType::HubRs {
+        if config.acp.document_type == AcpDocumentType::VeraRs {
             if config.acp.hub_rs_address.is_empty() {
                 return Err(Error::InvalidConfig(
-                    "hub_rs_address required when document_type is hub-rs".into(),
+                    "vera_rs_address required when document_type is hub-rs".into(),
                 ));
             }
 
@@ -127,10 +127,29 @@ impl Node {
                 "Resolved ACP tuning (hub.rs; access decision cache disabled)"
             );
 
+            let deployment = config.acp.vera_deployment_id.ok_or_else(|| {
+                Error::InvalidConfig(
+                    "vera_deployment_id is required for native Vera submissions".into(),
+                )
+            })?;
+            let worker_config = config.clone();
+            let worker = tokio::task::spawn_blocking(move || {
+                let keyring = crate::commands::open_keyring(&worker_config)?;
+                vera::hub_rs::NativeWorker::open(
+                    &worker_config.rootdir.join("vera-worker"),
+                    keyring.as_ref(),
+                    deployment,
+                )
+                .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
+            })
+            .await
+            .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
             let provider = Arc::new(
-                vera::HubRsProvider::new(
+                vera::VeraRsProvider::new(
                     config.acp.hub_rs_address.clone(),
+                    &config.acp.vera_consensus_key,
                     signer_key_bytes,
+                    worker,
                     &tuning,
                     Some(event_bus),
                 )

@@ -176,6 +176,10 @@ pub enum SignatureType {
 
     /// Threshold BLS12-381 (Orbis ring signing)
     BLS,
+
+    /// Public-key-augmented Orbis BLS, distinct from legacy basic BLS.
+    #[serde(rename = "BLS_AUG_V1")]
+    BLSAugV1,
 }
 
 impl SignatureType {
@@ -193,7 +197,7 @@ impl SignatureType {
             Self::ES256K | Self::EdDSA => true,
             // Rust-only. `BLS` is the Orbis ring extension; `ES256` covers
             // Secure Enclave and other secp256r1 keys.
-            Self::BLS | Self::ES256 => false,
+            Self::BLS | Self::BLSAugV1 | Self::ES256 => false,
         }
     }
 }

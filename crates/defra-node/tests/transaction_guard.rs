@@ -128,4 +128,47 @@ async fn owned_transaction_keeps_node_signing_context() {
     );
     txn.commit().await.unwrap();
     assert_eq!(node.verified_block_signer_did(&cid).await.unwrap(), did);
+    for commit in [false, true] {
+        let handle = node.begin_transaction(false).await.unwrap();
+        let response = node
+            .execute_request_in_txn(
+                QueryRequest::new(r#"mutation { add_Users(input: {name: "Bob"}) { _docID } }"#),
+                &handle,
+            )
+            .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        if commit {
+            node.commit_transaction(&handle).await.unwrap();
+        } else {
+            node.rollback_transaction(&handle).await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn unconfigured_node_preserves_the_callers_transaction_identity() {
+    use defra_core::current_identity::with_scoped_identity;
+    let node = node().await;
+    use identity::Identity;
+    let owner = identity::RawIdentity::from_ed25519(crypto::generate_ed25519().unwrap())
+        .unwrap()
+        .did()
+        .unwrap()
+        .to_string();
+    let handle = with_scoped_identity(Some(owner.clone()), node.begin_transaction(false))
+        .await
+        .unwrap();
+    assert!(node
+        .execute_request_in_txn(QueryRequest::new(READ), &handle)
+        .await
+        .has_errors());
+    with_scoped_identity(Some(owner), async {
+        assert!(!node
+            .execute_request_in_txn(QueryRequest::new(CREATE), &handle)
+            .await
+            .has_errors());
+        node.rollback_transaction(&handle).await.unwrap();
+    })
+    .await;
+    assert_discarded(&node, &handle).await;
 }

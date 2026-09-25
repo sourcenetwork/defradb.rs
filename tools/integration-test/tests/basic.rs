@@ -30,3 +30,9 @@ mod smoke;
 mod transactions;
 #[path = "basic/truncate_parallel.rs"]
 mod truncate_parallel;
+
+#[path = "basic/rest_transactions.rs"]
+mod rest_transactions;
+
+#[path = "basic/transaction_ownership.rs"]
+mod transaction_ownership;

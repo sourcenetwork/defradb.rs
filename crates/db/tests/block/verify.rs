@@ -73,3 +73,42 @@ fn verified_signer_rejects_invalid_identity() {
         .expect_err("invalid identity must fail verification");
     assert!(error.contains("invalid signature identity"), "{error}");
 }
+
+#[test]
+fn bls_block_signatures_require_the_declared_suite() {
+    let key = blst::min_pk::SecretKey::key_gen(&[42; 32], &[]).unwrap();
+    let public = key.sk_to_pk().to_bytes();
+    let expected_did =
+        crypto::PublicKey::did(&crypto::BlsPublicKey::from_bytes(&public).unwrap()).unwrap();
+    let block = test_block();
+    let bytes = block.to_dag_cbor().unwrap();
+    for (kind, domain, augmentation) in [
+        (
+            SignatureType::BLS,
+            b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_".as_slice(),
+            &[][..],
+        ),
+        (
+            SignatureType::BLSAugV1,
+            b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_".as_slice(),
+            public.as_slice(),
+        ),
+    ] {
+        let mut signature = Signature::new(
+            SignatureHeader::new(kind, hex::encode(public).into_bytes()),
+            key.sign(&bytes, domain, augmentation).to_bytes().to_vec(),
+        );
+        assert_eq!(
+            verified_signature_signer_did(&block, &signature).unwrap(),
+            expected_did
+        );
+        let encoded = signature.to_dag_cbor().unwrap();
+        assert_eq!(Signature::from_dag_cbor(&encoded).unwrap(), signature);
+        signature.header.sig_type = if kind == SignatureType::BLS {
+            SignatureType::BLSAugV1
+        } else {
+            SignatureType::BLS
+        };
+        assert!(verified_signature_signer_did(&block, &signature).is_err());
+    }
+}

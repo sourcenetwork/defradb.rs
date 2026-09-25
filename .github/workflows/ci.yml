@@ -155,7 +155,8 @@ jobs:
             packages: >-
               -p defra-core -p crdt -p storage -p blockstore -p schema
               -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-              -p identity -p zanzibar -p acp -p defra-version -p events -p lens
+              -p "path+file://$PWD/crates/identity" -p "path+file://$PWD/crates/zanzibar"
+              -p "path+file://$PWD/crates/acp" -p defra-version -p events -p lens
               -p replication-filter -p telemetry
           - os: ubuntu-latest
             group: data
@@ -173,7 +174,8 @@ jobs:
             packages: >-
               -p defra-core -p crdt -p storage -p blockstore -p schema
               -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-              -p identity -p zanzibar -p acp -p defra-version -p events -p lens
+              -p "path+file://$PWD/crates/identity" -p "path+file://$PWD/crates/zanzibar"
+              -p "path+file://$PWD/crates/acp" -p defra-version -p events -p lens
               -p replication-filter -p telemetry
           - os: macos-latest
             group: data

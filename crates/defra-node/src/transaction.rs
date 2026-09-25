@@ -30,7 +30,9 @@ impl EmbeddedNode {
         &self,
         readonly: bool,
     ) -> Result<EmbeddedTransaction<'_>, TransactionError> {
-        let guard = TransactionGuard::begin(self.runner().as_ref(), readonly).await?;
+        let guard = self
+            .as_node_identity(TransactionGuard::begin(self.runner().as_ref(), readonly))
+            .await?;
         Ok(EmbeddedTransaction { node: self, guard })
     }
 }
@@ -55,11 +57,11 @@ impl EmbeddedTransaction<'_> {
 
     /// Commit the writes and consume the owning transaction.
     pub async fn commit(self) -> Result<(), TransactionError> {
-        self.guard.commit().await
+        self.node.as_node_identity(self.guard.commit()).await
     }
 
     /// Roll back the writes and consume the owning transaction.
     pub async fn rollback(self) -> Result<(), TransactionError> {
-        self.guard.rollback().await
+        self.node.as_node_identity(self.guard.rollback()).await
     }
 }

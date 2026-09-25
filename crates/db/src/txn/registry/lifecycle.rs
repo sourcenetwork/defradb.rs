@@ -3,6 +3,20 @@
 use super::*;
 
 impl<S: Store + 'static> DbTransactionRegistry<S> {
+    fn take_owned_ctx(
+        &self,
+        handle: &TransactionHandle,
+    ) -> std::result::Result<RemovedTransaction<S>, TransactionError> {
+        self.transactions
+            .get(handle.as_str())
+            .and_then(|slot| slot.ctx())
+            .filter(|ctx| ctx.is_owned_by_caller())
+            .and_then(|_| self.take_registered(handle))
+            .ok_or_else(|| {
+                TransactionError::not_found(format!("transaction '{}' not found", handle))
+            })
+    }
+
     /// Apply the txn's recorded counter ops (#1044) then durably commit.
     ///
     /// LOCK LIFECYCLE — conforms to `proofs/tla/InteractiveTxnCounter.tla` GREEN
@@ -289,7 +303,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .get(handle.as_str())
             .and_then(|slot| slot.ctx())
         {
-            Some(ctx) if ctx.touch() => {
+            Some(ctx) if ctx.is_owned_by_caller() && ctx.touch() => {
                 GetTransactionResult::Found(ctx as Arc<dyn TransactionContext>)
             }
             _ => GetTransactionResult::NotFound,
@@ -300,9 +314,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self.take_registered(handle).ok_or_else(|| {
-            TransactionError::not_found(format!("transaction '{}' not found", handle))
-        })?;
+        let ctx = self.take_owned_ctx(handle)?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 
@@ -320,9 +332,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self.take_registered(handle).ok_or_else(|| {
-            TransactionError::not_found(format!("transaction '{}' not found", handle))
-        })?;
+        let ctx = self.take_owned_ctx(handle)?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 
@@ -346,9 +356,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         handle: &TransactionHandle,
         apply_read_effects: bool,
     ) -> std::result::Result<(), TransactionError> {
-        let ctx = self.take_registered(handle).ok_or_else(|| {
-            TransactionError::not_found(format!("transaction '{}' not found", handle))
-        })?;
+        let ctx = self.take_owned_ctx(handle)?;
         let action_lock = ctx.action_lock();
         let _action_guard = action_lock.lock().await;
 

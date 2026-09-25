@@ -5,7 +5,7 @@ use crate::thread_bounds::MaybeBoxFuture;
 
 use super::cache::{CheckCache, NodeId, NodeTrail};
 use super::{EvaluationStep, EvaluationTrace, PermissionEngine, StepResult};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::expression::RelationExpression;
 use crate::store::ZanzibarStore;
 use crate::types::Subject;
@@ -25,6 +25,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         trace: &'a mut EvaluationTrace,
     ) -> MaybeBoxFuture<'a, Result<bool>> {
         Box::pin(async move {
+            let _evaluation = cache.budget.enter()?;
             match expression {
                 RelationExpression::This => {
                     let result = self
@@ -45,7 +46,66 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         details: Some(format!("Direct tuple check for subject {}", subject)),
                     });
 
-                    Ok(result)
+                    if result {
+                        return Ok(true);
+                    }
+                    for target in self
+                        .store
+                        .get_relation_subjects(policy_id, resource, object_id, relation)
+                        .await?
+                    {
+                        cache.budget.charge()?;
+                        let Subject::EntitySet {
+                            resource,
+                            object_id,
+                            relation,
+                        } = target
+                        else {
+                            continue;
+                        };
+                        if relation.is_empty() {
+                            if self.lookup.is_actor_resource(policy_id, &resource)
+                                && object_id == subject.as_str()
+                            {
+                                trace.add_step(EvaluationStep {
+                                    expression_type: "Actor".into(),
+                                    resource: resource.clone(),
+                                    object_id: object_id.clone(),
+                                    relation: relation.clone(),
+                                    result: StepResult::Granted,
+                                    details: Some(
+                                        "Actor object matches the requested identity".into(),
+                                    ),
+                                });
+                                return Ok(true);
+                            }
+                            continue;
+                        }
+                        let node_id = NodeId::new(&resource, &object_id, &relation);
+                        if trail.contains(&node_id) {
+                            continue;
+                        }
+                        let expression = self
+                            .lookup
+                            .get_expression(policy_id, &resource, &relation)?;
+                        if self
+                            .evaluate_expr_with_trace(
+                                policy_id,
+                                &resource,
+                                &object_id,
+                                &relation,
+                                subject,
+                                expression,
+                                trail.with_node(node_id),
+                                cache.clone(),
+                                trace,
+                            )
+                            .await?
+                        {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
                 }
 
                 RelationExpression::ComputedUserset {
@@ -90,7 +150,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                             subject,
                             computed_expr,
                             new_trail,
-                            cache,
+                            cache.clone(),
                             trace,
                         )
                         .await?;
@@ -133,6 +193,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for target in targets {
+                        cache.budget.charge()?;
                         let node_id =
                             NodeId::new(&target.resource, &target.object_id, computed_relation);
                         if trail.contains(&node_id) {
@@ -189,6 +250,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for subj in subjects {
+                        cache.budget.charge()?;
                         match subj {
                             Subject::EntitySet {
                                 resource: target_resource,
@@ -401,13 +463,22 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         return Ok(false);
                     }
 
-                    let (subtract_result, _) = self
+                    let (subtract_result, subtract_tainted) = self
                         .evaluate_expr_inner(
-                            policy_id, resource, object_id, relation, subject, subtract, trail,
-                            cache,
+                            policy_id,
+                            resource,
+                            object_id,
+                            relation,
+                            subject,
+                            subtract,
+                            trail,
+                            cache.clone(),
                         )
                         .await?;
 
+                    if subtract_tainted {
+                        return Err(Error::IndeterminateExclusion);
+                    }
                     let final_result = !subtract_result;
                     trace.add_step(EvaluationStep {
                         expression_type: "Difference (result)".to_string(),

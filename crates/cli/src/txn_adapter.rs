@@ -49,8 +49,11 @@ impl<S: Store + 'static> TransactionOperations for TxnRegistryAdapter<S> {
         let registry = self.registry.clone();
         let txn_id = txn_id.to_string();
         let handle = tokio::runtime::Handle::current();
+        let acting_identity = defra_core::current_identity::get_effective_identity();
 
         tokio::task::spawn_blocking(move || {
+            let _identity_guard =
+                defra_core::current_identity::scoped_current_identity(acting_identity);
             handle.block_on(async {
                 registry
                     .set_migration_in_txn(&txn_id, lens_config, None)
@@ -70,8 +73,11 @@ impl<S: Store + 'static> TransactionOperations for TxnRegistryAdapter<S> {
         let registry = self.registry.clone();
         let txn_id = txn_id.to_string();
         let handle = tokio::runtime::Handle::current();
+        let acting_identity = defra_core::current_identity::get_effective_identity();
 
         tokio::task::spawn_blocking(move || {
+            let _identity_guard =
+                defra_core::current_identity::scoped_current_identity(acting_identity);
             handle.block_on(async {
                 registry
                     .get_collections_in_txn(&txn_id)
@@ -101,8 +107,11 @@ impl<S: Store + 'static> TransactionOperations for TxnRegistryAdapter<S> {
         let txn_id = txn_id.to_string();
         let sdl = sdl.to_string();
         let handle = tokio::runtime::Handle::current();
+        let acting_identity = defra_core::current_identity::get_effective_identity();
 
         tokio::task::spawn_blocking(move || {
+            let _identity_guard =
+                defra_core::current_identity::scoped_current_identity(acting_identity);
             handle.block_on(async {
                 registry
                     .add_schema_in_txn_with_acp(&txn_id, &sdl, document_acp, creator)

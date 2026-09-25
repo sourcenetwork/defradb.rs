@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use integration_test::node::{DefraNode, RustNode};
 use integration_test::{extract_p2p_addr, generate_identity, TestCluster};
+use integration_test::{vera_cli_binary, BinarySource};
 
 /// DAC policy mirroring the Go original (peer_acp_test.go). `owner` is
 /// auto-injected by the system; the `read` permission is satisfied by the
@@ -116,14 +117,13 @@ async fn wait_for_names(
 /// `node1` runs under its own distinct DID so granting *that* DID `reader` is
 /// meaningful for the KMS node-gate.
 async fn setup_two_nodes() -> (TestCluster, String, NodeIds) {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let node0 = generate_identity(&binary).expect("node0 identity");
     let node1 = generate_identity(&binary).expect("node1 identity");
 
     let cluster = TestCluster::builder()
         .rust_nodes(2)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         // Cluster-wide identity (node0) is the one funded in genesis and used
         // as the Vera tx signer.
@@ -457,15 +457,14 @@ async fn encryption_acp_node_partial_access() {
 #[serial_test::serial]
 #[ignore = "Vera harness funds only one account (node0); node1 cannot sign its merge-side ACP registration or a post-shutdown grant (account not found) — single-signer harness funding limitation, not the DEK-leak race (#976)"]
 async fn encryption_acp_server_not_available() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let node0 = generate_identity(&binary).expect("node0 identity");
     let node1 = generate_identity(&binary).expect("node1 identity");
     let node2 = generate_identity(&binary).expect("node2 identity");
 
     let mut cluster = TestCluster::builder()
         .rust_nodes(3)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         .with_identity(&node0.private_key_hex)
         .with_node_identity(1, &node1.private_key_hex)

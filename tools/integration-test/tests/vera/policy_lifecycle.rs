@@ -1,5 +1,5 @@
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, TestCluster, USER_ACP_POLICY};
+use integration_test::{vera_cli_binary, BinarySource};
 
 /// Full on-chain policy lifecycle test.
 ///
@@ -14,13 +14,12 @@ use integration_test::{generate_identity, users_schema_with_policy, TestCluster,
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_vera_policy_lifecycle() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build_with_features(&["vera"]).expect("build vera-enabled rust binary");
+    let binary = vera_cli_binary();
     let alice = generate_identity(&binary).expect("Alice identity");
 
     let cluster = TestCluster::builder()
         .rust_nodes(1)
-        .skip_build()
+        .with_rust_binary(BinarySource::Path(binary.clone()))
         .with_vera()
         .with_identity(&alice.private_key_hex)
         .build()

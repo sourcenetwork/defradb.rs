@@ -12,7 +12,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     ///
     /// Returns:
     /// - `Ok(Some(identity))` -- signature valid, identity is the verified signer
-    /// - `Ok(None)` -- unsigned block or BLS (unsupported), proceed with warning
+    /// - `Ok(None)` -- unsigned block
     /// - `Err(SignatureVerificationFailed)` -- invalid signature, block MUST be rejected
     pub async fn verify_block_signature(
         &self,
@@ -75,60 +75,6 @@ pub(crate) fn verify_signature_data(
         }
     };
 
-    let sig_identity = String::from_utf8_lossy(&signature.header.identity).to_string();
-
-    // Verify the signature over the block data (block without signature field)
-    let mut block_to_verify = block.clone();
-    block_to_verify.signature = None;
-    let signed_bytes =
-        block_to_verify
-            .to_dag_cbor()
-            .map_err(|e| MergeError::SignatureVerificationFailed {
-                cid: *cid,
-                reason: format!("failed to serialize block for verification: {}", e),
-            })?;
-
-    let sig_type = signature.header.sig_type;
-    let key_type = match sig_type {
-        defra_core::block::SignatureType::ES256K => crypto::KeyType::Secp256k1,
-        defra_core::block::SignatureType::ES256 => crypto::KeyType::Secp256r1,
-        defra_core::block::SignatureType::EdDSA => crypto::KeyType::Ed25519,
-        defra_core::block::SignatureType::BLS => crypto::KeyType::Bls12381,
-    };
-
-    let pub_key = crypto::public_key_from_string(key_type, &sig_identity).map_err(|e| {
-        MergeError::SignatureVerificationFailed {
-            cid: *cid,
-            reason: format!("failed to parse public key from identity: {}", e),
-        }
-    })?;
-
-    match pub_key.verify(&signed_bytes, &signature.value) {
-        Ok(true) => {
-            // Convert the hex public key to a did:key: DID so that
-            // effective_creator() returns a format compatible with ACP
-            // registration (which checks for "did:key:" prefix).
-            let verified_did =
-                pub_key
-                    .did()
-                    .map_err(|e| MergeError::SignatureVerificationFailed {
-                        cid: *cid,
-                        reason: format!("failed to derive DID from verified key: {}", e),
-                    })?;
-            tracing::debug!(
-                cid = %cid,
-                identity = %verified_did,
-                "Block signature verified successfully"
-            );
-            Ok(verified_did)
-        }
-        Err(e) => Err(MergeError::SignatureVerificationFailed {
-            cid: *cid,
-            reason: format!("signature verification error: {}", e),
-        }),
-        Ok(false) => Err(MergeError::SignatureVerificationFailed {
-            cid: *cid,
-            reason: "signature verification returned false unexpectedly".to_string(),
-        }),
-    }
+    crate::block::verify::verified_signature_signer_did(block, &signature)
+        .map_err(|reason| MergeError::SignatureVerificationFailed { cid: *cid, reason })
 }
