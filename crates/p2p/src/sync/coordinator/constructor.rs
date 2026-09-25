@@ -269,6 +269,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 },
                 authorizer,
                 classifier,
+                // The gate holds the late-bound serve ACP, which is not
+                // `Send` on wasm, as the two `LateBoundServeAcp` arcs above
+                // are not; the browser build has one thread.
+                #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
                 replication_policy: Arc::new(
                     crate::replication_policy::ReplicationPolicyGate::new(Arc::clone(&serve_acp)),
                 ),
