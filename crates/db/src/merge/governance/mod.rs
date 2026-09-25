@@ -5,6 +5,7 @@ mod awaited;
 mod deferred;
 mod judge;
 mod local_commit;
+mod local_write;
 mod redriven;
 mod signature;
 mod sweep;
@@ -21,6 +22,8 @@ pub use deferred::{
 };
 pub(crate) use judge::{GovernedFrame, Judgement};
 pub use local_commit::LocalCommitRelease;
+pub(crate) use local_write::judge_local_write;
+pub use local_write::LocalWriteJudge;
 pub use redriven::{RedrivenMerge, RedrivenMergeSink};
 pub use signature::SignatureStatus;
 pub use sweep::{run_governance_sweep, SWEEP_BUDGET, SWEEP_INTERVAL};

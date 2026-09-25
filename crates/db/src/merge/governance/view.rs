@@ -361,7 +361,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
     }
 }
 
-fn decode(data: &[u8]) -> FieldValue {
+pub(super) fn decode(data: &[u8]) -> FieldValue {
     ciborium::from_reader::<NormalValue, _>(data)
         .map(FieldValue::Value)
         .unwrap_or(FieldValue::Undecodable)

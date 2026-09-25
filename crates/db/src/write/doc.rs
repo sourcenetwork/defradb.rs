@@ -157,6 +157,19 @@ impl<S: Store + 'static> DbDocMutator<S> {
         let txn = txn_guard.as_mut().ok_or_else(|| {
             query::error::QueryError::execution("transaction is no longer active")
         })?;
+        let pending = txn
+            .blockstore()
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        crate::merge::governance::judge_local_write(
+            &self.db,
+            pending,
+            &collection_name,
+            &doc_id,
+            &doc_cid,
+            &doc_block,
+        )
+        .await
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
         let creator_did = defra_core::signing::get_broadcast_creator_did();
         register_update_event_callback(
             txn,
