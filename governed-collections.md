@@ -75,11 +75,11 @@ attributes; pinned by `ungoverned_identities_are_pinned` in
 ```mermaid
 flowchart TB
   S["Schema (SDL)"] --> C["Commitments<br/>root · branchable · per-field immutable · policy"]
-  C --> B1["Definition block<br/>WITHOUT policy_cid"]
-  C --> B2["Definition block<br/>WITH policy_cid"]
+  C --> B1["Definition block<br/>WITHOUT policy_cid and rule"]
+  C --> B2["Definition block<br/>WITH policy_cid and rule"]
   B1 --> CID1["collection ID = CID(B1)"]
   B2 --> CID2["version ID = CID(B2)"]
-  CID1 -.->|"no policy, or ungoverned"| SAME["collection ID = version ID"]
+  CID1 -.->|"neither a policy nor a rule, or ungoverned"| SAME["collection ID = version ID"]
 ```
 
 - **Collection ID** answers "which collection is this". It commits to the
@@ -130,7 +130,7 @@ flowchart LR
   G -- "links: field name → block" --> f1["Field block<br/>LWW / counter delta bytes"]
   G -- links --> f2["Field block"]
   U1 -- links --> f3["Field block (changed field)"]
-  G -. signature .-> S0["Signature block<br/>signer DID, sig over the composite"]
+  G -. signature .-> S0["Signature block<br/>signer's public key, sig over the composite"]
 ```
 
 Field blocks are content-addressed bytes; an encrypted field links an
@@ -423,11 +423,11 @@ sequenceDiagram
   participant Op as Operator
 
   P->>H: definition block (+ field blocks)
-  H->>H: version ID = CID, collection ID = CID of the block without policy_cid
+  H->>H: version ID = CID, collection ID = CID of the block without policy_cid and rule
   alt this version is already held
     H-->>P: nothing rebuilt
   else
-    H->>H: rebuild record: root, branchable, immutable flags from the delta
+    H->>H: rebuild record: fields and immutable flags from the delta, root and branchable from the delta or the version patched
     H->>H: policy: restored if a held version of the same collection has the reference the policy CID names, else policy_cid recorded, policy absent
     alt governed and claimed
       H->>H: validate_definition(candidate, view)
@@ -619,7 +619,8 @@ sequenceDiagram
 ```
 
 So the rule is part of what replicas agree on, a rule change is a version
-in the DAG judged under the rule it supersedes, execution is bounded, and
+in the DAG judged by the rule in force (the module the superseded version
+names, so a patch cannot admit itself), execution is bounded, and
 the inputs a verdict consumed are the closure an audit would replay it
 over. There is no order, no consensus and no value here; a write is still
 judged on what the replica holds and settles when the rest arrives.
