@@ -67,7 +67,7 @@ pub fn sign_batch(cids: &[Cid], config: &SigningConfig) -> Result<BatchSignature
             ("ES256K".to_string(), sig)
         }
         defra_core::signing::SigningKeyType::Secp256r1
-        | defra_core::signing::SigningKeyType::Bls => {
+        | defra_core::signing::SigningKeyType::BlsAugV1 => {
             return Err(BatchSignError::UnsupportedKeyType(
                 config.key_type.to_string(),
             ))
