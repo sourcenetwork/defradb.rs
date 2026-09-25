@@ -21,7 +21,7 @@ mod lww;
 mod protected_update;
 mod recovery;
 pub mod se_merge;
-mod signature;
+pub(crate) mod signature;
 pub(crate) use signature::verify_signature_data;
 
 pub use error::MergeError;

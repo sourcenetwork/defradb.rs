@@ -241,6 +241,9 @@ pub struct DB<S: Store> {
     /// awaiting what the write created are released.
     local_commit_release:
         std::sync::OnceLock<Arc<dyn crate::merge::governance::LocalCommitRelease>>,
+    /// Judges each composite a local write builds, before the transaction
+    /// commits, with the merge validator every peer will apply to it.
+    local_write_judge: std::sync::OnceLock<Arc<dyn crate::merge::governance::LocalWriteJudge>>,
     /// Per-document write serialization queue. Shared with the merge handler so
     /// local writes and P2P merges that touch the same document never interleave
     /// their CRDT read-modify-write (#1021 counter convergence).
@@ -293,6 +296,7 @@ impl<S: Store> DB<S> {
             nac_manager: std::sync::OnceLock::new(),
             merge_governance: std::sync::OnceLock::new(),
             local_commit_release: std::sync::OnceLock::new(),
+            local_write_judge: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: HopscotchMap::with_hasher(RandomState::default()),
@@ -358,6 +362,7 @@ impl<S: Store> DB<S> {
             nac_manager: std::sync::OnceLock::new(),
             merge_governance: std::sync::OnceLock::new(),
             local_commit_release: std::sync::OnceLock::new(),
+            local_write_judge: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: HopscotchMap::with_hasher(RandomState::default()),
@@ -512,6 +517,16 @@ impl<S: Store> DB<S> {
         &self,
     ) -> Option<&Arc<dyn crate::merge::governance::LocalCommitRelease>> {
         self.local_commit_release.get()
+    }
+
+    pub fn set_local_write_judge(&self, judge: Arc<dyn crate::merge::governance::LocalWriteJudge>) {
+        let _ = self.local_write_judge.set(judge);
+    }
+
+    pub(crate) fn local_write_judge(
+        &self,
+    ) -> Option<&Arc<dyn crate::merge::governance::LocalWriteJudge>> {
+        self.local_write_judge.get()
     }
 
     /// Get the NAC manager, if one has been installed.
