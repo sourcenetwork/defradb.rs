@@ -141,11 +141,7 @@ impl OrbisClient {
             return Err(error("BLS signature must contain 96 hex-encoded bytes"));
         }
         let signature = hex::decode(response.signature).map_err(error)?;
-        if !self
-            .public_key
-            .verify_augmented(data, &signature)
-            .map_err(error)?
-        {
+        if !self.public_key.verify(data, &signature).map_err(error)? {
             return Err(error("invalid signature"));
         }
         Ok(signature)

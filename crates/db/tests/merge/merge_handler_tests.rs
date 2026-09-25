@@ -734,12 +734,12 @@ async fn sign_block_bls(
     let did = crypto::keys::PublicKey::did(&bls_pub).unwrap();
 
     let signed_bytes = block.to_dag_cbor().unwrap();
-    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    let sig = sk.sign(&signed_bytes, dst, &[]);
+    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_";
+    let sig = sk.sign(&signed_bytes, dst, &pk_bytes);
     let sig_bytes = sig.compress().to_vec();
 
     let sig_block = Signature::new(
-        SignatureHeader::new(SignatureType::BLS, pub_hex.as_bytes().to_vec()),
+        SignatureHeader::new(SignatureType::BLSAugV1, pub_hex.as_bytes().to_vec()),
         sig_bytes,
     );
     let sig_data = sig_block.to_dag_cbor().unwrap();
