@@ -516,6 +516,24 @@ async fn a_rule_module_is_put_under_its_raw_cid() {
     assert!(blockstore.get_unmerged().await.unwrap().is_empty());
 }
 
+/// An installer compiles a module when it installs it: one this engine
+/// cannot run is refused then, and one it can is named by its CID.
+async fn a_rule_module_is_compiled_when_installed(engine: RuleEngine) {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let rules = WasmRules::with_engine(
+        Arc::new(BlockstoreModules::new(Arc::new(DefraBlockstore::new(
+            store, true,
+        )))),
+        engine,
+        RuleBudget::default(),
+    )
+    .unwrap();
+    let module = guest(ACCEPT, ACCEPT);
+    assert_eq!(rules.precompile(&module), Ok(module_cid(&module)));
+    let error = rules.precompile(b"not wasm").unwrap_err();
+    assert!(error.contains("does not compile"), "{error}");
+}
+
 /// Each case, once per engine.
 macro_rules! on_both_engines {
     ($($case:ident),* $(,)?) => {
@@ -550,4 +568,5 @@ on_both_engines!(
     a_rule_module_using_the_shared_profile_runs,
     a_rule_module_outside_the_profile_is_refused,
     a_rule_module_answering_past_its_memory_is_an_error,
+    a_rule_module_is_compiled_when_installed,
 );

@@ -20,6 +20,7 @@ type WasmRunner =
 use crate::bindings::{from_js, to_js, ClientConfig, CollectionInfo, FieldInfo};
 use crate::document_changes::DocumentChanges;
 use crate::error::{Result, WasmError};
+use crate::governance::Governance;
 use crate::identity::{ClientIdentity, SigningGuard};
 use crate::p2p::P2PRuntime;
 
@@ -59,6 +60,7 @@ pub struct DefraClient {
     pub(crate) document_acp: Arc<dyn acp::DocumentACP>,
     pub(crate) p2p: Option<P2PRuntime>,
     pub(crate) identity: Option<ClientIdentity>,
+    pub(crate) governance: Option<Governance>,
     mutate_lock: futures::lock::Mutex<()>,
     closed: bool,
 }
@@ -75,6 +77,9 @@ impl DefraClient {
     /// - `require_sync_handles`: fail instead of falling back to the
     ///   in-memory mirror when OPFS synchronous access handles are refused,
     ///   so a Worker taking over a database can retry (optional)
+    /// - `governance`: `{ collections, rule_modules, budget, engine }`, the
+    ///   collections the application claims, judged by the wasm rule module
+    ///   each version names (optional; see [`crate::governance::GovernanceConfig`])
     ///
     /// # Example
     ///
@@ -265,6 +270,11 @@ impl DefraClient {
             .map_err(|e| WasmError::Storage(format!("Failed to load collections: {}", e)))?;
 
         let db = Arc::new(db);
+        // Before the runner exists: nothing can write or merge ungoverned.
+        let governance = match config.governance.as_ref() {
+            Some(governance) => Some(Governance::install(&db, governance).await?),
+            None => None,
+        };
         let document_acp: Arc<dyn acp::DocumentACP> =
             Arc::new(acp::ZanzibarDocumentACP::new(Arc::new(
                 acp::PersistentZanzibarStore::from_store(Arc::clone(db.store())),
@@ -286,6 +296,7 @@ impl DefraClient {
             document_acp,
             p2p: None,
             identity,
+            governance,
             mutate_lock: futures::lock::Mutex::new(()),
             closed: false,
         })
@@ -437,6 +448,9 @@ impl DefraClient {
         }
 
         self.stop_p2p_impl().await;
+        if let Some(governance) = self.governance.as_mut() {
+            governance.stop().await;
+        }
         self.event_bus.close();
 
         // Drop runner first — it holds Arc<DB> refs via fetcher, mutator, and provider

@@ -163,6 +163,9 @@ impl DefraClient {
         .await?;
         let endpoint_id = runtime.endpoint_id();
         self.p2p = Some(runtime);
+        if let Some(governance) = self.governance.as_ref() {
+            governance.set_peer_running(true);
+        }
         self.rebuild_runner();
         Ok(endpoint_id)
     }
@@ -171,6 +174,9 @@ impl DefraClient {
         if let Some(runtime) = self.p2p.take() {
             self.rebuild_runner();
             runtime.shutdown().await;
+            if let Some(governance) = self.governance.as_ref() {
+                governance.set_peer_running(false);
+            }
         }
     }
 

@@ -48,7 +48,12 @@ hex.workspace = true
 getrandom = { version = "0.2", features = ["js"] }
 
 # Internal crates - use db crate which provides everything
-db = { path = "../db", default-features = false }
+# `wasm-rules`: a governed collection is judged here by the same rule
+# module a relay runs, on wasmi.
+db = { path = "../db", default-features = false, features = ["wasm-rules"] }
+blockstore = { path = "../blockstore" }
+serde_bytes.workspace = true
+n0-future.workspace = true
 storage = { path = "../storage", default-features = false, features = ["wasm"] }
 schema = { path = "../schema" }
 document = { path = "../document" }
@@ -71,6 +76,8 @@ cid.workspace = true
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+# Rule-module guests for the governance tests, assembled in the test.
+wat = "1"
 # The relay end-to-end test drives a native node's HTTP API with fetch and
 # waits on replication with browser timers.
 web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }

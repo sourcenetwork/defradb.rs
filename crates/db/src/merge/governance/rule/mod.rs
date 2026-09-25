@@ -246,6 +246,22 @@ impl WasmRules {
         self.budget
     }
 
+    /// Compile a module now and keep it for the versions that name it,
+    /// returning its CID: an installer finds a module this engine cannot
+    /// run when it installs it, not when the first write it governs stays
+    /// unmerged.
+    pub fn precompile(&self, bytes: &[u8]) -> Result<Cid, String> {
+        let cid = module_cid(bytes);
+        if self.compiled.get(&cid).is_none() {
+            let module = self
+                .runtime
+                .compile(bytes)
+                .map_err(|error| format!("rule module {cid} does not compile: {error}"))?;
+            self.compiled.insert(cid, Arc::new(module));
+        }
+        Ok(cid)
+    }
+
     /// The compiled module a version names, `Ok(None)` when its bytes are
     /// not held here.
     async fn module_for(&self, rule: &str) -> Result<Option<Arc<Compiled>>, String> {
