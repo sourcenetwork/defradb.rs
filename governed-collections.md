@@ -494,7 +494,72 @@ verifies, but this PR defines none. Until it does, auditability is: the
 
 ---
 
-## 9. What is not in this PR
+## 9. Emission: what a verdict may write beside itself
+
+A validator returns a verdict and, beside it, zero or more **emissions**: the
+shape is `(verdict, emit: 0..many)`, never a fourth outcome. `judge` returns a
+`Judged { verdict, emit }` and defaults to `validate` with nothing emitted, so
+a validator that only implements `validate` is unchanged; `judge_definition`
+is the same beside `validate_definition`.
+
+An `Emission` names a collection and the fields of a document. The host
+builds it as a genesis composite with no signature and no encryption, holds
+its blocks, and merges it through the re-drive queue, so it is judged if its
+collection is claimed, its heads are installed, and it is forwarded to
+replicators like any re-driven merge. Nothing about it is special once it is
+a block: a peer receiving it judges it as it judges anything.
+
+**The same fact is the same record.** No node-local value reaches the bytes
+(the create path's priority is always 1, and the document identity only keys
+headstore entries and scopes encryption, which is off), so the record has
+the same CID and the same document id on every replica that finds the fact.
+A replica that finds it again, on a re-drive, a sweep or a restart, holds it
+already and adds nothing. This is what makes emission safe under re-drive,
+where a deferred composite is judged many times: it is the second copy's
+being byte identical, not any bookkeeping, that stops it multiplying.
+
+**Emit only stable facts.** What may be emitted is a fact no later arrival
+takes back: a reject and its reason, which rests on present bytes; two signed
+entries at one position, which is a fork whatever else arrives. A fork is
+found during a verdict that ends in a *defer*, which is why the constraint is
+on the emission and not on the verdict it rides with. What must never be
+emitted is the verdict-shaped non-fact: "deferred", "not yet approved", or
+anything resting on absence. A validator that emits "not yet" has emitted a
+lie no replica can withdraw.
+
+**A record is evidence, never an input.** A validator reading a record must
+be able to recompute it from what it holds, or defer. If a record could make
+a verdict reach a conclusion the bytes alone could not, verdicts would depend
+on which replica judged first.
+
+**When it is written.** Emissions are queued while a block is judged and
+written once its merge attempt returns: an attempt may fail and be retried,
+and a retry judges again, so an attempt that errors discards what it queued.
+Writing then re-drives, so the record is judged and merged in the same call
+rather than on the next sweep. A record the node cannot write (an unknown
+collection, a field its schema does not hold) is logged and dropped; the
+verdict it came with stands, as an error is never a verdict.
+
+**Chains are bounded.** A record's own judgement may emit. Each emitted
+composite remembers how deep in such a chain it sits, and an emission past
+`MAX_EMISSION_DEPTH` (4) is dropped with a warning, so a rule that records
+its own records stops.
+
+**Not here.** A node's own writes are judged before they commit (§5) but do
+not emit: the write is not yet a block when it is judged, and every peer that
+merges it judges it in full and emits then, so the author holds the record
+as soon as it replicates. Emission from the local write path is a follow-up.
+The retention consequence, that a receipt carrying the culprit's own signed
+headers lets the two halves of a fork be released while the proof survives,
+belongs with a disposition primitive and is not in this PR either.
+
+Tests: `crates/db/tests/merge/governance/emission.rs`: a record emitted with
+an accept merges and is forwarded; one emitted with a defer is written once
+across sweeps; the same fact is the same record on two nodes; a record into a
+claimed collection is judged and a signed look-alike refused; a chain stops
+at the bound; an unwritable emission never fails its verdict.
+
+## 10. What is not in this PR
 
 - **Replication policy** (#1781, on top of this PR): what a node sends to or
   accepts from a peer, per collection and document. Narrowing only; it can
