@@ -83,9 +83,13 @@ flowchart TB
 ```
 
 - **Collection ID** answers "which collection is this". It commits to the
-  root, immutability and branchability. Two nodes that disagree about any of
-  those derive different collection IDs and are not replicas of each other
-  (`crates/schema/src/cid.rs`, `Commitments`).
+  root, immutability and branchability **of the initial definition**. Two
+  nodes that disagree about any of those derive different collection IDs
+  and are not replicas of each other (`crates/schema/src/cid.rs`,
+  `Commitments`). A patch inherits the collection ID from the version it
+  supersedes, even when it adds a field marked `@immutable`: the patch's
+  version ID commits to the new field, its collection ID does not, so the
+  collection ID cannot be used to detect what a patch changed.
 - **Version ID** answers "which revision of it". It additionally commits to
   the policy, so attaching or changing a policy mints a new version of the
   *same* collection. That is the "model-and-revision pair" of the ACP2 design:
@@ -439,7 +443,12 @@ honour them, or the commitment is decoration. This is the list.
 
 What a governed document's DAG proves, to anyone holding the bytes:
 
-- **who wrote each composite**: the signature block, verified to a DID;
+- **who wrote each composite**: the signature block, verified to a DID,
+  provided the composite carries one. `SignatureStatus` includes
+  `Unsigned`, and whether an unsigned composite is accepted is the
+  validator's call; an accepted unsigned composite proves nothing about its
+  author. Signer provenance therefore requires a validator that refuses
+  anything but a verified signature;
 - **in what order**: heads, by content;
 - **under which policy revision**: `schema_version_id`, whose version ID
   commits to the policy;
