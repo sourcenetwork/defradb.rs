@@ -9,7 +9,7 @@
 use db::merge::governance::rule::{BlockstoreModules, RuleBudget, WasmRules};
 use sha2::Digest as _;
 
-use super::definition::definition_block;
+use super::definition::{definition_block, patch_block};
 use super::*;
 
 /// `{"verdict":"accept"}`
@@ -250,8 +250,8 @@ async fn a_rule_module_not_held_defers_until_it_is() {
     );
 }
 
-/// A definition of a governed collection is judged by the module its own
-/// rule tag names.
+/// An initial definition is judged by the module its own rule tag names:
+/// there is no rule in force before it.
 #[tokio::test]
 async fn a_rule_module_judges_definitions_too() {
     let (node, _) = rules_node(&guest(ACCEPT, ACCEPT), RuleBudget::default()).await;
@@ -271,8 +271,8 @@ async fn a_rule_module_judges_definitions_too() {
         .put(&rejecting_cid, &rejecting)
         .await
         .unwrap();
-    // The same name under another root is a different collection, judged
-    // by the module its own tag names.
+    // The same name under another root is a different collection, an
+    // initial definition judged by the module its own tag names.
     let refused = definition_block(
         "Ledgers",
         &["_docID", "!writer"],
@@ -287,4 +287,48 @@ async fn a_rule_module_judges_definitions_too() {
         held.schema().governance_rule.as_deref(),
         Some(accepting.to_string().as_str())
     );
+}
+
+/// A patch that changes the rule is judged by the rule in force, the one the
+/// version it supersedes names, so a patch cannot admit itself by naming a
+/// permissive module. Here the accepting rule admits a change to the
+/// rejecting one, and the rejecting rule then refuses the change back.
+#[tokio::test]
+async fn a_rule_change_is_judged_by_the_rule_in_force() {
+    let accepting = guest(ACCEPT, ACCEPT);
+    let rejecting = guest(REJECT, REJECT);
+    let (node, _) = rules_node(&accepting, RuleBudget::default()).await;
+    let rejecting_cid = module_cid(&rejecting);
+    node.blockstore
+        .put(&rejecting_cid, &rejecting)
+        .await
+        .unwrap();
+
+    let initial = definition_block(
+        "Ledgers",
+        &["_docID", "!writer"],
+        Some("root-a"),
+        false,
+        Some(&module_cid(&accepting).to_string()),
+    );
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+
+    let to_rejecting = patch_block(&initial, &["note"], Some(&rejecting_cid.to_string()));
+    assert_eq!(
+        to_rejecting.merge(&node).await,
+        MergeOutcome::Merged,
+        "the rule in force, which accepts everything, did not admit the change"
+    );
+
+    let back = patch_block(
+        &to_rejecting,
+        &["more"],
+        Some(&module_cid(&accepting).to_string()),
+    );
+    assert_eq!(
+        back.merge(&node).await,
+        MergeOutcome::rejected("forged"),
+        "the rule now in force, which rejects everything, admitted a change"
+    );
+    assert!(!node.holds_version(&back.cid).await);
 }
