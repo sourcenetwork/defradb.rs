@@ -32,7 +32,7 @@ p2p = { path = "../p2p" }
 query = { path = "../query" }
 replication-filter = { path = "../replication-filter" }
 schema = { path = "../schema" }
-sourcehub = { path = "../sourcehub", optional = true }
+vera = { path = "../vera", optional = true }
 storage = { path = "../storage" }
 
 anyhow.workspace = true
@@ -60,8 +60,9 @@ wasmtime-runtime = [
     "defra-p2p-adapter/wasmtime-runtime",
     "lens/wasmtime-runtime",
 ]
-# SourceHub on-chain document ACP.
-sourcehub = ["dep:sourcehub"]
+# Vera on-chain document ACP.
+vera = ["dep:vera"]
+sourcehub = ["vera"]
 # libp2p transport. Default-on; omit for an iroh-only or transportless node.
 libp2p = [
     "db/p2p",

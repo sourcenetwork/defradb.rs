@@ -142,7 +142,7 @@ async fn rust_rust_secp256k1_acp_round_trip() {
     // caller to be the document's owner, and the owner is registered only on the
     // creating node (node0). If the secp256k1 DID survived creation/ACP
     // registration on node0, alice can grant a reader there. (Grants do not
-    // propagate to peers; cross-node access control is SourceHub ACP's job.)
+    // propagate to peers; cross-node access control is Vera ACP's job.)
     node0
         .acp_relationship_add("User", &doc_id, "reader", &bob.did, &alice.private_key_hex)
         .expect(

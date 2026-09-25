@@ -42,7 +42,7 @@ lens = { path = "../lens" }
 document = { path = "../document" }
 keyring = { path = "../keyring" }
 orbis = { path = "../orbis", optional = true }
-sourcehub = { path = "../sourcehub", optional = true }
+vera = { path = "../vera", optional = true }
 defra-version = { path = "../defra-version" }
 pg-compat = { path = "../pg-compat", optional = true }
 telemetry = { path = "../telemetry", default-features = false }
@@ -117,10 +117,11 @@ optional = true
 
 [features]
 default = []
-release-full = ["postgres", "sourcehub", "orbis"]
+release-full = ["postgres", "vera", "orbis"]
 postgres = ["dep:pg-compat"]
-# SourceHub/hub.rs on-chain document ACP (`--document-acp-type source-hub|hub-rs`).
-sourcehub = ["dep:sourcehub"]
+# Vera/hub.rs on-chain document ACP (`--document-acp-type vera|hub-rs`).
+vera = ["dep:vera"]
+sourcehub = ["vera"]
 # Orbis ring threshold signing (`--signer-type orbis`).
 orbis = ["dep:orbis"]
 iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms", "dep:iroh-net", "dep:rand"]

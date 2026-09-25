@@ -98,7 +98,7 @@ message SignRequest {
   //   "aux_rand": additional randomness for FROST
   map<string, bytes> options = 5;
 
-  // ACP authorization fields (optional — when non-empty, Orbis checks ACP on SourceHub).
+  // ACP authorization fields (optional — when non-empty, Orbis checks ACP on Vera).
   // These must match the corresponding fields in the JWT claims.
   string policy_id = 6;
   string resource = 7;

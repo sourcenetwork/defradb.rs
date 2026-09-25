@@ -191,7 +191,7 @@ impl std::str::FromStr for TransportType {
 ///
 /// - `None`: No document-level access control (default)
 /// - `Local`: Local Zanzibar-based ACP
-/// - `SourceHub`: Remote SourceHub ACP (Cosmos SDK / Go sourcehubd)
+/// - `Vera`: Remote Vera ACP (Cosmos SDK / Go verad)
 /// - `HubRs`: Remote hub.rs ACP (EVM precompile / hub.rs node)
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -200,9 +200,10 @@ pub enum AcpDocumentType {
     #[default]
     None,
     Local,
-    #[cfg(feature = "sourcehub")]
-    SourceHub,
-    #[cfg(feature = "sourcehub")]
+    #[cfg(feature = "vera")]
+    #[serde(alias = "sourcehub", alias = "source-hub")]
+    Vera,
+    #[cfg(feature = "vera")]
     HubRs,
 }
 
@@ -211,9 +212,9 @@ impl std::fmt::Display for AcpDocumentType {
         match self {
             AcpDocumentType::None => write!(f, "none"),
             AcpDocumentType::Local => write!(f, "local"),
-            #[cfg(feature = "sourcehub")]
-            AcpDocumentType::SourceHub => write!(f, "source-hub"),
-            #[cfg(feature = "sourcehub")]
+            #[cfg(feature = "vera")]
+            AcpDocumentType::Vera => write!(f, "vera"),
+            #[cfg(feature = "vera")]
             AcpDocumentType::HubRs => write!(f, "hub-rs"),
         }
     }
@@ -226,9 +227,9 @@ impl std::str::FromStr for AcpDocumentType {
         match s.to_lowercase().replace('-', "").as_str() {
             "none" | "" => Ok(AcpDocumentType::None),
             "local" => Ok(AcpDocumentType::Local),
-            #[cfg(feature = "sourcehub")]
-            "sourcehub" => Ok(AcpDocumentType::SourceHub),
-            #[cfg(feature = "sourcehub")]
+            #[cfg(feature = "vera")]
+            "vera" | "sourcehub" => Ok(AcpDocumentType::Vera),
+            #[cfg(feature = "vera")]
             "hubrs" => Ok(AcpDocumentType::HubRs),
             _ => Err(Error::InvalidAcpType(s.to_string())),
         }

@@ -118,20 +118,20 @@ pub enum SigningKey {
 pub enum DocumentAcpConfig {
     #[default]
     Local,
-    #[cfg(feature = "sourcehub")]
-    SourceHub(SourceHubConfig),
-    /// SourceHub ACP with distinct LCD and gRPC endpoints.
-    #[cfg(feature = "sourcehub")]
-    SourceHubWithLcd {
-        config: SourceHubConfig,
+    #[cfg(feature = "vera")]
+    Vera(VeraConfig),
+    /// Vera ACP with distinct LCD and gRPC endpoints.
+    #[cfg(feature = "vera")]
+    VeraWithLcd {
+        config: VeraConfig,
         lcd_address: String,
     },
 }
 
-/// SourceHub document ACP configuration.
-#[cfg(feature = "sourcehub")]
+/// Vera document ACP configuration.
+#[cfg(feature = "vera")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceHubConfig {
+pub struct VeraConfig {
     pub grpc_address: String,
     pub comet_rpc_address: String,
     pub chain_id: String,

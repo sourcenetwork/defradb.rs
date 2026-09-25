@@ -565,5 +565,5 @@ async fn peer_no_key_should_not_fetch() {
     }
 }
 
-// ACP encryption tests live in the sourcehub suite (they own the SourceHub
-// harness setup): tools/integration-test/tests/sourcehub/encryption_acp.rs.
+// ACP encryption tests live in the vera suite (they own the Vera
+// harness setup): tools/integration-test/tests/vera/encryption_acp.rs.

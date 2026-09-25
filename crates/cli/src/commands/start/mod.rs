@@ -135,7 +135,7 @@ pub struct StartArgs {
     ///
     /// The ring authenticates a Sign request by a JWT whose algorithm follows
     /// the key type, and it accepts EdDSA (ed25519) only. `--identity` is also
-    /// the key that signs SourceHub/Vera transactions, which must be
+    /// the key that signs Vera transactions, which must be
     /// secp256k1. One key therefore cannot serve both roles: without this
     /// flag a node with a secp256k1 identity presents an ES256K token and the
     /// ring rejects it as an unknown algorithm.
@@ -289,7 +289,7 @@ pub struct StartArgs {
     #[arg(long, env = "DEFRA_ACP_CIRCUIT_BREAKER_RESET_TIMEOUT")]
     pub acp_circuit_breaker_reset_timeout: Option<u64>,
 
-    /// ACP request timeout in seconds for SourceHub/hub.rs calls (default: 5)
+    /// ACP request timeout in seconds for Vera/hub.rs calls (default: 5)
     #[arg(long, env = "DEFRA_ACP_REQUEST_TIMEOUT")]
     pub acp_request_timeout: Option<u64>,
 

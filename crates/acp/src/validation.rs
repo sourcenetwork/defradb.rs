@@ -11,8 +11,8 @@
 //! 3. Resource must declare all DPI-required permissions (`read`, `update`,
 //!    `delete` for document ACP)
 //!
-//! Used by both `AcpAdapter` (local ACP backend) and `SourceHubAcpAdapter`
-//! (SourceHub-backed ACP backend with a local policy cache). Go's equivalent
+//! Used by both `AcpAdapter` (local ACP backend) and `VeraAcpAdapter`
+//! (Vera-backed ACP backend with a local policy cache). Go's equivalent
 //! is called by the schema-add path at `internal/db/definition_validation.go`.
 
 use crate::Policy;

@@ -33,7 +33,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | KMS key distribution | TLA+ | kms, db-merge |
 | Encrypted LWW restart/replay | TLA+ + existing LWW Lean law | kms, p2p, db-merge, crdt |
 | Management-channel auth (NAC gate) | TLA+ | http, db-nac, pg-compat |
-| ACP soundness + revocation + dual-path commits | TLA+ & Lean | acp, zanzibar, sourcehub, query, db |
+| ACP soundness + revocation + dual-path commits | TLA+ & Lean | acp, zanzibar, vera, query, db |
 | Storage SSI serializability (point + range/scan carve-out) | TLA+ | storage |
 | P2P explicit-replay capability gate | TLA+ | p2p |
 | NAC lifecycle privilege-escalation | TLA+ | acp, db-nac |

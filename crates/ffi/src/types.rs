@@ -184,16 +184,16 @@ pub struct NodeInitOptions {
     pub signing_private_key: *const u8,
     /// Length of signing_private_key in bytes. 0 if null.
     pub signing_private_key_len: usize,
-    /// SourceHub gRPC/LCD address (null = use local ACP).
-    pub sourcehub_grpc_address: *const c_char,
-    /// SourceHub CometBFT RPC address.
-    pub sourcehub_comet_rpc_address: *const c_char,
-    /// SourceHub chain ID (e.g., "sourcehub-test").
-    pub sourcehub_chain_id: *const c_char,
-    /// SourceHub secp256k1 signer key bytes (raw 32-byte private key).
-    pub sourcehub_signer_key: *const u8,
-    /// Length of sourcehub_signer_key. 0 if null.
-    pub sourcehub_signer_key_len: usize,
+    /// Vera gRPC/LCD address (null = use local ACP).
+    pub vera_grpc_address: *const c_char,
+    /// Vera CometBFT RPC address.
+    pub vera_comet_rpc_address: *const c_char,
+    /// Vera chain ID (e.g., "vera-test").
+    pub vera_chain_id: *const c_char,
+    /// Vera secp256k1 signer key bytes (raw 32-byte private key).
+    pub vera_signer_key: *const u8,
+    /// Length of vera_signer_key. 0 if null.
+    pub vera_signer_key_len: usize,
     /// Optional P2P transport backend for `new_node_with_p2p`: "libp2p" (default) or "iroh".
     pub p2p_transport: *const c_char,
     /// Optional iroh relay URL.
@@ -237,11 +237,11 @@ impl Default for NodeInitOptions {
             signing_key_type: ptr::null(),
             signing_private_key: ptr::null(),
             signing_private_key_len: 0,
-            sourcehub_grpc_address: ptr::null(),
-            sourcehub_comet_rpc_address: ptr::null(),
-            sourcehub_chain_id: ptr::null(),
-            sourcehub_signer_key: ptr::null(),
-            sourcehub_signer_key_len: 0,
+            vera_grpc_address: ptr::null(),
+            vera_comet_rpc_address: ptr::null(),
+            vera_chain_id: ptr::null(),
+            vera_signer_key: ptr::null(),
+            vera_signer_key_len: 0,
             p2p_transport: ptr::null(),
             iroh_relay_url: ptr::null(),
             iroh_relay_mode: ptr::null(),

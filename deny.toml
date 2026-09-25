@@ -104,12 +104,12 @@ skip = [
     { crate = "prost@0.11.9", reason = "iroh-bitswap (beetle fork) pins prost 0.11; removable only by a beetle commit + rev bump" },
 
     # prost 0.13 — cosmos-sdk-proto / tendermint / ics23 under cosmrs
-    # 0.22 (crates/sourcehub), and jmt under acp-light-client.
+    # 0.22 (crates/vera), and jmt under acp-light-client.
     # Removable when that stack moves to prost 0.14.
     { crate = "prost@0.13.5", reason = "hard-pinned by the cosmrs 0.22 / tendermint 0.40 stack; not ours to move" },
 
     # sha2 0.9 — ed25519-consensus 2.1, via commonware-cryptography and
-    # tendermint. Only present in sourcehub/backbone builds.
+    # tendermint. Only present in vera/backbone builds.
     { crate = "sha2@0.9.9", reason = "ed25519-consensus 2.1 under commonware-cryptography and tendermint" },
 
     # sha2 0.11 — multihash-codetable 0.2.2 requires sha2 0.11 and sits
@@ -158,12 +158,12 @@ skip = [
     # unsigned-varint 0.7 — multistream-select 0.13 inside libp2p.
     { crate = "unsigned-varint@0.7.2", reason = "multistream-select 0.13 inside libp2p" },
 
-    # sysinfo 0.37 — commonware-runtime, i.e. sourcehub/backbone builds
+    # sysinfo 0.37 — commonware-runtime, i.e. vera/backbone builds
     # only. crates/p2p was moved 0.29 -> 0.33 in #1333 to unify with
     # libp2p-memory-connection-limits 0.5, which is present in every
     # Go-interop variant; 0.37 would have unified with commonware
     # instead and left the default CLI on two versions.
-    { crate = "sysinfo@0.37.2", reason = "commonware-runtime; sourcehub/backbone builds only" },
+    { crate = "sysinfo@0.37.2", reason = "commonware-runtime; vera/backbone builds only" },
 
     # thiserror 1 — graphql-parser 0.4, josekit 0.8, lark-kv,
     # iroh-bitswap (beetle), cosmrs, jmt, tendermint-rpc,

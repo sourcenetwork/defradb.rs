@@ -7,8 +7,8 @@ use crate::Persistence;
 pub(crate) struct DocumentAcpSetup {
     pub document_acp: Arc<dyn acp::DocumentACP>,
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
-    #[cfg(feature = "sourcehub")]
-    pub sourcehub_acp: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+    #[cfg(feature = "vera")]
+    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
 }
 
 pub(crate) async fn create_document_acp<S>(
@@ -20,54 +20,48 @@ where
     S: storage::corekv::Store + 'static,
 {
     match config {
-        #[cfg(feature = "sourcehub")]
-        crate::DocumentAcpConfig::SourceHub(sourcehub_config) => {
-            let tuning = sourcehub::AcpTuning::default();
+        #[cfg(feature = "vera")]
+        crate::DocumentAcpConfig::Vera(vera_config) => {
+            let tuning = vera::AcpTuning::default();
             let provider = Arc::new(
-                sourcehub::CosmosProvider::new(
-                    sourcehub_config.grpc_address.clone(),
-                    sourcehub_config.comet_rpc_address.clone(),
-                    &sourcehub_config.signer_key,
-                    &sourcehub_config.chain_id,
+                vera::CosmosProvider::new(
+                    vera_config.grpc_address.clone(),
+                    vera_config.comet_rpc_address.clone(),
+                    &vera_config.signer_key,
+                    &vera_config.chain_id,
                     &tuning,
                 )
-                .map_err(|error| anyhow!("failed to create SourceHub provider: {error}"))?,
+                .map_err(|error| anyhow!("failed to create Vera provider: {error}"))?,
             );
-            let sh_acp = Arc::new(sourcehub::SourceHubDocumentACP::new(
-                provider,
-                tuning.cache_ttl,
-            ));
+            let sh_acp = Arc::new(vera::VeraDocumentACP::new(provider, tuning.cache_ttl));
             Ok(DocumentAcpSetup {
                 document_acp: sh_acp.clone(),
                 local_zanzibar_store: None,
-                sourcehub_acp: Some(sh_acp),
+                vera_acp: Some(sh_acp),
             })
         }
-        #[cfg(feature = "sourcehub")]
-        crate::DocumentAcpConfig::SourceHubWithLcd {
-            config: sourcehub_config,
+        #[cfg(feature = "vera")]
+        crate::DocumentAcpConfig::VeraWithLcd {
+            config: vera_config,
             lcd_address,
         } => {
-            let tuning = sourcehub::AcpTuning::default();
+            let tuning = vera::AcpTuning::default();
             let provider = Arc::new(
-                sourcehub::CosmosProvider::new_with_grpc(
+                vera::CosmosProvider::new_with_grpc(
                     lcd_address.clone(),
-                    sourcehub_config.grpc_address.clone(),
-                    sourcehub_config.comet_rpc_address.clone(),
-                    &sourcehub_config.signer_key,
-                    &sourcehub_config.chain_id,
+                    vera_config.grpc_address.clone(),
+                    vera_config.comet_rpc_address.clone(),
+                    &vera_config.signer_key,
+                    &vera_config.chain_id,
                     &tuning,
                 )
-                .map_err(|error| anyhow!("failed to create SourceHub provider: {error}"))?,
+                .map_err(|error| anyhow!("failed to create Vera provider: {error}"))?,
             );
-            let sourcehub_acp = Arc::new(sourcehub::SourceHubDocumentACP::new(
-                provider,
-                tuning.cache_ttl,
-            ));
+            let vera_acp = Arc::new(vera::VeraDocumentACP::new(provider, tuning.cache_ttl));
             Ok(DocumentAcpSetup {
-                document_acp: sourcehub_acp.clone(),
+                document_acp: vera_acp.clone(),
                 local_zanzibar_store: None,
-                sourcehub_acp: Some(sourcehub_acp),
+                vera_acp: Some(vera_acp),
             })
         }
         crate::DocumentAcpConfig::Local => match persistence {
@@ -92,8 +86,8 @@ fn local_document_acp_setup(
     DocumentAcpSetup {
         document_acp,
         local_zanzibar_store: Some(zanzibar_store),
-        #[cfg(feature = "sourcehub")]
-        sourcehub_acp: None,
+        #[cfg(feature = "vera")]
+        vera_acp: None,
     }
 }
 
@@ -141,8 +135,8 @@ mod tests {
             .await
             .unwrap();
 
-        #[cfg(feature = "sourcehub")]
-        assert!(acp_setup.sourcehub_acp.is_none());
+        #[cfg(feature = "vera")]
+        assert!(acp_setup.vera_acp.is_none());
         let document_acp = acp_setup.document_acp;
         let local_store = acp_setup
             .local_zanzibar_store
