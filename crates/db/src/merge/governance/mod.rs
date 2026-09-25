@@ -4,6 +4,7 @@
 mod awaited;
 mod collection_block;
 mod deferred;
+mod emission;
 mod judge;
 mod local_commit;
 mod local_write;
@@ -22,6 +23,7 @@ pub(crate) use deferred::DeferredMerges;
 pub use deferred::{
     MAX_AWAITED_PER_COMPOSITE, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, REDRIVE_BUDGET,
 };
+pub use emission::MAX_EMISSION_DEPTH;
 pub(crate) use judge::{GovernedFrame, Judgement};
 pub use local_commit::LocalCommitRelease;
 pub(crate) use local_write::judge_local_write;
@@ -29,6 +31,8 @@ pub use local_write::LocalWriteJudge;
 pub use redriven::{RedrivenMerge, RedrivenMergeSink};
 pub use signature::SignatureStatus;
 pub use sweep::{run_governance_sweep, SWEEP_BUDGET, SWEEP_INTERVAL};
-pub use validator::{DefinitionCandidate, MergeCandidate, MergeGovernance, MergeValidator};
+pub use validator::{
+    DefinitionCandidate, Emission, Judged, MergeCandidate, MergeGovernance, MergeValidator,
+};
 pub use verdict::MergeVerdict;
 pub use view::{FieldValue, MergeView};

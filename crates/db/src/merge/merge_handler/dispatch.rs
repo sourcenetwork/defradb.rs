@@ -159,9 +159,31 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
     }
 
+    /// One merge attempt for a single block, then whatever its judgement
+    /// emitted: written and re-driven once the attempt has returned, since an
+    /// attempt may fail and be retried, and a retry judges again. An attempt
+    /// that errors discards what it queued.
+    pub(crate) async fn merge_block_attempt(
+        &self,
+        cid: &Cid,
+        block_data: &[u8],
+        metadata: BlockMetadata<'_>,
+    ) -> Result<MergeOutcome, MergeError> {
+        let outcome = self
+            .merge_block_attempt_judging(cid, block_data, metadata)
+            .await;
+        match &outcome {
+            // Boxed: writing re-drives, and a re-drive is another attempt, so
+            // the future would otherwise contain itself.
+            Ok(_) => Box::pin(self.write_emissions()).await,
+            Err(_) => self.discard_emissions(),
+        }
+        outcome
+    }
+
     /// One merge attempt for a single block. Conflict retry lives in the
     /// `MergeHandler::handle_block` wrapper above (Go's `executeMerge` split).
-    pub(crate) async fn merge_block_attempt(
+    async fn merge_block_attempt_judging(
         &self,
         cid: &Cid,
         block_data: &[u8],

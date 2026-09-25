@@ -30,6 +30,7 @@ use storage::RegolithStore;
 
 mod collection_block;
 mod definition;
+mod emission;
 mod local_write;
 mod lookup;
 mod sweep;

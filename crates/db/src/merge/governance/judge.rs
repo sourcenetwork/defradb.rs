@@ -6,7 +6,7 @@ use schema::CollectionVersion;
 use storage::corekv::Store;
 
 use super::awaited::{is_immutable_scalar_field, Awaited, WaitKey};
-use super::validator::{DefinitionCandidate, MergeCandidate};
+use super::validator::{DefinitionCandidate, Judged, MergeCandidate};
 use super::verdict::MergeVerdict;
 use super::view::DbMergeView;
 use crate::merge::merge_handler::{DbMergeHandler, MergeError};
@@ -76,12 +76,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             signature: self.frame_signature(cid, block).await?,
         };
         let view = DbMergeView::new(self);
-        let verdict = validator.validate(&candidate, &view).await;
+        let judged = validator.judge(&candidate, &view).await;
         view.finish().await;
-        let verdict = verdict.map_err(|error| {
+        let Judged { verdict, emit } = judged.map_err(|error| {
             MergeError::MergeFailed(format!("merge validator failed on {cid}: {error}"))
         })?;
-        tracing::debug!(%cid, %doc_id, collection = %collection.name, ?verdict, "Governed composite judged");
+        tracing::debug!(%cid, %doc_id, collection = %collection.name, ?verdict, emitted = emit.len(), "Governed composite judged");
+        self.queue_emissions(cid, emit);
         if matches!(verdict, MergeVerdict::Reject { .. }) {
             self.rejected_governed.insert(*cid, ());
         }
@@ -120,14 +121,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         };
         let cid = *candidate.cid;
         let view = DbMergeView::new(self);
-        let verdict = validator.validate_definition(&candidate, &view).await;
+        let judged = validator.judge_definition(&candidate, &view).await;
         view.finish().await;
-        let verdict = verdict.map_err(|error| {
+        let Judged { verdict, emit } = judged.map_err(|error| {
             MergeError::MergeFailed(format!(
                 "merge validator failed on definition {cid}: {error}"
             ))
         })?;
-        tracing::debug!(%cid, collection = %candidate.version.name, ?verdict, "Governed definition judged");
+        tracing::debug!(%cid, collection = %candidate.version.name, ?verdict, emitted = emit.len(), "Governed definition judged");
+        self.queue_emissions(&cid, emit);
         if matches!(verdict, MergeVerdict::Reject { .. }) {
             self.rejected_governed.insert(cid, ());
         }

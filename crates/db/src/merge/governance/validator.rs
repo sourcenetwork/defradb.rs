@@ -7,9 +7,78 @@ use defra_core::thread_bounds::MaybeSendSync;
 use rapidhash::RapidHashSet;
 use schema::CollectionVersion;
 
+use document::NormalValue;
+
 use super::signature::SignatureStatus;
 use super::verdict::MergeVerdict;
 use super::view::MergeView;
+
+/// A document a validator emits while judging: a stable fact about bytes it
+/// holds, written as a genesis composite into `collection` with these fields.
+///
+/// The host builds it unsigned and unencrypted, so the same fact is the same
+/// bytes, the same CID and the same document on every replica that finds it,
+/// and finding it again (a re-drive, a sweep, another replica) adds nothing.
+/// It is then merged through the ordinary path: judged by the validator if
+/// `collection` is claimed, its heads installed, and forwarded to replicators
+/// like any re-driven merge.
+///
+/// What may be emitted is a fact no later arrival can take back: a reject and
+/// its reason, or two signed entries at one position. A defer is not one, and
+/// neither is anything that rests on what is absent. A validator that emits
+/// "not yet" has emitted a lie it cannot withdraw.
+///
+/// A record is evidence, never an input: a validator reading one must be able
+/// to recompute it from what it holds, or must defer. Fields must belong to
+/// the collection's schema; a record the collection cannot hold is dropped
+/// with a warning and never fails the verdict it came with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Emission {
+    pub collection: String,
+    pub fields: Vec<(String, NormalValue)>,
+}
+
+impl Emission {
+    pub fn new(collection: impl Into<String>) -> Self {
+        Self {
+            collection: collection.into(),
+            fields: Vec::new(),
+        }
+    }
+
+    pub fn field(mut self, name: impl Into<String>, value: impl Into<NormalValue>) -> Self {
+        self.fields.push((name.into(), value.into()));
+        self
+    }
+}
+
+/// A verdict and what the validator emits beside it. The verdict is the same
+/// three outcomes as ever; emission is a sibling output, never a fourth.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Judged {
+    pub verdict: MergeVerdict,
+    pub emit: Vec<Emission>,
+}
+
+impl Judged {
+    pub fn new(verdict: MergeVerdict) -> Self {
+        Self {
+            verdict,
+            emit: Vec::new(),
+        }
+    }
+
+    pub fn emitting(mut self, emission: Emission) -> Self {
+        self.emit.push(emission);
+        self
+    }
+}
+
+impl From<MergeVerdict> for Judged {
+    fn from(verdict: MergeVerdict) -> Self {
+        Self::new(verdict)
+    }
+}
 
 /// One composite arriving over replication into a governed collection.
 ///
@@ -86,6 +155,18 @@ pub trait MergeValidator: MaybeSendSync {
         view: &dyn MergeView,
     ) -> Result<MergeVerdict, String>;
 
+    /// [`Self::validate`], with what the validator emits beside the verdict.
+    /// This is the method the host calls. The default emits nothing, so a
+    /// validator that only implements `validate` behaves as before; one that
+    /// emits implements this and may have `validate` return its verdict.
+    async fn judge(
+        &self,
+        candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<Judged, String> {
+        Ok(Judged::new(self.validate(candidate, view).await?))
+    }
+
     /// Judge a definition block of a governed collection the app has claimed,
     /// before the version it describes is stored. The same three verdicts
     /// and the same rules as [`Self::validate`]: a reject rests on the
@@ -112,6 +193,18 @@ pub trait MergeValidator: MaybeSendSync {
     ) -> Result<MergeVerdict, String> {
         let _ = (candidate, view);
         Ok(MergeVerdict::Accept)
+    }
+
+    /// [`Self::validate_definition`], with what the validator emits beside
+    /// the verdict, the way [`Self::judge`] is to [`Self::validate`].
+    async fn judge_definition(
+        &self,
+        candidate: &DefinitionCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<Judged, String> {
+        Ok(Judged::new(
+            self.validate_definition(candidate, view).await?,
+        ))
     }
 }
 
