@@ -29,6 +29,7 @@ use datastore::NamespaceView;
 use defra_core::block::{Block, CrdtDelta};
 use defra_core::thread_bounds::MaybeSendSync;
 use document::NormalValue;
+use schema::CollectionVersion;
 use storage::corekv::Store;
 
 use super::signature::SignatureStatus;
@@ -38,17 +39,41 @@ use super::view::{decode, DbMergeView, FieldValue, MergeView};
 use crate::merge::merge_handler::signature::verify_signature_data;
 use crate::merge::merge_handler::DbMergeHandler;
 
+/// The writing transaction's stores, as a judgement reads them: the blocks
+/// a write built (uncommitted), and the documents this transaction has
+/// written so far, so a write may rely on one made earlier in the same
+/// batch, as every peer will once both have replicated.
+pub struct PendingStores {
+    pub blockstore: NamespaceView,
+    pub datastore: NamespaceView,
+    pub systemstore: NamespaceView,
+}
+
+impl PendingStores {
+    /// Taken before any await, so no borrow of the transaction is held
+    /// across one.
+    pub fn of<S: Store>(txn: &crate::txn::DbTxn<S>) -> crate::Result<Self> {
+        Ok(Self {
+            blockstore: txn.blockstore()?,
+            datastore: txn.datastore()?,
+            systemstore: txn.systemstore()?,
+        })
+    }
+}
+
 /// Judges a composite a local write built, before its transaction commits.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait LocalWriteJudge: MaybeSendSync {
-    /// `pending` is the writing transaction's blockstore view, which holds
-    /// the composite, its field blocks and its signature block, uncommitted.
-    /// `Ok(None)` lets the write proceed; `Ok(Some(reason))` refuses it.
+    /// `collection` is the version the write path resolved, in the writing
+    /// transaction, so a collection defined in that same transaction is
+    /// judged too. `Ok(None)` lets the write proceed; `Ok(Some(reason))`
+    /// refuses it; `Err` refuses it as well, since a write nobody could
+    /// judge is a write every peer would defer.
     async fn judge(
         &self,
-        pending: &NamespaceView,
-        collection_name: &str,
+        pending: &PendingStores,
+        collection: &CollectionVersion,
         doc_id: &str,
         cid: &Cid,
         block: &[u8],
@@ -56,12 +81,12 @@ pub trait LocalWriteJudge: MaybeSendSync {
 }
 
 /// Judge a composite a local write built, if a judge is installed.
-/// `pending` is the writing transaction's blockstore view, taken by the
-/// caller so no transaction borrow is held across the judgement.
+/// `pending` is the writing transaction's stores, taken by the caller so no
+/// transaction borrow is held across the judgement.
 pub(crate) async fn judge_local_write<S: Store>(
     db: &crate::database::DB<S>,
-    pending: NamespaceView,
-    collection_name: &str,
+    pending: PendingStores,
+    collection: &CollectionVersion,
     doc_id: &str,
     cid: &Cid,
     block: &[u8],
@@ -69,10 +94,7 @@ pub(crate) async fn judge_local_write<S: Store>(
     let Some(judge) = db.local_write_judge() else {
         return Ok(());
     };
-    match judge
-        .judge(&pending, collection_name, doc_id, cid, block)
-        .await
-    {
+    match judge.judge(&pending, collection, doc_id, cid, block).await {
         Ok(None) => Ok(()),
         Ok(Some(reason)) => Err(crate::Error::WriteRefused(reason)),
         Err(error) => Err(crate::Error::WriteRefused(format!(
@@ -96,28 +118,24 @@ where
 {
     async fn judge(
         &self,
-        pending: &NamespaceView,
-        collection_name: &str,
+        pending: &PendingStores,
+        collection: &CollectionVersion,
         doc_id: &str,
         cid: &Cid,
         block: &[u8],
     ) -> Result<Option<String>, String> {
+        // The judge outlives the handler only when the node is shutting
+        // down; a write it cannot judge is refused, never let through.
         let Some(handler) = self.handler.upgrade() else {
-            return Ok(None);
+            return Err("the merge handler is no longer available".to_string());
         };
         let Some(governance) = handler.db().merge_governance() else {
             return Ok(None);
         };
-        let Some(collection) = handler
-            .db()
-            .get_collection(collection_name)
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(None);
-        };
-        if !governance.governs(collection.schema()) {
+        if !governance.governs(collection) {
             return Ok(None);
         }
+        let collection_name = &collection.name;
         let Some(validator) = governance.validator() else {
             return Ok(Some(format!(
                 "collection {collection_name} is governed but no merge validator is installed, \
@@ -131,6 +149,7 @@ where
         let signature = match block.signature {
             None => SignatureStatus::Unsigned,
             Some(signature_cid) => match pending
+                .blockstore
                 .get(&signature_cid.to_bytes())
                 .await
                 .map_err(|error| error.to_string())?
@@ -142,19 +161,22 @@ where
                 },
             },
         };
+        let is_genesis = block.heads.as_deref().is_none_or(<[Cid]>::is_empty);
         let candidate = MergeCandidate {
             cid,
             block: &block,
             payload,
             doc_id,
-            collection: collection.schema(),
-            is_genesis: block.heads.as_deref().is_none_or(<[Cid]>::is_empty),
+            collection,
+            is_genesis,
             signature,
         };
         let view = PendingView {
-            pending,
-            inner: DbMergeView::new(&handler),
+            pending: &pending.blockstore,
+            inner: DbMergeView::with_stores(&handler, &pending.datastore, &pending.systemstore),
             handler: &handler,
+            doc_id,
+            is_genesis,
         };
         let verdict = validator.validate(&candidate, &view).await;
         view.inner.finish().await;
@@ -177,11 +199,18 @@ where
 }
 
 /// The merge view a local write is judged through: the transaction's
-/// uncommitted blocks first, the ordinary view for everything else.
+/// uncommitted blocks first, and its documents as it has written them so
+/// far, so a batch that creates a grant and then a note under it is judged
+/// as every peer will judge it once both have merged. The one document it
+/// hides is the candidate's own when the write creates it: no peer holds
+/// that document while judging its genesis, and a rule that counts matches
+/// would otherwise count the write against itself.
 struct PendingView<'a, S: Store, B: blockstore::Blockstore> {
     pending: &'a NamespaceView,
     inner: DbMergeView<'a, S, B>,
     handler: &'a DbMergeHandler<S, B>,
+    doc_id: &'a str,
+    is_genesis: bool,
 }
 
 impl<S: Store, B: blockstore::Blockstore> PendingView<'_, S, B> {
@@ -257,7 +286,11 @@ where
         field: &str,
         value: &NormalValue,
     ) -> Result<Vec<String>, String> {
-        self.inner.find_documents(collection, field, value).await
+        let mut ids = self.inner.find_documents(collection, field, value).await?;
+        if self.is_genesis {
+            ids.retain(|id| id != self.doc_id);
+        }
+        Ok(ids)
     }
 
     async fn immutable_fields(
@@ -265,6 +298,9 @@ where
         collection: &str,
         doc_id: &str,
     ) -> Result<Option<Vec<(String, NormalValue)>>, String> {
+        if self.is_genesis && doc_id == self.doc_id {
+            return Ok(None);
+        }
         self.inner.immutable_fields(collection, doc_id).await
     }
 }

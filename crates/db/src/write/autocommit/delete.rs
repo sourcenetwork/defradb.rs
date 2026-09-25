@@ -110,7 +110,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
             self.judge_pending(
                 pending,
-                collection_name,
+                collection.schema(),
                 &doc_id_str,
                 &composite_cid,
                 &block_result.block,
@@ -309,7 +309,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
                 self.judge_pending(
                     pending,
-                    collection_name,
+                    collection.schema(),
                     &canonical_doc_id.to_string(),
                     &composite_cid,
                     &block_result.block,

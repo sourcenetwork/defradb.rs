@@ -254,7 +254,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
             self.judge_pending(
                 pending,
-                collection_name,
+                collection.schema(),
                 &doc.id().map(|id| id.to_string()).unwrap_or_default(),
                 &block_result.cid,
                 &block_result.block,

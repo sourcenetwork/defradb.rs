@@ -75,8 +75,8 @@ impl<S: Store> AutoCommitMutator<S> {
     /// unjudged. Nothing is read when no judge is installed.
     async fn judge_pending(
         &self,
-        pending: Option<datastore::NamespaceView>,
-        collection_name: &str,
+        pending: Option<crate::merge::governance::PendingStores>,
+        collection: &schema::CollectionVersion,
         doc_id: &str,
         cid: &Cid,
         block: &[u8],
@@ -85,12 +85,7 @@ impl<S: Store> AutoCommitMutator<S> {
             return Ok(());
         };
         crate::merge::governance::judge_local_write(
-            &self.db,
-            pending,
-            collection_name,
-            doc_id,
-            cid,
-            block,
+            &self.db, pending, collection, doc_id, cid, block,
         )
         .await
         .map_err(|error| query::error::QueryError::execution(error.to_string()))
@@ -102,11 +97,11 @@ impl<S: Store> AutoCommitMutator<S> {
     fn pending_view(
         &self,
         txn: &DbTxn<S>,
-    ) -> query::error::Result<Option<datastore::NamespaceView>> {
+    ) -> query::error::Result<Option<crate::merge::governance::PendingStores>> {
         if self.db.local_write_judge().is_none() {
             return Ok(None);
         }
-        txn.blockstore()
+        crate::merge::governance::PendingStores::of(txn)
             .map(Some)
             .map_err(|error| query::error::QueryError::execution(error.to_string()))
     }

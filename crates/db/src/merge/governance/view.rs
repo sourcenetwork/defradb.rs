@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_lock::{Mutex, MutexGuard};
 use async_trait::async_trait;
 use cid::Cid;
+use datastore::NamespaceView;
 use defra_core::block::{Block, CrdtDelta};
 use defra_core::thread_bounds::MaybeSendSync;
 use document::{DocID, Document, NormalValue};
@@ -93,6 +94,11 @@ type ChosenIndexes = RapidHashMap<(String, String), Option<Arc<SimpleIndex>>>;
 pub(crate) struct DbMergeView<'a, S: Store, B: blockstore::Blockstore> {
     handler: &'a DbMergeHandler<S, B>,
     snapshot: Mutex<Option<DbTxn<S>>>,
+    /// A writing transaction's (datastore, systemstore) to read documents
+    /// through instead of a snapshot: the local write path, where the
+    /// documents this transaction has written must be visible. Indexes are
+    /// not consulted then, since they do not see uncommitted writes.
+    stores: Option<(&'a NamespaceView, &'a NamespaceView)>,
     /// The index chosen for each (collection, field) looked up this verdict.
     pub(super) indexes: Mutex<ChosenIndexes>,
     /// The deleted documents of each collection scanned this verdict, by
@@ -106,8 +112,22 @@ impl<'a, S: Store, B: blockstore::Blockstore> DbMergeView<'a, S, B> {
         Self {
             handler,
             snapshot: Mutex::new(None),
+            stores: None,
             indexes: Mutex::new(RapidHashMap::default()),
             deleted: Mutex::new(RapidHashMap::default()),
+        }
+    }
+
+    /// A view that reads documents through `datastore` and `systemstore`,
+    /// a writing transaction's own, rather than through a snapshot.
+    pub(crate) fn with_stores(
+        handler: &'a DbMergeHandler<S, B>,
+        datastore: &'a NamespaceView,
+        systemstore: &'a NamespaceView,
+    ) -> Self {
+        Self {
+            stores: Some((datastore, systemstore)),
+            ..Self::new(handler)
         }
     }
 
@@ -194,7 +214,12 @@ where
                 collection.name()
             ));
         }
-        let documents = match self.indexed_documents(&collection, field, value).await? {
+        let indexed = if self.stores.is_some() {
+            None
+        } else {
+            self.indexed_documents(&collection, field, value).await?
+        };
+        let documents = match indexed {
             Some(documents) => documents,
             None => self.documents(&collection).await?,
         };
@@ -264,12 +289,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
         let Ok(parsed) = doc_id.parse::<DocID>() else {
             return Ok(None);
         };
-        let snapshot = self.snapshot().await?;
-        let txn = snapshot.as_ref().expect("snapshot opened above");
-        let datastore = txn.datastore().map_err(|error| error.to_string())?;
-        let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
+        let snapshot;
+        let owned_datastore;
+        let owned_systemstore;
+        let (datastore, systemstore): (&NamespaceView, &NamespaceView) = match self.stores {
+            Some(stores) => stores,
+            None => {
+                snapshot = self.snapshot().await?;
+                let txn = snapshot.as_ref().expect("snapshot opened above");
+                owned_datastore = txn.datastore().map_err(|error| error.to_string())?;
+                owned_systemstore = txn.systemstore().map_err(|error| error.to_string())?;
+                (&owned_datastore, &owned_systemstore)
+            }
+        };
         let Some((short_id, canonical)) = collection
-            .resolve_doc_identity(&systemstore, &parsed)
+            .resolve_doc_identity(systemstore, &parsed)
             .await
             .map_err(|error| error.to_string())?
         else {
@@ -280,7 +314,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
             return Ok(None);
         }
         let document = collection
-            .get_with_datastore_include_deleted(&datastore, short_id, &canonical, false)
+            .get_with_datastore_include_deleted(datastore, short_id, &canonical, false)
             .await
             .map_err(|error| error.to_string())?
             .map(|(document, _)| document);
@@ -290,12 +324,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeView<'_, S, B> {
     /// Every merged document of `collection` on this verdict's snapshot,
     /// deleted or not.
     async fn documents(&self, collection: &Collection) -> Result<Vec<Document>, String> {
-        let snapshot = self.snapshot().await?;
-        let txn = snapshot.as_ref().expect("snapshot opened above");
-        let datastore = txn.datastore().map_err(|error| error.to_string())?;
-        let systemstore = txn.systemstore().map_err(|error| error.to_string())?;
+        let snapshot;
+        let owned_datastore;
+        let owned_systemstore;
+        let (datastore, systemstore): (&NamespaceView, &NamespaceView) = match self.stores {
+            Some(stores) => stores,
+            None => {
+                snapshot = self.snapshot().await?;
+                let txn = snapshot.as_ref().expect("snapshot opened above");
+                owned_datastore = txn.datastore().map_err(|error| error.to_string())?;
+                owned_systemstore = txn.systemstore().map_err(|error| error.to_string())?;
+                (&owned_datastore, &owned_systemstore)
+            }
+        };
         Ok(collection
-            .get_all_with_datastore_include_deleted(&datastore, &systemstore, true)
+            .get_all_with_datastore_include_deleted(datastore, systemstore, true)
             .await
             .map_err(|error| error.to_string())?
             .into_iter()

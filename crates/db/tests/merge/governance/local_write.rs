@@ -161,3 +161,80 @@ async fn a_single_mutation_is_judged_on_every_write_it_makes() {
         vec![created.doc_id.to_string()]
     );
 }
+
+/// A refused write leaves its transaction uncommittable: it already holds
+/// the write's blocks and heads, and a caller that ignored the error could
+/// otherwise make them durable.
+#[tokio::test]
+async fn a_refused_write_makes_its_batch_uncommittable() {
+    let node = Node::with_immutable_grants(Arc::new(NotesNeedGrant)).await;
+    let txn = node.db.new_txn(false).await.unwrap();
+    let mutator = BatchMutator::new(node.db.clone(), Arc::new(async_lock::Mutex::new(Some(txn))));
+    mutator
+        .create(
+            "Grants",
+            Document::from_json_str(r#"{"writer": "alice", "label": "x"}"#).unwrap(),
+        )
+        .await
+        .unwrap();
+    let error = mutator
+        .create(
+            "Notes",
+            Document::from_json_str(r#"{"grant": "forged"}"#).unwrap(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("forged grant"), "{error}");
+
+    let error = mutator.commit().await.unwrap_err().to_string();
+    assert!(error.contains("no longer active"), "{error}");
+    assert!(
+        node.doc_ids("Grants").await.is_empty(),
+        "the batch with a refused write committed"
+    );
+}
+
+/// A batch may create a grant and then a note under it: the judge reads the
+/// documents the transaction has written so far, as every peer will hold
+/// them once both have replicated.
+#[tokio::test]
+async fn a_note_may_use_a_grant_written_earlier_in_the_same_batch() {
+    let node = Node::with_immutable_grants(Arc::new(NotesNeedGrant)).await;
+    let txn = node.db.new_txn(false).await.unwrap();
+    let mutator = BatchMutator::new(node.db.clone(), Arc::new(async_lock::Mutex::new(Some(txn))));
+    mutator
+        .create(
+            "Grants",
+            Document::from_json_str(r#"{"writer": "bob", "label": "x"}"#).unwrap(),
+        )
+        .await
+        .unwrap();
+    mutator
+        .create(
+            "Notes",
+            Document::from_json_str(r#"{"grant": "bob"}"#).unwrap(),
+        )
+        .await
+        .unwrap();
+    mutator.commit().await.unwrap();
+    assert_eq!(node.doc_ids("Notes").await.len(), 1);
+}
+
+/// A judge whose merge handler is gone refuses the write rather than letting
+/// it through unjudged.
+#[tokio::test]
+async fn a_write_is_refused_when_the_merge_handler_is_gone() {
+    let node = Node::with_immutable_grants(Arc::new(NotesNeedGrant)).await;
+    let Node { db, handler, .. } = node;
+    drop(handler);
+    let error = AutoCommitMutator::new(db.clone())
+        .create(
+            "Notes",
+            Document::from_json_str(r#"{"grant": "alice"}"#).unwrap(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("no longer available"), "{error}");
+}

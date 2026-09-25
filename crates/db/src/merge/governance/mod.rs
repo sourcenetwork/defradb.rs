@@ -27,7 +27,7 @@ pub use emission::MAX_EMISSION_DEPTH;
 pub(crate) use judge::{GovernedFrame, Judgement};
 pub use local_commit::LocalCommitRelease;
 pub(crate) use local_write::judge_local_write;
-pub use local_write::LocalWriteJudge;
+pub use local_write::{LocalWriteJudge, PendingStores};
 pub use redriven::{RedrivenMerge, RedrivenMergeSink};
 pub use signature::SignatureStatus;
 pub use sweep::{run_governance_sweep, SWEEP_BUDGET, SWEEP_INTERVAL};

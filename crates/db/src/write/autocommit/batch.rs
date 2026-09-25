@@ -117,6 +117,7 @@ impl<S: Store + 'static> BatchMutator<S> {
         &self,
         collection_name: String,
         collection_id: String,
+        collection: schema::CollectionVersion,
         doc_id: String,
         doc_cid: Cid,
         doc_block: Bytes,
@@ -126,19 +127,24 @@ impl<S: Store + 'static> BatchMutator<S> {
         let txn = txn_guard.as_mut().ok_or_else(|| {
             query::error::QueryError::execution("mutation batch transaction is no longer active")
         })?;
-        let pending = txn
-            .blockstore()
+        let pending = crate::merge::governance::PendingStores::of(txn)
             .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-        crate::merge::governance::judge_local_write(
+        if let Err(error) = crate::merge::governance::judge_local_write(
             &self.db,
             pending,
-            &collection_name,
+            &collection,
             &doc_id,
             &doc_cid,
             &doc_block,
         )
         .await
-        .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
+        {
+            // The transaction already holds the refused write's blocks and
+            // heads, so it must not be committable: a caller that ignored
+            // the error could otherwise make the refused write durable.
+            txn_guard.take();
+            return Err(query::error::QueryError::execution(error.to_string()));
+        }
         register_update_event_callback(
             txn,
             self.db.event_bus(),
@@ -285,6 +291,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
+            collection.schema().clone(),
             doc_id.to_string(),
             doc_cid,
             doc_block.clone(),
@@ -422,6 +429,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             self.register_update_callback(
                 collection_name.to_string(),
                 collection.collection_id().to_string(),
+                collection.schema().clone(),
                 doc_id.to_string(),
                 doc_cid,
                 doc_block.clone(),
@@ -520,6 +528,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
+            collection.schema().clone(),
             canonical_doc_id.to_string(),
             doc_cid,
             doc_block.clone(),
