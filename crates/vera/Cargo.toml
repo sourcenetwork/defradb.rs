@@ -48,9 +48,9 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "25f796771363d7ca979b59c8bd747f6c863825e5" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "25f796771363d7ca979b59c8bd747f6c863825e5" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "25f796771363d7ca979b59c8bd747f6c863825e5" }
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "cf6bbe9ad5c2a4f7ad6ffea5647bf81dd13f84d2" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "cf6bbe9ad5c2a4f7ad6ffea5647bf81dd13f84d2" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "cf6bbe9ad5c2a4f7ad6ffea5647bf81dd13f84d2" }
 commonware-codec = "2026.9.0"
 
 # Lock-free shared state
@@ -73,7 +73,7 @@ alloy-primitives.workspace = true
 bs58.workspace = true
 
 # Authenticated ACP records and permission evaluation
-acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "0c10b40304eb6a515e77f78f15d124b973006e69" }
+acp-light-client = { git = "https://github.com/sourcenetwork/backbone.git", rev = "a5a005e64b23110c604ec8b86784bbdb825432de" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures.workspace = true
