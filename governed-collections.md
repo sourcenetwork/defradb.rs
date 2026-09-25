@@ -653,7 +653,30 @@ engine and fail on the other, which costs that node liveness, never
 agreement: no node reaches a different verdict, one reaches none. A rule
 should use a small fraction of its budget, and nodes that must settle on
 the same schedule, a relay and the browsers it serves, should run the same
-engine.
+engine. `defra start` defaults to wasmi for that reason.
+
+### Installing it on a node
+
+Governance is installed on the database before anything can write or merge
+into a claimed collection, and it judges the node's own writes from then on
+whether or not a replication stack is running
+(`install_merge_governance`).
+
+- **`defra start`**: `--governed <Collection>` (repeatable or comma list),
+  `--rule-module <path.wasm>` (repeatable; held as a raw block at startup,
+  its CID logged; a module the engine cannot compile stops the start) and
+  `--rule-engine wasmi|wasmtime`, or the same under `governance:` in
+  `config.yaml` (`collections`, `rule_modules`, `rule_engine`, and optional
+  `fuel`, `steps`, `memory_bytes`). A relay needs P2P to merge anything
+  (`--p2p-transport iroh` for browsers, from a build with the `iroh`
+  feature); with `--no-p2p` it still judges its HTTP mutations.
+- **`defra-wasm`**: `DefraClient.create({ ..., governance: { collections,
+  rule_modules, budget, engine } })`, then `put_rule_module(bytes)` for a
+  module that arrives later and `governance()` for what is installed. The
+  browser runs the governance sweep itself while no peer runs one.
+
+A module is not replicated by being held: every node that judges under a
+rule needs its bytes, put there by whoever runs the node.
 
 ## 11. Tests across nodes
 

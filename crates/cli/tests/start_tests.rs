@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use clap::{Args, Parser};
 use cli::cli::{Cli, Command};
 use cli::commands::StartArgs;
-use cli::config::{Config, DatastoreType, TransportType};
+use cli::config::{Config, DatastoreType, RuleEngineType, TransportType};
 use cli::error::Error;
 #[cfg(feature = "orbis")]
 use identity::Identity as _;
@@ -80,6 +80,9 @@ fn default_start_args() -> StartArgs {
         embedding_url: None,
         embedding_model: None,
         embedding_api_key_env: None,
+        governed: None,
+        rule_module: None,
+        rule_engine: None,
     }
 }
 
@@ -212,6 +215,9 @@ fn test_apply_to_config_all_flags() {
         embedding_url: Some("http://localhost:11434/v1".to_string()),
         embedding_model: Some("nomic-embed-text".to_string()),
         embedding_api_key_env: Some("CUSTOM_EMBEDDING_KEY".to_string()),
+        governed: Some(vec!["Move".to_string(), "Turn".to_string()]),
+        rule_module: Some(vec!["/rules/arena.wasm".to_string()]),
+        rule_engine: Some("wasmtime".to_string()),
     };
 
     let result = args.apply_to_config(&mut config);
@@ -272,6 +278,9 @@ fn test_apply_to_config_all_flags() {
     assert_eq!(config.embedding.url, "http://localhost:11434/v1");
     assert_eq!(config.embedding.model, "nomic-embed-text");
     assert_eq!(config.embedding.api_key_env, "CUSTOM_EMBEDDING_KEY");
+    assert_eq!(config.governance.collections, vec!["Move", "Turn"]);
+    assert_eq!(config.governance.rule_modules, vec!["/rules/arena.wasm"]);
+    assert_eq!(config.governance.rule_engine, RuleEngineType::Wasmtime);
 }
 
 /// An explicit `false` (flag `=false` or the environment variable) overrides
@@ -426,6 +435,10 @@ const ACP_START_FLAGS: &[&str] = &[
 const EMBEDDING_START_FLAGS: &[&str] =
     &["embedding-url", "embedding-model", "embedding-api-key-env"];
 
+// Consumed by start/server_governance.rs before any network surface starts;
+// behaviour is asserted in governed_start_tests.rs.
+const GOVERNANCE_START_FLAGS: &[&str] = &["governed", "rule-module", "rule-engine"];
+
 const CONFIG_BACKED_START_FLAG_GROUPS: &[&[&str]] = &[
     STORAGE_START_FLAGS,
     P2P_START_FLAGS,
@@ -433,6 +446,7 @@ const CONFIG_BACKED_START_FLAG_GROUPS: &[&[&str]] = &[
     QUERY_START_FLAGS,
     ACP_START_FLAGS,
     EMBEDDING_START_FLAGS,
+    GOVERNANCE_START_FLAGS,
 ];
 
 const DIRECT_START_FLAGS: &[(&str, fn())] = &[

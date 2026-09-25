@@ -6,6 +6,7 @@ mod p2p;
 mod run;
 mod server;
 mod server_acp;
+mod server_governance;
 mod server_http;
 mod server_p2p;
 mod server_query;
@@ -312,6 +313,20 @@ pub struct StartArgs {
     /// Environment variable name containing the embedding API key
     #[arg(long, env = "DEFRA_EMBEDDING_API_KEY_ENV")]
     pub embedding_api_key_env: Option<String>,
+
+    /// Collection whose merges and local writes are judged by the wasm rule
+    /// module its version names (repeatable, or comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub governed: Option<Vec<String>>,
+
+    /// Wasm rule module to hold at startup, by file path; its CID is logged
+    /// (repeatable, or comma-separated; needs --governed)
+    #[arg(long, value_delimiter = ',')]
+    pub rule_module: Option<Vec<String>>,
+
+    /// Engine rule modules run on: wasmi (default, as in the browser) or wasmtime
+    #[arg(long)]
+    pub rule_engine: Option<String>,
 }
 
 impl StartArgs {
@@ -575,6 +590,26 @@ impl StartArgs {
         }
         if let Some(ref transport) = self.p2p_transport {
             config.net.transport = transport.parse()?;
+        }
+        if let Some(ref collections) = self.governed {
+            config.governance.collections = collections.clone();
+        }
+        if let Some(ref modules) = self.rule_module {
+            // Absolute, from where the command ran: a config file written
+            // from these flags must name the same files on the next start.
+            config.governance.rule_modules = modules
+                .iter()
+                .map(|module| {
+                    std::path::absolute(module)
+                        .map(|path| path.display().to_string())
+                        .map_err(|error| {
+                            Error::InvalidConfig(format!("--rule-module {module}: {error}"))
+                        })
+                })
+                .collect::<Result<_>>()?;
+        }
+        if let Some(ref engine) = self.rule_engine {
+            config.governance.rule_engine = engine.parse()?;
         }
         if let Some(ref durability) = self.durability {
             config.datastore.durability = match durability.as_str() {

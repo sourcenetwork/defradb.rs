@@ -126,6 +126,10 @@ impl Node {
 
         let database = Arc::new(database);
 
+        // Before anything below can write or merge: the background workers,
+        // P2P, and the HTTP surface.
+        Self::install_governance(&database, &store, config).await?;
+
         let collection_count = database
             .list_collections()
             .map_err(|e| Error::Storage(storage::Error::Other(e.to_string())))?

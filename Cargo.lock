@@ -2148,6 +2148,7 @@ dependencies = [
  "url",
  "urlencoding",
  "vera",
+ "wat",
  "zeroize",
 ]
 

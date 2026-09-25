@@ -187,6 +187,54 @@ impl std::str::FromStr for TransportType {
     }
 }
 
+/// The engine wasm rule modules run on.
+///
+/// wasmi by default: it is the only engine a browser has, and a relay whose
+/// rules meter the way its browsers' do settles a write on the same
+/// schedule they do. The engines' fuel units differ, so a rule near its
+/// budget could judge on one and run out on the other (an error, never a
+/// different verdict).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum RuleEngineType {
+    #[default]
+    Wasmi,
+    Wasmtime,
+}
+
+impl std::fmt::Display for RuleEngineType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuleEngineType::Wasmi => write!(f, "wasmi"),
+            RuleEngineType::Wasmtime => write!(f, "wasmtime"),
+        }
+    }
+}
+
+impl std::str::FromStr for RuleEngineType {
+    type Err = Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "wasmi" => Ok(RuleEngineType::Wasmi),
+            "wasmtime" => Ok(RuleEngineType::Wasmtime),
+            _ => Err(Error::InvalidConfig(format!(
+                "unknown rule engine '{s}': expected wasmi or wasmtime"
+            ))),
+        }
+    }
+}
+
+impl From<RuleEngineType> for db::merge::governance::rule::RuleEngine {
+    fn from(engine: RuleEngineType) -> Self {
+        match engine {
+            RuleEngineType::Wasmi => Self::Wasmi,
+            RuleEngineType::Wasmtime => Self::Wasmtime,
+        }
+    }
+}
+
 /// Document ACP (Access Control Policy) type options.
 ///
 /// - `None`: No document-level access control (default)

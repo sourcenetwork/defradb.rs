@@ -6,6 +6,7 @@
 //! 3. Config file (config.yaml in rootdir)
 //! 4. Default values
 
+mod governance;
 mod iroh_relay_server;
 mod secret_file;
 mod sections;
@@ -20,11 +21,14 @@ use crate::cli::Cli;
 use crate::error::{Error, Result};
 
 // Re-export types and sections for external use
+pub use governance::GovernanceConfig;
 pub use iroh_relay_server::{IrohRelayServerConfig, IrohRelayServerTlsConfig};
 pub use sections::{
     AcpConfig, ApiConfig, DatastoreConfig, EmbeddingConfig, KeyringConfig, LogConfig, NetConfig,
 };
-pub use types::{AcpDocumentType, DatastoreType, LogFormat, LogLevel, LogOutput, TransportType};
+pub use types::{
+    AcpDocumentType, DatastoreType, LogFormat, LogLevel, LogOutput, RuleEngineType, TransportType,
+};
 // KeyringBackend is available but not currently used externally
 #[allow(unused_imports)]
 pub use types::KeyringBackend;
@@ -43,6 +47,8 @@ pub struct Config {
     pub keyring: KeyringConfig,
     #[serde(default)]
     pub acp: AcpConfig,
+    #[serde(default, skip_serializing_if = "GovernanceConfig::is_unset")]
+    pub governance: GovernanceConfig,
     pub development: bool,
     pub secret_file: String,
     pub telemetry_disabled: bool,
@@ -65,6 +71,7 @@ impl Default for Config {
             net: NetConfig::default(),
             keyring: KeyringConfig::default(),
             acp: AcpConfig::default(),
+            governance: GovernanceConfig::default(),
             development: false,
             secret_file: ".env".to_string(),
             telemetry_disabled: false,
@@ -301,6 +308,12 @@ impl Config {
 
         if let Some(relay_server) = &mut self.net.iroh_relay_server {
             relay_server.resolve_paths(rootdir);
+        }
+
+        for module in &mut self.governance.rule_modules {
+            if !Path::new(module.as_str()).is_absolute() {
+                *module = rootdir.join(&*module).display().to_string();
+            }
         }
     }
 
