@@ -437,6 +437,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         current_txn_collection_provider().unwrap_or_else(|| self.collection_provider.clone())
     }
 
+    pub(crate) fn transaction_collection_provider(
+        &self,
+        handle: &crate::txn::TransactionHandle,
+    ) -> Result<Arc<dyn CollectionProvider>> {
+        let context = self
+            .registry
+            .get(handle)
+            .into_result()
+            .map_err(|error| QueryError::execution(error.to_string()))?
+            .ok_or_else(|| QueryError::execution(format!("transaction '{handle}' not found")))?;
+        Ok(context
+            .collection_provider()
+            .unwrap_or_else(|| self.collection_provider.clone()))
+    }
+
     /// Get the names of all collections.
     ///
     /// Returns a sorted list of collection names registered with this runner.

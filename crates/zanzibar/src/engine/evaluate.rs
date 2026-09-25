@@ -3,9 +3,9 @@ use std::sync::Arc;
 use crate::did::Did;
 use crate::thread_bounds::MaybeBoxFuture;
 
-use super::cache::{CheckCache, NodeId, NodeTrail};
+use super::cache::{CheckCache, CheckKey, NodeId, NodeTrail};
 use super::PermissionEngine;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::expression::RelationExpression;
 use crate::store::ZanzibarStore;
 use crate::types::Subject;
@@ -33,7 +33,9 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         cache: Arc<CheckCache>,
     ) -> MaybeBoxFuture<'a, Result<Eval>> {
         Box::pin(async move {
-            if let Some(cached) = cache.get(resource, object_id, relation, subject) {
+            let key = CheckKey::new(policy_id, resource, object_id, relation, subject);
+            if let Some(cached) = cache.get(&key) {
+                cache.budget.charge()?;
                 // Only untainted results are ever stored, so a hit is trail-independent.
                 return Ok((cached, false));
             }
@@ -52,7 +54,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                 .await?;
 
             if !tainted {
-                cache.set(resource, object_id, relation, subject, value);
+                cache.set(key, value);
             }
 
             Ok((value, tainted))
@@ -72,13 +74,65 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
         cache: Arc<CheckCache>,
     ) -> MaybeBoxFuture<'a, Result<Eval>> {
         Box::pin(async move {
+            let _evaluation = cache.budget.enter()?;
             match expression {
                 RelationExpression::This => {
                     let granted = self
                         .store
                         .check_permission_direct(policy_id, resource, object_id, relation, subject)
                         .await?;
-                    Ok((granted, false))
+                    if granted {
+                        return Ok((true, false));
+                    }
+                    let mut tainted = false;
+                    for target in self
+                        .store
+                        .get_relation_subjects(policy_id, resource, object_id, relation)
+                        .await?
+                    {
+                        cache.budget.charge()?;
+                        let Subject::EntitySet {
+                            resource,
+                            object_id,
+                            relation,
+                        } = target
+                        else {
+                            continue;
+                        };
+                        if relation.is_empty() {
+                            if self.lookup.is_actor_resource(policy_id, &resource)
+                                && object_id == subject.as_str()
+                            {
+                                return Ok((true, false));
+                            }
+                            continue;
+                        }
+                        let node_id = NodeId::new(&resource, &object_id, &relation);
+                        if trail.contains(&node_id) {
+                            tainted = true;
+                            continue;
+                        }
+                        let expression = self
+                            .lookup
+                            .get_expression(policy_id, &resource, &relation)?;
+                        let (granted, target_tainted) = self
+                            .evaluate_expr_cached(
+                                policy_id,
+                                &resource,
+                                &object_id,
+                                &relation,
+                                subject,
+                                expression,
+                                trail.with_node(node_id),
+                                cache.clone(),
+                            )
+                            .await?;
+                        if granted {
+                            return Ok((true, target_tainted));
+                        }
+                        tainted |= target_tainted;
+                    }
+                    Ok((false, tainted))
                 }
 
                 RelationExpression::ComputedUserset {
@@ -103,7 +157,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         subject,
                         computed_expr,
                         new_trail,
-                        cache,
+                        cache.clone(),
                     )
                     .await
                 }
@@ -120,6 +174,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for target in targets {
+                        cache.budget.charge()?;
                         let node_id =
                             NodeId::new(&target.resource, &target.object_id, computed_relation);
                         if trail.contains(&node_id) {
@@ -159,6 +214,7 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
                         .await?;
 
                     for subj in subjects {
+                        cache.budget.charge()?;
                         match subj {
                             Subject::EntitySet {
                                 resource: target_resource,
@@ -279,12 +335,23 @@ impl<S: ZanzibarStore + ?Sized> PermissionEngine<S> {
 
                     let (subtract_granted, subtract_tainted) = self
                         .evaluate_expr_inner(
-                            policy_id, resource, object_id, relation, subject, subtract, trail,
-                            cache,
+                            policy_id,
+                            resource,
+                            object_id,
+                            relation,
+                            subject,
+                            subtract,
+                            trail,
+                            cache.clone(),
                         )
                         .await?;
 
-                    Ok((!subtract_granted, base_tainted || subtract_tainted))
+                    // A truncated cycle is not proof of absence. Negating it
+                    // could grant the very permission being excluded.
+                    if subtract_tainted {
+                        return Err(Error::IndeterminateExclusion);
+                    }
+                    Ok((!subtract_granted, base_tainted))
                 }
             }
         })

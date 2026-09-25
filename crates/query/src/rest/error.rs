@@ -18,6 +18,8 @@ pub enum RestError {
     InvalidInput(String),
     /// Permission denied (ACP check failed).
     PermissionDenied(String),
+    /// A transaction conflicted and may be retried.
+    TransactionConflict,
     /// Storage or execution error.
     Internal(String),
 }
@@ -30,6 +32,7 @@ impl std::fmt::Display for RestError {
             Self::InvalidDocId(id) => write!(f, "invalid document ID: {}", id),
             Self::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
             Self::PermissionDenied(msg) => write!(f, "permission denied: {}", msg),
+            Self::TransactionConflict => f.write_str(crate::executor::TXN_CONFLICT_MESSAGE),
             Self::Internal(msg) => write!(f, "internal error: {}", msg),
         }
     }
@@ -66,6 +69,8 @@ impl RestError {
 impl From<QueryError> for RestError {
     fn from(err: QueryError) -> Self {
         match err {
+            QueryError::TransactionConflict(_) => Self::TransactionConflict,
+            QueryError::Storage(source) if source.is_txn_conflict() => Self::TransactionConflict,
             // Not found errors
             QueryError::CollectionNotFound(name) => Self::CollectionNotFound(name),
             QueryError::DocumentNotFound(id) => Self::DocumentNotFound(id),

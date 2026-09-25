@@ -1,21 +1,12 @@
-use integration_test::node::{DefraNode, RustNode};
 use integration_test::{generate_identity, users_schema_with_policy, USER_ACP_POLICY};
 
 use super::helpers;
 
-/// Full on-chain policy lifecycle test via hub.rs.
-///
-/// 1. Create policy on hub.rs -> get policy ID
-/// 2. Verify policy exists on-chain via getPolicy precompile query
-/// 3. Use policy ID in DefraDB schema
-/// 4. Create documents governed by policy
-/// 5. Grant/revoke relationships (on-chain transactions via EVM)
-/// 6. Verify access changes propagate
+/// Native Vera grants and revocation apply to document and commit-history queries.
 #[tokio::test]
 #[serial_test::serial]
 async fn rust_hubrs_policy_lifecycle() {
-    let binary = RustNode::from_workspace().binary_path().to_path_buf();
-    RustNode::build().expect("build rust binary");
+    let binary = helpers::defra_binary();
     let alice = helpers::funded_identity();
 
     let hub = helpers::start_hub_cluster().await;
@@ -27,7 +18,6 @@ async fn rust_hubrs_policy_lifecycle() {
 
     let bob = generate_identity(&binary).expect("Bob identity");
 
-    // Create policy on-chain
     let policy_result = node
         .acp_policy_add(USER_ACP_POLICY, &alice.private_key_hex)
         .expect("create policy");
@@ -37,9 +27,8 @@ async fn rust_hubrs_policy_lifecycle() {
         .expect("PolicyID")
         .to_string();
 
-    // Verify policy exists on-chain via EVM precompile query
-    let exists = helpers::policy_exists_on_chain(&hub_rpc_url, &policy_id).await;
-    assert!(exists, "policy should exist on-chain after creation");
+    let exists = helpers::policy_exists(&hub_rpc_url, &policy_id).await;
+    assert!(exists, "created policy must have a verified record");
 
     // Deploy schema with policy
     let schema = users_schema_with_policy(&policy_id);
@@ -55,7 +44,24 @@ async fn rust_hubrs_policy_lifecycle() {
         .expect("create user");
     let doc_id = data["add_User"][0]["_docID"].as_str().expect("_docID");
 
-    // Bob initially cannot see the document
+    let commits_query = format!(r#"query {{ _commits(docID: "{doc_id}") {{ cid }} }}"#);
+    let owner_commits = node
+        .query_with_identity(&commits_query, &alice.private_key_hex)
+        .expect("owner commits");
+    let owner_cids: Vec<_> = owner_commits["_commits"]
+        .as_array()
+        .expect("owner commit array")
+        .iter()
+        .map(|commit| commit["cid"].as_str().expect("commit CID").to_owned())
+        .collect();
+    assert!(!owner_cids.is_empty(), "owner should see document history");
+    let bob_commits = node
+        .query_with_identity(&commits_query, &bob.private_key_hex)
+        .expect("commits before grant");
+    assert!(bob_commits["_commits"].as_array().unwrap().is_empty());
+    let anonymous_commits = node.query(&commits_query).expect("anonymous commits");
+    assert!(anonymous_commits["_commits"].as_array().unwrap().is_empty());
+
     let bob_before = node
         .query_with_identity("query { User { _docID name } }", &bob.private_key_hex)
         .expect("Bob query before grant");
@@ -77,11 +83,25 @@ async fn rust_hubrs_policy_lifecycle() {
     assert_eq!(bob_users.len(), 1, "Bob should see 1 doc after grant");
     assert_eq!(bob_users[0]["name"], "Alice");
 
-    // Revoke Bob's reader access
+    let bob_commits = node
+        .query_with_identity(&commits_query, &bob.private_key_hex)
+        .expect("commits after grant");
+    let bob_cids: Vec<_> = bob_commits["_commits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|commit| commit["cid"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(bob_cids, owner_cids);
+
     node.acp_relationship_delete("User", doc_id, "reader", &bob.did, &alice.private_key_hex)
         .expect("revoke Bob reader");
 
-    // Bob can no longer read
+    let revoked_commits = node
+        .query_with_identity(&commits_query, &bob.private_key_hex)
+        .expect("commits after revoke");
+    assert!(revoked_commits["_commits"].as_array().unwrap().is_empty());
+
     let bob_revoked = node
         .query_with_identity("query { User { _docID name } }", &bob.private_key_hex)
         .expect("Bob query after revoke");

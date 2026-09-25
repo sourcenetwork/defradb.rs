@@ -5,6 +5,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("cannot resolve an exclusion through a relationship cycle")]
+    IndeterminateExclusion,
+
+    #[error("permission evaluation {0} limit exceeded")]
+    EvaluationLimitExceeded(&'static str),
+
     #[error("serialization error: {0}")]
     Json(#[from] serde_json::Error),
 

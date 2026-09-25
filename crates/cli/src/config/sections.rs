@@ -573,6 +573,16 @@ pub struct AcpConfig {
     #[serde(default)]
     pub hub_rs_address: String,
 
+    /// Trusted Vera consensus public key from operator configuration (hex).
+    #[cfg(feature = "vera")]
+    #[serde(default)]
+    pub vera_consensus_key: String,
+
+    /// Vera deployment identifier used to bind native submissions.
+    #[cfg(feature = "vera")]
+    #[serde(default)]
+    pub vera_deployment_id: Option<u64>,
+
     /// Circuit breaker failure threshold before tripping. Default: 3.
     #[serde(default = "default_acp_cb_threshold")]
     pub circuit_breaker_threshold: u32,
@@ -627,6 +637,10 @@ impl Default for AcpConfig {
             vera_chain_id: String::new(),
             #[cfg(feature = "vera")]
             hub_rs_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_consensus_key: String::new(),
+            #[cfg(feature = "vera")]
+            vera_deployment_id: None,
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),
             request_timeout: default_acp_request_timeout(),

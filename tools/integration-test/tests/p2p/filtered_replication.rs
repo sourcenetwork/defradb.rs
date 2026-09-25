@@ -562,6 +562,8 @@ async fn rust_filtered_replication_encrypted_respects_filter() {
         .rust_nodes(2)
         .with_p2p()
         .with_encryption()
+        // A transient replay failure must retry within the 15-second assertion window.
+        .with_extra_rust_args(["--replicator-retry-intervals=1,2"])
         .build()
         .await
         .unwrap();

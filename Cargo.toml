@@ -34,7 +34,6 @@ members = [
     "crates/replication-filter",
     "crates/telemetry",
     "tools/lens-host",
-    "tools/perf",
     "tools/ffi-test",
     "tools/integration-test",
     "proofs",
@@ -301,3 +300,18 @@ opt-level = "z"
 opt-level = "z"
 [profile.release.package."hickory-net"]
 opt-level = "z"
+
+[patch.crates-io]
+commonware-p2p = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-utils = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-codec = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-runtime = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-consensus = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-cryptography = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-parallel = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-storage = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-broadcast = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-resolver = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-macros = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-glue = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-stream = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }

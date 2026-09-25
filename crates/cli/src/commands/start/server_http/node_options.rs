@@ -31,7 +31,7 @@ pub(super) fn sanitized_node_options(
     let document_signer_present = _user_identity_present
         && matches!(
             config.acp.document_type,
-            AcpDocumentType::Vera | AcpDocumentType::HubRs
+            AcpDocumentType::Vera | AcpDocumentType::VeraRs
         );
     #[cfg(not(feature = "vera"))]
     let document_signer_present = false;

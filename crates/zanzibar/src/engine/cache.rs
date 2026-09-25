@@ -5,11 +5,15 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use crate::did::Did;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct NodeId(String);
+pub(crate) struct NodeId(String, String, String);
 
 impl NodeId {
     pub(crate) fn new(resource: &str, object_id: &str, relation: &str) -> Self {
-        Self(format!("{resource}/{object_id}#{relation}"))
+        Self(
+            resource.to_owned(),
+            object_id.to_owned(),
+            relation.to_owned(),
+        )
     }
 }
 
@@ -40,13 +44,34 @@ impl NodeTrail {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CheckKey(String, NodeId, Did);
+
+impl CheckKey {
+    pub(crate) fn new(
+        policy: &str,
+        resource: &str,
+        object: &str,
+        relation: &str,
+        subject: &Did,
+    ) -> Self {
+        Self(
+            policy.to_owned(),
+            NodeId::new(resource, object, relation),
+            subject.clone(),
+        )
+    }
+}
+
 pub(crate) struct CheckCache {
-    results: HopscotchMap<String, bool, RandomState>,
+    pub(crate) budget: super::limits::EvaluationBudget,
+    results: HopscotchMap<CheckKey, bool, RandomState>,
 }
 
 impl Default for CheckCache {
     fn default() -> Self {
         Self {
+            budget: Default::default(),
             results: HopscotchMap::with_hasher(RandomState::default()),
         }
     }
@@ -57,30 +82,26 @@ impl CheckCache {
         Self::default()
     }
 
-    fn cache_key(resource: &str, object_id: &str, relation: &str, subject: &Did) -> String {
-        format!("{resource}/{object_id}#{relation}@{subject}")
+    pub(crate) fn get(&self, key: &CheckKey) -> Option<bool> {
+        self.results.get(key)
     }
 
-    pub(crate) fn get(
-        &self,
-        resource: &str,
-        object_id: &str,
-        relation: &str,
-        subject: &Did,
-    ) -> Option<bool> {
-        let key = Self::cache_key(resource, object_id, relation, subject);
-        self.results.get(&key)
-    }
-
-    pub(crate) fn set(
-        &self,
-        resource: &str,
-        object_id: &str,
-        relation: &str,
-        subject: &Did,
-        result: bool,
-    ) {
-        let key = Self::cache_key(resource, object_id, relation, subject);
+    pub(crate) fn set(&self, key: CheckKey, result: bool) {
         self.results.insert(key, result);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_identity_keeps_delimited_fields_separate() {
+        let first = NodeId::new("resource", "object#nested", "relation");
+        let second = NodeId::new("resource", "object", "nested#relation");
+        assert_ne!(first, second);
+        let trail = NodeTrail::new().with_node(first);
+        assert!(!trail.contains(&second));
+        assert_ne!(NodeId::new("a/b", "c", "d"), NodeId::new("a", "b/c", "d"));
     }
 }

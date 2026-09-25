@@ -192,7 +192,7 @@ impl std::str::FromStr for TransportType {
 /// - `None`: No document-level access control (default)
 /// - `Local`: Local Zanzibar-based ACP
 /// - `Vera`: Remote Vera ACP (Cosmos SDK / Go verad)
-/// - `HubRs`: Remote hub.rs ACP (EVM precompile / hub.rs node)
+/// - `VeraRs`: Native Vera ACP
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
@@ -204,7 +204,8 @@ pub enum AcpDocumentType {
     #[serde(alias = "sourcehub", alias = "source-hub")]
     Vera,
     #[cfg(feature = "vera")]
-    HubRs,
+    #[serde(rename = "hubrs", alias = "verars", alias = "vera-rs")]
+    VeraRs,
 }
 
 impl std::fmt::Display for AcpDocumentType {
@@ -215,7 +216,7 @@ impl std::fmt::Display for AcpDocumentType {
             #[cfg(feature = "vera")]
             AcpDocumentType::Vera => write!(f, "vera"),
             #[cfg(feature = "vera")]
-            AcpDocumentType::HubRs => write!(f, "hub-rs"),
+            AcpDocumentType::VeraRs => write!(f, "hub-rs"),
         }
     }
 }
@@ -230,7 +231,7 @@ impl std::str::FromStr for AcpDocumentType {
             #[cfg(feature = "vera")]
             "vera" | "sourcehub" => Ok(AcpDocumentType::Vera),
             #[cfg(feature = "vera")]
-            "hubrs" => Ok(AcpDocumentType::HubRs),
+            "hubrs" | "verars" => Ok(AcpDocumentType::VeraRs),
             _ => Err(Error::InvalidAcpType(s.to_string())),
         }
     }
