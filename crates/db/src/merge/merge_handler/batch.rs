@@ -250,6 +250,14 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
         self.merged_collections
             .extend(batch_merged_collections.keys().map(|cid| (cid, ())));
+        // A governed collection block deferred on its parent waits on the
+        // parent's CID; the parent installing in this batch releases it.
+        if self.deferred.has_waiters() {
+            let merged_collection_cids: Vec<Cid> = batch_merged_collections.keys().collect();
+            for cid in &merged_collection_cids {
+                self.release_merged_composite(cid, None).await;
+            }
+        }
 
         while let Some(action) = pending_post_commit_actions.pop() {
             if let Err(error) = action.action.run().await {

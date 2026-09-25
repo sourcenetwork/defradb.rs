@@ -11,9 +11,9 @@ use crate::merge::merge_handler::{DbMergeHandler, MergeError};
 pub const SWEEP_BUDGET: usize = 256;
 
 impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, B> {
-    /// One bounded pass over the composites of governed collections that this
-    /// node holds unmerged, re-driving each through the normal verifying merge
-    /// path. Returns how many were enqueued.
+    /// One bounded pass over the composites and collection blocks of governed
+    /// collections that this node holds unmerged, re-driving each through the
+    /// normal verifying merge path. Returns how many were enqueued.
     ///
     /// This is the fallback for a deferred verdict the re-drive index cannot
     /// hold: a defer naming nothing, a deferral past the index's capacity, a
@@ -78,11 +78,12 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
     }
 
     /// The re-drive entry for an unmerged block, or `None` when the sweep has
-    /// no business with it: a block that is not a composite, one whose
-    /// collection is not governed, one already merged in this process, or
-    /// one a verdict rejected, which no arrival can change.
+    /// no business with it: a block that is neither a composite nor a
+    /// collection block, one whose collection is not governed, one already
+    /// merged in this process, or one a verdict rejected, which no arrival
+    /// can change.
     async fn sweep_candidate(&self, cid: &Cid) -> Result<Option<MergeBlock>, MergeError> {
-        if self.has_merged_composite(cid) || self.rejected_governed.contains_key(cid) {
+        if self.rejected_governed.contains_key(cid) {
             return Ok(None);
         }
         let Some(data) = self
@@ -95,9 +96,37 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         };
         let block = Block::from_dag_cbor(&data)
             .map_err(|error| MergeError::BlockDecode(error.to_string()))?;
+        // A governed collection block a judgement deferred is owed a
+        // re-judgement like any composite. It is not a document write, so it
+        // carries no document and no carrier id; the merge path resolves the
+        // collection from the block, as it does for every governed block.
+        if let CrdtDelta::Collection(payload) = &block.delta {
+            if self.merged_collections.contains_key(cid)
+                || self
+                    .block_collection(&payload.schema_version_id, None)
+                    .await?
+                    .is_none_or(|collection| !self.is_governed(collection.schema()))
+            {
+                return Ok(None);
+            }
+            return Ok(Some(MergeBlock {
+                cid: *cid,
+                block_data: bytes::Bytes::new(),
+                doc_id: String::new(),
+                collection_id: String::new(),
+                creator: String::new(),
+                sender_peer: None,
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+                verified_creator: None,
+            }));
+        }
         let CrdtDelta::Composite(payload) = &block.delta else {
             return Ok(None);
         };
+        if self.has_merged_composite(cid) {
+            return Ok(None);
+        }
         // Resolved from the block alone, as a governed collection always is:
         // there is no carrier here to name one.
         let Some(collection) = self
