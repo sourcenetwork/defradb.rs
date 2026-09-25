@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cid::Cid;
-use defra_core::thread_bounds::MaybeSendSync;
 use identity::Did;
 
 use crate::bitswap::LateBoundServeAcp;
@@ -73,9 +72,12 @@ pub enum InboundRequest {
 /// sees the head CIDs announced there. It cannot fetch the blocks, but it
 /// learns that the document exists, that it changed, and its head CID. To keep
 /// a peer from learning that, keep it off the topic.
+// The policy is shared through an `Arc` by the coordinator and the CAR
+// authority, so the trait object is `Send + Sync` on every target; only the
+// futures are `?Send` on wasm, where there is one thread to run them on.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait ReplicationPolicy: MaybeSendSync {
+pub trait ReplicationPolicy: Send + Sync {
     /// Whether `block` may go to `peer`.
     ///
     /// Withholding a push does not drop it: the durable retry marker for the
