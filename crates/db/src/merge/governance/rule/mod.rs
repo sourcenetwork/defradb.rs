@@ -127,7 +127,39 @@ impl<B: blockstore::Blockstore> BlockstoreModules<B> {
     pub fn new(blockstore: Arc<B>) -> Self {
         Self { blockstore }
     }
+
+    /// Hold a module's bytes, returning the CID a rule tag names it by.
+    ///
+    /// Marked merged as it is put: a module is not a delta, nothing will
+    /// ever merge it, and a block left unmerged is one the governance sweep
+    /// reads on every pass.
+    pub async fn put(&self, bytes: &[u8]) -> Result<Cid, String> {
+        let cid = module_cid(bytes);
+        self.blockstore
+            .put(&cid, bytes)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.blockstore
+            .mark_as_merged(&cid)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(cid)
+    }
 }
+
+/// The CID a rule tag names a module by: CIDv1, raw codec, SHA2-256 over
+/// the module's bytes.
+pub fn module_cid(bytes: &[u8]) -> Cid {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(bytes);
+    Cid::new_v1(
+        RAW_CODEC,
+        cid::multihash::Multihash::wrap(SHA2_256, &digest).expect("a 32-byte digest fits"),
+    )
+}
+
+const RAW_CODEC: u64 = 0x55;
+const SHA2_256: u64 = 0x12;
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

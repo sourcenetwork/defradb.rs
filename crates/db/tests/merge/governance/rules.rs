@@ -496,6 +496,26 @@ fn a_rule_engine_is_named_by_its_crate() {
     assert_eq!(RuleEngine::default(), RuleEngine::Wasmtime);
 }
 
+/// A module is held under the CID a rule tag names it by, marked merged so
+/// the sweep never reads it as a candidate.
+#[tokio::test]
+async fn a_rule_module_is_put_under_its_raw_cid() {
+    let module = guest(ACCEPT, ACCEPT);
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let cid = BlockstoreModules::new(blockstore.clone())
+        .put(&module)
+        .await
+        .unwrap();
+    assert_eq!(cid, module_cid(&module));
+    assert_eq!(db::merge::governance::rule::module_cid(&module), cid);
+    assert_eq!(
+        blockstore.get(&cid).await.unwrap().unwrap().as_ref(),
+        module
+    );
+    assert!(blockstore.get_unmerged().await.unwrap().is_empty());
+}
+
 /// Each case, once per engine.
 macro_rules! on_both_engines {
     ($($case:ident),* $(,)?) => {
