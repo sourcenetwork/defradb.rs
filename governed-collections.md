@@ -184,7 +184,7 @@ the *presence* of a matching document, never on the absence of one.
 flowchart TB
   V{"MergeVerdict"}
   V -->|Accept| A["merge proceeds<br/>composite recorded as merged<br/>waiters on it released"]
-  V -->|"Reject { reason }"| R["MergeOutcome::Rejected<br/>block left unmerged<br/>coordinator quarantines the root<br/>handler remembers it; sweep skips it"]
+  V -->|"Reject { reason }"| R["MergeOutcome::Rejected<br/>block left unmerged<br/>coordinator quarantines the root<br/>handler remembers it, sweep skips it"]
   V -->|"Defer { reason, awaiting }"| D["retryable skip<br/>awaiting = [Composite(cid) | ImmutableField{collection, field, value}]"]
   D -->|"awaiting non-empty"| I["indexed in DeferredMerges<br/>re-driven when a key arrives"]
   D -->|"awaiting empty"| S["not indexed<br/>the sweep re-judges it"]
@@ -230,11 +230,11 @@ sequenceDiagram
   end
   alt Accept
     H->>BS: apply field deltas, install head (under the document lock)
-    H->>H: record merged; release waiters on this CID and on the immutable values it set
+    H->>H: record merged, release waiters on this CID and on the immutable values it set
     H-->>C: Merged
   else Reject
     H-->>C: Rejected (reason)
-    C->>C: quarantine the root; stop local re-drive
+    C->>C: quarantine the root, stop local re-drive
   else Defer, awaiting non-empty
     H->>H: index in DeferredMerges under each awaited key
     H-->>C: retryable skip
@@ -297,7 +297,7 @@ sequenceDiagram
   participant Val as Validator
   participant I as DeferredMerges
 
-  Note over H: update U arrives; genesis G not held
+  Note over H: update U arrives, genesis G not held
   H->>Val: validate(U)
   Val-->>H: Defer(awaiting [Composite(G)])
   H->>I: defer(U, [Composite(G)])
@@ -310,7 +310,7 @@ sequenceDiagram
   H->>H: re-drive U through the same path
   H->>Val: validate(U)
   Val-->>H: Accept
-  H->>H: merge U; forward U to replicators
+  H->>H: merge U, forward U to replicators
 ```
 
 Model: the contract and this mechanism are checked in `proofs/tla`
@@ -423,18 +423,18 @@ sequenceDiagram
   participant Op as Operator
 
   P->>H: definition block (+ field blocks)
-  H->>H: version ID = CID; collection ID = CID of the block without policy_cid
+  H->>H: version ID = CID, collection ID = CID of the block without policy_cid
   alt this version is already held
     H-->>P: nothing rebuilt
   else
     H->>H: rebuild record: root, branchable, immutable flags from the delta
-    H->>H: policy: restored if a held version of the same collection has the reference the policy CID names; else policy_cid recorded, policy absent
+    H->>H: policy: restored if a held version of the same collection has the reference the policy CID names, else policy_cid recorded, policy absent
     alt governed and claimed
       H->>H: validate_definition(candidate, view)
       Note over H: Reject → left unmerged, never stored · Defer → indexed, re-driven · Accept → continue
     end
     H->>SS: store record, inactive
-    alt local record of that name commits to more (a policy, a different root, a different collection ID under the same root; for ungoverned: immutable flags or branchability)
+    alt local record of that name commits to more (a policy, a different root, a different collection ID under the same root, for ungoverned: immutable flags or branchability)
       H->>Cache: not admitted
     else
       H->>Cache: admitted, inactive
