@@ -566,8 +566,13 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
+                // The event identifies the install: the requested set, not
+                // the replay subset. An install of [Note, User] that only
+                // replays User is a different install than one of [User],
+                // whatever the replay had to redo.
+                let requested_collections = effective_collections.to_vec();
                 n0_future::task::spawn(async move {
-                    if let Err(error) = push_pusher
+                    let result = push_pusher
                         .push_existing_docs(
                             &p2p::transport::PeerId::from(peer_id),
                             &collection_names_requiring_replay,
@@ -575,27 +580,42 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
                         )
-                        .await
-                    {
+                        .await;
+                    if let Err(ref error) = result {
                         tracing::error!(error = %error, "Failed to push existing docs to replicator");
                     }
                     if let Some(bus) = push_event_bus {
                         tracing::debug!("publishing ReplicatorCompleted event");
-                        bus.publish(events::Message::replicator_completed());
+                        bus.publish(events::Message::replicator_completed_with_data(
+                            events::ReplicatorCompletedData {
+                                peer_id: peer_id.to_string(),
+                                collections: requested_collections,
+                                skipped: false,
+                                error: result.err().map(|error| error.to_string()),
+                            },
+                        ));
                         tracing::debug!("ReplicatorCompleted event published");
                     }
                 });
             } else if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: collection_names_requiring_replay,
+                        skipped: true,
+                        error: None,
+                    },
+                ));
             }
         } else {
             tracing::debug!(
                 peer_id = %peer_id,
                 "Replicator already exists with same collections and replay capability, skipping initial replay"
             );
-            if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
-            }
+            // No event here: the install that already holds this replicator
+            // owns the completion event, and its replay may still be running.
+            // A skip published now would let a waiter observe a completion
+            // that has not happened yet.
         }
 
         Ok(())

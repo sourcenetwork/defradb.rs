@@ -126,6 +126,16 @@ pub(crate) fn message_to_json(message: &events::Message) -> String {
 
     // Check if this is a ReplicatorCompleted event
     if message.name == events::EventName::ReplicatorCompleted {
+        if let Some(data) = message.as_replicator_completed() {
+            return serde_json::json!({
+                "type": "replicator_completed",
+                "peer_id": data.peer_id,
+                "collections": data.collections,
+                "skipped": data.skipped,
+                "error": data.error,
+            })
+            .to_string();
+        }
         return serde_json::json!({
             "type": "replicator_completed"
         })

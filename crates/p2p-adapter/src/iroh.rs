@@ -715,8 +715,11 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
+                // The event identifies the install: the requested set, not
+                // the replay subset (same fix as the libp2p side).
+                let requested_collections = effective_collections.to_vec();
                 n0_future::task::spawn(async move {
-                    if let Err(error) = push_pusher
+                    let result = push_pusher
                         .push_existing_docs(
                             &push_peer,
                             &collection_names_requiring_replay,
@@ -724,25 +727,39 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
                         )
-                        .await
-                    {
+                        .await;
+                    if let Err(ref error) = result {
                         tracing::error!(error = %error, "Failed to push existing docs to replicator");
                     }
                     if let Some(bus) = push_event_bus {
-                        bus.publish(events::Message::replicator_completed());
+                        bus.publish(events::Message::replicator_completed_with_data(
+                            events::ReplicatorCompletedData {
+                                peer_id: push_peer.to_string(),
+                                collections: requested_collections,
+                                skipped: false,
+                                error: result.err().map(|error| error.to_string()),
+                            },
+                        ));
                     }
                 });
             } else if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: collection_names_requiring_replay,
+                        skipped: true,
+                        error: None,
+                    },
+                ));
             }
         } else {
             tracing::debug!(
                 peer_id = %peer_id,
                 "Replicator already exists with same collections, filters, and replay capability; skipping initial replay"
             );
-            if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
-            }
+            // No event here, mirroring the libp2p side: the install that
+            // already holds this replicator owns the completion event, and
+            // its replay may still be running.
         }
 
         Ok(())
