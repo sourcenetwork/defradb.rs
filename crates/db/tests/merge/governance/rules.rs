@@ -89,6 +89,29 @@ fn need(key: &str) -> String {
     format!(r#"\a2\67verdict\64need\64keys\81{key_len}{key}"#)
 }
 
+/// A CBOR value as a WAT string literal, every byte escaped.
+fn cbor_wat(value: &ciborium::value::Value) -> String {
+    let mut bytes = Vec::new();
+    ciborium::into_writer(value, &mut bytes).unwrap();
+    bytes.iter().map(|b| format!("\\{b:02x}")).collect()
+}
+
+/// `{"verdict":"accept","emit":[{"collection":"Records","fields":{"of":<of>}}]}`.
+fn accept_emitting(of: &str) -> String {
+    use ciborium::value::Value;
+    let t = |s: &str| Value::Text(s.to_string());
+    cbor_wat(&Value::Map(vec![
+        (t("verdict"), t("accept")),
+        (
+            t("emit"),
+            Value::Array(vec![Value::Map(vec![
+                (t("collection"), t("Records")),
+                (t("fields"), Value::Map(vec![(t("of"), t(of))])),
+            ])]),
+        ),
+    ]))
+}
+
 fn module_cid(bytes: &[u8]) -> Cid {
     use cid::multihash::Multihash;
     let digest = sha2::Sha256::digest(bytes);
@@ -114,6 +137,17 @@ async fn rules_node(module: &[u8], budget: RuleBudget) -> (Node, &'static str) {
         vec![
             FieldDescription::new("1", "_docID", FieldKind::doc_id()),
             writer,
+        ],
+    ))
+    .await
+    .unwrap();
+    db.create_collection(CollectionVersion::new(
+        "Records",
+        "col-records",
+        "col-records",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("2", "of", FieldKind::string()),
         ],
     ))
     .await
@@ -331,4 +365,29 @@ async fn a_rule_change_is_judged_by_the_rule_in_force() {
         "the rule now in force, which rejects everything, admitted a change"
     );
     assert!(!node.holds_version(&back.cid).await);
+}
+
+/// A module's verdict may carry emissions: the host writes each as an
+/// unsigned genesis composite, so two notes judged by the same constant
+/// response yield one record, and it is forwarded like a re-driven merge.
+#[tokio::test]
+async fn a_rule_module_emits_records_beside_its_verdict() {
+    let writer = signer();
+    let response = accept_emitting("seen");
+    let (node, notes) = rules_node(&guest(&response, &response), RuleBudget::default()).await;
+    let first = genesis(notes, "grant", "one", &writer);
+    let second = genesis(notes, "grant", "two", &writer);
+
+    assert_eq!(first.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    let records = node.doc_ids("Records").await;
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        field_value(&node, "Records", &records[0], "of").await,
+        Some("seen".to_string())
+    );
+    assert_eq!(node.forwarded().len(), 1);
+
+    assert_eq!(second.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    assert_eq!(node.doc_ids("Records").await, records);
+    assert_eq!(node.forwarded().len(), 1);
 }
