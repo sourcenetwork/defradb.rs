@@ -455,8 +455,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 {
                     return false;
                 }
-                dag.dispatches = dag.dispatches.saturating_add(1);
-                dag.next_retry_at = now + super::super::pending::retry_backoff(dag.dispatches);
+                if dag.merge_continuation {
+                    dag.next_retry_at =
+                        now + super::super::pending::PENDING_MERGE_CONTINUATION_DELAY;
+                } else {
+                    dag.dispatches = dag.dispatches.saturating_add(1);
+                    dag.next_retry_at = now + super::super::pending::retry_backoff(dag.dispatches);
+                }
                 true
             });
         if claimed {
@@ -465,6 +470,40 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             self.diagnostics.record_pending_dag_retry_suppressed();
         }
         claimed
+    }
+
+    /// Only a committed work-budget yield opts into local continuation.
+    /// ACP skips and errors leave the normal fetch retry policy intact.
+    pub(crate) fn schedule_pending_merge_continuation(&self, root_cid: &Cid) {
+        let next = n0_future::time::Instant::now()
+            + super::super::pending::PENDING_MERGE_CONTINUATION_DELAY;
+        let scheduled = self.pending_dags.update(|pending| {
+            let Some(dag) = pending.get_mut(root_cid) else {
+                return false;
+            };
+            dag.merge_continuation = true;
+            dag.next_retry_at = next;
+            pending.replace_missing(root_cid, RapidHashSet::new());
+            true
+        });
+        if scheduled {
+            self.pending_dag_ready.notify_one();
+        }
+    }
+
+    pub(crate) fn consume_pending_merge_continuation(&self, root_cid: &Cid) {
+        if !self.pending_dags.read(|pending| {
+            pending
+                .get(root_cid)
+                .is_some_and(|dag| dag.merge_continuation)
+        }) {
+            return;
+        }
+        self.pending_dags.update(|pending| {
+            if let Some(dag) = pending.get_mut(root_cid) {
+                dag.merge_continuation = false;
+            }
+        });
     }
 
     /// Make a root promptly due (e.g. a provider just connected) without
@@ -490,6 +529,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         &self,
         now: n0_future::time::Instant,
     ) -> Vec<(Cid, PendingDag)> {
+        self.evict_expired();
         let released: Vec<Cid> = self.pending_dags.read(|pending| {
             pending
                 .iter()
@@ -917,6 +957,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 last_fetch_error: None,
                 next_retry_at: n0_future::time::Instant::now(),
                 dispatches: 0,
+                merge_continuation: false,
                 storage_blocker: None,
             };
 

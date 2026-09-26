@@ -27,6 +27,9 @@ use std::time::Duration;
 use storage::RegolithStore;
 use tokio::sync::mpsc;
 
+#[path = "continuation_tests.rs"]
+mod continuation_tests;
+
 fn test_cid() -> Cid {
     Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap()
 }
@@ -114,6 +117,7 @@ struct NoopTransport {
     peer_id: PeerId,
     pubkey: Vec<u8>,
     publish_calls: Arc<AtomicUsize>,
+    sync_blocks_calls: Arc<AtomicUsize>,
     replicators: Arc<kovan::Atom<Vec<ReplicatorInfo>>>,
     pushlog_requests: Arc<kovan_queue::seg_queue::SegQueue<(PeerId, PushLogRequest)>>,
 }
@@ -124,6 +128,7 @@ impl NoopTransport {
             peer_id: PeerId::new("local-peer".to_string()),
             pubkey: vec![1, 2, 3],
             publish_calls: Arc::new(AtomicUsize::new(0)),
+            sync_blocks_calls: Arc::new(AtomicUsize::new(0)),
             replicators: Arc::new(kovan::Atom::new(Vec::new())),
             pushlog_requests: Arc::new(kovan_queue::seg_queue::SegQueue::new()),
         }
@@ -799,6 +804,7 @@ impl P2PTransport for NoopTransport {
         _providers: Vec<PeerId>,
         _missing: Vec<Cid>,
     ) -> P2PResult<QueryId> {
+        self.sync_blocks_calls.fetch_add(1, Ordering::SeqCst);
         Ok(QueryId(0))
     }
 
@@ -841,6 +847,9 @@ impl P2PTransport for NoopTransport {
 
 struct RetryThenMergeHandler {
     call_count: AtomicUsize,
+    yielding_root: Option<Cid>,
+    yield_turns: usize,
+    yielded_calls: AtomicUsize,
 }
 
 struct ErrorThenMergeHandler {
@@ -861,6 +870,17 @@ impl RetryThenMergeHandler {
     fn new() -> Self {
         Self {
             call_count: AtomicUsize::new(0),
+            yielding_root: None,
+            yield_turns: 0,
+            yielded_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn yielding(root: Cid, turns: usize) -> Self {
+        Self {
+            yielding_root: Some(root),
+            yield_turns: turns,
+            ..Self::new()
         }
     }
 }
@@ -898,11 +918,20 @@ impl MergeHandler for RetryThenMergeHandler {
 
     async fn handle_block(
         &self,
-        _cid: &Cid,
+        cid: &Cid,
         _block_data: &[u8],
         _metadata: BlockMetadata<'_>,
     ) -> Result<MergeOutcome, Self::Error> {
         let attempt = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if let Some(root) = self.yielding_root {
+            return if *cid == root
+                && self.yielded_calls.fetch_add(1, Ordering::SeqCst) < self.yield_turns
+            {
+                Ok(MergeOutcome::Yielded)
+            } else {
+                Ok(MergeOutcome::Merged)
+            };
+        }
         if attempt == 0 {
             Ok(MergeOutcome::retryable_skip("pending ACP"))
         } else {

@@ -16,6 +16,7 @@ mod dispatch;
 mod doc_identity;
 mod encryption;
 pub(crate) mod error;
+mod history;
 pub mod hook;
 mod lww;
 mod protected_update;
@@ -40,7 +41,7 @@ use datastore::NamespaceView;
 use defra_core::block::{
     Block, CollectionDefinitionDeltaPayload, CrdtDelta, FieldDefinitionDeltaPayload,
 };
-use defra_core::merge::{BlockMetadata, MergeErrorDisposition, MergeHandler, MergeOutcome};
+use defra_core::merge::{BlockMetadata, MergeHandler, MergeOutcome};
 use defra_core::types::DocId;
 use document::{DocID, Document, NormalValue};
 use events::{MergeCompleteData, Message, Update};
@@ -205,7 +206,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         Self::new_with_max_merge_depth(db, blockstore, DEFAULT_MAX_MERGE_DEPTH)
     }
 
-    /// Create a merge handler with an explicit parent-chain depth limit.
+    /// Create a handler with an explicit ancestry depth policy.
+    /// Composite merges exceeding this fast-path cutoff resume in durable turns.
+    /// Resumable history turns use at most this many steps, capped at 1024.
     pub fn new_with_max_merge_depth(
         db: Arc<DB<S>>,
         blockstore: Arc<B>,

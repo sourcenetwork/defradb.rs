@@ -231,7 +231,7 @@ pub struct DatastoreConfig {
     /// - `eventual`: defer fsync to OS for higher write throughput
     #[serde(default)]
     pub durability: DurabilityMode,
-    /// Maximum DAG traversal depth for merge operations.
+    /// DAG traversal depth limit; longer document histories resume in bounded turns.
     #[serde(default = "default_max_merge_depth")]
     pub max_merge_depth: usize,
     /// Enable transparent at-rest value encryption for the storage backend.

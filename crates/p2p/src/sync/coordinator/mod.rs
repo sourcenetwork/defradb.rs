@@ -293,6 +293,7 @@ enum PendingDagFetchTask {
     Scheduled,
     Claimed,
     Running(TrackedAbort),
+    Merging(std::sync::Weak<()>),
 }
 
 impl PendingDagFetchTask {
@@ -300,6 +301,7 @@ impl PendingDagFetchTask {
         match self {
             Self::Scheduled | Self::Claimed => true,
             Self::Running(task) => !task.is_finished(),
+            Self::Merging(owner) => owner.strong_count() != 0,
         }
     }
 }
@@ -571,6 +573,30 @@ impl SyncShutdownHandle {
         });
     }
 
+    fn claim_pending_dag_merge(&self, root_cid: Cid) -> Option<Arc<()>> {
+        if !self
+            .inner
+            .pending_dag_fetch_tasks
+            .peek(|tasks| matches!(tasks.get(&root_cid), Some(PendingDagFetchTask::Scheduled)))
+        {
+            return None;
+        }
+        let owner = Arc::new(());
+        let mut claimed = false;
+        self.inner.pending_dag_fetch_tasks.rcu(|current| {
+            let mut next = current.clone();
+            claimed = matches!(next.get(&root_cid), Some(PendingDagFetchTask::Scheduled));
+            if claimed {
+                next.insert(
+                    root_cid,
+                    PendingDagFetchTask::Merging(Arc::downgrade(&owner)),
+                );
+            }
+            next
+        });
+        claimed.then_some(owner)
+    }
+
     fn available_pending_dag_fetch_slots(&self) -> usize {
         self.inner
             .pending_dag_fetch_task_limit
@@ -644,7 +670,7 @@ impl SyncShutdownHandle {
         let reservations = self.inner.pending_dag_fetch_tasks.peek(|tasks| {
             tasks
                 .values()
-                .filter(|task| !matches!(task, PendingDagFetchTask::Running(_)))
+                .filter(|task| task.is_live() && !matches!(task, PendingDagFetchTask::Running(_)))
                 .count()
         });
         self.inner.background_tasks.len() + reservations
@@ -1055,6 +1081,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         dag: &PendingDag,
         event_permit: tokio::sync::mpsc::Permit<'_, crate::sync::SyncEvent>,
     ) {
+        if dag.merge_continuation {
+            event_permit.send(crate::sync::SyncEvent::DagReady {
+                root_cid,
+                doc_id: dag.doc_id.clone(),
+                collection_id: dag.collection_id.clone(),
+                creator: dag.creator.clone(),
+                sender_peer: dag.source_peer.clone(),
+                is_explicit_replicator: dag.is_explicit_replicator,
+                explicit_replay_authorization: dag.explicit_replay_authorization.clone(),
+            });
+            return;
+        }
         let missing: Vec<_> = dag.missing.iter().copied().collect();
         let mut providers = self.manager.get_providers_for_cids(&missing);
         if let Some(source_peer) = dag.source_peer.clone() {
@@ -1237,6 +1275,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         self.runtime
             .shutdown
             .release_pending_dag_fetch_reservation(root_cid);
+    }
+
+    /// The weak registry entry keeps a continuation bounded while queued or
+    /// merging. Dropping the owner releases it even if the merge is cancelled.
+    /// Nested single-event handlers cannot take ownership twice.
+    pub(crate) fn pending_dag_merge_guard(&self, root_cid: Cid) -> Option<Arc<()>> {
+        self.runtime.shutdown.claim_pending_dag_merge(root_cid)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_dag_work_count(&self) -> usize {
+        self.runtime.shutdown.pending_dag_fetch_count()
     }
 
     #[cfg(test)]

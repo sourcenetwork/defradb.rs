@@ -48,6 +48,7 @@ fn pending_dag_from(doc_id: &str, source_peer: Option<&str>, inserted_at: Instan
         last_fetch_error: None,
         next_retry_at: n0_future::time::Instant::now(),
         dispatches: 0,
+        merge_continuation: false,
         storage_blocker: None,
     }
 }
@@ -1120,7 +1121,7 @@ async fn resync_deletes_live_leftover_of_quarantined_root_without_redriving() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn resync_restore_leaves_root_due_for_receiver_clock() {
+async fn resync_restore_leaves_root_due_and_discards_expired_continuation() {
     use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
 
     let blockstore = Arc::new(DefraBlockstore::new(
@@ -1154,7 +1155,9 @@ async fn resync_restore_leaves_root_due_for_receiver_clock() {
         .await
         .expect("persist pending dag record");
 
-    manager.install_pending_dag_store(pending_store).await;
+    manager
+        .install_pending_dag_store(pending_store.clone())
+        .await;
 
     let restored = manager.resync_persisted_pending_dags().await;
     assert_eq!(restored, 1);
@@ -1169,6 +1172,31 @@ async fn resync_restore_leaves_root_due_for_receiver_clock() {
     assert!(manager
         .claim_due_pending_dag_retries(n0_future::time::Instant::now())
         .is_empty());
+
+    manager.schedule_pending_merge_continuation(&root);
+    assert!(
+        manager
+            .pending_dag_snapshot(&root)
+            .unwrap()
+            .merge_continuation
+    );
+    // TTL uses web_time, not Tokio's paused retry clock.
+    manager.pending_dags.update(|pending| {
+        pending.get_mut(&root).unwrap().inserted_at =
+            Instant::now() - PENDING_DAG_TTL - Duration::from_secs(1);
+    });
+    assert!(manager
+        .due_pending_dag_retries(n0_future::time::Instant::now())
+        .is_empty());
+    assert!(manager.pending_dag_snapshot(&root).is_none());
+    assert_eq!(pending_store.load_all().await.unwrap().len(), 1);
+    assert_eq!(manager.resync_persisted_pending_dags().await, 1);
+    let restored = manager.pending_dag_snapshot(&root).unwrap();
+    assert!(!restored.merge_continuation);
+    assert!(
+        restored.missing.contains(&root),
+        "restore validates availability again"
+    );
 }
 
 fn broadcast(doc_id: &str, cid: Cid, block: Vec<u8>) -> crate::message::PushLogBroadcast {

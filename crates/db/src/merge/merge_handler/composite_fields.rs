@@ -122,6 +122,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             pending.push((*link_cid, effective));
         }
 
+        if matches!(context.mode, super::composite::CompositeMergeMode::History)
+            && pending.len() != links.len()
+        {
+            return Ok(Some(MergeOutcome::retryable_skip(
+                "history encrypted fields are not yet readable",
+            )));
+        }
+
         // Phase 2: persist the decoded deltas.
         for (link_cid, effective) in pending {
             match effective {
