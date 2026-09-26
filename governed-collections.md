@@ -75,11 +75,11 @@ attributes; pinned by `ungoverned_identities_are_pinned` in
 ```mermaid
 flowchart TB
   S["Schema (SDL)"] --> C["Commitments<br/>root · branchable · per-field immutable · policy"]
-  C --> B1["Definition block<br/>WITHOUT policy_cid"]
-  C --> B2["Definition block<br/>WITH policy_cid"]
+  C --> B1["Definition block<br/>WITHOUT policy_cid and rule"]
+  C --> B2["Definition block<br/>WITH policy_cid and rule"]
   B1 --> CID1["collection ID = CID(B1)"]
   B2 --> CID2["version ID = CID(B2)"]
-  CID1 -.->|"no policy, or ungoverned"| SAME["collection ID = version ID"]
+  CID1 -.->|"neither a policy nor a rule, or ungoverned"| SAME["collection ID = version ID"]
 ```
 
 - **Collection ID** answers "which collection is this". It commits to the
@@ -130,7 +130,7 @@ flowchart LR
   G -- "links: field name → block" --> f1["Field block<br/>LWW / counter delta bytes"]
   G -- links --> f2["Field block"]
   U1 -- links --> f3["Field block (changed field)"]
-  G -. signature .-> S0["Signature block<br/>signer DID, sig over the composite"]
+  G -. signature .-> S0["Signature block<br/>signer's public key, sig over the composite"]
 ```
 
 Field blocks are content-addressed bytes; an encrypted field links an
@@ -184,7 +184,7 @@ the *presence* of a matching document, never on the absence of one.
 flowchart TB
   V{"MergeVerdict"}
   V -->|Accept| A["merge proceeds<br/>composite recorded as merged<br/>waiters on it released"]
-  V -->|"Reject { reason }"| R["MergeOutcome::Rejected<br/>block left unmerged<br/>coordinator quarantines the root<br/>handler remembers it; sweep skips it"]
+  V -->|"Reject { reason }"| R["MergeOutcome::Rejected<br/>block left unmerged<br/>coordinator quarantines the root<br/>handler remembers it, sweep skips it"]
   V -->|"Defer { reason, awaiting }"| D["retryable skip<br/>awaiting = [Composite(cid) | ImmutableField{collection, field, value}]"]
   D -->|"awaiting non-empty"| I["indexed in DeferredMerges<br/>re-driven when a key arrives"]
   D -->|"awaiting empty"| S["not indexed<br/>the sweep re-judges it"]
@@ -230,11 +230,11 @@ sequenceDiagram
   end
   alt Accept
     H->>BS: apply field deltas, install head (under the document lock)
-    H->>H: record merged; release waiters on this CID and on the immutable values it set
+    H->>H: record merged, release waiters on this CID and on the immutable values it set
     H-->>C: Merged
   else Reject
     H-->>C: Rejected (reason)
-    C->>C: quarantine the root; stop local re-drive
+    C->>C: quarantine the root, stop local re-drive
   else Defer, awaiting non-empty
     H->>H: index in DeferredMerges under each awaited key
     H-->>C: retryable skip
@@ -297,7 +297,7 @@ sequenceDiagram
   participant Val as Validator
   participant I as DeferredMerges
 
-  Note over H: update U arrives; genesis G not held
+  Note over H: update U arrives, genesis G not held
   H->>Val: validate(U)
   Val-->>H: Defer(awaiting [Composite(G)])
   H->>I: defer(U, [Composite(G)])
@@ -310,7 +310,7 @@ sequenceDiagram
   H->>H: re-drive U through the same path
   H->>Val: validate(U)
   Val-->>H: Accept
-  H->>H: merge U; forward U to replicators
+  H->>H: merge U, forward U to replicators
 ```
 
 Model: the contract and this mechanism are checked in `proofs/tla`
@@ -423,18 +423,18 @@ sequenceDiagram
   participant Op as Operator
 
   P->>H: definition block (+ field blocks)
-  H->>H: version ID = CID; collection ID = CID of the block without policy_cid
+  H->>H: version ID = CID, collection ID = CID of the block without policy_cid and rule
   alt this version is already held
     H-->>P: nothing rebuilt
   else
-    H->>H: rebuild record: root, branchable, immutable flags from the delta
-    H->>H: policy: restored if a held version of the same collection has the reference the policy CID names; else policy_cid recorded, policy absent
+    H->>H: rebuild record: fields and immutable flags from the delta, root and branchable from the delta or the version patched
+    H->>H: policy: restored if a held version of the same collection has the reference the policy CID names, else policy_cid recorded, policy absent
     alt governed and claimed
       H->>H: validate_definition(candidate, view)
       Note over H: Reject → left unmerged, never stored · Defer → indexed, re-driven · Accept → continue
     end
     H->>SS: store record, inactive
-    alt local record of that name commits to more (a policy, a different root, a different collection ID under the same root; for ungoverned: immutable flags or branchability)
+    alt local record of that name commits to more (a policy, a different root, a different collection ID under the same root, for ungoverned: immutable flags or branchability)
       H->>Cache: not admitted
     else
       H->>Cache: admitted, inactive
@@ -588,7 +588,51 @@ across sweeps; the same fact is the same record on two nodes; a record into a
 claimed collection is judged and a signed look-alike refused; a chain stops
 at the bound; an unwritable emission never fails its verdict.
 
-## 10. Tests across nodes
+## 10. Rules as code
+
+The rule tag can be the CID of a wasm module, and `WasmRules`
+(`crates/db/src/merge/governance/rule.rs`, feature `wasm-rules`) is a
+validator that runs the module a version names. The module has no imports:
+it is a function of one request, the candidate and the inputs fetched so
+far, and answers with a verdict or with the keys it needs next
+(`fields:<cid>`, `genesis:<cid>`, `find:<collection>:<field>:<hex value>`,
+`immutable:<collection>:<doc_id>`). The host fetches through the merge
+view and runs it again, up to a step budget, with fuel per step, a memory
+limit per instance, at most 64 keys a step and 256 inputs a verdict, and a
+response length checked against the module's memory before anything is
+allocated for it; a key it cannot satisfy is a defer naming it,
+in the vocabulary the deferral index re-drives on. A trap, an exhausted
+budget or a malformed answer is an error, not a verdict.
+
+```mermaid
+sequenceDiagram
+  participant H as WasmRules
+  participant M as Module
+  participant V as MergeView
+  H->>M: judge(step 0, candidate, inputs {})
+  M-->>H: need [keys]
+  H->>V: fetch each key
+  alt all held
+    H->>M: judge(step 1, candidate, inputs {...})
+    M-->>H: accept | reject | defer
+  else one not held
+    H-->>H: defer naming it
+  end
+```
+
+A module's answer may carry `"emit": [{"collection", "fields"}, ...]`
+beside any verdict; the host writes each as §9 describes, so a rule can
+leave a record of what it found, a fork receipt above all, without any
+ability to write beyond that.
+
+So the rule is part of what replicas agree on, a rule change is a version
+in the DAG judged by the rule in force (the module the superseded version
+names, so a patch cannot admit itself), execution is bounded, and
+the inputs a verdict consumed are the closure an audit would replay it
+over. There is no order, no consensus and no value here; a write is still
+judged on what the replica holds and settles when the rest arrives.
+
+## 11. Tests across nodes
 
 Everything that judges writes is also tested single-node, driving the merge
 handler directly (`crates/db/tests/merge/governance/`). What that cannot show
@@ -604,7 +648,7 @@ author; two peers emitting one record for one fact, and meeting leaving one
 document; and a deferred note merging after the peer restarts, where the
 defer index is gone and only the sweep can reach it.
 
-## 11. What is not in this PR
+## 12. What is not in this PR
 
 - **Replication policy** (#1781, on top of this PR): what a node sends to or
   accepts from a peer, per collection and document. Narrowing only; it can
