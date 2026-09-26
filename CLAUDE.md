@@ -86,7 +86,7 @@ crates/
 ├── query/              # Query engine (GraphQL, BM25)
 ├── replication-filter/ # Query-filter-backed replication matcher
 ├── schema/             # Schema validation
-├── sourcehub/          # On-chain ACP client (Cosmos/EVM)
+├── vera/               # Vera on-chain ACP client (Cosmos/EVM)
 ├── storage/            # Storage layer over regolith, the one engine
 ├── telemetry/          # OpenTelemetry exporter setup
 ├── wasm/               # Browser client (WebAssembly)
@@ -181,8 +181,8 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | Identity | `--test identity` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `--test backup` | dev_mode, dump, purge, restore |
 | Cursor | `--test cursor` | composite_index, error_paths, reindex_datetime_visibility, smoke |
-| SourceHub | `--test sourcehub` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
-| Hub.rs | `--test hubrs` | compartments, p2p_acp, policy_lifecycle, smoke |
+| Vera | `--test vera` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
+| Vera.rs | `--test verars` | compartments, p2p_acp, policy_lifecycle, smoke |
 
 Single-purpose binaries, each its own `[[test]]` with no submodules:
 

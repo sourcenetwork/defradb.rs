@@ -974,12 +974,21 @@ mod tests {
         let key0 = SecretKey::generate();
         let key1 = SecretKey::generate();
         let key2 = SecretKey::generate();
+        // Gossip can hand node 2 node 0's address; a direct 0-2 link would
+        // deliver the unrelayed copy first and dedup would hide the relay.
+        let only = |key: &SecretKey| {
+            let mut config = test_config(key.clone());
+            config.allowlist = crate::iroh::IrohAllowlistConfig::Explicit(
+                [key1.public().to_string()].into_iter().collect(),
+            );
+            config
+        };
         let (command_tx0, _events0, _replicators0, task0) =
-            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+            spawn_endpoint(only(&key0)).await.unwrap();
         let (command_tx1, _events1, _replicators1, task1) =
             spawn_endpoint(test_config(key1.clone())).await.unwrap();
         let (command_tx2, mut events2, _replicators2, task2) =
-            spawn_endpoint(test_config(key2.clone())).await.unwrap();
+            spawn_endpoint(only(&key2)).await.unwrap();
         let transport0 = IrohTransport::new(command_tx0, key0);
         let transport1 = IrohTransport::new(command_tx1, key1);
         let transport2 = IrohTransport::new(command_tx2, key2);
@@ -1070,6 +1079,25 @@ mod tests {
                 break;
             }
         }
+
+        async fn assert_direct_link_refused(dialer: &IrohTransport, server: &IrohTransport) {
+            let addrs = server.listen_addresses().await.unwrap();
+            let _ = dialer.dial(server.local_peer_id(), addrs).await;
+            let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+            while tokio::time::Instant::now() < deadline {
+                assert!(
+                    !server
+                        .connected_peers()
+                        .await
+                        .unwrap()
+                        .contains(dialer.local_peer_id()),
+                    "the allowlist must refuse a direct link that bypasses the relay"
+                );
+                tokio::task::yield_now().await;
+            }
+        }
+        assert_direct_link_refused(&transport2, &transport0).await;
+        assert_direct_link_refused(&transport0, &transport2).await;
 
         transport0.shutdown().await.unwrap();
         transport1.shutdown().await.unwrap();

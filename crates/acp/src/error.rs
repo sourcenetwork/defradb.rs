@@ -30,7 +30,7 @@ pub enum Error {
     InvalidRelation(String),
 
     /// The backend cannot represent the requested subject (e.g. a cross-object
-    /// or userset edge on the Local or SourceHub backend, which store bare DIDs).
+    /// or userset edge on the Local or Vera backend, which store bare DIDs).
     #[error("unsupported subject for this backend: {0}")]
     UnsupportedSubject(String),
 

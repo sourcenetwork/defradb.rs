@@ -36,9 +36,9 @@ fn default_start_args() -> StartArgs {
         #[cfg(feature = "orbis")]
         signer_orbis_endpoint: None,
         #[cfg(feature = "orbis")]
-        signer_orbis_ring_id: None,
+        signer_orbis_derivation_id: None,
         #[cfg(feature = "orbis")]
-        signer_orbis_derivation: None,
+        signer_orbis_public_key: None,
         #[cfg(feature = "orbis")]
         signer_orbis_identity: None,
         max_body_size: None,
@@ -168,9 +168,9 @@ fn test_apply_to_config_all_flags() {
         #[cfg(feature = "orbis")]
         signer_orbis_endpoint: None,
         #[cfg(feature = "orbis")]
-        signer_orbis_ring_id: None,
+        signer_orbis_derivation_id: None,
         #[cfg(feature = "orbis")]
-        signer_orbis_derivation: None,
+        signer_orbis_public_key: None,
         #[cfg(feature = "orbis")]
         signer_orbis_identity: None,
         max_body_size: Some(1024),
@@ -293,7 +293,7 @@ fn test_rebroadcast_flag_precedence() {
 }
 
 /// The Orbis ring authenticates a signing request with an EdDSA bearer token,
-/// while a node whose document ACP is SourceHub/Vera must keep a secp256k1
+/// while a node whose document ACP is Vera/Vera must keep a secp256k1
 /// identity to sign chain transactions. `--signer-orbis-identity` is what lets
 /// one node hold both, and it falls back to `--identity` when unset.
 #[cfg(feature = "orbis")]
@@ -447,14 +447,14 @@ const DIRECT_START_FLAGS: &[(&str, fn())] = &[
 // `profile` is checked against the private binary entry point in main_tests.rs.
 const BINARY_TESTED_START_FLAGS: &[&str] = &["profile"];
 
-// These need a live Orbis ring to verify public-key derivation and signing.
+// These need a live Orbis ring to verify registered derivation signing.
 // Inventory membership is not runtime enforcement coverage for these flags.
 #[cfg(feature = "orbis")]
 const RUNTIME_EXEMPT_START_FLAGS: &[&str] = &[
     "signer-type",
     "signer-orbis-endpoint",
-    "signer-orbis-ring-id",
-    "signer-orbis-derivation",
+    "signer-orbis-derivation-id",
+    "signer-orbis-public-key",
 ];
 #[cfg(not(feature = "orbis"))]
 const RUNTIME_EXEMPT_START_FLAGS: &[&str] = &[];

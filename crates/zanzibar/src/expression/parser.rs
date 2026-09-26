@@ -15,18 +15,27 @@ impl RelationExpression {
     /// All operators have equal precedence and are evaluated left-to-right,
     /// matching Go zanzi behavior. Use parentheses to override.
     pub fn parse(input: &str) -> Result<Self> {
+        Self::parse_bounded(input, 128)
+    }
+
+    fn parse_bounded(input: &str, remaining: usize) -> Result<Self> {
+        if remaining == 0 {
+            return Err(Error::InvalidExpression(
+                "expression exceeds nesting limit of 128".into(),
+            ));
+        }
         let input = input.trim();
         if input.is_empty() {
             return Err(Error::InvalidExpression("empty expression".into()));
         }
 
         if input.starts_with('(') && input.ends_with(')') && is_fully_parenthesized(input) {
-            return Self::parse(&input[1..input.len() - 1]);
+            return Self::parse_bounded(&input[1..input.len() - 1], remaining - 1);
         }
 
         if let Some((pos, op)) = find_rightmost_operator(input) {
-            let left = Self::parse(&input[..pos])?;
-            let right = Self::parse(&input[pos + 1..])?;
+            let left = Self::parse_bounded(&input[..pos], remaining - 1)?;
+            let right = Self::parse_bounded(&input[pos + 1..], remaining - 1)?;
 
             return match op {
                 '+' => Ok(merge_union(left, right)),
@@ -67,21 +76,21 @@ fn is_fully_parenthesized(input: &str) -> bool {
 
 fn find_rightmost_operator(input: &str) -> Option<(usize, char)> {
     let mut depth = 0;
-    let chars: Vec<char> = input.chars().collect();
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
     let mut rightmost: Option<(usize, char)> = None;
 
     for i in 0..chars.len() {
-        match chars[i] {
+        match chars[i].1 {
             '(' => depth += 1,
             ')' => depth -= 1,
             '+' | '&' if depth == 0 => {
-                rightmost = Some((i, chars[i]));
+                rightmost = Some((chars[i].0, chars[i].1));
             }
             '-' if depth == 0 => {
-                if i + 1 < chars.len() && chars[i + 1] == '>' {
+                if i + 1 < chars.len() && chars[i + 1].1 == '>' {
                     continue;
                 }
-                rightmost = Some((i, '-'));
+                rightmost = Some((chars[i].0, '-'));
             }
             _ => {}
         }

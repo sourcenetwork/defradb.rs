@@ -27,6 +27,7 @@ pub struct DbTransactionContext<S: Store> {
     db: Arc<DB<S>>,
     id: String,
     readonly: bool,
+    owner: Option<String>,
     fetcher: Arc<LensedDocFetcher<S>>,
     deferred_acp_mutations: Arc<DeferredAcpMutations>,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
@@ -57,6 +58,7 @@ impl<S: Store> DbTransactionContext<S> {
             db,
             id,
             readonly,
+            owner: defra_core::current_identity::get_effective_identity(),
             fetcher,
             deferred_acp_mutations,
             broadcaster,
@@ -64,6 +66,10 @@ impl<S: Store> DbTransactionContext<S> {
             created_at: now,
             last_request_seen: AtomicU64::new(0),
         }
+    }
+
+    pub(crate) fn is_owned_by_caller(&self) -> bool {
+        self.owner == defra_core::current_identity::get_effective_identity()
     }
 
     /// Get the instant when this transaction was created.

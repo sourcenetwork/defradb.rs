@@ -126,7 +126,7 @@ pub fn verified_signature_signer_did(
         defra_core::block::SignatureType::ES256K => crypto::KeyType::Secp256k1,
         defra_core::block::SignatureType::ES256 => crypto::KeyType::Secp256r1,
         defra_core::block::SignatureType::EdDSA => crypto::KeyType::Ed25519,
-        defra_core::block::SignatureType::BLS => crypto::KeyType::Bls12381,
+        defra_core::block::SignatureType::BLSAugV1 => crypto::KeyType::Bls12381,
     };
     let public_key = crypto::public_key_from_string(key_type, signature_identity)
         .map_err(|e| format!("invalid signature identity: {}", e))?;
@@ -348,9 +348,14 @@ fn verify_signature_bytes(
         .to_dag_cbor()
         .map_err(|e| format!("failed to serialize block for verification: {}", e))?;
 
+    if signature.header.sig_type == defra_core::block::SignatureType::BLSAugV1
+        && public_key.key_type() != crypto::KeyType::Bls12381
+    {
+        return Err("augmented BLS requires a BLS public key".into());
+    }
     let valid = public_key
         .verify(&signed_bytes, &signature.value)
-        .map_err(|e| format!("signature verification error: {}", e))?;
+        .map_err(|e| format!("signature verification error: {e}"))?;
 
     if !valid {
         return Err("signature verification failed".to_string());

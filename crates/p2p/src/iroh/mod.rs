@@ -43,6 +43,8 @@ pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::spawn_endpoint;
 pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
 pub use gossip_heal::GossipHealConfig;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub use iroh::SecretKey;
 #[cfg(feature = "iroh-relay-server")]
 pub use relay_server::{IrohRelayServer, IrohRelayServerConfig, IrohRelayTlsConfig};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]

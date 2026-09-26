@@ -153,7 +153,7 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
             .map_err(|e| format!("{}", e))?;
 
         // Local ACP relationships are node-local (matches Go): a grant is not
-        // propagated to peers. Cross-node access control is SourceHub's role.
+        // propagated to peers. Cross-node access control is Vera's role.
         Ok(added)
     }
 
@@ -202,7 +202,7 @@ impl<S: Store + 'static> DocumentAcpOperations for DocumentAcpAdapter<S> {
             .map_err(|e| format!("{}", e))?;
 
         // Local ACP relationships are node-local (matches Go): a revoke is not
-        // propagated to peers. Cross-node access control is SourceHub's role.
+        // propagated to peers. Cross-node access control is Vera's role.
         Ok(deleted)
     }
 }

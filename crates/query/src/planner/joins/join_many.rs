@@ -203,6 +203,7 @@ impl Planner {
                 && !has_filter_child_plan
                 && multi_level_paths_for_relation.is_empty()
                 && target_collection.policy.is_none()
+                && !self.app_gates_reads(target_collection)
                 && !select.show_deleted
             {
                 join_many = join_many.with_indexed_child_fetch(

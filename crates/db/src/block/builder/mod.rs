@@ -138,7 +138,7 @@ pub fn compute_signature(
                     .sign(&block_bytes)
                     .map_err(|e| format!("Failed to sign block: {}", e))?
             }
-            defra_core::signing::SigningKeyType::Bls => {
+            defra_core::signing::SigningKeyType::BlsAugV1 => {
                 return Err("BLS signing requires a remote signer".to_string());
             }
             defra_core::signing::SigningKeyType::Secp256r1 => {

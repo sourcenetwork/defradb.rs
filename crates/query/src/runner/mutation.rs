@@ -330,6 +330,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         //
         // This matches Go's behavior where GQL mutations on invisible documents return
         // empty results, while mutations on visible-but-unauthorized documents return errors.
+        if let Some(validator) = &self.write_validator {
+            let request = crate::access_hooks::WriteRequest {
+                identity: caller_identity.as_ref(),
+                collection: &collection,
+                kind: mutation.mutation_type,
+                doc_ids: doc_ids_for_check.as_deref().unwrap_or_default(),
+                create_input: &mutation.create_input,
+                update_input: &mutation.update_input,
+            };
+            validator
+                .validate_write(&request)
+                .await
+                .map_err(QueryError::execution)?;
+        }
+
         let mut acp_filtered_doc_ids: Option<Vec<String>> = None;
         if let Some(ref policy) = collection.policy {
             match mutation.mutation_type {
@@ -695,7 +710,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Note: encryption_config and broadcast_creator_did are cleared
         // automatically by the RAII guards declared above when this
         // function returns. The bearer token store stays alive — the
-        // ACP registration block below needs it for hub.rs auth.
+        // ACP registration block below needs it for vera.rs auth.
 
         let plan_execution_elapsed = plan_execution_start.elapsed();
         for doc_id in &result_doc_ids {

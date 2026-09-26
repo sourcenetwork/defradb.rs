@@ -207,6 +207,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         }
                     },
                 };
+                let allowed = match &collection {
+                    Some(collection) if allowed => {
+                        self.app_may_read(caller_identity.as_ref(), collection, doc_id)
+                            .await
+                    }
+                    _ => allowed,
+                };
                 if let Some(collection) = collection {
                     commit.set("collectionID", collection.collection_id.clone());
                 }

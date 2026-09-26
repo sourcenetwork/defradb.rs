@@ -25,3 +25,23 @@ pub(crate) fn txn_id_from_headers(headers: &HeaderMap) -> Result<Option<&str>, H
 
     Ok(Some(txn_id))
 }
+
+/// Resolve REST operations in the transaction selected by the request.
+pub(crate) fn rest_for_request(
+    state: &crate::router::AppState,
+    headers: &HeaderMap,
+) -> Result<std::sync::Arc<dyn query::rest::RestOperations>, HttpError> {
+    let rest = state
+        .rest
+        .as_ref()
+        .ok_or_else(|| HttpError::Internal("REST operations not configured".into()))?;
+    match txn_id_from_headers(headers)? {
+        Some(id) => rest
+            .with_transaction(
+                id.parse()
+                    .map_err(|_| HttpError::BadRequest("invalid transaction id".into()))?,
+            )
+            .map_err(Into::into),
+        None => Ok(rest.clone()),
+    }
+}

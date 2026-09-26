@@ -19,7 +19,7 @@ Compatible with Go DefraDB v1.0.0-rc1. Full feature parity across CLI, HTTP API,
 
 - **GraphQL query engine** — queries, mutations, subscriptions, aggregates, explain - full coverage of the defradb test suite
 - **P2P replication** — `libp2p` (primary, go compatable) and [`iroh`](https://github.com/n0-computer/iroh) (optional) transports
-- **Access control** — local Zanzibar engine, on-chain via [SourceHub](https://github.com/sourcenetwork/sourcehub) (Cosmos/EVM) and [`hub.rs`](https://github.com/sourcenetwork/hub.rs) (Commonware/EVM)
+- **Access control** — local Zanzibar engine, on-chain via [Vera](https://github.com/sourcenetwork/vera) (Cosmos/EVM) and [`vera.rs`](https://github.com/sourcenetwork/vera.rs) (Commonware/EVM)
 - **Full-text search** — (rust only) BM25 ranking with language-aware tokenization
 - **Schema migration** — non-destructive evolution via WASM transforms (Lens)
 - **Searchable encryption** — encrypted indexes with ACP integration
@@ -68,10 +68,10 @@ just ci                # Reproduce the CI pipeline locally
 ### FFI release variants
 
 Every release ships three FFI families: **full** (`defra-ffi_*`), carrying the
-libp2p transport, Lens migrations, and SourceHub ACP; **iroh**
+libp2p transport, Lens migrations, and Vera ACP; **iroh**
 (`defra-ffi-iroh_*`), an iOS XCFramework that adds the iroh transport on top of
 libp2p; and **lean** (`defra-ffi-lean_*`), libp2p-only with no Lens migrations
-and no SourceHub ACP. Iroh ships in that XCFramework alone, so no single
+and no Vera ACP. Iroh ships in that XCFramework alone, so no single
 artifact carries every capability. All of them expose the same `defra.h`
 and the same mobile JSON schema, so the choice is a size tradeoff and not an API
 one: configuring a capability the build does not carry fails with an explicit
@@ -165,6 +165,16 @@ let (handle, _tracer) = telemetry::init(
 // installing it as the process-wide global tracer.
 ```
 
+## HTTP transactions
+
+`GET /api/v0/collections` returns the full definitions of the selected versions.
+Document creation returns an array of document IDs. Supply `x-defradb-tx` to bind
+REST document reads, writes and ID listings to an existing transaction, including
+uncommitted schemas. Committing publishes those writes; discarding removes them.
+Read-only and finalized transactions reject mutations. Transaction handles belong
+to the identity that opened them; other callers receive the same not-found
+response as an unknown handle. Renewed tokens for the same identity retain access.
+
 ## Testing
 
 ### Integration Tests
@@ -177,7 +187,15 @@ cargo test -p integration-test --test basic                  # Specific area
 cargo test -p integration-test --test acp -- negative::      # Specific module
 ```
 
-Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `sourcehub`, `hubrs`
+Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`, `verars`
+
+Vera integration uses the `vera` crate, Cargo feature, and test suite. Select it
+with `--document-acp-type vera` and configure endpoints with `--vera-*` flags,
+`DEFRA_VERA_*` environment variables, or `vera_*` configuration fields. Older
+`--source-hub-*` flags, `DEFRA_SOURCE_HUB_*` environment variables,
+`sourcehub_*` configuration fields, and the `source-hub` ACP selector remain
+accepted. Mobile JSON uses `vera` (`sourcehub` is an alias). The `sourcehub`
+Cargo feature remains an alias for `vera`.
 
 ### Go Compatibility Tests
 
@@ -218,10 +236,10 @@ cargo bench -p benches --bench document_write
 
 ## P2P Replication
 
-### Protected writes with SourceHub ACP
+### Protected writes with Vera ACP
 
 For a policy-protected document, inbound updates and deletes require the
-**verified signer of each composite block** to hold the corresponding SourceHub
+**verified signer of each composite block** to hold the corresponding Vera
 `update` or `delete` permission. This also applies to ancestors, batch merges,
 and explicit-replicator replay. An unsigned update is rejected. The receiving
 node's read access is a separate check, not permission for the sender to write.

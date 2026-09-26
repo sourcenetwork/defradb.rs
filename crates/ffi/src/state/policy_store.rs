@@ -20,7 +20,7 @@ impl PolicyStore {
         }
     }
 
-    /// Store a policy with a known ID (used for SourceHub-created policies).
+    /// Store a policy with a known ID (used for Vera-created policies).
     pub fn store_policy(&self, id: &str, policy: &str) {
         self.policies.insert(id.to_string(), policy.to_string());
     }

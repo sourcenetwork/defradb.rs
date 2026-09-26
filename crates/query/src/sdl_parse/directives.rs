@@ -29,6 +29,7 @@ pub const KNOWN_TYPE_DIRECTIVES: &[&str] = &[
     "downsample",
     "branchable",
     "policy",
+    "governed",
 ];
 
 /// Known arguments for each directive
@@ -53,6 +54,7 @@ pub fn known_directive_arguments(directive_name: &str) -> &'static [&'static str
         "downsample" => &["interval", "timeField", "retention"],
         "branchable" => &["if"],
         "policy" => &["id", "resource"],
+        "governed" => &["root"],
         "embedding" => &["provider", "model", "url", "fields", "template"],
         "encryptedIndex" => &["type"],
         "fulltext" => &["language", "k1", "b"],

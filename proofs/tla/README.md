@@ -326,3 +326,47 @@ showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`
 # RED: a stale policy cache still grants a revoked permission (INV_RevocationConsistent).
 ./tools/tlc -metadir states/acp_r -config MC_Acp_StaleCache_Red.cfg MC_Acp_StaleCache_Red.tla
 ```
+
+---
+
+## Merge Governance Runs (the plugin interface)
+
+Design notes in [GovernanceContract_DESIGN.md](GovernanceContract_DESIGN.md) and
+[GovernanceMerge_DESIGN.md](GovernanceMerge_DESIGN.md). `MergeValidator`
+(`crates/db/src/merge/governance/`) lets an application narrow what the
+database merges, with a third verdict, `Defer`, for a composite whose inputs
+have not arrived. **`GovernanceContract.tla` is what a validator may assume of
+the host** and is the base model a plugin author instantiates for their own
+validator; **`GovernanceMerge.tla` is the merge path**, anchored to the Rust,
+checked to refine the contract on safety *and* liveness.
+
+```bash
+# GREEN: the merge path as coded refines the contract (field keys, unmerged-scoped sweep, in-memory index).
+./tools/tlc -metadir states/gov_t  -config MC_GovernanceMerge_Today.cfg             MC_GovernanceMerge_Orphan.tla
+# RED: the tree before sweep.rs — a restart empties the in-memory index and nothing re-judges what it held.
+./tools/tlc -metadir states/gov_ns -config MC_GovernanceMerge_Red_NoSweep.cfg       MC_GovernanceMerge_Orphan.tla
+# RED: the refactor to refuse — a sweep over the defer index instead of the unmerged set.
+./tools/tlc -metadir states/gov_si -config MC_GovernanceMerge_Red_SweepIndexed.cfg  MC_GovernanceMerge_Orphan.tla
+# RED: teeth — a composite merged without the validator breaks the refinement and nothing else.
+./tools/tlc -metadir states/gov_m  -config MC_GovernanceMerge_Red_Mutant.cfg        MC_GovernanceMerge_Mutant.tla
+# RED: the promise the interface asks of a plugin — reject on absence and replicas split (INV_NoSplit).
+./tools/tlc -metadir states/gov_a  -config MC_GovernanceContract_Red_Absence.cfg    MC_GovernanceContract_Nameable.tla
+```
+
+Nineteen runs in all (thirteen on the contract, six on the mechanism; `run-all.sh`
+carries every one). Five of the six contract REDs are liveness-only: every safety
+invariant passes, `INV_NoStuck` included, while a composite never settles, which
+is why the corpus is TLA+ and not invariants alone. The one safety RED is
+`Red_Absence`. What the runs established, in one line each: the sweep over
+*unmerged* composites is the correctness argument and the defer index only an
+optimisation; a sweep over the index is exactly wrong; never rejecting on
+absence is what makes judging a re-push afresh safe, so the two cannot be
+adopted separately; a disposition policy can strand composites but never split
+replicas.
+
+**For plugin authors.** Instantiate `GovernanceContract` with your validator's
+reads (`Needs`, `Self`, `Refs`, `Bad`) on a small case and check your properties
+with the levers as they are; turn `AbsenceReject` on to see what breaking the
+purity contract costs. Soundness of *your* deferral, that re-drive and a single
+judge agree, is assumed by this model and must be checked in one where your
+verdict is real; the design note says how.

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use super::node::Node;
-#[cfg(feature = "sourcehub")]
+#[cfg(feature = "vera")]
 use crate::config::AcpDocumentType;
 use crate::config::Config;
 use crate::error::{Error, Result};
@@ -17,7 +17,7 @@ pub(super) struct DocumentAcpSetup {
 }
 
 impl Node {
-    #[cfg_attr(not(feature = "sourcehub"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "vera"), allow(unused_variables))]
     pub(super) async fn setup_document_acp(
         config: &Config,
         identity_key_bytes: Option<&[u8]>,
@@ -26,21 +26,19 @@ impl Node {
         event_bus: Arc<dyn events::Bus>,
         nac_checker: Arc<dyn db::NodeAccessChecker>,
     ) -> Result<DocumentAcpSetup> {
-        #[cfg(feature = "sourcehub")]
-        if config.acp.document_type == AcpDocumentType::SourceHub {
-            if config.acp.sourcehub_address.is_empty() {
+        #[cfg(feature = "vera")]
+        if config.acp.document_type == AcpDocumentType::Vera {
+            if config.acp.vera_address.is_empty() {
                 return Err(Error::InvalidConfig(
-                    "sourcehub_address required when document_type is source-hub".into(),
+                    "vera_address required when document_type is vera".into(),
                 ));
             }
 
             let signer_key_bytes = identity_key_bytes.ok_or_else(|| {
-                Error::InvalidConfig(
-                    "node identity required for SourceHub ACP (use --identity)".into(),
-                )
+                Error::InvalidConfig("node identity required for Vera ACP (use --identity)".into())
             })?;
 
-            let tuning = sourcehub::AcpTuning {
+            let tuning = vera::AcpTuning {
                 request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
                 circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
                 circuit_breaker_reset_timeout: std::time::Duration::from_secs(
@@ -56,64 +54,62 @@ impl Node {
                 circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
                 cache_ttl_s = config.acp.cache_ttl,
                 receipt_timeout_s = config.acp.receipt_timeout,
-                "Resolved ACP tuning (SourceHub)"
+                "Resolved ACP tuning (Vera)"
             );
 
             let provider = Arc::new(
-                sourcehub::CosmosProvider::new_with_grpc(
-                    config.acp.sourcehub_address.clone(),
-                    if config.acp.sourcehub_grpc_address.is_empty() {
-                        config.acp.sourcehub_address.clone()
+                vera::CosmosProvider::new_with_grpc(
+                    config.acp.vera_address.clone(),
+                    if config.acp.vera_grpc_address.is_empty() {
+                        config.acp.vera_address.clone()
                     } else {
-                        config.acp.sourcehub_grpc_address.clone()
+                        config.acp.vera_grpc_address.clone()
                     },
-                    config.acp.sourcehub_comet_address.clone(),
+                    config.acp.vera_comet_address.clone(),
                     signer_key_bytes,
-                    &config.acp.sourcehub_chain_id,
+                    &config.acp.vera_chain_id,
                     &tuning,
                 )
-                .map_err(|e| Error::InvalidConfig(format!("SourceHub provider: {}", e)))?,
+                .map_err(|e| Error::InvalidConfig(format!("Vera provider: {}", e)))?,
             );
 
-            let document_acp = sourcehub::SourceHubDocumentACP::new(provider, tuning.cache_ttl);
-            let document_acp = if config.acp.sourcehub_events_ws.is_empty() {
+            let document_acp = vera::VeraDocumentACP::new(provider, tuning.cache_ttl);
+            let document_acp = if config.acp.vera_events_ws.is_empty() {
                 document_acp
             } else {
                 document_acp
-                    .with_cosmos_event_invalidation(config.acp.sourcehub_events_ws.clone())
-                    .map_err(|e| {
-                        Error::InvalidConfig(format!("SourceHub event subscriber: {}", e))
-                    })?
+                    .with_cosmos_event_invalidation(config.acp.vera_events_ws.clone())
+                    .map_err(|e| Error::InvalidConfig(format!("Vera event subscriber: {}", e)))?
             };
             let document_acp = Arc::new(document_acp);
-            let http_adapter = crate::sourcehub_acp_adapter::SourceHubAcpAdapter::new_arc(
+            let http_adapter = crate::vera_acp_adapter::VeraAcpAdapter::new_arc(
                 document_acp.clone(),
                 zanzibar_store,
                 nac_checker,
             );
 
-            info!("Document ACP configured (SourceHub)");
+            info!("Document ACP configured (Vera)");
             return Ok(DocumentAcpSetup {
                 document_acp,
                 http_adapter: Some(http_adapter),
             });
         }
 
-        #[cfg(feature = "sourcehub")]
-        if config.acp.document_type == AcpDocumentType::HubRs {
-            if config.acp.hub_rs_address.is_empty() {
+        #[cfg(feature = "vera")]
+        if config.acp.document_type == AcpDocumentType::VeraRs {
+            if config.acp.vera_rs_address.is_empty() {
                 return Err(Error::InvalidConfig(
-                    "hub_rs_address required when document_type is hub-rs".into(),
+                    "vera_rs_address required when document_type is verars".into(),
                 ));
             }
 
             let signer_key_bytes = identity_key_bytes.ok_or_else(|| {
                 Error::InvalidConfig(
-                    "node identity required for hub.rs ACP (use --identity)".into(),
+                    "node identity required for vera.rs ACP (use --identity)".into(),
                 )
             })?;
 
-            let tuning = sourcehub::AcpTuning {
+            let tuning = vera::AcpTuning {
                 request_timeout: std::time::Duration::from_secs(config.acp.request_timeout),
                 circuit_breaker_threshold: config.acp.circuit_breaker_threshold,
                 circuit_breaker_reset_timeout: std::time::Duration::from_secs(
@@ -128,30 +124,47 @@ impl Node {
                 circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
                 circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
                 receipt_timeout_s = config.acp.receipt_timeout,
-                "Resolved ACP tuning (hub.rs; access decision cache disabled)"
+                "Resolved ACP tuning (vera.rs; access decision cache disabled)"
             );
 
+            let deployment = config.acp.vera_deployment_id.ok_or_else(|| {
+                Error::InvalidConfig(
+                    "vera_deployment_id is required for native Vera submissions".into(),
+                )
+            })?;
+            let worker_config = config.clone();
+            let worker = tokio::task::spawn_blocking(move || {
+                let keyring = crate::commands::open_keyring(&worker_config)?;
+                vera::vera_rs::NativeWorker::open(
+                    &worker_config.rootdir.join("vera-worker"),
+                    keyring.as_ref(),
+                    deployment,
+                )
+                .map_err(|e| Error::InvalidConfig(format!("Vera worker: {e}")))
+            })
+            .await
+            .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
             let provider = Arc::new(
-                sourcehub::HubRsProvider::new(
-                    config.acp.hub_rs_address.clone(),
+                vera::VeraRsProvider::new(
+                    config.acp.vera_rs_address.clone(),
+                    &config.acp.vera_consensus_key,
                     signer_key_bytes,
+                    worker,
                     &tuning,
                     Some(event_bus),
                 )
                 .await
-                .map_err(|e| Error::InvalidConfig(format!("hub.rs provider: {}", e)))?,
+                .map_err(|e| Error::InvalidConfig(format!("vera.rs provider: {}", e)))?,
             );
 
-            let document_acp = Arc::new(sourcehub::SourceHubDocumentACP::without_access_cache(
-                provider,
-            ));
-            let http_adapter = crate::sourcehub_acp_adapter::SourceHubAcpAdapter::new_arc(
+            let document_acp = Arc::new(vera::VeraDocumentACP::without_access_cache(provider));
+            let http_adapter = crate::vera_acp_adapter::VeraAcpAdapter::new_arc(
                 document_acp.clone(),
                 zanzibar_store,
                 nac_checker,
             );
 
-            info!("Document ACP configured (hub.rs)");
+            info!("Document ACP configured (vera.rs)");
             return Ok(DocumentAcpSetup {
                 document_acp,
                 http_adapter: Some(http_adapter),

@@ -4,14 +4,14 @@
 use super::*;
 
 async fn owner_edit_on_relay(delete: bool, grant_writer: bool) {
-    if !support::sourcehub_binary_available() {
-        eprintln!("skipping strict ACP write test: sourcehubd is not available");
+    if !support::vera_binary_available() {
+        eprintln!("skipping strict ACP write test: verad is not available");
         return;
     }
     let relay = generate_identity(&integration_test::rust_binary()).expect("relay identity");
-    let (cluster, _, owner_key) = setup_sourcehub_cluster_with_relay(Some(&relay.private_key_hex))
+    let (cluster, _, owner_key) = setup_vera_cluster_with_relay(Some(&relay.private_key_hex))
         .await
-        .expect("SourceHub cluster");
+        .expect("Vera cluster");
     let origin = cluster.client(0);
     let other = cluster.client(1);
     let relay_identity = other.node_identity().expect("relay node identity");

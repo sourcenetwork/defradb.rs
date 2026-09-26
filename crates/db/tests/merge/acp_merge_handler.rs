@@ -226,7 +226,7 @@ fn strict_acp_registers_owner_only_for_a_did_creator() {
     assert!(hook.post_commit_action("doc1", &collection, &did).is_some());
 }
 
-// These tests exercise strict merge semantics without a running SourceHub:
+// These tests exercise strict merge semantics without a running Vera:
 // LocalDocumentACP supplies the authorization decisions, not the merge rules.
 #[tokio::test]
 async fn strict_acp_requires_the_signers_permission_even_for_the_local_node() {

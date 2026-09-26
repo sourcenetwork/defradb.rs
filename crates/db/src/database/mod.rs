@@ -3,7 +3,6 @@
 /// The DB struct is the main entry point for DefraDB operations.
 /// It manages the root store, creates transactions, and provides
 /// access to collections.
-use crate::collection::Collection;
 use crate::error::{Error, Result};
 pub use crate::search::EmbeddingClientConfig;
 use crate::txn::DbTxn;
@@ -20,7 +19,6 @@ use lens::UnsupportedTransformStore;
 #[cfg(feature = "wasmtime-runtime")]
 use lens::WasmTransformStore;
 use rapidhash::fast::RandomState;
-use rapidhash::{HashMapExt, RapidHashMap};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -198,7 +196,7 @@ pub struct DB<S: Store> {
     /// Whether the database has been closed.
     closed: AtomicBool,
     /// In-memory collection cache (name -> Collection).
-    pub(crate) collections: Atom<RapidHashMap<String, Collection>>,
+    pub(crate) collections: Atom<crate::collection::CollectionMap>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -232,6 +230,17 @@ pub struct DB<S: Store> {
     /// [`DB::set_nac_manager`]. When unset, all `check_node_access` calls are
     /// no-ops (NAC not configured).
     nac_manager: std::sync::OnceLock<std::sync::Arc<dyn NacManagerApi>>,
+    /// Collections an app has claimed and the validator governing their
+    /// replicated composites. Set once, before replication starts.
+    ///
+    /// Held by value: every reader borrows it, and on wasm the validator is
+    /// `?Send`, so wrapping it in an `Arc` would be an `Arc` over a value that
+    /// is neither `Send` nor `Sync`.
+    merge_governance: std::sync::OnceLock<crate::merge::governance::MergeGovernance>,
+    /// Told about each composite a local write commits, so composites deferred
+    /// awaiting what the write created are released.
+    local_commit_release:
+        std::sync::OnceLock<Arc<dyn crate::merge::governance::LocalCommitRelease>>,
     /// Per-document write serialization queue. Shared with the merge handler so
     /// local writes and P2P merges that touch the same document never interleave
     /// their CRDT read-modify-write (#1021 counter convergence).
@@ -273,7 +282,7 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(RapidHashMap::new()),
+            collections: Atom::new(crate::collection::CollectionMap::default()),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -282,6 +291,8 @@ impl<S: Store> DB<S> {
             kms: std::sync::OnceLock::new(),
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
+            merge_governance: std::sync::OnceLock::new(),
+            local_commit_release: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: HopscotchMap::with_hasher(RandomState::default()),
@@ -336,7 +347,7 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(RapidHashMap::new()),
+            collections: Atom::new(crate::collection::CollectionMap::default()),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -345,6 +356,8 @@ impl<S: Store> DB<S> {
             kms: std::sync::OnceLock::new(),
             kms_blockstore: std::sync::OnceLock::new(),
             nac_manager: std::sync::OnceLock::new(),
+            merge_governance: std::sync::OnceLock::new(),
+            local_commit_release: std::sync::OnceLock::new(),
             doc_write_queue: Arc::new(crate::write::queue::DocWriteQueue::new()),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
             collection_locks: HopscotchMap::with_hasher(RandomState::default()),
@@ -473,6 +486,32 @@ impl<S: Store> DB<S> {
     /// `check_node_access` calls are no-ops (NAC not configured).
     pub fn set_nac_manager(&self, nac: std::sync::Arc<dyn NacManagerApi>) {
         let _ = self.nac_manager.set(nac);
+    }
+
+    /// Install app merge governance. First call wins; install it before any
+    /// replication starts so no composite of a claimed collection merges
+    /// ungoverned.
+    pub fn set_merge_governance(&self, governance: crate::merge::governance::MergeGovernance) {
+        let _ = self.merge_governance.set(governance);
+    }
+
+    pub fn merge_governance(&self) -> Option<&crate::merge::governance::MergeGovernance> {
+        self.merge_governance.get()
+    }
+
+    /// Install the hook that releases deferred composites awaiting what a
+    /// local write creates. First call wins.
+    pub fn set_local_commit_release(
+        &self,
+        release: Arc<dyn crate::merge::governance::LocalCommitRelease>,
+    ) {
+        let _ = self.local_commit_release.set(release);
+    }
+
+    pub(crate) fn local_commit_release(
+        &self,
+    ) -> Option<&Arc<dyn crate::merge::governance::LocalCommitRelease>> {
+        self.local_commit_release.get()
     }
 
     /// Get the NAC manager, if one has been installed.

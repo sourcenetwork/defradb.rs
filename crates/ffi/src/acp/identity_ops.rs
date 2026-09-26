@@ -69,7 +69,7 @@ pub(crate) fn parse_crypto_key_type(
         defra_core::signing::SigningKeyType::Ed25519 => Ok(crypto::KeyType::Ed25519),
         defra_core::signing::SigningKeyType::Secp256k1 => Ok(crypto::KeyType::Secp256k1),
         defra_core::signing::SigningKeyType::Secp256r1 => Ok(crypto::KeyType::Secp256r1),
-        defra_core::signing::SigningKeyType::Bls => Ok(crypto::KeyType::Bls12381),
+        defra_core::signing::SigningKeyType::BlsAugV1 => Ok(crypto::KeyType::Bls12381),
         other => Err(format!("unsupported signing key type: {}", other)),
     }
 }

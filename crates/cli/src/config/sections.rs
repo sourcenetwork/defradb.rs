@@ -540,38 +540,48 @@ pub struct AcpConfig {
     ///
     /// - `none`: No document-level access control (default)
     /// - `local`: Local Zanzibar-based access control
-    /// - `source-hub`: Remote SourceHub access control
+    /// - `vera`: Remote Vera access control
     pub document_type: AcpDocumentType,
 
-    /// SourceHub LCD endpoint (e.g., "http://localhost:1317")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_address: String,
+    /// Vera LCD endpoint (e.g., "http://localhost:1317")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_address")]
+    pub vera_address: String,
 
-    /// SourceHub gRPC endpoint (e.g., "http://localhost:9090")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_grpc_address: String,
+    /// Vera gRPC endpoint (e.g., "http://localhost:9090")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_grpc_address")]
+    pub vera_grpc_address: String,
 
-    /// SourceHub CometBFT RPC endpoint (e.g., "http://localhost:26657")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_comet_address: String,
+    /// Vera CometBFT RPC endpoint (e.g., "http://localhost:26657")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_comet_address")]
+    pub vera_comet_address: String,
 
-    /// SourceHub CometBFT WebSocket endpoint for ACP cache invalidation.
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_events_ws: String,
+    /// Vera CometBFT WebSocket endpoint for ACP cache invalidation.
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_events_ws")]
+    pub vera_events_ws: String,
 
-    /// SourceHub chain ID (e.g., "sourcehub-test")
-    #[cfg(feature = "sourcehub")]
-    #[serde(default)]
-    pub sourcehub_chain_id: String,
+    /// Vera chain ID (e.g., "vera-test")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "sourcehub_chain_id")]
+    pub vera_chain_id: String,
 
-    /// hub.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
-    #[cfg(feature = "sourcehub")]
+    /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
+    #[cfg(feature = "vera")]
+    #[serde(default, alias = "hub_rs_address")]
+    pub vera_rs_address: String,
+
+    /// Trusted Vera consensus public key from operator configuration (hex).
+    #[cfg(feature = "vera")]
     #[serde(default)]
-    pub hub_rs_address: String,
+    pub vera_consensus_key: String,
+
+    /// Vera deployment identifier used to bind native submissions.
+    #[cfg(feature = "vera")]
+    #[serde(default)]
+    pub vera_deployment_id: Option<u64>,
 
     /// Circuit breaker failure threshold before tripping. Default: 3.
     #[serde(default = "default_acp_cb_threshold")]
@@ -581,7 +591,7 @@ pub struct AcpConfig {
     #[serde(default = "default_acp_cb_reset_timeout")]
     pub circuit_breaker_reset_timeout: u64,
 
-    /// Request timeout in seconds for SourceHub/hub.rs network calls. Default: 5.
+    /// Request timeout in seconds for Vera/vera.rs network calls. Default: 5.
     #[serde(default = "default_acp_request_timeout")]
     pub request_timeout: u64,
 
@@ -589,7 +599,7 @@ pub struct AcpConfig {
     #[serde(default = "default_acp_cache_ttl")]
     pub cache_ttl: u64,
 
-    /// Receipt polling timeout in seconds for hub.rs transactions. Default: 30.
+    /// Receipt polling timeout in seconds for vera.rs transactions. Default: 30.
     #[serde(default = "default_acp_receipt_timeout")]
     pub receipt_timeout: u64,
 }
@@ -615,18 +625,22 @@ impl Default for AcpConfig {
         Self {
             node_enable: false,
             document_type: AcpDocumentType::None,
-            #[cfg(feature = "sourcehub")]
-            sourcehub_address: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_grpc_address: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_comet_address: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_events_ws: String::new(),
-            #[cfg(feature = "sourcehub")]
-            sourcehub_chain_id: String::new(),
-            #[cfg(feature = "sourcehub")]
-            hub_rs_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_grpc_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_comet_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_events_ws: String::new(),
+            #[cfg(feature = "vera")]
+            vera_chain_id: String::new(),
+            #[cfg(feature = "vera")]
+            vera_rs_address: String::new(),
+            #[cfg(feature = "vera")]
+            vera_consensus_key: String::new(),
+            #[cfg(feature = "vera")]
+            vera_deployment_id: None,
             circuit_breaker_threshold: default_acp_cb_threshold(),
             circuit_breaker_reset_timeout: default_acp_cb_reset_timeout(),
             request_timeout: default_acp_request_timeout(),
@@ -670,7 +684,7 @@ impl AcpConfig {
         if self.receipt_timeout == 0 {
             return Err(Error::InvalidConfig(
                 "acp_receipt_timeout must be > 0: \
-                 a zero timeout means hub.rs transaction receipts are never awaited"
+                 a zero timeout means vera.rs transaction receipts are never awaited"
                     .into(),
             ));
         }

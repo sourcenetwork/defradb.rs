@@ -62,9 +62,12 @@ impl<S: Store> crate::database::DB<S> {
                     a.name.cmp(&b.name)
                 }
             });
+            let commitments = schema::Commitments::of(&schema);
             let mut fld_cids = Vec::new();
             for field in &sorted {
-                if let Ok(cid) = schema::generate_field_cid_with_priority(field, 1) {
+                if let Ok(cid) =
+                    schema::generate_field_cid_with_priority(field, 1, commitments.is_governed())
+                {
                     fld_cids.push(cid);
                 }
             }
@@ -76,6 +79,7 @@ impl<S: Store> crate::database::DB<S> {
                 &[],
                 qs_bytes.as_deref(),
                 qt_cid.as_ref(),
+                commitments,
             ) {
                 let new_version_id = new_cid.to_string();
                 let old_version_id = schema.version_id.clone();
@@ -167,10 +171,16 @@ impl<S: Store> crate::database::DB<S> {
             }
         });
 
+        let commitments = schema::Commitments::of(&schema);
         let mut field_cids = Vec::with_capacity(sorted_fields.len());
         for field in &sorted_fields {
             // Generate field block with priority=1 (matches Go)
-            match schema::generate_field_block_with_priority_and_heads(field, 1, &[]) {
+            match schema::generate_field_block_with_priority_and_heads(
+                field,
+                1,
+                &[],
+                commitments.is_governed(),
+            ) {
                 Ok(block_with_cid) => {
                     blockstore
                         .set(&block_with_cid.cid.to_bytes(), &block_with_cid.bytes)
@@ -208,6 +218,7 @@ impl<S: Store> crate::database::DB<S> {
             &[], // no heads for new collections
             qs_bytes_for_block.as_deref(),
             qt_cid_for_block.as_ref(),
+            commitments,
         ) {
             Ok(block_with_cid) => {
                 blockstore
@@ -298,7 +309,6 @@ impl<S: Store> crate::database::DB<S> {
         )
         .map_err(Error::Other)?;
 
-        let name = schema.name.clone();
         let mut txn = self.new_txn(false).await?;
 
         let finalized_schema = self.create_collection_with_txn(&mut txn, schema).await?;
@@ -315,9 +325,12 @@ impl<S: Store> crate::database::DB<S> {
         self.unforbid_collection_id(finalized_schema.collection_id.as_str())?;
 
         // Update the process-wide cache after successful commit
+        let collection = self
+            .collection_with_index_actions(finalized_schema.clone())
+            .await?;
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cache.insert(name.clone(), Collection::new(finalized_schema.clone()));
+            cache.put(collection.clone());
             cache
         });
 
@@ -453,10 +466,14 @@ impl<S: Store> crate::database::DB<S> {
         }
 
         // Update the process-wide cache after successful commit
+        let mut collections = Vec::with_capacity(finalized_schemas.len());
+        for schema in &finalized_schemas {
+            collections.push(self.collection_with_index_actions(schema.clone()).await?);
+        }
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            for schema in &finalized_schemas {
-                cache.insert(schema.name.clone(), Collection::new(schema.clone()));
+            for collection in &collections {
+                cache.put(collection.clone());
             }
             cache
         });

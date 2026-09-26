@@ -281,6 +281,7 @@ impl TryFrom<&Ipld> for FieldDefinitionDeltaPayload {
             scalar_kind: parse_optional_u8(map, "scalarKind")?,
             collection_id: parse_optional_string(map, "collectionID")?,
             relative_id: parse_optional_i32(map, "relativeID")?,
+            immutable: parse_flag(map, "immutable")?,
         })
     }
 }
@@ -304,6 +305,9 @@ impl TryFrom<&Ipld> for CollectionDefinitionDeltaPayload {
             name: parse_optional_string(map, "name")?,
             query_select: parse_optional_bytes(map, "querySelect")?,
             query_transform: parse_optional_cid(map, "queryTransform")?,
+            governance_root: parse_optional_string(map, "governance")?,
+            is_branchable: parse_flag(map, "branchable")?,
+            policy_cid: parse_optional_cid(map, "policy")?,
         })
     }
 }
@@ -372,7 +376,7 @@ impl TryFrom<&Ipld> for SignatureHeader {
                 "ES256K" => SignatureType::ES256K,
                 "ES256" => SignatureType::ES256,
                 "EdDSA" => SignatureType::EdDSA,
-                "BLS" => SignatureType::BLS,
+                "BLS_AUG_V1" => SignatureType::BLSAugV1,
                 other => {
                     return Err(Error::IpldError(format!(
                         "Unknown signature type: {}",
@@ -543,6 +547,24 @@ fn parse_u8(map: &BTreeMap<String, Ipld>, key: &str) -> Result<u8> {
 // ============================================================================
 // Optional Field Parsers (with proper type checking)
 // ============================================================================
+
+/// Parse a flag whose absence means false, which is how it is serialised.
+///
+/// A present value of the wrong type is an error rather than a silent false:
+/// these flags carry commitments, and the serde codec rejects the same bytes,
+/// so a lenient reading here would have the two decoders disagree about what a
+/// peer's block says.
+fn parse_flag(map: &BTreeMap<String, Ipld>, key: &str) -> Result<bool> {
+    match map.get(key) {
+        Some(Ipld::Bool(flag)) => Ok(*flag),
+        Some(other) => Err(Error::IpldError(format!(
+            "Field '{}' expected Bool, got {}",
+            key,
+            ipld_type_name(other)
+        ))),
+        None => Ok(false),
+    }
+}
 
 /// Parse an optional string field. Returns error if field exists but has wrong type.
 fn parse_optional_string(map: &BTreeMap<String, Ipld>, key: &str) -> Result<Option<String>> {

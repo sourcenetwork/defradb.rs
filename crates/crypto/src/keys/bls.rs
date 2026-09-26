@@ -13,7 +13,7 @@ use crate::error::crypto_error;
 use crate::keys::{Key, PublicKey};
 use crate::types::KeyType;
 
-const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_AUG_";
 
 /// BLS12-381 public key wrapper (G1, 48 bytes compressed)
 #[derive(Clone, Debug)]
@@ -64,9 +64,12 @@ impl Key for BlsPublicKey {
 
 impl PublicKey for BlsPublicKey {
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<bool> {
+        if self.raw_bytes.len() != 48 || signature.len() != 96 {
+            return Err(crypto_error("invalid BLS12-381 signature encoding: expected a compressed 48-byte key and 96-byte signature"));
+        }
         let sig = blst::min_pk::Signature::from_bytes(signature)
             .map_err(|e| crypto_error(format!("invalid BLS12-381 signature: {:?}", e)))?;
-        let err = sig.verify(true, data, DST, &[], &self.key, true);
+        let err = sig.verify(true, data, DST, &self.key.to_bytes(), &self.key, true);
         if err == blst::BLST_ERROR::BLST_SUCCESS {
             Ok(true)
         } else {

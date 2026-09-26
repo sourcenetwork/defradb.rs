@@ -19,8 +19,8 @@ use super::directives::{
     KNOWN_FIELD_DIRECTIVES, KNOWN_TYPE_DIRECTIVES,
 };
 use super::helpers::{
-    graphql_schema_value_to_json, normalize_datetime_string, parse_graphql_type,
-    parse_policy_directive,
+    graphql_schema_value_to_json, normalize_datetime_string, parse_governed_directive,
+    parse_graphql_type, parse_policy_directive,
 };
 use super::parser::{CompositeIndex, ParsedField, ParsedTypeDirectives, SdlParser};
 use super::warnings::{DirectiveLocation, ParseWarning};
@@ -388,6 +388,9 @@ impl<'a> SdlParser<'a> {
                 }
                 "policy" => {
                     result.policy = Some(parse_policy_directive(directive)?);
+                }
+                "governed" => {
+                    result.governance_root = Some(parse_governed_directive(directive)?);
                 }
                 _ => {
                     // Unknown directive - emit warning for forward compatibility

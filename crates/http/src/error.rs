@@ -7,6 +7,7 @@ use axum::{
 };
 use db::Error as DbError;
 use query::error::{QueryError, TransactionError};
+use query::executor::TXN_CONFLICT_MESSAGE;
 use query::rest::RestError;
 use serde::Serialize;
 use thiserror::Error;
@@ -23,6 +24,9 @@ pub enum HttpError {
 
     #[error("conflict: {0}")]
     Conflict(String),
+
+    #[error("{TXN_CONFLICT_MESSAGE}")]
+    TransactionConflict,
 
     #[error("unprocessable entity: {0}")]
     UnprocessableEntity(String),
@@ -61,6 +65,9 @@ impl IntoResponse for HttpError {
             HttpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             HttpError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             HttpError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            HttpError::TransactionConflict => {
+                (StatusCode::CONFLICT, TXN_CONFLICT_MESSAGE.to_owned())
+            }
             HttpError::UnprocessableEntity(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
             HttpError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             HttpError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
@@ -81,6 +88,7 @@ enum ErrorStatus {
     Forbidden,
     NotFound,
     Conflict,
+    TransactionConflict,
     UnprocessableEntity,
     ServiceUnavailable,
 }
@@ -91,6 +99,7 @@ fn http_error_from_status(status: ErrorStatus, message: String) -> HttpError {
         ErrorStatus::Forbidden => HttpError::Forbidden(message),
         ErrorStatus::NotFound => HttpError::NotFound(message),
         ErrorStatus::Conflict => HttpError::Conflict(message),
+        ErrorStatus::TransactionConflict => HttpError::TransactionConflict,
         ErrorStatus::UnprocessableEntity => HttpError::UnprocessableEntity(message),
         ErrorStatus::ServiceUnavailable => HttpError::ServiceUnavailable(message),
     }
@@ -102,6 +111,11 @@ fn message_contains_any(message: &str, needles: &[&str]) -> bool {
 
 fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
     let message = message.to_ascii_lowercase();
+    if message == "transaction conflict. please retry"
+        || message.ends_with(": transaction conflict. please retry")
+    {
+        return Some(ErrorStatus::TransactionConflict);
+    }
 
     // Fallback precedence is intentional: typed errors should be preferred,
     // and ambiguous auth/not-found messages stay privacy-preserving 404s.
@@ -176,6 +190,7 @@ fn classify_backend_message(message: &str) -> Option<ErrorStatus> {
             "invalid document",
             "invalid entityset",
             "filtered truncate is not supported",
+            "cannot execute mutation in read-only transaction",
             "invalid lens configuration",
             "invalid patch",
             "invalid policy",
@@ -201,12 +216,11 @@ fn http_error_from_query_error(err: &QueryError) -> HttpError {
             HttpError::NotFound(message)
         }
         QueryError::Storage(source) if source.is_not_found() => HttpError::NotFound(message),
-        QueryError::Storage(source)
-            if source.is_txn_conflict() || source.is_unique_constraint_violation() =>
-        {
+        QueryError::Storage(source) if source.is_txn_conflict() => HttpError::TransactionConflict,
+        QueryError::Storage(source) if source.is_unique_constraint_violation() => {
             HttpError::Conflict(message)
         }
-        QueryError::TransactionConflict(_) => HttpError::Conflict(message),
+        QueryError::TransactionConflict(_) => HttpError::TransactionConflict,
         QueryError::PermissionDenied(_)
         | QueryError::AcpRegistrationFailed { .. }
         | QueryError::AcpCheckFailed { .. }
@@ -226,9 +240,8 @@ fn http_status_from_db_error(err: &DbError) -> HttpError {
         | DbError::TransactionNotFound(_) => HttpError::NotFound(message),
         DbError::Storage(source) if source.is_not_found() => HttpError::NotFound(message),
         DbError::CollectionAlreadyExists(_) => HttpError::Conflict(message),
-        DbError::Storage(source)
-            if source.is_txn_conflict() || source.is_unique_constraint_violation() =>
-        {
+        DbError::Storage(source) if source.is_txn_conflict() => HttpError::TransactionConflict,
+        DbError::Storage(source) if source.is_unique_constraint_violation() => {
             HttpError::Conflict(message)
         }
         DbError::InvalidPatch(_)
@@ -278,6 +291,7 @@ impl From<TransactionError> for HttpError {
 impl From<RestError> for HttpError {
     fn from(err: RestError) -> Self {
         match err {
+            RestError::TransactionConflict => HttpError::TransactionConflict,
             RestError::CollectionNotFound(name) => {
                 HttpError::NotFound(format!("Collection '{}' not found", name))
             }
@@ -393,10 +407,45 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn transaction_conflicts_preserve_the_client_retry_contract() {
+        let errors = [
+            HttpError::from(DbError::Storage(storage::Error::TxnConflict)),
+            http_error_from_query_error(&QueryError::transaction_conflict("diagnostic context")),
+            HttpError::from(RestError::from(QueryError::transaction_conflict(
+                "write aborted",
+            ))),
+            HttpError::from(TransactionError::execution(
+                "commit error: datastore error: storage error: transaction conflict. Please retry",
+            )),
+        ];
+        for error in errors {
+            let response = error.into_response();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(value, serde_json::json!({"error": TXN_CONFLICT_MESSAGE}));
+        }
+        assert!(matches!(
+            http_error_from_backend_message("unique constraint violation".into()),
+            HttpError::Conflict(_)
+        ));
+        assert!(matches!(
+            http_error_from_backend_message("transaction conflict has another cause".into()),
+            HttpError::Conflict(_)
+        ));
+    }
+
     #[test]
     fn transaction_errors_map_to_status_buckets() {
         let cases = [
             (TransactionError::not_found("1"), StatusCode::NOT_FOUND),
+            (
+                TransactionError::execution("cannot execute mutation in read-only transaction"),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
             (
                 TransactionError::already_finalized("1"),
                 StatusCode::CONFLICT,

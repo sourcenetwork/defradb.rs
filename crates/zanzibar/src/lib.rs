@@ -6,6 +6,10 @@
 //! - Set operations (union, intersection, difference)
 //! - Goal-tree search with cycle detection
 //!
+//! Exclusions fail with `IndeterminateExclusion` when a cycle prevents proving
+//! the excluded branch false. Positive relationship cycles still allow reachable
+//! grants; unresolved exclusions never authorize access.
+//!
 //! Storage is pluggable via the `ZanzibarStore` trait. Consumers implement
 //! the trait against their own KV store (e.g., redb, QMDB, rocksdb).
 
@@ -27,6 +31,6 @@ pub use expression::RelationExpression;
 pub use lookup::PolicyLookupTable;
 pub use store::{MemoryZanzibarStore, StorePolicyOptions, ZanzibarStore};
 pub use types::{
-    decode_subject, encode_subject, ObjectRef, Policy, Relation, Relationship, Resource, Subject,
-    SubjectRestriction,
+    decode_subject, encode_subject, ObjectRef, Policy, PolicySpecification, Relation, Relationship,
+    Resource, Subject, SubjectRestriction,
 };

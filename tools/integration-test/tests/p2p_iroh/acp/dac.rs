@@ -67,17 +67,17 @@ fn extract_doc_id(data: &serde_json::Value, mutation_name: &str) -> String {
         .to_string()
 }
 
-/// Helper: set up a 2-node SourceHub cluster with ACP policy and schema.
+/// Helper: set up a 2-node Vera cluster with ACP policy and schema.
 /// Returns (cluster, policy_id, owner identity key).
-async fn setup_sourcehub_cluster() -> Option<(TestCluster, String, String)> {
-    setup_sourcehub_cluster_with_relay(None).await
+async fn setup_vera_cluster() -> Option<(TestCluster, String, String)> {
+    setup_vera_cluster_with_relay(None).await
 }
 
-async fn setup_sourcehub_cluster_with_relay(
+async fn setup_vera_cluster_with_relay(
     relay_key: Option<&str>,
 ) -> Option<(TestCluster, String, String)> {
-    if !support::sourcehub_binary_available() {
-        eprintln!("skipping SourceHub-backed Iroh DAC test: sourcehubd is not available");
+    if !support::vera_binary_available() {
+        eprintln!("skipping Vera-backed Iroh DAC test: verad is not available");
         return None;
     }
 
@@ -87,14 +87,14 @@ async fn setup_sourcehub_cluster_with_relay(
 
     let mut builder = TestCluster::builder()
         .rust_nodes(2)
-        .with_source_hub()
+        .with_vera()
         .with_iroh_transport()
-        .with_rust_binary(BinarySource::Path(support::sourcehub_iroh_binary()))
+        .with_rust_binary(BinarySource::Path(support::vera_iroh_binary()))
         .with_identity(&owner_key);
     if let Some(relay_key) = relay_key {
         builder = builder.with_node_identity(1, relay_key);
     }
-    let cluster = builder.build().await.expect("build SourceHub cluster");
+    let cluster = builder.build().await.expect("build Vera cluster");
 
     for i in 0..2 {
         cluster
@@ -106,7 +106,7 @@ async fn setup_sourcehub_cluster_with_relay(
     let node0 = cluster.client(0);
     let node1 = cluster.client(1);
 
-    // Add policy on SourceHub via node0
+    // Add policy on Vera via node0
     let policy_result = node0
         .acp_policy_add(USER_ACP_POLICY, &owner_key)
         .expect("add policy on node0");
@@ -333,15 +333,15 @@ async fn replicator_permissioned_local() {
 }
 
 // ---------------------------------------------------------------------------
-// SourceHub ACP tests
+// Vera ACP tests
 // ---------------------------------------------------------------------------
 
-/// Port: TestACP_P2PSubscribeAddGetSingleWithPermissionedCollection_SourceHubACP
-/// Subscription-based sync with SourceHub ACP enforcement.
+/// Port: TestACP_P2PSubscribeAddGetSingleWithPermissionedCollection_VeraACP
+/// Subscription-based sync with Vera ACP enforcement.
 #[tokio::test]
 #[serial]
-async fn subscribe_add_get_permissioned_sourcehub() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+async fn subscribe_add_get_permissioned_vera() {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 
@@ -373,7 +373,7 @@ async fn subscribe_add_get_permissioned_sourcehub() {
         },
         Duration::from_secs(15),
         Duration::from_millis(300),
-        "SourceHub ACP-protected doc did not replicate",
+        "Vera ACP-protected doc did not replicate",
     )
     .await;
 
@@ -382,16 +382,16 @@ async fn subscribe_add_get_permissioned_sourcehub() {
     let anon_count = anon["User"].as_array().map(|arr| arr.len()).unwrap_or(0);
     assert_eq!(
         anon_count, 0,
-        "anonymous should NOT see docs on node1 (SourceHub ACP enforced)"
+        "anonymous should NOT see docs on node1 (Vera ACP enforced)"
     );
 }
 
-/// Port: TestACP_P2PCreatePrivateDocumentsOnDifferentNodes_SourceHubACP
+/// Port: TestACP_P2PCreatePrivateDocumentsOnDifferentNodes_VeraACP
 /// Create private docs on different nodes, verify isolation.
 #[tokio::test]
 #[serial]
 async fn create_private_docs_different_nodes() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 
@@ -446,12 +446,12 @@ async fn create_private_docs_different_nodes() {
     );
 }
 
-/// Port: TestACP_P2PCreatePrivateDocumentAndSyncAfterAddingRelationship_SourceHubACP
+/// Port: TestACP_P2PCreatePrivateDocumentAndSyncAfterAddingRelationship_VeraACP
 /// Private doc becomes visible after granting reader relationship.
 #[tokio::test]
 #[serial]
 async fn create_private_sync_after_relationship() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 
@@ -509,12 +509,12 @@ async fn create_private_sync_after_relationship() {
     );
 }
 
-/// Port: TestACP_P2PUpdatePrivateDocumentsOnDifferentNodes_SourceHubACP
+/// Port: TestACP_P2PUpdatePrivateDocumentsOnDifferentNodes_VeraACP
 /// Update private docs on different nodes, verify sync.
 #[tokio::test]
 #[serial]
 async fn update_private_docs_different_nodes() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 
@@ -588,12 +588,12 @@ async fn update_private_docs_different_nodes() {
     );
 }
 
-/// Port: TestACP_P2PDeletePrivateDocumentsOnDifferentNodes_SourceHubACP
+/// Port: TestACP_P2PDeletePrivateDocumentsOnDifferentNodes_VeraACP
 /// Delete private docs, verify deletion syncs.
 #[tokio::test]
 #[serial]
 async fn delete_private_docs_different_nodes() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 
@@ -666,12 +666,12 @@ async fn delete_private_docs_different_nodes() {
     .await;
 }
 
-/// Port: TestACP_P2POneToOneReplicatorWithPermissionedCollection_SourceHubACP
-/// Replicator with SourceHub ACP enforcement.
+/// Port: TestACP_P2POneToOneReplicatorWithPermissionedCollection_VeraACP
+/// Replicator with Vera ACP enforcement.
 #[tokio::test]
 #[serial]
-async fn replicator_permissioned_sourcehub() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+async fn replicator_permissioned_vera() {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 
@@ -703,7 +703,7 @@ async fn replicator_permissioned_sourcehub() {
         },
         Duration::from_secs(15),
         Duration::from_millis(300),
-        "SourceHub ACP doc did not replicate via replicator",
+        "Vera ACP doc did not replicate via replicator",
     )
     .await;
 
@@ -712,7 +712,7 @@ async fn replicator_permissioned_sourcehub() {
     assert_eq!(
         anon["User"].as_array().map(|a| a.len()).unwrap_or(0),
         0,
-        "anonymous should NOT see docs (SourceHub ACP enforced)"
+        "anonymous should NOT see docs (Vera ACP enforced)"
     );
 
     // A different identity cannot read
@@ -731,12 +731,12 @@ async fn replicator_permissioned_sourcehub() {
     );
 }
 
-/// Port: TestACP_P2PSubscribeAddGetSingleWithPermissionedCollectionCreateDocActorRelationship_SourceHubACP
+/// Port: TestACP_P2PSubscribeAddGetSingleWithPermissionedCollectionCreateDocActorRelationship_VeraACP
 /// Subscription with doc-actor relationship grants access.
 #[tokio::test]
 #[serial]
 async fn subscribe_add_get_with_doc_actor_relationship() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 
@@ -803,12 +803,12 @@ async fn subscribe_add_get_with_doc_actor_relationship() {
     );
 }
 
-/// Port: TestACP_P2PReplicatorWithPermissionedCollectionCreateDocActorRelationship_SourceHubACP
+/// Port: TestACP_P2PReplicatorWithPermissionedCollectionCreateDocActorRelationship_VeraACP
 /// Replicator with doc-actor relationship management.
 #[tokio::test]
 #[serial]
 async fn replicator_with_doc_actor_relationship() {
-    let Some((cluster, _policy_id, owner_key)) = setup_sourcehub_cluster().await else {
+    let Some((cluster, _policy_id, owner_key)) = setup_vera_cluster().await else {
         return;
     };
 

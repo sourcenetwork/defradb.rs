@@ -81,7 +81,7 @@ impl AcpCompositeMergeHook {
     ) -> Result<bool, MergeError> {
         let signer = Identity::Authenticated(signer);
         // Keep the local-ACP node-owner shortcut, but never use it for
-        // SourceHub: a node's signature is not a shared-policy write grant.
+        // Vera: a node's signature is not a shared-policy write grant.
         if !self.strict_replicated_doc_access.load(Ordering::Relaxed)
             && self.local_identity.as_ref() == Some(&signer)
         {
@@ -132,7 +132,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
                 MergeError::MergeFailed(format!("ACP registration lookup failed: {}", e))
             })?;
         if !is_registered {
-            // Local ACP treats unregistered replicas as public. SourceHub
+            // Local ACP treats unregistered replicas as public. Vera
             // registration can lag replication; never turn that lag into a
             // write-authorization bypass, even on an explicit replay path.
             return Ok(self
@@ -276,7 +276,7 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         metadata: &BlockMetadata<'_>,
     ) -> Option<Box<dyn CompositePostCommitAction>> {
         // Only register a replicated document's owner on the receiving node under
-        // strict (SourceHub) ACP, where cross-node access control is authoritative
+        // strict (Vera) ACP, where cross-node access control is authoritative
         // via shared on-chain state. Under Local ACP we match Go: a replicated
         // document is NOT registered on the peer (unregistered == public), so the
         // peer does not gate it. Cross-node Local ACP gating was a Rust-only

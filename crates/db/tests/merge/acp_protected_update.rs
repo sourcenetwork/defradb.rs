@@ -1,6 +1,6 @@
 //! Updates to a registered protected document, merged through the full ACP
 //! merge handler under local and strict ACP. The in-memory ACP supplies the
-//! decisions; SourceHub-backed coverage lives in the Iroh DAC integration tests.
+//! decisions; Vera-backed coverage lives in the Iroh DAC integration tests.
 
 use acp::DocumentACP;
 use acp::LocalDocumentACP;

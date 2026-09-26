@@ -9,7 +9,7 @@
 //! ## Cargo features
 //!
 //! - `native` — native host (tokio, event channel). Default-on.
-//! - `sourcehub` — on-chain document ACP. Default-on. Omit for local-only ACP.
+//! - `vera` — on-chain document ACP. Default-on. Omit for local-only ACP.
 //! - `wasmtime-runtime` — Lens WASM execution. Default-on. Without it,
 //!   [`EmbeddedNode::set_migration`] returns an explicit error.
 //! - `p2p` — Iroh/QUIC replication. Implies `native`. Does **not** compile libp2p.
@@ -58,8 +58,8 @@ pub use config::DocumentAcpConfig;
 pub use config::HttpConfig;
 #[cfg(feature = "p2p")]
 pub use config::P2PConfig;
-#[cfg(feature = "sourcehub")]
-pub use config::SourceHubConfig;
+#[cfg(feature = "vera")]
+pub use config::VeraConfig;
 pub use dense_search::{DenseHybridSearchHit, DenseHybridSearchRequest, DenseHybridSearchResponse};
 pub use events::EventName;
 pub use lens::{LensConfig, LensModule, TransformId};
@@ -333,7 +333,12 @@ impl EmbeddedNode {
     where
         F: std::future::Future<Output = T>,
     {
-        defra_core::current_identity::with_scoped_identity(self.node_identity_did.clone(), op).await
+        if self.node_identity_did.is_some() {
+            defra_core::current_identity::with_scoped_identity(self.node_identity_did.clone(), op)
+                .await
+        } else {
+            op.await
+        }
     }
 
     /// DID used as the embedded node identity for signing, when configured.
@@ -370,8 +375,7 @@ impl EmbeddedNode {
         cid: &str,
         transaction: &TransactionHandle,
     ) -> anyhow::Result<String> {
-        self.block_ops
-            .verified_signer_did_in_txn(cid, transaction)
+        self.as_node_identity(self.block_ops.verified_signer_did_in_txn(cid, transaction))
             .await
     }
 
@@ -491,7 +495,7 @@ impl EmbeddedNode {
         &self,
         readonly: bool,
     ) -> Result<TransactionHandle, query::TransactionError> {
-        self.runner.begin_txn(readonly).await
+        self.as_node_identity(self.runner.begin_txn(readonly)).await
     }
 
     /// Commit a transaction owned by this embedded node.
@@ -499,7 +503,8 @@ impl EmbeddedNode {
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
-        self.runner.commit_txn(transaction).await
+        self.as_node_identity(self.runner.commit_txn(transaction))
+            .await
     }
 
     /// Roll back a transaction owned by this embedded node.
@@ -507,7 +512,8 @@ impl EmbeddedNode {
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
-        self.runner.rollback_txn(transaction).await
+        self.as_node_identity(self.runner.rollback_txn(transaction))
+            .await
     }
 
     /// Access the raw query executor for advanced use.
@@ -878,6 +884,7 @@ pub struct NodeBuilder {
     data_path: Option<PathBuf>,
     storage_backend: StorageBackend,
     storage_durability: storage::backends::DurabilityMode,
+    regolith_options: Option<storage::RegolithStoreOptions>,
     embedding_url: Option<String>,
     embedding_model: Option<String>,
     embedding_api_key: Option<String>,
@@ -894,6 +901,15 @@ pub struct NodeBuilder {
     p2p_config: Option<P2PConfig>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
+}
+
+/// Durability is a separate builder setting, so it is applied over the
+/// caller's options rather than being one of the values they replace.
+fn resolve_regolith_options(
+    explicit: Option<storage::RegolithStoreOptions>,
+    durability: storage::backends::DurabilityMode,
+) -> storage::RegolithStoreOptions {
+    explicit.unwrap_or_default().with_durability(durability)
 }
 
 struct StoreBuildArgs {
@@ -962,6 +978,19 @@ impl NodeBuilder {
         self
     }
 
+    /// Set the regolith store options, including its memory budget.
+    ///
+    /// Defaults to [`storage::RegolithStoreOptions::default`], whose sizing
+    /// targets a server. An embedded host that opens the node in-process
+    /// pays that budget out of its own address space, so it picks a profile
+    /// here rather than inheriting one. Durability stays with
+    /// [`NodeBuilder::with_storage_durability`] and is applied over whatever
+    /// is set here.
+    pub fn with_regolith_options(mut self, options: storage::RegolithStoreOptions) -> Self {
+        self.regolith_options = Some(options);
+        self
+    }
+
     /// Enable transparent at-rest value encryption for the persistent storage backend.
     pub fn with_at_rest_encryption_key(mut self, key: [u8; 32]) -> Self {
         self.at_rest_encryption_key = Some(key);
@@ -992,23 +1021,19 @@ impl NodeBuilder {
         self
     }
 
-    /// Configure the node to use SourceHub-backed document ACP.
+    /// Configure the node to use Vera-backed document ACP.
     ///
-    /// Requires the `sourcehub` feature (on by default).
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub(mut self, config: SourceHubConfig) -> Self {
-        self.document_acp = DocumentAcpConfig::SourceHub(config);
+    /// Requires the `vera` feature (on by default).
+    #[cfg(feature = "vera")]
+    pub fn with_vera(mut self, config: VeraConfig) -> Self {
+        self.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
-    /// Configure SourceHub ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub_lcd(
-        mut self,
-        config: SourceHubConfig,
-        lcd_address: impl Into<String>,
-    ) -> Self {
-        self.document_acp = DocumentAcpConfig::SourceHubWithLcd {
+    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
+    #[cfg(feature = "vera")]
+    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
+        self.document_acp = DocumentAcpConfig::VeraWithLcd {
             config,
             lcd_address: lcd_address.into(),
         };
@@ -1186,7 +1211,7 @@ impl NodeBuilder {
                 "embedded node starting"
             );
             let opts =
-                storage::RegolithStoreOptions::default().with_durability(self.storage_durability);
+                resolve_regolith_options(self.regolith_options.clone(), self.storage_durability);
             let store = storage::RegolithStore::open_with_options(&path, opts)
                 .map_err(|e| anyhow::anyhow!("failed to open regolith store: {}", e))?;
 
@@ -1444,9 +1469,9 @@ impl NodeBuilder {
         let acp_setup =
             node_acp::create_document_acp(store.clone(), persistence, &document_acp_config).await?;
         let document_acp = acp_setup.document_acp.clone();
-        #[cfg(feature = "sourcehub")]
-        let _strict_replicated_doc_access = acp_setup.sourcehub_acp.is_some();
-        #[cfg(not(feature = "sourcehub"))]
+        #[cfg(feature = "vera")]
+        let _strict_replicated_doc_access = acp_setup.vera_acp.is_some();
+        #[cfg(not(feature = "vera"))]
         let _strict_replicated_doc_access = false;
 
         // P2P setup (affects mutator choice)
@@ -1597,10 +1622,10 @@ impl NodeBuilder {
         };
 
         let runner: Arc<dyn QueryExecutor> = Arc::new(query_runner);
-        #[cfg(feature = "sourcehub")]
+        #[cfg(feature = "vera")]
         let policy_lookup =
-            acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.sourcehub_acp);
-        #[cfg(not(feature = "sourcehub"))]
+            acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);
+        #[cfg(not(feature = "vera"))]
         let policy_lookup = acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store);
         let schema_ops: Arc<dyn SchemaOps> = Arc::new(db_impls::DbSchemaOps::new(
             database.clone(),
@@ -1782,6 +1807,50 @@ mod tests {
         );
 
         node.shutdown().await;
+    }
+
+    #[test]
+    fn node_builder_accepts_regolith_options() {
+        let builder = EmbeddedNode::builder()
+            .with_regolith_options(storage::RegolithStoreOptions::embedded());
+
+        assert_eq!(
+            builder
+                .regolith_options
+                .as_ref()
+                .map(|options| options.engine.write_buffer_size),
+            Some(256 * 1024)
+        );
+    }
+
+    #[test]
+    fn regolith_options_default_to_server_sizing() {
+        let resolved =
+            super::resolve_regolith_options(None, storage::backends::DurabilityMode::Immediate);
+        let server = storage::RegolithStoreOptions::default();
+
+        assert_eq!(
+            resolved.engine.write_buffer_size,
+            server.engine.write_buffer_size
+        );
+        assert_eq!(
+            resolved.engine.block_cache_size,
+            server.engine.block_cache_size
+        );
+    }
+
+    #[test]
+    fn explicit_regolith_options_survive_and_durability_stays_with_the_builder() {
+        let resolved = super::resolve_regolith_options(
+            Some(storage::RegolithStoreOptions::embedded()),
+            storage::backends::DurabilityMode::Eventual,
+        );
+        let expected = storage::RegolithStoreOptions::embedded()
+            .with_durability(storage::backends::DurabilityMode::Eventual);
+
+        assert_eq!(resolved.engine.write_buffer_size, 256 * 1024);
+        assert_eq!(resolved.engine.block_cache_size, 0);
+        assert_eq!(format!("{resolved:?}"), format!("{expected:?}"));
     }
 
     #[test]

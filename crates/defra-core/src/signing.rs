@@ -48,7 +48,7 @@ pub enum SigningAuthorization {
 /// Key type for signing operations.
 ///
 /// Replaces raw string matching with a type-safe enum. Serializes to/from
-/// lowercase strings ("ed25519", "secp256k1", "secp256r1", "bls") for
+/// lowercase strings ("ed25519", "secp256k1", "secp256r1", "bls_aug_v1") for
 /// backward compatibility with JSON/FFI boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,7 +57,8 @@ pub enum SigningKeyType {
     Ed25519,
     Secp256k1,
     Secp256r1,
-    Bls,
+    #[serde(rename = "bls_aug_v1")]
+    BlsAugV1,
 }
 
 impl SigningKeyType {
@@ -70,7 +71,7 @@ impl SigningKeyType {
             SigningKeyType::Ed25519 => "ed25519",
             SigningKeyType::Secp256k1 => "secp256k1",
             SigningKeyType::Secp256r1 => "secp256r1",
-            SigningKeyType::Bls => "bls",
+            SigningKeyType::BlsAugV1 => "bls_aug_v1",
         }
     }
 
@@ -80,7 +81,7 @@ impl SigningKeyType {
             SigningKeyType::Ed25519 => crate::block::SignatureType::EdDSA,
             SigningKeyType::Secp256k1 => crate::block::SignatureType::ES256K,
             SigningKeyType::Secp256r1 => crate::block::SignatureType::ES256,
-            SigningKeyType::Bls => crate::block::SignatureType::BLS,
+            SigningKeyType::BlsAugV1 => crate::block::SignatureType::BLSAugV1,
         }
     }
 }
@@ -91,7 +92,7 @@ impl fmt::Display for SigningKeyType {
             SigningKeyType::Ed25519 => write!(f, "ed25519"),
             SigningKeyType::Secp256k1 => write!(f, "secp256k1"),
             SigningKeyType::Secp256r1 => write!(f, "secp256r1"),
-            SigningKeyType::Bls => write!(f, "bls"),
+            SigningKeyType::BlsAugV1 => write!(f, "bls_aug_v1"),
         }
     }
 }
@@ -104,7 +105,7 @@ impl std::str::FromStr for SigningKeyType {
             "ed25519" => Ok(SigningKeyType::Ed25519),
             "secp256k1" => Ok(SigningKeyType::Secp256k1),
             "secp256r1" => Ok(SigningKeyType::Secp256r1),
-            "bls" => Ok(SigningKeyType::Bls),
+            "bls_aug_v1" => Ok(SigningKeyType::BlsAugV1),
             other => Err(format!("unsupported signing key type: {other}")),
         }
     }
@@ -318,7 +319,7 @@ fn request_token_store() -> &'static HopscotchMap<String, String, RandomState> {
 ///
 /// When a user authenticates via JWT, the node doesn't have their private key
 /// and can't create new bearer tokens for them. Instead, we pass through the
-/// original JWT (which IS signed by the user's key) to hub.rs/SourceHub
+/// original JWT (which IS signed by the user's key) to vera.rs/Vera
 /// for ACP operations like register_object.
 pub fn set_request_bearer_token(did: &str, token: impl Into<String>) {
     request_token_store().insert(did.to_string(), token.into());
@@ -414,7 +415,7 @@ mod tests {
         store_identity(
             "did:key:remote",
             SigningConfig {
-                key_type: SigningKeyType::Bls,
+                key_type: SigningKeyType::BlsAugV1,
                 private_key_bytes: vec![],
                 public_key_bytes: vec![],
                 public_key_hex: "remote".to_string(),

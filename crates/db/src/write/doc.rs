@@ -162,6 +162,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
             txn,
             self.db.event_bus(),
             self.broadcaster.as_ref(),
+            self.db.local_commit_release(),
             collection_name,
             collection_id,
             doc_id,

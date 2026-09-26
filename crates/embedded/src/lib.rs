@@ -1,7 +1,11 @@
+#[cfg(feature = "iroh")]
+mod access_hooks;
 mod node;
 mod node_acp;
 mod node_identity;
 mod node_p2p;
+#[cfg(any(feature = "libp2p", feature = "iroh"))]
+mod node_peer_key;
 mod node_recovery;
 mod node_tasks;
 
@@ -10,6 +14,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 pub use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
 
+#[cfg(feature = "iroh")]
+pub use access_hooks::AccessHooks;
+#[cfg(feature = "iroh")]
+pub use node::build_with_store_and_access_hooks;
 pub use node::{build_with_store, EmbeddedNode, NodeBuilder};
 pub use node_tasks::BackgroundTasks;
 
@@ -69,6 +77,8 @@ pub struct IrohConfig {
     pub relay_mode: p2p::iroh::IrohRelayModeConfig,
     pub discovery: p2p::iroh::IrohDiscoveryConfig,
     pub max_concurrent_multipath_paths: Option<u32>,
+    /// Iroh key file from before the node shared one peer key across transports.
+    /// Imported as the node's peer key when the store has none; never written.
     pub secret_key_path: Option<std::path::PathBuf>,
     /// Who may open an inbound connection. `AcceptAll` (the default) keeps
     /// the behaviour every existing embedder has. `Explicit` restricts
@@ -108,20 +118,20 @@ pub enum SigningKey {
 pub enum DocumentAcpConfig {
     #[default]
     Local,
-    #[cfg(feature = "sourcehub")]
-    SourceHub(SourceHubConfig),
-    /// SourceHub ACP with distinct LCD and gRPC endpoints.
-    #[cfg(feature = "sourcehub")]
-    SourceHubWithLcd {
-        config: SourceHubConfig,
+    #[cfg(feature = "vera")]
+    Vera(VeraConfig),
+    /// Vera ACP with distinct LCD and gRPC endpoints.
+    #[cfg(feature = "vera")]
+    VeraWithLcd {
+        config: VeraConfig,
         lcd_address: String,
     },
 }
 
-/// SourceHub document ACP configuration.
-#[cfg(feature = "sourcehub")]
+/// Vera document ACP configuration.
+#[cfg(feature = "vera")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceHubConfig {
+pub struct VeraConfig {
     pub grpc_address: String,
     pub comet_rpc_address: String,
     pub chain_id: String,

@@ -5,6 +5,10 @@ use std::ptr;
 
 use crate::types::FfiResult;
 
+#[cfg(test)]
+#[path = "mobile_config_tests.rs"]
+mod tests;
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MobileNodeConfig {
@@ -13,7 +17,8 @@ pub(crate) struct MobileNodeConfig {
     pub datastore_backend: Option<String>,
     pub signing: Option<MobileSigningConfig>,
     pub default_identity_did: Option<String>,
-    pub sourcehub: Option<MobileSourceHubConfig>,
+    #[serde(alias = "sourcehub")]
+    pub vera: Option<MobileVeraConfig>,
     pub p2p: Option<MobileP2pConfig>,
 }
 
@@ -27,7 +32,7 @@ pub(crate) struct MobileSigningConfig {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct MobileSourceHubConfig {
+pub(crate) struct MobileVeraConfig {
     pub grpc_address: String,
     pub comet_rpc_address: String,
     pub chain_id: String,
@@ -58,6 +63,8 @@ pub(crate) struct MobileIrohConfig {
     pub discovery: Option<bool>,
     pub discovery_origin_domain: Option<String>,
     pub pkarr_relay_url: Option<String>,
+    /// Iroh key file from before the node shared one peer key across transports.
+    /// Imported as the node's peer key when the store has none; never written.
     pub key_path: Option<String>,
 }
 

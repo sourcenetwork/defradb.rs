@@ -8,6 +8,7 @@ use defra_core::merge::{
 use storage::corekv::Store;
 
 use super::{DbMergeHandler, MergeError};
+use crate::merge::governance::{RedrivenMerge, REDRIVE_BUDGET};
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -43,6 +44,28 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeHandler
         block_data: &[u8],
         metadata: BlockMetadata<'_>,
     ) -> Result<MergeOutcome, Self::Error> {
+        let result = self.merge_with_retries(cid, block_data, metadata).await;
+        self.redrive_deferred().await;
+        result
+    }
+
+    async fn handle_block_batch(
+        &self,
+        blocks: &[MergeBlock],
+    ) -> Vec<Result<MergeOutcome, Self::Error>> {
+        let results = self.try_batch_merge_with_split(blocks).await;
+        self.redrive_deferred().await;
+        results
+    }
+}
+
+impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, B> {
+    async fn merge_with_retries(
+        &self,
+        cid: &Cid,
+        block_data: &[u8],
+        metadata: BlockMetadata<'_>,
+    ) -> Result<MergeOutcome, MergeError> {
         // Go parity (internal/db/merge.go): merges race concurrent merges and
         // local writes on shared systemstore keys — the /seq/doc short-ID
         // sequence and co-owned block-ownership entries — so an optimistic
@@ -91,15 +114,51 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeHandler
         }
     }
 
-    async fn handle_block_batch(
-        &self,
-        blocks: &[MergeBlock],
-    ) -> Vec<Result<MergeOutcome, Self::Error>> {
-        self.try_batch_merge_with_split(blocks).await
+    /// Re-merge deferred composites whose awaited CIDs have merged, through
+    /// the normal path: signatures are verified and the validator judges each
+    /// one again. Bounded by [`REDRIVE_BUDGET`] per call; composites released
+    /// by a re-driven merge join the same drain.
+    pub async fn redrive_deferred(&self) {
+        let mut budget = REDRIVE_BUDGET;
+        while budget > 0 {
+            let Some(entry) = self.deferred.take_ready() else {
+                return;
+            };
+            budget -= 1;
+            let data = match self.blockstore.get(&entry.cid).await {
+                Ok(Some(data)) => data,
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::debug!(cid = %entry.cid, %error, "Deferred composite unreadable for re-drive");
+                    continue;
+                }
+            };
+            // A swept composite has no carrier, so it names no creator and no
+            // sending peer; an id left empty reads as absent, not as "".
+            let mut metadata = BlockMetadata::normal(
+                &entry.doc_id,
+                &entry.collection_id,
+                &entry.creator,
+                entry.sender_peer.as_deref(),
+                entry.is_explicit_replicator,
+            )
+            .with_explicit_replay_authorization(entry.explicit_replay_authorization.clone());
+            metadata.doc_id = metadata.doc_id.filter(|id| !id.is_empty());
+            metadata.collection_id = metadata.collection_id.filter(|id| !id.is_empty());
+            metadata.creator = metadata.creator.filter(|creator| !creator.is_empty());
+            let outcome = self.merge_with_retries(&entry.cid, &data, metadata).await;
+            tracing::debug!(cid = %entry.cid, ?outcome, "Re-drove deferred composite");
+            if matches!(outcome, Ok(MergeOutcome::Merged)) {
+                if let Some(sink) = self.redriven_merge_sink() {
+                    sink.forward(RedrivenMerge::new(&entry, data)).await;
+                }
+            }
+        }
+        if self.deferred.has_ready() {
+            tracing::debug!("Re-drive budget spent; remaining composites drain on the next merge");
+        }
     }
-}
 
-impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, B> {
     /// One merge attempt for a single block. Conflict retry lives in the
     /// `MergeHandler::handle_block` wrapper above (Go's `executeMerge` split).
     pub(crate) async fn merge_block_attempt(

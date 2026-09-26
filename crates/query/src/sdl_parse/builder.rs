@@ -232,6 +232,9 @@ impl<'a> SdlParser<'a> {
         // This ensures CID dependencies are resolved correctly.
         // Also simulates Go's headstore to replicate prefix collision behavior.
         let mut all_collection_ids: RapidHashMap<String, String> = RapidHashMap::new();
+        // Version IDs are tracked beside them: they equal the collection ID
+        // unless a policy is attached, which reaches the version only.
+        let mut all_version_ids: RapidHashMap<String, String> = RapidHashMap::new();
         let mut headstore: RapidHashMap<String, (Cid, u64)> = RapidHashMap::new();
 
         for type_name in &processing_order {
@@ -248,6 +251,7 @@ impl<'a> SdlParser<'a> {
             )?;
             // Store this type's CollectionID for later types to reference
             all_collection_ids.insert(type_name.clone(), collection.collection_id.clone());
+            all_version_ids.insert(type_name.clone(), collection.version_id.clone());
 
             // Update simulated headstore: store this collection's CID with height=1
             // (Go stores collection definition CIDs at prefix /g/<CollectionName>)
@@ -321,7 +325,7 @@ impl<'a> SdlParser<'a> {
             // Override with Pass 1's CID (computed in topological order with headstore)
             if let Some(pass1_id) = all_collection_ids.get(type_name) {
                 collection.collection_id = pass1_id.clone();
-                collection.version_id = pass1_id.clone();
+                collection.version_id = all_version_ids.get(type_name).unwrap_or(pass1_id).clone();
             }
 
             // Assign CollectionSetDescription for multi-type circular groups
@@ -744,10 +748,39 @@ impl<'a> SdlParser<'a> {
 
         // Generate collection ID from type name and fields (like Go, includes field CIDs as links)
         // The headstore simulates Go's prefix collision behavior for deterministic CIDs
-        let collection_id = generate_collection_id(&type_def.name, &fields, headstore);
+        let commitments = schema::Commitments {
+            governance_root: type_def.directives.governance_root.as_deref(),
+            is_branchable: type_def.directives.is_branchable,
+            // The collection ID never carries the policy: see below.
+            policy_cid: None,
+        };
+        let collection_id = generate_collection_id(&type_def.name, &fields, headstore, commitments);
 
-        // Version ID equals collection ID for new schemas (Go behavior)
-        let version_id = collection_id.clone();
+        // Version ID equals collection ID for new schemas (Go behavior), unless
+        // a governed collection has a policy attached: that reaches the version
+        // and not the collection, so attaching or amending one mints a new
+        // version of the same collection rather than a different collection.
+        // An ungoverned collection commits to no policy at all, and keeps the
+        // version ID it has today.
+        let policy = type_def.directives.policy.as_ref().map(|policy_config| {
+            schema::PolicyDescription::new(&policy_config.id, &policy_config.resource)
+        });
+        let policy_commitment = commitments
+            .is_governed()
+            .then(|| schema::policy_commitment(policy.as_ref()))
+            .flatten();
+        let version_id = match policy_commitment {
+            None => collection_id.clone(),
+            Some(policy_cid) => generate_collection_id(
+                &type_def.name,
+                &fields,
+                headstore,
+                schema::Commitments {
+                    policy_cid: Some(policy_cid),
+                    ..commitments
+                },
+            ),
+        };
 
         // Build encrypted indexes from @encryptedIndex directives
         let encrypted_indexes: Vec<schema::EncryptedIndexDescription> = type_def
@@ -962,12 +995,10 @@ impl<'a> SdlParser<'a> {
         collection.downsample_time_field = type_def.directives.downsample_time_field.clone();
         collection.downsample_retention = type_def.directives.downsample_retention.clone();
         collection.is_branchable = type_def.directives.is_branchable;
-        if let Some(ref policy_config) = type_def.directives.policy {
-            collection.policy = Some(schema::PolicyDescription::new(
-                &policy_config.id,
-                &policy_config.resource,
-            ));
-        }
+        collection
+            .governance_root
+            .clone_from(&type_def.directives.governance_root);
+        collection.policy = policy;
 
         Ok(collection)
     }

@@ -239,9 +239,9 @@ fn extract_identity_from_auth_header(
         .did()
         .map_err(|e| IdentityExtractionError::InvalidToken(e.to_string()))?;
 
-    // Store the raw JWT keyed by DID for passthrough to SourceHub/hub.rs ACP operations.
+    // Store the raw JWT keyed by DID for passthrough to Vera/vera.rs ACP operations.
     // Go DefraDB's BearerToken() pattern: the original JWT (signed by the user's key)
-    // is forwarded to SourceHub for register_object and other bearer policy commands.
+    // is forwarded to Vera for register_object and other bearer policy commands.
     defra_core::signing::set_request_bearer_token(did.as_str(), token.to_string());
 
     Ok(Some(did))

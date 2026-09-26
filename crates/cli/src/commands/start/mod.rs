@@ -120,22 +120,22 @@ pub struct StartArgs {
     #[arg(long)]
     pub signer_orbis_endpoint: Option<String>,
 
-    /// Orbis ring ID from DKG (required when --signer-type=orbis)
+    /// Registered Orbis derivation ID (required when --signer-type=orbis)
     #[cfg(feature = "orbis")]
     #[arg(long)]
-    pub signer_orbis_ring_id: Option<String>,
+    pub signer_orbis_derivation_id: Option<String>,
 
-    /// Orbis derivation label for the ring's derived key (e.g. "x-archive")
+    /// Independently provisioned BLS public key, hex encoded
     #[cfg(feature = "orbis")]
     #[arg(long)]
-    pub signer_orbis_derivation: Option<String>,
+    pub signer_orbis_public_key: Option<String>,
 
     /// Hex private key this node authenticates to the Orbis ring with,
     /// separately from `--identity`.
     ///
     /// The ring authenticates a Sign request by a JWT whose algorithm follows
     /// the key type, and it accepts EdDSA (ed25519) only. `--identity` is also
-    /// the key that signs SourceHub/Vera transactions, which must be
+    /// the key that signs Vera transactions, which must be
     /// secp256k1. One key therefore cannot serve both roles: without this
     /// flag a node with a secp256k1 identity presents an ES256K token and the
     /// ring rejects it as an unknown algorithm.
@@ -289,7 +289,7 @@ pub struct StartArgs {
     #[arg(long, env = "DEFRA_ACP_CIRCUIT_BREAKER_RESET_TIMEOUT")]
     pub acp_circuit_breaker_reset_timeout: Option<u64>,
 
-    /// ACP request timeout in seconds for SourceHub/hub.rs calls (default: 5)
+    /// ACP request timeout in seconds for Vera/vera.rs calls (default: 5)
     #[arg(long, env = "DEFRA_ACP_REQUEST_TIMEOUT")]
     pub acp_request_timeout: Option<u64>,
 
@@ -297,7 +297,7 @@ pub struct StartArgs {
     #[arg(long, env = "DEFRA_ACP_CACHE_TTL")]
     pub acp_cache_ttl: Option<u64>,
 
-    /// ACP receipt polling timeout in seconds for hub.rs transactions (default: 30)
+    /// ACP receipt polling timeout in seconds for vera.rs transactions (default: 30)
     #[arg(long, env = "DEFRA_ACP_RECEIPT_TIMEOUT")]
     pub acp_receipt_timeout: Option<u64>,
 
@@ -371,16 +371,18 @@ impl StartArgs {
             Error::InvalidConfig("--signer-orbis-endpoint required for orbis signer".into())
         })?;
 
-        let ring_id = self.signer_orbis_ring_id.as_ref().ok_or_else(|| {
-            Error::InvalidConfig("--signer-orbis-ring-id required for orbis signer".into())
+        let derivation_id = self.signer_orbis_derivation_id.as_ref().ok_or_else(|| {
+            Error::InvalidConfig("--signer-orbis-derivation-id required for orbis signer".into())
         })?;
-
-        let derivation = self.signer_orbis_derivation.clone().unwrap_or_default();
-
+        let public_key = self.signer_orbis_public_key.as_ref().ok_or_else(|| {
+            Error::InvalidConfig("--signer-orbis-public-key required for orbis signer".into())
+        })?;
+        let public_key = hex::decode(public_key)
+            .map_err(|e| Error::InvalidConfig(format!("invalid Orbis public key: {e}")))?;
         let client = orbis::OrbisClient::new(
             endpoint.clone(),
-            ring_id.clone(),
-            derivation,
+            derivation_id.clone(),
+            public_key,
             service_identity.clone(),
         )
         .await
@@ -393,7 +395,7 @@ impl StartArgs {
         defra_core::signing::store_identity(
             &signer_did,
             defra_core::signing::SigningConfig {
-                key_type: defra_core::signing::SigningKeyType::Bls,
+                key_type: defra_core::signing::SigningKeyType::BlsAugV1,
                 private_key_bytes: vec![],
                 public_key_bytes,
                 public_key_hex,
