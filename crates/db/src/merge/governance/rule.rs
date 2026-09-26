@@ -166,6 +166,16 @@ impl WasmRules {
     pub fn with_budget(modules: Arc<dyn RuleModules>, budget: RuleBudget) -> Result<Self, String> {
         let mut config = Config::new();
         config.consume_fuel(true);
+        #[cfg(target_os = "macos")]
+        {
+            // Wasmtime installs trap handling once per process and panics if a
+            // second engine asks for a different kind. `lens` embeds wasmtime
+            // too and turns Mach ports off (fork-capable embedders crash when
+            // the Mach-port exception handler is initialised before spawning),
+            // and both engines live in one process, so this engine has to
+            // agree with it.
+            config.macos_use_mach_ports(false);
+        }
         let engine = Engine::new(&config).map_err(|error| error.to_string())?;
         Ok(Self {
             engine,
