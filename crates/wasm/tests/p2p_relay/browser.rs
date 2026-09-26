@@ -24,6 +24,11 @@ impl Browser {
             }),
             None => json!({ "db_name": db_name }),
         };
+        Self::start_with(config, sdl).await
+    }
+
+    /// As [`Self::start`], from a whole `create` config.
+    pub async fn start_with(config: Value, sdl: &str) -> Self {
         let mut client = DefraClient::create(js(&config)).await.unwrap();
         client.add_schema(sdl).await.unwrap();
         let endpoint_id = client
@@ -56,6 +61,10 @@ impl Browser {
         let result: Value =
             serde_wasm_bindgen::from_value(self.client.mutate(mutation).await.unwrap()).unwrap();
         result["data"].clone()
+    }
+
+    pub async fn governance(&self) -> Value {
+        serde_wasm_bindgen::from_value(self.client.governance().await.unwrap()).unwrap()
     }
 }
 

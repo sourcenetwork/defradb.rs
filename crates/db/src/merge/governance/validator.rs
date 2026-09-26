@@ -233,6 +233,13 @@ impl MergeGovernance {
         self
     }
 
+    /// The claimed collection names, sorted.
+    pub fn collections(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.collections.iter().map(String::as_str).collect();
+        names.sort_unstable();
+        names
+    }
+
     pub fn governs(&self, collection: &CollectionVersion) -> bool {
         self.collections.contains(&collection.name)
     }

@@ -141,6 +141,8 @@ rcgen = "0.13"
 toml = "0.9"
 tempfile = "3.17"
 portpicker = "0.1"
+# Rule-module guests for governed_start_tests, assembled in the test.
+wat = "1"
 
 [lints]
 workspace = true

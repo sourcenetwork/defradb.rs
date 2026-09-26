@@ -195,3 +195,24 @@ fn valuelogfilesize_is_not_serialized_into_generated_config() {
         "generated config.yaml must not carry the key:\n{yaml}"
     );
 }
+
+/// A node that governs nothing writes the config file it always wrote; one
+/// that governs reads its section back.
+#[test]
+fn governance_is_absent_from_a_config_that_sets_none() {
+    let yaml = serde_yaml::to_string(&cli::config::Config::default()).unwrap();
+    assert!(!yaml.contains("governance"), "{yaml}");
+
+    let mut config = cli::config::Config::default();
+    config.governance.collections = vec!["Move".to_string()];
+    config.governance.rule_modules = vec!["rules/arena.wasm".to_string()];
+    config.governance.fuel = Some(5_000);
+    let yaml = serde_yaml::to_string(&config).unwrap();
+    let back: cli::config::Config = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(back.governance, config.governance);
+    assert_eq!(
+        back.governance.rule_engine,
+        cli::config::RuleEngineType::Wasmi,
+        "wasmi is the default engine"
+    );
+}

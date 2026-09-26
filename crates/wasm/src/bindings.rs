@@ -34,6 +34,9 @@ pub struct ClientConfig {
     /// not yet released: the open then fails and can be retried, instead of
     /// mounting an empty mirror beside the real data.
     pub require_sync_handles: bool,
+    /// Collections the application claims, judged by the wasm rule module
+    /// each version names. Installed before the client can write or merge.
+    pub governance: Option<crate::governance::GovernanceConfig>,
 }
 
 /// Collection info returned to JavaScript.

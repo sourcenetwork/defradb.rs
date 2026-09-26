@@ -17,8 +17,8 @@ p2p = ["dep:libp2p", "p2p/libp2p-transport"]
 native = ["dep:tokio", "events/channel", "acp/native"]
 wasmtime-runtime = ["lens/wasmtime-runtime"]
 # Merge rules carried as wasm modules named by CID, run under a fuel budget.
-# Native only: the browser build judges nothing this way.
-wasm-rules = ["dep:wasmtime"]
+# wasmi everywhere, the browser included; wasmtime beside it on native.
+wasm-rules = ["dep:wasmi", "dep:wasmtime"]
 
 [lib]
 bench = false
@@ -72,6 +72,22 @@ base64.workspace = true
 hex.workspace = true
 
 libp2p = { workspace = true, optional = true }
+
+# The rule engine every target has. `deterministic` canonicalises NaNs, as
+# wasmtime's `cranelift_nan_canonicalization` does on native; no `simd` and
+# no `memory64`, which the shared rule profile leaves out.
+#
+# `portable-dispatch`, not the default tail-call dispatch: that one relies on
+# LLVM turning every handler's call into a jump, which a dev build with
+# debug assertions does not, and a rule looping on its fuel then overflows
+# the node's native stack instead of running out of fuel.
+wasmi = { version = "2.0.0", optional = true, default-features = false, features = [
+    "std",
+    "validate",
+    "stable",
+    "portable-dispatch",
+    "deterministic",
+] }
 
 # Native-only (optional)
 tokio = { workspace = true, features = ["rt", "fs", "sync", "time"], optional = true }

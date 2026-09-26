@@ -5,11 +5,13 @@ mod awaited;
 mod collection_block;
 mod deferred;
 mod emission;
+mod install;
 mod judge;
 mod local_commit;
 mod local_write;
+mod mark_merged;
 mod redriven;
-#[cfg(all(feature = "wasm-rules", not(target_arch = "wasm32")))]
+#[cfg(feature = "wasm-rules")]
 pub mod rule;
 mod signature;
 mod sweep;
@@ -26,10 +28,12 @@ pub use deferred::{
     MAX_AWAITED_PER_COMPOSITE, MAX_DEFERRED_COMPOSITES, MAX_WAITERS_PER_DEPENDENCY, REDRIVE_BUDGET,
 };
 pub use emission::MAX_EMISSION_DEPTH;
+pub use install::install_merge_governance;
 pub(crate) use judge::{GovernedFrame, Judgement};
 pub use local_commit::LocalCommitRelease;
 pub(crate) use local_write::judge_local_write;
 pub use local_write::{LocalWriteJudge, PendingStores};
+pub use mark_merged::MarkMergedSink;
 pub use redriven::{RedrivenMerge, RedrivenMergeSink};
 pub use signature::SignatureStatus;
 pub use sweep::{run_governance_sweep, SWEEP_BUDGET, SWEEP_INTERVAL};

@@ -44,6 +44,9 @@ pub enum WasmError {
 
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
+
+    #[error("Governance error: {0}")]
+    Governance(String),
 }
 
 impl From<WasmError> for JsValue {

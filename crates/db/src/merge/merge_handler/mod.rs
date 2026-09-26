@@ -94,7 +94,7 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// Reference to the blockstore for loading linked blocks.
     pub(crate) blockstore: Arc<B>,
     /// Shared parent-chain depth policy for identity and merge traversals.
-    max_merge_depth: usize,
+    pub(crate) max_merge_depth: usize,
     /// Optional merge hook for policy-specific behavior around composite merges.
     composite_merge_hook: std::sync::OnceLock<Arc<dyn CompositeMergeHook>>,
     /// Tracks composite CIDs that have already been merged, preventing

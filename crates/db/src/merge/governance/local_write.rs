@@ -36,6 +36,7 @@ use super::signature::SignatureStatus;
 use super::validator::MergeCandidate;
 use super::verdict::MergeVerdict;
 use super::view::{decode, DbMergeView, FieldValue, MergeView};
+use crate::database::DB;
 use crate::merge::merge_handler::signature::verify_signature_data;
 use crate::merge::merge_handler::DbMergeHandler;
 
@@ -111,15 +112,23 @@ pub(crate) async fn judge_local_write<S: Store>(
     }
 }
 
-/// [`LocalWriteJudge`] backed by the node's merge handler. Held weakly: the
-/// handler holds the database that holds this.
-pub(crate) struct HandlerJudge<S: Store, B: blockstore::Blockstore> {
-    handler: Weak<DbMergeHandler<S, B>>,
+/// [`LocalWriteJudge`] over the database itself, building the merge handler
+/// a judgement reads through when a write needs one.
+///
+/// It holds the database weakly, since the database holds it, and holds no
+/// merge handler: a judge borrowing a replication stack's handler judged
+/// nothing once that stack stopped, and the first-wins slot it sits in
+/// kept the dead one, so every write after a P2P restart, and every write
+/// on a node that never started one, committed unjudged.
+pub(crate) struct DbJudge<S: Store, B: blockstore::Blockstore> {
+    db: Weak<DB<S>>,
+    blockstore: Arc<B>,
+    max_merge_depth: usize,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<S, B> LocalWriteJudge for HandlerJudge<S, B>
+impl<S, B> LocalWriteJudge for DbJudge<S, B>
 where
     S: Store + 'static,
     B: blockstore::Blockstore + MaybeSendSync + 'static,
@@ -132,12 +141,12 @@ where
         cid: &Cid,
         block: &[u8],
     ) -> Result<Option<String>, String> {
-        // The judge outlives the handler only when the node is shutting
-        // down; a write it cannot judge is refused, never let through.
-        let Some(handler) = self.handler.upgrade() else {
-            return Err("the merge handler is no longer available".to_string());
+        // The judge outlives the database only while the node shuts down;
+        // a write it cannot judge is refused, never let through.
+        let Some(db) = self.db.upgrade() else {
+            return Err("the database is no longer available".to_string());
         };
-        let Some(governance) = handler.db().merge_governance() else {
+        let Some(governance) = db.merge_governance() else {
             return Ok(None);
         };
         if !governance.governs(collection) {
@@ -150,6 +159,11 @@ where
                  so every peer would defer this write"
             )));
         };
+        let handler = DbMergeHandler::new_with_max_merge_depth(
+            db.clone(),
+            self.blockstore.clone(),
+            self.max_merge_depth,
+        );
         let block = Block::from_dag_cbor(block).map_err(|error| error.to_string())?;
         let CrdtDelta::Composite(payload) = &block.delta else {
             return Ok(None);
@@ -320,9 +334,26 @@ where
 {
     /// Judge this node's own writes by the merge validator before they
     /// commit, so a write every peer would refuse is refused here first.
+    /// The judge outlives this handler: it needs only the database and the
+    /// blockstore.
     pub fn install_local_write_judge(self: &Arc<Self>) {
-        self.db().set_local_write_judge(Arc::new(HandlerJudge {
-            handler: Arc::downgrade(self),
-        }));
+        install_local_write_judge(&self.db, self.blockstore.clone(), self.max_merge_depth);
     }
+}
+
+/// Judge `db`'s own writes by its merge validator, through `blockstore`,
+/// whether or not a replication stack ever runs. First call wins.
+pub(crate) fn install_local_write_judge<S, B>(
+    db: &Arc<DB<S>>,
+    blockstore: Arc<B>,
+    max_merge_depth: usize,
+) where
+    S: Store + 'static,
+    B: blockstore::Blockstore + MaybeSendSync + 'static,
+{
+    db.set_local_write_judge(Arc::new(DbJudge {
+        db: Arc::downgrade(db),
+        blockstore,
+        max_merge_depth,
+    }));
 }

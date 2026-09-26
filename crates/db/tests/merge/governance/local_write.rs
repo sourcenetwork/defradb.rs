@@ -221,11 +221,11 @@ async fn a_note_may_use_a_grant_written_earlier_in_the_same_batch() {
     assert_eq!(node.doc_ids("Notes").await.len(), 1);
 }
 
-/// A judge whose merge handler is gone refuses a write to a claimed
-/// collection rather than letting it through unjudged; a write to any
-/// other collection never needs the judge and is not touched.
+/// The judge holds the database, not a replication stack's handler, so a
+/// write after that stack stops is judged as before: a claimed collection
+/// by the validator, any other not at all.
 #[tokio::test]
-async fn a_write_is_refused_when_the_merge_handler_is_gone() {
+async fn a_write_after_the_stack_stops_is_judged_only_if_claimed() {
     let node = Node::with_immutable_grants(Arc::new(NotesNeedGrant)).await;
     let Node { db, handler, .. } = node;
     drop(handler);
@@ -240,10 +240,68 @@ async fn a_write_is_refused_when_the_merge_handler_is_gone() {
     let error = mutator
         .create(
             "Notes",
-            Document::from_json_str(r#"{"grant": "alice"}"#).unwrap(),
+            Document::from_json_str(r#"{"grant": "forged"}"#).unwrap(),
         )
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("no longer available"), "{error}");
+    assert!(error.contains("forged grant"), "{error}");
+}
+
+/// Notes governed by [`NotesNeedGrant`], with the judge installed by
+/// `install_merge_governance` and no merge handler anywhere: a node started
+/// without P2P, or a browser that has not joined the network.
+async fn governed_without_a_handler() -> Arc<DB<RegolithStore>> {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let db = Arc::new(
+        DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+            .await
+            .unwrap(),
+    );
+    db.create_collection(CollectionVersion::new(
+        "Notes",
+        "col-notes",
+        "col-notes",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("2", "grant", FieldKind::string()),
+        ],
+    ))
+    .await
+    .unwrap();
+    db::merge::governance::install_merge_governance(
+        &db,
+        Arc::new(DefraBlockstore::new(store, true)),
+        MergeGovernance::new(["Notes"]).with_validator(Arc::new(NotesNeedGrant)),
+        db::merge::DEFAULT_MAX_MERGE_DEPTH,
+    );
+    db
+}
+
+async fn try_create(db: &Arc<DB<RegolithStore>>, json: &str) -> Result<(), String> {
+    let txn = db.new_txn(false).await.unwrap();
+    let mutator = BatchMutator::new(db.clone(), Arc::new(async_lock::Mutex::new(Some(txn))));
+    mutator
+        .create("Notes", Document::from_json_str(json).unwrap())
+        .await
+        .map_err(|error| error.to_string())?;
+    mutator.commit().await.map_err(|error| error.to_string())
+}
+
+#[tokio::test]
+async fn a_node_with_no_replication_stack_judges_its_writes() {
+    let db = governed_without_a_handler().await;
+    let error = try_create(&db, r#"{"grant": "forged"}"#).await.unwrap_err();
+    assert!(error.contains("forged grant"), "{error}");
+}
+
+/// The judge a replication stack installs outlives the stack: a P2P stop
+/// and restart used to leave the first stack's dead handler in the
+/// first-wins slot, and every later write committed unjudged.
+#[tokio::test]
+async fn a_local_write_is_judged_after_the_stack_that_installed_the_judge_stops() {
+    let Node { db, handler, .. } = Node::with_immutable_grants(Arc::new(NotesNeedGrant)).await;
+    drop(handler);
+    let error = try_create(&db, r#"{"grant": "forged"}"#).await.unwrap_err();
+    assert!(error.contains("forged grant"), "{error}");
 }
