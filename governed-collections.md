@@ -588,7 +588,23 @@ across sweeps; the same fact is the same record on two nodes; a record into a
 claimed collection is judged and a signed look-alike refused; a chain stops
 at the bound; an unwritable emission never fails its verdict.
 
-## 10. What is not in this PR
+## 10. Tests across nodes
+
+Everything that judges writes is also tested single-node, driving the merge
+handler directly (`crates/db/tests/merge/governance/`). What that cannot show
+is the property the interface exists for, so
+`crates/embedded/tests/governed_collections.rs` exercises it on iroh embedded
+nodes: a note and its grant merging on a peer; a note that arrives first
+deferring and never rejecting, then merging when the grant arrives; a forged
+note from a node running no validator refused by a governed peer; a local
+write the rule refuses reaching no peer and not committing here; a grant and
+a note under it in one request merging on a peer; a claimed collection with
+no validator deferring a peer's writes; a record a peer emitted reaching the
+author; two peers emitting one record for one fact, and meeting leaving one
+document; and a deferred note merging after the peer restarts, where the
+defer index is gone and only the sweep can reach it.
+
+## 11. What is not in this PR
 
 - **Replication policy** (#1781, on top of this PR): what a node sends to or
   accepts from a peer, per collection and document. Narrowing only; it can
