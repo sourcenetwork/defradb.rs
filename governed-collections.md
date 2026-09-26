@@ -605,6 +605,11 @@ sequenceDiagram
   end
 ```
 
+A module's answer may carry `"emit": [{"collection", "fields"}, ...]`
+beside any verdict; the host writes each as §9 describes, so a rule can
+leave a record of what it found, a fork receipt above all, without any
+ability to write beyond that.
+
 So the rule is part of what replicas agree on, a rule change is a version
 in the DAG judged by the rule in force (the module the superseded version
 names, so a patch cannot admit itself), execution is bounded, and

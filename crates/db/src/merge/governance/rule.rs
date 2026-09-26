@@ -60,6 +60,12 @@
 //! { "verdict": "need", "keys": [ key, ... ] }
 //! ```
 //!
+//! Any verdict may carry `"emit": [ {"collection": s, "fields": {name: v, ...}}, ... ]`:
+//! documents the host writes beside the verdict, as unsigned genesis
+//! composites, so the same fact is the same record on every replica that
+//! finds it (`governance::emission`). Emit only what no later arrival takes
+//! back; a fork found mid-verdict qualifies, "not yet" never does.
+//!
 //! A module that traps, exceeds its fuel, or answers malformed CBOR is an
 //! error, not a verdict: the composite stays unmerged and the sweep will
 //! try again. A module that asks for more steps than the budget allows is
@@ -81,6 +87,7 @@ use super::signature::SignatureStatus;
 use super::validator::{DefinitionCandidate, MergeCandidate, MergeValidator};
 use super::verdict::MergeVerdict;
 use super::view::{FieldValue, MergeView};
+use super::{Emission, Judged};
 
 /// Where rule modules come from, by the CID the version names.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -223,15 +230,15 @@ impl WasmRules {
     }
 
     /// Run the step protocol to a verdict.
-    async fn judge(
+    async fn run(
         &self,
         rule: Option<&str>,
         kind: &str,
         candidate: Value,
         view: &dyn MergeView,
-    ) -> Result<MergeVerdict, String> {
+    ) -> Result<Judged, String> {
         let Some(rule) = rule else {
-            return Ok(MergeVerdict::reject("the version names no rule"));
+            return Ok(MergeVerdict::reject("the version names no rule").into());
         };
         let Some(module) = self.module_for(rule).await? else {
             // A block, not a composite: nothing merges to release it, so the
@@ -239,7 +246,8 @@ impl WasmRules {
             return Ok(MergeVerdict::defer(
                 format!("rule module {rule} not held"),
                 std::iter::empty::<Awaited>(),
-            ));
+            )
+            .into());
         };
         let mut inputs: Vec<(Value, Value)> = Vec::new();
         for step in 0..self.budget.steps {
@@ -253,12 +261,12 @@ impl WasmRules {
             ciborium::into_writer(&request, &mut bytes).map_err(|error| error.to_string())?;
             let response = self.step(&module, &bytes)?;
             match parse_response(&response)? {
-                Response::Verdict(verdict) => return Ok(verdict),
+                Response::Judged(judged) => return Ok(judged),
                 Response::Need(keys) => {
                     for key in keys {
                         match fetch(view, &key).await? {
                             Fetched::Value(value) => inputs.push((text(&key), value)),
-                            Fetched::Defer(verdict) => return Ok(verdict),
+                            Fetched::Defer(verdict) => return Ok(verdict.into()),
                         }
                     }
                 }
@@ -278,6 +286,22 @@ impl MergeValidator for WasmRules {
         candidate: &MergeCandidate<'_>,
         view: &dyn MergeView,
     ) -> Result<MergeVerdict, String> {
+        Ok(self.judge(candidate, view).await?.verdict)
+    }
+
+    async fn validate_definition(
+        &self,
+        candidate: &DefinitionCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(self.judge_definition(candidate, view).await?.verdict)
+    }
+
+    async fn judge(
+        &self,
+        candidate: &MergeCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<Judged, String> {
         let fields = view
             .composite_fields(candidate.cid)
             .await?
@@ -307,7 +331,7 @@ impl MergeValidator for WasmRules {
             (text("signer"), opt_text(signer.as_deref())),
             (text("fields"), fields),
         ]);
-        self.judge(
+        self.run(
             candidate.collection.governance_rule.as_deref(),
             "composite",
             value,
@@ -316,11 +340,11 @@ impl MergeValidator for WasmRules {
         .await
     }
 
-    async fn validate_definition(
+    async fn judge_definition(
         &self,
         candidate: &DefinitionCandidate<'_>,
         view: &dyn MergeView,
-    ) -> Result<MergeVerdict, String> {
+    ) -> Result<Judged, String> {
         let value = Value::Map(vec![
             (text("cid"), text(&candidate.cid.to_string())),
             (text("collection"), text(&candidate.version.name)),
@@ -360,12 +384,12 @@ impl MergeValidator for WasmRules {
             .previous
             .and_then(|previous| previous.governance_rule.as_deref())
             .or(candidate.version.governance_rule.as_deref());
-        self.judge(in_force, "definition", value, view).await
+        self.run(in_force, "definition", value, view).await
     }
 }
 
 enum Response {
-    Verdict(MergeVerdict),
+    Judged(Judged),
     Need(Vec<String>),
 }
 
@@ -387,9 +411,27 @@ fn parse_response(response: &Value) -> Result<Response, String> {
             .unwrap_or("rule module gave no reason")
             .to_string()
     };
+    let emit = || -> Result<Vec<Emission>, String> {
+        get("emit")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(parse_emission)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map(Option::unwrap_or_default)
+    };
+    let judged = |verdict: MergeVerdict| -> Result<Response, String> {
+        Ok(Response::Judged(Judged {
+            verdict,
+            emit: emit()?,
+        }))
+    };
     Ok(match verdict {
-        "accept" => Response::Verdict(MergeVerdict::Accept),
-        "reject" => Response::Verdict(MergeVerdict::reject(reason())),
+        "accept" => judged(MergeVerdict::Accept)?,
+        "reject" => judged(MergeVerdict::reject(reason()))?,
         "defer" => {
             let awaiting = get("awaiting")
                 .and_then(Value::as_array)
@@ -401,7 +443,7 @@ fn parse_response(response: &Value) -> Result<Response, String> {
                 })
                 .transpose()?
                 .unwrap_or_default();
-            Response::Verdict(MergeVerdict::defer(reason(), awaiting))
+            judged(MergeVerdict::defer(reason(), awaiting))?
         }
         "need" => {
             let keys = get("keys")
@@ -417,6 +459,35 @@ fn parse_response(response: &Value) -> Result<Response, String> {
             Response::Need(keys)
         }
         other => return Err(format!("rule module verdict {other} is unknown")),
+    })
+}
+
+/// `{"collection": s, "fields": {name: v, ...}}`.
+fn parse_emission(value: &Value) -> Result<Emission, String> {
+    let map = value.as_map().ok_or("emission is not a map")?;
+    let get = |key: &str| {
+        map.iter()
+            .find(|(k, _)| k.as_text() == Some(key))
+            .map(|(_, v)| v)
+    };
+    let collection = get("collection")
+        .and_then(Value::as_text)
+        .ok_or("emission names no collection")?;
+    let fields = get("fields")
+        .and_then(Value::as_map)
+        .ok_or("emission has no fields map")?
+        .iter()
+        .map(|(name, value)| {
+            let name = name
+                .as_text()
+                .ok_or("emission field name is not text")?
+                .to_string();
+            Ok((name, normal_value(value)?))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(Emission {
+        collection: collection.to_string(),
+        fields,
     })
 }
 
