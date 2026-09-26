@@ -54,6 +54,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let headstore = txn.headstore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get headstore: {}", e))
         })?;
+        let pending = self.pending_view(&txn)?;
 
         let result: query::error::Result<(DocID, Cid, Bytes, Option<(Cid, Bytes)>)> = async {
             // Create an IndexManager for unique constraint enforcement
@@ -143,6 +144,15 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &headstore,
                 block_result.cid,
                 sign_config.as_ref(),
+            )
+            .await?;
+
+            self.judge_pending(
+                pending,
+                collection.schema(),
+                &doc_id.to_string(),
+                &block_result.cid,
+                &block_result.block,
             )
             .await?;
 
@@ -347,6 +357,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             let headstore = txn.headstore().map_err(|e| {
                 query::error::QueryError::execution(format!("failed to get headstore: {}", e))
             })?;
+            let pending = self.pending_view(&txn)?;
 
             self.db
                 .validate_downsample_write(
@@ -395,6 +406,15 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &headstore,
                 computed.block_result.cid,
                 sign_config.as_ref(),
+            )
+            .await?;
+
+            self.judge_pending(
+                pending,
+                collection.schema(),
+                &doc_id.to_string(),
+                &computed.block_result.cid,
+                &computed.block_result.block,
             )
             .await?;
 

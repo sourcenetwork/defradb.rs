@@ -21,7 +21,7 @@ mod lww;
 mod protected_update;
 mod recovery;
 pub mod se_merge;
-mod signature;
+pub(crate) mod signature;
 pub(crate) use signature::verify_signature_data;
 
 pub use error::MergeError;
@@ -136,6 +136,13 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// rejected composite each tick and, past its budget, never reach a
     /// deferred one. In memory: after a restart each is re-judged once.
     pub(crate) rejected_governed: CidSet,
+    /// What the validators emitted while the current block was judged,
+    /// written once its merge attempt returns (`governance::emission`).
+    pub(crate) pending_emissions:
+        std::sync::Mutex<Vec<(usize, crate::merge::governance::Emission)>>,
+    /// How deep in a chain of records each emitted composite sits, so a
+    /// record's own emissions stop at `MAX_EMISSION_DEPTH`.
+    pub(crate) emitted_depth: std::sync::Mutex<rapidhash::RapidHashMap<Cid, usize>>,
     /// Where composites merged by re-drive are reported, so they take the
     /// same post-merge path as a first-attempt merge.
     redriven_sink: std::sync::OnceLock<Arc<dyn crate::merge::governance::RedrivenMergeSink>>,
@@ -227,6 +234,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             prefetched_dek_cids: Arc::new(cid_set()),
             deferred: Default::default(),
             rejected_governed: cid_set(),
+            pending_emissions: std::sync::Mutex::new(Vec::new()),
+            emitted_depth: std::sync::Mutex::new(rapidhash::RapidHashMap::default()),
             redriven_sink: std::sync::OnceLock::new(),
         }
     }

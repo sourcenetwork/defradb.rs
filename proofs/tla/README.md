@@ -331,8 +331,13 @@ showing a mishandled exclusion operator over-grants. All `[propext, Quot.sound]`
 
 ## Merge Governance Runs (the plugin interface)
 
-Design notes in [GovernanceContract_DESIGN.md](GovernanceContract_DESIGN.md) and
-[GovernanceMerge_DESIGN.md](GovernanceMerge_DESIGN.md). `MergeValidator`
+Design notes in [GovernanceContract_DESIGN.md](GovernanceContract_DESIGN.md),
+[GovernanceMerge_DESIGN.md](GovernanceMerge_DESIGN.md) and
+[GovernanceHeads_DESIGN.md](GovernanceHeads_DESIGN.md) (collection blocks and
+definitions, which the validator never sees). Thirty-one runs: the contract's
+nineteen (deferral, disposition, emission, the local write path), the
+mechanism's nine (the merge path checked to refine the contract, emission's
+queue and drain included), and the heads module's three. `MergeValidator`
 (`crates/db/src/merge/governance/`) lets an application narrow what the
 database merges, with a third verdict, `Defer`, for a composite whose inputs
 have not arrived. **`GovernanceContract.tla` is what a validator may assume of

@@ -67,6 +67,45 @@ impl<S: Store> AutoCommitMutator<S> {
         let _ = self.document_acp.set(acp);
     }
 
+    /// Judge the composite a write built by the merge validator before its
+    /// transaction commits, as `DbDocMutator` and `BatchMutator` do. The
+    /// single-mutation path this mutator serves is the one a GraphQL request
+    /// with one mutation, a REST document write and a backup import take,
+    /// so without this most local writes in a governed collection committed
+    /// unjudged. Nothing is read when no judge is installed.
+    async fn judge_pending(
+        &self,
+        pending: Option<crate::merge::governance::PendingStores>,
+        collection: &schema::CollectionVersion,
+        doc_id: &str,
+        cid: &Cid,
+        block: &[u8],
+    ) -> query::error::Result<()> {
+        let Some(pending) = pending else {
+            return Ok(());
+        };
+        crate::merge::governance::judge_local_write(
+            &self.db, pending, collection, doc_id, cid, block,
+        )
+        .await
+        .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
+    /// The transaction's blockstore view a judgement reads the uncommitted
+    /// blocks through, taken before any await so no borrow of the
+    /// transaction is held across one; `None` when no judge is installed.
+    fn pending_view(
+        &self,
+        txn: &DbTxn<S>,
+    ) -> query::error::Result<Option<crate::merge::governance::PendingStores>> {
+        if self.db.local_write_judge().is_none() {
+            return Ok(None);
+        }
+        crate::merge::governance::PendingStores::of(txn)
+            .map(Some)
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))
+    }
+
     async fn new_mutation_txn(&self) -> query::error::Result<DbTxn<S>> {
         self.db.new_txn(false).await.map_err(|error| {
             query::error::QueryError::execution(format!("failed to create txn: {error}"))

@@ -137,6 +137,18 @@ pub struct CollectionVersion {
     )]
     pub governance_root: Option<String>,
 
+    /// The rule this version is judged by, from `@governed(rule:)`: an
+    /// opaque tag hashed into the version ID, so a rule change is an
+    /// explicit upgrade and a node judging under another rule derives a
+    /// different version. A validator may refuse a version whose rule it
+    /// does not recognise.
+    #[serde(
+        rename = "GovernanceRule",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub governance_rule: Option<String>,
+
     /// Whether this is the active version
     #[serde(rename = "IsActive", default = "default_active")]
     pub is_active: bool,
@@ -243,6 +255,7 @@ impl CollectionVersion {
             policy: None,
             policy_cid: None,
             governance_root: None,
+            governance_rule: None,
             is_active: true,
             is_materialized: true,
             downsample_interval: None,

@@ -53,6 +53,53 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         doc_id: &str,
         heads: Vec<Cid>,
     ) -> Vec<Cid> {
+        let heads = self
+            .filter_accessible_doc_heads(peer_id, doc_id, heads)
+            .await;
+        if !self.replication_policy.is_installed() {
+            return heads;
+        }
+        let doc_ids = [doc_id.to_string()];
+        let mut permitted = Vec::with_capacity(heads.len());
+        for cid in heads {
+            let Ok(Some(data)) = self.manager.blockstore().get(&cid).await else {
+                continue;
+            };
+            let Some(collection_id) = block_context_from_data(&data).collection_id else {
+                continue;
+            };
+            let policy = &self.replication_policy;
+            if policy
+                .may_accept(
+                    peer_id.as_str(),
+                    crate::replication_policy::InboundRequest::SyncRequest,
+                    &collection_id,
+                )
+                .await
+                && policy
+                    .may_send(
+                        peer_id.as_str(),
+                        crate::replication_policy::OutboundPath::Serve,
+                        &crate::replication_policy::OutboundBlock {
+                            cid: &cid,
+                            collection_id: &collection_id,
+                            doc_ids: &doc_ids,
+                        },
+                    )
+                    .await
+            {
+                permitted.push(cid);
+            }
+        }
+        permitted
+    }
+
+    async fn filter_accessible_doc_heads(
+        &self,
+        peer_id: &PeerId,
+        doc_id: &str,
+        heads: Vec<Cid>,
+    ) -> Vec<Cid> {
         if self.access.access_mode.is_open() {
             return heads;
         }

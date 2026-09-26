@@ -54,5 +54,6 @@ fn iroh_config() -> IrohConfig {
         discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
         max_concurrent_multipath_paths: None,
         secret_key_path: None,
+        ..Default::default()
     }
 }

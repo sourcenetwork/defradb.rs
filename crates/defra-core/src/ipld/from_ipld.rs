@@ -308,6 +308,7 @@ impl TryFrom<&Ipld> for CollectionDefinitionDeltaPayload {
             governance_root: parse_optional_string(map, "governance")?,
             is_branchable: parse_flag(map, "branchable")?,
             policy_cid: parse_optional_cid(map, "policy")?,
+            rule: parse_optional_string(map, "rule")?,
         })
     }
 }

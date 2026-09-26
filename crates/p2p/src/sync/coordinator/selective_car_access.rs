@@ -154,11 +154,41 @@ impl SelectiveCarAccess {
 #[derive(Clone)]
 pub struct HeadHintCarAuthority {
     access: Arc<SelectiveCarAccess>,
+    policy: Arc<crate::replication_policy::ReplicationPolicyGate>,
 }
 
 impl HeadHintCarAuthority {
-    pub(super) fn new(access: Arc<SelectiveCarAccess>) -> Self {
-        Self { access }
+    pub(super) fn new(
+        access: Arc<SelectiveCarAccess>,
+        policy: Arc<crate::replication_policy::ReplicationPolicyGate>,
+    ) -> Self {
+        Self { access, policy }
+    }
+
+    /// Whether the replication policy lets this head go to `peer_id`. Replay
+    /// and retry senders ask before announcing a head.
+    pub async fn may_push(
+        &self,
+        peer_id: &PeerId,
+        collection_id: &str,
+        doc_id: &str,
+        cid: &Cid,
+    ) -> bool {
+        let doc_ids: Vec<String> = (!doc_id.is_empty())
+            .then(|| doc_id.to_string())
+            .into_iter()
+            .collect();
+        self.policy
+            .may_send(
+                peer_id.as_str(),
+                crate::replication_policy::OutboundPath::Push,
+                &crate::replication_policy::OutboundBlock {
+                    cid,
+                    collection_id,
+                    doc_ids: &doc_ids,
+                },
+            )
+            .await
     }
 
     pub fn register(&self, peer_id: PeerId, root_cid: Cid) -> Option<HeadHintCarGrant> {

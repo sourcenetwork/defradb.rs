@@ -43,7 +43,32 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         (name, col_id, fields, Some(prev))
                     }
                     None => {
-                        tracing::debug!(cid = %cid, "CollectionDefinition has no name and no resolvable previous version - skipping");
+                        // A patch of a version this node does not hold yet:
+                        // it waits for that version, and its arrival, or the
+                        // sweep after a restart, re-drives it. Left terminal
+                        // it would leave the unmerged set and never be
+                        // judged again.
+                        if let Some(previous) = block.heads.as_deref().and_then(<[Cid]>::first) {
+                            tracing::debug!(cid = %cid, %previous, "CollectionDefinition patches a version not held; waiting for it");
+                            self.deferred.defer(
+                                defra_core::merge::MergeBlock {
+                                    cid: *cid,
+                                    block_data: bytes::Bytes::new(),
+                                    doc_id: String::new(),
+                                    collection_id: String::new(),
+                                    creator: String::new(),
+                                    sender_peer: None,
+                                    is_explicit_replicator: false,
+                                    explicit_replay_authorization: None,
+                                    verified_creator: None,
+                                },
+                                vec![crate::merge::governance::WaitKey::Composite(*previous)],
+                            );
+                            return Ok(MergeOutcome::retryable_skip(
+                                "collection definition patches a version not held",
+                            ));
+                        }
+                        tracing::debug!(cid = %cid, "CollectionDefinition has no name and no previous version - skipping");
                         return Ok(MergeOutcome::terminal_skip(
                             "collection definition has no name and no previous version",
                         ));
@@ -145,6 +170,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             schema.is_branchable = payload.is_branchable;
             schema.governance_root.clone_from(&payload.governance_root);
         }
+        // The rule is a version's, carried on every version's delta like the
+        // policy, so a patch states its own or has none.
+        if schema.governance_root.is_some() {
+            schema.governance_rule.clone_from(&payload.rule);
+        }
         // The version ID binds the policy by a CID over its reference. The
         // record keeps the binding, and the policy itself only when a version
         // this node holds of the same collection supplies the reference the
@@ -204,6 +234,48 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 "Synced collection definition already held; nothing rebuilt"
             );
             return Ok(MergeOutcome::Merged);
+        }
+
+        // A governed definition is judged before it is stored. An initial one
+        // is self-certifying, since the collection ID commits to the root;
+        // a patch inherits that ID and changes what every later write is
+        // judged against, so the application says who may publish one.
+        if schema.governance_root.is_some() {
+            match self
+                .judge_definition(crate::merge::governance::DefinitionCandidate {
+                    cid,
+                    block,
+                    payload,
+                    version: &schema,
+                    previous: previous.as_ref(),
+                })
+                .await?
+            {
+                crate::merge::governance::Judgement::Ungoverned
+                | crate::merge::governance::Judgement::Accept => {}
+                crate::merge::governance::Judgement::Verdict { outcome, awaiting } => {
+                    if !awaiting.is_empty() {
+                        // No document and no carrier id: a definition is not
+                        // a document write, and re-drive must not push it as
+                        // one.
+                        self.deferred.defer(
+                            defra_core::merge::MergeBlock {
+                                cid: *cid,
+                                block_data: bytes::Bytes::new(),
+                                doc_id: String::new(),
+                                collection_id: String::new(),
+                                creator: String::new(),
+                                sender_peer: None,
+                                is_explicit_replicator: false,
+                                explicit_replay_authorization: None,
+                                verified_creator: None,
+                            },
+                            awaiting,
+                        );
+                    }
+                    return Ok(outcome);
+                }
+            }
         }
 
         // Store in systemstore
@@ -295,6 +367,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
              activation); cached unless the name already holds another collection"
         );
 
+        // A patch that arrived first waits on this version's CID; the
+        // caller's re-drive picks it up.
+        self.deferred.release(std::iter::once(
+            crate::merge::governance::WaitKey::Composite(*cid),
+        ));
+
         Ok(MergeOutcome::Merged)
     }
 
@@ -381,12 +459,14 @@ fn collection_id_of(version_id: &Cid, block: &Block) -> Result<String, MergeErro
     let CrdtDelta::CollectionDefinition(payload) = &block.delta else {
         return Ok(version_id.to_string());
     };
-    if payload.governance_root.is_none() || payload.policy_cid.is_none() {
+    if payload.governance_root.is_none() || (payload.policy_cid.is_none() && payload.rule.is_none())
+    {
         return Ok(version_id.to_string());
     }
     let mut without_policy = block.clone();
     if let CrdtDelta::CollectionDefinition(payload) = &mut without_policy.delta {
         payload.policy_cid = None;
+        payload.rule = None;
     }
     without_policy
         .generate_cid()

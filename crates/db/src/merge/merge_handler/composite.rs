@@ -240,9 +240,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 ));
             }
 
-            if let Some(reason) = self
+            // A replicated write into a local-only downsample source is
+            // skipped as terminal, which the replication handler marks
+            // merged. For a governed collection that mark is what a
+            // collection block's link check reads, so the verdict comes
+            // first: a reject quarantines, an accept is then skipped, and
+            // the mark never says "accepted" of a composite no verdict saw
+            // (proofs/tla/GovernanceHeads.tla, SkipBeforeJudge).
+            let downsample_skip = self
                 .db
-                .replicated_downsample_source_skip_reason(collection.schema())?
+                .replicated_downsample_source_skip_reason(collection.schema())?;
+            if let Some(reason) = downsample_skip
+                .as_ref()
+                .filter(|_| !self.is_governed(collection.schema()))
             {
                 tracing::warn!(
                     collection = %collection.name(),
@@ -282,7 +292,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         return Ok(CompositeMergePreparation::Complete(outcome));
                     }
                 }
-                Judgement::Accept => {}
+                Judgement::Accept => {
+                    if let Some(reason) = downsample_skip {
+                        tracing::warn!(
+                            collection = %collection.name(),
+                            %doc_id,
+                            %reason,
+                            "Skipping an accepted replicated write into a local-only downsample source"
+                        );
+                        return Ok(CompositeMergePreparation::Complete(
+                            MergeOutcome::terminal_skip(reason),
+                        ));
+                    }
+                }
                 Judgement::Verdict { outcome, awaiting } if !awaiting.is_empty() => {
                     return Ok(CompositeMergePreparation::Deferred { outcome, awaiting });
                 }

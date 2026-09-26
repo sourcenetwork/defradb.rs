@@ -99,6 +99,7 @@ pub struct DbTransportDocPusher<S: storage::corekv::Store, T: P2PTransport> {
     car_authority: p2p::sync::HeadHintCarAuthority,
     retry_schedule: storage::stores::RetrySchedule,
     document_acp: std::sync::OnceLock<Arc<dyn acp::DocumentACP>>,
+    filter_matcher: Arc<dyn p2p::replicator::ReplicationFilterMatcher>,
 }
 
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<S, T> {
@@ -113,6 +114,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
             car_authority,
             retry_schedule: storage::stores::RetrySchedule::default(),
             document_acp: std::sync::OnceLock::new(),
+            filter_matcher: Arc::new(replication_filter::QueryReplicationFilterMatcher::new()),
         }
     }
 
@@ -126,6 +128,15 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
 
     pub fn with_retry_schedule(mut self, schedule: storage::stores::RetrySchedule) -> Self {
         self.retry_schedule = schedule;
+        self
+    }
+
+    /// Evaluate replicator filters with `matcher` instead of the query-filter matcher.
+    pub fn with_filter_matcher(
+        mut self,
+        matcher: Arc<dyn p2p::replicator::ReplicationFilterMatcher>,
+    ) -> Self {
+        self.filter_matcher = matcher;
         self
     }
 
@@ -169,7 +180,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
                 retry_schedule: self.retry_schedule.clone(),
                 ..Default::default()
             },
-            &replication_filter::QueryReplicationFilterMatcher::new(),
+            self.filter_matcher.as_ref(),
             &self.car_authority,
         )
         .await
@@ -201,7 +212,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
                 retry_schedule: self.retry_schedule.clone(),
                 ..Default::default()
             },
-            &replication_filter::QueryReplicationFilterMatcher::new(),
+            self.filter_matcher.as_ref(),
             &self.car_authority,
         )
         .await
@@ -230,7 +241,7 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             doc_id,
             collection_id,
             &filters,
-            &replication_filter::QueryReplicationFilterMatcher::new(),
+            self.filter_matcher.as_ref(),
             &self.car_authority,
         )
         .await
