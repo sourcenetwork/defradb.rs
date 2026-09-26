@@ -36,8 +36,6 @@ policy. Replicas sharing an actor identity retain independent worker identities
 and submission sequences.
 
 The native provider module is `vera::vera_rs`, and its integration suite is
-`cargo test -p integration-test --test verars`. The old `hubrs`/`hub-rs`
-selectors, `--hub-rs-address`, `hub_rs_address` config key, and
-`DEFRA_HUB_RS_ADDRESS` environment variable remain accepted for compatibility.
-New configuration and help use Vera names; `DEFRA_VERA_RS_ADDRESS` takes
-precedence over its legacy environment variable.
+`cargo test -p integration-test --test verars`. Configure it with the `verars`
+provider selector, `--vera-rs-address`, `DEFRA_VERA_RS_ADDRESS`, or the
+`vera_rs_address` config key.

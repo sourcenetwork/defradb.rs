@@ -570,7 +570,7 @@ pub struct AcpConfig {
 
     /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
     #[cfg(feature = "vera")]
-    #[serde(default, alias = "hub_rs_address")]
+    #[serde(default)]
     pub vera_rs_address: String,
 
     /// Trusted Vera consensus public key from operator configuration (hex).

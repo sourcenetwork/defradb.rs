@@ -270,12 +270,8 @@ impl Config {
 
         // vera.rs
         #[cfg(feature = "vera")]
-        if let Some(addr) = cli
-            .vera_rs_address
-            .clone()
-            .or_else(|| std::env::var("DEFRA_HUB_RS_ADDRESS").ok())
-        {
-            self.acp.vera_rs_address = addr;
+        if let Some(ref addr) = cli.vera_rs_address {
+            self.acp.vera_rs_address = addr.clone();
         }
         #[cfg(feature = "vera")]
         if let Some(ref key) = cli.vera_consensus_key {

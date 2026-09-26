@@ -130,12 +130,7 @@ pub struct Cli {
 
     /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
     #[cfg(feature = "vera")]
-    #[arg(
-        long,
-        alias = "hub-rs-address",
-        global = true,
-        env = "DEFRA_VERA_RS_ADDRESS"
-    )]
+    #[arg(long, global = true, env = "DEFRA_VERA_RS_ADDRESS")]
     pub vera_rs_address: Option<String>,
 
     /// Trusted Vera consensus public key from operator configuration (hex)

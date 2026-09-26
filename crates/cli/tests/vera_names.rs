@@ -128,8 +128,6 @@ fn native_provider_flags_work_with_the_vera_feature() {
     for (provider, address_flag) in [
         ("verars", "--vera-rs-address"),
         ("vera-rs", "--vera-rs-address"),
-        ("hubrs", "--hub-rs-address"),
-        ("hub-rs", "--hub-rs-address"),
     ] {
         let cli = Cli::try_parse_from([
             "defradb",
@@ -161,25 +159,32 @@ fn native_provider_flags_work_with_the_vera_feature() {
 }
 
 #[test]
-fn legacy_native_config_serializes_with_verars_names() {
-    for selector in ["hubrs", "hub-rs", "verars", "vera-rs"] {
+fn old_native_names_are_not_accepted() {
+    for selector in ["hubrs", "hub-rs"] {
+        assert!(selector.parse::<AcpDocumentType>().is_err());
         let mut value = serde_json::to_value(AcpConfig::default()).unwrap();
-        let fields = value.as_object_mut().unwrap();
-        fields.insert("document_type".into(), selector.into());
-        fields.remove("vera_rs_address");
-        fields.insert("hub_rs_address".into(), "http://localhost:8545".into());
-        let config: AcpConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(config.document_type, AcpDocumentType::VeraRs);
-        assert_eq!(config.vera_rs_address, "http://localhost:8545");
-        let output = serde_json::to_value(config).unwrap();
-        assert_eq!(output["document_type"], "verars");
-        assert_eq!(output["vera_rs_address"], "http://localhost:8545");
-        assert!(output.get("hub_rs_address").is_none());
+        value["document_type"] = selector.into();
+        assert!(serde_json::from_value::<AcpConfig>(value).is_err());
+        assert!(
+            Cli::try_parse_from(["defradb", "--document-acp-type", selector, "version"]).is_err()
+        );
     }
+    assert!(Cli::try_parse_from([
+        "defradb",
+        "--hub-rs-address",
+        "http://localhost:8545",
+        "version"
+    ])
+    .is_err());
+    let mut value = serde_json::to_value(AcpConfig::default()).unwrap();
+    value.as_object_mut().unwrap().remove("vera_rs_address");
+    value["hub_rs_address"] = "http://obsolete:8545".into();
+    let config: AcpConfig = serde_json::from_value(value).unwrap();
+    assert!(config.vera_rs_address.is_empty());
 }
 
 #[test]
-fn native_environment_values_use_vera_with_legacy_fallback() {
+fn native_environment_uses_only_vera_names() {
     if let Ok(expected) = std::env::var("VERARS_NAMING_TEST_EXPECTED") {
         let cli = Cli::try_parse_from(["defradb", "version"]).unwrap();
         let mut config = Config::default();
@@ -189,15 +194,12 @@ fn native_environment_values_use_vera_with_legacy_fallback() {
     }
     for (canonical, legacy, expected) in [
         (Some("canonical"), None, "canonical"),
-        (None, Some("legacy"), "legacy"),
+        (None, Some("legacy"), ""),
         (Some("canonical"), Some("legacy"), "canonical"),
     ] {
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
-            .args([
-                "--exact",
-                "native_environment_values_use_vera_with_legacy_fallback",
-            ])
+            .args(["--exact", "native_environment_uses_only_vera_names"])
             .env("VERARS_NAMING_TEST_EXPECTED", expected)
             .env_remove("DEFRA_VERA_RS_ADDRESS")
             .env_remove("DEFRA_HUB_RS_ADDRESS");
