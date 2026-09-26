@@ -408,7 +408,11 @@ A rejected definition is never stored and the sweep leaves it alone; a
 deferred one is indexed and re-driven like a composite, and swept if the
 index forgets it. A patch that arrives before the version it supersedes
 waits on that version's CID, is swept meanwhile, and is stored once the
-version merges.
+version merges. That holds for an ungoverned patch too, since a nameless
+patch says nothing about its governance until its base is held: before,
+such a patch was dropped as terminal and lost; now it waits, and a node
+with a validator installed re-drives it each sweep until the base arrives,
+one budget slot a tick.
 
 ```mermaid
 sequenceDiagram
@@ -549,12 +553,21 @@ a verdict reach a conclusion the bytes alone could not, verdicts would depend
 on which replica judged first.
 
 **When it is written.** Emissions are queued while a block is judged and
-written once its merge attempt returns: an attempt may fail and be retried,
-and a retry judges again, so an attempt that errors discards what it queued.
-Writing then re-drives, so the record is judged and merged in the same call
-rather than on the next sweep. A record the node cannot write (an unknown
-collection, a field its schema does not hold) is logged and dropped; the
-verdict it came with stands, as an error is never a verdict.
+written once the merge attempt that judged it returns, whether or not it
+succeeded: an emission is a fact about bytes the node holds and not about
+the attempt's outcome, and an attempt retried after a transaction conflict
+finds the same fact and the same record. The batch path writes at the end
+of the batch. Writing then re-drives, so the record is judged and merged in
+the same call rather than on the next sweep, and it is forwarded to
+replicators under its collection like any re-driven merge. A record the
+node cannot write (an unknown collection, a field its schema does not hold,
+a counter field) is logged and dropped; the verdict it came with stands, as
+an error is never a verdict. Two things follow from "the same fact is the
+same record" that a deployment has to keep: the record names the target
+collection's *active* version, so replicas that emit into a collection must
+activate its versions in step; and the chain bound below is this node's,
+since a record met again from a peer or after a restart starts at depth
+zero.
 
 **Chains are bounded.** A record's own judgement may emit. Each emitted
 composite remembers how deep in such a chain it sits, and an emission past

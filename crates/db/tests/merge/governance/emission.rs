@@ -170,9 +170,14 @@ async fn a_record_emitted_with_an_accept_merges_and_is_forwarded() {
 
     let records = node.doc_ids("Records").await;
     assert_eq!(records.len(), 1);
-    let forwarded = node.forwarded();
+    let forwarded = node.forwarded_with_ids();
     assert_eq!(forwarded.len(), 1);
-    assert_eq!(db::block::builder::derive_doc_id(&forwarded[0]), records[0]);
+    assert_eq!(
+        db::block::builder::derive_doc_id(&forwarded[0].0),
+        records[0]
+    );
+    // The sink pushes to replicators only under a collection id.
+    assert_eq!(forwarded[0].1, "col-records");
     assert_eq!(
         field_value(&node, "Records", &records[0], "of").await,
         Some(note.cid.to_string())
@@ -262,4 +267,59 @@ async fn an_emission_into_an_unknown_collection_never_fails_the_verdict() {
     assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
     assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
     assert!(node.forwarded().is_empty());
+}
+
+/// E7. The batch path judges through its own transaction and writes what
+/// it emitted at the end of the batch.
+#[tokio::test]
+async fn a_record_emitted_during_a_batch_merge_is_written() {
+    let writer = signer();
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    let node = node_with_records(Arc::new(RecordsNotes), &["Notes"]).await;
+    note.store(&node).await;
+
+    let outcomes = node
+        .handler
+        .handle_block_batch(&[merge_block(&note, &writer.did)])
+        .await;
+    assert!(
+        matches!(outcomes.as_slice(), [Ok(MergeOutcome::Merged)]),
+        "{outcomes:?}"
+    );
+    assert_eq!(node.doc_ids("Records").await.len(), 1);
+}
+
+/// E8. A record naming a field its collection lacks is dropped; the verdict
+/// it came with stands.
+#[tokio::test]
+async fn an_emission_with_a_field_the_schema_lacks_never_fails_the_verdict() {
+    struct RecordsBadField;
+
+    #[async_trait]
+    impl MergeValidator for RecordsBadField {
+        async fn validate(
+            &self,
+            candidate: &MergeCandidate<'_>,
+            view: &dyn MergeView,
+        ) -> Result<MergeVerdict, String> {
+            Ok(self.judge(candidate, view).await?.verdict)
+        }
+
+        async fn judge(
+            &self,
+            candidate: &MergeCandidate<'_>,
+            _view: &dyn MergeView,
+        ) -> Result<Judged, String> {
+            Ok(Judged::new(MergeVerdict::Accept)
+                .emitting(Emission::new("Records").field("nope", candidate.cid.to_string())))
+        }
+    }
+
+    let writer = signer();
+    let note = genesis("col-notes", "grant", "anything", &writer);
+    let node = node_with_records(Arc::new(RecordsBadField), &["Notes"]).await;
+
+    assert_eq!(note.merge(&node, &writer.did).await, MergeOutcome::Merged);
+    assert_eq!(node.doc_ids("Notes").await, vec![note.doc_id.clone()]);
+    assert!(node.doc_ids("Records").await.is_empty());
 }

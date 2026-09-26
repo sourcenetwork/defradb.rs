@@ -7,15 +7,30 @@
 //! re-drive queue: judged if its collection is claimed, its heads installed,
 //! forwarded to replicators. Nothing about it is special once it is a block.
 //!
-//! Emissions are queued while a block is judged and written once its merge
-//! attempt returns, never from inside the attempt: the attempt may still fail
-//! and be retried, and a retry judges again. An attempt that errors discards
-//! what it queued.
+//! Emissions are queued while a block is judged and written once the merge
+//! attempt that judged it returns, never from inside the attempt, since an
+//! attempt may hold a transaction that is still to commit. Whether the
+//! attempt succeeded does not matter: an emission is a fact about bytes the
+//! node holds, not about the attempt's outcome, and an attempt that failed
+//! on a transaction conflict is retried and finds the same fact, which is the
+//! same bytes and so the same record. The queue is one per handler and
+//! merges of different documents run concurrently, so a drain may write what
+//! another attempt queued; that is harmless for the same reason. The batch
+//! path drains at the end of the batch.
 //!
 //! A record's own judgement may emit in turn. Each emitted document remembers
 //! how deep in such a chain it sits, and an emission past
 //! [`MAX_EMISSION_DEPTH`] is dropped with a warning: a rule that records its
-//! own records would otherwise never stop.
+//! own records would otherwise never stop. The bound is this node's: a record
+//! that arrives from a peer, or is met again after a restart, starts at zero,
+//! so a rule that emits on its own records chains across replicas as far as
+//! they pass records around. Such a rule is wrong, and the bound only keeps
+//! it from taking one node down with it.
+//!
+//! The record names the target collection's active version, so replicas
+//! that have activated different versions of that collection emit different
+//! CIDs for one fact. A collection records are emitted into must therefore
+//! be activated in step across the replicas that emit into it.
 
 use bytes::Bytes;
 use cid::Cid;
@@ -47,12 +62,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let mut pending = self.pending_emissions.lock().unwrap();
         pending.extend(emit.into_iter().map(|emission| (depth, emission)));
     }
-
-    /// Forget what the failed attempt queued; its retry judges again.
-    pub(crate) fn discard_emissions(&self) {
-        self.pending_emissions.lock().unwrap().clear();
-    }
 }
+
+/// Beyond this many remembered depths the map is cleared: a cleared entry
+/// only makes a record's own emissions start from zero again on this node.
+const MAX_REMEMBERED_DEPTHS: usize = 65_536;
 
 impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, B> {
     /// Write everything queued since the last drain, then re-drive so each
@@ -100,7 +114,26 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 emission.collection
             )));
         };
-        let version_id = collection.schema().version_id.clone();
+        let schema = collection.schema();
+        let version_id = schema.version_id.clone();
+        let collection_id = schema.collection_id.clone();
+        // A field the schema lacks, or a counter, cannot be written as the
+        // LWW genesis field the builder makes of it; better dropped here
+        // with a reason than merged as something no peer can read.
+        for (name, _) in &emission.fields {
+            let Some(field) = schema.fields.iter().find(|field| &field.name == name) else {
+                return Err(MergeError::MergeFailed(format!(
+                    "emission into {} names a field its schema lacks: {name}",
+                    emission.collection
+                )));
+            };
+            if field.crdt_type.is_counter() {
+                return Err(MergeError::MergeFailed(format!(
+                    "emission into {} names a counter field: {name}",
+                    emission.collection
+                )));
+            }
+        }
         drop(txn);
 
         let mut doc = Document::new();
@@ -129,7 +162,13 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             return Ok(false);
         }
 
-        self.emitted_depth.lock().unwrap().insert(cid, depth + 1);
+        {
+            let mut depths = self.emitted_depth.lock().unwrap();
+            if depths.len() >= MAX_REMEMBERED_DEPTHS {
+                depths.clear();
+            }
+            depths.insert(cid, depth + 1);
+        }
         for (key, data) in &blocks.blockstore_entries {
             let block_cid = Cid::try_from(key.as_slice())
                 .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
@@ -140,14 +179,14 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
         tracing::debug!(%cid, collection = %emission.collection, depth, "Emitted a record");
 
-        // No carrier: like a swept block, it names no document, no
-        // collection and no sender, and the merge path resolves all three
-        // from the block.
+        // No sender and no creator, as a swept block has none; the document
+        // and collection ids are what the replication sink pushes under, so
+        // an empty collection id would leave the record on this node.
         Ok(self.deferred.enqueue_ready(MergeBlock {
             cid,
             block_data: Bytes::new(),
-            doc_id: String::new(),
-            collection_id: String::new(),
+            doc_id: blocks.block_result.doc_id.clone(),
+            collection_id,
             creator: String::new(),
             sender_peer: None,
             is_explicit_replicator: false,
