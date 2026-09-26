@@ -597,8 +597,10 @@ it is a function of one request, the candidate and the inputs fetched so
 far, and answers with a verdict or with the keys it needs next
 (`fields:<cid>`, `genesis:<cid>`, `find:<collection>:<field>:<hex value>`,
 `immutable:<collection>:<doc_id>`). The host fetches through the merge
-view and runs it again, up to a step budget, with fuel per step and a
-memory limit per instance; a key it cannot satisfy is a defer naming it,
+view and runs it again, up to a step budget, with fuel per step, a memory
+limit per instance, at most 64 keys a step and 256 inputs a verdict, and a
+response length checked against the module's memory before anything is
+allocated for it; a key it cannot satisfy is a defer naming it,
 in the vocabulary the deferral index re-drives on. A trap, an exhausted
 budget or a malformed answer is an error, not a verdict.
 

@@ -66,6 +66,11 @@
 //! finds it (`governance::emission`). Emit only what no later arrival takes
 //! back; a fork found mid-verdict qualifies, "not yet" never does.
 //!
+//! A step may ask for at most [`MAX_KEYS_PER_STEP`] keys and a verdict gather
+//! at most [`MAX_INPUTS`], a key asked for twice is fetched once, and a
+//! response whose length runs past the module's memory is refused before
+//! anything is allocated for it.
+//!
 //! A module that traps, exceeds its fuel, or answers malformed CBOR is an
 //! error, not a verdict: the composite stays unmerged and the sweep will
 //! try again. A module that asks for more steps than the budget allows is
@@ -117,6 +122,12 @@ impl<B: blockstore::Blockstore + 'static> RuleModules for BlockstoreModules<B> {
             .map_err(|error| error.to_string())
     }
 }
+
+/// The most keys one step may ask for, and the most inputs one verdict may
+/// gather: each key is a fetch, `find:` a scan, and every request carries
+/// every input gathered so far.
+pub const MAX_KEYS_PER_STEP: usize = 64;
+pub const MAX_INPUTS: usize = 256;
 
 /// What one verdict may cost.
 #[derive(Debug, Clone, Copy)]
@@ -221,9 +232,16 @@ impl WasmRules {
             .read(&store, out as usize, &mut header)
             .map_err(|error| format!("rule module response unreadable: {error}"))?;
         let out_len = u32::from_le_bytes(header) as usize;
+        // The length is the guest's to write; a span past the memory is an
+        // error found here, before the host allocates for it.
+        let start =
+            usize::try_from(out).map_err(|_| "rule module response pointer is negative")? + 4;
+        if out_len > memory.data_size(&store).saturating_sub(start) {
+            return Err("rule module response runs past its memory".to_string());
+        }
         let mut response = vec![0u8; out_len];
         memory
-            .read(&store, out as usize + 4, &mut response)
+            .read(&store, start, &mut response)
             .map_err(|error| format!("rule module response unreadable: {error}"))?;
         ciborium::from_reader(response.as_slice())
             .map_err(|error| format!("rule module response is not CBOR: {error}"))
@@ -250,6 +268,7 @@ impl WasmRules {
             .into());
         };
         let mut inputs: Vec<(Value, Value)> = Vec::new();
+        let mut fetched: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for step in 0..self.budget.steps {
             let request = Value::Map(vec![
                 (text("step"), Value::Integer((step as u64).into())),
@@ -263,7 +282,22 @@ impl WasmRules {
             match parse_response(&response)? {
                 Response::Judged(judged) => return Ok(judged),
                 Response::Need(keys) => {
+                    if keys.len() > MAX_KEYS_PER_STEP {
+                        return Err(format!(
+                            "rule module {rule} asked for {} keys in one step, more than {MAX_KEYS_PER_STEP}",
+                            keys.len()
+                        ));
+                    }
                     for key in keys {
+                        // A key already fetched is already in `inputs`.
+                        if !fetched.insert(key.clone()) {
+                            continue;
+                        }
+                        if fetched.len() > MAX_INPUTS {
+                            return Err(format!(
+                                "rule module {rule} asked for more than {MAX_INPUTS} inputs"
+                            ));
+                        }
                         match fetch(view, &key).await? {
                             Fetched::Value(value) => inputs.push((text(&key), value)),
                             Fetched::Defer(verdict) => return Ok(verdict.into()),
