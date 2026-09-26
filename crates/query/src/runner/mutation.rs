@@ -710,7 +710,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Note: encryption_config and broadcast_creator_did are cleared
         // automatically by the RAII guards declared above when this
         // function returns. The bearer token store stays alive — the
-        // ACP registration block below needs it for hub.rs auth.
+        // ACP registration block below needs it for vera.rs auth.
 
         let plan_execution_elapsed = plan_execution_start.elapsed();
         for doc_id in &result_doc_ids {

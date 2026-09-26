@@ -274,7 +274,7 @@ impl CodingSessionFixtureConfig {
             self.medium_session_actions,
         );
         let background_projects = [
-            "/Users/johnzampolin/go/src/github.com/sourcenetwork/hub-rs",
+            "/Users/johnzampolin/go/src/github.com/sourcenetwork/vera-rs",
             "/Users/johnzampolin/go/src/github.com/jackzampolin/amygdala",
             "/Users/johnzampolin/go/src/github.com/mizufinance/bankd",
         ];

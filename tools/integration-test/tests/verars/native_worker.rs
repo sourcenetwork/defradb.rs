@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use alloy_sol_types::SolCall;
 use keyring::{FileKeyring, Keyring};
-use vera::hub_rs::NativeWorker;
+use vera::vera_rs::NativeWorker;
 use vera_client::{VeraClient, ACP_ADDRESS};
 use vera_domain::{ConsensusPublicKey, NativeTx, ReceiptResponse};
 use vera_modules::acp::abi::IAcp;

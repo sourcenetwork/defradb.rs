@@ -21,7 +21,7 @@ async fn archived_owner_record_does_not_authorize_access() {
     let keyring =
         keyring::FileKeyring::open(worker_dir.path().join("keys"), b"test-password").unwrap();
     let worker =
-        vera::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
+        vera::vera_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
             .unwrap();
     let owner = helpers::funded_identity();
     let private_key = hex::decode(&owner.private_key_hex).expect("owner key");
@@ -142,7 +142,7 @@ async fn native_permissions_honor_policy_exclusions_and_cross_object_rules() {
     let keyring =
         keyring::FileKeyring::open(worker_dir.path().join("keys"), b"test-password").unwrap();
     let worker =
-        vera::hub_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
+        vera::vera_rs::NativeWorker::open(&worker_dir.path().join("worker"), &keyring, 9001)
             .unwrap();
     let owner = helpers::funded_identity();
     let provider = Arc::new(

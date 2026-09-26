@@ -5,7 +5,7 @@ use super::helpers;
 /// Native Vera grants and revocation apply to document and commit-history queries.
 #[tokio::test]
 #[serial_test::serial]
-async fn rust_hubrs_policy_lifecycle() {
+async fn rust_verars_policy_lifecycle() {
     let binary = helpers::defra_binary();
     let alice = helpers::funded_identity();
 
@@ -13,7 +13,7 @@ async fn rust_hubrs_policy_lifecycle() {
     let hub_rpc_url = hub.node(0).rpc_url();
 
     let cluster =
-        helpers::build_defra_with_hub_rs(&hub_rpc_url, &alice.private_key_hex, 1, false).await;
+        helpers::build_defra_with_vera_rs(&hub_rpc_url, &alice.private_key_hex, 1, false).await;
     let node = cluster.client(0);
 
     let bob = generate_identity(&binary).expect("Bob identity");

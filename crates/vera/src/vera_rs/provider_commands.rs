@@ -1,4 +1,4 @@
-//! Command encoding helpers for hub.rs provider operations.
+//! Command encoding helpers for vera.rs provider operations.
 
 use crate::provider::SubjectRef;
 
@@ -10,7 +10,7 @@ pub(crate) fn subject_to_cmd_json(subject: &SubjectRef) -> serde_json::Value {
 }
 
 pub(crate) fn encode_register_object_cmd(resource: &str, object_id: &str) -> Vec<u8> {
-    // Matches hub.rs PolicyCmd::RegisterObject(Object { resource, id })
+    // Matches vera.rs PolicyCmd::RegisterObject(Object { resource, id })
     serde_json::to_vec(&serde_json::json!({
         "RegisterObject": { "resource": resource, "id": object_id }
     }))
@@ -18,7 +18,7 @@ pub(crate) fn encode_register_object_cmd(resource: &str, object_id: &str) -> Vec
 }
 
 pub(crate) fn encode_archive_object_cmd(resource: &str, object_id: &str) -> Vec<u8> {
-    // Matches hub.rs PolicyCmd::ArchiveObject(Object { resource, id })
+    // Matches vera.rs PolicyCmd::ArchiveObject(Object { resource, id })
     serde_json::to_vec(&serde_json::json!({
         "ArchiveObject": { "resource": resource, "id": object_id }
     }))
@@ -95,7 +95,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encodes_register_object_as_hub_rs_policy_cmd() {
+    fn encodes_register_object_as_vera_rs_policy_cmd() {
         let value: Value =
             serde_json::from_slice(&encode_register_object_cmd("users", "doc-1")).unwrap();
 
@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn encodes_relationship_subjects_as_hub_rs_policy_cmds() {
+    fn encodes_relationship_subjects_as_vera_rs_policy_cmds() {
         let actor = crate::provider::SubjectRef::Actor("did:key:zActor".to_string());
         let value: Value = serde_json::from_slice(&encode_set_relationship_cmd(
             "users", "doc-1", "reader", &actor,

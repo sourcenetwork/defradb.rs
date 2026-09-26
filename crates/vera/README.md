@@ -1,8 +1,8 @@
 # Vera ACP provider
 
 Build the Defra CLI with `--features vera` and select
-`--document-acp-type hub-rs`. Configure the service endpoint with
-`DEFRA_HUB_RS_ADDRESS`, and supply both `--vera-consensus-key` (hex) and
+`--document-acp-type verars`. Configure the service endpoint with
+`DEFRA_VERA_RS_ADDRESS`, and supply both `--vera-consensus-key` (hex) and
 `--vera-deployment-id` from the deployment's operator configuration. Their
 corresponding environment variables are `DEFRA_VERA_CONSENSUS_KEY` and
 `DEFRA_VERA_DEPLOYMENT_ID`.
@@ -34,3 +34,8 @@ Receipt recovery is distinct from caller-level operation idempotency. Retrying
 a completed operation can issue a new request, including creating another
 policy. Replicas sharing an actor identity retain independent worker identities
 and submission sequences.
+
+The native provider module is `vera::vera_rs`, and its integration suite is
+`cargo test -p integration-test --test verars`. Configure it with the `verars`
+provider selector, `--vera-rs-address`, `DEFRA_VERA_RS_ADDRESS`, or the
+`vera_rs_address` config key.

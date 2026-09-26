@@ -58,7 +58,7 @@ elan_bin  := env('ELAN_HOME', home_directory() / ".elan") / "bin"
 export PATH := tooling_bin + ":" + go_root + "/bin" + ":" + cargo_bin + ":" + elan_bin + ":" + env('PATH')
 
 # Integration areas, each a [[test]] binary in tools/integration-test.
-integration_suites := "basic query acp nac p2p encryption identity backup vera hubrs fts p2p_iroh cursor"
+integration_suites := "basic query acp nac p2p encryption identity backup vera verars fts p2p_iroh cursor"
 
 # Cargo profile for the build and test recipes. `dev` is the stock debug
 # profile and the default; `just profile=super-dev test` opts into the lean

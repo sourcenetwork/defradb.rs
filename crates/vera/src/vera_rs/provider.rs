@@ -227,7 +227,7 @@ impl VeraProvider for VeraRsProvider {
 
         tracing::warn!(
             did,
-            "hub.rs bearer token creation failed: no signing config for DID and no request token"
+            "vera.rs bearer token creation failed: no signing config for DID and no request token"
         );
         Err(ProviderError::Config(format!(
             "no signing config found for DID: {}",
@@ -324,7 +324,7 @@ impl VeraProvider for VeraRsProvider {
         tracing::info!(
             doc_id = %object_id,
             elapsed = ?send_tx_start.elapsed(),
-            "hub.rs register_object send_tx completed"
+            "vera.rs register_object send_tx completed"
         );
 
         Ok(())
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn resolve_registered_or_passthrough_bearer_token_uses_request_token_for_remote_identity() {
         let _guard = crate::signing_state_test_guard();
-        let did = "did:key:zRemoteHubRsToken";
+        let did = "did:key:zRemoteVeraRsToken";
         let token = "device.jwt.token".to_string();
         defra_core::signing::clear_identity_store();
         defra_core::signing::clear_request_bearer_token(did);

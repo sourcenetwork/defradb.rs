@@ -90,8 +90,8 @@ name = "vera"
 path = "tests/vera.rs"
 
 [[test]]
-name = "hubrs"
-path = "tests/hubrs.rs"
+name = "verars"
+path = "tests/verars.rs"
 
 [[test]]
 name = "fts"

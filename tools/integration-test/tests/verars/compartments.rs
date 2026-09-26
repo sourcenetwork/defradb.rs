@@ -30,7 +30,7 @@ fn add_policy(node: &integration_test::DefraClient, policy: &str, identity: &str
 ///   Vanessa (reader), Outsider (none)
 #[tokio::test]
 #[serial_test::serial]
-async fn rust_hubrs_compartments() {
+async fn rust_verars_compartments() {
     let binary = helpers::defra_binary();
     let jack = helpers::funded_identity();
 
@@ -38,7 +38,7 @@ async fn rust_hubrs_compartments() {
     let hub_rpc_url = hub.node(0).rpc_url();
 
     let cluster =
-        helpers::build_defra_with_hub_rs(&hub_rpc_url, &jack.private_key_hex, 1, false).await;
+        helpers::build_defra_with_vera_rs(&hub_rpc_url, &jack.private_key_hex, 1, false).await;
     let node = cluster.client(0);
 
     let agent_xarchive = generate_identity(&binary).expect("Agent-XArchive identity");
@@ -46,7 +46,7 @@ async fn rust_hubrs_compartments() {
     let vanessa = generate_identity(&binary).expect("Vanessa identity");
     let outsider = generate_identity(&binary).expect("Outsider identity");
 
-    // Create policies on hub.rs (one at a time to avoid nonce issues)
+    // Create policies on vera.rs (one at a time to avoid nonce issues)
     let xarchive_policy_id = add_policy(&node, XARCHIVE_ACP_POLICY, &jack.private_key_hex);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let hiking_policy_id = add_policy(&node, HIKING_ACP_POLICY, &jack.private_key_hex);

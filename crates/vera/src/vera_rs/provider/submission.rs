@@ -1,4 +1,4 @@
-use crate::hub_rs::client::ClientError;
+use crate::vera_rs::client::ClientError;
 use alloy_primitives::Bytes;
 use tokio::sync::OwnedMutexGuard;
 use vera_domain::{ExecutionReceipt, NativeTx};

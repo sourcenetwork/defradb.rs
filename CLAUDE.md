@@ -182,7 +182,7 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | Backup | `--test backup` | dev_mode, dump, purge, restore |
 | Cursor | `--test cursor` | composite_index, error_paths, reindex_datetime_visibility, smoke |
 | Vera | `--test vera` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
-| Hub.rs | `--test hubrs` | compartments, p2p_acp, policy_lifecycle, smoke |
+| Vera.rs | `--test verars` | compartments, p2p_acp, policy_lifecycle, smoke |
 
 Single-purpose binaries, each its own `[[test]]` with no submodules:
 

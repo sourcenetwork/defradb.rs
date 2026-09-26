@@ -19,7 +19,7 @@ use crate::provider::{AcpLightClientStatus, ProviderError, SubjectRef, VeraProvi
 ///
 /// Delegates write and read operations to a `VeraProvider` implementation.
 /// By default it caches `verify_access` results to avoid redundant network
-/// roundtrips. hub.rs can opt out because remote ACP state may change outside
+/// roundtrips. vera.rs can opt out because remote ACP state may change outside
 /// DefraDB's mutation path.
 pub struct VeraDocumentACP {
     provider: Arc<dyn VeraProvider>,
@@ -453,7 +453,7 @@ impl DocumentACP for VeraDocumentACP {
             return Ok(());
         }
 
-        // hub.rs uses node's DID for archive; Cosmos uses the owner's DID
+        // vera.rs uses node's DID for archive; Cosmos uses the owner's DID
         let archive_did = self
             .provider
             .self_did()

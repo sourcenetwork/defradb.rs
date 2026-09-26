@@ -2,27 +2,27 @@ use integration_test::{users_schema_with_policy, USER_ACP_POLICY};
 
 use super::helpers;
 
-/// Smoke test proving DefraDB -> hub.rs ACP pipeline works end-to-end.
+/// Smoke test proving DefraDB -> vera.rs ACP pipeline works end-to-end.
 ///
-/// 1. Starts a hub.rs devnet + 1 Rust DefraDB node connected to it
+/// 1. Starts a vera.rs devnet + 1 Rust DefraDB node connected to it
 /// 2. Creates an ACP policy through native Vera
 /// 3. Creates a protected document as Jack (owner)
 /// 4. Jack sees the document, anonymous sees nothing
 #[tokio::test]
 #[serial_test::serial]
-async fn rust_hubrs_smoke() {
+async fn rust_verars_smoke() {
     let jack = helpers::funded_identity();
 
     let hub = helpers::start_hub_cluster().await;
     let hub_rpc_url = hub.node(0).rpc_url();
 
     let cluster =
-        helpers::build_defra_with_hub_rs(&hub_rpc_url, &jack.private_key_hex, 1, false).await;
+        helpers::build_defra_with_vera_rs(&hub_rpc_url, &jack.private_key_hex, 1, false).await;
     let node = cluster.client(0);
 
     let policy_result = node
         .acp_policy_add(USER_ACP_POLICY, &jack.private_key_hex)
-        .expect("failed to add ACP policy via hub.rs");
+        .expect("failed to add ACP policy via vera.rs");
 
     let policy_id = policy_result["PolicyID"]
         .as_str()
@@ -64,6 +64,6 @@ async fn rust_hubrs_smoke() {
     assert_eq!(
         anon_users.len(),
         0,
-        "anonymous should see 0 documents (hub.rs ACP)"
+        "anonymous should see 0 documents (vera.rs ACP)"
     );
 }

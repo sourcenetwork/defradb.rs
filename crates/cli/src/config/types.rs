@@ -204,7 +204,7 @@ pub enum AcpDocumentType {
     #[serde(alias = "sourcehub", alias = "source-hub")]
     Vera,
     #[cfg(feature = "vera")]
-    #[serde(rename = "hubrs", alias = "verars", alias = "vera-rs")]
+    #[serde(rename = "verars", alias = "vera-rs")]
     VeraRs,
 }
 
@@ -216,7 +216,7 @@ impl std::fmt::Display for AcpDocumentType {
             #[cfg(feature = "vera")]
             AcpDocumentType::Vera => write!(f, "vera"),
             #[cfg(feature = "vera")]
-            AcpDocumentType::VeraRs => write!(f, "hub-rs"),
+            AcpDocumentType::VeraRs => write!(f, "verars"),
         }
     }
 }
@@ -231,7 +231,7 @@ impl std::str::FromStr for AcpDocumentType {
             #[cfg(feature = "vera")]
             "vera" | "sourcehub" => Ok(AcpDocumentType::Vera),
             #[cfg(feature = "vera")]
-            "hubrs" | "verars" => Ok(AcpDocumentType::VeraRs),
+            "verars" => Ok(AcpDocumentType::VeraRs),
             _ => Err(Error::InvalidAcpType(s.to_string())),
         }
     }

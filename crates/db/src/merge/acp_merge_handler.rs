@@ -80,8 +80,11 @@ impl AcpCompositeMergeHook {
         doc_id: &str,
     ) -> Result<bool, MergeError> {
         let signer = Identity::Authenticated(signer);
-        // The node's own key has full access locally, as on the write path.
-        if self.local_identity.as_ref() == Some(&signer) {
+        // Keep the local-ACP node-owner shortcut, but never use it for
+        // Vera: a node's signature is not a shared-policy write grant.
+        if !self.strict_replicated_doc_access.load(Ordering::Relaxed)
+            && self.local_identity.as_ref() == Some(&signer)
+        {
             return Ok(true);
         }
         acp.check_doc_access(
@@ -102,7 +105,7 @@ const DELETED_STATUS: u8 = 2;
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl CompositeMergeHook for AcpCompositeMergeHook {
     fn guards_protected_updates(&self) -> bool {
-        self.document_acp().is_some() && !self.strict_replicated_doc_access.load(Ordering::Relaxed)
+        self.document_acp().is_some()
     }
 
     async fn on_protected_update(
@@ -117,8 +120,9 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
         let Some(policy) = &collection.policy else {
             return Ok(None);
         };
-        // Strict ACP keeps its own replicated-access rules in on_protected_composite.
-        if frame.is_genesis || self.strict_replicated_doc_access.load(Ordering::Relaxed) {
+        // Receiver read access (including explicit replay) is independent of
+        // the verified signer's authority to update this particular composite.
+        if frame.is_genesis {
             return Ok(None);
         }
         let is_registered = acp
@@ -128,7 +132,17 @@ impl CompositeMergeHook for AcpCompositeMergeHook {
                 MergeError::MergeFailed(format!("ACP registration lookup failed: {}", e))
             })?;
         if !is_registered {
-            return Ok(None);
+            // Local ACP treats unregistered replicas as public. Vera
+            // registration can lag replication; never turn that lag into a
+            // write-authorization bypass, even on an explicit replay path.
+            return Ok(self
+                .strict_replicated_doc_access
+                .load(Ordering::Relaxed)
+                .then(|| {
+                    MergeOutcome::retryable_skip(
+                        "replicated protected document is not yet registered in local ACP",
+                    )
+                }));
         }
 
         let permission = if frame.status == DELETED_STATUS {

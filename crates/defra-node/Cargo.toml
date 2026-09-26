@@ -32,7 +32,7 @@ p2p = [
 ]
 # Native host (tokio, event channel). Default-on.
 native = ["db/native", ]
-# Vera / hub.rs on-chain document ACP. Default-on; omit for local-only ACP.
+# Vera / vera.rs on-chain document ACP. Default-on; omit for local-only ACP.
 vera = ["dep:vera"]
 sourcehub = ["vera"]
 # Lens WASM execution. Default-on; without it set_migration fails explicitly.

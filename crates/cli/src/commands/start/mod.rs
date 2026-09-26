@@ -289,7 +289,7 @@ pub struct StartArgs {
     #[arg(long, env = "DEFRA_ACP_CIRCUIT_BREAKER_RESET_TIMEOUT")]
     pub acp_circuit_breaker_reset_timeout: Option<u64>,
 
-    /// ACP request timeout in seconds for Vera/hub.rs calls (default: 5)
+    /// ACP request timeout in seconds for Vera/vera.rs calls (default: 5)
     #[arg(long, env = "DEFRA_ACP_REQUEST_TIMEOUT")]
     pub acp_request_timeout: Option<u64>,
 
@@ -297,7 +297,7 @@ pub struct StartArgs {
     #[arg(long, env = "DEFRA_ACP_CACHE_TTL")]
     pub acp_cache_ttl: Option<u64>,
 
-    /// ACP receipt polling timeout in seconds for hub.rs transactions (default: 30)
+    /// ACP receipt polling timeout in seconds for vera.rs transactions (default: 30)
     #[arg(long, env = "DEFRA_ACP_RECEIPT_TIMEOUT")]
     pub acp_receipt_timeout: Option<u64>,
 

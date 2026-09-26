@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use k256::ecdsa::SigningKey;
 use sha2::{Digest, Sha256};
 
-/// Create an ES256K JWT bearer token for hub.rs ACP operations.
+/// Create an ES256K JWT bearer token for vera.rs ACP operations.
 ///
 /// The token uses the `did:key:z...` format for the issuer.
 pub fn create_bearer_token(
@@ -89,7 +89,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bearer_token_uses_hub_rs_es256k_shape() {
+    fn bearer_token_uses_vera_rs_es256k_shape() {
         let signing_key = SigningKey::from_slice(&[7u8; 32]).expect("valid signing key");
         let subject = "did:key:zSubject\",\"scope\":\"other";
         let issuer = did_from_signing_key(&signing_key, false);

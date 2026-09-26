@@ -319,7 +319,7 @@ fn request_token_store() -> &'static HopscotchMap<String, String, RandomState> {
 ///
 /// When a user authenticates via JWT, the node doesn't have their private key
 /// and can't create new bearer tokens for them. Instead, we pass through the
-/// original JWT (which IS signed by the user's key) to hub.rs/Vera
+/// original JWT (which IS signed by the user's key) to vera.rs/Vera
 /// for ACP operations like register_object.
 pub fn set_request_bearer_token(did: &str, token: impl Into<String>) {
     request_token_store().insert(did.to_string(), token.into());

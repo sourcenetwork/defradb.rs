@@ -31,26 +31,26 @@ pub async fn start_hub_cluster() -> vera_harness::cluster::TestCluster {
         .genesis(vera_harness::cluster::GenesisBuilder::devnet().simplex(Default::default()))
         .build()
         .await
-        .expect("start hub.rs cluster");
+        .expect("start vera.rs cluster");
     cluster
         .wait_ready(Duration::from_secs(30))
         .await
-        .expect("hub.rs cluster ready");
+        .expect("vera.rs cluster ready");
     cluster
 }
 
-/// Build a DefraDB test cluster configured to use hub.rs for document ACP.
+/// Build a DefraDB test cluster configured to use vera.rs for document ACP.
 ///
-/// Sets `DEFRA_HUB_RS_ADDRESS` and `DEFRA_ACP_DOCUMENT_TYPE` env vars before
+/// Sets `DEFRA_VERA_RS_ADDRESS` and `DEFRA_ACP_DOCUMENT_TYPE` env vars before
 /// spawning nodes (the CLI reads these at startup). Env vars are cleared after
 /// the cluster is built so they don't leak to other tests.
-pub async fn build_defra_with_hub_rs(
+pub async fn build_defra_with_vera_rs(
     hub_rpc_url: &str,
     identity: &str,
     n_nodes: usize,
     p2p: bool,
 ) -> TestCluster {
-    let previous_address = std::env::var_os("DEFRA_HUB_RS_ADDRESS");
+    let previous_address = std::env::var_os("DEFRA_VERA_RS_ADDRESS");
     let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
@@ -61,10 +61,10 @@ pub async fn build_defra_with_hub_rs(
     let previous_deployment = std::env::var_os("DEFRA_VERA_DEPLOYMENT_ID");
     let previous_type = std::env::var_os("DEFRA_ACP_DOCUMENT_TYPE");
     unsafe {
-        std::env::set_var("DEFRA_HUB_RS_ADDRESS", hub_rpc_url);
+        std::env::set_var("DEFRA_VERA_RS_ADDRESS", hub_rpc_url);
         std::env::set_var("DEFRA_VERA_CONSENSUS_KEY", trusted_key);
         std::env::set_var("DEFRA_VERA_DEPLOYMENT_ID", "9001");
-        std::env::set_var("DEFRA_ACP_DOCUMENT_TYPE", "hub-rs");
+        std::env::set_var("DEFRA_ACP_DOCUMENT_TYPE", "verars");
     }
 
     let mut builder = TestCluster::builder()
@@ -81,7 +81,7 @@ pub async fn build_defra_with_hub_rs(
 
     unsafe {
         for (name, value) in [
-            ("DEFRA_HUB_RS_ADDRESS", previous_address),
+            ("DEFRA_VERA_RS_ADDRESS", previous_address),
             ("DEFRA_VERA_CONSENSUS_KEY", previous_key),
             ("DEFRA_VERA_DEPLOYMENT_ID", previous_deployment),
             ("DEFRA_ACP_DOCUMENT_TYPE", previous_type),

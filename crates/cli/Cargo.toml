@@ -119,7 +119,7 @@ optional = true
 default = []
 release-full = ["postgres", "vera", "orbis"]
 postgres = ["dep:pg-compat"]
-# Vera/hub.rs on-chain document ACP (`--document-acp-type vera|hub-rs`).
+# Vera/vera.rs on-chain document ACP (`--document-acp-type vera|verars`).
 vera = ["dep:vera"]
 sourcehub = ["vera"]
 # Orbis ring threshold signing (`--signer-type orbis`).
