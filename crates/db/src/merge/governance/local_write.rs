@@ -91,6 +91,14 @@ pub(crate) async fn judge_local_write<S: Store>(
     cid: &Cid,
     block: &[u8],
 ) -> crate::Result<()> {
+    // Only a claimed collection is judged, so a write to any other never
+    // needs the judge, alive or not.
+    if !db
+        .merge_governance()
+        .is_some_and(|governance| governance.governs(collection))
+    {
+        return Ok(());
+    }
     let Some(judge) = db.local_write_judge() else {
         return Ok(());
     };

@@ -221,14 +221,23 @@ async fn a_note_may_use_a_grant_written_earlier_in_the_same_batch() {
     assert_eq!(node.doc_ids("Notes").await.len(), 1);
 }
 
-/// A judge whose merge handler is gone refuses the write rather than letting
-/// it through unjudged.
+/// A judge whose merge handler is gone refuses a write to a claimed
+/// collection rather than letting it through unjudged; a write to any
+/// other collection never needs the judge and is not touched.
 #[tokio::test]
 async fn a_write_is_refused_when_the_merge_handler_is_gone() {
     let node = Node::with_immutable_grants(Arc::new(NotesNeedGrant)).await;
     let Node { db, handler, .. } = node;
     drop(handler);
-    let error = AutoCommitMutator::new(db.clone())
+    let mutator = AutoCommitMutator::new(db.clone());
+    mutator
+        .create(
+            "Grants",
+            Document::from_json_str(r#"{"writer": "alice", "label": "x"}"#).unwrap(),
+        )
+        .await
+        .expect("an unclaimed collection needs no judge");
+    let error = mutator
         .create(
             "Notes",
             Document::from_json_str(r#"{"grant": "alice"}"#).unwrap(),
