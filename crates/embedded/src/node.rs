@@ -9,8 +9,8 @@ use crate::node_tasks::BackgroundTasks;
 use crate::IrohConfig;
 #[cfg(feature = "libp2p")]
 use crate::Libp2pConfig;
-#[cfg(feature = "sourcehub")]
-use crate::{DocumentAcpConfig, SourceHubConfig};
+#[cfg(feature = "vera")]
+use crate::{DocumentAcpConfig, VeraConfig};
 use crate::{
     EmbeddedNodeConfig, EmbeddedStore, ManagedP2PSystem, Persistence, SigningConfig, SigningKey,
     TransportConfig,
@@ -58,8 +58,8 @@ pub struct EmbeddedNode<S: storage::corekv::Store + 'static> {
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     pub event_bus: Arc<dyn events::Bus>,
     pub node_identity_did: Option<String>,
-    #[cfg(feature = "sourcehub")]
-    pub sourcehub_acp: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+    #[cfg(feature = "vera")]
+    pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     pub query_limits: query::QueryLimits,
     pub p2p: Option<Arc<ManagedP2PSystem>>,
     /// Idempotency guard for [`EmbeddedNode::shutdown`]. Set to `true`
@@ -264,6 +264,8 @@ pub struct NodeBuilder {
     data_path: Option<PathBuf>,
     config: EmbeddedNodeConfig,
     at_rest_encryption_key: Option<[u8; 32]>,
+    #[cfg(feature = "iroh")]
+    access_hooks: Option<crate::AccessHooks>,
 }
 
 impl NodeBuilder {
@@ -306,20 +308,16 @@ impl NodeBuilder {
         self
     }
 
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub(mut self, config: SourceHubConfig) -> Self {
-        self.config.document_acp = DocumentAcpConfig::SourceHub(config);
+    #[cfg(feature = "vera")]
+    pub fn with_vera(mut self, config: VeraConfig) -> Self {
+        self.config.document_acp = DocumentAcpConfig::Vera(config);
         self
     }
 
-    /// Configure SourceHub ACP when LCD and gRPC use distinct endpoints.
-    #[cfg(feature = "sourcehub")]
-    pub fn with_sourcehub_lcd(
-        mut self,
-        config: SourceHubConfig,
-        lcd_address: impl Into<String>,
-    ) -> Self {
-        self.config.document_acp = DocumentAcpConfig::SourceHubWithLcd {
+    /// Configure Vera ACP when LCD and gRPC use distinct endpoints.
+    #[cfg(feature = "vera")]
+    pub fn with_vera_lcd(mut self, config: VeraConfig, lcd_address: impl Into<String>) -> Self {
+        self.config.document_acp = DocumentAcpConfig::VeraWithLcd {
             config,
             lcd_address: lcd_address.into(),
         };
@@ -328,6 +326,14 @@ impl NodeBuilder {
 
     pub fn with_query_limits(mut self, limits: query::QueryLimits) -> Self {
         self.config.query_limits = limits;
+        self
+    }
+
+    /// Install the app's own access control. Only an iroh node accepts it:
+    /// `build` fails for any other transport.
+    #[cfg(feature = "iroh")]
+    pub fn with_access_hooks(mut self, hooks: crate::AccessHooks) -> Self {
+        self.access_hooks = Some(hooks);
         self
     }
 
@@ -392,6 +398,9 @@ impl NodeBuilder {
         };
 
         self.config.persistence = persistence;
+        #[cfg(feature = "iroh")]
+        return build_with_store_and_access_hooks(store, self.config, self.access_hooks).await;
+        #[cfg(not(feature = "iroh"))]
         build_with_store(store, self.config).await
     }
 }
@@ -480,6 +489,39 @@ pub async fn build_with_store<S>(
 where
     S: storage::corekv::Store + 'static,
 {
+    build_node(store, config, None).await
+}
+
+/// Build an iroh node whose access control the app supplies. Fails when
+/// `hooks` is set and the transport is not iroh.
+#[cfg(feature = "iroh")]
+pub async fn build_with_store_and_access_hooks<S>(
+    store: Arc<S>,
+    config: EmbeddedNodeConfig,
+    hooks: Option<crate::AccessHooks>,
+) -> Result<EmbeddedNode<S>>
+where
+    S: storage::corekv::Store + 'static,
+{
+    if hooks.is_some() && !matches!(config.transport, TransportConfig::Iroh(_)) {
+        return Err(anyhow!("access hooks require the iroh transport"));
+    }
+    build_node(store, config, hooks).await
+}
+
+#[cfg(feature = "iroh")]
+type NodeAccessHooks = Option<crate::AccessHooks>;
+#[cfg(not(feature = "iroh"))]
+type NodeAccessHooks = Option<std::convert::Infallible>;
+
+async fn build_node<S>(
+    store: Arc<S>,
+    config: EmbeddedNodeConfig,
+    access_hooks: NodeAccessHooks,
+) -> Result<EmbeddedNode<S>>
+where
+    S: storage::corekv::Store + 'static,
+{
     let event_bus: Arc<dyn events::Bus> = Arc::new(events::ChannelBus::default());
 
     let (raw_identity, node_identity_did) = create_node_identity(&config.signing)?;
@@ -493,6 +535,10 @@ where
         .await
         .map_err(|error| anyhow!("failed to open database: {error}"))?;
     database.set_event_bus(event_bus.clone());
+    #[cfg(feature = "iroh")]
+    if let Some(hooks) = &access_hooks {
+        hooks.install(&database);
+    }
     let database = Arc::new(database);
     let background_tasks = Arc::new(BackgroundTasks::new(Some(
         database.clone().start_downsample_task(),
@@ -522,11 +568,11 @@ where
         create_document_acp(store.clone(), config.persistence, &config.document_acp).await?;
     let document_acp = acp_setup.document_acp;
     let local_zanzibar_store = acp_setup.local_zanzibar_store;
-    #[cfg(feature = "sourcehub")]
-    let sourcehub_acp = acp_setup.sourcehub_acp;
-    #[cfg(all(feature = "sourcehub", any(feature = "libp2p", feature = "iroh")))]
-    let strict_replicated_doc_access = sourcehub_acp.is_some();
-    #[cfg(all(not(feature = "sourcehub"), any(feature = "libp2p", feature = "iroh")))]
+    #[cfg(feature = "vera")]
+    let vera_acp = acp_setup.vera_acp;
+    #[cfg(all(feature = "vera", any(feature = "libp2p", feature = "iroh")))]
+    let strict_replicated_doc_access = vera_acp.is_some();
+    #[cfg(all(not(feature = "vera"), any(feature = "libp2p", feature = "iroh")))]
     let strict_replicated_doc_access = false;
 
     let p2p_setup: Result<Option<crate::node_p2p::P2PSetup>> = match &config.transport {
@@ -708,6 +754,13 @@ where
         query_runner = query_runner.with_se_transport(se_transport);
     }
 
+    #[cfg(feature = "iroh")]
+    if let Some(hooks) = &access_hooks {
+        query_runner = hooks.apply(query_runner);
+    }
+    #[cfg(not(feature = "iroh"))]
+    let _ = access_hooks;
+
     let query_runner: Arc<dyn query::QueryExecutor> = Arc::new(query_runner);
 
     Ok(EmbeddedNode {
@@ -720,8 +773,8 @@ where
         local_zanzibar_store,
         event_bus,
         node_identity_did,
-        #[cfg(feature = "sourcehub")]
-        sourcehub_acp,
+        #[cfg(feature = "vera")]
+        vera_acp,
         query_limits: config.query_limits,
         p2p: p2p_setup.map(|setup| setup.system),
         shutdown_started: AtomicBool::new(false),

@@ -97,29 +97,10 @@ where
     let blockstore = Arc::new(EmbeddedBlockstore::new(store.clone(), true));
     let bitswap_store = BitswapStoreAdapter::new(blockstore.clone());
 
-    let p2p_keypair = {
-        let peerstore = Peerstore::new(store.clone());
-        let key_id = "__local_p2p_identity__";
-        match peerstore.get_replicator(key_id).await {
-            Ok(Some(bytes)) => match libp2p::identity::Keypair::from_protobuf_encoding(&bytes) {
-                Ok(keypair) => keypair,
-                Err(_) => {
-                    let keypair = libp2p::identity::Keypair::generate_ed25519();
-                    if let Ok(encoded) = keypair.to_protobuf_encoding() {
-                        let _ = peerstore.create_replicator(key_id, &encoded).await;
-                    }
-                    keypair
-                }
-            },
-            _ => {
-                let keypair = libp2p::identity::Keypair::generate_ed25519();
-                if let Ok(encoded) = keypair.to_protobuf_encoding() {
-                    let _ = peerstore.create_replicator(key_id, &encoded).await;
-                }
-                keypair
-            }
-        }
-    };
+    let mut seed =
+        crate::node_peer_key::load_or_create(&Peerstore::new(store.clone()), None).await?;
+    let p2p_keypair = libp2p::identity::Keypair::ed25519_from_bytes(&mut *seed)
+        .map_err(|error| anyhow!("invalid peer key: {error}"))?;
 
     let classifier = defra_p2p_adapter::DbBlockClassifier::new_arc(database.clone());
     let serve_acp = Arc::new(p2p::bitswap::LateBoundServeAcp::new());
@@ -226,6 +207,20 @@ where
             .run_pending_dag_retry_clock(std::time::Duration::from_secs(2))
             .await
             .expect("retry interval is nonzero");
+    });
+
+    // The fallback for a deferred verdict no arrival can release: one named
+    // nothing, one past the index's capacity, and everything the index held
+    // before this process started.
+    let sweep_handler = replication.merge_handler_inner.clone();
+    let sweep_shutdown = coordinator.shutdown_handle();
+    let governance_sweep_task = tokio::spawn(async move {
+        db::merge::governance::run_governance_sweep(
+            sweep_handler,
+            db::merge::governance::SWEEP_INTERVAL,
+            sweep_shutdown,
+        )
+        .await;
     });
 
     match db::merge::load_persisted_collections(&coordinator).await {
@@ -351,6 +346,7 @@ where
                 retry_loop_task,
                 pending_dag_resync_task,
                 pending_dag_retry_task,
+                governance_sweep_task,
             ],
         ),
         replicator_push_options,
@@ -454,8 +450,12 @@ where
     use defra_p2p_adapter::{IrohPeer, IrohPeerConfig, TransportDocPusher};
     use storage::stores::Peerstore;
 
-    let secret_key =
-        p2p::iroh::load_or_generate_secret_key(config.secret_key_path.as_deref()).await?;
+    let seed = crate::node_peer_key::load_or_create(
+        &Peerstore::new(store.clone()),
+        config.secret_key_path.as_deref(),
+    )
+    .await?;
+    let secret_key = p2p::iroh::SecretKey::from_bytes(&seed);
     let mut peer_config = IrohPeerConfig::new(
         p2p::iroh::IrohEndpointConfig {
             secret_key,

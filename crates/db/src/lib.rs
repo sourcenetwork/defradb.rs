@@ -88,6 +88,7 @@ pub use collection::selector::CollectionSelector;
 pub use collection::snapshot::CollectionSnapshot;
 #[allow(deprecated)]
 pub use collection::{collection_short_id, Collection, DbCollectionTruncator};
+pub use collection::{Cached, CollectionMap};
 pub use database::{
     DbOptions, EmbeddingClientConfig, DB, DEFAULT_MAX_TXN_RETRIES,
     DEFAULT_MIGRATION_WRITE_BACK_BATCH_SIZE,

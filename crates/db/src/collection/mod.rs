@@ -29,8 +29,10 @@ mod crud;
 mod index;
 pub mod loader;
 pub(crate) mod locks;
+pub mod map;
 pub mod name;
 pub(crate) mod ops;
+pub use map::{Cached, CollectionMap};
 pub(crate) mod provider;
 pub mod retriever;
 pub mod selector;
@@ -149,6 +151,15 @@ pub struct Collection {
 }
 
 impl Collection {
+    pub(crate) async fn load_index_actions(
+        def: CollectionVersion,
+        systemstore: &datastore::NamespaceView,
+    ) -> crate::error::Result<Self> {
+        let actions =
+            crate::database::action::index_action_statuses(systemstore, &def.collection_id).await?;
+        Ok(Self::with_index_actions(def, &actions))
+    }
+
     /// Create a new collection with the given schema definition.
     pub fn new(def: CollectionVersion) -> Self {
         let indexes = def.indexes.clone();

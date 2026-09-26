@@ -1,4 +1,5 @@
 mod fixture;
+mod governance;
 
 use blockstore::{Blockstore as _, DefraBlockstore};
 use db::merge::merge_handler::DbMergeHandler;

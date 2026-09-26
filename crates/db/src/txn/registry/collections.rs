@@ -185,7 +185,8 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 .set(&name_key.bytes(), version_id.as_bytes())
                 .await
                 .map_err(Error::Storage)?;
-            txn.cache_collection(Collection::new(target.clone()));
+            let collection = Collection::load_index_actions(target.clone(), &systemstore).await?;
+            txn.cache_collection(collection);
         } else if was_active {
             systemstore
                 .delete(&name_key.bytes())
@@ -196,14 +197,17 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         drop(systemstore);
 
         let db = self.db.clone();
-        let committed = target.clone();
+        let committed = Collection::load_index_actions(target.clone(), &txn.systemstore()?).await?;
         txn.on_success(Box::new(move || {
             db.collections.rcu(|old| {
                 let mut cache = old.clone();
-                if committed.is_active {
-                    cache.insert(committed.name.clone(), Collection::new(committed.clone()));
+                if committed.schema().is_active {
+                    // `committed` already carries the index action state this
+                    // transaction wrote; caching a plain Collection::new here
+                    // would drop it the moment the callback fired.
+                    cache.put_named(committed.name(), committed.clone());
                 } else if was_active {
-                    cache.remove(&committed.name);
+                    cache.remove(committed.name());
                 }
                 cache
             });

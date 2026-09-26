@@ -9,6 +9,13 @@ pub(crate) async fn restore_libp2p_replicators<S: storage::corekv::Store + 'stat
     match peerstore.list_replicators().await {
         Ok(entries) => {
             for (peer_id_str, data) in entries {
+                // Not a replicator: the slot libp2p kept its keypair in before
+                // the shared peer key. It is left in place so the identity
+                // stays recoverable, so decoding it here would warn on every
+                // start about a record that is doing its job.
+                if peer_id_str == crate::node_peer_key::LEGACY_LIBP2P_KEY_ID {
+                    continue;
+                }
                 match p2p::ReplicatorInfo::from_bytes(&data) {
                     Ok(info) => {
                         if let Some(peer_id) = info.peer_id() {

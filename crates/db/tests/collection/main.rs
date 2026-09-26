@@ -5,6 +5,8 @@ mod common;
 mod acp;
 mod cache;
 mod delete;
+mod index_actions;
+mod map;
 mod name;
 mod retriever;
 mod selector;

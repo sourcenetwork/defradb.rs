@@ -1,8 +1,10 @@
 use super::composite::{CompositeMergeContext, CompositeMergeState};
 use super::*;
 
+/// The delta is boxed: a `CrdtDelta` carries a collection definition payload,
+/// which dwarfs the other two variants.
 enum EffectiveLinkedDelta {
-    Delta(CrdtDelta),
+    Delta(Box<CrdtDelta>),
     Skip(MergeOutcome),
     SkipField,
 }
@@ -106,7 +108,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 .handle_encryption(context, &linked_block, &mut state.encrypted_policy_checked)
                 .await?
             {
-                EffectiveLinkedDelta::Delta(delta) => delta,
+                EffectiveLinkedDelta::Delta(delta) => *delta,
                 EffectiveLinkedDelta::Skip(outcome) => return Ok(Some(outcome)),
                 EffectiveLinkedDelta::SkipField => continue,
             };
@@ -225,9 +227,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     ) -> std::result::Result<EffectiveLinkedDelta, MergeError> {
         if linked_block.encryption.is_some() && !*encrypted_policy_checked {
             *encrypted_policy_checked = true;
-            if let (Some(collection), Some(hook)) =
-                (context.collection.as_ref(), self.composite_merge_hook())
-            {
+            if let (Some(collection), Some(hook)) = (
+                context
+                    .collection
+                    .as_ref()
+                    .filter(|collection| !self.is_governed(collection.schema())),
+                self.composite_merge_hook(),
+            ) {
                 if let Some(outcome) = hook
                     .on_encrypted_link(context.doc_id_str, collection.schema(), context.metadata)
                     .await?
@@ -303,6 +309,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             other => other.clone(),
         };
 
-        Ok(EffectiveLinkedDelta::Delta(effective_linked_delta))
+        Ok(EffectiveLinkedDelta::Delta(Box::new(
+            effective_linked_delta,
+        )))
     }
 }

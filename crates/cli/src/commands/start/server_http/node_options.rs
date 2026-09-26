@@ -17,24 +17,23 @@ pub(super) fn sanitized_node_options(
     let redacted_list = |values: &[String]| vec!["<redacted>"; values.len()];
     let persistent = config.datastore.store == DatastoreType::Regolith;
 
-    #[cfg(feature = "sourcehub")]
-    let (sourcehub_chain_id, sourcehub_grpc_address, sourcehub_comet_address) = (
-        redacted_text(!config.acp.sourcehub_chain_id.is_empty()),
+    #[cfg(feature = "vera")]
+    let (vera_chain_id, vera_grpc_address, vera_comet_address) = (
+        redacted_text(!config.acp.vera_chain_id.is_empty()),
         redacted_text(
-            !config.acp.sourcehub_grpc_address.is_empty()
-                || !config.acp.sourcehub_address.is_empty(),
+            !config.acp.vera_grpc_address.is_empty() || !config.acp.vera_address.is_empty(),
         ),
-        redacted_text(!config.acp.sourcehub_comet_address.is_empty()),
+        redacted_text(!config.acp.vera_comet_address.is_empty()),
     );
-    #[cfg(not(feature = "sourcehub"))]
-    let (sourcehub_chain_id, sourcehub_grpc_address, sourcehub_comet_address) = ("", "", "");
-    #[cfg(feature = "sourcehub")]
+    #[cfg(not(feature = "vera"))]
+    let (vera_chain_id, vera_grpc_address, vera_comet_address) = ("", "", "");
+    #[cfg(feature = "vera")]
     let document_signer_present = _user_identity_present
         && matches!(
             config.acp.document_type,
-            AcpDocumentType::SourceHub | AcpDocumentType::HubRs
+            AcpDocumentType::Vera | AcpDocumentType::HubRs
         );
-    #[cfg(not(feature = "sourcehub"))]
+    #[cfg(not(feature = "vera"))]
     let document_signer_present = false;
 
     let value = json!({
@@ -53,9 +52,9 @@ pub(super) fn sanitized_node_options(
             "DocumentACPType": config.acp.document_type.to_string(),
             "Path": redacted_text(config.acp.document_type != AcpDocumentType::None && persistent),
             "Signer": redacted(document_signer_present),
-            "SourceHubChainID": sourcehub_chain_id,
-            "SourceHubGRPCAddress": sourcehub_grpc_address,
-            "SourceHubCometRPCAddress": sourcehub_comet_address,
+            "VeraChainID": vera_chain_id,
+            "VeraGRPCAddress": vera_grpc_address,
+            "VeraCometRPCAddress": vera_comet_address,
         },
         "NodeACP": {
             "IsEnabled": config.acp.node_enable,

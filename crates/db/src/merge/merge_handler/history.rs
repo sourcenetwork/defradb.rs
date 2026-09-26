@@ -313,7 +313,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     break;
                 }
                 if !root_checked {
-                    if let CompositeMergePreparation::Complete(outcome) = self
+                    match self
                         .prepare_composite_merge(
                             root,
                             root_block,
@@ -324,12 +324,20 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         )
                         .await?
                     {
-                        if outcome.is_rejected() || outcome.is_terminal_skip() {
-                            progress.outcome = Completion::from_outcome(outcome);
-                        } else {
-                            waiting = Some(outcome);
+                        CompositeMergePreparation::Ready(_) => {}
+                        CompositeMergePreparation::Complete(outcome) => {
+                            if outcome.is_rejected() || outcome.is_terminal_skip() {
+                                progress.outcome = Completion::from_outcome(outcome);
+                            } else {
+                                waiting = Some(outcome);
+                            }
+                            break;
                         }
-                        break;
+                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
+                            self.index_deferred(root, doc, metadata, awaiting);
+                            waiting = Some(outcome);
+                            break;
+                        }
                     }
                     root_checked = true;
                 }
@@ -420,6 +428,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     outcome
                 }
                 CompositeMergePreparation::Complete(outcome) => outcome,
+                CompositeMergePreparation::Deferred { outcome, awaiting } => {
+                    self.index_deferred(root, doc, metadata, awaiting);
+                    outcome
+                }
             };
             if outcome.is_rejected() {
                 progress.outcome = Completion::from_outcome(outcome);
@@ -450,6 +462,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         drop(headstore);
         drop(store);
         txn.force_commit().await?;
+        let merged_cids: Vec<Cid> = merged.keys().collect();
+        for cid in merged_cids {
+            self.release_merged_composite(&cid, None).await;
+        }
         while let Some(action) = actions.pop() {
             if let Err(error) = action.action.run().await {
                 tracing::warn!(%error, "History post-commit action failed");

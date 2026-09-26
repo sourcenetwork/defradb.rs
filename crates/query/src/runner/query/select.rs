@@ -377,9 +377,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .await
                 .map_err(QueryError::execution)?;
 
-            let filtered_ids =
-                Self::filter_ids_by_acp(&ids, self.acp.as_ref(), &collection, caller_identity)
-                    .await;
+            let filtered_ids = Self::filter_ids_by_acp(
+                &ids,
+                self.acp.as_ref(),
+                &collection,
+                caller_identity.clone(),
+            )
+            .await;
+            let filtered_ids = self
+                .app_readable_ids(caller_identity.as_ref(), &collection, filtered_ids)
+                .await;
 
             return Ok(serde_json::json!([{"docIDs": filtered_ids}]));
         }
@@ -412,9 +419,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             &matching_ids,
             self.acp.as_ref(),
             &collection,
-            caller_identity,
+            caller_identity.clone(),
         )
         .await;
+        let filtered_ids = self
+            .app_readable_ids(caller_identity.as_ref(), &collection, filtered_ids)
+            .await;
 
         Ok(serde_json::json!([{"docIDs": filtered_ids}]))
     }

@@ -15,14 +15,15 @@ description = "Key Management Service for DefraDB — DEK generation, wrapping, 
 # This crate is a stub at design time.
 
 [package.metadata.cargo-machete]
-ignored = ["orbis", "sourcehub"]
+ignored = ["orbis", "vera"]
 
 [features]
 default = []
 # Threshold (Orbis) backend. M6.
 threshold = ["dep:orbis"]
-# SourceHub-attested release policy. M4.
-sourcehub = ["dep:sourcehub"]
+# Vera-attested release policy. M4.
+vera = ["dep:vera"]
+sourcehub = ["vera"]
 
 [lib]
 bench = false
@@ -37,7 +38,7 @@ identity = { path = "../identity" }
 
 # Optional backends — feature-gated until the corresponding milestone lands.
 orbis = { path = "../orbis", optional = true }
-sourcehub = { path = "../sourcehub", optional = true }
+vera = { path = "../vera", optional = true }
 
 async-trait.workspace = true
 kovan.workspace = true

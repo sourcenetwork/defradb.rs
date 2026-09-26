@@ -197,9 +197,20 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
 
         txn.commit().await.map_err(|e| format!("{}", e))?;
 
-        self.database
+        // Same collection, so the cache takes it; a refusal would mean the
+        // index change is durable but invisible, which must not pass quietly.
+        let collection_name = updated_schema.name.clone();
+        let cached = self
+            .database
             .add_collection_to_cache(updated_schema)
+            .await
             .map_err(|e| format!("{}", e))?;
+        if cached == db::Cached::NameHeldByAnother {
+            return Err(format!(
+                "index update for collection '{collection_name}' was stored but \
+                 another collection holds that name in the cache"
+            ));
+        }
 
         Ok(())
     }

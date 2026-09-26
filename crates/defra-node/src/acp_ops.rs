@@ -36,24 +36,24 @@ pub(crate) trait AcpOps: Send + Sync {
 /// The ACP backends a node was built with, shared by every caller that needs to
 /// resolve a policy id.
 ///
-/// `create_document_acp` guarantees exactly one of `local`/`sourcehub` is
+/// `create_document_acp` guarantees exactly one of `local`/`vera` is
 /// `Some`, so every "ACP not available" branch below is defensive only.
 #[derive(Clone)]
 pub(crate) struct PolicyLookup {
     pub(crate) local: Option<Arc<dyn acp::ZanzibarStore>>,
-    #[cfg(feature = "sourcehub")]
-    pub(crate) sourcehub: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+    #[cfg(feature = "vera")]
+    pub(crate) vera: Option<Arc<vera::VeraDocumentACP>>,
 }
 
 impl PolicyLookup {
     pub(crate) fn new(
         local: Option<Arc<dyn acp::ZanzibarStore>>,
-        #[cfg(feature = "sourcehub")] sourcehub: Option<Arc<sourcehub::SourceHubDocumentACP>>,
+        #[cfg(feature = "vera")] vera: Option<Arc<vera::VeraDocumentACP>>,
     ) -> Self {
         Self {
             local,
-            #[cfg(feature = "sourcehub")]
-            sourcehub,
+            #[cfg(feature = "vera")]
+            vera,
         }
     }
 
@@ -65,9 +65,9 @@ impl PolicyLookup {
                 .await
                 .map_err(|error| anyhow!("failed to get policy: {error}"));
         }
-        #[cfg(feature = "sourcehub")]
-        if let Some(sourcehub) = &self.sourcehub {
-            return sourcehub
+        #[cfg(feature = "vera")]
+        if let Some(vera) = &self.vera {
+            return vera
                 .get_policy(policy_id)
                 .await
                 .map_err(|error| anyhow!("failed to get policy: {error}"));
@@ -239,15 +239,15 @@ impl<S: storage::corekv::Store + 'static> DbAcpOps<S> {
         }
         acp::policy_yaml::validate_policy_expressions(&parsed).map_err(|error| anyhow!(error))?;
 
-        #[cfg(feature = "sourcehub")]
-        if let Some(sourcehub_acp) = &self.policy_lookup.sourcehub {
+        #[cfg(feature = "vera")]
+        if let Some(vera_acp) = &self.policy_lookup.vera {
             if counter_override.is_some() {
                 bail!("explicit policy counters apply to local ACP only");
             }
-            return sourcehub_acp
+            return vera_acp
                 .add_policy(identity, policy)
                 .await
-                .map_err(|error| anyhow!("SourceHub create policy failed: {error}"));
+                .map_err(|error| anyhow!("Vera create policy failed: {error}"));
         }
 
         let Some(store) = &self.policy_lookup.local else {
@@ -320,7 +320,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             .map_err(|error| anyhow!("{error}"))?;
 
         // Local ACP relationships are node-local (matches Go): a grant is not
-        // propagated to peers. Cross-node access control is SourceHub's role.
+        // propagated to peers. Cross-node access control is Vera's role.
         if added {
             self.publish_document_update(&resolved.collection_id, doc_id)
                 .await;
@@ -349,7 +349,7 @@ impl<S: storage::corekv::Store + 'static> AcpOps for DbAcpOps<S> {
             .await?;
 
         // Local ACP relationships are node-local (matches Go): a revoke is not
-        // propagated to peers. Cross-node access control is SourceHub's role.
+        // propagated to peers. Cross-node access control is Vera's role.
         self.document_acp
             .delete_relationship(
                 &requestor,

@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "acp-light-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=74478d66e0b994b0edad5bb36b1daf86948e7804#74478d66e0b994b0edad5bb36b1daf86948e7804"
 dependencies = [
  "alloy-primitives",
  "borsh",
@@ -2136,7 +2136,6 @@ dependencies = [
  "serde_ipld_dagcbor",
  "serde_json",
  "serde_yaml",
- "sourcehub",
  "storage",
  "telemetry",
  "tempfile",
@@ -2148,6 +2147,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
+ "vera",
  "zeroize",
 ]
 
@@ -3494,7 +3494,7 @@ dependencies = [
 [[package]]
 name = "defra-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=74478d66e0b994b0edad5bb36b1daf86948e7804#74478d66e0b994b0edad5bb36b1daf86948e7804"
 dependencies = [
  "eyre",
  "futures",
@@ -3505,10 +3505,10 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sourcehub-harness",
  "test-infra",
  "tokio",
  "tracing",
+ "vera-harness",
 ]
 
 [[package]]
@@ -3583,7 +3583,6 @@ dependencies = [
  "schema",
  "serde",
  "serde_json",
- "sourcehub",
  "storage",
  "telemetry",
  "tempfile",
@@ -3591,6 +3590,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vera",
 ]
 
 [[package]]
@@ -4110,13 +4110,13 @@ dependencies = [
  "serde_bytes",
  "serde_ipld_dagcbor",
  "serde_json",
- "sourcehub",
  "storage",
  "tar",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "vera",
  "zeroize",
  "zstd",
 ]
@@ -4393,7 +4393,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
- "sourcehub",
  "storage",
  "tempfile",
  "thiserror 2.0.18",
@@ -4401,6 +4400,7 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+ "vera",
  "zeroize",
 ]
 
@@ -5309,7 +5309,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hub-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=74478d66e0b994b0edad5bb36b1daf86948e7804#74478d66e0b994b0edad5bb36b1daf86948e7804"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6457,11 +6457,11 @@ dependencies = [
  "rapidhash",
  "serde",
  "serde_bytes",
- "sourcehub",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",
+ "vera",
  "wasm-bindgen-futures",
  "x25519-dalek",
  "zeroize",
@@ -11278,64 +11278,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea06cc588e43c632923a55450401b8f25e628131571d4e1baea1bdfdb2b5ed06"
 
 [[package]]
-name = "sourcehub"
-version = "0.5.0"
-dependencies = [
- "acp",
- "acp-light-client",
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-types",
- "async-trait",
- "base64 0.22.1",
- "bs58",
- "cosmrs",
- "crypto",
- "defra-core",
- "events",
- "futures",
- "hex",
- "identity",
- "k256",
- "kovan",
- "kovan-map",
- "kovan-queue",
- "prost 0.14.3",
- "rapidhash",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.26.2",
- "tonic",
- "tonic-prost",
- "tracing",
- "zanzibar",
-]
-
-[[package]]
-name = "sourcehub-harness"
-version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
-dependencies = [
- "cosmrs",
- "eyre",
- "hex",
- "regex",
- "reqwest 0.12.28",
- "serde_json",
- "test-infra",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "spez"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11858,7 +11800,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=9fe9622a53bb5cc08574788ca370b5fb201868aa#9fe9622a53bb5cc08574788ca370b5fb201868aa"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=74478d66e0b994b0edad5bb36b1daf86948e7804#74478d66e0b994b0edad5bb36b1daf86948e7804"
 dependencies = [
  "eyre",
  "futures",
@@ -12781,6 +12723,64 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vera"
+version = "0.5.0"
+dependencies = [
+ "acp",
+ "acp-light-client",
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "async-trait",
+ "base64 0.22.1",
+ "bs58",
+ "cosmrs",
+ "crypto",
+ "defra-core",
+ "events",
+ "futures",
+ "hex",
+ "identity",
+ "k256",
+ "kovan",
+ "kovan-map",
+ "kovan-queue",
+ "prost 0.14.3",
+ "rapidhash",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tonic",
+ "tonic-prost",
+ "tracing",
+ "zanzibar",
+]
+
+[[package]]
+name = "vera-harness"
+version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=74478d66e0b994b0edad5bb36b1daf86948e7804#74478d66e0b994b0edad5bb36b1daf86948e7804"
+dependencies = [
+ "cosmrs",
+ "eyre",
+ "hex",
+ "regex",
+ "reqwest 0.12.28",
+ "serde_json",
+ "test-infra",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "vergen"

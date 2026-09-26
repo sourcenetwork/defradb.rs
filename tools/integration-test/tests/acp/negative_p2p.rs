@@ -14,7 +14,7 @@ const EXPLICIT_REPLAY_TIMEOUT: Duration = Duration::from_secs(45);
 /// NOT gated on that peer — the unregistered doc is treated as public there, so any
 /// caller (anonymous, ungranted, or owner) can read it on node1 (matches Go).
 /// Grants/revokes do NOT propagate to peers. Cross-node access control is
-/// SourceHub ACP's job (separate, unaffected).
+/// Vera ACP's job (separate, unaffected).
 ///
 /// This test verifies node0 still gates (Bob needs an explicit grant) while the
 /// replicated copy is public on the peer.
@@ -144,7 +144,7 @@ async fn p2p_merge_denial_test(cluster: TestCluster) {
 
     // Charlie has no relationship anywhere, yet on the peer the doc is public, so he
     // sees it too. This is the inverse of the old cross-node peer-gating assertion:
-    // Local ACP does not gate on the peer (cross-node control is SourceHub's job).
+    // Local ACP does not gate on the peer (cross-node control is Vera's job).
     let charlie_node1 = node1
         .query_with_identity("query { User { _docID name } }", &charlie.private_key_hex)
         .expect("Charlie query on node1");
@@ -370,7 +370,7 @@ async fn retryable_skip_is_replayed_by_replicator_test(cluster: TestCluster) {
     // Local ACP is node-local; once the doc is stored on the peer it is public there
     // (the owner is registered only on the creating node0, matches Go). So Bob — who
     // has no relationship anywhere — sees the replayed doc on node1. This replaces the
-    // old peer-side denial: cross-node access control is SourceHub ACP's job.
+    // old peer-side denial: cross-node access control is Vera ACP's job.
     let bob_after_replay = node1
         .query_with_identity("query { User { _docID name } }", &bob.private_key_hex)
         .expect("Bob query on node1 after replicator");
@@ -561,7 +561,7 @@ async fn wrong_identity_explicit_replay_capability_is_ignored_test(cluster: Test
     // Local ACP is node-local; once the doc is stored on the peer it is public there
     // (the owner is registered only on the creating node0, matches Go). Bob — with no
     // relationship anywhere — sees the replayed doc on node1. This replaces the old
-    // peer-side denial: cross-node access control is SourceHub ACP's job. The point of
+    // peer-side denial: cross-node access control is Vera ACP's job. The point of
     // this test (a wrong-identity replicator capability is ignored, so the doc only
     // replays under the owner-signed replicator) is preserved by the assertions above.
     let bob_after_replay = node1

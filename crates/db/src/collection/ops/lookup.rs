@@ -1,4 +1,5 @@
 use super::*;
+use crate::collection::Cached;
 
 impl<S: Store> crate::database::DB<S> {
     /// List all collection names using the transaction's cache.
@@ -16,22 +17,52 @@ impl<S: Store> crate::database::DB<S> {
     pub fn list_collections(&self) -> Result<Vec<String>> {
         Ok(self
             .collections
-            .peek(|cache| cache.keys().cloned().collect()))
+            .peek(|cache| cache.names().cloned().collect()))
     }
 
-    /// Add a collection to the runtime cache.
+    /// Cache `schema` under its name, reporting whether the cache took it.
     ///
-    /// This is used by the merge handler to add synced collections received via P2P
-    /// to the cache so they're visible to `list_collections` and `get_collection`.
-    /// The collection can be inactive (synced collections start inactive until manually activated).
-    pub fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<()> {
+    /// Used by the merge handler to make a collection synced over p2p visible
+    /// to `list_collections` and `get_collection`. Such a collection can be
+    /// inactive: a synced one starts inactive until it is activated.
+    ///
+    /// [`Cached::NameHeldByAnother`] means an entry naming a different
+    /// collection already holds the name and was left alone, so the cache is
+    /// unchanged.
+    /// A `Collection` whose write/query index sets reflect the persisted
+    /// action statuses. Every cache refresh path goes through this, so a
+    /// cached entry never silently widens an ERRORED index back into writes
+    /// or an in-progress one into queries.
+    pub(crate) async fn collection_with_index_actions(
+        &self,
+        schema: CollectionVersion,
+    ) -> Result<Collection> {
+        let txn = self.new_txn(true).await?;
+        let result = Collection::load_index_actions(schema, &txn.systemstore()?).await;
+        let _ = txn.discard();
+        result
+    }
+
+    pub async fn add_collection_to_cache(&self, schema: CollectionVersion) -> Result<Cached> {
         let name = schema.name.clone();
+        let collection = self.collection_with_index_actions(schema.clone()).await?;
+
+        let offered = schema.collection_id.clone();
+        let mut cached = Cached::Taken;
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cache.insert(name.clone(), Collection::new(schema.clone()));
+            cached = cache.offer(collection.clone());
             cache
         });
-        Ok(())
+        if cached == Cached::NameHeldByAnother {
+            tracing::warn!(
+                collection_name = %name,
+                held_by_name = "another collection id",
+                %offered,
+                "Refusing to displace a cached collection with a different collection ID"
+            );
+        }
+        Ok(cached)
     }
 
     /// Get a collection by name using the transaction's cache.
@@ -65,7 +96,7 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Uses the process-wide cache. For transaction-scoped access, use `has_collection_with_txn`.
     pub fn has_collection(&self, name: &str) -> Result<bool> {
-        Ok(self.collections.peek(|cache| cache.contains_key(name)))
+        Ok(self.collections.peek(|cache| cache.contains_name(name)))
     }
 
     /// Find a collection by its collection ID (schema version ID).
@@ -75,12 +106,9 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Uses the process-wide cache.
     pub fn find_collection_by_id(&self, collection_id: &str) -> Result<Option<Collection>> {
-        Ok(self.collections.peek(|cache| {
-            cache
-                .values()
-                .find(|c| c.collection_id() == collection_id)
-                .cloned()
-        }))
+        Ok(self
+            .collections
+            .peek(|cache| cache.by_id(collection_id).cloned()))
     }
 
     pub(crate) fn forbid_collection_id(&self, collection_id: &str) -> Result<()> {
@@ -102,6 +130,8 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// Returns an immutable snapshot that provides snapshot isolation for transactions.
     pub fn collections_snapshot(&self) -> Result<CollectionSnapshot> {
-        Ok(CollectionSnapshot::new(self.collections.load_clone()))
+        Ok(CollectionSnapshot::new(
+            self.collections.load_clone().by_name(),
+        ))
     }
 }

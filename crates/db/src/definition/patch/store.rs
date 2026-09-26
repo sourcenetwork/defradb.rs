@@ -400,10 +400,16 @@ impl<S: Store> crate::database::DB<S> {
             });
 
             // Generate and store field blocks for new fields
+            let commitments = schema::Commitments::of(&new_schema);
             let mut field_cids = Vec::new();
             for &idx in &new_field_indices {
                 let field = &new_schema.fields[idx];
-                match schema::generate_field_block_with_priority_and_heads(field, 1, &[]) {
+                match schema::generate_field_block_with_priority_and_heads(
+                    field,
+                    1,
+                    &[],
+                    commitments.is_governed(),
+                ) {
                     Ok(block_with_cid) => {
                         blockstore
                             .set(&block_with_cid.cid.to_bytes(), &block_with_cid.bytes)
@@ -435,6 +441,7 @@ impl<S: Store> crate::database::DB<S> {
                 &collection_heads,
                 query_select.as_deref(),
                 query_transform.as_ref(),
+                commitments,
             ) {
                 Ok(block_with_cid) => {
                     blockstore
@@ -483,11 +490,16 @@ impl<S: Store> crate::database::DB<S> {
         // Update cache based on which version is active.
         // An inactive new version leaves the old version cached, as it already is.
         if new_schema.is_active {
-            // Cache under the actual collection name, not collection_name, which
-            // might be a version_id for branching patches.
+            // Cached under the actual collection name — the same name the
+            // name index, schema_heads and the reindex switch were written
+            // under — not new_schema.name, which for a placeholder rename
+            // has not become the registered name yet.
+            let cached_collection = self
+                .collection_with_index_actions(new_schema.clone())
+                .await?;
             self.collections.rcu(|old| {
                 let mut cache = old.clone();
-                cache.insert(actual_name.to_string(), Collection::new(new_schema.clone()));
+                cache.put_named(actual_name, cached_collection.clone());
                 cache
             });
         }
@@ -529,7 +541,7 @@ impl<S: Store> crate::database::DB<S> {
         let candidates: Vec<(String, CollectionVersion)> = self.collections.peek(|cache| {
             cache
                 .iter()
-                .filter(|(name, _)| name.as_str() != just_patched.name)
+                .filter(|(_, col)| col.name() != just_patched.name)
                 .map(|(name, col)| (name.clone(), col.schema().clone()))
                 .collect()
         });
@@ -607,9 +619,10 @@ impl<S: Store> crate::database::DB<S> {
                 txn.commit().await?;
 
                 // Update cache
+                let cached_collection = self.collection_with_index_actions(updated_schema).await?;
                 self.collections.rcu(|old| {
                     let mut cache = old.clone();
-                    cache.insert(coll_name.clone(), Collection::new(updated_schema.clone()));
+                    cache.put_named(coll_name, cached_collection.clone());
                     cache
                 });
             }

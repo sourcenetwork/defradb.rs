@@ -218,7 +218,12 @@ impl<S: Store> crate::database::DB<S> {
 
             self.collections.rcu(|old| {
                 let mut cache = old.clone();
-                cache.extend(loaded.iter().cloned());
+                // Cached under the name the index was read from: a schema's
+                // own name can differ until the name index moves, and the
+                // cache must answer the name that is registered.
+                for (name, collection) in &loaded {
+                    cache.put_named(name, collection.clone());
+                }
                 cache
             });
 

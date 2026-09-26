@@ -709,3 +709,79 @@ fn test_block_with_encryption_and_signature_ipld_roundtrip() {
     assert_eq!(block.encryption, restored.encryption);
     assert_eq!(block.signature, restored.signature);
 }
+
+/// An ungoverned definition delta must serialise to exactly the bytes it did
+/// before the governance field existed, so its CID is unchanged.
+#[test]
+fn an_absent_governance_root_is_not_serialised() {
+    let delta = CollectionDefinitionDeltaPayload::new(1).with_name("Agent");
+    assert_eq!(delta.governance_root, None);
+
+    let bytes = serde_ipld_dagcbor::to_vec(&delta).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains("governance"), "{text:?}");
+
+    let ipld = Ipld::try_from(&delta).unwrap();
+    let Ipld::Map(map) = &ipld else {
+        panic!("expected a map");
+    };
+    assert!(!map.contains_key("governance"));
+}
+
+/// The root survives both codec paths: the serde one the CID is taken over,
+/// and the hand-written IPLD one the p2p decode uses.
+#[test]
+fn a_governance_root_round_trips_through_both_codecs() {
+    let delta = CollectionDefinitionDeltaPayload::new(1)
+        .with_name("Agent")
+        .with_governance_root("EIaZ9-root-inception-digest");
+
+    let bytes = serde_ipld_dagcbor::to_vec(&delta).unwrap();
+    let decoded: CollectionDefinitionDeltaPayload = serde_ipld_dagcbor::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, delta);
+
+    let ipld = Ipld::try_from(&delta).unwrap();
+    let restored = CollectionDefinitionDeltaPayload::try_from(&ipld).unwrap();
+    assert_eq!(restored, delta);
+}
+
+/// Two definitions alike but for their root must not share a CID; that is the
+/// whole point of putting the root in the identity.
+#[test]
+fn a_governance_root_changes_the_delta_bytes() {
+    let bare = CollectionDefinitionDeltaPayload::new(1).with_name("Agent");
+    let governed = bare.clone().with_governance_root("root-a");
+    let other = bare.clone().with_governance_root("root-b");
+
+    let encode =
+        |delta: &CollectionDefinitionDeltaPayload| serde_ipld_dagcbor::to_vec(delta).unwrap();
+    assert_ne!(encode(&bare), encode(&governed));
+    assert_ne!(encode(&governed), encode(&other));
+}
+
+/// Both commitment flags refuse a wrong-typed value rather than reading it as
+/// false. The serde codec rejects the same bytes, so a lenient reading here
+/// would let the two decoders disagree about whether a peer's field is
+/// immutable or its collection branchable.
+#[test]
+fn a_wrong_typed_commitment_flag_is_refused() {
+    let mut collection = BTreeMap::new();
+    collection.insert("priority".to_string(), Ipld::Integer(1));
+    collection.insert("branchable".to_string(), Ipld::String("yes".to_string()));
+    assert!(CollectionDefinitionDeltaPayload::try_from(&Ipld::Map(collection)).is_err());
+
+    let mut field = BTreeMap::new();
+    field.insert("priority".to_string(), Ipld::Integer(1));
+    field.insert("immutable".to_string(), Ipld::Integer(1));
+    assert!(FieldDefinitionDeltaPayload::try_from(&Ipld::Map(field)).is_err());
+}
+
+/// An explicit false is a valid encoding of the default and still decodes.
+#[test]
+fn an_explicit_false_commitment_flag_decodes() {
+    let mut collection = BTreeMap::new();
+    collection.insert("priority".to_string(), Ipld::Integer(1));
+    collection.insert("branchable".to_string(), Ipld::Bool(false));
+    let decoded = CollectionDefinitionDeltaPayload::try_from(&Ipld::Map(collection)).unwrap();
+    assert!(!decoded.is_branchable);
+}

@@ -1,0 +1,185 @@
+//! Adapter to bridge ACP policy operations to HTTP's AcpOperations trait via Vera.
+//!
+//! Policies are created on-chain via Vera transactions, then cached locally
+//! in the ZanzibarStore for reads (list/get). This matches the FFI pattern.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use acp::{Policy, StorePolicyOptions, ZanzibarStore};
+use defra_http::router::{AcpLightClientStatus, AcpOperations, PolicyInfo};
+
+/// Placeholder: Vera assigns the id, so this value never reaches storage.
+const UNASSIGNED_ID_COUNTER: u64 = 1;
+
+/// Adapter that implements AcpOperations with Vera for writes and local store for reads.
+pub struct VeraAcpAdapter {
+    vera_acp: Arc<vera::VeraDocumentACP>,
+    local_store: Arc<dyn ZanzibarStore>,
+    nac_checker: Arc<dyn db::NodeAccessChecker>,
+}
+
+impl VeraAcpAdapter {
+    pub fn new(
+        vera_acp: Arc<vera::VeraDocumentACP>,
+        local_store: Arc<dyn ZanzibarStore>,
+        nac_checker: Arc<dyn db::NodeAccessChecker>,
+    ) -> Self {
+        Self {
+            vera_acp,
+            local_store,
+            nac_checker,
+        }
+    }
+
+    pub fn new_arc(
+        vera_acp: Arc<vera::VeraDocumentACP>,
+        local_store: Arc<dyn ZanzibarStore>,
+        nac_checker: Arc<dyn db::NodeAccessChecker>,
+    ) -> Arc<dyn AcpOperations> {
+        Arc::new(Self::new(vera_acp, local_store, nac_checker))
+    }
+
+    async fn get_or_cache_policy(&self, policy_id: &str) -> Result<Option<Policy>, String> {
+        if let Some(policy) = self
+            .local_store
+            .get_policy(policy_id)
+            .await
+            .map_err(|e| format!("failed to get policy from local cache: {}", e))?
+        {
+            return Ok(Some(policy));
+        }
+
+        let Some(policy) = self
+            .vera_acp
+            .get_policy(policy_id)
+            .await
+            .map_err(|e| format!("failed to query Vera policy: {}", e))?
+        else {
+            return Ok(None);
+        };
+
+        let options = StorePolicyOptions::new()
+            .with_validation()
+            .with_dpi_enforcement();
+        self.local_store
+            .store_policy_with_options(&policy, &options)
+            .await
+            .map_err(|e| format!("failed to cache Vera policy: {}", e))?;
+
+        Ok(Some(policy))
+    }
+}
+
+fn policy_to_info(policy: &Policy) -> PolicyInfo {
+    let resources = serde_json::to_value(&policy.resources).ok();
+    PolicyInfo {
+        id: policy.id.clone(),
+        name: Some(policy.name.clone()),
+        description: policy.attributes.get("description").cloned(),
+        resources,
+        actor: None,
+        creation_time: None,
+    }
+}
+
+#[async_trait]
+impl AcpOperations for VeraAcpAdapter {
+    async fn add_policy(&self, yaml: &str) -> Result<String, String> {
+        self.nac_checker
+            .check_node_access(acp::nac::NodePermission::DacPolicyAdd)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Validate locally first (same checks as local adapter)
+        acp::policy_yaml::check_duplicate_yaml_keys(yaml)?;
+
+        let parsed = acp::policy_yaml::parse_policy_yaml(yaml)?;
+        if parsed.name.is_empty() {
+            return Err("name required".to_string());
+        }
+        acp::policy_yaml::validate_policy_expressions(&parsed)?;
+
+        let mut policy = acp::policy_yaml::build_policy(&parsed, UNASSIGNED_ID_COUNTER)
+            .map_err(|e| format!("invalid policy: {}", e))?;
+
+        let options = StorePolicyOptions::new()
+            .with_validation()
+            .with_dpi_enforcement();
+
+        // Reject an invalid policy before it reaches the chain.
+        policy
+            .validate()
+            .map_err(|e| format!("failed to validate policy: {}", e))?;
+        policy
+            .validate_dpi()
+            .map_err(|e| format!("failed to validate policy: {}", e))?;
+
+        // Submit on-chain via Vera
+        let policy_id = self
+            .vera_acp
+            .add_policy("", yaml)
+            .await
+            .map_err(|e| format!("Vera create policy failed: {}", e))?;
+
+        // The schema references the on-chain id, and doc_acp_adapter validates
+        // against this store.
+        policy.id = policy_id.clone();
+        self.local_store
+            .store_policy_with_options(&policy, &options)
+            .await
+            .map_err(|e| format!("failed to cache policy with on-chain ID: {}", e))?;
+
+        Ok(policy_id)
+    }
+
+    async fn list_policies(&self) -> Result<Vec<PolicyInfo>, String> {
+        let policies = self
+            .local_store
+            .list_policies()
+            .await
+            .map_err(|e| format!("failed to list policies: {}", e))?;
+
+        Ok(policies.iter().map(policy_to_info).collect())
+    }
+
+    async fn get_policy(&self, id: &str) -> Result<Option<PolicyInfo>, String> {
+        let policy = self
+            .local_store
+            .get_policy(id)
+            .await
+            .map_err(|e| format!("failed to get policy: {}", e))?;
+
+        Ok(policy.as_ref().map(policy_to_info))
+    }
+
+    async fn validate_resource_interface(
+        &self,
+        policy_id: &str,
+        resource_name: &str,
+    ) -> Result<(), String> {
+        let policy = self.get_or_cache_policy(policy_id).await.map_err(|e| {
+            format!(
+                "policy validation failed with acp: {}. PolicyID: {}",
+                e, policy_id
+            )
+        })?;
+        acp::validate_resource_interface(policy_id, resource_name, policy.as_ref())
+    }
+
+    async fn get_light_client_status(&self) -> Result<AcpLightClientStatus, String> {
+        let status = self
+            .vera_acp
+            .acp_light_client_status()
+            .map_err(|e| format!("failed to get ACP light client status: {}", e))?;
+
+        Ok(AcpLightClientStatus {
+            height: status.height,
+            module_state_root: status.module_state_root,
+            cache_entries: status.cache_entries,
+            last_invalidation_height: status.last_invalidation_height,
+            connected: status.connected,
+        })
+    }
+}

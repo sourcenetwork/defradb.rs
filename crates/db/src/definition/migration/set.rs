@@ -7,7 +7,6 @@ use storage::keys::systemstore::{CollectionKey, CollectionVersionKey, LensConfig
 use tracing::instrument;
 
 use super::helpers::{create_orphan_placeholder, create_placeholder_with_source};
-use crate::collection::Collection;
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
 use crate::DB;
@@ -227,13 +226,14 @@ impl<S: Store> DB<S> {
         self.bump_migration_generation();
 
         if !collection_name.is_empty() {
+            let cached_collection = self.collection_with_index_actions(dst_col.clone()).await?;
             self.collections.rcu(|old| {
                 let mut cache = old.clone();
                 let matches_dest = cache
-                    .get(&collection_name)
+                    .get(collection_name.as_str())
                     .is_some_and(|cached| cached.schema().version_id == dest_version_id);
                 if matches_dest {
-                    cache.insert(collection_name.clone(), Collection::new(dst_col.clone()));
+                    cache.put_named(collection_name.as_str(), cached_collection.clone());
                 }
                 cache
             });

@@ -48,6 +48,16 @@ impl<S: Store> crate::database::DB<S> {
                 })?;
             crate::collection::populate_collection_root_id(&systemstore, &mut target_schema)
                 .await?;
+            // A synced version binds its policy by CID. Rebuilt without the
+            // reference, the record commits to less than its identity does,
+            // and activating it would serve the collection unpoliced,
+            // indistinguishable from one that never had a policy.
+            if let (None, Some(policy_cid)) = (&target_schema.policy, &target_schema.policy_cid) {
+                return Err(Error::CollectionVersionPolicyNotHeld {
+                    version_id: version_id.to_string(),
+                    policy_cid: policy_cid.clone(),
+                });
+            }
 
             let name = target_schema.name.clone();
             let collection_id = target_schema.collection_id.clone();
@@ -115,11 +125,14 @@ impl<S: Store> crate::database::DB<S> {
         };
 
         txn.commit().await?;
+        let collection = self
+            .collection_with_index_actions(target_schema.clone())
+            .await?;
 
         // Update the process-wide cache (scoped to drop lock before reindex)
         self.collections.rcu(|old| {
             let mut cache = old.clone();
-            cache.insert(name.clone(), Collection::new(target_schema.clone()));
+            cache.put_named(name.as_str(), collection.clone());
             cache
         });
 
@@ -141,12 +154,9 @@ impl<S: Store> crate::database::DB<S> {
     /// This searches the in-memory cache for a collection with the given version ID.
     /// It only returns active collections that are in the cache.
     pub fn get_collection_by_version_id(&self, version_id: &str) -> Result<Option<Collection>> {
-        Ok(self.collections.peek(|cache| {
-            cache
-                .values()
-                .find(|c| c.version_id() == version_id)
-                .cloned()
-        }))
+        Ok(self
+            .collections
+            .peek(|cache| cache.by_version(version_id).cloned()))
     }
 
     /// Get a collection by version ID, searching both cache and KV store.
