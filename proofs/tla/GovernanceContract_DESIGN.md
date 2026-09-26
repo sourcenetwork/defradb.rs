@@ -73,7 +73,7 @@ therefore a failure of the *host machinery*, not of the validator.
 `w2 ∈ Bad` so the reject properties stay non-vacuous. Two replicas throughout,
 so `INV_NoSplit` has something to say.
 
-## The thirteen runs
+## The nineteen runs
 
 | Config | Instance | Levers | States | Verdict | Fails |
 |---|---|---|---|---|---|
@@ -90,6 +90,12 @@ so `INV_NoSplit` has something to say.
 | `MC_GovernanceContract_Red_Absence` | Nameable | **purity off**: reject on absence | 8 | RED | `INV_RejectIntrinsic` `INV_NoSplit` `ACT_NoFlip` `L3` |
 | `MC_GovernanceContract_Green_GC` | Nameable | disposition, floor on | 4 248 | GREEN | — |
 | `MC_GovernanceContract_Red_GCNoFloor` | Nameable | disposition, **floor off** | 37 080 | RED | `L1` `L2` `L3` |
+| `MC_GovernanceContract_Green_Emit` | Emit | emission: a reject record, a fork receipt found during a defer; no restarts | 7 056 | GREEN |
+| `MC_GovernanceContract_Red_EmitLostOnRestart` | Emit | a queued record lost to a restart; the write never re-judged | 28 560 | RED `L_FactsWritten` |
+| `MC_GovernanceContract_Red_EmitOnAbsence` | Emit | a defer emits "not approved" | 242 | RED `INV_NoRecordContradictsVerdict` |
+| `MC_GovernanceContract_Green_LocalWrite` | LocalWrite | own document hidden, the transaction's documents visible | 32 | GREEN |
+| `MC_GovernanceContract_Red_OwnDocCounted` | LocalWrite | the judge counts the document the write creates | 224 | RED `L_LocalAcceptSettlesEverywhere` |
+| `MC_GovernanceContract_Red_SnapshotView` | LocalWrite | the judge reads a fresh snapshot | 32 | RED `L_LocalAcceptsWhatPeersWould` |
 
 ## Result 1 — the sweep is load-bearing, and no invariant can see why
 
@@ -203,6 +209,60 @@ and `INV_AcceptJustified` (a `wasJust` ghost, true at the moment of the verdict)
 from `INV_AcceptHeldNow` (still re-derivable now, true only when nothing is
 forgotten).
 
+## Result 7: emission, and what may never be emitted
+
+A validator's judgement may emit records beside its verdict, and the contract
+carries that as `Facts[w]`, what judging `w` emits, each record resting on the
+held bytes `FactNeeds[f]`. Two obligations follow, one on the host and one on
+the plugin.
+
+**The host writes what a judgement emitted.** `Judge` queues the emittable facts
+and `Emit`, fair, writes them; `L_FactsWritten` says a fact found at a replica is
+eventually a record there. `Green_Emit` (7 056 states, `MaxRestarts = 0`) is
+GREEN. `Red_EmitLostOnRestart` is the same instance with one restart allowed:
+a queued record is in memory, the restart clears it, and the write that found
+it is settled and never re-judged, so the record is never written. That is the
+one-call window between an attempt's commit and `write_emissions` in the code,
+stated as a red run rather than hidden; closing it means writing emissions in
+the merge transaction.
+
+**A record rests on present bytes.** `EmitOnAbsence` is the purity violation
+for emission, as `AbsenceReject` is for verdicts: a defer emits "not approved",
+a claim about what the replica lacks. `Red_EmitOnAbsence` produces a replica
+holding that record while another has accepted the write, and
+`INV_NoRecordContradictsVerdict` fails in a few hundred states. The rule a
+plugin author takes from it: emit a reject and its reason, or two signed
+entries at one position, which is a fork whatever else arrives; never "not
+yet". A record is evidence, never an input: `Records` and `Entries` are disjoint
+by construction, which is the model's way of saying no verdict reads one.
+
+## Result 8: the local write path is a fourth entry point
+
+A node writes composites itself, and judges each before its transaction
+commits, through a view of what it holds, what the transaction wrote before
+this write, and, unless hidden, the document the write itself creates.
+`LocalWrite` accepts and commits; `LocalRefuse` is the refusal, which drops
+the transaction so a refused write is never durable and never a composite.
+`Authored` writes exist only once a node has written them, and what a
+transaction wrote exists only once it committed.
+
+`L_LocalAcceptSettlesEverywhere`: a write this node accepted settles on every
+replica that receives it. `Red_OwnDocCounted` breaks it with `HideOwnDoc =
+FALSE`: a rule that counts the document the write is creating accepts locally,
+and every peer, which holds that document only by merging the write, defers on
+it forever. The pending view therefore hides the candidate's own document on a
+create, and `local_write.rs:299-309` does exactly that.
+
+`L_LocalAcceptsWhatPeersWould`: a write every peer would accept is not refused
+here. `Red_SnapshotView` breaks it with `TxnDocsVisible = FALSE`: the judge
+reads a fresh snapshot, does not see the grant the same batch wrote a moment
+earlier, refuses the note, and the batch with it, so the grant never exists
+either. This was the fourth hole in a review of #1835, and the fix is the
+transaction's own stores in the view (`view.rs:123`, `with_stores`). The
+property is stated as one eventuality over the constant set of locally
+acceptable writes rather than a quantified leads-to: TLC's liveness tableau
+mishandles a leads-to whose antecedent is constant-valued under `\A`.
+
 ## Fairness
 
 `Spec` assumes weak fairness per `(replica, item)` for deliveries, drains and
@@ -238,6 +298,16 @@ A plugin author does not re-model the merge path. They instantiate this module:
    shows what happens if your validator ever rejects for a missing input.
    That last one is the promise the interface asks of you; the RED run is
    what breaking it costs everyone.
+4. **Describe what you emit.** `Facts[w]` and `FactNeeds[f]` say what a
+   judgement of `w` records and what it rests on. Keep `FactNeeds[f]` inside
+   the bytes the verdict read: a reject record rests on the composite's own
+   bytes (`FactNeeds = {}`), a fork receipt on the two entries. Then check
+   `L_FactsWritten` with `MaxRestarts = 0`, and `EmitOnAbsence = TRUE` to see
+   the contradiction a "not yet" record produces.
+5. **Describe your own writes.** `Authored` is what your node writes, `Batch[w]`
+   what the same transaction wrote before it, `Own[w]` the document the write
+   creates. `Red_OwnDocCounted` is the mistake to look for in your rule: a
+   lookup that would count the write's own document.
 
 ### What this does not establish, and where it has to be checked
 

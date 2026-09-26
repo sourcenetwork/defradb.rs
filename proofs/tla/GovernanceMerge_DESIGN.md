@@ -43,14 +43,20 @@ corrupts state.
   `Registered(r)` and the `room` check in `Apply`. `:129` `release` is
   `Released(r, e)`; `:82` `enqueue_ready` is the sweep's entry to the same
   `queued` gate. The index is in memory: `IndexDurable = FALSE` is today.
-- `judge.rs:32` `judge_governed` maps the verdict (`PushLog`, `DrainReleased`);
-  `:194` `index_deferred` files it.
-- `merge_handler/dispatch.rs:121` `redrive_deferred` drains the ready queue
-  through the verifying merge path: `DrainReleased`.
-- `sweep.rs:29-33` `sweep_unmerged_governed` walks `blockstore.get_unmerged()`,
+- `judge.rs:42` `judge_governed` maps the verdict (`PushLog`, `DrainReleased`)
+  and `:85` queues what it emitted; `:103` `judge_definition` likewise;
+  `:261` `index_deferred` files a defer.
+- `emission.rs:51` `queue_emissions`, one queue per handler; `:76`
+  `write_emissions`, the drain, which then re-drives; `:105` `emit_one` builds
+  the record and queues it for re-drive. `Queue`, `WriteEmissions`.
+- `merge_handler/dispatch.rs:170-181` `merge_block_attempt` wraps the attempt
+  and writes emissions once it has returned, succeeded or not; `:59` the batch
+  path writes at the end of the batch; `:124` `redrive_deferred` drains the
+  ready queue through the verifying merge path: `DrainReleased`.
+- `sweep.rs:37` `sweep_unmerged_governed` walks `blockstore.get_unmerged()`,
   the store's own to-merge index, and re-drives each governed composite through
   `enqueue_ready` and `redrive_deferred`: `Sweep` with `SweepScope = "Unmerged"`.
-  `:124` `SWEEP_INTERVAL` (60 s) and `:129` `run_governance_sweep`, which runs
+  `:210` `SWEEP_INTERVAL` (60 s) and `:215` `run_governance_sweep`, which runs
   one pass at startup (`Crash` followed by `Sweep`) and then on the interval.
   Spawned from `crates/embedded/src/node_p2p.rs:236`,
   `crates/p2p-adapter/src/iroh_peer/peer.rs:235` and
@@ -79,7 +85,13 @@ final    <- hFinal
 awaiting <- pending              the defer index IS the contract's awaiting
 queue    <- sweepQ               released waiters awaiting re-merge
 restarts <- crashes
+queuedRecords <- emitQ           pending_emissions, one queue per handler
+records  <- records              what write_emissions wrote
 ```
+
+and the local write path and the absence lever are mapped off: this module is
+the replicated path, and the contract's local-write instance checks the
+other.
 
 and the contract's levers are read off the mechanism:
 
@@ -101,16 +113,23 @@ failure of the refinement, which is what we want to observe.
 index dies with the process, and whether that costs anything must be a result,
 not an input. It is result 1: with an unmerged-scoped sweep it costs nothing.
 
-## The six runs
+## The nine runs
 
-| Config | Await keys | Sweep scope | Durable index | States | Verdict |
-|---|---|---|---|---|---|
-| `MC_GovernanceMerge_Today` | CID + field | unmerged | no | 2 016 | GREEN |
-| `MC_GovernanceMerge_Green_CidOnly` | CID | unmerged | no | 1 152 | GREEN |
-| `MC_GovernanceMerge_Green_Augmented` | CID + field | indexed | yes | 1 680 | GREEN |
-| `MC_GovernanceMerge_Red_NoSweep` | CID + field | indexed | no | 2 016 | RED |
-| `MC_GovernanceMerge_Red_SweepIndexed` | CID | indexed | yes | 1 632 | RED |
-| `MC_GovernanceMerge_Red_Mutant` | teeth check: one silent merge | | | 44 | RED |
+| Config | Await keys | Sweep scope | Durable index | Emission | States | Verdict |
+|---|---|---|---|---|---|---|
+| `MC_GovernanceMerge_Today` | CID + field | unmerged | no | none in the instance | 7 072 | GREEN |
+| `MC_GovernanceMerge_Green_CidOnly` | CID | unmerged | no | none | 3 872 | GREEN |
+| `MC_GovernanceMerge_Green_Augmented` | CID + field | indexed | yes | none | 5 824 | GREEN |
+| `MC_GovernanceMerge_Red_NoSweep` | CID + field | indexed | no | none | 7 072 | RED |
+| `MC_GovernanceMerge_Red_SweepIndexed` | CID | indexed | yes | none | 5 632 | RED |
+| `MC_GovernanceMerge_Red_Mutant` | teeth check: one silent merge | | | | 106 | RED |
+| `MC_GovernanceMerge_Green_Emit` | CID + field | unmerged | no | queue, drain at return; no crashes | 13 924 | GREEN |
+| `MC_GovernanceMerge_Red_DiscardOnError` | CID + field | unmerged | no | a failed attempt clears the queue | 86 | RED |
+| `MC_GovernanceMerge_Red_BatchNoDrain` | CID + field | unmerged | no | the batch path never drains | 20 449 | RED |
+
+The state counts of the first six grew when the module gained the emission
+queue, the written records and the drain-owed flag; the verdicts and the
+counterexamples did not change.
 
 ## Result 1 — the merge path as coded refines the contract
 
@@ -176,6 +195,36 @@ partner. That is why the sweep, not a persisted index, was the fix: it needs no
 new durable state, and its cost follows the unmerged set, which a plugin's
 retention bounds.
 
+## Result 5: emission is a queue and a drain, and both halves are load-bearing
+
+`Emitting(r, w)` is what judging `w` emits: the facts in `Facts[w]` whose
+`FactNeeds` the replica holds. `Queue` appends them to `emitQ[r]`, which is one
+queue per handler, and marks a drain owed; `WriteEmissions` writes the queue
+when a drain is owed. Every attempt owes one on return, succeeded or failed:
+an emission is a fact about held bytes, not about the attempt's outcome, and a
+retried attempt finds the same fact and the same record.
+
+`Red_DiscardOnError` is the design before review: an attempt that fails on a
+transaction conflict clears the queue on its way out. The queue is shared, so
+a concurrent attempt on another document, which had queued its facts and not
+yet drained, loses them; that document merges, is never re-judged, and its
+record is never written. RED on the refinement itself, since the contract has
+no step that removes a queued record except writing it, and on
+`DL_FactsWritten`.
+
+`Red_BatchNoDrain` is `handle_block_batch` judging through its own transaction
+and returning without a drain: a batch member's facts sit in the queue until an
+unrelated attempt happens to return, and on a node fed only by batches, never.
+RED on liveness: the contract's `Emit` is fair, and nothing here enables it.
+
+`Green_Emit` is today's code with `MaxCrashes = 0`. With a crash allowed the
+same instance is RED, and honestly so: a fact queued between an attempt's
+commit and its drain is lost with the process, and a write already merged or
+quarantined is never re-judged. The window is one call wide in the code and
+it is real; the contract records it as `Red_EmitLostOnRestart`, and closing
+it means writing emissions inside the attempt's transaction, which this PR
+does not do.
+
 ## Does the refinement check have teeth?
 
 `MC_GovernanceMerge_Red_Mutant` adds one bug to the otherwise-correct mechanism,
@@ -211,8 +260,8 @@ is recorded there.
 
 1. **Soundness of deferral.** Assumed by both modules; see the contract note.
 2. **The batch path.** `MergeQueue.tla` covers ordered multi-document batches
-   and retry exhaustion. Nothing here distinguishes a batch from a sequence of
-   pushes.
+   and retry exhaustion. Here a batch member differs from a push in one way
+   only, whether its return owes a drain (`PushBatchMember`).
 3. **Two collections.** Everything here is one governed collection. The
    fail-closed rule (a claimed collection with no validator defers everything)
    only becomes interesting with more than one.

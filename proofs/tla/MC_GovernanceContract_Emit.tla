@@ -1,9 +1,8 @@
----- MODULE MC_GovernanceMerge_Orphan ----
-\* The merge path driven with the orphan: a composite pushed before the
-\* inputs its verdict needs, so the plugin's Defer names no CID and the
-\* index has nothing to file it under. The same content as
-\* MC_GovernanceContract_Orphan, so the two layers are compared on one case.
-EXTENDS GovernanceMerge
+---- MODULE MC_GovernanceContract_Emit ----
+\* The orphan case with two facts a verdict can find: one rests on the
+\* rejected composite's own bytes (a reject record), one on the seal alone,
+\* so it is found during a verdict that ends in a defer (a fork receipt).
+EXTENDS GovernanceContract
 
 mcReplicas == {"p", "q"}
 mcEntries  == {"seal", "anchor"}
@@ -18,10 +17,9 @@ mcAwaitLogs == [w \in mcWrites |-> IF w = "w1" THEN {"Ldev", "Ltower"} ELSE {}]
 mcBad == {"w2"}
 mcDeliverable == mcEntries
 
-\* ---- emission and the local write path: off in this instance ----
-mcRecords == {}
-mcFacts == [w \in mcWrites |-> {}]
-mcFactNeeds == [f \in mcRecords |-> {}]
+mcRecords == {"fork", "badw2"}
+mcFacts == [w \in mcWrites |-> IF w = "w1" THEN {"fork"} ELSE {"badw2"}]
+mcFactNeeds == [f \in mcRecords |-> IF f = "fork" THEN {"seal"} ELSE {}]
 mcAuthored == {}
 mcOwn == [w \in mcWrites |-> {}]
 mcBatch == [w \in mcWrites |-> {}]

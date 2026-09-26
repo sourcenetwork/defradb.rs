@@ -55,12 +55,16 @@ CONSTANTS
   AwaitKeys,        \* "Cid" (composite CIDs only) | "CidAndField" (today)
   SweepScope,       \* "Indexed" (the defer index) | "Unmerged" (every
                     \* composite pushed and not yet merged or quarantined)
-  IndexDurable      \* the defer index survives a crash (not today)
+  IndexDurable,     \* the defer index survives a crash (not today)
+  Records, Facts, FactNeeds,  \* emission, as in the contract
+  DiscardOnError,   \* an attempt that errors clears the handler's queue (the design before review)
+  BatchDrains       \* the batch path writes what it queued (today)
 
 ASSUME AwaitKeys \in {"Cid", "CidAndField"}
 ASSUME SweepScope \in {"Indexed", "Unmerged"}
 ASSUME IndexDurable \in BOOLEAN
 ASSUME PendingCap \in Nat /\ MaxCrashes \in Nat
+ASSUME DiscardOnError \in BOOLEAN /\ BatchDrains \in BOOLEAN
 
 VARIABLES
   store,        \* [Replicas -> SUBSET Entries]  the blockstore
@@ -70,9 +74,12 @@ VARIABLES
   pending,      \* [Replicas -> [Writes -> SUBSET Entries]]  the defer index, CID keys (in memory)
   pendingLogs,  \* [Replicas -> [Writes -> SUBSET Logs]]     the defer index, field keys (same index)
   sweepQ,       \* [Replicas -> SUBSET Writes]   released waiters awaiting re-merge
-  crashes
+  crashes,
+  emitQ,        \* [Replicas -> SUBSET Records]  pending_emissions: one queue per handler
+  records,      \* [Replicas -> SUBSET Records]  written records
+  drainDue      \* [Replicas -> BOOLEAN]  an attempt has returned and its drain is owed
 
-dvars == << store, pushed, merged, quarantined, pending, pendingLogs, sweepQ, crashes >>
+dvars == << store, pushed, merged, quarantined, pending, pendingLogs, sweepQ, crashes, emitQ, records, drainDue >>
 
 \* An index entry exists iff the composite is filed under at least one key,
 \* CID or field. A composite that named nothing cannot be filed: there is no
@@ -112,6 +119,16 @@ Apply(r, w) ==
                        ELSE IF room /\ AwaitKeys = "CidAndField" THEN AwaitLogs[w]
                                       ELSE {}]
 
+\* judge_governed queues what the judgement emitted (queue_emissions). The
+\* queue is one per handler: every attempt on this replica shares it.
+Emitting(r, w) == { f \in Facts[w] : FactNeeds[f] \subseteq store[r] }
+
+\* An attempt that judged w: its emissions are queued, and its return owes
+\* a drain (write_emissions at the end of merge_block_attempt).
+Queue(r, w, due) ==
+  /\ emitQ' = [emitQ EXCEPT ![r] = @ \cup Emitting(r, w)]
+  /\ drainDue' = [drainDue EXCEPT ![r] = @ \/ due]
+
 \* ---- Events ----
 
 \* A block arrives and releases its waiters (DeferredMerges::release). A
@@ -127,22 +144,60 @@ ReceiveBlock(r, e) ==
   /\ e \notin store[r]
   /\ store' = [store EXCEPT ![r] = @ \cup {e}]
   /\ sweepQ' = [sweepQ EXCEPT ![r] = @ \cup Released(r, e)]
-  /\ UNCHANGED << pushed, merged, quarantined, pending, pendingLogs, crashes >>
+  /\ UNCHANGED << pushed, merged, quarantined, pending, pendingLogs, crashes, emitQ, records, drainDue >>
 
 PushLog(r, w) ==
   /\ w \notin pushed[r]
   /\ pushed' = [pushed EXCEPT ![r] = @ \cup {w}]
   /\ Apply(r, w)
-  /\ UNCHANGED << store, sweepQ, crashes >>
+  /\ Queue(r, w, TRUE)
+  /\ UNCHANGED << store, sweepQ, crashes, records >>
+
+\* An attempt that judged w and then failed to commit, a transaction
+\* conflict: nothing merges, and it is retried later. Its emissions were
+\* queued like any attempt's. DiscardOnError clears the queue on the error,
+\* and the queue is one per handler, so what a concurrent attempt on
+\* another document had queued goes with them. Without it the failed
+\* attempt owes a drain like any other: an emission is a fact about held
+\* bytes, not about the attempt's outcome, and the retry finds the same.
+FailedAttempt(r, w) ==
+  /\ w \in pushed[r] /\ w \notin merged[r] /\ w \notin quarantined[r]
+  \* An attempt whose verdict would have merged or quarantined and then
+  \* failed is any failed transaction: retried, and the retry applies the
+  \* verdict. What is modelled is the queue, so the attempt judged here is
+  \* one whose verdict is a defer, which applies nothing either way.
+  /\ Verdict(r, w) = "Defer"
+  /\ IF DiscardOnError
+       THEN emitQ' = [emitQ EXCEPT ![r] = {}] /\ UNCHANGED drainDue
+       ELSE Queue(r, w, TRUE)
+  /\ UNCHANGED << store, pushed, merged, quarantined, pending, pendingLogs, sweepQ, crashes, records >>
+
+\* A batch member (handle_block_batch) is judged through the batch's own
+\* transaction, so no single attempt returns for it; the batch's end owes
+\* the drain only if BatchDrains.
+PushBatchMember(r, w) ==
+  /\ w \notin pushed[r]
+  /\ pushed' = [pushed EXCEPT ![r] = @ \cup {w}]
+  /\ Apply(r, w)
+  /\ Queue(r, w, BatchDrains)
+  /\ UNCHANGED << store, sweepQ, crashes, records >>
+
+\* write_emissions: an owed drain writes the queue, then re-drive.
+WriteEmissions(r) ==
+  /\ drainDue[r]
+  /\ records' = [records EXCEPT ![r] = @ \cup emitQ[r]]
+  /\ emitQ' = [emitQ EXCEPT ![r] = {}]
+  /\ drainDue' = [drainDue EXCEPT ![r] = FALSE]
+  /\ UNCHANGED << store, pushed, merged, quarantined, pending, pendingLogs, sweepQ, crashes >>
 
 \* redrive_deferred: re-merge a released waiter through the verifying path.
 DrainReleased(r, w) ==
   /\ w \in sweepQ[r]
   /\ sweepQ' = [sweepQ EXCEPT ![r] = @ \ {w}]
   /\ IF w \in Unmerged(r)
-       THEN Apply(r, w)
-       ELSE UNCHANGED << merged, quarantined, pending, pendingLogs >>
-  /\ UNCHANGED << store, pushed, crashes >>
+       THEN Apply(r, w) /\ Queue(r, w, TRUE)
+       ELSE UNCHANGED << merged, quarantined, pending, pendingLogs, emitQ, drainDue >>
+  /\ UNCHANGED << store, pushed, crashes, records >>
 
 \* The sweep. SweepScope is the question: what does it iterate?
 \* "Unmerged" is sweep_unmerged_governed, which walks the blockstore's
@@ -152,13 +207,15 @@ Sweep(r, w) ==
   /\ w \in Unmerged(r)
   /\ (SweepScope = "Unmerged" \/ w \in Registered(r))
   /\ Apply(r, w)
-  /\ UNCHANGED << store, pushed, sweepQ, crashes >>
+  /\ Queue(r, w, TRUE)
+  /\ UNCHANGED << store, pushed, sweepQ, crashes, records >>
 
 \* A remote re-push of a quarantined composite is judged afresh.
 RePush(r, w) ==
   /\ w \in quarantined[r]
   /\ Apply(r, w)
-  /\ UNCHANGED << store, pushed, sweepQ, crashes >>
+  /\ Queue(r, w, TRUE)
+  /\ UNCHANGED << store, pushed, sweepQ, crashes, records >>
 
 \* The defer index is process-local; a crash empties it. What survives is
 \* the blockstore, the merged marks and the quarantine.
@@ -170,11 +227,16 @@ Crash(r) ==
   /\ pendingLogs' = [pendingLogs EXCEPT ![r] =
                        IF IndexDurable THEN @ ELSE [w \in Writes |-> {}]]
   /\ sweepQ' = [sweepQ EXCEPT ![r] = IF IndexDurable THEN Unmerged(r) ELSE {}]
-  /\ UNCHANGED << store, pushed, merged, quarantined >>
+  /\ emitQ' = [emitQ EXCEPT ![r] = {}]
+  /\ drainDue' = [drainDue EXCEPT ![r] = FALSE]
+  /\ UNCHANGED << store, pushed, merged, quarantined, records >>
 
 DNext ==
   \/ \E r \in Replicas, e \in Entries : ReceiveBlock(r, e)
   \/ \E r \in Replicas, w \in Writes  : PushLog(r, w)
+  \/ \E r \in Replicas, w \in Writes  : PushBatchMember(r, w)
+  \/ \E r \in Replicas, w \in Writes  : FailedAttempt(r, w)
+  \/ \E r \in Replicas                : WriteEmissions(r)
   \/ \E r \in Replicas, w \in Writes  : DrainReleased(r, w)
   \/ \E r \in Replicas, w \in Writes  : Sweep(r, w)
   \/ \E r \in Replicas, w \in Writes  : RePush(r, w)
@@ -189,10 +251,16 @@ DInit ==
   /\ pendingLogs = [r \in Replicas |-> [w \in Writes |-> {}]]
   /\ sweepQ = [r \in Replicas |-> {}]
   /\ crashes = 0
+  /\ emitQ = [r \in Replicas |-> {}]
+  /\ records = [r \in Replicas |-> {}]
+  /\ drainDue = [r \in Replicas |-> FALSE]
 
+\* PushBatchMember and FailedAttempt are not fair: a batch or a conflict
+\* may happen or not, and neither must be needed for progress.
 DFairness ==
   /\ \A r \in Replicas, e \in Entries : WF_dvars(ReceiveBlock(r, e))
   /\ \A r \in Replicas, w \in Writes  : WF_dvars(PushLog(r, w))
+  /\ \A r \in Replicas                : WF_dvars(WriteEmissions(r))
   /\ \A r \in Replicas, w \in Writes  : WF_dvars(DrainReleased(r, w))
   /\ \A r \in Replicas, w \in Writes  : WF_dvars(Sweep(r, w))
 
@@ -220,11 +288,16 @@ hFinal == [r \in Replicas |->
 hForgotten == [r \in Replicas |-> {}]
 hWasJust == [r \in Replicas |-> [w \in Writes |-> TRUE]]
 
+hOwn == [w \in Writes |-> {}]
 H == INSTANCE GovernanceContract WITH
        held <- store, arrived <- pushed, final <- hFinal,
        awaiting <- pending, awaitingLogs <- pendingLogs,
        queue <- sweepQ, restarts <- crashes,
        forgotten <- hForgotten, forgets <- 0, wasJust <- hWasJust,
+       queuedRecords <- emitQ, records <- records, denied <- {},
+       EmitOnAbsence <- FALSE,
+       LocalWrites <- FALSE, Authored <- {}, Own <- hOwn, Batch <- hOwn,
+       HideOwnDoc <- TRUE, TxnDocsVisible <- TRUE,
        GC <- FALSE,
        GCFloor <- TRUE,
        MaxForgets <- 0,
@@ -260,5 +333,11 @@ DSettleable(w) == w \in Bad \/ Needs[w] \subseteq Deliverable
 DL1_SettleableSettles ==
   <>[](\A r \in Replicas, w \in Writes :
          DSettleable(w) => (w \in merged[r] \/ w \in quarantined[r]))
+
+\* Every fact a judgement found is written: nothing an attempt queued is
+\* lost to another attempt's failure, and the batch path writes its own.
+DL_FactsWritten ==
+  \A r \in Replicas, w \in Writes : \A f \in Facts[w] :
+    (w \in pushed[r] /\ FactNeeds[f] \subseteq store[r]) ~> f \in records[r]
 
 ====
