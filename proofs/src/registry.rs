@@ -364,4 +364,31 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_IndexReconciliation_Green.cfg",
         tiers: &[Behavioral],
     },
+    Property {
+        // A send that returns Ok has not been delivered: every P2PTransport
+        // method is fire-and-forget and the 30s timeout in
+        // handle_send_two_stream_request cannot distinguish a request that never
+        // arrived from one whose reply was lost. Retiring the sender's scope
+        // marker on that timeout drops a head that was written while the
+        // previous attempt was still live — it never reaches the wire.
+        family: "Transport delivery semantics (two-stream reply / reorder / multipath)",
+        name: "INV_NoLostUpdate — the current head is registered, or someone still owes it",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/command_handler/messaging.rs handle_send_two_stream_request; crates/p2p/src/transport.rs P2PTransport",
+        model_ref: "MC_Transport_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Go compatibility fixes the two-stream shape: the sender closes the
+        // request stream and the receiver opens a NEW one to reply, so a reply
+        // needs a working reverse route. Over a relay-only path the head merges
+        // and the sender never learns, retrying forever. Fault injection on a
+        // live link is not driven by this binary.
+        family: "Transport delivery semantics (two-stream reply / reorder / multipath)",
+        name: "LIVE_SenderQuiesces — the sender stops retrying once the receiver holds the head",
+        axis: Tla,
+        anchor: "crates/p2p/src/two_stream/mod.rs two-stream protocol; crates/p2p/src/iroh/transport.rs relay paths",
+        model_ref: "MC_Transport_Red_RelayNoRouteBack.cfg",
+        tiers: &[Boundary],
+    },
 ];

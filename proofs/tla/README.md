@@ -25,6 +25,9 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
   (`IndexReconciliation.tla`).
 - **Document materialization status** — delete/update status stays componentwise
   (`DocumentMaterialization.tla`).
+- **Transport delivery semantics** — the link under the head hint made explicit:
+  two-stream reply, reorder, multipath duplication, ambiguous timeout
+  (`Transport_DESIGN.md`).
 
 Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero on mismatch).
 
@@ -363,6 +366,38 @@ optimisation; a sweep over the index is exactly wrong; never rejecting on
 absence is what makes judging a re-push afresh safe, so the two cannot be
 adopted separately; a disposition policy can strand composites but never split
 replicas.
+
+## Transport Runs (the link under the head hint)
+
+Design notes in [Transport_DESIGN.md](Transport_DESIGN.md). Every other model
+abstracts delivery to a `connected` predicate; this one puts requests and replies
+on the wire as separate objects that fail independently, because Go's two-stream
+protocol makes the reply a fresh dial back and the 30s send timeout cannot tell a
+lost request from a lost reply.
+
+```bash
+# GREEN: hostile link (reorder + multipath duplication + two-stream reply +
+#        ambiguous timeout) vs the shipped marker-rederive / head-current design.
+./tools/tlc -metadir states/tr_g  -config MC_Transport_Green.cfg                    MC_Transport_Common.tla
+# GREEN: arrival-order registration is sound exactly when the link is ordered.
+./tools/tlc -metadir states/tr_go -config MC_Transport_Green_OrderedLastArrived.cfg MC_Transport_Common.tla
+# RED: an unguarded timeout retires the marker for a head written after the
+#      attempt began; that head is lost without ever reaching the wire.
+./tools/tlc -metadir states/tr_dt -config MC_Transport_Red_DefiniteTimeout.cfg      MC_Transport_Common.tla
+# RED: a timed-out copy is overtaken by a retry of a newer head; last-arrived
+#      registration rolls the durable head backwards.
+./tools/tlc -metadir states/tr_ro -config MC_Transport_Red_ReorderOverwrite.cfg     MC_Transport_Common.tla
+# RED: direct + relayed copies of one hint create two obligations.
+./tools/tlc -metadir states/tr_do -config MC_Transport_Red_DuplicateObligation.cfg  MC_Transport_Common.tla
+# RED: over a relay-only path the head merges but no reply can be dialed back,
+#      so the sender never retires its marker.
+./tools/tlc -metadir states/tr_rb -config MC_Transport_Red_RelayNoRouteBack.cfg     MC_Transport_Common.tla
+```
+
+**Scope.** One hop, one direction, one scope, bounded faults. Multi-hop
+composition, the gossip broadcast path, spurious timeouts, and cross-class
+head-of-line blocking are all out of this first slice — see the Boundaries
+section of the design doc.
 
 **For plugin authors.** Instantiate `GovernanceContract` with your validator's
 reads (`Needs`, `Self`, `Refs`, `Bad`) on a small case and check your properties
