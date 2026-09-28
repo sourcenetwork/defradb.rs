@@ -54,6 +54,36 @@ pub fn summary() -> Vec<(&'static str, bool)> {
         .collect()
 }
 
+/// Anchors naming source in another repository. `gents` is the multi-instance
+/// claim substrate and is not vendored here, which is why that family is
+/// `Boundary` rather than `Behavioral`.
+#[cfg(test)]
+const FOREIGN_ANCHOR_PREFIXES: &[&str] = &["crates/gents/"];
+
+/// The path-shaped tokens in an `anchor`. Anchors mix real paths with prose
+/// ("crates/db (index) index maintenance"), so only tokens that carry a
+/// separator and a source extension are treated as paths.
+#[cfg(test)]
+fn source_paths(anchor: &str) -> Vec<&str> {
+    anchor
+        .split([';', ',', ' '])
+        .map(|token| {
+            token.trim_matches(|c: char| {
+                !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+            })
+        })
+        .filter(|token| {
+            token.contains('/')
+                && (token.ends_with(".rs") || token.ends_with(".lean") || token.ends_with(".tla"))
+        })
+        .filter(|token| {
+            !FOREIGN_ANCHOR_PREFIXES
+                .iter()
+                .any(|prefix| token.starts_with(prefix))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +121,32 @@ mod tests {
         assert!(
             stray.is_empty(),
             "registry families not in MODELED_FAMILIES: {stray:?}"
+        );
+    }
+
+    /// An `anchor` is prose plus source paths, and nothing else checks the
+    /// paths: `push_docs_transport.rs` was cited by two families and had never
+    /// existed. A stale anchor silently breaks the only link from a model back
+    /// to the code it abstracts, so resolve every path-shaped token.
+    #[test]
+    fn registry_anchors_resolve() {
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("proofs/ has a parent");
+
+        let missing: Vec<String> = PROPERTIES
+            .iter()
+            .flat_map(|p| {
+                source_paths(p.anchor)
+                    .into_iter()
+                    .filter(|path| !repo_root.join(path).exists())
+                    .map(move |path| format!("{} -> {path}", p.family))
+            })
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "registry anchors naming source that does not exist: {missing:#?}"
         );
     }
 }
