@@ -117,6 +117,10 @@ name = "identity"
 harness = false
 
 [[bench]]
+name = "introspection"
+harness = false
+
+[[bench]]
 name = "filter"
 harness = false
 

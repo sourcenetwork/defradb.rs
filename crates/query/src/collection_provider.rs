@@ -18,6 +18,16 @@ pub trait CollectionProvider: MaybeSendSync {
     /// List all collection names.
     async fn list_collections(&self) -> Result<Vec<String>>;
 
+    /// A monotonic epoch identifying the provider's current schema view, when
+    /// the provider can prove one: equal epochs from the same provider mean
+    /// the visible collection set is unchanged. `None` (the default) means no
+    /// such proof exists and cached schemas must not be reused on its basis —
+    /// transaction-scoped providers return `None` because uncommitted schema
+    /// changes have no committed epoch.
+    fn schema_epoch(&self) -> Option<u64> {
+        None
+    }
+
     /// Resolve a collection by its (schema) version id, **including inactive
     /// versions**. This is required by ACP-gated paths (e.g. `_commits`) that
     /// must resolve the collection a historical block was authored under — after
@@ -62,6 +72,11 @@ impl CollectionProvider for StaticCollectionProvider {
 
     async fn list_collections(&self) -> Result<Vec<String>> {
         Ok(self.collections.keys().cloned().collect())
+    }
+
+    /// A static set never changes, so any constant epoch is proof.
+    fn schema_epoch(&self) -> Option<u64> {
+        Some(0)
     }
 
     async fn get_collection_by_version_id(

@@ -38,6 +38,8 @@ mod index_equal_key_order;
 mod index_fallback_4633;
 #[path = "query/index_management.rs"]
 mod index_management;
+#[path = "query/introspection_cache_1855.rs"]
+mod introspection_cache_1855;
 #[path = "query/join_order_1596.rs"]
 mod join_order_1596;
 #[path = "query/json_missing_key.rs"]

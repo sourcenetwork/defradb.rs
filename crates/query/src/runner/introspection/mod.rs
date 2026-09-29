@@ -5,6 +5,7 @@
 //! generated schema based on the current collections.
 
 mod aggregates;
+pub(crate) mod cache;
 mod collection;
 mod commits;
 mod input_types;
@@ -15,6 +16,7 @@ use async_graphql::{dynamic::*, Value as GqlValue};
 use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use crate::error::{QueryError, Result};
 
@@ -45,7 +47,7 @@ use operators::{
 
 /// Build an async-graphql schema from collections for introspection.
 pub fn build_introspection_schema(
-    collections: &[CollectionVersion],
+    collections: &[Arc<CollectionVersion>],
 ) -> std::result::Result<Schema, SchemaError> {
     // Build a mapping from collection ID to collection name for relation resolution
     let mut id_to_name: RapidHashMap<String, String> = collections
@@ -323,16 +325,19 @@ pub fn build_introspection_schema(
     schema_builder.finish()
 }
 
-/// Execute an introspection query against the schema.
-pub async fn execute_introspection(
-    collections: Vec<CollectionVersion>,
+/// Execute an introspection query, building the schema for it first.
+#[cfg(test)]
+pub(crate) async fn execute_introspection(
+    collections: &[Arc<CollectionVersion>],
     query: &str,
 ) -> Result<JsonValue> {
-    // Build schema from collections
-    let schema = build_introspection_schema(&collections)
+    let schema = build_introspection_schema(collections)
         .map_err(|e| QueryError::introspection(format!("failed to build schema: {}", e)))?;
+    execute_against(&schema, query).await
+}
 
-    // Execute the query
+/// Execute an introspection query against an already-built schema.
+pub(crate) async fn execute_against(schema: &Schema, query: &str) -> Result<JsonValue> {
     let request = async_graphql::Request::new(query);
     let response = schema.execute(request).await;
 
@@ -374,7 +379,7 @@ mod tests {
     /// unknown collection. Regression test for #1124.
     #[tokio::test]
     async fn root_typename_returns_query() {
-        let result = execute_introspection(vec![], "{ __typename }")
+        let result = execute_introspection(&[], "{ __typename }")
             .await
             .expect("introspection execution should succeed");
         assert_eq!(result, serde_json::json!({ "__typename": "Query" }));
@@ -384,7 +389,7 @@ mod tests {
     async fn aggregate_nullability_matches_go() {
         let collection = CollectionVersion::new("Users", "v1", "users", vec![]);
         let result = execute_introspection(
-            vec![collection],
+            &[Arc::new(collection)],
             r#"query {
                 collection: __type(name: "Users") {
                     fields { name type { kind name ofType { kind name } } }
@@ -420,7 +425,7 @@ mod tests {
             )],
         );
         let result = execute_introspection(
-            vec![collection],
+            &[Arc::new(collection)],
             r#"query {
                 selector: __type(name: "Users__CountSelector") {
                     inputFields {
@@ -480,7 +485,7 @@ mod tests {
             ],
         );
         let result = execute_introspection(
-            vec![collection],
+            &[Arc::new(collection)],
             r#"{
                 __type(name: "UsersMutationInputArg") {
                     inputFields {
@@ -529,7 +534,7 @@ mod tests {
                 ),
             ],
         );
-        let schema = build_introspection_schema(&[collection]).unwrap();
+        let schema = build_introspection_schema(&[Arc::new(collection)]).unwrap();
         let barrier = Barrier::new(CALLERS);
 
         let results = std::thread::scope(|scope| {

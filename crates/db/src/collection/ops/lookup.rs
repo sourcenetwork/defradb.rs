@@ -84,6 +84,18 @@ impl<S: Store> crate::database::DB<S> {
         Ok(self.collections.peek(|cache| cache.get(name).cloned()))
     }
 
+    /// The query-side schema of a collection: the definition with the
+    /// queryable index set substituted.
+    ///
+    /// Reads under the cache guard and clones only the pointer, so a query
+    /// path resolving a collection does not deep-copy the definition — which
+    /// [`get_collection`](Self::get_collection) would, since it hands back an
+    /// owned [`Collection`].
+    pub fn query_schema(&self, name: &str) -> Option<std::sync::Arc<schema::CollectionVersion>> {
+        self.collections
+            .peek(|cache| cache.get(name).map(|coll| coll.schema_for_queries()))
+    }
+
     /// Check if a collection exists using the transaction's cache.
     ///
     /// This performs lazy loading - the collection is loaded from the store

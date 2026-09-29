@@ -27,7 +27,7 @@ mod commits_numeric;
 mod executor;
 mod explain;
 mod fetcher;
-mod introspection;
+pub(crate) mod introspection;
 mod mutation;
 mod mutation_inputs;
 mod plan;
@@ -229,6 +229,8 @@ pub struct QueryRunner<F: DocFetcher, R: TransactionRegistry = NoOpTransactionRe
     pub(crate) read_validator: Option<Arc<dyn crate::access_hooks::ReadValidator>>,
     /// App write validator, checked before ACP on every mutation.
     pub(crate) write_validator: Option<Arc<dyn crate::access_hooks::WriteValidator>>,
+    /// Cache of built introspection schemas.
+    pub(crate) introspection_cache: introspection::cache::IntrospectionSchemaCache,
 }
 
 impl<F: DocFetcher + 'static> QueryRunner<F, NoOpTransactionRegistry> {
@@ -252,6 +254,7 @@ impl<F: DocFetcher + 'static> QueryRunner<F, NoOpTransactionRegistry> {
             read_validator: None,
             write_validator: None,
             se_transport: None,
+            introspection_cache: Default::default(),
         }
     }
 
@@ -275,6 +278,7 @@ impl<F: DocFetcher + 'static> QueryRunner<F, NoOpTransactionRegistry> {
             read_validator: None,
             write_validator: None,
             se_transport: None,
+            introspection_cache: Default::default(),
         }
     }
 }
@@ -300,6 +304,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             read_validator: None,
             write_validator: None,
             se_transport: None,
+            introspection_cache: Default::default(),
         }
     }
 
@@ -328,6 +333,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             read_validator: None,
             write_validator: None,
             se_transport: None,
+            introspection_cache: Default::default(),
         }
     }
 
@@ -355,6 +361,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             read_validator: None,
             write_validator: None,
             se_transport: None,
+            introspection_cache: Default::default(),
         }
     }
 
@@ -503,6 +510,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         self
     }
 
+    /// Enable or disable the introspection schema cache.
+    pub fn with_introspection_cache(mut self, enabled: bool) -> Self {
+        self.introspection_cache = introspection::cache::IntrospectionSchemaCache::new(enabled);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn introspection_build_count(&self) -> u64 {
+        self.introspection_cache.build_count()
+    }
+
     /// Resolve the effective identity for a request.
     ///
     /// Priority:
@@ -593,15 +611,56 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// schema based on the current collections, rather than against document storage.
     pub(crate) async fn execute_introspection(&self, query: &str) -> Result<JsonValue> {
         let provider = self.effective_provider();
-        let collections = provider.list_collections().await?;
-        let mut collection_versions = Vec::new();
-        for name in collections {
+        let cache = &self.introspection_cache;
+
+        // Fast path: the provider proves its view unchanged since a cached
+        // build, so nothing needs materializing at all.
+        let epoch = if cache.enabled() {
+            provider.schema_epoch()
+        } else {
+            None
+        };
+        if let Some(schema) = epoch.and_then(|epoch| cache.head_get(epoch)) {
+            return introspection::execute_against(&schema, query).await;
+        }
+
+        let names = provider.list_collections().await?;
+        let mut collections = Vec::with_capacity(names.len());
+        for name in names {
             if let Some(coll) = provider.get_collection(&name).await? {
-                collection_versions.push((*coll).clone());
+                collections.push(coll);
             }
         }
 
-        // Execute introspection query
-        introspection::execute_introspection(collection_versions, query).await
+        let build_start = web_time::Instant::now();
+        let schema = introspection::build_introspection_schema(&collections)
+            .map_err(|e| QueryError::introspection(format!("failed to build schema: {}", e)))?;
+        cache.note_build();
+        tracing::debug!(
+            collections = collections.len(),
+            elapsed_ms = build_start.elapsed().as_millis() as u64,
+            "built introspection schema"
+        );
+
+        self.promote_head(&provider, epoch, &schema);
+        introspection::execute_against(&schema, query).await
+    }
+
+    /// Install `schema` in the head slot iff the provider's epoch still equals
+    /// the one read before materializing — proof the view was not torn or
+    /// superseded by a concurrent schema change. A failed check only skips
+    /// caching; the schema itself is still served, matching the atomicity of
+    /// the uncached path.
+    fn promote_head(
+        &self,
+        provider: &Arc<dyn CollectionProvider>,
+        epoch: Option<u64>,
+        schema: &async_graphql::dynamic::Schema,
+    ) {
+        if let Some(epoch) = epoch {
+            if provider.schema_epoch() == Some(epoch) {
+                self.introspection_cache.head_put(epoch, schema.clone());
+            }
+        }
     }
 }
