@@ -176,7 +176,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         peer_id: &PeerId,
         message_id: &str,
         token: Option<T::ResponseToken>,
-        supports_same_stream_reply: bool,
         reply_message: &str,
         error: Error,
     ) -> Error {
@@ -186,8 +185,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
             tracing::debug!(error = %sign_err, "Failed to sign two-stream backpressure nack");
         }
-        self.send_two_stream_reply(peer_id, reply, token, supports_same_stream_reply)
-            .await;
+        self.send_two_stream_reply(peer_id, reply, token).await;
         error
     }
 
@@ -306,14 +304,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 token,
                 ..
             } => {
-                let supports_same_stream_reply = request.supports_same_stream_reply;
                 let error = Self::saturated_error(&peer_id);
                 Err(self
                     .reject_two_stream(
                         &peer_id,
                         &request.message_id,
                         token,
-                        supports_same_stream_reply,
                         AT_CAPACITY_MESSAGE,
                         error,
                     )
@@ -494,7 +490,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 is_explicit_replicator,
                 explicit_replay_authorization,
             } => {
-                let supports_same_stream_reply = request.supports_same_stream_reply;
                 if let Err(error) = self.check_rate_limit(
                     &self.runtime.request_rate_limiter,
                     &peer_id,
@@ -505,7 +500,6 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                             &peer_id,
                             &request.message_id,
                             token,
-                            supports_same_stream_reply,
                             RATE_LIMITED_MESSAGE,
                             error,
                         )

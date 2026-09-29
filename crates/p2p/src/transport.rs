@@ -394,6 +394,16 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
 
     async fn send_two_stream_response(&self, peer_id: &PeerId, reply: PushLogReply) -> Result<()>;
 
+    /// Whether a two-stream PushLog reply rides the request's own stream.
+    ///
+    /// This is a property of the transport, not of the peer. libp2p keeps Go's
+    /// shape — the sender closes the request stream and the receiver opens
+    /// `/defradb/rep_resp/0.0.1` to answer — so it stays `false`. iroh answers
+    /// on the request's bidirectional stream via the response token.
+    fn prefers_same_stream_reply(&self) -> bool {
+        false
+    }
+
     async fn send_doc_sync_request(&self, peer_id: &PeerId, req: DocSyncRequest) -> Result<()>;
 
     async fn send_doc_sync_response(&self, peer_id: &PeerId, reply: DocSyncReply) -> Result<()>;
