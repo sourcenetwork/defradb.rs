@@ -379,16 +379,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
-        // Go compatibility fixes the two-stream shape: the sender closes the
-        // request stream and the receiver opens a NEW one to reply, so a reply
-        // needs a working reverse route. Over a relay-only path the head merges
-        // and the sender never learns, retrying forever. Fault injection on a
-        // live link is not driven by this binary.
+        // The reply shape is a property of the transport
+        // (`prefers_same_stream_reply`), not of the peer. libp2p keeps Go's
+        // reverse stream — which needs a route back, so over a relay-only path
+        // the head merges while the sender never learns and retries forever —
+        // and iroh answers on the request's own stream, where it cannot.
+        // MC_Transport_Green_SameStream is the iroh leg of the same pair.
+        // Fault injection on a live link is not driven by this binary.
         family: "Transport delivery semantics (two-stream reply / reorder / multipath)",
         name: "LIVE_SenderQuiesces — the sender stops retrying once the receiver holds the head",
         axis: Tla,
-        anchor: "crates/p2p/src/two_stream/mod.rs two-stream protocol; crates/p2p/src/iroh/transport.rs relay paths",
-        model_ref: "MC_Transport_Red_RelayNoRouteBack.cfg",
+        anchor: "crates/p2p/src/two_stream/mod.rs two-stream protocol; crates/p2p/src/transport.rs prefers_same_stream_reply",
+        model_ref: "MC_Transport_Red_RelayNoRouteBack.cfg + MC_Transport_Green_SameStream.cfg",
         tiers: &[Boundary],
     },
 ];

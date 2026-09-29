@@ -26,8 +26,8 @@ grounded facts for B3 live in [DESIGN.md](DESIGN.md); each later slice has its o
 - **Document materialization status** — delete/update status stays componentwise
   (`DocumentMaterialization.tla`).
 - **Transport delivery semantics** — the link under the head hint made explicit:
-  two-stream reply, reorder, multipath duplication, ambiguous timeout
-  (`Transport_DESIGN.md`).
+  reply shape (libp2p's reverse stream vs iroh's same stream), reorder,
+  multipath duplication, ambiguous timeout (`Transport_DESIGN.md`).
 
 Run all configured models at once with `./run-all.sh` (red/green oracle, exits non-zero on mismatch).
 
@@ -381,6 +381,8 @@ lost request from a lost reply.
 ./tools/tlc -metadir states/tr_g  -config MC_Transport_Green.cfg                    MC_Transport_Common.tla
 # GREEN: arrival-order registration is sound exactly when the link is ordered.
 ./tools/tlc -metadir states/tr_go -config MC_Transport_Green_OrderedLastArrived.cfg MC_Transport_Common.tla
+# GREEN: the iroh shape -- a same-stream reply crosses a relay-only path.
+./tools/tlc -metadir states/tr_ss -config MC_Transport_Green_SameStream.cfg         MC_Transport_Common.tla
 # RED: an unguarded timeout retires the marker for a head written after the
 #      attempt began; that head is lost without ever reaching the wire.
 ./tools/tlc -metadir states/tr_dt -config MC_Transport_Red_DefiniteTimeout.cfg      MC_Transport_Common.tla
@@ -389,8 +391,8 @@ lost request from a lost reply.
 ./tools/tlc -metadir states/tr_ro -config MC_Transport_Red_ReorderOverwrite.cfg     MC_Transport_Common.tla
 # RED: direct + relayed copies of one hint create two obligations.
 ./tools/tlc -metadir states/tr_do -config MC_Transport_Red_DuplicateObligation.cfg  MC_Transport_Common.tla
-# RED: over a relay-only path the head merges but no reply can be dialed back,
-#      so the sender never retires its marker.
+# RED: the libp2p shape -- over a relay-only path the head merges but no reply
+#      can be dialed back, so the sender never retires its marker.
 ./tools/tlc -metadir states/tr_rb -config MC_Transport_Red_RelayNoRouteBack.cfg     MC_Transport_Common.tla
 ```
 

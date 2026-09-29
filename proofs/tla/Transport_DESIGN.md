@@ -28,12 +28,19 @@ inbound `TransportEvent`. `handle_send_two_stream_request`
 distinguish a request that never arrived from one that was delivered, processed
 and whose reply was lost.
 
-**The reply is a second, independent delivery.** Go compatibility fixes the
-two-stream shape (`crates/p2p/src/two_stream/mod.rs:1-8`): the sender opens
+**On libp2p, the reply is a second, independent delivery.** Go compatibility
+fixes that shape (`crates/p2p/src/two_stream/mod.rs:1-8`): the sender opens
 `/defradb/rep_req/0.0.1`, sends, and **closes** the stream; the receiver opens a
 **new** stream on `/defradb/rep_resp/0.0.1` to answer. A reply therefore needs a
 working route from receiver back to sender, which a relay-only path does not
-provide.
+provide. It cannot be changed: Go verifies by re-serializing, so a capability
+field it does not know would break signature verification.
+
+**On iroh, it is not.** The reply rides the request's own QUIC bidirectional
+stream, through the response token
+(`crates/p2p/src/iroh/transport.rs prefers_same_stream_reply`). `ReplyMode` is
+therefore a per-transport constant, not a per-peer negotiation, and the model
+runs both settings.
 
 ## State and actions
 
@@ -67,7 +74,8 @@ request may still be delivered, which is the whole point.
 | `MC_Transport_Red_DefiniteTimeout` | `TimeoutMode = "Definite"` | RED `INV_NoLostUpdate` |
 | `MC_Transport_Red_ReorderOverwrite` | `RegisterMode = "LastArrived"` | RED `INV_RegisteredMonotone` |
 | `MC_Transport_Red_DuplicateObligation` | `+ DupMode = "Duplicate"` | RED `INV_ObligationIdempotent` |
-| `MC_Transport_Red_RelayNoRouteBack` | `RouteMode = "RelayOnly"` | RED `LIVE_SenderQuiesces` |
+| `MC_Transport_Green_SameStream` | `ReplyMode = "SameStream"` + `RelayOnly` | GREEN — the iroh shape |
+| `MC_Transport_Red_RelayNoRouteBack` | `RouteMode = "RelayOnly"` | RED `LIVE_SenderQuiesces` — the libp2p shape |
 
 The green run is the hostile link against the shipped design: the wire reorders,
 duplicates, requires a reverse route for every reply, and times out ambiguously,
@@ -117,9 +125,14 @@ unsound.
 
 `MC_Transport_Red_RelayNoRouteBack` violates `LIVE_SenderQuiesces` while every
 safety invariant holds and the head merges. The receiver has the data; the
-sender simply never learns, and retries forever. Setting `ReplyMode = "SameStream"`
-alone makes it quiesce. The unbounded retry is therefore a cost of the
-Go-compatible two-stream shape, not of the relay.
+sender simply never learns, and retries forever. `MC_Transport_Green_SameStream`
+differs in `ReplyMode` alone and quiesces. The unbounded retry is therefore a
+cost of the Go-compatible reverse-stream shape, not of the relay.
+
+That pair maps onto the two transports rather than onto two hypotheses: the RED
+run is libp2p, which cannot escape the shape without breaking Go's signature
+check, and the GREEN run is iroh, which answers on the request's own stream. The
+model describes the fix that was chosen, and prices what it buys.
 
 ## Boundaries
 
@@ -136,6 +149,9 @@ Go-compatible two-stream shape, not of the relay.
   in progress. Admitting that would make every liveness property here
   unprovable without a retry budget, so it is excluded from this first pass and
   is the second red to add.
+- **One reply shape per run.** `ReplyMode` is fixed per configuration, matching
+  a transport. A node that speaks both transports at once runs both shapes
+  side by side; nothing here relates them.
 - **The gossip path is not modelled.** `broadcast_update`
   (`crates/p2p/src/sync/broadcaster.rs:77`) publishes to a document topic and a
   collection topic and tolerates either failing
