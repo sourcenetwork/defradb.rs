@@ -1,5 +1,6 @@
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -11,10 +12,32 @@ struct CacheKey {
     permission: String,
 }
 
-#[derive(Clone)]
 struct CachedDecision {
-    allowed: bool,
+    allowed: OnceLock<bool>,
     cached_at: Instant,
+}
+
+pub(crate) struct PendingDecision<'a> {
+    entry: Arc<CachedDecision>,
+    cache: &'a AccessCache,
+    key: CacheKey,
+}
+
+impl PendingDecision<'_> {
+    pub(crate) fn complete(self, allowed: bool) {
+        // An invalidated entry stays detached; completion never reinserts it.
+        let _ = self.entry.allowed.set(allowed);
+    }
+}
+
+impl Drop for PendingDecision<'_> {
+    fn drop(&mut self) {
+        if self.entry.allowed.get().is_none() {
+            // Failed or cancelled checks must not leave entries behind. A
+            // concurrent replacement may also be evicted, which is a safe miss.
+            self.cache.entries.force_remove(&self.key);
+        }
+    }
 }
 
 /// In-memory cache for ACP access decisions.
@@ -25,7 +48,7 @@ struct CachedDecision {
 /// all entries for their policy so indirect grants cannot remain cached.
 pub(crate) struct AccessCache {
     ttl: Duration,
-    entries: HopscotchMap<CacheKey, CachedDecision, RandomState>,
+    entries: HopscotchMap<CacheKey, Arc<CachedDecision>, RandomState>,
 }
 
 fn cache_key(
@@ -62,13 +85,35 @@ impl AccessCache {
     ) -> Option<bool> {
         let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
         let entry = self.entries.get(&key)?;
-        if entry.cached_at.elapsed() > self.ttl {
+        if entry.cached_at.elapsed() >= self.ttl {
             None
         } else {
-            Some(entry.allowed)
+            entry.allowed.get().copied()
         }
     }
 
+    pub(crate) fn begin_check(
+        &self,
+        actor_did: &str,
+        policy_id: &str,
+        resource: &str,
+        doc_id: &str,
+        permission: &str,
+    ) -> PendingDecision<'_> {
+        let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
+        let entry = Arc::new(CachedDecision {
+            allowed: OnceLock::new(),
+            cached_at: Instant::now(),
+        });
+        self.entries.insert(key.clone(), Arc::clone(&entry));
+        PendingDecision {
+            entry,
+            cache: self,
+            key,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn set(
         &self,
         actor_did: &str,
@@ -78,14 +123,8 @@ impl AccessCache {
         permission: &str,
         allowed: bool,
     ) {
-        let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
-        self.entries.insert(
-            key,
-            CachedDecision {
-                allowed,
-                cached_at: Instant::now(),
-            },
-        );
+        self.begin_check(actor_did, policy_id, resource, doc_id, permission)
+            .complete(allowed);
     }
 
     /// Invalidate ALL cached decisions for a specific document.
@@ -126,6 +165,10 @@ impl AccessCache {
         count
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/access_cache_pending.rs"]
+mod pending_tests;
 
 #[cfg(test)]
 mod tests {

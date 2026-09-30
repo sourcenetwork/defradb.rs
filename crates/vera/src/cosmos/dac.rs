@@ -232,6 +232,15 @@ impl DocumentACP for VeraDocumentACP {
             }
         }
 
+        let pending = self.access_cache.as_ref().map(|cache| {
+            cache.begin_check(
+                &actor_did,
+                policy_id,
+                resource_name,
+                doc_id,
+                permission.as_str(),
+            )
+        });
         let result = self
             .provider
             .verify_access(
@@ -245,15 +254,8 @@ impl DocumentACP for VeraDocumentACP {
             .map_err(provider_err)?;
 
         if result {
-            if let Some(cache) = &self.access_cache {
-                cache.set(
-                    &actor_did,
-                    policy_id,
-                    resource_name,
-                    doc_id,
-                    permission.as_str(),
-                    result,
-                );
+            if let Some(pending) = pending {
+                pending.complete(result);
             }
         }
 
