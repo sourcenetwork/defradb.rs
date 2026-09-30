@@ -13,7 +13,7 @@ on:
         required: true
         default: false
       combineBranchName:
-        description: 'Name of the branch to combine PRs into'
+        description: 'Prefix of the branch to combine PRs into (the run ID is appended)'
         required: true
         default: 'combined-bot-prs-branch'
       ignoreLabel:
@@ -40,67 +40,69 @@ jobs:
           script: |
             const { BRANCH_PREFIX, MUST_BE_GREEN, COMBINE_BRANCH, IGNORE_LABEL } = process.env;
             const { owner, repo } = context.repo;
+            const baseRef = context.payload.repository.default_branch;
+            const head = `${COMBINE_BRANCH}-${context.runId}`;
 
-            const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open' });
+            const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: baseRef });
             const picked = [];
-            let base = null;
             for (const pull of pulls) {
               const branch = pull.head.ref;
+              const sha = pull.head.sha;
               if (!branch.startsWith(BRANCH_PREFIX)) continue;
               if (pull.labels.some(l => l.name === IGNORE_LABEL)) {
                 console.log(`Skipping ${branch}: labelled ${IGNORE_LABEL}`);
                 continue;
               }
               if (MUST_BE_GREEN === 'true') {
-                const result = await github.graphql(`query($owner: String!, $repo: String!, $number: Int!) {
+                const result = await github.graphql(`query($owner: String!, $repo: String!, $sha: GitObjectID!) {
                   repository(owner: $owner, name: $repo) {
-                    pullRequest(number: $number) {
-                      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-                    }
+                    object(oid: $sha) { ... on Commit { statusCheckRollup { state } } }
                   }
-                }`, { owner, repo, number: pull.number });
-                const state = result.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup?.state;
+                }`, { owner, repo, sha });
+                const state = result.repository.object?.statusCheckRollup?.state;
                 if (state !== 'SUCCESS') {
-                  console.log(`Skipping ${branch}: status ${state}`);
+                  console.log(`Skipping ${branch}@${sha}: status ${state}`);
                   continue;
                 }
               }
-              picked.push({ branch, line: `#${pull.number} ${pull.title}` });
-              base = pull.base;
+              picked.push({ branch, sha, line: `#${pull.number} ${pull.title}` });
             }
             if (picked.length === 0) {
-              core.setFailed('No PRs/branches matched criteria');
+              core.setFailed(`No PRs targeting ${baseRef} matched criteria`);
               return;
             }
+
+            const { data: baseBranch } = await github.rest.repos.getBranch({ owner, repo, branch: baseRef });
+            await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${head}`, sha: baseBranch.commit.sha });
 
             try {
-              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${COMBINE_BRANCH}`, sha: base.sha });
-            } catch (error) {
-              core.setFailed(`Failed to create ${COMBINE_BRANCH}, does it already exist? ${error}`);
-              return;
-            }
-
-            const combined = [];
-            const conflicted = [];
-            for (const { branch, line } of picked) {
-              try {
-                await github.rest.repos.merge({ owner, repo, base: COMBINE_BRANCH, head: branch });
-                combined.push(line);
-              } catch (error) {
-                console.log(`Failed to merge ${branch}: ${error}`);
-                conflicted.push(line);
+              const combined = [];
+              const conflicted = [];
+              // Merge the SHA that was checked, not the branch, which a bot may have moved since.
+              for (const { branch, sha, line } of picked) {
+                try {
+                  await github.rest.repos.merge({ owner, repo, base: head, head: sha });
+                  combined.push(line);
+                } catch (error) {
+                  console.log(`Failed to merge ${branch}@${sha}: ${error}`);
+                  conflicted.push(line);
+                }
               }
-            }
+              if (combined.length === 0) throw new Error('Every selected PR conflicted');
 
-            let body = '✅ This PR was created by combining the following PRs:\n' + combined.join('\n');
-            if (conflicted.length > 0) {
-              body += '\n\n⚠️ The following PRs were left out due to merge conflicts:\n' + conflicted.join('\n');
+              let body = '✅ This PR was created by combining the following PRs:\n' + combined.join('\n');
+              if (conflicted.length > 0) {
+                body += '\n\n⚠️ The following PRs were left out due to merge conflicts:\n' + conflicted.join('\n');
+              }
+              const date = new Date().toISOString().slice(0, 10);
+              await github.rest.pulls.create({
+                owner, repo,
+                title: `bot: Combine dependabot PRs ${date}`,
+                head,
+                base: baseRef,
+                body,
+              });
+            } catch (error) {
+              await github.rest.git.deleteRef({ owner, repo, ref: `heads/${head}` });
+              core.setFailed(`Removed ${head}: ${error}`);
             }
-            const date = new Date().toISOString().slice(0, 10);
-            await github.rest.pulls.create({
-              owner, repo,
-              title: `bot: Combine dependabot PRs ${date}`,
-              head: COMBINE_BRANCH,
-              base: base.ref,
-              body,
-            });
