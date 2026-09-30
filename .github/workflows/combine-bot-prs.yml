@@ -1,0 +1,106 @@
+name: Combine Bot PRs
+
+on:
+  workflow_dispatch:
+    inputs:
+      branchPrefix:
+        description: 'Branch prefix of the PRs to combine, eg: dependabot/cargo'
+        required: true
+        default: 'dependabot'
+      mustBeGreen:
+        description: 'Only combine PRs whose checks are all green'
+        type: boolean
+        required: true
+        default: false
+      combineBranchName:
+        description: 'Name of the branch to combine PRs into'
+        required: true
+        default: 'combined-bot-prs-branch'
+      ignoreLabel:
+        description: 'Exclude PRs with this label'
+        required: true
+        default: 'DO NOT MERGE'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  combine-bot-prs:
+    name: Combine bot PRs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          BRANCH_PREFIX: ${{ inputs.branchPrefix }}
+          MUST_BE_GREEN: ${{ inputs.mustBeGreen }}
+          COMBINE_BRANCH: ${{ inputs.combineBranchName }}
+          IGNORE_LABEL: ${{ inputs.ignoreLabel }}
+        with:
+          script: |
+            const { BRANCH_PREFIX, MUST_BE_GREEN, COMBINE_BRANCH, IGNORE_LABEL } = process.env;
+            const { owner, repo } = context.repo;
+
+            const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open' });
+            const picked = [];
+            let base = null;
+            for (const pull of pulls) {
+              const branch = pull.head.ref;
+              if (!branch.startsWith(BRANCH_PREFIX)) continue;
+              if (pull.labels.some(l => l.name === IGNORE_LABEL)) {
+                console.log(`Skipping ${branch}: labelled ${IGNORE_LABEL}`);
+                continue;
+              }
+              if (MUST_BE_GREEN === 'true') {
+                const result = await github.graphql(`query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+                    }
+                  }
+                }`, { owner, repo, number: pull.number });
+                const state = result.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup?.state;
+                if (state !== 'SUCCESS') {
+                  console.log(`Skipping ${branch}: status ${state}`);
+                  continue;
+                }
+              }
+              picked.push({ branch, line: `#${pull.number} ${pull.title}` });
+              base = pull.base;
+            }
+            if (picked.length === 0) {
+              core.setFailed('No PRs/branches matched criteria');
+              return;
+            }
+
+            try {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${COMBINE_BRANCH}`, sha: base.sha });
+            } catch (error) {
+              core.setFailed(`Failed to create ${COMBINE_BRANCH}, does it already exist? ${error}`);
+              return;
+            }
+
+            const combined = [];
+            const conflicted = [];
+            for (const { branch, line } of picked) {
+              try {
+                await github.rest.repos.merge({ owner, repo, base: COMBINE_BRANCH, head: branch });
+                combined.push(line);
+              } catch (error) {
+                console.log(`Failed to merge ${branch}: ${error}`);
+                conflicted.push(line);
+              }
+            }
+
+            let body = '✅ This PR was created by combining the following PRs:\n' + combined.join('\n');
+            if (conflicted.length > 0) {
+              body += '\n\n⚠️ The following PRs were left out due to merge conflicts:\n' + conflicted.join('\n');
+            }
+            const date = new Date().toISOString().slice(0, 10);
+            await github.rest.pulls.create({
+              owner, repo,
+              title: `bot: Combine dependabot PRs ${date}`,
+              head: COMBINE_BRANCH,
+              base: base.ref,
+              body,
+            });
