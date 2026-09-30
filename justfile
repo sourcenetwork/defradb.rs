@@ -451,6 +451,8 @@ doctor:
     for t in docker node npm python3; do
         printf '%-16s %s\n' "$t" "$(command -v "$t" 2>/dev/null || echo 'missing')"
     done
+    echo
+    echo "browser tools (setup runs best-effort; install Firefox separately on macOS):"
     printf '%-16s %s\n' "firefox" "$(bash tools/find-firefox.sh "{{ tooling }}" 2>/dev/null || echo 'missing (just setup-browser)')"
     printf '%-16s %s\n' "geckodriver" "$(command -v geckodriver 2>/dev/null || echo 'missing (just setup-browser)')"
 

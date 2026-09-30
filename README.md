@@ -54,9 +54,11 @@ before use. The host needs `bash`, `curl`, `tar`, `unzip` and `git`.
 
 `just doctor` reports what resolved and what is missing.
 
-Browser tests are optional: run `just setup-browser` before `just test-wasm`
-or `just test-browser-p2p`. On macOS, install Firefox in `/Applications` or
-`~/Applications`; setup also recognizes browsers already on `PATH`.
+`just setup` includes browser setup. On macOS, missing Firefox produces a
+warning rather than blocking setup; install it in `/Applications` or
+`~/Applications` before running `just test-wasm` or `just test-browser-p2p`.
+Browsers already on `PATH` are also recognized. Run `just setup-browser` to
+retry browser setup separately.
 
 ```bash
 just build             # Build all crates
