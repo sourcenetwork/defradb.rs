@@ -262,6 +262,29 @@ fn a_policy_moves_a_governed_version_id_and_not_its_collection_id() {
     assert_ne!(policied.version_id, other.version_id);
 }
 
+/// A rule tag reaches the version and not the collection, like a policy:
+/// which rule judges a collection is a revision of the same collection.
+#[test]
+fn a_rule_tag_moves_a_governed_version_id_and_not_its_collection_id() {
+    let parse = |sdl: &str| parse_sdl(sdl).unwrap().remove(0);
+
+    let bare = parse(r#"type Agent @governed(root: "root-a") { did: String, body: String }"#);
+    let ruled = parse(
+        r#"type Agent @governed(root: "root-a", rule: "fefra/v3") { did: String, body: String }"#,
+    );
+    let other = parse(
+        r#"type Agent @governed(root: "root-a", rule: "fefra/v4") { did: String, body: String }"#,
+    );
+
+    assert_eq!(ruled.collection_id, bare.collection_id);
+    assert_eq!(other.collection_id, bare.collection_id);
+    assert_ne!(ruled.version_id, ruled.collection_id);
+    assert_ne!(ruled.version_id, bare.version_id);
+    assert_ne!(ruled.version_id, other.version_id);
+    assert_eq!(ruled.governance_rule.as_deref(), Some("fefra/v3"));
+    assert_eq!(bare.governance_rule, None);
+}
+
 /// An ungoverned collection commits to no policy: both its identities are
 /// where they were, so a policy on an existing collection changes neither.
 #[test]

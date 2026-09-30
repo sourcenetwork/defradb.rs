@@ -62,6 +62,9 @@ pub struct EmbeddedNode<S: storage::corekv::Store + 'static> {
     pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
     pub query_limits: query::QueryLimits,
     pub p2p: Option<Arc<ManagedP2PSystem>>,
+    /// Collections the replication policy joins as topics once they exist.
+    #[cfg(feature = "iroh")]
+    replication_topics: Vec<String>,
     /// Idempotency guard for [`EmbeddedNode::shutdown`]. Set to `true`
     /// by the first caller of `shutdown()`.
     shutdown_started: AtomicBool,
@@ -99,6 +102,12 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
         let _id_guard =
             defra_core::current_identity::scoped_current_identity(self.node_identity_did.clone());
         let creator = resolve_creator_identity()?;
+        #[cfg(feature = "iroh")]
+        let topics: Vec<String> = collections
+            .iter()
+            .map(|collection| collection.name.clone())
+            .filter(|name| self.replication_topics.contains(name))
+            .collect();
         self.database
             .create_collections_atomic_with_acp_registration(
                 collections,
@@ -107,6 +116,14 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
             )
             .await
             .map_err(|error| anyhow!("create collection error: {error}"))?;
+
+        #[cfg(feature = "iroh")]
+        if let (Some(p2p), false) = (&self.p2p, topics.is_empty()) {
+            p2p.ops()
+                .add_collections(topics)
+                .await
+                .map_err(|error| anyhow!("replication topic subscription error: {error}"))?;
+        }
 
         Ok(())
     }
@@ -597,6 +614,9 @@ where
             raw_identity.clone(),
             document_acp.clone(),
             strict_replicated_doc_access,
+            access_hooks
+                .as_ref()
+                .and_then(crate::AccessHooks::replication_policy),
         )
         .await
         .map(Some),
@@ -777,6 +797,11 @@ where
         vera_acp,
         query_limits: config.query_limits,
         p2p: p2p_setup.map(|setup| setup.system),
+        #[cfg(feature = "iroh")]
+        replication_topics: access_hooks
+            .as_ref()
+            .map(crate::AccessHooks::replication_topics)
+            .unwrap_or_default(),
         shutdown_started: AtomicBool::new(false),
         shutdown_finished: AtomicBool::new(false),
         shutdown_notify: Notify::new(),

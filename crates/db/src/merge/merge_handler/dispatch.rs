@@ -54,6 +54,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeHandler
         blocks: &[MergeBlock],
     ) -> Vec<Result<MergeOutcome, Self::Error>> {
         let results = self.try_batch_merge_with_split(blocks).await;
+        // The batch judged through its own transaction, so what it emitted
+        // is written here, once, rather than by whichever attempt runs next.
+        self.write_emissions().await;
         self.redrive_deferred().await;
         results
     }
@@ -159,9 +162,29 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
     }
 
+    /// One merge attempt for a single block, then whatever its judgement
+    /// emitted: written and re-driven once the attempt has returned, since an
+    /// attempt may hold a transaction still to commit. Written whether or not
+    /// the attempt succeeded: an emission is a fact about held bytes, and a
+    /// retried attempt finds the same fact and the same record.
+    pub(crate) async fn merge_block_attempt(
+        &self,
+        cid: &Cid,
+        block_data: &[u8],
+        metadata: BlockMetadata<'_>,
+    ) -> Result<MergeOutcome, MergeError> {
+        let outcome = self
+            .merge_block_attempt_judging(cid, block_data, metadata)
+            .await;
+        // Boxed: writing re-drives, and a re-drive is another attempt, so
+        // the future would otherwise contain itself.
+        Box::pin(self.write_emissions()).await;
+        outcome
+    }
+
     /// One merge attempt for a single block. Conflict retry lives in the
     /// `MergeHandler::handle_block` wrapper above (Go's `executeMerge` split).
-    pub(crate) async fn merge_block_attempt(
+    async fn merge_block_attempt_judging(
         &self,
         cid: &Cid,
         block_data: &[u8],

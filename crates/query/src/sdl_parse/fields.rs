@@ -390,7 +390,9 @@ impl<'a> SdlParser<'a> {
                     result.policy = Some(parse_policy_directive(directive)?);
                 }
                 "governed" => {
-                    result.governance_root = Some(parse_governed_directive(directive)?);
+                    let (root, rule) = parse_governed_directive(directive)?;
+                    result.governance_root = Some(root);
+                    result.governance_rule = rule;
                 }
                 _ => {
                     // Unknown directive - emit warning for forward compatibility

@@ -30,6 +30,17 @@ fn definition_with(
     governance_root: Option<&str>,
     is_branchable: bool,
 ) -> Definition {
+    definition_block(collection, fields, governance_root, is_branchable, None)
+}
+
+/// As `definition_with`, naming the rule the version is judged by.
+fn definition_block(
+    collection: &str,
+    fields: &[&str],
+    governance_root: Option<&str>,
+    is_branchable: bool,
+    rule: Option<&str>,
+) -> Definition {
     let mut blocks = Vec::new();
     let mut links = Vec::new();
     for field in fields {
@@ -56,6 +67,9 @@ fn definition_with(
         .with_branchable(is_branchable);
     if let Some(root) = governance_root {
         payload = payload.with_governance_root(root);
+    }
+    if let Some(rule) = rule {
+        payload = payload.with_rule(rule);
     }
     let block = Block::new(CrdtDelta::CollectionDefinition(payload), vec![], links);
     let cid = block.generate_cid().unwrap();
@@ -571,5 +585,352 @@ async fn a_held_version_is_not_rebuilt_from_its_own_block() {
             .iter()
             .any(|field| field.name == "writer" && field.immutable),
         "the record on disk lost @immutable"
+    );
+}
+
+// ---- Judging definitions -------------------------------------------------
+
+/// A patch of `prev`: no name, heads naming the version it supersedes, and
+/// the fields it adds. `prev`'s blocks are assumed held already.
+fn patch_of(prev: &Definition, fields: &[&str]) -> Definition {
+    patch_block(prev, fields, None)
+}
+
+/// As `patch_of`, naming the rule the new version is judged by.
+fn patch_block(prev: &Definition, fields: &[&str], rule: Option<&str>) -> Definition {
+    let mut blocks = Vec::new();
+    let mut links = Vec::new();
+    for field in fields {
+        let immutable = field.starts_with('!');
+        let name = field.trim_start_matches('!');
+        let block = Block::new(
+            CrdtDelta::FieldDefinition(
+                FieldDefinitionDeltaPayload::new(2)
+                    .with_name(name)
+                    .with_scalar_kind(STRING_KIND)
+                    .with_crdt(schema::CType::LwwRegister.to_u8())
+                    .with_immutable(immutable),
+            ),
+            vec![],
+            vec![],
+        );
+        let cid = block.generate_cid().unwrap();
+        blocks.push((cid, block.to_dag_cbor().unwrap()));
+        links.push(DAGLink::new(name, cid));
+    }
+    let mut payload = CollectionDefinitionDeltaPayload::new(2);
+    if let Some(rule) = rule {
+        payload = payload.with_rule(rule);
+    }
+    let block = Block::new(
+        CrdtDelta::CollectionDefinition(payload),
+        vec![prev.cid],
+        links,
+    );
+    let cid = block.generate_cid().unwrap();
+    blocks.push((cid, block.to_dag_cbor().unwrap()));
+    Definition { cid, blocks }
+}
+
+#[derive(Clone, Copy)]
+enum PatchRule {
+    Reject,
+    /// A patch is authorised by a `Grants` document whose `writer` is the
+    /// patch's version ID; absent, defer on that value.
+    AwaitGrant,
+}
+
+/// Accepts every composite and every initial definition; patches by rule.
+/// Records whether each definition it saw was initial.
+struct DefinitionRule {
+    patches: PatchRule,
+    seen: Mutex<Vec<bool>>,
+}
+
+impl DefinitionRule {
+    fn new(patches: PatchRule) -> Arc<Self> {
+        Arc::new(Self {
+            patches,
+            seen: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+#[async_trait]
+impl MergeValidator for DefinitionRule {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::Accept)
+    }
+
+    async fn validate_definition(
+        &self,
+        candidate: &DefinitionCandidate<'_>,
+        view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        self.seen.lock().unwrap().push(candidate.is_initial());
+        if candidate.is_initial() {
+            return Ok(MergeVerdict::Accept);
+        }
+        Ok(match self.patches {
+            PatchRule::Reject => MergeVerdict::reject("not the root's patch"),
+            PatchRule::AwaitGrant => {
+                let version = NormalValue::String(candidate.cid.to_string());
+                if view
+                    .find_documents("Grants", "writer", &version)
+                    .await?
+                    .is_empty()
+                {
+                    MergeVerdict::defer(
+                        "no grant names this version",
+                        [Awaited::immutable_field("Grants", "writer", version)],
+                    )
+                } else {
+                    MergeVerdict::Accept
+                }
+            }
+        })
+    }
+}
+
+impl Node {
+    /// Grants defined locally with an `@immutable` `writer`, and `claims`
+    /// governed by `validator`.
+    async fn judging(claims: &[&str], validator: Arc<dyn MergeValidator>) -> Self {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(
+            DB::open_from_arc_with_options(store.clone(), DbOptions::default())
+                .await
+                .unwrap(),
+        );
+        let mut writer = FieldDescription::new("2", "writer", FieldKind::string());
+        writer.immutable = true;
+        db.create_collection(CollectionVersion::new(
+            "Grants",
+            "col-grants",
+            "col-grants",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                writer,
+            ],
+        ))
+        .await
+        .unwrap();
+        db.set_merge_governance(
+            MergeGovernance::new(claims.iter().copied()).with_validator(validator),
+        );
+        Self::assemble(db, store)
+    }
+
+    async fn holds_version(&self, cid: &Cid) -> bool {
+        self.db
+            .get_collection_by_version_id_full(&cid.to_string())
+            .await
+            .unwrap()
+            .is_some()
+    }
+}
+
+/// An initial definition is judged and, accepted, stored; a patch the
+/// validator rejects is never stored, and the sweep does not re-judge it.
+#[tokio::test]
+async fn a_governed_patch_the_validator_rejects_is_never_stored() {
+    let rule = DefinitionRule::new(PatchRule::Reject);
+    let node = Node::judging(&["Ledgers"], rule.clone()).await;
+    let initial = definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), false);
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+    assert!(node.holds_version(&initial.cid).await);
+
+    let patch = patch_of(&initial, &["note"]);
+    assert_eq!(
+        patch.merge(&node).await,
+        MergeOutcome::rejected("not the root's patch")
+    );
+    assert!(
+        !node.holds_version(&patch.cid).await,
+        "a rejected patch was stored"
+    );
+    assert_eq!(*rule.seen.lock().unwrap(), vec![true, false]);
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 0);
+}
+
+/// A patch the validator defers is not stored, is swept while it waits, and
+/// is stored once what it awaits merges: here a `Grants` document naming
+/// the patch's version.
+#[tokio::test]
+async fn a_governed_patch_the_validator_defers_is_stored_when_its_grant_merges() {
+    let rule = DefinitionRule::new(PatchRule::AwaitGrant);
+    let node = Node::judging(&["Ledgers", "Grants"], rule).await;
+    let initial = definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), false);
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+
+    let patch = patch_of(&initial, &["note"]);
+    assert_eq!(
+        patch.merge(&node).await,
+        MergeOutcome::retryable_skip("no grant names this version")
+    );
+    assert!(
+        !node.holds_version(&patch.cid).await,
+        "a deferred patch was stored"
+    );
+    assert_eq!(node.handler.deferred_composites(), 1);
+    assert_eq!(
+        node.handler.sweep_unmerged_governed().await,
+        1,
+        "the sweep does not see a deferred definition"
+    );
+    assert!(!node.holds_version(&patch.cid).await);
+
+    let root = signer();
+    let grant = genesis("col-grants", "writer", &patch.cid.to_string(), &root);
+    assert_eq!(grant.merge(&node, &root.did).await, MergeOutcome::Merged);
+    assert!(
+        node.holds_version(&patch.cid).await,
+        "the grant's arrival did not re-drive the patch"
+    );
+    assert_eq!(node.handler.deferred_composites(), 0);
+}
+
+/// Ungoverned definitions are never judged, patches included.
+#[tokio::test]
+async fn an_ungoverned_definition_is_never_judged() {
+    let rule = DefinitionRule::new(PatchRule::Reject);
+    let node = Node::judging(&["Ledgers"], rule.clone()).await;
+    let initial = definition("Ledgers", &["_docID", "writer"]);
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+    let patch = patch_of(&initial, &["note"]);
+    assert_eq!(patch.merge(&node).await, MergeOutcome::Merged);
+    assert!(node.holds_version(&patch.cid).await);
+    assert!(
+        rule.seen.lock().unwrap().is_empty(),
+        "an ungoverned definition was judged"
+    );
+}
+
+/// A claimed collection with no validator installed defers its definitions
+/// as it defers its composites: nothing is stored unjudged.
+#[tokio::test]
+async fn a_governed_definition_claimed_without_a_validator_is_not_stored() {
+    let node = Node::open(
+        RegolithStore::in_memory().unwrap(),
+        MergeGovernance::new(["Ledgers"]),
+        false,
+    )
+    .await;
+    let initial = definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), false);
+    assert_eq!(
+        initial.merge(&node).await,
+        MergeOutcome::retryable_skip(
+            "collection Ledgers is governed but no merge validator is installed"
+        )
+    );
+    assert!(!node.holds_version(&initial.cid).await);
+}
+
+/// A rule tag reaches the version ID and the rebuilt record, and a peer
+/// derives the same identities the author did.
+#[tokio::test]
+async fn a_ruled_definition_block_reproduces_its_identity_on_a_fresh_node() {
+    let author = Node::bare().await;
+    let defined = query::parse_sdl(
+        r#"type Ledgers @governed(root: "root-a", rule: "fefra/v3") { writer: String @immutable }"#,
+    )
+    .unwrap()
+    .remove(0);
+    assert_ne!(defined.version_id, defined.collection_id);
+    author.db.create_collection(defined.clone()).await.unwrap();
+
+    let fresh = Node::bare().await;
+    sync_definition(&author, &fresh, &defined.version_id).await;
+    let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(synced.schema().version_id, defined.version_id);
+    assert_eq!(synced.schema().collection_id, defined.collection_id);
+    assert_eq!(synced.schema().governance_rule.as_deref(), Some("fefra/v3"));
+}
+
+/// Refuses a patch that names a rule other than the one it supersedes.
+struct SameRule;
+
+#[async_trait]
+impl MergeValidator for SameRule {
+    async fn validate(
+        &self,
+        _candidate: &MergeCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        Ok(MergeVerdict::Accept)
+    }
+
+    async fn validate_definition(
+        &self,
+        candidate: &DefinitionCandidate<'_>,
+        _view: &dyn MergeView,
+    ) -> Result<MergeVerdict, String> {
+        let Some(previous) = candidate.previous else {
+            return Ok(MergeVerdict::Accept);
+        };
+        Ok(
+            if candidate.version.governance_rule == previous.governance_rule {
+                MergeVerdict::Accept
+            } else {
+                MergeVerdict::reject("the patch changes the rule")
+            },
+        )
+    }
+}
+
+/// A rule change is an upgrade the validator sees on the version it judges,
+/// so a node judging under one rule can decline a patch naming another.
+#[tokio::test]
+async fn a_patch_naming_another_rule_is_the_validators_to_refuse() {
+    let node = Node::judging(&["Ledgers"], Arc::new(SameRule)).await;
+    let initial = definition_block(
+        "Ledgers",
+        &["_docID", "!writer"],
+        Some("root-a"),
+        false,
+        Some("fefra/v3"),
+    );
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+    let held = node.db.get_collection("Ledgers").unwrap().unwrap();
+    assert_eq!(held.schema().governance_rule.as_deref(), Some("fefra/v3"));
+
+    let other = patch_block(&initial, &["note"], Some("fefra/v4"));
+    assert_eq!(
+        other.merge(&node).await,
+        MergeOutcome::rejected("the patch changes the rule")
+    );
+    assert!(!node.holds_version(&other.cid).await);
+
+    let same = patch_block(&initial, &["note"], Some("fefra/v3"));
+    assert_eq!(same.merge(&node).await, MergeOutcome::Merged);
+    assert!(node.holds_version(&same.cid).await);
+}
+
+/// A patch that arrives before the version it supersedes waits for it, is
+/// swept meanwhile rather than forgotten, and is stored once that version
+/// merges.
+#[tokio::test]
+async fn a_patch_that_arrives_before_its_version_is_stored_when_it_arrives() {
+    let node = Node::judging(&["Ledgers"], Arc::new(AcceptEverything)).await;
+    let initial = definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), false);
+    let patch = patch_of(&initial, &["note"]);
+
+    assert_eq!(
+        patch.merge(&node).await,
+        MergeOutcome::retryable_skip("collection definition patches a version not held")
+    );
+    assert!(!node.holds_version(&patch.cid).await);
+    assert_eq!(node.handler.sweep_unmerged_governed().await, 1);
+    assert!(!node.holds_version(&patch.cid).await);
+
+    assert_eq!(initial.merge(&node).await, MergeOutcome::Merged);
+    assert!(node.holds_version(&initial.cid).await);
+    assert!(
+        node.holds_version(&patch.cid).await,
+        "the patch was not re-driven when its version arrived"
     );
 }

@@ -51,6 +51,16 @@ pub struct Commitments<'a> {
     /// which collection it is. Like the rest, it reaches the delta only for a
     /// governed collection.
     pub policy_cid: Option<Cid>,
+    /// The rule this version is judged by, as an opaque tag.
+    ///
+    /// **Version ID only**, for the same reason as the policy: which rule
+    /// judges a write is a revision of the collection, not a different
+    /// collection. Committing it closes the gap between "who governs" and
+    /// "which validator runs": a node judging under another rule derives a
+    /// different version and is visibly not judging the same thing. A name
+    /// today; a content identifier for the rule's code when rules are
+    /// carried as code.
+    pub rule: Option<&'a str>,
 }
 
 /// The policy commitment for a collection's optional policy.
@@ -83,6 +93,7 @@ impl<'a> Commitments<'a> {
             governance_root: version.governance_root.as_deref(),
             is_branchable: version.is_branchable,
             policy_cid: policy_commitment(version.policy.as_ref()),
+            rule: version.governance_rule.as_deref(),
         }
     }
 
@@ -275,6 +286,9 @@ fn build_collection_delta(
         delta = delta.with_branchable(commitments.is_branchable);
         if let Some(policy) = commitments.policy_cid {
             delta = delta.with_policy_cid(policy);
+        }
+        if let Some(rule) = commitments.rule {
+            delta = delta.with_rule(rule);
         }
     }
     delta

@@ -751,8 +751,9 @@ impl<'a> SdlParser<'a> {
         let commitments = schema::Commitments {
             governance_root: type_def.directives.governance_root.as_deref(),
             is_branchable: type_def.directives.is_branchable,
-            // The collection ID never carries the policy: see below.
+            // The collection ID never carries the policy or the rule: see below.
             policy_cid: None,
+            rule: None,
         };
         let collection_id = generate_collection_id(&type_def.name, &fields, headstore, commitments);
 
@@ -769,17 +770,24 @@ impl<'a> SdlParser<'a> {
             .is_governed()
             .then(|| schema::policy_commitment(policy.as_ref()))
             .flatten();
-        let version_id = match policy_commitment {
-            None => collection_id.clone(),
-            Some(policy_cid) => generate_collection_id(
+        // The rule tag reaches the version the same way.
+        let rule = commitments
+            .is_governed()
+            .then_some(type_def.directives.governance_rule.as_deref())
+            .flatten();
+        let version_id = if policy_commitment.is_none() && rule.is_none() {
+            collection_id.clone()
+        } else {
+            generate_collection_id(
                 &type_def.name,
                 &fields,
                 headstore,
                 schema::Commitments {
-                    policy_cid: Some(policy_cid),
+                    policy_cid: policy_commitment,
+                    rule,
                     ..commitments
                 },
-            ),
+            )
         };
 
         // Build encrypted indexes from @encryptedIndex directives
@@ -998,6 +1006,9 @@ impl<'a> SdlParser<'a> {
         collection
             .governance_root
             .clone_from(&type_def.directives.governance_root);
+        collection
+            .governance_rule
+            .clone_from(&type_def.directives.governance_rule);
         collection.policy = policy;
 
         Ok(collection)

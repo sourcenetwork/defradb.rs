@@ -244,6 +244,10 @@ impl Ord for DAGLink {
 /// Serializes as `{"lww": {...}}` or `{"counter": {...}}` etc.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
+// The definition variant is the largest by the width of its optional
+// governance fields. One is built per collection version, not per document
+// write, so boxing it would cost every match site for nothing that matters.
+#[allow(clippy::large_enum_variant)]
 pub enum CrdtDelta {
     /// LWW Register delta
     #[serde(rename = "lww")]

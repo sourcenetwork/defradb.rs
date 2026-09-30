@@ -163,7 +163,24 @@ pub(super) fn normalize_datetime_string(s: &str) -> String {
 /// identifier covers key rotation and a later change of signing threshold.
 /// The collection identity therefore commits to the identifier and survives
 /// both.
-pub(super) fn parse_governed_directive(directive: &Directive<'_, String>) -> Result<String> {
+pub(super) fn parse_governed_directive(
+    directive: &Directive<'_, String>,
+) -> Result<(String, Option<String>)> {
+    let rule = match get_directive_arg(directive, "rule") {
+        None => None,
+        Some(graphql_parser::schema::Value::String(rule)) if !rule.trim().is_empty() => {
+            Some(rule.clone())
+        }
+        Some(graphql_parser::schema::Value::String(_)) => {
+            return Err(QueryError::parse("@governed rule must not be empty"));
+        }
+        Some(value) => {
+            return Err(QueryError::parse(format!(
+                "Argument \"rule\" has invalid value {}",
+                format_graphql_value(value)
+            )));
+        }
+    };
     let Some(value) = get_directive_arg(directive, "root") else {
         return Err(QueryError::parse(
             "missing @governed argument, must have root",
@@ -178,7 +195,7 @@ pub(super) fn parse_governed_directive(directive: &Directive<'_, String>) -> Res
     if root.trim().is_empty() {
         return Err(QueryError::parse("@governed root must not be empty"));
     }
-    Ok(root.clone())
+    Ok((root.clone(), rule))
 }
 
 pub(super) fn parse_policy_directive(directive: &Directive<'_, String>) -> Result<PolicyConfig> {

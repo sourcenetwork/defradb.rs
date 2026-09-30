@@ -54,7 +54,7 @@ pub fn known_directive_arguments(directive_name: &str) -> &'static [&'static str
         "downsample" => &["interval", "timeField", "retention"],
         "branchable" => &["if"],
         "policy" => &["id", "resource"],
-        "governed" => &["root"],
+        "governed" => &["root", "rule"],
         "embedding" => &["provider", "model", "url", "fields", "template"],
         "encryptedIndex" => &["type"],
         "fulltext" => &["language", "k1", "b"],

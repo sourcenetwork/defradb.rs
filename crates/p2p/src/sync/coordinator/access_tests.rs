@@ -399,6 +399,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         authorizer,
         classifier: Arc::new(crate::bitswap::DefaultBlockClassifier),
         serve_acp: Arc::new(crate::bitswap::LateBoundServeAcp::new()),
+        replication_policy: Arc::new(Default::default()),
         document_acp: std::sync::OnceLock::new(),
         #[cfg(feature = "kms")]
         kms_transport: std::sync::OnceLock::new(),
@@ -4189,4 +4190,86 @@ async fn sync_status_surfaces_quarantine_counters() {
     let after = coordinator.sync_status().await;
     assert_eq!(after.pending_dag_terminal_quarantined, 1);
     assert_eq!(after.quarantined_pending_dags, 1);
+}
+
+struct RefuseAll;
+
+#[async_trait]
+impl crate::replication_policy::ReplicationPolicy for RefuseAll {
+    async fn may_accept(
+        &self,
+        _peer: &crate::replication_policy::PolicyPeer<'_>,
+        _request: crate::replication_policy::InboundRequest,
+        _collection_id: &str,
+    ) -> std::result::Result<bool, String> {
+        Ok(false)
+    }
+}
+
+struct AcceptAll;
+
+impl crate::replication_policy::ReplicationPolicy for AcceptAll {}
+
+#[tokio::test]
+async fn replication_policy_narrows_pushlog_access() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let replicator = random_peer_id();
+    replicators.add_replicator("collection1", replicator.as_str());
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Controlled,
+        replicators,
+        Arc::new(PeerStateTracker::new()),
+    );
+    assert!(coordinator
+        .check_pushlog_access_str(replicator.as_str(), "collection1")
+        .await
+        .is_ok());
+
+    coordinator.set_replication_policy(Arc::new(RefuseAll));
+    assert!(matches!(
+        coordinator
+            .check_pushlog_access_str(replicator.as_str(), "collection1")
+            .await,
+        Err(Error::AccessDenied { .. })
+    ));
+}
+
+#[tokio::test]
+async fn replication_policy_cannot_widen_pushlog_access() {
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Controlled,
+        Arc::new(ReplicatorRegistry::new()),
+        Arc::new(PeerStateTracker::new()),
+    );
+    coordinator.set_replication_policy(Arc::new(AcceptAll));
+    assert!(matches!(
+        coordinator
+            .check_pushlog_access_str(random_peer_id().as_str(), "collection1")
+            .await,
+        Err(Error::AccessDenied { .. })
+    ));
+}
+
+#[tokio::test]
+async fn replication_policy_narrows_sync_request_access() {
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let connected = random_peer_id();
+    peer_state.peer_connected(connected.as_str());
+    let (coordinator, _events) = create_test_coordinator(
+        AccessMode::Controlled,
+        Arc::new(ReplicatorRegistry::new()),
+        peer_state,
+    );
+    assert!(coordinator
+        .check_access_str(connected.as_str(), "collection1")
+        .await
+        .is_ok());
+
+    coordinator.set_replication_policy(Arc::new(RefuseAll));
+    assert!(matches!(
+        coordinator
+            .check_access_str(connected.as_str(), "collection1")
+            .await,
+        Err(Error::AccessDenied { .. })
+    ));
 }

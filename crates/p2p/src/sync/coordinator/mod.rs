@@ -835,6 +835,9 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
     /// Late-bound ACP resolver/gate shared by Bitswap and CAR serve paths.
     pub(super) serve_acp: Arc<crate::bitswap::LateBoundServeAcp>,
 
+    /// App replication policy, ANDed with every other replication gate.
+    pub(super) replication_policy: Arc<crate::replication_policy::ReplicationPolicyGate>,
+
     /// Optional document ACP used for local ACP relationship snapshot replay.
     pub(super) document_acp: std::sync::OnceLock<Arc<dyn DocumentACP>>,
 

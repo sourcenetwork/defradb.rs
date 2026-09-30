@@ -33,6 +33,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let headstore = txn.headstore().map_err(|e| {
             query::error::QueryError::execution(format!("failed to get headstore: {}", e))
         })?;
+        let pending = self.pending_view(&txn)?;
 
         let result: query::error::Result<Option<(DocID, CommitArtifacts)>> = async {
             let Some((doc_short_id, canonical_doc_id)) = collection
@@ -104,6 +105,15 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &headstore,
                 composite_cid,
                 sign_config.as_ref(),
+            )
+            .await?;
+
+            self.judge_pending(
+                pending,
+                collection.schema(),
+                &doc_id_str,
+                &composite_cid,
+                &block_result.block,
             )
             .await?;
 
@@ -256,6 +266,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 let headstore = txn.headstore().map_err(|e| {
                     query::error::QueryError::execution(format!("failed to get headstore: {}", e))
                 })?;
+                let pending = self.pending_view(&txn)?;
 
                 let block_result = write_delete_block(
                     &blockstore,
@@ -293,6 +304,15 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     &headstore,
                     composite_cid,
                     sign_config.as_ref(),
+                )
+                .await?;
+
+                self.judge_pending(
+                    pending,
+                    collection.schema(),
+                    &canonical_doc_id.to_string(),
+                    &composite_cid,
+                    &block_result.block,
                 )
                 .await?;
 

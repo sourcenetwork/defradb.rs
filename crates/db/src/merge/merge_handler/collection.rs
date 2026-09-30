@@ -1,5 +1,6 @@
 use super::batch::{PendingFieldBlockFinalization, PendingMergeEvent, PendingPostCommitAction};
 use super::*;
+use crate::merge::governance::{BatchMerged, CollectionBlockVerdict};
 
 enum CollectionMergeFrame {
     Enter {
@@ -53,6 +54,18 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         Block::from_dag_cbor(&data).ok()
     }
 
+    /// A held block, decoded; `None` when it is not held or does not decode.
+    async fn load_held_block(&self, cid: &Cid) -> Option<Block> {
+        match self.blockstore.get(cid).await {
+            Ok(Some(data)) => Block::from_dag_cbor(&data).ok(),
+            Ok(None) => None,
+            Err(error) => {
+                tracing::debug!(%cid, %error, "Failed to load linked block");
+                None
+            }
+        }
+    }
+
     /// Process a Collection delta from a block.
     ///
     /// Collection blocks are metadata containers that link to document composite
@@ -69,6 +82,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         metadata: &BlockMetadata<'_>,
         depth: usize,
     ) -> std::result::Result<MergeOutcome, MergeError> {
+        // A governed collection judges every block of the walk by its links;
+        // the parents share the root's collection.
+        let governed = self.governed_collection_of_block(payload, metadata).await?;
         let mut frames = vec![CollectionMergeFrame::Enter {
             cid: *cid,
             block: Some(block.clone()),
@@ -99,7 +115,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         );
                         continue;
                     }
-                    if self.has_merged_collection(&cid) {
+                    if self
+                        .collection_already_merged(&cid, governed.is_some(), None)
+                        .await?
+                    {
                         if is_root {
                             return Ok(MergeOutcome::terminal_skip("collection already merged"));
                         }
@@ -168,18 +187,30 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     depth,
                     is_root,
                 } => {
-                    if self.has_merged_collection(&cid) {
+                    if self
+                        .collection_already_merged(&cid, governed.is_some(), None)
+                        .await?
+                    {
                         if is_root {
                             return Ok(MergeOutcome::terminal_skip("collection already merged"));
                         }
                         continue;
                     }
-                    let outcome = match self
-                        .process_collection_delta_body(
-                            &cid, &block, &payload, metadata, depth, is_root,
-                        )
-                        .await
-                    {
+                    let result = match &governed {
+                        Some(collection) => {
+                            self.process_governed_collection_block(
+                                &cid, &block, &payload, metadata, collection, depth,
+                            )
+                            .await
+                        }
+                        None => {
+                            self.process_collection_delta_body(
+                                &cid, &block, &payload, metadata, depth, is_root,
+                            )
+                            .await
+                        }
+                    };
+                    let outcome = match result {
                         Ok(outcome) => outcome,
                         Err(error) if !is_root => {
                             tracing::debug!(
@@ -191,7 +222,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                         Err(error) => return Err(error),
                     };
-                    if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
+                    if is_root {
+                        return Ok(outcome);
+                    }
+                    // A governed parent that deferred or was rejected is
+                    // recorded as such; the root judges itself against it
+                    // and files its own wait, so the walk goes on.
+                    if governed.is_none() && !outcome.is_merged() && !outcome.is_terminal_skip() {
                         return Ok(outcome);
                     }
                 }
@@ -409,54 +446,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ),
             None => None,
         };
-        let txn = self.db.new_txn(false).await?;
-        let short_id = if let Ok(systemstore) = txn.systemstore() {
-            crate::collection::require_persisted_collection_short_id(&systemstore, collection_id)
-                .await?
-        } else {
-            return Err(MergeError::Database(crate::error::Error::Other(
-                "failed to access systemstore while resolving collection root_id".to_string(),
-            )));
-        };
-        if let Ok(headstore) = txn.headstore() {
-            // Record the heads this block supersedes rather than deleting
-            // them. Two peers replicating siblings would otherwise both delete
-            // the shared parent's key, and one of the merges would be refused.
-            if let Some(heads) = &block.heads {
-                if let Err(e) =
-                    crate::block::heads::record_supersedes(&headstore, short_id, heads, *cid).await
-                {
-                    tracing::warn!(
-                        error = %e,
-                        collection_id = %collection_id,
-                        "Failed to record superseded collection heads"
-                    );
-                }
-            }
-
-            // Add the new collection head (idempotent if already exists)
-            let col_key = storage::keys::headstore::HeadstoreColKey::new(short_id, *cid);
-            let priority_bytes = encode_priority_varint(payload.priority);
-            if let Err(e) = headstore
-                .set(
-                    &<storage::keys::headstore::HeadstoreColKey as storage::corekv::Key>::bytes(
-                        &col_key,
-                    ),
-                    &priority_bytes,
-                )
-                .await
-            {
-                tracing::warn!(
-                    error = %e,
-                    collection_id = %collection_id,
-                    "Failed to write collection head to headstore"
-                );
-            }
-        }
-        txn.force_commit().await?;
-        // Replication supersedes heads the same way a local append does, so
-        // the same reclamation applies.
-        self.db.maybe_prune_collection_heads(short_id).await;
+        let short_id = self
+            .write_collection_head(cid, block, payload, collection_id)
+            .await?;
 
         tracing::info!(
             cid = %cid,
@@ -498,6 +490,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
         depth: usize,
     ) -> std::result::Result<MergeOutcome, MergeError> {
+        let governed = self.governed_collection_of_block(payload, metadata).await?;
+        let batch = BatchMerged {
+            composites: batch_merged,
+            collections: batch_merged_collections,
+        };
         let mut frames = vec![CollectionMergeFrame::Enter {
             cid: *cid,
             block: Some(block.clone()),
@@ -528,7 +525,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         );
                         continue;
                     }
-                    if self.has_merged_collection(&cid) {
+                    if self
+                        .collection_already_merged(&cid, governed.is_some(), Some(batch))
+                        .await?
+                    {
                         if is_root {
                             return Ok(MergeOutcome::terminal_skip("collection already merged"));
                         }
@@ -602,7 +602,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     depth,
                     is_root,
                 } => {
-                    if self.has_merged_collection(&cid)
+                    if self
+                        .collection_already_merged(&cid, governed.is_some(), Some(batch))
+                        .await?
                         || Self::has_batch_merged_collection(batch_merged_collections, &cid)
                     {
                         if is_root {
@@ -610,25 +612,45 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                         continue;
                     }
-                    let outcome = match self
-                        .process_collection_delta_in_txn_body(
-                            datastore,
-                            headstore,
-                            systemstore,
-                            &cid,
-                            &block,
-                            &payload,
-                            metadata,
-                            batch_merged,
-                            batch_merged_collections,
-                            pending_events,
-                            pending_post_commit_actions,
-                            pending_field_block_finalizations,
-                            depth,
-                            is_root,
-                        )
-                        .await
-                    {
+                    let result = match &governed {
+                        Some(_) => {
+                            self.process_governed_collection_block_in_txn(
+                                datastore,
+                                headstore,
+                                systemstore,
+                                &cid,
+                                &block,
+                                &payload,
+                                metadata,
+                                batch,
+                                pending_events,
+                                pending_post_commit_actions,
+                                pending_field_block_finalizations,
+                                depth,
+                            )
+                            .await
+                        }
+                        None => {
+                            self.process_collection_delta_in_txn_body(
+                                datastore,
+                                headstore,
+                                systemstore,
+                                &cid,
+                                &block,
+                                &payload,
+                                metadata,
+                                batch_merged,
+                                batch_merged_collections,
+                                pending_events,
+                                pending_post_commit_actions,
+                                pending_field_block_finalizations,
+                                depth,
+                                is_root,
+                            )
+                            .await
+                        }
+                    };
+                    let outcome = match result {
                         Ok(outcome) => outcome,
                         Err(error) if !is_root => {
                             tracing::debug!(
@@ -640,7 +662,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                         Err(error) => return Err(error),
                     };
-                    if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
+                    if is_root {
+                        return Ok(outcome);
+                    }
+                    // As in the single-block walk: a governed parent's wait or
+                    // rejection is recorded, and the root judges itself.
+                    if governed.is_none() && !outcome.is_merged() && !outcome.is_terminal_skip() {
                         return Ok(outcome);
                     }
                 }
@@ -839,5 +866,347 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 "no linked composites needed merging",
             ))
         }
+    }
+
+    /// Whether the walk may skip a collection block as already merged. An
+    /// ungoverned block is remembered in this process only, as before; a
+    /// governed one also reads the blockstore's marker, so a head installed
+    /// before a restart is not judged again.
+    async fn collection_already_merged(
+        &self,
+        cid: &Cid,
+        governed: bool,
+        batch: Option<BatchMerged<'_>>,
+    ) -> std::result::Result<bool, MergeError> {
+        if governed {
+            return self.collection_block_merged(cid, batch).await;
+        }
+        Ok(self.has_merged_collection(cid))
+    }
+
+    /// Write `cid` as a head of the collection in a transaction of its own,
+    /// recording the heads it supersedes, and reclaim what the append
+    /// superseded. Returns the collection's short id.
+    async fn write_collection_head(
+        &self,
+        cid: &Cid,
+        block: &Block,
+        payload: &defra_core::block::CollectionDeltaPayload,
+        collection_id: &str,
+    ) -> std::result::Result<u32, MergeError> {
+        let txn = self.db.new_txn(false).await?;
+        let short_id = if let Ok(systemstore) = txn.systemstore() {
+            crate::collection::require_persisted_collection_short_id(&systemstore, collection_id)
+                .await?
+        } else {
+            return Err(MergeError::Database(crate::error::Error::Other(
+                "failed to access systemstore while resolving collection root_id".to_string(),
+            )));
+        };
+        if let Ok(headstore) = txn.headstore() {
+            // Record the heads this block supersedes rather than deleting
+            // them. Two peers replicating siblings would otherwise both delete
+            // the shared parent's key, and one of the merges would be refused.
+            if let Some(heads) = &block.heads {
+                if let Err(e) =
+                    crate::block::heads::record_supersedes(&headstore, short_id, heads, *cid).await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        collection_id = %collection_id,
+                        "Failed to record superseded collection heads"
+                    );
+                }
+            }
+
+            // Add the new collection head (idempotent if already exists)
+            let col_key = storage::keys::headstore::HeadstoreColKey::new(short_id, *cid);
+            let priority_bytes = encode_priority_varint(payload.priority);
+            if let Err(e) = headstore
+                .set(
+                    &<storage::keys::headstore::HeadstoreColKey as storage::corekv::Key>::bytes(
+                        &col_key,
+                    ),
+                    &priority_bytes,
+                )
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    collection_id = %collection_id,
+                    "Failed to write collection head to headstore"
+                );
+            }
+        }
+        txn.force_commit().await?;
+        // Replication supersedes heads the same way a local append does, so
+        // the same reclamation applies.
+        self.db.maybe_prune_collection_heads(short_id).await;
+        Ok(short_id)
+    }
+
+    /// A collection block of a governed collection: its held links are
+    /// driven through the composite path, where the validator judges them,
+    /// and the block is then judged by what its links and parents became.
+    /// The head is written only once every link and parent has merged, under
+    /// the collection guard, after a second look at the links.
+    async fn process_governed_collection_block(
+        &self,
+        cid: &Cid,
+        block: &Block,
+        payload: &defra_core::block::CollectionDeltaPayload,
+        metadata: &BlockMetadata<'_>,
+        collection: &Collection,
+        depth: usize,
+    ) -> std::result::Result<MergeOutcome, MergeError> {
+        let mut rejected_now = Vec::new();
+        for dag_link in block.links.iter().flatten() {
+            let link_cid = &dag_link.link;
+            if self.has_merged_composite(link_cid) {
+                continue;
+            }
+            // A link not held is left to the judgement below, which waits on it.
+            let Some(linked_block) = self.load_held_block(link_cid).await else {
+                continue;
+            };
+            let CrdtDelta::Composite(composite_payload) = &linked_block.delta else {
+                continue;
+            };
+            match self
+                .process_composite_delta(
+                    link_cid,
+                    &linked_block,
+                    composite_payload,
+                    metadata,
+                    true,
+                    depth + 1,
+                )
+                .await
+            {
+                Ok(outcome) if outcome.is_merged() || outcome.is_terminal_skip() => {
+                    // Per-document MergeComplete, as the ungoverned path
+                    // publishes for a link it drove.
+                    if let Some(bus) = self.db.event_bus() {
+                        if let Ok(doc_id) = self
+                            .resolve_composite_doc_id(link_cid, &linked_block, depth + 1)
+                            .await
+                        {
+                            bus.publish(Message::merge_complete(MergeCompleteData {
+                                doc_id,
+                                subject_doc_id: None,
+                                cid: *link_cid,
+                                collection_id: metadata
+                                    .collection_id
+                                    .unwrap_or(&payload.schema_version_id)
+                                    .to_string(),
+                                by_peer: metadata.sender_peer.unwrap_or("").to_string(),
+                            }));
+                        }
+                    }
+                }
+                Ok(MergeOutcome::Rejected { reason }) => {
+                    tracing::debug!(link_cid = %link_cid, %reason, "Linked composite rejected");
+                    rejected_now.push(*link_cid);
+                }
+                Ok(outcome) => {
+                    tracing::debug!(link_cid = %link_cid, ?outcome, "Linked composite deferred");
+                }
+                // A terminal error is a rejection on the block's content; a
+                // retryable one leaves the link unmerged, and the block waits.
+                Err(error) if error.disposition() == MergeErrorDisposition::Terminal => {
+                    tracing::debug!(link_cid = %link_cid, %error, "Linked composite failed");
+                    rejected_now.push(*link_cid);
+                }
+                Err(error) => {
+                    tracing::debug!(link_cid = %link_cid, %error, "Linked composite failed");
+                }
+            }
+        }
+
+        match self
+            .judge_governed_collection_block(cid, block, None, &rejected_now)
+            .await?
+        {
+            CollectionBlockVerdict::Rejected(outcome) => return Ok(outcome),
+            CollectionBlockVerdict::Deferred { outcome, awaiting } => {
+                self.defer_collection_block(cid, metadata, awaiting);
+                return Ok(outcome);
+            }
+            CollectionBlockVerdict::Install => {}
+        }
+
+        let _collection_guard = self
+            .db
+            .collection_read_guard(collection.collection_id())
+            .await?;
+        if self.collection_block_merged(cid, None).await? {
+            return Ok(MergeOutcome::terminal_skip("collection already merged"));
+        }
+        // Judged again under the guard: a link rejected between the first
+        // look and the write must not let a head in.
+        match self
+            .judge_governed_collection_block(cid, block, None, &rejected_now)
+            .await?
+        {
+            CollectionBlockVerdict::Rejected(outcome) => return Ok(outcome),
+            CollectionBlockVerdict::Deferred { outcome, awaiting } => {
+                self.defer_collection_block(cid, metadata, awaiting);
+                return Ok(outcome);
+            }
+            CollectionBlockVerdict::Install => {}
+        }
+
+        let short_id = self
+            .write_collection_head(cid, block, payload, collection.collection_id())
+            .await?;
+        tracing::info!(
+            %cid,
+            collection = %collection.name(),
+            short_id,
+            "Governed collection block installed"
+        );
+        self.merged_collections.insert(*cid, ());
+        // A child block deferred on this one as its parent is re-driven now.
+        self.release_merged_composite(cid, Some(block)).await;
+        Ok(MergeOutcome::Merged)
+    }
+
+    /// The batch form of [`Self::process_governed_collection_block`]: links
+    /// are driven in the shared transaction and the head is written to its
+    /// headstore view, under the collection guards the batch holds. Waiters
+    /// on the block are released after the batch commits.
+    #[allow(clippy::too_many_arguments)]
+    async fn process_governed_collection_block_in_txn(
+        &self,
+        datastore: &NamespaceView,
+        headstore: &NamespaceView,
+        systemstore: &NamespaceView,
+        cid: &Cid,
+        block: &Block,
+        payload: &defra_core::block::CollectionDeltaPayload,
+        metadata: &BlockMetadata<'_>,
+        batch: BatchMerged<'_>,
+        pending_events: &SegQueue<PendingMergeEvent>,
+        pending_post_commit_actions: &SegQueue<PendingPostCommitAction>,
+        pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
+        depth: usize,
+    ) -> std::result::Result<MergeOutcome, MergeError> {
+        let mut rejected_now = Vec::new();
+        for dag_link in block.links.iter().flatten() {
+            let link_cid = &dag_link.link;
+            if self.has_merged_composite(link_cid) || batch.composites.contains_key(link_cid) {
+                continue;
+            }
+            let Some(linked_block) = self.load_held_block(link_cid).await else {
+                continue;
+            };
+            let CrdtDelta::Composite(composite_payload) = &linked_block.delta else {
+                continue;
+            };
+            match self
+                .process_composite_delta_in_txn(
+                    datastore,
+                    headstore,
+                    systemstore,
+                    link_cid,
+                    &linked_block,
+                    composite_payload,
+                    metadata,
+                    true,
+                    batch.composites,
+                    batch.collections,
+                    pending_events,
+                    pending_post_commit_actions,
+                    pending_field_block_finalizations,
+                    depth + 1,
+                )
+                .await
+            {
+                Ok(outcome) if outcome.is_merged() || outcome.is_terminal_skip() => {
+                    if let Ok(doc_id) = self
+                        .resolve_composite_doc_id_in_txn(
+                            systemstore,
+                            link_cid,
+                            &linked_block,
+                            depth + 1,
+                        )
+                        .await
+                    {
+                        pending_events.push(PendingMergeEvent {
+                            message: Message::merge_complete(MergeCompleteData {
+                                doc_id,
+                                subject_doc_id: None,
+                                cid: *link_cid,
+                                collection_id: metadata
+                                    .collection_id
+                                    .unwrap_or(&payload.schema_version_id)
+                                    .to_string(),
+                                by_peer: metadata.sender_peer.unwrap_or("").to_string(),
+                            }),
+                        });
+                    }
+                }
+                Ok(MergeOutcome::Rejected { reason }) => {
+                    tracing::debug!(link_cid = %link_cid, %reason, "Linked composite rejected in batch");
+                    rejected_now.push(*link_cid);
+                }
+                Ok(outcome) => {
+                    tracing::debug!(link_cid = %link_cid, ?outcome, "Linked composite deferred in batch");
+                }
+                Err(error) if error.disposition() == MergeErrorDisposition::Terminal => {
+                    tracing::debug!(link_cid = %link_cid, %error, "Linked composite failed in batch");
+                    rejected_now.push(*link_cid);
+                }
+                Err(error) => {
+                    tracing::debug!(link_cid = %link_cid, %error, "Linked composite failed in batch");
+                }
+            }
+        }
+
+        match self
+            .judge_governed_collection_block(cid, block, Some(batch), &rejected_now)
+            .await?
+        {
+            CollectionBlockVerdict::Rejected(outcome) => return Ok(outcome),
+            CollectionBlockVerdict::Deferred { outcome, awaiting } => {
+                self.defer_collection_block(cid, metadata, awaiting);
+                return Ok(outcome);
+            }
+            CollectionBlockVerdict::Install => {}
+        }
+
+        let collection_id = metadata.collection_id.unwrap_or(&payload.schema_version_id);
+        let short_id = {
+            let txn = self.db.new_txn(true).await?;
+            let short_id = if let Ok(systemstore) = txn.systemstore() {
+                crate::collection::require_persisted_collection_short_id(
+                    &systemstore,
+                    collection_id,
+                )
+                .await?
+            } else {
+                return Err(MergeError::Database(crate::error::Error::Other(
+                    "failed to access systemstore while resolving collection root_id".to_string(),
+                )));
+            };
+            let _ = txn.discard();
+            short_id
+        };
+
+        batch.collections.insert(*cid, ());
+        if let Some(heads) = &block.heads {
+            let _ = crate::block::heads::record_supersedes(headstore, short_id, heads, *cid).await;
+        }
+        let col_key = storage::keys::headstore::HeadstoreColKey::new(short_id, *cid);
+        let priority_bytes = encode_priority_varint(payload.priority);
+        let _ = headstore
+            .set(
+                &<storage::keys::headstore::HeadstoreColKey as storage::corekv::Key>::bytes(
+                    &col_key,
+                ),
+                &priority_bytes,
+            )
+            .await;
+        Ok(MergeOutcome::Merged)
     }
 }

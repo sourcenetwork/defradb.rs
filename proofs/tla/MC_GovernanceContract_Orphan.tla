@@ -33,4 +33,12 @@ mcAwaitLogs == [w \in mcWrites |-> IF w = "w1" THEN {"Ldev", "Ltower"} ELSE {}]
 
 mcBad == {"w2"}
 mcDeliverable == mcEntries
+
+\* ---- emission and the local write path: off in this instance ----
+mcRecords == {}
+mcFacts == [w \in mcWrites |-> {}]
+mcFactNeeds == [f \in mcRecords |-> {}]
+mcAuthored == {}
+mcOwn == [w \in mcWrites |-> {}]
+mcBatch == [w \in mcWrites |-> {}]
 ====

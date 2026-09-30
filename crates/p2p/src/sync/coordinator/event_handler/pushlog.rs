@@ -208,6 +208,38 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         // replicator channel in Rust. Keep pubsub PushLog ingress guarded
         // above, and keep merge-time ACP/explicit replay checks downstream.
 
+        if !self
+            .replication_policy
+            .may_accept(
+                peer_id.as_str(),
+                crate::replication_policy::InboundRequest::Push,
+                &request.collection_id,
+            )
+            .await
+        {
+            tracing::warn!(
+                peer_id = %peer_id,
+                collection_id = %request.collection_id,
+                "Replication policy refused two-stream PushLog"
+            );
+            let mut reply = PushLogReply::error(
+                &request.message_id,
+                &format!(
+                    "access denied: not accepted for collection {}",
+                    request.collection_id
+                ),
+            );
+            if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
+                tracing::error!(error = %sign_err, "Failed to sign refused PushLog response");
+            }
+            self.send_two_stream_reply(&peer_id, reply, token, supports_same_stream_reply)
+                .await;
+            return Err(crate::error::Error::AccessDenied {
+                peer_id: peer_id.to_string(),
+                collection_id: request.collection_id.clone(),
+            });
+        }
+
         // Parse CID
         let cid = match Cid::try_from(request.cid.as_ref()) {
             Ok(cid) => {

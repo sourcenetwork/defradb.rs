@@ -51,7 +51,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Capability for existing-document and durable-retry paths to authorize
     /// receiver-owned CAR completion before announcing a head.
     pub fn head_hint_car_authority(&self) -> HeadHintCarAuthority {
-        HeadHintCarAuthority::new(Arc::clone(&self.runtime.selective_car_access))
+        HeadHintCarAuthority::new(
+            Arc::clone(&self.runtime.selective_car_access),
+            Arc::clone(&self.replication_policy),
+        )
+    }
+
+    /// Install the app replication policy. First call wins; install it before
+    /// the transport handles traffic.
+    pub fn set_replication_policy(
+        &self,
+        policy: Arc<dyn crate::replication_policy::ReplicationPolicy>,
+    ) {
+        self.replication_policy.set(policy);
     }
 
     /// Get the shared DAG fetch limiter.

@@ -37,10 +37,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             && is_outbound_replicator_target
             && !is_subscribed;
 
-        if !topic_matches_document
-            && (!topic_matches_collection
-                || is_direction_filtered
-                || (!is_open_access && !is_subscribed))
+        let policy_refuses = !self
+            .replication_policy
+            .may_accept(
+                propagation_source.as_str(),
+                crate::replication_policy::InboundRequest::Push,
+                &message.collection_id,
+            )
+            .await;
+        if policy_refuses
+            || (!topic_matches_document
+                && (!topic_matches_collection
+                    || is_direction_filtered
+                    || (!is_open_access && !is_subscribed)))
         {
             if is_direction_filtered {
                 self.access

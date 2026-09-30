@@ -41,6 +41,9 @@ pub enum Error {
         policy_cid: String,
     },
 
+    #[error("write refused by the merge validator: {0}")]
+    WriteRefused(String),
+
     #[error("collection already exists. Name: {0}")]
     CollectionAlreadyExists(String),
 

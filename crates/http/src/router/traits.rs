@@ -330,6 +330,11 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     /// Returns after retry markers are registered and the bounded push
     /// attempt finishes. Default implementations report the operation as
     /// unsupported.
+    ///
+    /// `Ok` does not mean every document was sent: a peer that is not a
+    /// registered replicator has no retry scope, so nothing is sent, and the
+    /// replication policy may withhold individual documents. Both keep the
+    /// call successful.
     async fn push_documents_to_peer(
         &self,
         _peer_id: &str,

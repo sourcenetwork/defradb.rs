@@ -122,7 +122,12 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
 
 /// Push an explicit `(collection_name, doc_id)` set through the existing
 /// replay path (connection wait, retry guard, ACP creator resolution,
-/// bounded PushLog, marker registration).
+/// replication policy, bounded PushLog, marker registration).
+///
+/// The peer must be a registered replicator: without one there is no retry
+/// scope to register markers in, so the call sends nothing and returns `Ok`.
+/// A document the replication policy withholds also returns `Ok`, keeping its
+/// durable retry marker for a later, more permissive answer.
 #[allow(clippy::too_many_arguments)]
 pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -372,6 +377,18 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 .await
                 .map_err(|error| format!("failed to register replay marker: {error}"))?;
             drop(marker_guard);
+
+            // A withheld document keeps the marker registered above, so the
+            // retry clock offers it again under a later policy.
+            let mut withheld = false;
+            for (head_cid, _) in &doc_blocks {
+                withheld |= !car_authority
+                    .may_push(peer_id, collection.collection_id(), doc_id, head_cid)
+                    .await;
+            }
+            if withheld {
+                continue;
+            }
 
             let mut requests = Vec::new();
             for (block_cid, block_data) in doc_blocks {
@@ -765,12 +782,20 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         load_latest_composite_head_cids(&*head_txn, &*block_txn, doc_short_id).await;
     attempted_heads.sort_unstable();
     let mut successful_blocks = 0usize;
+    let mut withheld_heads = 0usize;
     for head_cid in attempted_heads.iter().copied() {
         let block_data = match block_txn.get(&head_cid.to_bytes()).await {
             Ok(Some(data)) => data,
             _ => continue,
         };
 
+        if !car_authority
+            .may_push(peer_id, collection_id, doc_id, &head_cid)
+            .await
+        {
+            withheld_heads += 1;
+            continue;
+        }
         {
             let block_cid = head_cid;
             let _car_grant = car_authority
@@ -818,6 +843,11 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
     }
     drop(block_txn);
     drop(head_txn);
+    if withheld_heads > 0 {
+        return Err(format!(
+            "replication policy withheld {withheld_heads} head(s); keeping the retry marker"
+        ));
+    }
     crate::merge::push_docs_common::complete_document_retry_if_current(
         db,
         peer_id.as_str(),
@@ -853,12 +883,20 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
     let mut heads =
         crate::merge::push_docs_common::load_collection_head_cids(&headstore, short_id).await?;
     heads.sort_unstable();
+    let mut withheld_heads = 0usize;
     for cid in heads.iter().copied() {
         let block_data = block_txn
             .get(&cid.to_bytes())
             .await
             .map_err(|error| format!("collection head read: {error}"))?
             .ok_or_else(|| format!("current collection head {cid} is missing"))?;
+        if !car_authority
+            .may_push(peer_id, collection_id, "", &cid)
+            .await
+        {
+            withheld_heads += 1;
+            continue;
+        }
         let _car_grant = car_authority
             .register(peer_id.clone(), cid)
             .ok_or_else(|| format!("selective CAR authority full for collection head {cid}"))?;
@@ -887,6 +925,11 @@ pub async fn retry_collection_commit<S: Store + 'static, T: P2PTransport>(
         }
     }
     drop(txn);
+    if withheld_heads > 0 {
+        return Err(format!(
+            "replication policy withheld {withheld_heads} collection head(s); keeping the retry marker"
+        ));
+    }
     crate::merge::push_docs_common::complete_collection_retry_if_current(
         db,
         peer_id.as_str(),

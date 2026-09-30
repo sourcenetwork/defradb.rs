@@ -19,4 +19,12 @@ mcAwaitLogs == [w \in mcWrites |-> {}]
 
 mcBad == {}
 mcDeliverable == mcEntries
+
+\* ---- emission and the local write path: off in this instance ----
+mcRecords == {}
+mcFacts == [w \in mcWrites |-> {}]
+mcFactNeeds == [f \in mcRecords |-> {}]
+mcAuthored == {}
+mcOwn == [w \in mcWrites |-> {}]
+mcBatch == [w \in mcWrites |-> {}]
 ====

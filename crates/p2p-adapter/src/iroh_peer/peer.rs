@@ -67,7 +67,12 @@ impl<S: Store + 'static> IrohPeer<S> {
             retry_schedule,
             load_persisted_collections,
             replicator_push_options,
+            replication_policy,
         } = config;
+        let filter_matcher: Arc<dyn p2p::replicator::ReplicationFilterMatcher> = replication_policy
+            .as_ref()
+            .and_then(|policy| policy.filter_matcher())
+            .unwrap_or_else(|| Arc::new(replication_filter::QueryReplicationFilterMatcher::new()));
 
         let secret_key = endpoint.secret_key.clone();
         let (command_tx, events, replicators, endpoint_task) =
@@ -86,7 +91,7 @@ impl<S: Store + 'static> IrohPeer<S> {
                 replicators,
                 Arc::new(p2p::sync::P2PCollectionStore::new(Arc::clone(&store))),
                 Arc::new(db::merge::create_head_provider(Arc::clone(&database))),
-                Arc::new(replication_filter::QueryReplicationFilterMatcher::new()),
+                Arc::clone(&filter_matcher),
                 DbBlockClassifier::new_arc(Arc::clone(&database)),
                 Arc::clone(&serve_acp),
             )
@@ -99,6 +104,9 @@ impl<S: Store + 'static> IrohPeer<S> {
                 }
             };
 
+        if let Some(policy) = replication_policy {
+            coordinator.set_replication_policy(policy);
+        }
         let failure_rx = db::merge::attach_failure_channel(&mut coordinator, 1024);
         let coordinator = Arc::new(coordinator);
         coordinator
@@ -141,7 +149,8 @@ impl<S: Store + 'static> IrohPeer<S> {
                 transport.clone(),
                 coordinator.head_hint_car_authority(),
             )
-            .with_retry_schedule(retry_schedule.clone()),
+            .with_retry_schedule(retry_schedule.clone())
+            .with_filter_matcher(filter_matcher),
         );
 
         // Inbound events queue in the endpoint's channel until the handler

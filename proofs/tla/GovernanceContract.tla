@@ -63,7 +63,19 @@ CONSTANTS
   AbsenceReject, \* purity VIOLATED: reject a composite for what it lacks
   GC,            \* node-local disposition may forget a held input
   GCFloor,       \* the floor a disposition policy may not go below
-  MaxForgets     \* bound on forgets, so behaviours are not trivially unfair
+  MaxForgets,    \* bound on forgets, so behaviours are not trivially unfair
+  \* ---- emission: what a verdict may write beside itself ----
+  Records,       \* documents a verdict may emit
+  Facts,         \* [Writes -> SUBSET Records]   what judging w emits, when emittable
+  FactNeeds,     \* [Records -> SUBSET Entries]  the held bytes a record rests on
+  EmitOnAbsence, \* purity VIOLATED: a defer emits "not approved", a claim about absence
+  \* ---- the local write path: a node's own writes judged before commit ----
+  LocalWrites,   \* the node writes composites itself, judged before they commit
+  Authored,      \* SUBSET Writes  composites that exist only once a node has written them
+  Own,           \* [Writes -> SUBSET Entries]  the document a write itself creates
+  Batch,         \* [Writes -> SUBSET Entries]  documents written earlier in the same transaction
+  HideOwnDoc,    \* the local judge does not see the document the write is creating
+  TxnDocsVisible \* the local judge sees what the transaction wrote before this write
 
 ASSUME Replicas # {}
 ASSUME Needs \in [Writes -> SUBSET Entries]
@@ -84,6 +96,19 @@ ASSUME AbsenceReject \in BOOLEAN
 ASSUME GC \in BOOLEAN
 ASSUME GCFloor \in BOOLEAN
 ASSUME MaxForgets \in Nat
+ASSUME Facts \in [Writes -> SUBSET Records]
+ASSUME FactNeeds \in [Records -> SUBSET Entries]
+ASSUME EmitOnAbsence \in BOOLEAN
+ASSUME LocalWrites \in BOOLEAN
+ASSUME Authored \subseteq Writes
+ASSUME Own \in [Writes -> SUBSET Entries]
+ASSUME Batch \in [Writes -> SUBSET Entries]
+ASSUME HideOwnDoc \in BOOLEAN
+ASSUME TxnDocsVisible \in BOOLEAN
+\* A record is evidence, never an input: no verdict reads one. Stated as an
+\* obligation on the instantiation rather than checked, since Records and
+\* Entries are disjoint sorts here by construction.
+ASSUME Records \cap Entries = {}
 
 Verdicts == {"None", "Accept", "Reject"}
 
@@ -97,10 +122,14 @@ VARIABLES
   restarts,   \* how many restarts have happened, bounded by MaxRestarts
   forgotten,  \* [Replicas -> SUBSET Entries]  dropped by disposition, not re-delivered
   forgets,    \* how many inputs have been forgotten, bounded by MaxForgets
-  wasJust     \* ghost: [Replicas -> [Writes -> BOOLEAN]] was an Accept
+  wasJust,    \* ghost: [Replicas -> [Writes -> BOOLEAN]] was an Accept
               \* justified by what the replica held when it was recorded
+  queuedRecords, \* [Replicas -> SUBSET Records]  emitted, not yet written
+  records,    \* [Replicas -> SUBSET Records]  written: held as documents
+  denied      \* SUBSET Writes  "not approved" records emitted anywhere (EmitOnAbsence)
 
-vars == << held, arrived, final, awaiting, awaitingLogs, queue, restarts, forgotten, forgets, wasJust >>
+vars == << held, arrived, final, awaiting, awaitingLogs, queue, restarts, forgotten, forgets, wasJust, queuedRecords, records, denied >>
+evars == << queuedRecords, records, denied >>
 
 \* A composite is deferred at r when it has arrived and holds no final
 \* verdict: MergeOutcome::Skipped { terminal: false }, unmerged in the
@@ -146,6 +175,13 @@ Judge(r, w) ==
                                        ELSE {}]
   /\ wasJust' = [wasJust EXCEPT ![r][w] =
                    IF v = "Accept" THEN Needs[w] \subseteq held[r] ELSE @]
+  \* Emission (Judged { verdict, emit }): beside any verdict, the facts this
+  \* judgement found and can rest on present bytes. Queued, not written: the
+  \* host writes them once the attempt returns (Emit). A defer that emits
+  \* "not approved" is the purity violation EmitOnAbsence.
+  /\ queuedRecords' = [queuedRecords EXCEPT ![r] =
+                         @ \cup { f \in Facts[w] : FactNeeds[f] \subseteq held[r] }]
+  /\ denied' = IF EmitOnAbsence /\ v = "None" THEN denied \cup {w} ELSE denied
 
 \* ---- Events the host raises ----
 
@@ -171,26 +207,81 @@ DeliverEntry(r, e) ==
   /\ e \in Deliverable
   /\ e \notin forgotten[r]
   /\ e \notin held[r]
+  \* The document a write creates is never delivered on its own: a peer
+  \* holds it once it has merged the write. What a transaction wrote
+  \* before an authored write exists only once that transaction committed,
+  \* which a refusal of the write prevents.
+  /\ \A w \in Writes : e \notin Own[w]
+  /\ \A w \in Authored : e \in Batch[w] => \E q \in Replicas : w \in arrived[q]
   /\ held' = [held EXCEPT ![r] = @ \cup {e}]
   /\ queue' = [queue EXCEPT ![r] = @ \cup Waiters(r, e)]
-  /\ UNCHANGED << arrived, final, awaiting, awaitingLogs, restarts, forgotten, forgets, wasJust >>
+  /\ UNCHANGED << arrived, final, awaiting, awaitingLogs, restarts, forgotten, forgets, wasJust, evars >>
 
 \* The merge attempt: the host calls the validator once on arrival and maps
 \* the verdict (judge_governed).
 DeliverWrite(r, w) ==
   /\ w \notin arrived[r]
+  \* An authored write reaches a peer only after its author committed it.
+  /\ w \in Authored => \E q \in Replicas : w \in arrived[q]
   /\ arrived' = [arrived EXCEPT ![r] = @ \cup {w}]
   /\ Judge(r, w)
-  /\ UNCHANGED << held, queue, restarts, forgotten, forgets >>
+  \* Merging a write materialises the document it creates.
+  /\ held' = [held EXCEPT ![r] = IF Judgement(r, w) = "Accept" THEN @ \cup Own[w] ELSE @]
+  /\ UNCHANGED << queue, restarts, forgotten, forgets, records >>
+
+\* The local write path: this node builds w and judges it before the
+\* transaction commits, through a view of what it holds, what the
+\* transaction wrote before this write (TxnDocsVisible: the transaction's
+\* own stores) and, unless hidden, the document the write itself creates,
+\* which no peer holds while judging it. Accept commits: the write and the
+\* documents of its transaction become held here and the write is a
+\* composite peers will receive. Anything else refuses the write, and the
+\* transaction with it: nothing of it is kept.
+LocalView(r, w) ==
+  held[r]
+    \cup (IF TxnDocsVisible THEN Batch[w] ELSE {})
+    \cup (IF HideOwnDoc THEN {} ELSE Own[w])
+
+LocalJudgement(r, w) ==
+  IF w \in Bad THEN "Reject"
+  ELSE IF Needs[w] \subseteq LocalView(r, w) THEN "Accept"
+  ELSE "None"
+
+LocalWrite(r, w) ==
+  /\ LocalWrites
+  /\ w \notin arrived[r]
+  /\ LocalJudgement(r, w) = "Accept"
+  /\ arrived' = [arrived EXCEPT ![r] = @ \cup {w}]
+  /\ final' = [final EXCEPT ![r][w] = "Accept"]
+  /\ held' = [held EXCEPT ![r] = @ \cup Batch[w] \cup Own[w]]
+  /\ wasJust' = [wasJust EXCEPT ![r][w] = Needs[w] \subseteq LocalView(r, w)]
+  /\ queuedRecords' = [queuedRecords EXCEPT ![r] =
+                         @ \cup { f \in Facts[w] : FactNeeds[f] \subseteq LocalView(r, w) }]
+  /\ UNCHANGED << awaiting, awaitingLogs, queue, restarts, forgotten, forgets, records, denied >>
+
+\* Refused locally: nothing changes. The transaction that held the write is
+\* dropped, so a refused write is never durable and never a composite.
+LocalRefuse(r, w) ==
+  /\ LocalWrites
+  /\ w \notin arrived[r]
+  /\ LocalJudgement(r, w) # "Accept"
+  /\ UNCHANGED vars
+
+\* The host writes what a judgement emitted, once the attempt has returned.
+Emit(r) ==
+  /\ queuedRecords[r] # {}
+  /\ records' = [records EXCEPT ![r] = @ \cup queuedRecords[r]]
+  /\ queuedRecords' = [queuedRecords EXCEPT ![r] = {}]
+  /\ UNCHANGED << held, arrived, final, awaiting, awaitingLogs, queue, restarts, forgotten, forgets, wasJust, denied >>
 
 \* Re-drive a queued waiter through the same verdict path (redrive_deferred).
 DrainOne(r, w) ==
   /\ w \in queue[r]
   /\ queue' = [queue EXCEPT ![r] = @ \ {w}]
   /\ IF final[r][w] = "None"
-       THEN Judge(r, w)
-       ELSE UNCHANGED << final, awaiting, awaitingLogs, wasJust >>    \* already final
-  /\ UNCHANGED << held, arrived, restarts, forgotten, forgets >>
+       THEN Judge(r, w) /\ held' = [held EXCEPT ![r] = IF Judgement(r, w) = "Accept" THEN @ \cup Own[w] ELSE @]
+       ELSE UNCHANGED << final, awaiting, awaitingLogs, wasJust, held, queuedRecords, denied >>    \* already final
+  /\ UNCHANGED << arrived, restarts, forgotten, forgets, records >>
 
 \* The sweep (sweep_unmerged_governed): re-judge a deferred composite with no
 \* arrival to prompt it. The backstop that a defer naming nothing, the index
@@ -199,7 +290,8 @@ Retry(r, w) ==
   /\ RetryClock
   /\ w \in Deferred(r)
   /\ Judge(r, w)
-  /\ UNCHANGED << held, arrived, queue, restarts, forgotten, forgets >>
+  /\ held' = [held EXCEPT ![r] = IF Judgement(r, w) = "Accept" THEN @ \cup Own[w] ELSE @]
+  /\ UNCHANGED << arrived, queue, restarts, forgotten, forgets, records >>
 
 \* Quarantine is local and a remote re-push is judged afresh, against what
 \* the replica holds NOW.
@@ -212,7 +304,8 @@ RePushQuarantined(r, w) ==
   /\ Repush
   /\ final[r][w] = "Reject"
   /\ Judge(r, w)
-  /\ UNCHANGED << held, arrived, queue, restarts, forgotten, forgets >>
+  /\ held' = [held EXCEPT ![r] = IF Judgement(r, w) = "Accept" THEN @ \cup Own[w] ELSE @]
+  /\ UNCHANGED << arrived, queue, restarts, forgotten, forgets, records >>
 
 \* Restart. The blockstore, the merged set and the quarantine are durable;
 \* the defer index and the re-drive queue are in memory. With Recovery the
@@ -227,7 +320,9 @@ Restart(r) ==
   /\ awaitingLogs' = [awaitingLogs EXCEPT ![r] =
                         IF Recovery THEN @ ELSE [w \in Writes |-> {}]]
   /\ queue' = [queue EXCEPT ![r] = IF Recovery THEN Deferred(r) ELSE {}]
-  /\ UNCHANGED << held, arrived, final, forgotten, forgets, wasJust >>
+  \* Queued emissions are in memory; what was written is durable.
+  /\ queuedRecords' = [queuedRecords EXCEPT ![r] = {}]
+  /\ UNCHANGED << held, arrived, final, forgotten, forgets, wasJust, records, denied >>
 
 \* The floor a disposition policy may not go below. An input may be
 \* forgotten only once no composite that needs it is still unsettled here,
@@ -251,7 +346,7 @@ Forget(r, e) ==
   /\ held' = [held EXCEPT ![r] = @ \ {e}]
   /\ forgotten' = [forgotten EXCEPT ![r] = @ \cup {e}]
   /\ forgets' = forgets + 1
-  /\ UNCHANGED << arrived, final, awaiting, awaitingLogs, queue, restarts, wasJust >>
+  /\ UNCHANGED << arrived, final, awaiting, awaitingLogs, queue, restarts, wasJust, evars >>
 
 Next ==
   \/ \E r \in Replicas, e \in Entries : Forget(r, e)
@@ -261,6 +356,9 @@ Next ==
   \/ \E r \in Replicas, w \in Writes  : Retry(r, w)
   \/ \E r \in Replicas, w \in Writes  : RePushQuarantined(r, w)
   \/ \E r \in Replicas                : Restart(r)
+  \/ \E r \in Replicas, w \in Writes  : LocalWrite(r, w)
+  \/ \E r \in Replicas, w \in Writes  : LocalRefuse(r, w)
+  \/ \E r \in Replicas                : Emit(r)
 
 Init ==
   /\ held = [r \in Replicas |-> {}]
@@ -273,6 +371,9 @@ Init ==
   /\ forgotten = [r \in Replicas |-> {}]
   /\ forgets = 0
   /\ wasJust = [r \in Replicas |-> [w \in Writes |-> TRUE]]
+  /\ queuedRecords = [r \in Replicas |-> {}]
+  /\ records = [r \in Replicas |-> {}]
+  /\ denied = {}
 
 \* Replication eventually delivers every deliverable input and every
 \* composite to every replica; the host eventually drains its queue and,
@@ -288,6 +389,8 @@ Fairness ==
   /\ \A r \in Replicas, w \in Writes  : WF_vars(DeliverWrite(r, w))
   /\ \A r \in Replicas, w \in Writes  : WF_vars(DrainOne(r, w))
   /\ \A r \in Replicas, w \in Writes  : WF_vars(Retry(r, w))
+  /\ \A r \in Replicas, w \in Writes  : WF_vars(LocalWrite(r, w))
+  /\ \A r \in Replicas                : WF_vars(Emit(r))
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -304,6 +407,9 @@ TypeOK ==
   /\ forgotten \in [Replicas -> SUBSET Entries]
   /\ forgets \in 0 .. MaxForgets
   /\ wasJust \in [Replicas -> [Writes -> BOOLEAN]]
+  /\ queuedRecords \in [Replicas -> SUBSET Records]
+  /\ records \in [Replicas -> SUBSET Records]
+  /\ denied \subseteq Writes
 
 \* A reject rests on present bytes, never on absence. No composite outside
 \* Bad is ever quarantined, however little the replica holds.
@@ -359,6 +465,44 @@ INV_NoStuck ==
 \* The defer index respects its capacity.
 INV_IndexBound ==
   \A r \in Replicas : Cardinality(Indexed(r)) <= MaxIndexed
+
+SettledAt(r, w) == final[r][w] # "None"
+
+\* ---- Emission ----
+
+\* A record rests on present bytes, so no record claims what another
+\* replica's verdict denies: "not approved" emitted anywhere while the write
+\* is accepted somewhere is the contradiction EmitOnAbsence produces.
+INV_NoRecordContradictsVerdict ==
+  \A w \in denied, r \in Replicas : final[r][w] # "Accept"
+
+\* A record is written once the fact it rests on is held and the write
+\* that finds it has been judged there: emission is never lost, and a
+\* replica that finds a fact writes it.
+L_FactsWritten ==
+  \A r \in Replicas, w \in Writes : \A f \in Facts[w] :
+    (w \in arrived[r] /\ FactNeeds[f] \subseteq held[r]) ~> f \in records[r]
+
+\* ---- The local write path ----
+
+\* A write this node accepted settles on every replica that receives it: the
+\* local verdict is one a peer can reach. The lever that breaks it is
+\* HideOwnDoc = FALSE, a local judge counting the document the write is
+\* creating, which no peer holds while judging the write.
+L_LocalAcceptSettlesEverywhere ==
+  \A r \in Replicas, w \in Writes :
+    (final[r][w] = "Accept" /\ LocalWrites) ~>
+      \A q \in Replicas : (w \in arrived[q] => SettledAt(q, w))
+
+\* A write every peer would accept is not refused here: what the
+\* transaction wrote before it is in its view. The lever that breaks it is
+\* TxnDocsVisible = FALSE, a local judge reading a fresh snapshot.
+\* Stated as one eventuality over a constant set rather than a quantified
+\* leads-to: TLC's liveness tableau mishandles a leads-to whose antecedent
+\* is constant-valued under \A.
+LocallyAcceptable == { w \in Writes : LocalWrites /\ w \notin Bad /\ Needs[w] \subseteq Batch[w] }
+L_LocalAcceptsWhatPeersWould ==
+  <>(\A w \in LocallyAcceptable : \E r \in Replicas : final[r][w] = "Accept")
 
 \* ---- Action properties ----
 

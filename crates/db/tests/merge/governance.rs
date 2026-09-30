@@ -10,8 +10,8 @@ use cid::Cid;
 use crypto::PrivateKey as _;
 use db::database::{DbOptions, DB};
 use db::merge::governance::{
-    Awaited, FieldValue, MergeCandidate, MergeGovernance, MergeValidator, MergeVerdict, MergeView,
-    RedrivenMerge, RedrivenMergeSink, SignatureStatus,
+    Awaited, DefinitionCandidate, FieldValue, MergeCandidate, MergeGovernance, MergeValidator,
+    MergeVerdict, MergeView, RedrivenMerge, RedrivenMergeSink, SignatureStatus,
 };
 use db::merge::merge_handler::DbMergeHandler;
 use db::write::autocommit::batch::BatchMutator;
@@ -28,7 +28,10 @@ use query::runner::DocFetcher;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
+mod collection_block;
 mod definition;
+mod emission;
+mod local_write;
 mod lookup;
 mod sweep;
 
@@ -205,6 +208,7 @@ impl Node {
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         let handler = Arc::new(DbMergeHandler::new(db.clone(), blockstore.clone()));
         handler.install_local_commit_release();
+        handler.install_local_write_judge();
         let sink = Arc::new(RecordingSink::default());
         handler.set_redriven_merge_sink(sink.clone());
         Self {
@@ -267,15 +271,20 @@ impl Node {
     /// Create a document the way a client mutation does, and return its
     /// composite's CID.
     async fn create_locally(&self, collection: &str, json: &str) -> Cid {
+        self.try_create_locally(collection, json).await.unwrap()
+    }
+
+    /// As `create_locally`, returning the mutation's error when it refuses.
+    async fn try_create_locally(&self, collection: &str, json: &str) -> Result<Cid, String> {
         let txn = self.db.new_txn(false).await.unwrap();
         let mutator =
             BatchMutator::new(self.db.clone(), Arc::new(async_lock::Mutex::new(Some(txn))));
         let created = mutator
             .create(collection, Document::from_json_str(json).unwrap())
             .await
-            .unwrap();
-        mutator.commit().await.unwrap();
-        created.commit_cid.unwrap()
+            .map_err(|error| error.to_string())?;
+        mutator.commit().await.map_err(|error| error.to_string())?;
+        Ok(created.commit_cid.unwrap())
     }
 
     /// A local write releases waiters off the writing task, so the re-driven

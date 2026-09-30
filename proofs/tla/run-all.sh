@@ -162,6 +162,18 @@ RUNS=(
   "MC_GovernanceMerge_Red_NoSweep.cfg         MC_GovernanceMerge_Orphan.tla          RED"   # the tree before sweep.rs: index-only re-drive, in-memory index -> orphan never merges
   "MC_GovernanceMerge_Red_SweepIndexed.cfg    MC_GovernanceMerge_Orphan.tla          RED"   # the refactor to refuse: a sweep over the index never sees an unindexed composite
   "MC_GovernanceMerge_Red_Mutant.cfg          MC_GovernanceMerge_Mutant.tla          RED"   # teeth check: a silent merge must break the refinement
+  "MC_GovernanceContract_Green_Emit.cfg       MC_GovernanceContract_Emit.tla         GREEN" # emission: a reject record and a fork receipt found during a defer are written, no restarts
+  "MC_GovernanceContract_Red_EmitLostOnRestart.cfg MC_GovernanceContract_Emit.tla    RED"   # a fact queued when a restart hits is lost, and a settled write is never re-judged (L_FactsWritten)
+  "MC_GovernanceContract_Red_EmitOnAbsence.cfg MC_GovernanceContract_Emit.tla        RED"   # purity violated, a defer emits "not approved" -> contradicts a peer's accept (INV_NoRecordContradictsVerdict)
+  "MC_GovernanceContract_Green_LocalWrite.cfg MC_GovernanceContract_LocalWrite.tla   GREEN" # the local write path: own document hidden, the transaction's documents visible
+  "MC_GovernanceContract_Red_OwnDocCounted.cfg MC_GovernanceContract_LocalWrite.tla  RED"   # a local judge counting the document the write creates accepts what no peer can (L_LocalAcceptSettlesEverywhere)
+  "MC_GovernanceContract_Red_SnapshotView.cfg MC_GovernanceContract_LocalWrite.tla   RED"   # a local judge reading a fresh snapshot refuses a batch every peer would accept (L_LocalAcceptsWhatPeersWould)
+  "MC_GovernanceMerge_Green_Emit.cfg          MC_GovernanceMerge_Emit.tla            GREEN" # queue then drain at the attempt's return refines the contract's emission, no crashes
+  "MC_GovernanceMerge_Red_DiscardOnError.cfg  MC_GovernanceMerge_Emit.tla            RED"   # the design before review: a failed attempt clears the handler's queue, a concurrent attempt's facts with it
+  "MC_GovernanceMerge_Red_BatchNoDrain.cfg    MC_GovernanceMerge_Emit.tla            RED"   # the batch path judging without draining: its facts are never written
+  "MC_GovernanceHeads_Today.cfg               MC_GovernanceHeads.tla                 GREEN" # a head installs only over accepted composites; a patch waits for its base
+  "MC_GovernanceHeads_Red_SkipBeforeJudge.cfg MC_GovernanceHeads.tla                 RED"   # the downsample-source skip before the verdict marks a governed composite merged unjudged (INV_MergedIsJudged)
+  "MC_GovernanceHeads_Red_OrphanTerminal.cfg  MC_GovernanceHeads.tla                 RED"   # a patch whose base is not held dropped as terminal is never stored (L_DefsStored)
 )
 
 fails=0; n=0
