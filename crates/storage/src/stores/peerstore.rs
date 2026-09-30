@@ -13,7 +13,7 @@ use bytes::Bytes;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use std::future::Future;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 use tracing;
 
 const PUSH_RETRY_TXN_MAX_ATTEMPTS: usize = 4;
@@ -34,17 +34,32 @@ fn legacy_retry_commit_key(peer_id: &str, collection_id: &str, cid: &str) -> Vec
 }
 
 type RetryPeerLock = RwLock<()>;
+type RetryPeerLocks = HopscotchMap<String, Weak<RetryPeerLock>, RandomState>;
 
 fn retry_peer_lock(peer_id: &str) -> Arc<RetryPeerLock> {
-    static LOCKS: OnceLock<HopscotchMap<String, Arc<RetryPeerLock>, RandomState>> = OnceLock::new();
+    static LOCKS: OnceLock<RetryPeerLocks> = OnceLock::new();
     let locks = LOCKS.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()));
+    retry_peer_lock_from(locks, peer_id)
+}
 
-    if let Some(lock) = locks.get(peer_id) {
-        return lock;
+fn retry_peer_lock_from(locks: &RetryPeerLocks, peer_id: &str) -> Arc<RetryPeerLock> {
+    loop {
+        if let Some(lock) = locks.get(peer_id).and_then(|weak| weak.upgrade()) {
+            return lock;
+        }
+        let candidate = Arc::new(RetryPeerLock::new(()));
+        let weak = locks.get_or_insert(peer_id.to_string(), Arc::downgrade(&candidate));
+        if let Some(lock) = weak.upgrade() {
+            return lock;
+        }
+        remove_expired_retry_peer_lock(locks, peer_id);
     }
-    // Retain one lock per distinct peer for the process lifetime. Without
-    // conditional removal, reclaiming a weak entry can remove a live successor.
-    locks.get_or_insert(peer_id.to_string(), Arc::new(RetryPeerLock::new(())))
+}
+
+fn remove_expired_retry_peer_lock(locks: &RetryPeerLocks, peer_id: &str) {
+    // Check the current entry atomically: a stale caller must not remove a
+    // live replacement. A Weak with no strong owners cannot become live again.
+    locks.remove_if(peer_id, |weak| weak.strong_count() == 0);
 }
 
 /// Keeps a retry pass or failure-recording operation coordinated with forget.
