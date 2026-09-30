@@ -4717,6 +4717,7 @@ dependencies = [
  "events",
  "hex",
  "identity 0.5.0",
+ "keyring 0.5.0",
  "kms",
  "kovan-queue",
  "lens",

@@ -204,6 +204,7 @@ fn resolve_embedded_config(
     };
 
     Ok(embedded::EmbeddedNodeConfig {
+        peer_keyring: None,
         persistence,
         transport: embedded::TransportConfig::None,
         signing,

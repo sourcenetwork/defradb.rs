@@ -8,6 +8,7 @@ mod node_p2p;
 mod node_peer_key;
 mod node_recovery;
 mod node_tasks;
+mod peer_keyring;
 
 use std::sync::Arc;
 
@@ -16,10 +17,12 @@ pub use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
 
 #[cfg(feature = "iroh")]
 pub use access_hooks::AccessHooks;
+pub use keyring::Keyring;
 #[cfg(feature = "iroh")]
 pub use node::build_with_store_and_access_hooks;
 pub use node::{build_with_store, EmbeddedNode, NodeBuilder};
 pub use node_tasks::BackgroundTasks;
+pub use peer_keyring::PeerKeyring;
 
 type ReplicatorPushOptionsCallback =
     Arc<dyn Fn(ReplicatorPushOptions) -> Result<(), String> + Send + Sync>;
@@ -141,6 +144,8 @@ pub struct VeraConfig {
 /// Node assembly configuration used by `build_with_store`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EmbeddedNodeConfig {
+    /// Optional application-owned keyring for the transport identity.
+    pub peer_keyring: Option<PeerKeyring>,
     pub persistence: Persistence,
     pub transport: TransportConfig,
     pub signing: SigningConfig,

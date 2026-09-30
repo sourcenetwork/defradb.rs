@@ -26,6 +26,7 @@ defra-p2p-adapter = { workspace = true, default-features = false }
 document = { path = "../document" }
 events = { path = "../events" }
 identity = { path = "../identity" }
+keyring = { path = "../keyring" }
 kms = { path = "../kms" }
 lens = { path = "../lens", default-features = false }
 p2p = { path = "../p2p" }
