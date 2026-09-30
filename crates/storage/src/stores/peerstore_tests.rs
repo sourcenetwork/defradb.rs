@@ -6,6 +6,43 @@ use crate::backends::RegolithStore;
 use crate::corekv::Key;
 use crate::keys::peerstore::ReplicatorKey;
 
+#[test]
+fn retry_peer_lock_survives_the_last_caller() {
+    let lock = retry_peer_lock("retained-retry-lock");
+    let original = Arc::downgrade(&lock);
+    drop(lock);
+    let next = retry_peer_lock("retained-retry-lock");
+    assert!(Arc::ptr_eq(
+        &original.upgrade().expect("stable lock identity"),
+        &next
+    ));
+}
+
+#[test]
+fn concurrent_retry_callers_share_one_lock() {
+    const CALLERS: usize = 16;
+    let barrier = std::sync::Barrier::new(CALLERS);
+    std::thread::scope(|scope| {
+        let callers: Vec<_> = (0..CALLERS)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    retry_peer_lock("concurrent-retry-lock")
+                })
+            })
+            .collect();
+        let locks: Vec<_> = callers
+            .into_iter()
+            .map(|caller| caller.join().unwrap())
+            .collect();
+        assert!(locks.iter().all(|lock| Arc::ptr_eq(lock, &locks[0])));
+    });
+    assert!(!Arc::ptr_eq(
+        &retry_peer_lock("concurrent-retry-lock"),
+        &retry_peer_lock("other-retry-lock")
+    ));
+}
+
 #[tokio::test]
 async fn push_transaction_conflicts_retry_to_success() {
     let attempts = AtomicUsize::new(0);

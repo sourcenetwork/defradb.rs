@@ -13,7 +13,7 @@ use bytes::Bytes;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use std::future::Future;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, OnceLock};
 use tracing;
 
 const PUSH_RETRY_TXN_MAX_ATTEMPTS: usize = 4;
@@ -36,27 +36,15 @@ fn legacy_retry_commit_key(peer_id: &str, collection_id: &str, cid: &str) -> Vec
 type RetryPeerLock = RwLock<()>;
 
 fn retry_peer_lock(peer_id: &str) -> Arc<RetryPeerLock> {
-    static LOCKS: OnceLock<HopscotchMap<String, Weak<RetryPeerLock>, RandomState>> =
-        OnceLock::new();
+    static LOCKS: OnceLock<HopscotchMap<String, Arc<RetryPeerLock>, RandomState>> = OnceLock::new();
     let locks = LOCKS.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()));
 
-    loop {
-        if let Some(lock) = locks.get(peer_id).and_then(|weak| weak.upgrade()) {
-            return lock;
-        }
-        let candidate = Arc::new(RetryPeerLock::new(()));
-        // get_or_insert is the atomic decision point: concurrent callers racing
-        // on an absent key all receive the same freshly inserted Weak.
-        let weak = locks.get_or_insert(peer_id.to_string(), Arc::downgrade(&candidate));
-        if let Some(lock) = weak.upgrade() {
-            return lock;
-        }
-        // vertexia: no table-wide sweep of dead entries for other peers
-        // (HopscotchMap has no retain); each peer's entry self-heals lazily on
-        // its next lookup instead. If per-peer churn grows unbounded, revisit
-        // with a periodic sweep over locks.iter().
-        locks.remove(peer_id);
+    if let Some(lock) = locks.get(peer_id) {
+        return lock;
     }
+    // Retain one lock per distinct peer for the process lifetime. Without
+    // conditional removal, reclaiming a weak entry can remove a live successor.
+    locks.get_or_insert(peer_id.to_string(), Arc::new(RetryPeerLock::new(())))
 }
 
 /// Keeps a retry pass or failure-recording operation coordinated with forget.
