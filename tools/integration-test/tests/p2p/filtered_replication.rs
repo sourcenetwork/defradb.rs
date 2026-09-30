@@ -52,7 +52,10 @@ fn run_replicator_add(
 ) -> std::process::Output {
     let client = cluster.client(node);
     let cols = collections.join(",");
+    let root = tempfile::tempdir().expect("isolated CLI root");
     Command::new(client.binary_path())
+        .arg("--rootdir")
+        .arg(root.path())
         .arg("--url")
         .arg(socket_addr(cluster, node))
         .args([
@@ -101,7 +104,10 @@ fn add_filtered_replicator_with_identity(
 ) {
     let client = cluster.client(node);
     let cols = collections.join(",");
+    let root = tempfile::tempdir().expect("isolated CLI root");
     let output = Command::new(client.binary_path())
+        .arg("--rootdir")
+        .arg(root.path())
         .arg("--url")
         .arg(socket_addr(cluster, node))
         .args([
@@ -133,7 +139,10 @@ fn add_filtered_replicator_with_identity(
 /// so a test can observe error payloads the typed `query()` helper discards.
 fn run_query(cluster: &TestCluster, node: usize, gql: &str) -> std::process::Output {
     let client = cluster.client(node);
+    let root = tempfile::tempdir().expect("isolated CLI root");
     Command::new(client.binary_path())
+        .arg("--rootdir")
+        .arg(root.path())
         .arg("--url")
         .arg(socket_addr(cluster, node))
         .args(["client", "query", gql])
@@ -524,7 +533,10 @@ async fn rust_filtered_replicator_cli_requires_filter_field() {
         .await
         .unwrap();
     let client = cluster.client(0);
+    let root = tempfile::tempdir().expect("isolated CLI root");
     let output = Command::new(client.binary_path())
+        .arg("--rootdir")
+        .arg(root.path())
         .arg("--url")
         .arg(socket_addr(&cluster, 0))
         .args([
@@ -1066,7 +1078,10 @@ fn run_replicator_add_filter(
 ) -> std::process::Output {
     let client = cluster.client(node);
     let cols = collections.join(",");
+    let root = tempfile::tempdir().expect("isolated CLI root");
     Command::new(client.binary_path())
+        .arg("--rootdir")
+        .arg(root.path())
         .arg("--url")
         .arg(socket_addr(cluster, node))
         .args([
@@ -1096,7 +1111,10 @@ fn add_filtered_replicator_json_with_identity(
 ) {
     let client = cluster.client(node);
     let cols = collections.join(",");
+    let root = tempfile::tempdir().expect("isolated CLI root");
     let output = Command::new(client.binary_path())
+        .arg("--rootdir")
+        .arg(root.path())
         .arg("--url")
         .arg(socket_addr(cluster, node))
         .args([
@@ -3436,7 +3454,10 @@ fn run_replicator_add_plain(
 ) -> std::process::Output {
     let client = cluster.client(node);
     let cols = collections.join(",");
+    let root = tempfile::tempdir().expect("isolated CLI root");
     Command::new(client.binary_path())
+        .arg("--rootdir")
+        .arg(root.path())
         .arg("--url")
         .arg(socket_addr(cluster, node))
         .args(["client", "p2p", "replicator", "add", "-c", &cols, addr])
