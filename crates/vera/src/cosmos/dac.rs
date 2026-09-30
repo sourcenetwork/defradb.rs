@@ -64,9 +64,10 @@ impl VeraDocumentACP {
         Ok(self)
     }
 
-    fn invalidate_cached_access(&self, policy_id: &str, resource_name: &str, doc_id: &str) {
+    fn invalidate_cached_access(&self, policy_id: &str) {
         if let Some(cache) = &self.access_cache {
-            cache.invalidate_object(policy_id, resource_name, doc_id);
+            // Other objects can inherit access through this object's relationships.
+            cache.invalidate_policy(policy_id);
         }
     }
 
@@ -155,7 +156,9 @@ impl DocumentACP for VeraDocumentACP {
         self.provider
             .register_object(&bearer_token, policy_id, resource_name, doc_id)
             .await
-            .map_err(provider_err)
+            .map_err(provider_err)?;
+        self.invalidate_cached_access(policy_id);
+        Ok(())
     }
 
     async fn is_doc_registered(
@@ -306,7 +309,7 @@ impl DocumentACP for VeraDocumentACP {
             .await
             .map_err(provider_err)?;
 
-        self.invalidate_cached_access(policy_id, resource_name, doc_id);
+        self.invalidate_cached_access(policy_id);
 
         Ok(result)
     }
@@ -336,7 +339,7 @@ impl DocumentACP for VeraDocumentACP {
             .await
             .map_err(provider_err)?;
 
-        self.invalidate_cached_access(policy_id, resource_name, doc_id);
+        self.invalidate_cached_access(policy_id);
 
         Ok(result)
     }
@@ -382,7 +385,7 @@ impl DocumentACP for VeraDocumentACP {
                     )
                     .await
                     .map_err(provider_err)?;
-                self.invalidate_cached_access(policy_id, resource_name, doc_id);
+                self.invalidate_cached_access(policy_id);
                 Ok(result)
             }
             other => Err(acp::Error::UnsupportedSubject(other.to_string())),
@@ -430,7 +433,7 @@ impl DocumentACP for VeraDocumentACP {
                     )
                     .await
                     .map_err(provider_err)?;
-                self.invalidate_cached_access(policy_id, resource_name, doc_id);
+                self.invalidate_cached_access(policy_id);
                 Ok(result)
             }
             other => Err(acp::Error::UnsupportedSubject(other.to_string())),
@@ -464,7 +467,7 @@ impl DocumentACP for VeraDocumentACP {
             .await
             .map_err(provider_err)?;
 
-        self.invalidate_cached_access(policy_id, resource_name, doc_id);
+        self.invalidate_cached_access(policy_id);
 
         Ok(())
     }

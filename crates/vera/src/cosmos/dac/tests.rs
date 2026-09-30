@@ -5,6 +5,8 @@ use kovan_queue::seg_queue::SegQueue;
 
 use super::*;
 
+mod cache_mutations;
+
 /// Which relationship-emitting provider method a routing test drove, plus
 /// the structured-subject codec tuple for the EntitySet path. Each field
 /// stands alone: tests only ever read one after its own call completes, so
@@ -73,7 +75,7 @@ impl VeraProvider for MockProvider {
         _resource: &str,
         _object_id: &str,
     ) -> std::result::Result<(), ProviderError> {
-        unreachable!("register_object is not used in this test")
+        Ok(())
     }
 
     async fn archive_object(
@@ -83,7 +85,7 @@ impl VeraProvider for MockProvider {
         _resource: &str,
         _object_id: &str,
     ) -> std::result::Result<(), ProviderError> {
-        unreachable!("archive_object is not used in this test")
+        Ok(())
     }
 
     async fn set_relationship(
