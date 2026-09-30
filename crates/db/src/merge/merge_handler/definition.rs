@@ -43,6 +43,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         (name, col_id, fields, Some(prev))
                     }
                     None => {
+                        if block.heads.as_ref().is_some_and(|heads| !heads.is_empty()) {
+                            return Ok(MergeOutcome::retryable_skip(
+                                "collection predecessor definition is not yet available",
+                            ));
+                        }
                         tracing::debug!(cid = %cid, "CollectionDefinition has no name and no resolvable previous version - skipping");
                         return Ok(MergeOutcome::terminal_skip(
                             "collection definition has no name and no previous version",
