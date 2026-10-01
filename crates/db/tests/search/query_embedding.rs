@@ -41,6 +41,31 @@ async fn fixture() -> (
 }
 
 #[tokio::test]
+async fn unresponsive_embedding_provider_times_out() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config = EmbeddingClientConfig::new()
+        .with_url(format!("http://{}", listener.local_addr().unwrap()))
+        .with_model("model");
+    let request = tokio::spawn(async move { embed_text(&config, "question", None).await });
+    let (mut connection, _) = listener.accept().await.unwrap();
+    let mut bytes = [0; 4096];
+    assert!(
+        tokio::io::AsyncReadExt::read(&mut connection, &mut bytes)
+            .await
+            .unwrap()
+            > 0
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(31)).await;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), request)
+        .await
+        .expect("the request deadline must expire without a response")
+        .unwrap();
+    assert!(result.is_err(), "an unresponsive provider must not succeed");
+}
+
+#[tokio::test]
 async fn query_embeddings_share_document_provider_contracts() {
     let (url, mut requests, server) = fixture().await;
     let config = EmbeddingClientConfig::new()
@@ -127,13 +152,16 @@ async fn hybrid_search_selects_endpoint_without_forwarding_node_credentials() {
     }
     assert_eq!(config.api_key, "node-secret");
     let same_endpoint = config.clone().with_url(&url);
-    let request = DenseHybridSearchRequest::new("Docs", "question", "vector", ["text"]);
-    db::hybrid_search_dense(&runner, &same_endpoint, &request)
-        .await
-        .unwrap();
-    let (headers, body) = requests.try_recv().unwrap();
-    assert_eq!(headers["authorization"], "Bearer node-secret");
-    assert_eq!(body, json!({"input": "question", "model": "node-model"}));
+    for override_url in [None, Some(url.clone()), Some(format!("  {url}//  "))] {
+        let mut request = DenseHybridSearchRequest::new("Docs", "question", "vector", ["text"]);
+        request.embedding_url = override_url;
+        db::hybrid_search_dense(&runner, &same_endpoint, &request)
+            .await
+            .unwrap();
+        let (headers, body) = requests.try_recv().unwrap();
+        assert_eq!(headers["authorization"], "Bearer node-secret");
+        assert_eq!(body, json!({"input": "question", "model": "node-model"}));
+    }
     server.abort();
 }
 

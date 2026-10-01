@@ -229,6 +229,10 @@ async fn call_embedding(
     };
 
     let mut request = embedding_client().post(&endpoint);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        request = request.timeout(std::time::Duration::from_secs(30));
+    }
     if provider == "openai" && !api_key.is_empty() {
         request = request.bearer_auth(api_key);
     }
@@ -288,29 +292,4 @@ pub fn parse_embedding_vector(embedding: &[serde_json::Value]) -> Result<Vec<f64
                 .ok_or_else(|| format!("embedding value at index {} is not numeric", index))
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalized_embedding_url;
-
-    #[test]
-    fn trailing_slashes_and_whitespace_are_one_endpoint() {
-        assert_eq!(
-            normalized_embedding_url("https://host/api/"),
-            "https://host/api"
-        );
-        assert_eq!(
-            normalized_embedding_url(" https://host/api "),
-            "https://host/api"
-        );
-        assert_eq!(
-            normalized_embedding_url("https://host/api//"),
-            normalized_embedding_url("https://host/api")
-        );
-        assert_ne!(
-            normalized_embedding_url("https://host/api"),
-            normalized_embedding_url("https://other.host/api")
-        );
-    }
 }
