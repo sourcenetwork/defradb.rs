@@ -90,8 +90,8 @@ impl AccessCache {
 
     /// Invalidate ALL cached decisions for a specific document.
     ///
-    /// Called on document registration and archival mutations. Invalidates all
-    /// actors and permissions for the affected document.
+    /// Used for remote registration, archive, and unarchive events. Local
+    /// mutations invalidate the whole policy to include inherited grants.
     pub(crate) fn invalidate_object(&self, policy_id: &str, resource: &str, doc_id: &str) -> usize {
         let stale: Vec<CacheKey> = self
             .entries
