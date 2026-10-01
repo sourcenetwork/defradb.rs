@@ -23,24 +23,39 @@ pub(crate) async fn load_with_keyring<S: storage::corekv::Store>(
     let Some(keyring) = keyring else {
         return load_or_create(peerstore, legacy_iroh_key).await;
     };
-    if peerstore.get_local_peer_key().await?.is_some()
-        || legacy_iroh_seed(legacy_iroh_key).await?.is_some()
-        || peerstore
-            .get_replicator(LEGACY_LIBP2P_KEY_ID)
-            .await?
-            .is_some()
+    if peerstore.get_local_peer_key().await?.is_some() {
+        return Err(anyhow!(
+            "plaintext peerstore /p2p/local-peer-key requires explicit keyring migration"
+        ));
+    }
+    if legacy_iroh_seed(legacy_iroh_key).await?.is_some() {
+        return Err(anyhow!(
+            "plaintext iroh key file '{}' requires explicit keyring migration",
+            legacy_iroh_key.expect("existing key file").display()
+        ));
+    }
+    if peerstore
+        .get_replicator(LEGACY_LIBP2P_KEY_ID)
+        .await?
+        .is_some()
     {
         return Err(anyhow!(
-            "existing plaintext peer identity requires explicit keyring migration"
+            "plaintext peerstore {LEGACY_LIBP2P_KEY_ID} requires explicit keyring migration"
         ));
     }
 
-    use crypto::Key;
+    let expected = peerstore.get_local_peer_keyring_identity().await?;
+    use crypto::{Key, PrivateKey};
     let key = match keyring.0.get(keyring::PEER_KEY) {
         Ok(bytes) => {
             crypto::Ed25519PrivateKey::from_bytes(&bytes).context("keyring peer key is corrupt")?
         }
         Err(keyring::Error::NotFound(_)) => {
+            if expected.is_some() {
+                return Err(anyhow!(
+                    "peer key is missing from the configured keyring; restore the original keyring"
+                ));
+            }
             let key = crypto::generate_ed25519().context("failed to generate peer key")?;
             keyring
                 .0
@@ -50,6 +65,20 @@ pub(crate) async fn load_with_keyring<S: storage::corekv::Store>(
         }
         Err(error) => return Err(error).context("failed to read peer key from keyring"),
     };
+    let public_key = key.public_key();
+    match expected {
+        Some(expected) if expected.as_ref() != public_key.raw() => {
+            return Err(anyhow!(
+                "keyring peer identity does not match this database"
+            ));
+        }
+        None => {
+            peerstore
+                .set_local_peer_keyring_identity(public_key.raw())
+                .await?
+        }
+        Some(_) => {}
+    }
     seed_from_slice(&key.raw()[..32])
 }
 
@@ -67,6 +96,11 @@ pub(crate) async fn load_or_create<S: storage::corekv::Store>(
     peerstore: &Peerstore<S>,
     legacy_iroh_key: Option<&Path>,
 ) -> Result<Seed> {
+    if peerstore.get_local_peer_keyring_identity().await?.is_some() {
+        return Err(anyhow!(
+            "this database requires its application-owned peer keyring"
+        ));
+    }
     if let Some(bytes) = peerstore
         .get_local_peer_key()
         .await

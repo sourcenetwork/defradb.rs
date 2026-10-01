@@ -426,7 +426,7 @@ enum ShutdownKind {
     Libp2p {
         handle: Box<p2p::P2PHostHandle>,
         coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: SegQueue<tokio::task::JoinHandle<()>>,
+        tasks: Box<SegQueue<tokio::task::JoinHandle<()>>>,
     },
     #[cfg(feature = "iroh")]
     Iroh(defra_p2p_adapter::IrohPeerShutdown),
@@ -447,7 +447,7 @@ impl ShutdownHandle {
             inner: ShutdownKind::Libp2p {
                 handle: Box::new(handle),
                 coordinator,
-                tasks: pending,
+                tasks: Box::new(pending),
             },
         }
     }

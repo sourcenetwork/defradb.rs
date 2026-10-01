@@ -235,10 +235,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             // carrier's collection id honoured, a sender would pick the validator.
             if metadata.collection_id.is_some()
                 && self.is_governed(collection.schema())
-                && !self
+                && self
                     .block_collection(&payload.schema_version_id, None)
                     .await?
-                    .is_some_and(|own| own.collection_id() == collection.collection_id())
+                    .is_none_or(|own| own.collection_id() != collection.collection_id())
             {
                 return Ok(CompositeMergePreparation::Complete(
                     MergeOutcome::retryable_skip(format!(

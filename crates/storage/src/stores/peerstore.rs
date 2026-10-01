@@ -271,6 +271,20 @@ impl<S: Store> Peerstore<S> {
         txn.get(b"/p2p/local-peer-key").await
     }
 
+    /// Public identity bound to an application-owned peer keyring.
+    pub async fn get_local_peer_keyring_identity(&self) -> Result<Option<Bytes>> {
+        let txn = self.store.new_txn(true).await?;
+        txn.get(b"/p2p/local-peer-keyring-identity").await
+    }
+
+    /// Record keyring mode without storing any private key material.
+    pub async fn set_local_peer_keyring_identity(&self, public_key: &[u8]) -> Result<()> {
+        let mut txn = self.store.new_txn(false).await?;
+        txn.set(b"/p2p/local-peer-keyring-identity", public_key)
+            .await?;
+        txn.commit().await
+    }
+
     /// Store P2P collection subscriptions (persists across restarts).
     pub async fn set_p2p_collections(&self, data: &[u8]) -> Result<()> {
         let mut txn = self.store.new_txn(false).await?;

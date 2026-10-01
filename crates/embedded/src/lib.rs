@@ -17,12 +17,14 @@ pub use defra_p2p_adapter::{ReplicatorPushOptions, ReplicatorPushOptionsState};
 
 #[cfg(feature = "iroh")]
 pub use access_hooks::AccessHooks;
+pub use keyring;
 pub use keyring::Keyring;
 #[cfg(feature = "iroh")]
 pub use node::build_with_store_and_access_hooks;
 pub use node::{build_with_store, EmbeddedNode, NodeBuilder};
 pub use node_tasks::BackgroundTasks;
 pub use peer_keyring::PeerKeyring;
+pub use zeroize::Zeroizing;
 
 type ReplicatorPushOptionsCallback =
     Arc<dyn Fn(ReplicatorPushOptions) -> Result<(), String> + Send + Sync>;

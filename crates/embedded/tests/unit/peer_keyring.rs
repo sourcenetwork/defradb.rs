@@ -3,6 +3,49 @@ use std::sync::Arc;
 use super::*;
 use keyring::Keyring;
 
+#[tokio::test]
+async fn keyring_marker_rejects_missing_and_replaced_backends() {
+    use crypto::Key;
+
+    let peerstore = store();
+    let dir = tempfile::tempdir().unwrap();
+    let backend = Arc::new(keyring::FileKeyring::open(dir.path(), b"password").unwrap());
+    let keyring = crate::PeerKeyring::new(backend.clone());
+    let seed = load_with_keyring(&peerstore, None, Some(&keyring))
+        .await
+        .unwrap();
+    assert!(load_with_keyring(&peerstore, None, None)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("requires its application-owned peer keyring"));
+    assert!(peerstore.get_local_peer_key().await.unwrap().is_none());
+    let original = backend.get(keyring::PEER_KEY).unwrap();
+    backend.delete(keyring::PEER_KEY).unwrap();
+    assert!(load_with_keyring(&peerstore, None, Some(&keyring))
+        .await
+        .is_err());
+    assert!(matches!(
+        backend.get(keyring::PEER_KEY),
+        Err(keyring::Error::NotFound(_))
+    ));
+    backend
+        .set(keyring::PEER_KEY, crypto::generate_ed25519().unwrap().raw())
+        .unwrap();
+    assert!(load_with_keyring(&peerstore, None, Some(&keyring))
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("does not match"));
+    backend.set(keyring::PEER_KEY, &original).unwrap();
+    assert_eq!(
+        *load_with_keyring(&peerstore, None, Some(&keyring))
+            .await
+            .unwrap(),
+        *seed
+    );
+}
+
 fn store() -> Peerstore<storage::RegolithStore> {
     Peerstore::new(Arc::new(storage::RegolithStore::in_memory().unwrap()))
 }
