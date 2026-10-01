@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use storage::corekv::IterOptions;
 
-#[path = "history_cleanup.rs"]
-mod cleanup;
+#[path = "history_registry.rs"]
+mod registry;
 
 const ROOTS_KEY: &[u8] = b"/merge-history/v1/roots";
 const MAX_ROOTS: u64 = 64;
+const MAX_ROOTS_PER_PEER: usize = 16;
 // Operators can increase the durable per-root admission quota without changing history validity.
 fn max_nodes() -> u64 {
     std::env::var("DEFRA_MERGE_HISTORY_MAX_NODES")
@@ -35,6 +36,8 @@ struct Progress {
     context: [u8; 32],
     #[serde(default)]
     last_active_unix: u64,
+    #[serde(default)]
+    sender_peer: Option<String>,
 }
 
 fn now_unix() -> u64 {
@@ -231,7 +234,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             None => {
                 let roots = read::<u64>(&store, ROOTS_KEY).await?.unwrap_or(0);
                 if roots >= MAX_ROOTS {
-                    if cleanup::reclaim_idle(&store, budget).await? {
+                    if registry::reclaim_idle(&store, budget).await? {
                         drop(store);
                         txn.force_commit().await?;
                         return Ok(MergeOutcome::Yielded);
@@ -239,6 +242,35 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     return Ok(MergeOutcome::retryable_skip(
                         "history admission quota reached",
                     ));
+                }
+                if let Some(sender) = metadata.sender_peer {
+                    if !registry::sender_has_capacity(&store, sender).await? {
+                        return Ok(MergeOutcome::retryable_skip(
+                            "history admission quota reached for sender",
+                        ));
+                    }
+                }
+                // Carrier identity is only an admission precheck. The walk still
+                // derives and verifies the document identity before applying frames.
+                if let Some(doc) = metadata.doc_id {
+                    match self
+                        .prepare_composite_merge(
+                            root,
+                            root_block,
+                            root_payload,
+                            metadata,
+                            doc,
+                            CompositeMergeMode::Batch,
+                        )
+                        .await?
+                    {
+                        CompositeMergePreparation::Ready(_) => {}
+                        CompositeMergePreparation::Complete(outcome) => return Ok(outcome),
+                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
+                            self.index_deferred(root, doc, metadata, awaiting);
+                            return Ok(outcome);
+                        }
+                    }
                 }
                 write(&store, ROOTS_KEY, &(roots + 1)).await?;
                 write(
@@ -258,6 +290,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     nodes: 1,
                     context,
                     last_active_unix: now_unix(),
+                    sender_peer: metadata.sender_peer.map(str::to_owned),
                     ..Progress::default()
                 }
             }
@@ -369,16 +402,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     {
                         CompositeMergePreparation::Ready(_) => {}
                         CompositeMergePreparation::Complete(outcome) => {
-                            if outcome.is_rejected() || outcome.is_terminal_skip() {
-                                progress.outcome = Completion::from_outcome(outcome);
-                            } else {
-                                waiting = Some(outcome);
-                            }
+                            progress.outcome = Some(
+                                Completion::from_outcome(outcome).unwrap_or(Completion::Restart),
+                            );
                             break;
                         }
                         CompositeMergePreparation::Deferred { outcome, awaiting } => {
                             self.index_deferred(root, doc, metadata, awaiting);
-                            waiting = Some(outcome);
+                            progress.outcome = Some(Completion::Restart);
+                            tracing::debug!(?outcome, %root, "Releasing unready history admission");
                             break;
                         }
                     }
