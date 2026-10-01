@@ -37,6 +37,7 @@ pub struct FieldStats {
 pub struct CollectionStats {
     pub names: Vec<String>,
     pub datastore: ByteCounts,
+    pub datastore_by_kind: BTreeMap<String, ByteCounts>,
     pub blocks: ByteCounts,
     pub fields: BTreeMap<String, FieldStats>,
 }
@@ -109,6 +110,18 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
     let mut document_versions: BTreeMap<(String, String), BTreeMap<String, u64>> = BTreeMap::new();
     let mut iter = reader.iterator(IterOptions::new()).await?;
     while let Some(pair) = iter.next().await? {
+        if report.total.keys > 0 && report.total.keys % 1024 == 0 {
+            let mut yielded = false;
+            futures::future::poll_fn(|cx| {
+                if std::mem::replace(&mut yielded, true) {
+                    std::task::Poll::Ready(())
+                } else {
+                    cx.waker().wake_by_ref();
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+        }
         report.total.record(&pair.key, &pair.value);
         let namespace = match pair.key.first() {
             Some(b'd') => "datastore",
@@ -126,19 +139,22 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
             .or_default()
             .record(&pair.key, &pair.value);
         if let Some(key) = pair.key.strip_prefix(b"d") {
-            let collection = text_collection(key)
-                .filter(|id| report.collections.contains_key(*id))
-                .or_else(|| {
-                    datastore_collection(key, &layouts)
-                        .and_then(|id| short_ids.get(&id))
-                        .map(String::as_str)
-                });
+            let collection = match text_collection(key) {
+                Some(id) if report.collections.contains_key(id) => Some(id),
+                // Unknown textual IDs must not be decoded as short IDs 100 or 118.
+                Some(id) if id.parse::<cid::Cid>().is_ok() => None,
+                _ => datastore_collection(key, &layouts)
+                    .and_then(|id| short_ids.get(&id))
+                    .map(String::as_str),
+            };
             if let Some(id) = collection {
-                report
-                    .collections
-                    .get_mut(id)
-                    .expect("loaded collection")
-                    .datastore
+                let kind = datastore_kind(key, id, &layouts);
+                let collection = report.collections.get_mut(id).expect("loaded collection");
+                collection.datastore.record(&pair.key, &pair.value);
+                collection
+                    .datastore_by_kind
+                    .entry(kind.into())
+                    .or_default()
                     .record(&pair.key, &pair.value);
             } else {
                 report.unattributed_datastore.record(&pair.key, &pair.value);
@@ -213,16 +229,6 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
                 report.unattributed_blocks.record(&pair.key, &pair.value);
             }
         }
-        if report.total.keys % 1024 == 0 {
-            // A one-shot waker yield rather than tokio::task::yield_now: the
-            // wasm client builds this crate without the native feature, which
-            // is the only thing that links tokio in.
-            futures::future::poll_fn(|cx| {
-                cx.waker().wake_by_ref();
-                std::task::Poll::<()>::Pending
-            })
-            .await;
-        }
     }
     iter.close().await?;
     for ((collection, field), counts) in document_versions {
@@ -248,6 +254,56 @@ fn text_collection(key: &[u8]) -> Option<&str> {
         .or_else(|| key.strip_prefix(b"/del/"))?;
     let end = key.iter().position(|byte| *byte == b'/')?;
     std::str::from_utf8(&key[..end]).ok()
+}
+
+fn datastore_kind(
+    key: &[u8],
+    collection: &str,
+    layouts: &BTreeMap<u32, Vec<schema::IndexDescription>>,
+) -> &'static str {
+    if text_collection(key) == Some(collection) {
+        return if key.starts_with(b"/d/") {
+            "documents"
+        } else if key.starts_with(b"/v/") {
+            "versions"
+        } else if key.starts_with(b"/se/") {
+            "searchable_encryption"
+        } else {
+            "deletion_markers"
+        };
+    }
+    if key.starts_with(b"/collection/vi/") {
+        return "indexes";
+    }
+    let Some(key) = key.strip_prefix(b"/") else {
+        return "other";
+    };
+    if vector_collection(key, layouts).is_some() {
+        return "indexes";
+    }
+    let Ok((rest, id)) = decode_uvarint_ascending(key) else {
+        return "other";
+    };
+    let Some(rest) = rest.strip_prefix(b"/") else {
+        return "other";
+    };
+    if u32::try_from(id)
+        .ok()
+        .is_some_and(|id| ordered_index_prefix(rest, id, layouts))
+    {
+        return "indexes";
+    }
+    if rest.starts_with(b"v/") {
+        "document_values"
+    } else if rest.starts_with(b"p/") {
+        "priorities"
+    } else if rest.starts_with(b"d/") {
+        "deletion_markers"
+    } else if rest.starts_with(b"pk/") {
+        "indexes"
+    } else {
+        "other"
+    }
 }
 
 fn datastore_collection(

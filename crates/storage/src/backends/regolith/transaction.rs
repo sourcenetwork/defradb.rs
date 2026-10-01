@@ -49,6 +49,9 @@ impl RegolithTxn {
             stats: TransactionStatsHandle::for_backend("regolith"),
             callbacks: CallbackManager::default(),
             readonly: true,
+            head_cache: SharedHeadCache::default(),
+            head_snapshot: None,
+            head_changes: HeadChanges::default(),
         })
     }
 

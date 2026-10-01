@@ -13,6 +13,10 @@ use storage::{
 async fn live_scan_accounts_for_every_byte_without_exposing_values() {
     let db = crate::common::fixture::fixture_with_docs(3).await;
     let stats = db.storage_stats(true).await.unwrap();
+    assert!(stats.block_kinds["lww"].keys > 0);
+    assert_eq!(stats.block_kinds["composite"].keys, 3);
+    assert!(stats.block_kinds["field_definition"].keys > 0);
+    assert_eq!(stats.block_kinds["collection_definition"].keys, 1);
     let txn = db.store().new_txn(true).await.unwrap();
     let mut iter = txn.iterator(IterOptions::new()).await.unwrap();
     let mut counts = (0, 0, 0);
@@ -41,6 +45,14 @@ async fn live_scan_accounts_for_every_byte_without_exposing_values() {
         .find(|col| col.names == ["Users"])
         .unwrap();
     assert!(collection.datastore.keys > 0);
+    assert_eq!(
+        collection
+            .datastore_by_kind
+            .values()
+            .map(|counts| counts.keys)
+            .sum::<u64>(),
+        collection.datastore.keys
+    );
     assert!(collection.blocks.keys > 0);
     let field = &collection.fields["name"];
     assert_eq!(field.documents, Some(3));
@@ -49,6 +61,43 @@ async fn live_scan_accounts_for_every_byte_without_exposing_values() {
     for value in ["user-0", "user-1", "user-2"] {
         assert!(!json.contains(value));
     }
+}
+
+#[tokio::test]
+async fn signed_branchable_documents_classify_collection_and_signature_blocks() {
+    use crypto::{Key, PrivateKey};
+    use defra_core::signing::{set_signing_config, SigningConfig, SigningKeyType};
+
+    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    db.create_collection(crate::common::schema::test_schema().as_branchable())
+        .await
+        .unwrap();
+    let key = crypto::generate_ed25519().unwrap();
+    let public_key = key.public_key();
+    set_signing_config(Some(SigningConfig {
+        key_type: SigningKeyType::Ed25519,
+        private_key_bytes: key.raw_owned(),
+        public_key_bytes: public_key.raw_owned(),
+        public_key_hex: hex::encode(public_key.raw()),
+        remote_signer: None,
+        signing_authorization: None,
+    }));
+    let created = db::AutoCommitMutator::new(db.clone())
+        .create(
+            "Users",
+            Document::from_json_str(r#"{"name":"private name"}"#).unwrap(),
+        )
+        .await;
+    set_signing_config(None);
+    created.unwrap();
+
+    let stats = db.storage_stats(false).await.unwrap();
+    assert_eq!(stats.block_kinds["collection"].keys, 1);
+    assert_eq!(stats.block_kinds["composite"].keys, 1);
+    assert!(stats.block_kinds["signature"].keys > 0);
+    let json = serde_json::to_string(&stats).unwrap();
+    assert!(!json.contains("private name"));
+    assert!(!json.contains(&hex::encode(public_key.raw())));
 }
 
 async fn stats_schema(txn: &mut dyn Txn, short_id: u32, indexes: Vec<schema::IndexDescription>) {
@@ -175,6 +224,10 @@ async fn vector_and_ordinary_keys_with_overlapping_encodings_are_attributed() {
     let txn = store.new_txn(true).await.unwrap();
     let stats = storage_stats::collect(txn.as_ref(), false).await.unwrap();
     assert_eq!(stats.collections["col-1"].datastore, first);
+    assert_eq!(
+        stats.collections["col-1"].datastore_by_kind["indexes"],
+        first
+    );
     assert_eq!(stats.collections["col-137"].datastore, second);
     assert_eq!(stats.unattributed_datastore, ambiguous);
     assert!(!serde_json::to_string(&stats).unwrap().contains("private"));
@@ -331,6 +384,67 @@ async fn unknown_keys_remain_in_the_totals() {
     assert!(!serde_json::to_string(&stats)
         .unwrap()
         .contains("private data"));
+}
+
+#[tokio::test]
+async fn scan_completes_after_multiple_cooperative_yields() {
+    let store = RegolithStore::in_memory().unwrap();
+    let mut txn = store.new_txn(false).await.unwrap();
+    for n in 0..2200 {
+        // Invalid block keys take the early-continue path through the scan.
+        txn.set(format!("b/unknown/{n}").as_bytes(), b"value")
+            .await
+            .unwrap();
+        txn.set(format!("x/{n}").as_bytes(), b"value")
+            .await
+            .unwrap();
+    }
+    txn.commit().await.unwrap();
+    let txn = store.new_txn(true).await.unwrap();
+    let stats = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        storage_stats::collect(txn.as_ref(), false),
+    )
+    .await
+    .expect("scan must resume after yielding")
+    .unwrap();
+    assert_eq!(stats.total.keys, 4400);
+    assert_eq!(stats.unattributed_blocks.keys, 2200);
+}
+
+#[tokio::test]
+async fn orphaned_text_ids_do_not_alias_loaded_short_ids() {
+    use storage::keys::{DataStoreKey, InstanceType};
+
+    let store = RegolithStore::in_memory().unwrap();
+    let mut txn = store.new_txn(false).await.unwrap();
+    stats_schema(txn.as_mut(), 100, vec![]).await;
+    stats_schema(txn.as_mut(), 118, vec![]).await;
+    let cid = defra_core::block::generate_cid_from_bytes(b"unloaded collection").unwrap();
+    let orphaned = stats_entries(
+        txn.as_mut(),
+        vec![
+            format!("/d/{cid}/doc").into_bytes(),
+            format!("/v/{cid}/doc").into_bytes(),
+        ],
+    )
+    .await;
+    let body = stats_entries(
+        txn.as_mut(),
+        vec![DataStoreKey::new(100, InstanceType::Value, 1, "2").bytes()],
+    )
+    .await;
+    let version = stats_entries(
+        txn.as_mut(),
+        vec![DataStoreKey::version_key(118, InstanceType::Value, 1).bytes()],
+    )
+    .await;
+    txn.commit().await.unwrap();
+    let txn = store.new_txn(true).await.unwrap();
+    let stats = storage_stats::collect(txn.as_ref(), false).await.unwrap();
+    assert_eq!(stats.unattributed_datastore, orphaned);
+    assert_eq!(stats.collections["col-100"].datastore, body);
+    assert_eq!(stats.collections["col-118"].datastore, version);
 }
 
 #[tokio::test]
