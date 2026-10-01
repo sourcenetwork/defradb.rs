@@ -46,6 +46,7 @@ fn cache_lifetime_starts_before_the_check_completes() {
         entry: Arc::new(CachedDecision {
             allowed: OnceLock::new(),
             cached_at: Instant::now() - Duration::from_secs(61),
+            pending: AtomicUsize::new(1),
         }),
         cache: &cache,
         key: cache_key("alice", "policy", "files", "doc", "read"),
@@ -74,4 +75,56 @@ fn failed_and_cancelled_checks_leave_no_entries() {
     assert_eq!(cache.entries.len(), 1);
     drop(pending);
     assert_eq!(cache.entries.len(), 0);
+}
+
+#[test]
+fn concurrent_checks_share_the_reservation_and_keep_the_first_result() {
+    let cache = AccessCache::new(Duration::from_secs(60));
+    let first = cache.begin_check("alice", "policy", "files", "doc", "read");
+    let second = cache.begin_check("alice", "policy", "files", "doc", "read");
+    assert!(Arc::ptr_eq(&first.entry, &second.entry));
+    first.complete(true);
+    assert_eq!(
+        cache.get("alice", "policy", "files", "doc", "read"),
+        Some(true)
+    );
+    drop(second);
+    assert_eq!(
+        cache.get("alice", "policy", "files", "doc", "read"),
+        Some(true)
+    );
+}
+
+#[test]
+fn cancellation_keeps_other_pending_checks_and_removes_only_the_last() {
+    let cache = AccessCache::new(Duration::from_secs(60));
+    let first = cache.begin_check("alice", "policy", "files", "doc", "read");
+    let second = cache.begin_check("alice", "policy", "files", "doc", "read");
+    drop(first);
+    assert_eq!(cache.entries.len(), 1);
+    second.complete(true);
+    assert_eq!(
+        cache.get("alice", "policy", "files", "doc", "read"),
+        Some(true)
+    );
+    cache.clear();
+    let first = cache.begin_check("alice", "policy", "files", "doc", "read");
+    let second = cache.begin_check("alice", "policy", "files", "doc", "read");
+    drop(first);
+    drop(second);
+    assert_eq!(cache.entries.len(), 0);
+}
+
+#[test]
+fn cancelled_old_check_cannot_remove_a_replacement() {
+    let cache = AccessCache::new(Duration::from_secs(60));
+    let old = cache.begin_check("alice", "policy", "files", "doc", "read");
+    cache.invalidate_policy("policy");
+    let current = cache.begin_check("alice", "policy", "files", "doc", "read");
+    drop(old);
+    current.complete(true);
+    assert_eq!(
+        cache.get("alice", "policy", "files", "doc", "read"),
+        Some(true)
+    );
 }

@@ -1,5 +1,6 @@
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,10 @@ struct CacheKey {
 struct CachedDecision {
     allowed: OnceLock<bool>,
     cached_at: Instant,
+    pending: AtomicUsize,
 }
+
+const RETIRED: usize = usize::MAX;
 
 pub(crate) struct PendingDecision<'a> {
     entry: Arc<CachedDecision>,
@@ -32,10 +36,21 @@ impl PendingDecision<'_> {
 
 impl Drop for PendingDecision<'_> {
     fn drop(&mut self) {
-        if self.entry.allowed.get().is_none() {
-            // Failed or cancelled checks must not leave entries behind. A
-            // concurrent replacement may also be evicted, which is a safe miss.
-            self.cache.entries.force_remove(&self.key);
+        let previous = self
+            .entry
+            .pending
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                Some(if count == 1 && self.entry.allowed.get().is_none() {
+                    RETIRED
+                } else {
+                    count - 1
+                })
+            })
+            .expect("pending decision owns a reservation");
+        if previous == 1 && self.entry.allowed.get().is_none() {
+            self.cache
+                .entries
+                .remove_if(&self.key, |entry| Arc::ptr_eq(entry, &self.entry));
         }
     }
 }
@@ -101,11 +116,36 @@ impl AccessCache {
         permission: &str,
     ) -> PendingDecision<'_> {
         let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
-        let entry = Arc::new(CachedDecision {
-            allowed: OnceLock::new(),
-            cached_at: Instant::now(),
-        });
-        self.entries.insert(key.clone(), Arc::clone(&entry));
+        let entry = loop {
+            let fresh = Arc::new(CachedDecision {
+                allowed: OnceLock::new(),
+                cached_at: Instant::now(),
+                pending: AtomicUsize::new(0),
+            });
+            let entry = if self.ttl.is_zero() {
+                fresh
+            } else {
+                self.entries.get_or_insert(key.clone(), fresh)
+            };
+            if !self.ttl.is_zero() && entry.cached_at.elapsed() >= self.ttl {
+                self.entries
+                    .remove_if(&key, |current| Arc::ptr_eq(current, &entry));
+                continue;
+            }
+            // Last-caller cleanup retires an empty entry before removing it.
+            // A racing check must reserve a new entry rather than revive it.
+            if entry
+                .pending
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    count.checked_add(1).filter(|next| *next != RETIRED)
+                })
+                .is_ok()
+            {
+                break entry;
+            }
+            self.entries
+                .remove_if(&key, |current| Arc::ptr_eq(current, &entry));
+        };
         PendingDecision {
             entry,
             cache: self,
