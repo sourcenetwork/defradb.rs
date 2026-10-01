@@ -12,6 +12,18 @@ fn now() -> u64 {
 }
 
 #[test]
+fn clock_rollback_does_not_extend_receiver_backpressure() {
+    let mut recorded = RetryInfo::new_initial();
+    recorded.deferred_at_unix = now() + 3600;
+    recorded.not_before_unix = recorded.deferred_at_unix + 2;
+    recorded.next_retry_unix = recorded.not_before_unix;
+    let restored = RetryInfo::from_bytes(&recorded.to_bytes().unwrap()).unwrap();
+    assert_eq!(restored.not_before_unix, 0);
+    assert!(restored.is_backpressure_elapsed());
+    assert!(restored.is_due());
+}
+
+#[test]
 fn retry_schedule_rejects_empty_and_zero_intervals() {
     for intervals in [vec![], vec![0], vec![1, 0, 3]] {
         assert!(RetrySchedule::new(intervals).is_err());
@@ -74,6 +86,74 @@ async fn no_hint_registration_preserves_supplied_rung_and_cursor() {
 }
 
 #[tokio::test]
+async fn receiver_hint_preserves_existing_retry_progress() {
+    let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
+    peerstore
+        .create_replicator("peer", b"replicator")
+        .await
+        .unwrap();
+    let mut requested = RetryInfo::new_initial();
+    requested.num_retries = 3;
+    requested.dispatch_cursor = 17;
+    peerstore
+        .record_push_failure("peer", "doc", "collection", &requested.to_bytes().unwrap())
+        .await
+        .unwrap();
+    let before = info(&peerstore).await;
+    let received_at = now();
+    assert!(peerstore
+        .record_retry_after("peer", std::time::Duration::from_secs(45))
+        .await
+        .unwrap());
+    let hinted = info(&peerstore).await;
+    assert_eq!(hinted.num_retries, before.num_retries);
+    assert_eq!(hinted.dispatch_cursor, before.dispatch_cursor);
+    assert!(hinted.not_before_unix >= received_at + 45);
+    peerstore.activate_retry_peer("peer").await.unwrap();
+    assert_eq!(
+        info(&peerstore).await.next_retry_unix,
+        hinted.not_before_unix
+    );
+    peerstore.delete_replicator("peer").await.unwrap();
+    assert!(!peerstore
+        .record_retry_after("peer", std::time::Duration::from_secs(45))
+        .await
+        .unwrap());
+    assert!(peerstore.get_retry_info("peer").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn ordinary_delay_does_not_install_receiver_backpressure() {
+    let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
+    peerstore
+        .create_replicator("peer", b"replicator")
+        .await
+        .unwrap();
+    peerstore
+        .observe_push_head("peer", "doc", "collection")
+        .await
+        .unwrap();
+    peerstore
+        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), 1)
+        .await
+        .unwrap();
+    assert_eq!(info(&peerstore).await.not_before_unix, 0);
+    peerstore.activate_retry_peer("peer").await.unwrap();
+    assert!(info(&peerstore).await.is_due());
+
+    peerstore
+        .record_retry_after("peer", std::time::Duration::from_secs(45))
+        .await
+        .unwrap();
+    let deadline = info(&peerstore).await.not_before_unix;
+    peerstore
+        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(2)), 1)
+        .await
+        .unwrap();
+    assert_eq!(info(&peerstore).await.next_retry_unix, deadline);
+}
+
+#[tokio::test]
 async fn retry_after_registration_survives_reopen_and_cannot_be_shortened() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(RegolithStore::open(dir.path()).unwrap());
@@ -83,13 +163,13 @@ async fn retry_after_registration_survives_reopen_and_cannot_be_shortened() {
         .await
         .unwrap();
     let mut requested = RetryInfo::new_initial();
-    requested.defer_for(std::time::Duration::from_secs(45));
+    requested.defer_for_hint(std::time::Duration::from_secs(45));
     let deadline = requested.not_before_unix;
     peerstore
         .record_push_failure("peer", "doc", "collection", &requested.to_bytes().unwrap())
         .await
         .unwrap();
-    requested.defer_for(std::time::Duration::from_millis(1));
+    requested.defer_for_hint(std::time::Duration::from_millis(1));
     peerstore
         .record_push_failure(
             "peer",
@@ -127,7 +207,7 @@ async fn last_scope_ack_preserves_peer_hint_until_expiry_or_forget() {
         .await
         .unwrap();
     peerstore
-        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(45)), 0)
+        .record_retry_after("peer", std::time::Duration::from_secs(45))
         .await
         .unwrap();
     let deadline = info(&peerstore).await.not_before_unix;
@@ -171,7 +251,7 @@ async fn last_scope_ack_preserves_peer_hint_until_expiry_or_forget() {
         .await
         .unwrap();
     peerstore
-        .reschedule_retry_peer("peer", Some(std::time::Duration::from_secs(45)), 0)
+        .record_retry_after("peer", std::time::Duration::from_secs(45))
         .await
         .unwrap();
     peerstore.delete_replicator("peer").await.unwrap();

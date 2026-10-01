@@ -45,6 +45,8 @@ pub struct RetryInfo {
     /// Receiver backpressure deadline, preserved across reconnects and ladder changes.
     #[serde(default)]
     pub not_before_unix: u64,
+    #[serde(default)]
+    pub deferred_at_unix: u64,
     /// Durable round-robin start for the peer's presence-only scope markers.
     ///
     /// All scopes share this peer clock.  Persisting the cursor prevents a
@@ -154,6 +156,7 @@ impl RetryInfo {
             num_retries: 0,
             next_retry_unix: 0,
             not_before_unix: 0,
+            deferred_at_unix: 0,
             dispatch_cursor: 0,
         }
     }
@@ -210,18 +213,35 @@ impl RetryInfo {
 
     /// Schedule another attempt without recording a delivery failure.
     pub fn defer_for(&mut self, delay: Duration) {
+        let (_, deadline) = Self::deferred_deadline(delay);
+        self.next_retry_unix = deadline.max(self.not_before_unix);
+    }
+
+    /// Preserve receiver-requested backpressure across other schedule changes.
+    pub fn defer_for_hint(&mut self, delay: Duration) {
+        let (now, deadline) = Self::deferred_deadline(delay);
+        if !delay.is_zero() && deadline > self.not_before_unix {
+            self.not_before_unix = deadline;
+            self.deferred_at_unix = now;
+        }
+        self.next_retry_unix = deadline.max(self.not_before_unix);
+    }
+
+    fn deferred_deadline(delay: Duration) -> (u64, u64) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
-        if !delay.is_zero() {
-            let deadline = now.saturating_add(delay);
-            // The durable clock has second precision: round up, never retry early.
-            let deadline = deadline
-                .as_secs()
-                .saturating_add(u64::from(deadline.subsec_nanos() > 0));
-            self.not_before_unix = self.not_before_unix.max(deadline);
+        if delay.is_zero() {
+            return (now.as_secs(), now.as_secs());
         }
-        self.next_retry_unix = now.as_secs().max(self.not_before_unix);
+        let deadline = now.saturating_add(delay);
+        // The durable clock has second precision: round up, never retry early.
+        (
+            now.as_secs(),
+            deadline
+                .as_secs()
+                .saturating_add(u64::from(deadline.subsec_nanos() > 0)),
+        )
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
@@ -229,8 +249,20 @@ impl RetryInfo {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        defra_core::cbor::from_slice(bytes)
-            .map_err(|e| format!("failed to deserialize RetryInfo: {}", e))
+        let mut info: Self = defra_core::cbor::from_slice(bytes)
+            .map_err(|e| format!("failed to deserialize RetryInfo: {}", e))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // A clock rollback cannot turn a short receiver hint into an hour-long pause.
+        if now < info.deferred_at_unix {
+            info.next_retry_unix =
+                now.saturating_add(info.next_retry_unix.saturating_sub(info.not_before_unix));
+            info.not_before_unix = 0;
+            info.deferred_at_unix = 0;
+        }
+        Ok(info)
     }
 }
 
@@ -255,7 +287,7 @@ mod tests {
     fn retry_after_rounds_up_and_survives_activation_and_restart() {
         let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let mut info = RetryInfo::new_initial();
-        info.defer_for(Duration::from_millis(1500));
+        info.defer_for_hint(Duration::from_millis(1500));
         assert!(Duration::from_secs(info.next_retry_unix) >= before + Duration::from_millis(1500));
         let deadline = info.not_before_unix;
         info.defer_for(Duration::ZERO);

@@ -366,7 +366,10 @@ impl<S: Store> Peerstore<S> {
                 None => requested.clone(),
             };
             if requested.not_before_unix > 0 {
-                info.not_before_unix = info.not_before_unix.max(requested.not_before_unix);
+                if requested.not_before_unix > info.not_before_unix {
+                    info.not_before_unix = requested.not_before_unix;
+                    info.deferred_at_unix = requested.deferred_at_unix;
+                }
                 info.next_retry_unix = info.not_before_unix;
             } else {
                 info.bump_with_schedule(peer_id, &self.retry_schedule);
@@ -699,14 +702,13 @@ impl<S: Store> Peerstore<S> {
         .await
     }
 
-    /// Insert the initial retry schedule for `peer_id`, deferred by `delay`.
-    ///
-    /// The counterpart to `reschedule_retry_peer` for a peer whose replicator
-    /// exists but whose schedule row does not yet: the first backpressure hint
-    /// of a history replay. Returns false when the replicator is gone — no
-    /// replicator, no durable obligation — and leaves any existing schedule
-    /// untouched rather than overwriting it.
-    pub async fn seed_retry_peer(&self, peer_id: &str, delay: std::time::Duration) -> Result<bool> {
+    /// Apply a receiver hint atomically, creating the schedule when necessary.
+    /// Returns false if the replicator was removed.
+    pub async fn record_retry_after(
+        &self,
+        peer_id: &str,
+        delay: std::time::Duration,
+    ) -> Result<bool> {
         let _retry_guard = retry_peer_lock(peer_id).write_arc().await;
         retry_push_txn_conflicts(|| async {
             let mut txn = self.store.new_txn(false).await?;
@@ -714,11 +716,13 @@ impl<S: Store> Peerstore<S> {
                 return Ok(false);
             }
             let key = ReplicatorRetryIDKey::new(peer_id).bytes();
-            if txn.get(&key).await?.is_some() {
-                return Ok(true);
-            }
-            let mut info = super::RetryInfo::new_initial();
-            info.defer_for(delay);
+            let mut info = match txn.get(&key).await? {
+                Some(bytes) => {
+                    super::RetryInfo::from_bytes(&bytes).map_err(crate::corekv::Error::Other)?
+                }
+                None => super::RetryInfo::new_initial(),
+            };
+            info.defer_for_hint(delay);
             txn.set(&key, &info.to_bytes().map_err(crate::corekv::Error::Other)?)
                 .await?;
             txn.commit().await?;

@@ -115,7 +115,7 @@ pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
             } else if failure.create_retry {
                 let mut info = storage::stores::RetryInfo::new_initial();
                 if let Some(delay) = failure.retry_after {
-                    info.defer_for(delay);
+                    info.defer_for_hint(delay);
                     tracing::debug!(target: "p2p::retry_after", peer_id = %failure.peer_id,
                         retry_after_ms = delay.as_millis() as u64,
                         retry_not_before_unix = info.not_before_unix,
@@ -587,6 +587,10 @@ where
 mod sweep_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/retry_hints.rs"]
+mod hint_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -602,11 +606,9 @@ mod tests {
     use p2p::transport::{MessageId, PeerAddr};
     use p2p::{QueryId, ReplicatorInfo, Result as P2PResult};
 
-    /// Transport double for the reconnect probe. Only `connected_peers` and
-    /// `dial` carry behaviour; every other method is unreachable from these
-    /// tests.
+    /// Transport double for reconnect probes and receiver backpressure.
     #[derive(Clone)]
-    struct FakeTransport {
+    pub(super) struct FakeTransport {
         peer_id: PeerId,
         pubkey: Vec<u8>,
         /// `None` makes `connected_peers` fail, which is the observation
@@ -615,6 +617,8 @@ mod tests {
         dial_hangs: bool,
         dials: Arc<kovan::Atom<Vec<PeerId>>>,
         observations: Arc<AtomicUsize>,
+        reply: Option<PushLogReply>,
+        pub(super) sends: Arc<AtomicUsize>,
     }
 
     impl FakeTransport {
@@ -626,6 +630,17 @@ mod tests {
                 dial_hangs: false,
                 dials: Arc::new(kovan::Atom::new(Vec::new())),
                 observations: Arc::new(AtomicUsize::new(0)),
+                reply: None,
+                sends: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        pub(super) fn with_hint(peer: PeerId) -> Self {
+            let mut reply = PushLogReply::error("hint", p2p::error::RATE_LIMITED_MESSAGE);
+            reply.retry_after_ms = Some(45_000);
+            Self {
+                reply: Some(reply),
+                ..Self::new(Some(vec![peer]))
             }
         }
 
@@ -733,7 +748,11 @@ mod tests {
             _peer_id: &PeerId,
             _req: PushLogRequest,
         ) -> P2PResult<PushLogReply> {
-            Ok(PushLogReply::success("noop"))
+            self.sends.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .reply
+                .clone()
+                .unwrap_or_else(|| PushLogReply::success("noop")))
         }
 
         async fn send_two_stream_response(
@@ -1219,7 +1238,7 @@ mod tests {
             .await
             .unwrap();
         peerstore
-            .reschedule_retry_peer("peer-a", Some(Duration::from_secs(45)), 0)
+            .record_retry_after("peer-a", Duration::from_secs(45))
             .await
             .unwrap();
         for _ in 0..2 {

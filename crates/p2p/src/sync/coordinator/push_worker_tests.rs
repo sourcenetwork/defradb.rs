@@ -19,12 +19,24 @@ fn test_context(
     Arc<PushWorkerContext<TestTransport>>,
     tokio::sync::mpsc::Receiver<PushFailure>,
 ) {
+    test_context_with_admission(transport, backlog, send_timeout, true)
+}
+
+fn test_context_with_admission(
+    transport: TestTransport,
+    backlog: Arc<PushBacklog>,
+    send_timeout: Duration,
+    admit: bool,
+) -> (
+    Arc<PushWorkerContext<TestTransport>>,
+    tokio::sync::mpsc::Receiver<PushFailure>,
+) {
     let (tx, mut events) = tokio::sync::mpsc::channel::<PushFailure>(64);
     let (forward, rx) = tokio::sync::mpsc::channel(64);
     tokio::spawn(async move {
         while let Some(mut event) = events.recv().await {
             if event.admission_only {
-                event.durable_tx.take().unwrap().send(true).unwrap();
+                event.durable_tx.take().unwrap().send(admit).unwrap();
             } else if forward.send(event).await.is_err() {
                 break;
             }
@@ -40,6 +52,24 @@ fn test_context(
         send_timeout,
     });
     (context, rx)
+}
+
+#[tokio::test]
+async fn persisted_backpressure_denies_live_push_before_transport_send() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) = test_context_with_admission(
+        transport.clone(),
+        backlog.clone(),
+        Duration::from_secs(1),
+        false,
+    );
+    backlog.try_enqueue(job("peer", b"active")).await;
+    let active = backlog.next_job().await.unwrap();
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    backlog.close();
 }
 
 fn job(peer: &str, cid_seed: &[u8]) -> PushJobSpec {

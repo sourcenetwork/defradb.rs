@@ -589,7 +589,7 @@ async fn retry_after_arriving_during_ack_blocks_next_marker() {
     started.notified().await;
     sweep
         .peerstore
-        .reschedule_retry_peer(PEER, Some(Duration::from_secs(45)), 0)
+        .record_retry_after(PEER, Duration::from_secs(45))
         .await
         .unwrap();
     finish.notify_one();

@@ -341,6 +341,17 @@ async fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
         .await
         .unwrap();
 
+    persist_replay_failures(
+        &peerstore,
+        &peer,
+        &[ReplayDocumentFailure {
+            doc_id: "doc-seed".into(),
+            collection_id: "collection-seed".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    peerstore.activate_retry_peer(peer.as_str()).await.unwrap();
     let remaining = remaining_retry_after(&peerstore, &peer)
         .await
         .unwrap()
@@ -351,8 +362,6 @@ async fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
     );
 
     // A replicator that is gone: no row written, still a success.
-    peerstore.delete_replicator("peer-seed").await.unwrap();
-    peerstore.delete_replicator("peer-gone").await.unwrap();
     let gone = PeerId::new("peer-gone".to_string());
     persist_retry_after(&peerstore, &gone, &reply)
         .await
