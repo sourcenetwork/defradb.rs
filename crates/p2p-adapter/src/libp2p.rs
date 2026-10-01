@@ -44,6 +44,7 @@ pub struct P2PAdapter<B: Blockstore + 'static> {
     event_bus: Option<Arc<dyn events::Bus>>,
     version_syncer: Option<Arc<dyn VersionSyncer>>,
     replicator_push_options: ReplicatorPushOptionsState,
+    replicator_installs: crate::replicator_installs::ReplicatorInstalls,
     peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
     tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
@@ -136,6 +137,7 @@ impl<B: Blockstore + 'static> P2PAdapter<B> {
             event_bus: Some(event_bus),
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
@@ -437,6 +439,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         }
 
         let peer_id = parsed.peer_id;
+        let install_guard = self.replicator_installs.acquire(&peer_id.to_string()).await;
         let requested_collections: RapidHashSet<String> = collection_cids.iter().cloned().collect();
         let local_peer_id = self.handle.local_peer_id_cached().to_string();
         let target_peer_id = peer_id.to_string();
@@ -572,6 +575,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 // whatever the replay had to redo.
                 let requested_collections = effective_collections.to_vec();
                 n0_future::task::spawn(async move {
+                    let _install_guard = install_guard;
                     let result = push_pusher
                         .push_existing_docs(
                             &p2p::transport::PeerId::from(peer_id),
@@ -601,7 +605,7 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 bus.publish(events::Message::replicator_completed_with_data(
                     events::ReplicatorCompletedData {
                         peer_id: peer_id.to_string(),
-                        collections: collection_names_requiring_replay,
+                        collections: effective_collections.to_vec(),
                         skipped: true,
                         error: None,
                     },
@@ -612,10 +616,16 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 peer_id = %peer_id,
                 "Replicator already exists with same collections and replay capability, skipping initial replay"
             );
-            // No event here: the install that already holds this replicator
-            // owns the completion event, and its replay may still be running.
-            // A skip published now would let a waiter observe a completion
-            // that has not happened yet.
+            if let Some(ref bus) = self.event_bus {
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: effective_collections.to_vec(),
+                        skipped: true,
+                        error: None,
+                    },
+                ));
+            }
         }
 
         Ok(())
@@ -1116,6 +1126,10 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
 }
 
 #[cfg(test)]
+#[path = "../tests/libp2p/replicator_completion.rs"]
+mod completion_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use blockstore::DefraBlockstore;
@@ -1198,7 +1212,7 @@ mod tests {
     /// The adapter under test carries no sync coordinator, so the blockstore
     /// generic is never exercised; a do-nothing implementation satisfies it.
     #[derive(Debug)]
-    struct NoopBlockstore;
+    pub(super) struct NoopBlockstore;
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -1277,7 +1291,7 @@ mod tests {
     /// Dials `handle_a` to `handle_b` and waits until each side observes the
     /// other as connected. Mirrors `assert_hosts_connect_over` in
     /// `crates/p2p/tests/host_tests.rs`.
-    async fn connect_hosts(handle_a: &P2PHostHandle, handle_b: &P2PHostHandle) {
+    pub(super) async fn connect_hosts(handle_a: &P2PHostHandle, handle_b: &P2PHostHandle) {
         handle_b
             .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
             .await
@@ -1291,7 +1305,7 @@ mod tests {
         wait_until_connected(handle_b, peer_a).await;
     }
 
-    fn identity_test_adapter(handle: P2PHostHandle) -> P2PAdapter<NoopBlockstore> {
+    pub(super) fn identity_test_adapter(handle: P2PHostHandle) -> P2PAdapter<NoopBlockstore> {
         P2PAdapter {
             handle,
             sync_coordinator: None,
@@ -1299,6 +1313,7 @@ mod tests {
             event_bus: None,
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
@@ -1443,6 +1458,7 @@ mod tests {
             event_bus: Some(Arc::new(events::ChannelBus::default())),
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
