@@ -512,6 +512,7 @@ jobs:
         run: >-
           cargo test --profile super-dev -p integration-test --test p2p_iroh
           -- --test-threads=1 connection::
+          sync::version::initial_col_version sync::version::patch_version_of_
       - name: Run iroh sync ownership fences
         if: matrix.suite == 'iroh'
         run: |

@@ -201,7 +201,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .get_collection_by_version_id_full(&version_id)
             .await
             .map_err(MergeError::Database)?
-            .is_some()
+            .is_some_and(|existing| !existing.schema().is_placeholder)
         {
             tracing::debug!(
                 collection_name = %collection_name,
