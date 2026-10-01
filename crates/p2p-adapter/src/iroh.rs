@@ -32,6 +32,7 @@ pub struct IrohP2PAdapter<B: Blockstore + 'static> {
     event_bus: Option<Arc<dyn events::Bus>>,
     version_syncer: Option<Arc<dyn TransportVersionSyncer>>,
     replicator_push_options: ReplicatorPushOptionsState,
+    replicator_installs: crate::replicator_installs::ReplicatorInstalls,
     peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
     tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
@@ -109,6 +110,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             event_bus: Some(event_bus),
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
@@ -208,6 +210,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             event_bus: None,
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
@@ -508,6 +511,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         let addr_str = addr.ok_or_else(|| P2PError::invalid_input("address is required"))?;
         let (peer_id, direct_addrs) = parse_public_peer_addr(addr_str)
             .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        let install_guard = self.replicator_installs.acquire(peer_id.as_str()).await;
 
         let effective_collections = if collections.is_empty() {
             if let Some(ref pusher) = self.doc_pusher {
@@ -719,6 +723,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 // the replay subset (same fix as the libp2p side).
                 let requested_collections = effective_collections.to_vec();
                 n0_future::task::spawn(async move {
+                    let _install_guard = install_guard;
                     let result = push_pusher
                         .push_existing_docs(
                             &push_peer,
@@ -746,7 +751,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 bus.publish(events::Message::replicator_completed_with_data(
                     events::ReplicatorCompletedData {
                         peer_id: peer_id.to_string(),
-                        collections: collection_names_requiring_replay,
+                        collections: effective_collections.to_vec(),
                         skipped: true,
                         error: None,
                     },
@@ -757,9 +762,16 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 peer_id = %peer_id,
                 "Replicator already exists with same collections, filters, and replay capability; skipping initial replay"
             );
-            // No event here, mirroring the libp2p side: the install that
-            // already holds this replicator owns the completion event, and
-            // its replay may still be running.
+            if let Some(ref bus) = self.event_bus {
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: effective_collections.to_vec(),
+                        skipped: true,
+                        error: None,
+                    },
+                ));
+            }
         }
 
         Ok(())
@@ -1418,6 +1430,7 @@ mod tests {
             event_bus: Some(Arc::new(events::ChannelBus::default())),
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
