@@ -350,9 +350,10 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .fold(root_routes, |router, prefix| {
             router.nest(prefix, api_routes.clone())
         })
-        // Establish the fastrace root for every request. Must wrap the whole
-        // router: spans created below a handler are discarded without it.
-        .layer(axum::middleware::from_fn(crate::trace_root::trace_root))
+        // Establish the fastrace root for every request. `route_layer` (not
+        // `layer`) so routing has run and the span can be named after the
+        // route template rather than the ID-bearing concrete path.
+        .route_layer(axum::middleware::from_fn(crate::trace_root::trace_root))
 }
 
 #[cfg(test)]

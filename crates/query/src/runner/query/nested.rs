@@ -36,6 +36,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         identity: Option<Did>,
         warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
+        #[cfg(feature = "verbose-spans")]
         fastrace::local::LocalSpan::add_properties(|| {
             [
                 ("collection", select.collection_name.to_string()),
