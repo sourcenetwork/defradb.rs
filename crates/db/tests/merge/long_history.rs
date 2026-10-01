@@ -166,6 +166,58 @@ async fn disk_reopen_resumes_a_partially_applied_history() {
 }
 
 #[tokio::test]
+async fn finishing_an_older_walk_does_not_resurrect_its_head() {
+    use storage::corekv::{IterOptions, Key};
+    use storage::keys::headstore::HeadstoreDocKey;
+
+    let initial = make_handler().await;
+    let handler = DbMergeHandler::new_with_max_merge_depth(
+        initial.db().clone(),
+        initial.blockstore().clone(),
+        8,
+    );
+    let mut history = History::default();
+    history
+        .append(handler.blockstore().as_ref(), 64, "revision")
+        .await;
+    let older = history.root().clone();
+    assert_eq!(
+        merge_turn(&handler, &older, false).await,
+        MergeOutcome::Yielded
+    );
+    history
+        .append(handler.blockstore().as_ref(), 1, "newer")
+        .await;
+    converge(&handler, history.root(), true).await;
+
+    let restarted = DbMergeHandler::new_with_max_merge_depth(
+        handler.db().clone(),
+        handler.blockstore().clone(),
+        8,
+    );
+    converge(&restarted, &older, false).await;
+    let txn = handler.db().new_txn(true).await.unwrap();
+    let system = txn.systemstore().unwrap();
+    let doc_ref = db::docid::map::get_doc_ref(&system, &older.doc_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let headstore = txn.headstore().unwrap();
+    let expected = HeadstoreDocKey::new(doc_ref.doc_short_id, "C", history.root().cid).bytes();
+    let mut prefix = expected.clone();
+    prefix.truncate(prefix.len() - history.root().cid.to_bytes().len());
+    let mut heads = headstore
+        .iterator(IterOptions::new().with_prefix(prefix))
+        .await
+        .unwrap();
+    assert_eq!(heads.next().await.unwrap().unwrap().key, expected);
+    assert!(
+        heads.next().await.unwrap().is_none(),
+        "a completed descendant must remain the only head"
+    );
+}
+
+#[tokio::test]
 async fn shared_ancestors_are_applied_once_across_forks() {
     let initial = make_handler().await;
     let handler = DbMergeHandler::new_with_max_merge_depth(
@@ -366,6 +418,53 @@ async fn completed_history_releases_its_admission_slot() {
             .await
             .unwrap()
             .get("score"),
+        Some(&NormalValue::Int(16))
+    );
+}
+
+#[tokio::test]
+async fn idle_cursor_reclamation_preserves_blocks_and_allows_the_history_to_restart() {
+    let initial = make_handler().await;
+    let handler = DbMergeHandler::new_with_max_merge_depth(
+        initial.db().clone(),
+        initial.blockstore().clone(),
+        8,
+    );
+    let mut histories = Vec::new();
+    for index in 0..64 {
+        let mut history = History::default();
+        history
+            .append(handler.blockstore().as_ref(), 16, &format!("idle-{index}"))
+            .await;
+        assert_eq!(
+            merge_turn(&handler, history.root(), false).await,
+            MergeOutcome::Yielded
+        );
+        histories.push(history);
+    }
+    let idle = histories[0].root();
+    let txn = handler.db().new_txn(false).await.unwrap();
+    let system = txn.systemstore().unwrap();
+    let key = format!("/merge-history/v1/{}/state", idle.cid).into_bytes();
+    let mut progress: serde_json::Value =
+        serde_json::from_slice(&system.get(&key).await.unwrap().unwrap()).unwrap();
+    progress["last_active_unix"] = serde_json::json!(1);
+    system
+        .set(&key, &serde_json::to_vec(&progress).unwrap())
+        .await
+        .unwrap();
+    drop(system);
+    txn.force_commit().await.unwrap();
+
+    let mut waiting = History::default();
+    waiting
+        .append(handler.blockstore().as_ref(), 16, "waiting")
+        .await;
+    converge(&handler, waiting.root(), false).await;
+    assert!(handler.blockstore().has(&idle.cid).await.unwrap());
+    converge(&handler, idle, false).await;
+    assert_eq!(
+        read_document(&handler, idle).await.unwrap().get("score"),
         Some(&NormalValue::Int(16))
     );
 }

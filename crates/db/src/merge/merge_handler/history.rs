@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use storage::corekv::IterOptions;
 
+#[path = "history_cleanup.rs"]
+mod cleanup;
+
 const ROOTS_KEY: &[u8] = b"/merge-history/v1/roots";
 const MAX_ROOTS: u64 = 64;
 // Operators can increase the durable per-root admission quota without changing history validity.
@@ -30,6 +33,15 @@ struct Progress {
     outcome: Option<Completion>,
     #[serde(default)]
     context: [u8; 32],
+    #[serde(default)]
+    last_active_unix: u64,
+}
+
+fn now_unix() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn context_key(metadata: &BlockMetadata<'_>) -> Result<[u8; 32], MergeError> {
@@ -124,6 +136,30 @@ impl Completion {
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    pub(super) async fn composite_was_applied(
+        systemstore: &NamespaceView,
+        headstore: &NamespaceView,
+        cid: &Cid,
+        payload: &defra_core::block::CompositeDeltaPayload,
+        doc: &str,
+    ) -> Result<bool, MergeError> {
+        use storage::corekv::Key;
+        let Some(doc_ref) = crate::docid::map::get_doc_ref(systemstore, doc).await? else {
+            return Ok(false);
+        };
+        headstore
+            .has(
+                &storage::keys::headstore::HeadstorePriorityKey::new(
+                    doc_ref.doc_short_id,
+                    payload.priority,
+                    *cid,
+                )
+                .bytes(),
+            )
+            .await
+            .map_err(storage_error)
+    }
+
     pub(super) async fn resume_composite_history(
         &self,
         root: &Cid,
@@ -195,6 +231,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             None => {
                 let roots = read::<u64>(&store, ROOTS_KEY).await?.unwrap_or(0);
                 if roots >= MAX_ROOTS {
+                    if cleanup::reclaim_idle(&store, budget).await? {
+                        drop(store);
+                        txn.force_commit().await?;
+                        return Ok(MergeOutcome::Yielded);
+                    }
                     return Ok(MergeOutcome::retryable_skip(
                         "history admission quota reached",
                     ));
@@ -216,6 +257,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Progress {
                     nodes: 1,
                     context,
+                    last_active_unix: now_unix(),
                     ..Progress::default()
                 }
             }
@@ -273,6 +315,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let fields: SegQueue<PendingFieldBlockFinalization> = SegQueue::new();
         let mut root_checked = false;
         let mut waiting = None;
+        let before = (progress.top, progress.nodes, progress.doc.clone());
 
         for _ in 0..budget {
             let mut frame: Frame = read(&store, &stack_key(progress.top))
@@ -313,7 +356,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     break;
                 }
                 if !root_checked {
-                    if let CompositeMergePreparation::Complete(outcome) = self
+                    match self
                         .prepare_composite_merge(
                             root,
                             root_block,
@@ -324,14 +367,40 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         )
                         .await?
                     {
-                        if outcome.is_rejected() || outcome.is_terminal_skip() {
-                            progress.outcome = Completion::from_outcome(outcome);
-                        } else {
-                            waiting = Some(outcome);
+                        CompositeMergePreparation::Ready(_) => {}
+                        CompositeMergePreparation::Complete(outcome) => {
+                            if outcome.is_rejected() || outcome.is_terminal_skip() {
+                                progress.outcome = Completion::from_outcome(outcome);
+                            } else {
+                                waiting = Some(outcome);
+                            }
+                            break;
                         }
-                        break;
+                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
+                            self.index_deferred(root, doc, metadata, awaiting);
+                            waiting = Some(outcome);
+                            break;
+                        }
                     }
                     root_checked = true;
+                }
+                // The priority index survives restart and is shared by every walk
+                // of this document. Reapplying an ancestor would resurrect its head.
+                if Self::composite_was_applied(&store, &headstore, &cid, payload, doc).await? {
+                    store
+                        .set(&node_key(&cid), &[1])
+                        .await
+                        .map_err(storage_error)?;
+                    store
+                        .delete(&stack_key(progress.top))
+                        .await
+                        .map_err(storage_error)?;
+                    if progress.top == 0 {
+                        progress.outcome = Some(Completion::Merged);
+                        break;
+                    }
+                    progress.top -= 1;
+                    continue;
                 }
             }
 
@@ -420,6 +489,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     outcome
                 }
                 CompositeMergePreparation::Complete(outcome) => outcome,
+                CompositeMergePreparation::Deferred { outcome, awaiting } => {
+                    self.index_deferred(root, doc, metadata, awaiting);
+                    outcome
+                }
             };
             if outcome.is_rejected() {
                 progress.outcome = Completion::from_outcome(outcome);
@@ -445,6 +518,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         // Applied counter markers, documents, visited nodes and the cursor commit together.
+        if before != (progress.top, progress.nodes, progress.doc.clone())
+            || progress.outcome.is_some()
+        {
+            progress.last_active_unix = now_unix();
+        }
         write(&store, &state_key(root), &progress).await?;
         drop(datastore);
         drop(headstore);

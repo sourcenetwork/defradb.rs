@@ -94,8 +94,8 @@ async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
     assert_eq!(batch.changes.len(), 1);
     assert_eq!(batch.changes[0].doc_id, doc_id.to_string());
     assert_eq!(
-        batch.updates, 257,
-        "one state notification for the entire committed history"
+        batch.updates, 256,
+        "one state notification for new revisions, excluding the already committed genesis"
     );
     assert!(!batch.resync_required);
     let mut raw_count = 0;
@@ -103,8 +103,8 @@ async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         raw_count += 1;
     }
     assert_eq!(
-        raw_count, 257,
-        "revision subscribers still receive every update"
+        raw_count, 256,
+        "revision subscribers receive each newly applied update"
     );
     assert_eq!(raw.dropped_count(), 0);
     let txn = handler.db().new_txn(true).await.unwrap();

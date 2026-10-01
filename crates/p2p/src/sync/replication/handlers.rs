@@ -337,7 +337,10 @@ where
     }
 
     // Delegate merge to handler
-    match handler.handle_block(&cid, &block_data, metadata).await {
+    match handler
+        .handle_block(&cid, &block_data, metadata.clone())
+        .await
+    {
         Ok(MergeOutcome::Merged) => {
             // Merge successful - mark as merged
             if let Err(e) = coordinator.mark_as_merged(&cid).await {
@@ -431,9 +434,12 @@ where
             }
         }
         Ok(MergeOutcome::Yielded) => {
-            coordinator
-                .manager()
-                .schedule_pending_merge_continuation(&cid);
+            if !coordinator.manager().continue_merge(&cid, Some(&metadata)) {
+                return ReplicationResult::Failed {
+                    cid,
+                    error: "merge continuation capacity reached".into(),
+                };
+            }
             ReplicationResult::Skipped {
                 cid,
                 doc_id: doc_id_for_result,
@@ -700,9 +706,25 @@ where
                 });
             }
             Ok(MergeOutcome::Yielded) => {
-                coordinator
+                let mut metadata = BlockMetadata::normal(
+                    &block.doc_id,
+                    &block.collection_id,
+                    &block.creator,
+                    block.sender_peer.as_deref(),
+                    block.is_explicit_replicator,
+                );
+                metadata.explicit_replay_authorization =
+                    block.explicit_replay_authorization.clone();
+                if !coordinator
                     .manager()
-                    .schedule_pending_merge_continuation(&block.cid);
+                    .continue_merge(&block.cid, Some(&metadata))
+                {
+                    results.push(ReplicationResult::Failed {
+                        cid: block.cid,
+                        error: "merge continuation capacity reached".into(),
+                    });
+                    continue;
+                }
                 results.push(ReplicationResult::Skipped {
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
