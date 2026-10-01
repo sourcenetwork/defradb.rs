@@ -1,3 +1,4 @@
+mod admission;
 mod fixture;
 
 use blockstore::{Blockstore as _, DefraBlockstore};
@@ -394,11 +395,13 @@ async fn completed_history_releases_its_admission_slot() {
                 &format!("document-{index}"),
             )
             .await;
+        let mut root = history.root().clone();
+        root.sender_peer = Some(format!("peer-{}", index / 16));
         assert_eq!(
-            merge_turn(&handler, history.root(), false).await,
+            merge_turn(&handler, &root, false).await,
             MergeOutcome::Yielded
         );
-        first.get_or_insert_with(|| history.root().clone());
+        first.get_or_insert(root);
     }
     let mut waiting = History::default();
     waiting
@@ -436,8 +439,10 @@ async fn idle_cursor_reclamation_preserves_blocks_and_allows_the_history_to_rest
         history
             .append(handler.blockstore().as_ref(), 16, &format!("idle-{index}"))
             .await;
+        let mut root = history.root().clone();
+        root.sender_peer = Some(format!("peer-{}", index / 16));
         assert_eq!(
-            merge_turn(&handler, history.root(), false).await,
+            merge_turn(&handler, &root, false).await,
             MergeOutcome::Yielded
         );
         histories.push(history);
