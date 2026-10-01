@@ -56,11 +56,21 @@ async fn execute_once_with_context(
     let batch_session_key = signing_config.as_ref().map(|s| s.public_key_hex.clone());
     let acting_did = identity.did().map(|d| d.as_str().to_string());
 
+    // `fastrace`'s local parent is thread-local, so the root established by
+    // the trace_root middleware does not reach a `spawn_blocking` worker.
+    // Carry the SpanContext over explicitly and re-root there, or every span
+    // produced under the executor is silently discarded.
+    let parent = fastrace::collector::SpanContext::current_local_parent();
+
     match tokio::task::spawn_blocking(move || {
         let _identity_guard = defra_core::current_identity::scoped_current_identity(acting_did);
         defra_core::signing::set_signing_config(signing_config);
         defra_core::batch_signing::set_batch_session_key(batch_session_key);
         defra_core::dac_bypass::set_dac_bypass(dac_bypass);
+        let _span_guard = parent.map(|ctx| {
+            let span = fastrace::Span::root("query.blocking", ctx);
+            (span.set_local_parent(), span)
+        });
         handle.block_on(async { executor.execute(request).await })
     })
     .await

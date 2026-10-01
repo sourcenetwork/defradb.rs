@@ -12,7 +12,7 @@ const CHUNK_SIZE: usize = 1000;
 
 impl<S: Store> crate::database::DB<S> {
     /// Permanently remove documents matching `filter` while preserving the collection.
-    #[instrument(skip(self, filter), fields(collection = %name), name = "db.truncate_collection_filtered")]
+    #[fastrace::trace(name = "db.truncate_collection_filtered")]
     pub async fn truncate_collection_with_filter(
         self: &Arc<Self>,
         name: &str,
@@ -22,6 +22,7 @@ impl<S: Store> crate::database::DB<S> {
     where
         S: 'static,
     {
+        fastrace::local::LocalSpan::add_properties(|| [("collection", name.to_string())]);
         self.check_node_access(identity, acp::nac::NodePermission::CollectionTruncate)
             .await?;
         filter.validate_depth()?;

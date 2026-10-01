@@ -34,4 +34,4 @@ pub use metrics::{
 #[cfg(feature = "otlp")]
 mod init;
 #[cfg(feature = "otlp")]
-pub use init::{init, otel_layer, InitError, Tracer};
+pub use init::{init, InitError, Reporter};

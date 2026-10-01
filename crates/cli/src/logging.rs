@@ -6,8 +6,6 @@ use tracing_subscriber::layer::SubscriberExt;
 #[cfg(feature = "profiling")]
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-#[cfg(feature = "otel")]
-use tracing_subscriber::Layer;
 use tracing_subscriber::{EnvFilter, Registry};
 
 #[cfg(feature = "profiling")]
@@ -21,20 +19,6 @@ use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 
 use crate::config::{Config, LogFormat, LogLevel, LogOutput};
 use crate::error::{Error, Result};
-
-/// Build the OTLP bridge layer paired with a fresh dedup filter, for a given
-/// inner-subscriber type `S`. Generic over `S` because the registry's type
-/// differs between the profiling (fmt + chrome) and non-profiling (fmt only)
-/// branches — a plain `let` binding would fix `S` at first use and fail at
-/// the second, which is why this is a function rather than a hoisted local.
-/// Returns `None` when no tracer was configured (telemetry off/failed).
-#[cfg(feature = "otel")]
-fn otel_dedup_layer<S>(tracer: Option<telemetry::Tracer>) -> Option<impl Layer<S>>
-where
-    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
-{
-    tracer.map(|t| telemetry::otel_layer(t).with_filter(telemetry::OtelDedupFilter::new()))
-}
 
 fn with_default_transport_noise_filters(filter: EnvFilter) -> EnvFilter {
     filter
@@ -86,6 +70,9 @@ impl LoggingHandle {
             drop(profiling.guard);
             eprintln!("Chrome trace written to {}", path.display());
         }
+        // Must precede telemetry shutdown: flush hands buffered spans to the
+        // reporter, which exports through the OTLP exporter owned below.
+        fastrace::flush();
         self.telemetry.shutdown();
     }
 }
@@ -97,6 +84,16 @@ impl LoggingHandle {
 /// in `cli/start.go`). Ephemeral commands like `version` / `client` keep the
 /// fmt subscriber but never spin up the exporter thread or pay its shutdown
 /// cost.
+/// Spans are produced by `fastrace`. When nothing consumes them — no `otel`
+/// feature, or telemetry disabled at runtime — install a reporter that drops
+/// each batch. This is the analogue of the old `tracing` spans reaching the
+/// Registry and being discarded under `FmtSpan::NONE`.
+struct DropReporter;
+
+impl fastrace::collector::Reporter for DropReporter {
+    fn report(&mut self, _spans: Vec<fastrace::prelude::SpanRecord>) {}
+}
+
 pub fn init(
     config: &Config,
     enable_profiling: bool,
@@ -183,8 +180,9 @@ where
     // malformed env var), we log and continue with no telemetry — matches
     // Go's `log.ErrorContextE` + continue path.
     #[cfg(feature = "otel")]
-    let (telemetry_handle, tracer) = if config.telemetry_disabled || !enable_telemetry {
-        (telemetry::TelemetryHandle::noop(), None)
+    let telemetry_handle = if config.telemetry_disabled || !enable_telemetry {
+        fastrace::set_reporter(DropReporter, fastrace::collector::Config::default());
+        telemetry::TelemetryHandle::noop()
     } else {
         // Source a Go-style descriptive build string for service.version
         // (`defradb <ver> (<commit8> <date>) built with ...`) so OTLP
@@ -195,12 +193,15 @@ where
             defra_version::VersionInfo::new().descriptive(),
         );
         match telemetry::init(telemetry_config) {
-            Ok((handle, tracer)) => (handle, Some(tracer)),
+            Ok((handle, reporter)) => {
+                fastrace::set_reporter(reporter, fastrace::collector::Config::default());
+                handle
+            }
             Err(err) => {
                 eprintln!(
                     "warning: failed to configure OpenTelemetry, continuing without telemetry: {err}"
                 );
-                (telemetry::TelemetryHandle::noop(), None)
+                telemetry::TelemetryHandle::noop()
             }
         }
     };
@@ -208,6 +209,7 @@ where
     #[cfg(not(feature = "otel"))]
     let telemetry_handle = {
         let _ = (config, enable_telemetry); // unused when otel is off
+        fastrace::set_reporter(DropReporter, fastrace::collector::Config::default());
         telemetry::TelemetryHandle::noop()
     };
 
@@ -227,8 +229,6 @@ where
         let registry = tracing_subscriber::registry()
             .with(fmt_layer)
             .with(chrome_layer);
-        #[cfg(feature = "otel")]
-        let registry = registry.with(otel_dedup_layer(tracer));
         registry
             .with(filter)
             .try_init()
@@ -237,8 +237,6 @@ where
     }
 
     let registry = tracing_subscriber::registry().with(fmt_layer);
-    #[cfg(feature = "otel")]
-    let registry = registry.with(otel_dedup_layer(tracer));
     registry
         .with(filter)
         .try_init()

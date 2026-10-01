@@ -3,7 +3,7 @@
 use lens::Lens;
 use rapidhash::HashMapExt;
 use storage::corekv::Store;
-use tracing::{instrument, warn};
+use tracing::warn;
 
 use super::helpers::{cache_document_version, cache_migrated_document, lens_doc_to_document};
 use crate::definition::loader::get_collections_by_collection_id;
@@ -17,12 +17,18 @@ impl<S: Store> DB<S> {
     /// Checks if the destination version is in the active version's history chain
     /// (not just an exact match). This handles cases where migrations are registered
     /// for ancestor versions that affect the active version's data.
-    #[instrument(skip(self), fields(collection = %collection_name, dest_version = %dest_version_id))]
+    #[fastrace::trace]
     pub(crate) async fn maybe_reindex_after_migration(
         &self,
         collection_name: &str,
         dest_version_id: &str,
     ) -> Result<()> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [
+                ("collection", collection_name.to_string()),
+                ("dest_version", dest_version_id.to_string()),
+            ]
+        });
         let collection = match self.get_collection(collection_name)? {
             Some(c) => c,
             None => {

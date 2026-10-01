@@ -12,6 +12,10 @@ description = "DefraDB database and collection management"
 ignored = ["anyhow", "bytes", "libp2p", "multihash", "p2p", "rand", "serde", "serde_bytes", "serde_cbor", "zeroize"]
 
 [features]
+# Spans that were `level = "trace"` / `level = "debug"` under `tracing`,
+# i.e. compiled out in production. `fastrace` has no per-callsite level
+# filter, so they are feature-gated to keep the default build quiet.
+verbose-spans = ["blockstore/verbose-spans", "crdt/verbose-spans"]
 default = ["p2p", "native", "wasmtime-runtime"]
 p2p = ["dep:libp2p", "p2p/libp2p-transport"]
 native = ["dep:tokio", "events/channel", "acp/native"]
@@ -47,6 +51,7 @@ thiserror.workspace = true
 
 # Logging
 tracing.workspace = true
+fastrace.workspace = true
 
 # IPLD
 cid.workspace = true

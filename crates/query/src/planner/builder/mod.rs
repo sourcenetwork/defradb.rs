@@ -20,7 +20,7 @@ use std::sync::Arc;
 use acp::DocumentACP;
 use identity::Did;
 use schema::CollectionVersion;
-use tracing::{debug, instrument};
+use tracing::debug;
 
 use crate::error::{QueryError, Result};
 use crate::executor::GqlWarning;
@@ -232,12 +232,11 @@ impl Planner {
     ///
     /// Returns a `PlanResult` containing both the plan and optional `IndexScanParams`
     /// when an index can be used to optimize the query.
-    #[instrument(
-        name = "query.plan",
-        skip(self, select),
-        fields(collection = %select.collection_name)
-    )]
+    #[fastrace::trace(name = "query.plan")]
     pub fn plan_with_index_info(&self, select: &Select) -> Result<PlanResult> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [("collection", select.collection_name.to_string())]
+        });
         let collection = self
             .collections
             .get(&select.collection_name)

@@ -4,7 +4,6 @@ use lens::{LensConfig, TransformId};
 use schema::CollectionSource;
 use storage::corekv::{Key, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionVersionKey, LensConfigKey};
-use tracing::instrument;
 
 use super::helpers::{create_orphan_placeholder, create_placeholder_with_source};
 use crate::error::{Error, Result};
@@ -29,15 +28,18 @@ impl<S: Store> DB<S> {
     /// # Returns
     ///
     /// The transform ID that was registered.
-    #[instrument(skip(self, config), fields(
-        source = %config.source_schema_version_id,
-        dest = %config.destination_schema_version_id
-    ))]
+    #[fastrace::trace]
     pub async fn set_migration(
         &self,
         config: LensConfig,
         identity: Option<&identity::Did>,
     ) -> Result<TransformId> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [
+                ("source", config.source_schema_version_id.to_string()),
+                ("dest", config.destination_schema_version_id.to_string()),
+            ]
+        });
         self.check_node_access(identity, acp::nac::NodePermission::MigrationSet)
             .await?;
         let dest_version_id = config.destination_schema_version_id.clone();
@@ -262,16 +264,19 @@ impl<S: Store> DB<S> {
     /// committing or rolling back the transaction.
     ///
     /// This is used for transaction-aware migration configuration via the FFI.
-    #[instrument(skip(self, txn, config), fields(
-        source = %config.source_schema_version_id,
-        dest = %config.destination_schema_version_id
-    ))]
+    #[fastrace::trace]
     pub async fn set_migration_in_txn(
         &self,
         txn: &DbTxn<S>,
         config: LensConfig,
         identity: Option<&identity::Did>,
     ) -> Result<TransformId> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [
+                ("source", config.source_schema_version_id.to_string()),
+                ("dest", config.destination_schema_version_id.to_string()),
+            ]
+        });
         self.check_node_access(identity, acp::nac::NodePermission::MigrationSet)
             .await?;
         self.set_migration_in_txn_with_store(txn, self.lens_store.clone(), config)
@@ -279,16 +284,19 @@ impl<S: Store> DB<S> {
             .map(|outcome| outcome.transform_id)
     }
 
-    #[instrument(skip(self, txn, lens_store, config), fields(
-        source = %config.source_schema_version_id,
-        dest = %config.destination_schema_version_id
-    ))]
+    #[fastrace::trace]
     pub(crate) async fn set_migration_in_txn_with_store(
         &self,
         txn: &DbTxn<S>,
         lens_store: std::sync::Arc<dyn lens::TransformStore>,
         config: LensConfig,
     ) -> Result<SetMigrationInTxnOutcome> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [
+                ("source", config.source_schema_version_id.to_string()),
+                ("dest", config.destination_schema_version_id.to_string()),
+            ]
+        });
         let dest_version_id = config.destination_schema_version_id.clone();
         let source_version_id = config.source_schema_version_id.clone();
         let config_for_persistence = config.clone();
