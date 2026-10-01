@@ -96,6 +96,63 @@ fn dispatch(coordinator: &TestCoordinator) -> usize {
     coordinator.dispatch_due_pending_dag_fetches_for_test(n0_future::time::Instant::now())
 }
 
+#[tokio::test(start_paused = true)]
+async fn pulled_roots_continue_without_a_pushlog_registration() {
+    let (blockstore, pending) = stores();
+    let root = seed(&blockstore, &pending, "pulled").await;
+    pending.remove(&root).await.unwrap();
+    let (coordinator, mut events) = restart(blockstore.clone(), pending).await;
+    let handler = RetryThenMergeHandler::yielding(root, 2);
+    let config = ReplicationConfig::default();
+    coordinator
+        .manager()
+        .event_sender()
+        .send(SyncEvent::BlockReceived {
+            cid: root,
+            doc_id: "pulled".into(),
+            collection_id: "col1".into(),
+            creator: "creator".into(),
+            sender_peer: Some("source".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(coordinator.pending_dag_count(), 0);
+    for turn in 0..3 {
+        if turn > 0 {
+            tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+            assert_eq!(dispatch(&coordinator), 1);
+        }
+        let results =
+            ReplicationLoop::process_next_batch(&coordinator, &mut events, &handler, &config).await;
+        if turn < 2 {
+            assert!(matches!(
+                results.as_slice(),
+                [ReplicationResult::Skipped {
+                    terminal: false,
+                    ..
+                }]
+            ));
+            assert!(
+                coordinator
+                    .manager()
+                    .pending_dag_snapshot(&root)
+                    .unwrap()
+                    .merge_continuation
+            );
+        } else {
+            assert!(matches!(
+                results.as_slice(),
+                [ReplicationResult::Merged { .. }]
+            ));
+        }
+    }
+    assert!(blockstore.is_merged(&root).await.unwrap());
+    assert_eq!(coordinator.pending_dag_count(), 0);
+    coordinator.shutdown().await;
+}
+
 // Observe the scheduler's actual event, then return it to the production batch
 // path. DagNeedsFetch here would redo discovery even if no network call occurs.
 async fn assert_local_turn(

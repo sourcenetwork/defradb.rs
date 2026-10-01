@@ -181,6 +181,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .await
                     {
                         Ok(outcome) => outcome,
+                        Err(error @ MergeError::HistoryRequired) => return Err(error),
+                        Err(error) if !is_root => {
+                            tracing::debug!(parent_cid = %cid, %error, "Parent collection merge failed");
+                            continue;
+                        }
                         Err(error) => return Err(error),
                     };
                     if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
@@ -335,7 +340,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                     outcome = ?outcome,
                                     "Composite skipped and will be retried"
                                 );
-                                return Ok(outcome);
+                                if matches!(outcome, MergeOutcome::Yielded) {
+                                    return Ok(outcome);
+                                }
+                                retryable_skip.get_or_insert(outcome);
                             }
                             Err(e) => {
                                 tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed");
@@ -627,6 +635,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         .await
                     {
                         Ok(outcome) => outcome,
+                        Err(error @ MergeError::HistoryRequired) => return Err(error),
+                        Err(error) if !is_root => {
+                            tracing::debug!(parent_cid = %cid, %error, "Parent collection merge failed in batch");
+                            continue;
+                        }
                         Err(error) => return Err(error),
                     };
                     if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
@@ -761,9 +774,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                         Ok(outcome) => {
                             tracing::debug!(link_cid = %link_cid, outcome = ?outcome, "Composite skipped in batch and will be retried");
-                            return Ok(outcome);
+                            if matches!(outcome, MergeOutcome::Yielded) {
+                                return Ok(outcome);
+                            }
+                            retryable_skip.get_or_insert(outcome);
                         }
                         Err(e) => {
+                            if matches!(e, MergeError::HistoryRequired) {
+                                return Err(e);
+                            }
                             tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed in batch");
                             if e.disposition() == MergeErrorDisposition::Retryable {
                                 unprocessed.get_or_insert_with(|| {

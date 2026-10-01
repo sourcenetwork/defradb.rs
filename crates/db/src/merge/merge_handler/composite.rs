@@ -263,10 +263,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             // carrier's collection id honoured, a sender would pick the validator.
             if metadata.collection_id.is_some()
                 && self.is_governed(collection.schema())
-                && !self
+                && self
                     .block_collection(&payload.schema_version_id, None)
                     .await?
-                    .is_some_and(|own| own.collection_id() == collection.collection_id())
+                    .is_none_or(|own| own.collection_id() != collection.collection_id())
             {
                 return Ok(CompositeMergePreparation::Complete(
                     MergeOutcome::retryable_skip(format!(
@@ -353,10 +353,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             is_root: true,
         }];
 
+        let applied_txn = self.db.new_txn(true).await?;
         let mut steps = 0;
+        let work_limit = self.max_merge_depth.max(1);
         while let Some(frame) = frames.pop() {
-            steps += 1;
-            if steps > 1024 || frames.len() > 1024 {
+            steps += usize::from(matches!(frame, CompositeMergeFrame::Enter { .. }));
+            if steps > work_limit || frames.len() > work_limit {
                 return Err(MergeError::HistoryRequired);
             }
             match frame {
@@ -398,6 +400,21 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         }
                     };
 
+                    if Self::composite_was_applied(
+                        &applied_txn.systemstore()?,
+                        &applied_txn.headstore()?,
+                        &cid,
+                        &payload,
+                        &doc_id_str,
+                    )
+                    .await?
+                    {
+                        if is_root {
+                            return Ok(MergeOutcome::terminal_skip("already merged"));
+                        }
+                        continue;
+                    }
+
                     match self
                         .prepare_composite_merge(
                             &cid,
@@ -420,7 +437,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 is_root,
                             });
                             if let Some(heads) = heads {
-                                if heads.len().saturating_add(frames.len()) > 1024 {
+                                if heads.len().saturating_add(frames.len()) > work_limit {
                                     return Err(MergeError::HistoryRequired);
                                 }
                                 for parent_cid in heads.into_iter().rev() {
@@ -803,9 +820,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }];
 
         let mut steps = 0;
+        let work_limit = self.max_merge_depth.max(1);
         while let Some(frame) = frames.pop() {
-            steps += 1;
-            if steps > 1024 || frames.len() > 1024 {
+            steps += usize::from(matches!(frame, CompositeMergeFrame::Enter { .. }));
+            if steps > work_limit || frames.len() > work_limit {
                 return Err(MergeError::HistoryRequired);
             }
             match frame {
@@ -850,6 +868,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     };
                     let doc_id = doc_id.clone();
 
+                    if Self::composite_was_applied(systemstore, headstore, &cid, &payload, &doc_id)
+                        .await?
+                    {
+                        if is_root {
+                            return Ok(MergeOutcome::terminal_skip("already merged"));
+                        }
+                        continue;
+                    }
+
                     match self
                         .prepare_composite_merge(
                             &cid,
@@ -872,7 +899,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 is_root,
                             });
                             if let Some(heads) = heads {
-                                if heads.len().saturating_add(frames.len()) > 1024 {
+                                if heads.len().saturating_add(frames.len()) > work_limit {
                                     return Err(MergeError::HistoryRequired);
                                 }
                                 for parent_cid in heads.into_iter().rev() {
