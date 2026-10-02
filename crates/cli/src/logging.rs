@@ -32,11 +32,15 @@ fn fastrace_event_layer() -> Option<tracing_subscriber::layer::Identity> {
     None
 }
 
-/// Captures dependency instrumentation. `iroh`, `libp2p`, `quinn` and
-/// `hickory` emit `tracing` spans, which `fastrace` cannot see; this mirrors
-/// them, rooting any that arrive without a local parent so background tasks
-/// are not dropped. The subscriber-wide `EnvFilter` runs first, so the cost is
-/// bounded by the configured level rather than by how chatty a dependency is.
+/// Mirrors dependency `tracing` spans into `fastrace`, so instrumentation in
+/// `iroh` and friends reaches traces at all.
+///
+/// Which dependency spans are mirrored is a filtering question, not an on/off
+/// one: the layer sits beneath the subscriber-wide `EnvFilter`, so a target
+/// directive governs it exactly as it governs events. The span-storm targets
+/// are quietened by default in
+/// [`with_default_transport_noise_filters`]; raising one in `RUST_LOG` brings
+/// it back.
 #[cfg(feature = "otel")]
 fn fastrace_compat_layer<S>() -> Option<telemetry::FastraceCompatLayer<S>>
 where
@@ -50,18 +54,43 @@ fn fastrace_compat_layer() -> Option<tracing_subscriber::layer::Identity> {
     None
 }
 
-fn with_default_transport_noise_filters(filter: EnvFilter) -> EnvFilter {
-    filter
-        .add_directive(
-            "iroh_quinn_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
-        .add_directive(
-            "noq_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
+/// Targets whose spans would otherwise swamp a trace. Measured on an idle iroh
+/// node with no peers over 13 s: `iroh::socket::transports` alone emitted 99
+/// `poll_send` spans, `iroh::net_report` 22 address probes, and
+/// `iroh::endpoint` is a process-lifetime span that roots all of them, so the
+/// trace never completes while the node runs.
+///
+/// These are quietened rather than removed — transport plumbing is diagnostic
+/// data that belongs in logs, but it is still worth being able to ask for when
+/// debugging the transport itself. A `RUST_LOG` directive for the same target
+/// overrides the default.
+const SPAN_STORM_TARGETS: &[&str] = &[
+    "iroh::socket=warn",
+    "iroh::net_report=warn",
+    "iroh::endpoint=warn",
+    "iroh::address_lookup=warn",
+    "iroh_relay=warn",
+    "portmapper=warn",
+    "netwatch=warn",
+];
+
+/// Directives that quieten third-party noise, applied beneath anything the
+/// operator sets so `RUST_LOG` still wins.
+fn default_noise_directives() -> String {
+    let mut spec = String::from("iroh_quinn_proto::connection=error,noq_proto::connection=error");
+    for target in SPAN_STORM_TARGETS {
+        spec.push(',');
+        spec.push_str(target);
+    }
+    spec
+}
+
+/// Build the event/span filter: our defaults first, then the operator's
+/// directives, so a later identical target replaces the default rather than
+/// being replaced by it.
+fn with_default_transport_noise_filters(level: Level) -> EnvFilter {
+    let operator = std::env::var("RUST_LOG").unwrap_or_else(|_| level.to_string());
+    EnvFilter::new(format!("{},{}", default_noise_directives(), operator))
 }
 
 pub struct LoggingHandle {
@@ -136,9 +165,7 @@ pub fn init(
         LogLevel::Fatal => Level::ERROR,
     };
 
-    let filter = with_default_transport_noise_filters(
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.to_string())),
-    );
+    let filter = with_default_transport_noise_filters(level);
 
     // Span callsites read the same directives as events, so `RUST_LOG` (or the
     // configured level) governs both and there is only one filter language to
