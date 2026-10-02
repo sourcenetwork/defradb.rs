@@ -1,7 +1,7 @@
 //! Protocol-specific event handlers (Identify, PushLog, GossipSub, Bitswap, Kademlia).
 
-use iroh_bitswap::{BitswapEvent, Store};
-use libp2p::{gossipsub, kad, kad::store::RecordStore, request_response, PeerId};
+use ::bitswap::{BitswapEvent, Store};
+use libp2p::{gossipsub, kad, kad::store::RecordStore, request_response};
 use tracing::{debug, error, warn};
 
 use crate::behaviour::{DefraKademliaEvent, KademliaNetwork};
@@ -39,7 +39,7 @@ impl<S: Store> P2PHost<S> {
                     protocols = ?protocols,
                     "Informing Bitswap of peer protocols"
                 );
-                self.swarm.behaviour().on_identify(&peer_id, &protocols);
+                self.swarm.behaviour_mut().on_identify(&peer_id, &protocols);
 
                 // Store the peer's listen addresses in Kademlia for routing.
                 // Do NOT call add_external_address — those are the REMOTE peer's
@@ -302,34 +302,7 @@ impl<S: Store> P2PHost<S> {
 
     /// Handle Bitswap events.
     pub(super) async fn handle_bitswap_event(&mut self, event: BitswapEvent) {
-        // iroh-bitswap events are for higher-level coordination
-        // Block exchange happens transparently through the Client
-        match event {
-            BitswapEvent::Provide { key } => {
-                debug!(cid = %key, "Bitswap requests to provide block");
-                // Could integrate with Kademlia DHT to provide this key
-            }
-            BitswapEvent::FindProviders {
-                key,
-                response,
-                limit,
-            } => {
-                debug!(cid = %key, limit = limit, "Bitswap requests to find providers");
-                // Return all connected peers as potential providers. In a small
-                // DefraDB network, any connected peer may have the requested block.
-                // This complements session.add_provider() which may not take effect
-                // if processed before get_blocks() adds CIDs to the want list.
-                let providers: std::collections::HashSet<PeerId> =
-                    self.peer_addrs.keys().copied().collect();
-                debug!(cid = %key, count = providers.len(), "Returning connected peers as Bitswap providers");
-                let _ = response.send(Ok(providers)).await;
-            }
-            BitswapEvent::Ping { peer, response } => {
-                debug!(peer_id = %peer, "Bitswap ping request");
-                // Could implement ping latency measurement
-                let _ = response.send(None);
-            }
-        }
+        match event {}
     }
 
     /// Handle Kademlia DHT events.

@@ -22,14 +22,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use ::bitswap::Store;
 use cid::Cid;
-use iroh_bitswap::Store;
 use libp2p::PeerId;
 use tracing::debug;
 
 use super::{AccessMode, BlockClass, BlockClassifier, LateBoundServeAcp, ReplicatorRegistry};
 
-/// Build a filter closure that satisfies iroh-bitswap's
+/// Build a filter closure that satisfies the bitswap crate's
 /// `PeerBlockRequestFilter` trait.
 ///
 /// The returned closure owns clones of `registry` and `store`, so the
@@ -154,10 +154,10 @@ mod tests {
     };
     use crate::peer_identity::AnonymousResolver;
     use crate::replicator::{ReplicationFilter, ReplicationFilters, ReplicatorInfo};
+    use ::bitswap::{Block, Store};
     use async_trait::async_trait;
     use bytes::Bytes;
     use defra_core::Block as DefraBlock;
-    use iroh_bitswap::{Block, Store};
     use kovan_map::HopscotchMap;
 
     #[derive(Clone)]

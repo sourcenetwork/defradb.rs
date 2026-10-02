@@ -1,6 +1,6 @@
 //! Swarm event handling.
 
-use iroh_bitswap::Store;
+use ::bitswap::Store;
 use libp2p::core::ConnectedPoint;
 use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{ConnectionId, SwarmEvent};
@@ -102,16 +102,12 @@ impl<S: Store> P2PHost<S> {
                     .kademlia
                     .add_address(&peer_id, peer_addr);
 
-                // Pre-announce bitswap protocols so the peer immediately transitions
-                // from Connected → Responsive in iroh-bitswap. Without this, there's
-                // a race between the Identify protocol completing and the first
-                // Bitswap fetch: after a node restart, GossipSub notifications can
-                // trigger Bitswap fetches before Identify finishes, leaving the peer
-                // in Connected state where peer_connected() is never called and the
-                // peer has no MessageQueue, so want messages are never sent.
+                // A Bitswap fetch can start before Identify finishes (GossipSub
+                // notifications after a restart), and the client needs the peer's
+                // protocol to pick want-have or want-block, so announce it now.
                 // The actual protocol version is negotiated per-substream regardless.
                 debug!(peer_id = %peer_id, "Pre-announcing Bitswap protocols");
-                self.swarm.behaviour().on_identify(
+                self.swarm.behaviour_mut().on_identify(
                     &peer_id,
                     &[
                         "/ipfs/bitswap/1.2.0".to_string(),
