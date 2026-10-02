@@ -184,6 +184,7 @@ bytes = "1.5"
 tracing = "0.1"
 fastrace = { version = "0.7", features = ["enable"] }
 fastrace-opentelemetry = "0.18"
+fastrace-tracing = "0.1"
 
 # Testing
 proptest = "1.11.0"

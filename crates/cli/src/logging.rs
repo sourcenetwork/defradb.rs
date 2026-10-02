@@ -32,6 +32,24 @@ fn fastrace_event_layer() -> Option<tracing_subscriber::layer::Identity> {
     None
 }
 
+/// Captures dependency instrumentation. `iroh`, `libp2p`, `quinn` and
+/// `hickory` emit `tracing` spans, which `fastrace` cannot see; this mirrors
+/// them, rooting any that arrive without a local parent so background tasks
+/// are not dropped. The subscriber-wide `EnvFilter` runs first, so the cost is
+/// bounded by the configured level rather than by how chatty a dependency is.
+#[cfg(feature = "otel")]
+fn fastrace_compat_layer<S>() -> Option<telemetry::FastraceCompatLayer<S>>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    Some(telemetry::FastraceCompatLayer::new())
+}
+
+#[cfg(not(feature = "otel"))]
+fn fastrace_compat_layer() -> Option<tracing_subscriber::layer::Identity> {
+    None
+}
+
 fn with_default_transport_noise_filters(filter: EnvFilter) -> EnvFilter {
     filter
         .add_directive(
@@ -251,7 +269,8 @@ where
         let registry = tracing_subscriber::registry()
             .with(fmt_layer)
             .with(chrome_layer)
-            .with(fastrace_event_layer());
+            .with(fastrace_event_layer())
+            .with(fastrace_compat_layer());
         registry
             .with(filter)
             .try_init()
@@ -261,7 +280,8 @@ where
 
     let registry = tracing_subscriber::registry()
         .with(fmt_layer)
-        .with(fastrace_event_layer());
+        .with(fastrace_event_layer())
+        .with(fastrace_compat_layer());
     registry
         .with(filter)
         .try_init()

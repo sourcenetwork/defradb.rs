@@ -23,6 +23,7 @@ otlp = [
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-semantic-conventions",
     "dep:fastrace-opentelemetry",
+    "dep:fastrace-tracing",
     "opentelemetry_sdk/trace",
     "opentelemetry_sdk/metrics",
     "opentelemetry-otlp/trace",
@@ -68,6 +69,9 @@ opentelemetry-semantic-conventions = { version = "0.32", optional = true }
 # `opentelemetry_otlp::SpanExporter` and `Resource` unchanged.
 fastrace.workspace = true
 fastrace-opentelemetry = { workspace = true, optional = true }
+# Mirrors third-party `tracing` spans (iroh, libp2p, quinn, hickory) into
+# fastrace so dependency instrumentation still reaches traces.
+fastrace-tracing = { workspace = true, optional = true }
 
 [lints]
 workspace = true
