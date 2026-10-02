@@ -25,7 +25,6 @@ use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::systemstore::{
     CollectionKey, CollectionNameKey, CollectionVersionKey, IndexIDSequenceKey,
 };
-use tracing::instrument;
 
 /// Helper to delete all keys with a given prefix from a namespace view.
 pub(super) async fn delete_prefix(store: &NamespaceView, prefix: Vec<u8>) -> Result<()> {
@@ -54,7 +53,7 @@ impl<S: Store> crate::database::DB<S> {
     /// This also finalizes relations by:
     /// - Auto-generating `_id` fields for non-array relation fields
     /// - Auto-determining primary sides for one-to-many relations
-    #[instrument(skip(self), name = "db.load_collections")]
+    #[defra_trace::traced(name = "db.load_collections", root)]
     pub async fn load_collections(&self) -> Result<()> {
         let txn = self.new_txn(true).await?;
         let prefix = CollectionNameKey::name_prefix();

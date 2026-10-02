@@ -11,7 +11,6 @@ mod simple;
 use identity::Did;
 use rapidhash::RapidHashMap;
 use serde_json::{Map, Value as JsonValue};
-use tracing::instrument;
 
 use crate::error::Result;
 use crate::executor::GqlWarning;
@@ -102,11 +101,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     }
 
     /// Execute already-parsed Select operations with a specific fetcher and identity.
-    #[instrument(
-        name = "query.execute",
-        skip(self, selects, fetcher, caller_identity, warnings),
-        fields(select_count = selects.len() as i64)
-    )]
+    #[fastrace::trace(name = "query.execute")]
     pub(crate) async fn execute_selects_internal(
         &self,
         selects: Vec<Select>,
@@ -114,6 +109,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         caller_identity: Option<Did>,
         warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [("select_count", selects.len().to_string())]
+        });
         let mut results = Map::new();
 
         for select in selects {

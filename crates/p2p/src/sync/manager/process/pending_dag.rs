@@ -547,7 +547,9 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// This is called when BitswapComplete is received, indicating all requested
     /// blocks have arrived. We re-check the DAG for any remaining missing links
     /// (recursively, at all depths) and process it if complete.
+    #[defra_trace::traced(name = "p2p.retry_pending_dag", root)]
     pub async fn retry_pending_dag(&self, root_cid: &Cid) -> Result<bool> {
+        fastrace::local::LocalSpan::add_properties(|| [("root_cid", root_cid.to_string())]);
         enum PendingDagRetryEntry {
             Current(PendingDag),
             Expired(PendingDag),
@@ -716,6 +718,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
     /// registration whose in-memory entry was TTL-evicted is recovered
     /// without a restart. Roots that no longer fit under `max_pending_dags`
     /// keep their record for the next sweep. Returns the count re-driven.
+    #[defra_trace::traced(name = "p2p.resync_pending_dags", root)]
     pub async fn resync_persisted_pending_dags(&self) -> usize {
         let Some(store) = self.pending_store() else {
             return 0;

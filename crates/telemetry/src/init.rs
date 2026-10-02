@@ -10,23 +10,20 @@
 //!   `resource.WithOS()` + `resource.WithProcess()` (which we approximate
 //!   with `std::env::consts` + `std::process` to avoid an extra dep).
 //!
+use std::borrow::Cow;
+
+use fastrace_opentelemetry::OpenTelemetryReporter;
 use opentelemetry::global;
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::InstrumentationScope;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithHttpConfig};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
-use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider};
 use opentelemetry_sdk::Resource;
 use thiserror::Error;
-use tracing::Subscriber;
-use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::registry::LookupSpan;
 
 use crate::config::TelemetryConfig;
 use crate::handle::TelemetryHandle;
 use crate::util::{otel_timeout, panic_message};
-
-pub use opentelemetry_sdk::trace::SdkTracer as Tracer;
 
 #[derive(Debug, Error)]
 pub enum InitError {
@@ -46,10 +43,15 @@ pub enum InitError {
     HttpClientBuild(#[source] reqwest::Error),
 }
 
-/// Returns the lifecycle handle and a configured [`SdkTracer`]. The caller
-/// wraps the tracer with `tracing_opentelemetry::layer().with_tracer(...)`
-/// at its subscriber-composition site so type inference can pick the right
-/// `S` parameter for `OpenTelemetryLayer<S, _>`.
+/// Returns the lifecycle handle and a [`OpenTelemetryReporter`] for
+/// `fastrace::set_reporter`. Spans are produced by `fastrace`, so the OTLP
+/// span path is the reporter rather than a `tracing` layer; the exporter and
+/// resource below are the same ones Go's `otlptracehttp` setup uses.
+///
+/// The reporter drives export with `pollster::block_on`, which is correct for
+/// the `reqwest-blocking-client` transport selected in this crate's
+/// `Cargo.toml` — no Tokio runtime is required. Batching is `fastrace`'s own
+/// collector interval rather than `BatchSpanProcessor`.
 ///
 /// Safe to call from any context (no Tokio runtime required): with the
 /// `reqwest-blocking-client` transport selected in this crate's `Cargo.toml`,
@@ -61,7 +63,9 @@ pub enum InitError {
 /// `false` (or call [`TelemetryConfig::without_global`]) to skip that —
 /// useful when the host process already runs its own OTel stack and would
 /// otherwise see its globals silently replaced.
-pub fn init(config: TelemetryConfig) -> Result<(TelemetryHandle, SdkTracer), InitError> {
+pub fn init(
+    config: TelemetryConfig,
+) -> Result<(TelemetryHandle, OpenTelemetryReporter), InitError> {
     let executable_name = std::env::current_exe()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -101,10 +105,11 @@ pub fn init(config: TelemetryConfig) -> Result<(TelemetryHandle, SdkTracer), Ini
         .build()
         .map_err(|e| InitError::SpanExporter(Box::new(e)))?;
 
-    let tracer_provider = SdkTracerProvider::builder()
-        .with_batch_exporter(span_exporter)
-        .with_resource(resource.clone())
-        .build();
+    let reporter = OpenTelemetryReporter::new(
+        span_exporter,
+        Cow::Owned(resource.clone()),
+        InstrumentationScope::builder(config.service_name.clone()).build(),
+    );
 
     let metric_exporter = MetricExporter::builder()
         .with_http()
@@ -119,27 +124,14 @@ pub fn init(config: TelemetryConfig) -> Result<(TelemetryHandle, SdkTracer), Ini
     let metric_installation = crate::metrics::install(&meter_provider);
 
     if config.install_global {
-        global::set_tracer_provider(tracer_provider.clone());
         global::set_meter_provider(meter_provider.clone());
     }
 
-    let tracer = tracer_provider.tracer(config.service_name);
-
     let handle = TelemetryHandle {
-        tracer_provider: Some(tracer_provider),
         meter_provider: Some(meter_provider),
         metric_installation: Some(metric_installation),
     };
 
-    Ok((handle, tracer))
+    Ok((handle, reporter))
 }
-
-/// Build the `tracing` ↔ OTEL bridge layer for a given subscriber type.
-/// Call this at the subscriber-composition site so `S` is inferred from the
-/// inner subscriber at that point — the layer's `S` parameter must match.
-pub fn otel_layer<S>(tracer: SdkTracer) -> OpenTelemetryLayer<S, SdkTracer>
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-{
-    tracing_opentelemetry::layer().with_tracer(tracer)
-}
+pub use fastrace_opentelemetry::OpenTelemetryReporter as Reporter;

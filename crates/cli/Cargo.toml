@@ -69,6 +69,8 @@ tracing = { workspace = true }
 # the first TLS client construction panicked. Pinned to the version those
 # crates resolve to.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+fastrace.workspace = true
+defra-trace = { path = "../trace" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-chrome = { version = "0.7", optional = true }
 

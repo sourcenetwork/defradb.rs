@@ -8,7 +8,6 @@ use graphql_parser::query::{
 };
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
-use tracing::instrument;
 
 use crate::document::DocumentMapping;
 use crate::error::{QueryError, Result};
@@ -414,13 +413,14 @@ pub fn parse_request_with_variables(
 }
 
 /// Parse a GraphQL request with variable substitution and custom limits.
-#[instrument(name = "query.parse", skip(query, variables, limits), fields(query_len = query.len() as i64))]
+#[fastrace::trace(name = "query.parse")]
 pub fn parse_request_with_limits(
     query: &str,
     variables: Option<&RapidHashMap<String, JsonValue>>,
     operation_name: Option<&str>,
     limits: QueryLimits,
 ) -> Result<ParsedOperation> {
+    fastrace::local::LocalSpan::add_properties(|| [("query_len", query.len().to_string())]);
     let doc: Document<'_, String> = graphql_parser::parse_query(query).map_err(|e| {
         let msg = e.to_string();
         if msg.contains("Parse error at") {

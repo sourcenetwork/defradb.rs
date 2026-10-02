@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use rapidhash::RapidHashMap;
 use serde_json::Value as JsonValue;
 use std::future::Future;
-use tracing::{instrument, warn};
+use tracing::warn;
 
 use acp::nac::NodePermission;
 use identity::Did;
@@ -105,12 +105,11 @@ fn convert_variables(variables: &Option<JsonValue>) -> Option<RapidHashMap<Strin
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRunner<F, R> {
-    #[instrument(
-        name = "query.execute_request",
-        skip(self, request),
-        fields(query_len = request.query.len() as i64)
-    )]
+    #[defra_trace::traced(name = "query.execute_request", root)]
     async fn execute(&self, request: QueryRequest) -> QueryResponse {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [("query_len", request.query.len().to_string())]
+        });
         // Convert variables from JSON to RapidHashMap format for the parser
         let variables = convert_variables(&request.variables);
 
@@ -308,16 +307,18 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         }
     }
 
-    #[instrument(
-        name = "query.execute_in_txn",
-        skip(self, request),
-        fields(query_len = request.query.len() as i64, txn_id = %handle)
-    )]
+    #[defra_trace::traced(name = "query.execute_in_txn", root)]
     async fn execute_in_txn(
         &self,
         request: QueryRequest,
         handle: &TransactionHandle,
     ) -> QueryResponse {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [
+                ("query_len", request.query.len().to_string()),
+                ("txn_id", handle.to_string()),
+            ]
+        });
         let txn_ctx = match self.registry.get(handle) {
             GetTransactionResult::Found(ctx) => ctx,
             GetTransactionResult::NotFound => {

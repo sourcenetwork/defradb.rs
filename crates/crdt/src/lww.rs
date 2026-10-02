@@ -12,7 +12,6 @@ use defra_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use storage::{corekv::Key, keys::CRDTValueKey, Reader, ReaderWriter};
-use tracing::instrument;
 
 /// LWW Delta - represents a change to an LWW register
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,7 +281,7 @@ impl Lww {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl ReplicatedData for Lww {
-    #[instrument(level = "trace", skip(self, rw, ctx, delta))]
+    #[defra_trace::traced(name = "crdt.lww.merge", level = "trace")]
     async fn merge(
         &self,
         rw: &mut dyn ReaderWriter,

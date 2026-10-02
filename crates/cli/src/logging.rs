@@ -6,8 +6,6 @@ use tracing_subscriber::layer::SubscriberExt;
 #[cfg(feature = "profiling")]
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-#[cfg(feature = "otel")]
-use tracing_subscriber::Layer;
 use tracing_subscriber::{EnvFilter, Registry};
 
 #[cfg(feature = "profiling")]
@@ -22,32 +20,77 @@ use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use crate::config::{Config, LogFormat, LogLevel, LogOutput};
 use crate::error::{Error, Result};
 
-/// Build the OTLP bridge layer paired with a fresh dedup filter, for a given
-/// inner-subscriber type `S`. Generic over `S` because the registry's type
-/// differs between the profiling (fmt + chrome) and non-profiling (fmt only)
-/// branches — a plain `let` binding would fix `S` at first use and fail at
-/// the second, which is why this is a function rather than a hoisted local.
-/// Returns `None` when no tracer was configured (telemetry off/failed).
+/// The event bridge only earns its keep when spans are exported; without
+/// `otel` the reporter discards them, so attaching events would be pure cost.
 #[cfg(feature = "otel")]
-fn otel_dedup_layer<S>(tracer: Option<telemetry::Tracer>) -> Option<impl Layer<S>>
+fn fastrace_event_layer() -> Option<telemetry::FastraceEventLayer> {
+    Some(telemetry::FastraceEventLayer)
+}
+
+#[cfg(not(feature = "otel"))]
+fn fastrace_event_layer() -> Option<tracing_subscriber::layer::Identity> {
+    None
+}
+
+/// Mirrors dependency `tracing` spans into `fastrace`, so instrumentation in
+/// `iroh` and friends reaches traces at all.
+///
+/// Which dependency spans are mirrored is a filtering question, not an on/off
+/// one: the layer sits beneath the subscriber-wide `EnvFilter`, so a target
+/// directive governs it exactly as it governs events. The span-storm targets
+/// are quietened by default in
+/// [`with_default_transport_noise_filters`]; raising one in `RUST_LOG` brings
+/// it back.
+#[cfg(feature = "otel")]
+fn fastrace_compat_layer<S>() -> Option<telemetry::FastraceCompatLayer<S>>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    tracer.map(|t| telemetry::otel_layer(t).with_filter(telemetry::OtelDedupFilter::new()))
+    Some(telemetry::FastraceCompatLayer::new())
 }
 
-fn with_default_transport_noise_filters(filter: EnvFilter) -> EnvFilter {
-    filter
-        .add_directive(
-            "iroh_quinn_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
-        .add_directive(
-            "noq_proto::connection=error"
-                .parse()
-                .expect("valid tracing directive"),
-        )
+#[cfg(not(feature = "otel"))]
+fn fastrace_compat_layer() -> Option<tracing_subscriber::layer::Identity> {
+    None
+}
+
+/// Targets whose spans would otherwise swamp a trace. Measured on an idle iroh
+/// node with no peers over 13 s: `iroh::socket::transports` alone emitted 99
+/// `poll_send` spans, `iroh::net_report` 22 address probes, and
+/// `iroh::endpoint` is a process-lifetime span that roots all of them, so the
+/// trace never completes while the node runs.
+///
+/// These are quietened rather than removed — transport plumbing is diagnostic
+/// data that belongs in logs, but it is still worth being able to ask for when
+/// debugging the transport itself. A `RUST_LOG` directive for the same target
+/// overrides the default.
+const SPAN_STORM_TARGETS: &[&str] = &[
+    "iroh::socket=warn",
+    "iroh::net_report=warn",
+    "iroh::endpoint=warn",
+    "iroh::address_lookup=warn",
+    "iroh_relay=warn",
+    "portmapper=warn",
+    "netwatch=warn",
+];
+
+/// Directives that quieten third-party noise, applied beneath anything the
+/// operator sets so `RUST_LOG` still wins.
+fn default_noise_directives() -> String {
+    let mut spec = String::from("iroh_quinn_proto::connection=error,noq_proto::connection=error");
+    for target in SPAN_STORM_TARGETS {
+        spec.push(',');
+        spec.push_str(target);
+    }
+    spec
+}
+
+/// Build the event/span filter: our defaults first, then the operator's
+/// directives, so a later identical target replaces the default rather than
+/// being replaced by it.
+fn with_default_transport_noise_filters(level: Level) -> EnvFilter {
+    let operator = std::env::var("RUST_LOG").unwrap_or_else(|_| level.to_string());
+    EnvFilter::new(format!("{},{}", default_noise_directives(), operator))
 }
 
 pub struct LoggingHandle {
@@ -86,6 +129,9 @@ impl LoggingHandle {
             drop(profiling.guard);
             eprintln!("Chrome trace written to {}", path.display());
         }
+        // Must precede telemetry shutdown: flush hands buffered spans to the
+        // reporter, which exports through the OTLP exporter owned below.
+        fastrace::flush();
         self.telemetry.shutdown();
     }
 }
@@ -97,6 +143,16 @@ impl LoggingHandle {
 /// in `cli/start.go`). Ephemeral commands like `version` / `client` keep the
 /// fmt subscriber but never spin up the exporter thread or pay its shutdown
 /// cost.
+/// Spans are produced by `fastrace`. When nothing consumes them — no `otel`
+/// feature, or telemetry disabled at runtime — install a reporter that drops
+/// each batch. This is the analogue of the old `tracing` spans reaching the
+/// Registry and being discarded under `FmtSpan::NONE`.
+struct DropReporter;
+
+impl fastrace::collector::Reporter for DropReporter {
+    fn report(&mut self, _spans: Vec<fastrace::prelude::SpanRecord>) {}
+}
+
 pub fn init(
     config: &Config,
     enable_profiling: bool,
@@ -109,9 +165,17 @@ pub fn init(
         LogLevel::Fatal => Level::ERROR,
     };
 
-    let filter = with_default_transport_noise_filters(
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.to_string())),
-    );
+    let filter = with_default_transport_noise_filters(level);
+
+    // Span callsites read the same directives as events, so `RUST_LOG` (or the
+    // configured level) governs both and there is only one filter language to
+    // learn. `fastrace` has no filtering of its own, so without this a span
+    // left in a hot path could only be switched off by recompiling.
+    //
+    // The transport-noise directives above are deliberately not included: they
+    // scope third-party event targets, and those crates emit no `defra_trace`
+    // spans, so they would never match a span callsite.
+    defra_trace::set_directives(&std::env::var("RUST_LOG").unwrap_or_else(|_| level.to_string()));
 
     let builder = fmt::layer()
         .with_target(true)
@@ -183,8 +247,9 @@ where
     // malformed env var), we log and continue with no telemetry — matches
     // Go's `log.ErrorContextE` + continue path.
     #[cfg(feature = "otel")]
-    let (telemetry_handle, tracer) = if config.telemetry_disabled || !enable_telemetry {
-        (telemetry::TelemetryHandle::noop(), None)
+    let telemetry_handle = if config.telemetry_disabled || !enable_telemetry {
+        fastrace::set_reporter(DropReporter, fastrace::collector::Config::default());
+        telemetry::TelemetryHandle::noop()
     } else {
         // Source a Go-style descriptive build string for service.version
         // (`defradb <ver> (<commit8> <date>) built with ...`) so OTLP
@@ -195,12 +260,15 @@ where
             defra_version::VersionInfo::new().descriptive(),
         );
         match telemetry::init(telemetry_config) {
-            Ok((handle, tracer)) => (handle, Some(tracer)),
+            Ok((handle, reporter)) => {
+                fastrace::set_reporter(reporter, fastrace::collector::Config::default());
+                handle
+            }
             Err(err) => {
                 eprintln!(
                     "warning: failed to configure OpenTelemetry, continuing without telemetry: {err}"
                 );
-                (telemetry::TelemetryHandle::noop(), None)
+                telemetry::TelemetryHandle::noop()
             }
         }
     };
@@ -208,6 +276,7 @@ where
     #[cfg(not(feature = "otel"))]
     let telemetry_handle = {
         let _ = (config, enable_telemetry); // unused when otel is off
+        fastrace::set_reporter(DropReporter, fastrace::collector::Config::default());
         telemetry::TelemetryHandle::noop()
     };
 
@@ -226,9 +295,9 @@ where
         let chrome_layer = chrome_layer.with_filter(telemetry::OtelDedupFilter::new());
         let registry = tracing_subscriber::registry()
             .with(fmt_layer)
-            .with(chrome_layer);
-        #[cfg(feature = "otel")]
-        let registry = registry.with(otel_dedup_layer(tracer));
+            .with(chrome_layer)
+            .with(fastrace_event_layer())
+            .with(fastrace_compat_layer());
         registry
             .with(filter)
             .try_init()
@@ -236,9 +305,10 @@ where
         return Ok(LoggingHandle::with_profile(profiling, telemetry_handle));
     }
 
-    let registry = tracing_subscriber::registry().with(fmt_layer);
-    #[cfg(feature = "otel")]
-    let registry = registry.with(otel_dedup_layer(tracer));
+    let registry = tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(fastrace_event_layer())
+        .with(fastrace_compat_layer());
     registry
         .with(filter)
         .try_init()

@@ -13,8 +13,9 @@ impl<S: Store> crate::database::DB<S> {
     /// # Errors
     ///
     /// - `CollectionVersionNotFound` if no collection with the given version ID exists
-    #[instrument(skip(self), fields(version_id = %version_id), name = "db.set_active_version")]
+    #[defra_trace::traced(name = "db.set_active_version", root)]
     pub async fn set_active_collection_version(&self, version_id: &str) -> Result<()> {
+        fastrace::local::LocalSpan::add_properties(|| [("version_id", version_id.to_string())]);
         self.check_node_access(None, acp::nac::NodePermission::CollectionPatch)
             .await?;
         if version_id.is_empty() {

@@ -69,6 +69,8 @@ serde_ipld_dagcbor = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+fastrace.workspace = true
+defra-trace = { path = "../trace" }
 rlimit = { version = "0.9", optional = true }
 sysinfo = { version = "0.33", optional = true }
 

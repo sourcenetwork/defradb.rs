@@ -116,6 +116,8 @@ pub mod server;
 #[cfg(feature = "server")]
 mod tls;
 #[cfg(feature = "server")]
+pub mod trace_root;
+#[cfg(feature = "server")]
 pub mod validation;
 
 #[cfg(any(test, feature = "test-utils"))]

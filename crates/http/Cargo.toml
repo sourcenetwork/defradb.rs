@@ -83,6 +83,7 @@ thiserror.workspace = true
 
 # Logging
 tracing.workspace = true
+fastrace.workspace = true
 telemetry = { path = "../telemetry", optional = true }
 
 # Retry jitter

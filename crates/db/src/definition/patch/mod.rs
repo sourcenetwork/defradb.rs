@@ -20,7 +20,6 @@ use crate::error::{Error, Result};
 use schema::{CollectionSource, CollectionVersion};
 use storage::corekv::{Key, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey, CollectionVersionKey};
-use tracing::instrument;
 
 impl<S: Store> crate::database::DB<S> {
     /// Apply a JSON Patch to a collection schema.
@@ -63,7 +62,7 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     /// Apply a JSON Patch and its migration as one operation.
-    #[instrument(skip(self, patch, migration), fields(collection = %collection_name), name = "db.patch_collection")]
+    #[defra_trace::traced(name = "db.patch_collection", root)]
     pub async fn patch_collection_with_migration(
         &self,
         collection_name: &str,
@@ -71,6 +70,9 @@ impl<S: Store> crate::database::DB<S> {
         migration: Option<lens::LensConfig>,
         identity: Option<&identity::Did>,
     ) -> Result<CollectionVersion> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [("collection", collection_name.to_string())]
+        });
         self.check_node_access(identity, acp::nac::NodePermission::CollectionPatch)
             .await?;
         // Parse the patch early - needed for both collection lookup fallbacks and processing

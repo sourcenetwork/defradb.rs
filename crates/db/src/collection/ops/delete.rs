@@ -12,12 +12,13 @@ impl<S: Store> crate::database::DB<S> {
     /// 3. The version index entry from `/collection/version/{collection_id}/{version_id}`
     ///
     /// Note: This does NOT delete documents. Use `truncate_collection` first if needed.
-    #[instrument(skip(self, txn), fields(collection = %name), name = "db.delete_collection")]
+    #[fastrace::trace(name = "db.delete_collection")]
     pub(crate) async fn delete_collection_with_txn(
         &self,
         txn: &mut DbTxn<S>,
         name: &str,
     ) -> Result<()> {
+        fastrace::local::LocalSpan::add_properties(|| [("collection", name.to_string())]);
         // Get the collection to find its version_id and collection_id
         let collection = txn
             .get_collection(name)
@@ -69,8 +70,9 @@ impl<S: Store> crate::database::DB<S> {
     /// and updates the process-wide cache.
     ///
     /// Note: This does NOT delete documents. Use `truncate_collection` first if needed.
-    #[instrument(skip(self), fields(collection = %name), name = "db.delete_collection_auto")]
+    #[defra_trace::traced(name = "db.delete_collection_auto", root)]
     pub async fn delete_collection(&self, name: &str) -> Result<()> {
+        fastrace::local::LocalSpan::add_properties(|| [("collection", name.to_string())]);
         self.check_node_access(None, acp::nac::NodePermission::CollectionPatch)
             .await?;
         let collection = self
@@ -173,12 +175,13 @@ impl<S: Store> crate::database::DB<S> {
     /// while preserving the collection schema.
     ///
     /// Processes deletes in chunks to avoid building a massive uncommitted write set.
-    #[instrument(skip(self), fields(collection = %name), name = "db.truncate_collection")]
+    #[defra_trace::traced(name = "db.truncate_collection", root)]
     pub async fn truncate_collection(
         &self,
         name: &str,
         identity: Option<&identity::Did>,
     ) -> Result<()> {
+        fastrace::local::LocalSpan::add_properties(|| [("collection", name.to_string())]);
         self.check_node_access(identity, acp::nac::NodePermission::CollectionTruncate)
             .await?;
         let collection = self

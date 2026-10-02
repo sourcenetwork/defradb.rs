@@ -13,6 +13,8 @@ ignored = ["serde_json", "thiserror"]
 [lib]
 bench = false
 
+[features]
+
 [dependencies]
 bytes.workspace = true
 defra-core = { path = "../defra-core" }
@@ -29,6 +31,8 @@ serde_json.workspace = true
 # Error handling
 thiserror.workspace = true
 tracing.workspace = true
+fastrace.workspace = true
+defra-trace = { path = "../trace" }
 
 [dev-dependencies]
 proptest.workspace = true

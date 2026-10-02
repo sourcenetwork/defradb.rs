@@ -21,8 +21,6 @@ use crate::util::panic_message;
 
 pub struct TelemetryHandle {
     #[cfg(feature = "otlp")]
-    pub(crate) tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
-    #[cfg(feature = "otlp")]
     pub(crate) meter_provider: Option<opentelemetry_sdk::metrics::SdkMeterProvider>,
     #[cfg(feature = "otlp")]
     pub(crate) metric_installation: Option<u64>,
@@ -32,8 +30,6 @@ impl TelemetryHandle {
     /// Returns a handle that owns no providers — `shutdown` and `Drop` are no-ops.
     pub fn noop() -> Self {
         Self {
-            #[cfg(feature = "otlp")]
-            tracer_provider: None,
             #[cfg(feature = "otlp")]
             meter_provider: None,
             #[cfg(feature = "otlp")]
@@ -66,9 +62,6 @@ impl TelemetryHandle {
         if let Some(provider) = self.meter_provider.take() {
             let _ = provider.shutdown();
         }
-        if let Some(provider) = self.tracer_provider.take() {
-            let _ = provider.shutdown();
-        }
     }
 }
 
@@ -80,7 +73,7 @@ impl TelemetryHandle {
 impl Drop for TelemetryHandle {
     fn drop(&mut self) {
         #[cfg(feature = "otlp")]
-        if self.tracer_provider.is_some() || self.meter_provider.is_some() {
+        if self.meter_provider.is_some() {
             // `catch_unwind` keeps a panic inside the SDK shutdown (e.g. the
             // `handle.join().unwrap()` the batch processor does) from
             // becoming a panic-during-unwind → process abort when the handle

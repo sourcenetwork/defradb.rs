@@ -22,7 +22,8 @@ otlp = [
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-semantic-conventions",
-    "dep:tracing-opentelemetry",
+    "dep:fastrace-opentelemetry",
+    "dep:fastrace-tracing",
     "opentelemetry_sdk/trace",
     "opentelemetry_sdk/metrics",
     "opentelemetry-otlp/trace",
@@ -63,7 +64,14 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 # Provides the `SCHEMA_URL` constant for the resource's schema declaration,
 # matching Go's `resource.WithSchemaURL(semconv.SchemaURL)`.
 opentelemetry-semantic-conventions = { version = "0.32", optional = true }
-tracing-opentelemetry = { version = "0.33", optional = true }
+# Spans are produced by `fastrace`, so the OTLP span path is its reporter
+# rather than the tracing-opentelemetry bridge. It takes our existing
+# `opentelemetry_otlp::SpanExporter` and `Resource` unchanged.
+fastrace.workspace = true
+fastrace-opentelemetry = { workspace = true, optional = true }
+# Mirrors third-party `tracing` spans (iroh, libp2p, quinn, hickory) into
+# fastrace so dependency instrumentation still reaches traces.
+fastrace-tracing = { workspace = true, optional = true }
 
 [lints]
 workspace = true

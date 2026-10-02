@@ -5,7 +5,7 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-use tracing::{debug, instrument};
+use tracing::debug;
 use web_time::Instant;
 
 use crate::error::Result;
@@ -25,12 +25,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// The Planner builds a proper join plan with TypeJoinOne/TypeJoinMany nodes.
     /// ScanNodes fetch their own data via the attached fetcher.
     /// ACP permission filtering is applied per-collection via PermissionFilterNode in the plan.
-    #[instrument(
-        name = "query.execute_nested_select",
-        level = "debug",
-        skip(self, select, fetcher, identity),
-        fields(collection = %select.collection_name, field = %select.field.output_name())
-    )]
+    #[defra_trace::traced(name = "query.execute_nested_select", level = "debug")]
     pub(crate) async fn execute_nested_select_with_planner(
         &self,
         select: &Select,
@@ -38,6 +33,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         identity: Option<Did>,
         warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [
+                ("collection", select.collection_name.to_string()),
+                ("field", select.field.output_name().to_string()),
+            ]
+        });
         let mut profile = NestedQueryProfile::default();
 
         // Build the plan using the Planner with fetcher support

@@ -16,6 +16,8 @@
 mod config;
 #[cfg(feature = "otlp")]
 mod dedup;
+#[cfg(feature = "otlp")]
+mod events;
 mod handle;
 mod metrics;
 #[cfg(feature = "otlp")]
@@ -24,6 +26,16 @@ mod util;
 pub use config::TelemetryConfig;
 #[cfg(feature = "otlp")]
 pub use dedup::OtelDedupFilter;
+#[cfg(feature = "otlp")]
+pub use events::FastraceEventLayer;
+/// Mirrors spans and events from crates instrumented with `tracing` — our
+/// dependencies — into `fastrace`. It roots a span that has no local parent,
+/// so background tasks in `libp2p` and `iroh` are captured rather than
+/// dropped. Complements [`FastraceEventLayer`], which handles events emitted
+/// inside our own `fastrace` spans; this one handles events inside third-party
+/// `tracing` spans.
+#[cfg(feature = "otlp")]
+pub use fastrace_tracing::FastraceCompatLayer;
 pub use handle::TelemetryHandle;
 pub use metrics::{
     conflict_metrics_snapshot, record_commit_gate_wait, record_conflict_tracker_size,
@@ -34,4 +46,4 @@ pub use metrics::{
 #[cfg(feature = "otlp")]
 mod init;
 #[cfg(feature = "otlp")]
-pub use init::{init, otel_layer, InitError, Tracer};
+pub use init::{init, InitError, Reporter};
