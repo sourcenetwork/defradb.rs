@@ -52,6 +52,7 @@ thiserror.workspace = true
 # Logging
 tracing.workspace = true
 fastrace.workspace = true
+defra-trace = { path = "../trace" }
 
 # IPLD
 cid.workspace = true

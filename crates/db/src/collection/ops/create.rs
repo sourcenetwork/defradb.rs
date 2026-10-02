@@ -274,7 +274,7 @@ impl<S: Store> crate::database::DB<S> {
     ///
     /// This creates a new transaction, calls `create_collection_with_txn`, commits,
     /// and updates the process-wide cache.
-    #[fastrace::trace(name = "db.create_collection_auto")]
+    #[defra_trace::traced(name = "db.create_collection_auto", root)]
     pub async fn create_collection(&self, schema: CollectionVersion) -> Result<()> {
         fastrace::local::LocalSpan::add_properties(|| [("collection", schema.name.to_string())]);
         self.create_collection_inner(schema, None, None)

@@ -62,7 +62,7 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     /// Apply a JSON Patch and its migration as one operation.
-    #[fastrace::trace(name = "db.patch_collection")]
+    #[defra_trace::traced(name = "db.patch_collection", root)]
     pub async fn patch_collection_with_migration(
         &self,
         collection_name: &str,

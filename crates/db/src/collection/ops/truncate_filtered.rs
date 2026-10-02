@@ -12,7 +12,7 @@ const CHUNK_SIZE: usize = 1000;
 
 impl<S: Store> crate::database::DB<S> {
     /// Permanently remove documents matching `filter` while preserving the collection.
-    #[fastrace::trace(name = "db.truncate_collection_filtered")]
+    #[defra_trace::traced(name = "db.truncate_collection_filtered", root)]
     pub async fn truncate_collection_with_filter(
         self: &Arc<Self>,
         name: &str,

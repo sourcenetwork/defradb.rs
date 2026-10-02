@@ -28,7 +28,7 @@ impl<S: Store> DB<S> {
     /// # Returns
     ///
     /// The transform ID that was registered.
-    #[fastrace::trace]
+    #[defra_trace::traced(name = "db.set_migration", root)]
     pub async fn set_migration(
         &self,
         config: LensConfig,
@@ -264,7 +264,7 @@ impl<S: Store> DB<S> {
     /// committing or rolling back the transaction.
     ///
     /// This is used for transaction-aware migration configuration via the FFI.
-    #[fastrace::trace]
+    #[defra_trace::traced(name = "db.set_migration_in_txn", root)]
     pub async fn set_migration_in_txn(
         &self,
         txn: &DbTxn<S>,

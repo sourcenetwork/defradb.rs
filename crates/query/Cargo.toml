@@ -61,6 +61,7 @@ sha2.workspace = true
 # Logging
 tracing.workspace = true
 fastrace.workspace = true
+defra-trace = { path = "../trace" }
 
 # Full-text search
 bm25.workspace = true

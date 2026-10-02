@@ -70,7 +70,7 @@ impl<S: Store> crate::database::DB<S> {
     /// and updates the process-wide cache.
     ///
     /// Note: This does NOT delete documents. Use `truncate_collection` first if needed.
-    #[fastrace::trace(name = "db.delete_collection_auto")]
+    #[defra_trace::traced(name = "db.delete_collection_auto", root)]
     pub async fn delete_collection(&self, name: &str) -> Result<()> {
         fastrace::local::LocalSpan::add_properties(|| [("collection", name.to_string())]);
         self.check_node_access(None, acp::nac::NodePermission::CollectionPatch)
@@ -175,7 +175,7 @@ impl<S: Store> crate::database::DB<S> {
     /// while preserving the collection schema.
     ///
     /// Processes deletes in chunks to avoid building a massive uncommitted write set.
-    #[fastrace::trace(name = "db.truncate_collection")]
+    #[defra_trace::traced(name = "db.truncate_collection", root)]
     pub async fn truncate_collection(
         &self,
         name: &str,

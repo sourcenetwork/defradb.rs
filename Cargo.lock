@@ -3939,6 +3939,7 @@ dependencies = [
  "crypto",
  "datastore",
  "defra-core",
+ "defra-trace",
  "document",
  "ed25519-dalek 2.2.0",
  "events",
@@ -4223,6 +4224,24 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo 0.33.1",
+]
+
+[[package]]
+name = "defra-trace"
+version = "0.5.0"
+dependencies = [
+ "defra-trace-macro",
+ "fastrace",
+ "tokio",
+]
+
+[[package]]
+name = "defra-trace-macro"
+version = "0.5.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -10568,6 +10587,7 @@ dependencies = [
  "cid",
  "cursor",
  "defra-core",
+ "defra-trace",
  "document",
  "fastrace",
  "futures",

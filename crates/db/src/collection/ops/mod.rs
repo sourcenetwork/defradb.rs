@@ -53,7 +53,7 @@ impl<S: Store> crate::database::DB<S> {
     /// This also finalizes relations by:
     /// - Auto-generating `_id` fields for non-array relation fields
     /// - Auto-determining primary sides for one-to-many relations
-    #[fastrace::trace(name = "db.load_collections")]
+    #[defra_trace::traced(name = "db.load_collections", root)]
     pub async fn load_collections(&self) -> Result<()> {
         let txn = self.new_txn(true).await?;
         let prefix = CollectionNameKey::name_prefix();

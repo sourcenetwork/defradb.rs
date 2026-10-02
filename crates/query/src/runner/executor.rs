@@ -105,7 +105,7 @@ fn convert_variables(variables: &Option<JsonValue>) -> Option<RapidHashMap<Strin
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRunner<F, R> {
-    #[fastrace::trace(name = "query.execute_request")]
+    #[defra_trace::traced(name = "query.execute_request", root)]
     async fn execute(&self, request: QueryRequest) -> QueryResponse {
         fastrace::local::LocalSpan::add_properties(|| {
             [("query_len", request.query.len().to_string())]
@@ -307,7 +307,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         }
     }
 
-    #[fastrace::trace(name = "query.execute_in_txn")]
+    #[defra_trace::traced(name = "query.execute_in_txn", root)]
     async fn execute_in_txn(
         &self,
         request: QueryRequest,

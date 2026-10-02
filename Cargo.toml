@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/trace",
+    "crates/trace-macro",
     "crates/defra-core",
     "crates/crdt",
     "crates/storage",
