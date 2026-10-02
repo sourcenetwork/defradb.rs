@@ -9,7 +9,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
-use syn::{parse_macro_input, Ident, ItemFn, LitStr, Result, Token};
+use syn::{parse_macro_input, Expr, Ident, ItemFn, LitStr, Result, Stmt, Token};
 
 struct Args {
     name: Option<LitStr>,
@@ -70,6 +70,29 @@ impl Parse for Args {
     }
 }
 
+/// `async_trait` rewrites `async fn f(..) -> T` into a plain fn returning
+/// `Box::pin(async move { .. })`. The attribute therefore sees a *sync* fn, and
+/// instrumenting that would time only the construction of the future — the span
+/// would close in nanoseconds and the body's spans would attach to whatever
+/// parent happened to be current. Reach inside and instrument the async block
+/// instead.
+fn async_trait_block(block: &syn::Block) -> Option<&syn::ExprAsync> {
+    let Some(Stmt::Expr(Expr::Call(call), _)) = block.stmts.last() else {
+        return None;
+    };
+    let Expr::Path(path) = call.func.as_ref() else {
+        return None;
+    };
+    // `Box::pin(..)`, however it was spelled.
+    if path.path.segments.last()?.ident != "pin" {
+        return None;
+    }
+    match call.args.first()? {
+        Expr::Async(inner) => Some(inner),
+        _ => None,
+    }
+}
+
 #[proc_macro_attribute]
 pub fn traced(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as Args);
@@ -111,7 +134,19 @@ pub fn traced(args: TokenStream, item: TokenStream) -> TokenStream {
         };
     };
 
-    let body = if sig.asyncness.is_some() {
+    // An `async_trait` method is async in spirit even though its signature is
+    // not, so it takes the future-carrying path.
+    let async_trait_inner = async_trait_block(&block);
+
+    let body = if let Some(inner) = async_trait_inner {
+        let inner_block = &inner.block;
+        let inner_attrs = &inner.attrs;
+        quote! {
+            #preamble
+            use ::defra_trace::fastrace::future::FutureExt as _;
+            Box::pin(#(#inner_attrs)* async move #inner_block.in_span(__traced_span))
+        }
+    } else if sig.asyncness.is_some() {
         // A thread-local parent guard cannot be held across an await, so the
         // future carries the span and re-enters it on each poll.
         quote! {
