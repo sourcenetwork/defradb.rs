@@ -31,7 +31,10 @@ struct MemStore(Arc<BTreeMap<Cid, Block>>);
 #[async_trait]
 impl Store for MemStore {
     async fn get_size(&self, cid: &Cid) -> anyhow::Result<usize> {
-        self.0.get(cid).map(|b| b.data.len()).ok_or_else(|| anyhow!("not found"))
+        self.0
+            .get(cid)
+            .map(|b| b.data.len())
+            .ok_or_else(|| anyhow!("not found"))
     }
     async fn get(&self, cid: &Cid) -> anyhow::Result<Block> {
         self.0.get(cid).cloned().ok_or_else(|| anyhow!("not found"))
@@ -59,7 +62,11 @@ fn build<S: Store>(store: S) -> (PeerId, Swarm<Bitswap<S>>) {
     let peer_id = keypair.public().to_peer_id();
     let swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
-        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )
         .unwrap()
         .with_behaviour(|_| Bitswap::new(peer_id, store, Config::default()))
         .unwrap()
@@ -74,10 +81,14 @@ fn protocols() -> Vec<String> {
 
 /// A connected pair: the client swarm (driven by the caller) and the server peer id.
 async fn pair(blocks: &[Block]) -> (PeerId, Swarm<Bitswap<MemStore>>) {
-    let store = MemStore(Arc::new(blocks.iter().map(|b| (b.cid, b.clone())).collect()));
+    let store = MemStore(Arc::new(
+        blocks.iter().map(|b| (b.cid, b.clone())).collect(),
+    ));
     let (server_id, mut server) = build(store);
     let (_, mut client) = build(MemStore(Arc::new(BTreeMap::new())));
-    server.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+    server
+        .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+        .unwrap();
     let addr = loop {
         if let SwarmEvent::NewListenAddr { address, .. } = server.select_next_some().await {
             break address;
@@ -87,7 +98,9 @@ async fn pair(blocks: &[Block]) -> (PeerId, Swarm<Bitswap<MemStore>>) {
     tokio::spawn(async move {
         let mut ready = Some(ready_tx);
         loop {
-            if let SwarmEvent::ConnectionEstablished { peer_id, .. } = server.select_next_some().await {
+            if let SwarmEvent::ConnectionEstablished { peer_id, .. } =
+                server.select_next_some().await
+            {
                 server.behaviour_mut().on_identify(&peer_id, &protocols());
                 if let Some(tx) = ready.take() {
                     let _ = tx.send(());
@@ -101,12 +114,18 @@ async fn pair(blocks: &[Block]) -> (PeerId, Swarm<Bitswap<MemStore>>) {
             break peer_id;
         }
     };
-    client.behaviour_mut().on_identify(&client_peer, &protocols());
+    client
+        .behaviour_mut()
+        .on_identify(&client_peer, &protocols());
     timeout(DEADLINE, ready_rx).await.unwrap().unwrap();
     (server_id, client)
 }
 
-async fn fetch_all(client: &mut Swarm<Bitswap<MemStore>>, server: PeerId, blocks: &[Block]) -> Duration {
+async fn fetch_all(
+    client: &mut Swarm<Bitswap<MemStore>>,
+    server: PeerId,
+    blocks: &[Block],
+) -> Duration {
     let start = Instant::now();
     let (_, mut rx) = client
         .behaviour_mut()
@@ -163,7 +182,10 @@ fn report_bulk(name: &str, count: usize, size: usize, mut t: Vec<Duration>) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn fetch_bench() {
-    for (name, count, size) in [("W1 2000x512B", 2000, 512), ("W2 64x256KiB", 64, 256 * 1024)] {
+    for (name, count, size) in [
+        ("W1 2000x512B", 2000, 512),
+        ("W2 64x256KiB", 64, 256 * 1024),
+    ] {
         let mut t = Vec::new();
         for i in 0..WARMUP + MEASURED {
             let d = bulk(count, size, i + 1).await;
