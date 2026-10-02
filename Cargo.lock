@@ -2599,6 +2599,7 @@ dependencies = [
  "rcgen 0.13.2",
  "replication-filter",
  "reqwest 0.12.28",
+ "rustls 0.23.37",
  "schema",
  "serde",
  "serde_bytes",
