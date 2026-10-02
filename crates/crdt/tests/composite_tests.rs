@@ -11,7 +11,6 @@ use crdt::counter::NumericKind;
 use crdt::traits::{Context, MergeResult, ReplicatedData};
 use defra_core::types::DocId;
 use std::collections::HashMap;
-use std::f64;
 use storage::{RegolithStore, Store};
 
 #[tokio::test]
