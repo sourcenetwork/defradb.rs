@@ -127,6 +127,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         Ok(())
     }
 
+    #[defra_trace::traced(name = "p2p.bitswap_complete", root)]
     pub(crate) async fn handle_bitswap_complete(
         &self,
         query_id: crate::QueryId,

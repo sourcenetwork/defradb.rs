@@ -172,6 +172,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         .await
     }
 
+    #[defra_trace::traced(name = "p2p.process_pushlog", root)]
     async fn process_pushlog_with_provider_evidence(
         &self,
         msg: &PushLogBroadcast,
@@ -180,6 +181,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         explicit_replay_authorization: Option<ExplicitReplayAuthorization>,
         recovery_provider_evidenced: bool,
     ) -> Result<()> {
+        fastrace::local::LocalSpan::add_properties(|| {
+            [
+                ("doc_id", msg.doc_id.clone()),
+                ("collection_id", msg.collection_id.clone()),
+                ("sender_peer", sender_peer.unwrap_or("unknown").to_string()),
+            ]
+        });
         // Parse CID from message
         let cid = Cid::try_from(msg.cid.as_ref())
             .map_err(|e| Error::InvalidCid(format!("Failed to parse CID: {}", e)))?;
