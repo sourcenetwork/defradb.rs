@@ -835,6 +835,10 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
     /// Late-bound ACP resolver/gate shared by Bitswap and CAR serve paths.
     pub(super) serve_acp: Arc<crate::bitswap::LateBoundServeAcp>,
 
+    /// Resumable progress for rooted CAR authorization walks that exhausted a
+    /// budget, so a retried request continues the traversal (#1727).
+    pub(super) rooted_authorization: crate::sync::car_authorization::RootedAuthorizationProgress,
+
     /// Optional document ACP used for local ACP relationship snapshot replay.
     pub(super) document_acp: std::sync::OnceLock<Arc<dyn DocumentACP>>,
 
