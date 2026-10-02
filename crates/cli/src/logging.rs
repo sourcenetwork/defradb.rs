@@ -20,6 +20,18 @@ use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use crate::config::{Config, LogFormat, LogLevel, LogOutput};
 use crate::error::{Error, Result};
 
+/// The event bridge only earns its keep when spans are exported; without
+/// `otel` the reporter discards them, so attaching events would be pure cost.
+#[cfg(feature = "otel")]
+fn fastrace_event_layer() -> Option<telemetry::FastraceEventLayer> {
+    Some(telemetry::FastraceEventLayer)
+}
+
+#[cfg(not(feature = "otel"))]
+fn fastrace_event_layer() -> Option<tracing_subscriber::layer::Identity> {
+    None
+}
+
 fn with_default_transport_noise_filters(filter: EnvFilter) -> EnvFilter {
     filter
         .add_directive(
@@ -228,7 +240,8 @@ where
         let chrome_layer = chrome_layer.with_filter(telemetry::OtelDedupFilter::new());
         let registry = tracing_subscriber::registry()
             .with(fmt_layer)
-            .with(chrome_layer);
+            .with(chrome_layer)
+            .with(fastrace_event_layer());
         registry
             .with(filter)
             .try_init()
@@ -236,7 +249,9 @@ where
         return Ok(LoggingHandle::with_profile(profiling, telemetry_handle));
     }
 
-    let registry = tracing_subscriber::registry().with(fmt_layer);
+    let registry = tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(fastrace_event_layer());
     registry
         .with(filter)
         .try_init()

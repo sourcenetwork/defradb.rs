@@ -16,6 +16,8 @@
 mod config;
 #[cfg(feature = "otlp")]
 mod dedup;
+#[cfg(feature = "otlp")]
+mod events;
 mod handle;
 mod metrics;
 #[cfg(feature = "otlp")]
@@ -24,6 +26,8 @@ mod util;
 pub use config::TelemetryConfig;
 #[cfg(feature = "otlp")]
 pub use dedup::OtelDedupFilter;
+#[cfg(feature = "otlp")]
+pub use events::FastraceEventLayer;
 pub use handle::TelemetryHandle;
 pub use metrics::{
     conflict_metrics_snapshot, record_commit_gate_wait, record_conflict_tracker_size,
