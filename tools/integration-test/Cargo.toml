@@ -164,3 +164,7 @@ path = "tests/acp_replay_outage_repro.rs"
 [[test]]
 name = "acp_replay_outage_cross_runtime"
 path = "tests/acp_replay_outage_cross_runtime.rs"
+
+[[test]]
+name = "telemetry"
+path = "tests/telemetry.rs"

@@ -148,7 +148,12 @@ pub struct Cli {
     pub secret_file: Option<String>,
 
     /// Disable OpenTelemetry exporters (no-op unless the binary was built with `--features otel`).
-    #[arg(long, global = true, env = "DEFRA_NO_TELEMETRY", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser())]
+    ///
+    /// `overrides_with` itself so a later occurrence wins rather than erroring.
+    /// Wrappers that append flags after their own — the integration harness
+    /// passes `--no-telemetry` unconditionally — can then re-enable telemetry
+    /// without the wrapper having to change.
+    #[arg(long, global = true, env = "DEFRA_NO_TELEMETRY", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser(), overrides_with = "no_telemetry")]
     pub no_telemetry: Option<bool>,
 
     /// Enables development mode features
