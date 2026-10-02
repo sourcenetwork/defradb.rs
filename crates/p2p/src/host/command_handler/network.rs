@@ -2,7 +2,7 @@
 
 use rapidhash::RapidHashSet;
 
-use iroh_bitswap::Store;
+use ::bitswap::Store;
 use libp2p::{Multiaddr, PeerId};
 use tracing::debug;
 

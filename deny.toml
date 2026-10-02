@@ -18,11 +18,6 @@ ignore = [
     # (e.g. to ahash) before this can be removed.
     "RUSTSEC-2025-0057",
 
-    # instant — unmaintained. Pulled by parking_lot 0.11 through
-    # wasm-timer in iroh-bitswap (beetle repo). Removable when beetle is
-    # dropped or moves off wasm-timer.
-    "RUSTSEC-2024-0384",
-
     # paste — unmaintained. Pulled by alloy-primitives (backbone repo,
     # ACP light client). Removable when alloy migrates off paste; our
     # direct alloy pin is already at the latest workspace version.
@@ -116,11 +111,6 @@ highlight = "lowest-version"
 # crates/keyring colliding with the crates.io name. Not a duplicate.
 # ------------------------------------------------------------------
 skip = [
-    # prost 0.11 — iroh-bitswap 0.2 in the sourcenetwork/beetle fork.
-    # Needs a commit in beetle plus a rev bump here; we are already on
-    # the newest line (workspace prost = "0.14").
-    { crate = "prost@0.11.9", reason = "iroh-bitswap (beetle fork) pins prost 0.11; removable only by a beetle commit + rev bump" },
-
     # prost 0.13 — cosmos-sdk-proto / tendermint / ics23 under cosmrs
     # 0.22 (crates/vera), and jmt under acp-light-client.
     # Removable when that stack moves to prost 0.14.
@@ -184,11 +174,11 @@ skip = [
     { crate = "sysinfo@0.37.2", reason = "commonware-runtime; vera/backbone builds only" },
 
     # thiserror 1 — graphql-parser 0.4, josekit 0.8, lark-kv,
-    # iroh-bitswap (beetle), cosmrs, jmt, tendermint-rpc,
+    # cosmrs, jmt, tendermint-rpc,
     # proc-macro-crate 1.1 and quick-protobuf-codec. No first-party
     # crate declares v1 as of #1333; the duplicate is entirely
     # third-party.
-    { crate = "thiserror@1.0.69", reason = "graphql-parser, josekit, lark-kv, iroh-bitswap, cosmrs, jmt — no first-party declaration remains" },
+    { crate = "thiserror@1.0.69", reason = "graphql-parser, josekit, lark-kv, cosmrs, jmt; no first-party declaration remains" },
 ]
 skip-tree = []
 
@@ -197,6 +187,5 @@ unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
-    "https://github.com/sourcenetwork/beetle",
     "https://github.com/sourcenetwork/backbone",
 ]

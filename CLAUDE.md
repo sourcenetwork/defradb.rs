@@ -53,6 +53,7 @@ No `ROADMAP.md`, `DEVELOPMENT.md`, `docs/` directories, or planning documents.
 ```
 crates/
 ├── acp/                # Access Control Policy
+├── bitswap/            # Bitswap block exchange, wire-compatible with Go
 ├── blockstore/         # IPLD block storage
 ├── cli/                # Command-line interface
 ├── crdt/               # CRDT implementations

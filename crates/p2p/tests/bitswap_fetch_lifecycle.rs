@@ -2,14 +2,11 @@
 
 //! A Bitswap fetch must release what it allocates once it has completed.
 //!
-//! `handle_bitswap_sync` opens an iroh-bitswap `Session` per fetch. The
-//! session manager keeps every session in its map until `Session::stop`, and
-//! each one owns a worker task, a periodic-search timer, a bounded op queue
-//! and a want-sender with its own tasks. The runtime's task census is the
-//! observable: a fetch that stops its session leaves the runtime with the
-//! number of live tasks it started with. The same handler also records an
-//! abort handle per query and only removes it on cancel, so a completed
-//! query must not be cancellable afterwards.
+//! `handle_bitswap_sync` starts a bitswap crate fetch per query and spawns a
+//! task that drains it. The runtime's task census is the observable: a
+//! completed fetch leaves the runtime with the number of live tasks it started
+//! with. The same handler also records an abort handle per query, so a
+//! completed query must not be cancellable afterwards.
 
 use std::time::Duration;
 
@@ -145,7 +142,7 @@ async fn connected_pair(cid: cid::Cid, bytes: Vec<u8>) -> Pair {
 }
 
 #[tokio::test]
-async fn a_completed_bitswap_fetch_leaves_no_session_tasks_behind() {
+async fn a_completed_bitswap_fetch_leaves_no_tasks_behind() {
     let (cid, bytes) = make_data_block();
     let mut pair = connected_pair(cid, bytes).await;
 
@@ -175,7 +172,7 @@ async fn a_completed_bitswap_fetch_leaves_no_session_tasks_behind() {
     assert!(
         after <= baseline,
         "{FETCHES} completed Bitswap fetches left {} live tasks behind ({} per fetch): \
-         each fetch's session is still registered and running",
+         each fetch's task or want state is still alive",
         after - baseline,
         (after - baseline) / FETCHES,
     );
