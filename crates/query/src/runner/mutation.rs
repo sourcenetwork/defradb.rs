@@ -684,13 +684,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         let plan_execution_start = Instant::now();
         let outcome = async {
-            plan.init().await.map_err(&map_doc_not_found)?;
-            plan.start().await.map_err(&map_doc_not_found)?;
+            plan.init().await.map_err(map_doc_not_found)?;
+            plan.start().await.map_err(map_doc_not_found)?;
 
             let mut results = Vec::new();
             let mut result_doc_ids = Vec::new();
 
-            while plan.next().await.map_err(&map_doc_not_found)? {
+            while plan.next().await.map_err(map_doc_not_found)? {
                 let doc = plan.value();
                 if let Some(doc_id) = doc.doc_id() {
                     result_doc_ids.push(doc_id.to_string());
@@ -705,7 +705,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         let (mut results, result_doc_ids) = plan_drive::close_after(plan.as_mut(), outcome)
             .await
-            .map_err(&map_doc_not_found)?;
+            .map_err(map_doc_not_found)?;
 
         // Note: encryption_config and broadcast_creator_did are cleared
         // automatically by the RAII guards declared above when this
