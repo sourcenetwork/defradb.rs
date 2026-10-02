@@ -32,6 +32,7 @@ pub struct IrohP2PAdapter<B: Blockstore + 'static> {
     event_bus: Option<Arc<dyn events::Bus>>,
     version_syncer: Option<Arc<dyn TransportVersionSyncer>>,
     replicator_push_options: ReplicatorPushOptionsState,
+    replicator_installs: crate::replicator_installs::ReplicatorInstalls,
     peer_addresses: Arc<HopscotchMap<String, String, RandomState>>,
     tracked_documents: Arc<HopscotchMap<String, (), RandomState>>,
     nac_checker: Option<Arc<dyn db::NodeAccessChecker>>,
@@ -109,6 +110,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             event_bus: Some(event_bus),
             version_syncer,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: Some(nac_checker),
@@ -208,6 +210,7 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
             event_bus: None,
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,
@@ -508,6 +511,7 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
         let addr_str = addr.ok_or_else(|| P2PError::invalid_input("address is required"))?;
         let (peer_id, direct_addrs) = parse_public_peer_addr(addr_str)
             .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        let install_guard = self.replicator_installs.acquire(peer_id.as_str()).await;
 
         let effective_collections = if collections.is_empty() {
             if let Some(ref pusher) = self.doc_pusher {
@@ -715,8 +719,12 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                     "Replaying existing docs for collections requiring replay"
                 );
 
+                // The event identifies the install: the requested set, not
+                // the replay subset (same fix as the libp2p side).
+                let requested_collections = effective_collections.to_vec();
                 n0_future::task::spawn(async move {
-                    if let Err(error) = push_pusher
+                    let _install_guard = install_guard;
+                    let result = push_pusher
                         .push_existing_docs(
                             &push_peer,
                             &collection_names_requiring_replay,
@@ -724,16 +732,30 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
                         )
-                        .await
-                    {
+                        .await;
+                    if let Err(ref error) = result {
                         tracing::error!(error = %error, "Failed to push existing docs to replicator");
                     }
                     if let Some(bus) = push_event_bus {
-                        bus.publish(events::Message::replicator_completed());
+                        bus.publish(events::Message::replicator_completed_with_data(
+                            events::ReplicatorCompletedData {
+                                peer_id: push_peer.to_string(),
+                                collections: requested_collections,
+                                skipped: false,
+                                error: result.err().map(|error| error.to_string()),
+                            },
+                        ));
                     }
                 });
             } else if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: effective_collections.to_vec(),
+                        skipped: true,
+                        error: None,
+                    },
+                ));
             }
         } else {
             tracing::debug!(
@@ -741,7 +763,14 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
                 "Replicator already exists with same collections, filters, and replay capability; skipping initial replay"
             );
             if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: effective_collections.to_vec(),
+                        skipped: true,
+                        error: None,
+                    },
+                ));
             }
         }
 
@@ -1401,6 +1430,7 @@ mod tests {
             event_bus: Some(Arc::new(events::ChannelBus::default())),
             version_syncer: None,
             replicator_push_options: ReplicatorPushOptionsState::default(),
+            replicator_installs: Default::default(),
             peer_addresses: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             tracked_documents: Arc::new(HopscotchMap::with_hasher(RandomState::default())),
             nac_checker: None,

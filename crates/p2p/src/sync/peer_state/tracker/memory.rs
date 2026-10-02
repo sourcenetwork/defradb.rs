@@ -79,6 +79,7 @@ impl PeerStateTracker {
         }
 
         if evicted > 0 {
+            #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
             self.total_cids
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
                     Some(total.saturating_sub(evicted))
