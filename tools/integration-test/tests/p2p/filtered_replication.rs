@@ -1600,6 +1600,8 @@ async fn rust_filtered_replication_in_set_backfill() {
     let cluster = TestCluster::builder()
         .rust_nodes(2)
         .with_p2p()
+        // The default first retry takes 15–30s, beyond this test's 15s delivery window.
+        .with_extra_rust_args(["--replicator-retry-intervals=1,2"])
         .build()
         .await
         .unwrap();
