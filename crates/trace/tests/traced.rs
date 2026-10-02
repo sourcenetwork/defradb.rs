@@ -122,4 +122,61 @@ fn traced_roots_and_filters() {
         !names.contains(&"sync.verbose".to_string()),
         "verbose site leaked after re-disabling: {names:?}"
     );
+
+    // Runs here rather than as its own `#[test]`: `fastrace::set_reporter` is
+    // process-global, so parallel tests overwrite each other's capture.
+    directives_scope_by_target_and_tolerate_junk();
+}
+
+mod inner {
+    // Nested so its callsite target is `traced::inner`, which lets the
+    // longest-match rule be tested against a shorter `traced` directive.
+    #[defra_trace::traced(name = "directive.site", level = "debug")]
+    pub fn site() {}
+}
+
+fn directives_scope_by_target_and_tolerate_junk() {
+    let cap = Captured::default();
+    fastrace::set_reporter(cap.clone(), fastrace::collector::Config::default());
+
+    let fired = |cap: &Captured| -> bool {
+        {
+            let root = fastrace::Span::root("dr", SpanContext::random());
+            let _g = root.set_local_parent();
+            inner::site();
+        }
+        fastrace::flush();
+        cap.take()
+            .iter()
+            .any(|s| s.name.as_ref() == "directive.site")
+    };
+
+    // Default info: a debug site is off.
+    defra_trace::set_directives("info");
+    assert!(!fired(&cap), "debug site fired at info");
+
+    // A bare level raises the default.
+    defra_trace::set_directives("debug");
+    assert!(fired(&cap), "debug site gated at debug");
+
+    // A target override beats the default, in both directions.
+    defra_trace::set_directives("debug,traced=error");
+    assert!(!fired(&cap), "target override did not lower the ceiling");
+
+    defra_trace::set_directives("error,traced=trace");
+    assert!(fired(&cap), "target override did not raise the ceiling");
+
+    // Longest target wins, so a specific directive is not shadowed by a
+    // broader one listed alongside it.
+    defra_trace::set_directives("error,traced=error,traced::inner=trace");
+    assert!(
+        fired(&cap),
+        "the more specific target directive was shadowed by the shorter one"
+    );
+
+    // Malformed entries are skipped rather than failing a node start.
+    defra_trace::set_directives("debug,=,garbage=nonsense,,also_bad");
+    assert!(fired(&cap), "junk directives discarded the usable default");
+
+    defra_trace::set_directives("info");
 }

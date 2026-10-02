@@ -25,10 +25,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// The Planner builds a proper join plan with TypeJoinOne/TypeJoinMany nodes.
     /// ScanNodes fetch their own data via the attached fetcher.
     /// ACP permission filtering is applied per-collection via PermissionFilterNode in the plan.
-    #[cfg_attr(
-        feature = "verbose-spans",
-        fastrace::trace(name = "query.execute_nested_select")
-    )]
+    #[defra_trace::traced(name = "query.execute_nested_select", level = "debug")]
     pub(crate) async fn execute_nested_select_with_planner(
         &self,
         select: &Select,
@@ -36,7 +33,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         identity: Option<Did>,
         warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
-        #[cfg(feature = "verbose-spans")]
         fastrace::local::LocalSpan::add_properties(|| {
             [
                 ("collection", select.collection_name.to_string()),

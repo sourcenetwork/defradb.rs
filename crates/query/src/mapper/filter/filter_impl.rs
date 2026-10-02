@@ -115,7 +115,7 @@ impl Filter {
     }
 
     /// Evaluate the filter against document fields
-    #[cfg_attr(feature = "verbose-spans", fastrace::trace)]
+    #[defra_trace::traced(name = "query.filter.matches", level = "trace")]
     pub fn matches(&self, fields: &[Option<JsonValue>], mapping: &DocumentMapping) -> Result<bool> {
         if self.conditions.is_empty() {
             return Ok(true);

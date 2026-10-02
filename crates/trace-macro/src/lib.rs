@@ -100,8 +100,10 @@ pub fn traced(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let preamble = quote! {
         const __TRACED_NAME: &str = #name;
-        static __TRACED_CALLSITE: ::defra_trace::Callsite =
-            ::defra_trace::Callsite::new(::defra_trace::Level::#level);
+        static __TRACED_CALLSITE: ::defra_trace::Callsite = ::defra_trace::Callsite::new(
+            ::core::module_path!(),
+            ::defra_trace::Level::#level,
+        );
         let __traced_span = if __TRACED_CALLSITE.enabled() {
             #span_expr
         } else {

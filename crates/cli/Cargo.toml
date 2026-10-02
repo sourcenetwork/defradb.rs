@@ -70,6 +70,7 @@ tracing = { workspace = true }
 # crates resolve to.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 fastrace.workspace = true
+defra-trace = { path = "../trace" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-chrome = { version = "0.7", optional = true }
 
@@ -124,10 +125,6 @@ version = "0.9"
 optional = true
 
 [features]
-# Spans that were `level = "trace"` / `level = "debug"` under `tracing`,
-# i.e. compiled out in production. `fastrace` has no per-callsite level
-# filter, so they are feature-gated to keep the default build quiet.
-verbose-spans = ["db/verbose-spans", "query/verbose-spans"]
 default = []
 release-full = ["postgres", "vera", "orbis"]
 postgres = ["dep:pg-compat"]

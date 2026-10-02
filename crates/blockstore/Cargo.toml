@@ -15,10 +15,6 @@ ignored = ["crypto", "defra-core"]
 bench = false
 
 [features]
-# Spans that were `level = "trace"` / `level = "debug"` under `tracing`,
-# i.e. compiled out in production. `fastrace` has no per-callsite level
-# filter, so they are feature-gated to keep the default build quiet.
-verbose-spans = []
 
 [dependencies]
 # Internal dependencies
@@ -43,6 +39,7 @@ thiserror = { workspace = true }
 # Logging
 tracing = { workspace = true }
 fastrace.workspace = true
+defra-trace = { path = "../trace" }
 
 # Caching
 bytes = { workspace = true }

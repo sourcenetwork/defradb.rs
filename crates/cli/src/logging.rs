@@ -122,6 +122,16 @@ pub fn init(
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.to_string())),
     );
 
+    // Span callsites read the same directives as events, so `RUST_LOG` (or the
+    // configured level) governs both and there is only one filter language to
+    // learn. `fastrace` has no filtering of its own, so without this a span
+    // left in a hot path could only be switched off by recompiling.
+    //
+    // The transport-noise directives above are deliberately not included: they
+    // scope third-party event targets, and those crates emit no `defra_trace`
+    // spans, so they would never match a span callsite.
+    defra_trace::set_directives(&std::env::var("RUST_LOG").unwrap_or_else(|_| level.to_string()));
+
     let builder = fmt::layer()
         .with_target(true)
         .with_thread_ids(false)

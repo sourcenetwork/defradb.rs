@@ -177,7 +177,7 @@ impl<S: Store + 'static> DefraBlockstore<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> Blockstore for DefraBlockstore<S> {
-    #[cfg_attr(feature = "verbose-spans", fastrace::trace)]
+    #[defra_trace::traced(name = "blockstore.get", level = "trace")]
     async fn get(&self, cid: &Cid) -> Result<Option<Bytes>> {
         // Check LRU cache first (skip cache when hash verification is enabled,
         // since cached data may not have been verified yet)
@@ -220,7 +220,7 @@ impl<S: Store + 'static> Blockstore for DefraBlockstore<S> {
         Ok(None)
     }
 
-    #[cfg_attr(feature = "verbose-spans", fastrace::trace)]
+    #[defra_trace::traced(name = "blockstore.put", level = "trace")]
     async fn put(&self, cid: &Cid, data: &[u8]) -> Result<()> {
         // Check cache for existence (avoids storage read for recently-written blocks)
         if self.cache.lock().contains(cid) {

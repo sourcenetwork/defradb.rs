@@ -20,7 +20,7 @@
 
 mod callsite;
 
-pub use callsite::{set_max_level, Callsite, Level};
+pub use callsite::{set_directives, set_max_level, Callsite, Level};
 pub use defra_trace_macro::traced;
 
 #[doc(hidden)]
