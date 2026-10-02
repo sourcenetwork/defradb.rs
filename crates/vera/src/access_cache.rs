@@ -35,6 +35,7 @@ impl PendingDecision<'_> {
 }
 
 impl Drop for PendingDecision<'_> {
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
     fn drop(&mut self) {
         let previous = self
             .entry
@@ -107,6 +108,7 @@ impl AccessCache {
         }
     }
 
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
     pub(crate) fn begin_check(
         &self,
         actor_did: &str,
