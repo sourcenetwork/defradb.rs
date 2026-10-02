@@ -105,7 +105,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     #[instrument(
         name = "query.execute",
         skip(self, selects, fetcher, caller_identity, warnings),
-        fields(select_count = selects.len())
+        fields(select_count = selects.len() as i64)
     )]
     pub(crate) async fn execute_selects_internal(
         &self,
