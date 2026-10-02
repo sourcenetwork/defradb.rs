@@ -58,9 +58,6 @@ pub const STREAM_MANAGE_QUERY_RESP: &[u8] = b"/defra-iroh/manage-query/0.1/resp"
 /// Stream tag for the two-stream push protocol.
 pub const STREAM_TWOSTREAM: &[u8] = b"/defra-iroh/twostream/0.1";
 
-/// Stream tag for two-stream push replies.
-pub const STREAM_TWOSTREAM_RESP: &[u8] = b"/defra-iroh/twostream/0.1/resp";
-
 /// Every stream tag this node dispatches. Dispatch matches tags individually;
 /// this list exists so the tests can assert the set is distinct and framable.
 #[cfg(test)]
@@ -77,7 +74,6 @@ pub const ALL_STREAM_TAGS: &[&[u8]] = &[
     STREAM_SE_QUERY_REQ,
     STREAM_SE_QUERY_RESP,
     STREAM_TWOSTREAM,
-    STREAM_TWOSTREAM_RESP,
     STREAM_MANAGE_REQ,
     STREAM_MANAGE_RESP,
     STREAM_MANAGE_QUERY_REQ,

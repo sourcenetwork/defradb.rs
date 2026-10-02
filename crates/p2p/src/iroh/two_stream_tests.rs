@@ -120,7 +120,7 @@ async fn two_stream_request_receives_reply_on_request_stream() {
     let (peer_id, received, token) = next_two_stream_request(&mut receiver.events).await;
     assert_eq!(peer_id, *sender.transport.local_peer_id());
     assert_eq!(received.message_id, message_id);
-    assert!(received.supports_same_stream_reply);
+    assert!(receiver.transport.prefers_same_stream_reply());
 
     let mut reply = PushLogReply::success(&message_id);
     sign_with_transport(&receiver.transport, &mut reply).unwrap();
@@ -197,12 +197,12 @@ async fn two_stream_request_carries_cached_explicit_replay_capability() {
 }
 
 #[tokio::test]
-async fn two_stream_request_still_accepts_legacy_reverse_stream_reply() {
+async fn two_stream_request_has_no_reverse_stream_reply_path() {
     let sender = TestNode::spawn().await;
     let mut receiver = TestNode::spawn().await;
     connect(&sender.transport, &receiver.transport).await;
 
-    let request = signed_request(&sender.transport, "legacy-reply");
+    let request = signed_request(&sender.transport, "no-legacy-reply");
     let message_id = request.message_id.clone();
     let target = receiver.transport.local_peer_id().clone();
     let sender_transport = sender.transport.clone();
@@ -212,21 +212,33 @@ async fn two_stream_request_still_accepts_legacy_reverse_stream_reply() {
             .await
     });
 
-    let (_, received, _) = next_two_stream_request(&mut receiver.events).await;
+    let (_, received, token) = next_two_stream_request(&mut receiver.events).await;
     assert_eq!(received.message_id, message_id);
-    assert!(received.supports_same_stream_reply);
+    assert!(receiver.transport.prefers_same_stream_reply());
 
     let mut reply = PushLogReply::success(&message_id);
     sign_with_transport(&receiver.transport, &mut reply).unwrap();
+
+    // The reverse-dialled `/defra-iroh/twostream/0.1/resp` protocol is gone:
+    // asking iroh for that shape is an error, not a second delivery path.
+    let reverse = receiver
+        .transport
+        .send_two_stream_response(sender.transport.local_peer_id(), reply.clone())
+        .await;
+    assert!(
+        reverse.is_err(),
+        "iroh must not reverse-dial a two-stream response"
+    );
+
+    // The ACK the sender is waiting on rides the request's own stream.
     receiver
         .transport
-        .send_two_stream_response(sender.transport.local_peer_id(), reply)
+        .send_pushlog_response(token, reply)
         .await
         .unwrap();
-
     let received_reply = timeout(Duration::from_secs(1), send_task)
         .await
-        .expect("legacy reverse-stream reply timed out")
+        .expect("same-stream reply timed out")
         .unwrap()
         .unwrap();
     assert_eq!(received_reply.message_id, message_id);
@@ -300,11 +312,11 @@ async fn concurrent_two_stream_fan_in_replies_on_request_streams() {
         senders.push((sender, send_task));
     }
 
+    assert!(receiver.transport.prefers_same_stream_reply());
     let mut peers = RapidHashSet::with_capacity(SENDERS);
     for _ in 0..SENDERS {
         let (peer_id, request, token) = next_two_stream_request(&mut receiver.events).await;
         peers.insert(peer_id);
-        assert!(request.supports_same_stream_reply);
         let mut reply = PushLogReply::success(&request.message_id);
         sign_with_transport(&receiver.transport, &mut reply).unwrap();
         receiver

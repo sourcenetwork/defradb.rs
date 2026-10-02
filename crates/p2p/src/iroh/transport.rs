@@ -372,9 +372,8 @@ impl P2PTransport for IrohTransport {
     ) -> Result<PushLogReply> {
         self.explicit_replay_capabilities
             .attach(peer_id.as_str(), &mut req);
-        // Advertise that this iroh sender consumes the ACK from the request
-        // stream. Re-sign because the capability is part of the wire message.
-        req.supports_same_stream_reply = true;
+        // Re-sign because the attached replay capability is part of the wire
+        // message.
         sign_with_transport(self, &mut req)?;
         self.send_command(|reply| IrohCommand::SendTwoStreamRequest {
             peer_id: peer_id.clone(),
@@ -384,13 +383,19 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_two_stream_response(&self, peer_id: &PeerId, reply: PushLogReply) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendTwoStreamResponse {
-            peer_id: peer_id.clone(),
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+    fn prefers_same_stream_reply(&self) -> bool {
+        true
+    }
+
+    /// Unreachable on iroh: `prefers_same_stream_reply` is `true`, so the
+    /// coordinator answers on the request's bidirectional stream. The
+    /// reverse-dialled `/defra-iroh/twostream/0.1/resp` protocol this used to
+    /// open no longer exists.
+    async fn send_two_stream_response(&self, peer_id: &PeerId, _reply: PushLogReply) -> Result<()> {
+        Err(crate::error::Error::Transport(format!(
+            "iroh answers two-stream requests on the request stream; \
+             no reverse-stream response path to {peer_id}"
+        )))
     }
 
     async fn send_doc_sync_request(&self, peer_id: &PeerId, req: DocSyncRequest) -> Result<()> {

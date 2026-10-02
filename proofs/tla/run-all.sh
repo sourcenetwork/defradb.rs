@@ -167,6 +167,13 @@ RUNS=(
   "MC_GovernanceMerge_Red_NoSweep.cfg         MC_GovernanceMerge_Orphan.tla          RED"   # the tree before sweep.rs: index-only re-drive, in-memory index -> orphan never merges
   "MC_GovernanceMerge_Red_SweepIndexed.cfg    MC_GovernanceMerge_Orphan.tla          RED"   # the refactor to refuse: a sweep over the index never sees an unindexed composite
   "MC_GovernanceMerge_Red_Mutant.cfg          MC_GovernanceMerge_Mutant.tla          RED"   # teeth check: a silent merge must break the refinement
+  "MC_Transport_Green.cfg                     MC_Transport_Common.tla                GREEN" # hostile link (reorder+duplicate+two-stream reply+ambiguous timeout) vs marker-rederive sender and head-current receiver
+  "MC_Transport_Green_OrderedLastArrived.cfg  MC_Transport_Common.tla                GREEN" # arrival-order registration is sound exactly when the link is ordered: isolates the assumption
+  "MC_Transport_Green_SameStream.cfg          MC_Transport_Common.tla                GREEN" # the iroh shape: a same-stream reply crosses a relay-only path, so the sender quiesces
+  "MC_Transport_Red_DefiniteTimeout.cfg       MC_Transport_Common.tla                RED"   # unguarded timeout retires the marker for a newer head: the update is lost unsent
+  "MC_Transport_Red_ReorderOverwrite.cfg      MC_Transport_Common.tla                RED"   # a timed-out copy is overtaken by a retry; last-arrived registration rolls backwards
+  "MC_Transport_Red_DuplicateObligation.cfg   MC_Transport_Common.tla                RED"   # multipath direct+relay copies of one head hint create two obligations
+  "MC_Transport_Red_RelayNoRouteBack.cfg      MC_Transport_Common.tla                RED"   # two-stream reply needs a reverse route; over a relay-only path the sender never quiesces
 )
 
 fails=0; n=0

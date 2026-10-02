@@ -8,9 +8,7 @@ use bytes::Bytes;
 use iroh_gossip::net::Gossip;
 use iroh_gossip::proto::TopicId;
 use kovan_map::HopscotchMap;
-use kovan_queue::seg_queue::SegQueue;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::bitswap::ReplicatorRegistry;
@@ -22,14 +20,12 @@ use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
 use super::endpoint::{
     peer_direct_addr, snapshot_subscription_senders, spawn_task, ActiveSync, EndpointResources,
-    Neighbors, PendingPushLogReplies, RawTopics, SpawnedTasks, SubscriptionSenders,
-    TopicSubscription,
+    Neighbors, RawTopics, SpawnedTasks, SubscriptionSenders, TopicSubscription,
 };
 use super::endpoint_config::PeerAdmission;
 use super::endpoint_rpc::{
     close_peer_connections, handle_block_sync, handle_car_request_response, handle_fire_and_forget,
-    handle_request_response, handle_send_only, handle_two_stream_request, remember_connection,
-    BlockSyncResources,
+    handle_request_response, handle_two_stream_request, remember_connection, BlockSyncResources,
 };
 use super::endpoint_streams::ConnectionStreamContext;
 use super::gossip_heal;
@@ -92,7 +88,6 @@ fn authenticate_pushlog_origin(
 pub(super) async fn handle_command(
     cmd: IrohCommand,
     resources: &EndpointResources,
-    pending_pushlog_replies: &PendingPushLogReplies,
     subscriptions: &mut RapidHashMap<String, TopicSubscription>,
     raw_topics: &RawTopics,
     replicators: &Arc<ReplicatorRegistry>,
@@ -123,7 +118,6 @@ pub(super) async fn handle_command(
             // still get their result.
             let ctx = DialContext {
                 resources: resources.clone(),
-                pending_pushlog_replies: Arc::clone(pending_pushlog_replies),
                 subscription_senders: snapshot_subscription_senders(subscriptions),
                 event_tx: event_tx.clone(),
             };
@@ -308,55 +302,13 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let pending_pushlog_replies = pending_pushlog_replies.clone();
-            let connection_cache = Arc::clone(connection_cache);
-            let admission = Arc::clone(&resources.admission);
-            let message_id = request.message_id.clone();
-            let _ = spawn_task(spawned_tasks, async move {
-                let request_peer_id = peer_id.clone();
-                let request_message_id = message_id.clone();
-                let result = async move {
-                    let (reply_tx, reply_rx) = oneshot::channel();
-                    let slot = SegQueue::new();
-                    slot.push(reply_tx);
-                    pending_pushlog_replies.insert(request_message_id.clone(), Arc::new(slot));
-
-                    let result = handle_two_stream_request(
-                        &endpoint,
-                        &request_peer_id,
-                        &request,
-                        direct_addr,
-                        &connection_cache,
-                        reply_rx,
-                        &admission,
-                    )
-                    .await;
-                    if let Some(slot) = pending_pushlog_replies.remove(&request_message_id) {
-                        drop(slot.pop());
-                    }
-                    result
-                }
-                .await;
-                let _ = reply.send(result);
-            });
-        }
-        IrohCommand::SendTwoStreamResponse {
-            peer_id,
-            reply_msg,
-            reply,
-        } => {
-            // The reply path for a request that did not advertise same-stream
-            // reply support.
-            let direct_addr = peer_direct_addr(peer_map, &peer_id);
-            let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_send_only(
+                let result = handle_two_stream_request(
                     &endpoint,
                     &peer_id,
-                    protocols::STREAM_TWOSTREAM_RESP,
-                    &reply_msg,
+                    &request,
                     direct_addr,
                     &connection_cache,
                     &admission,
@@ -808,7 +760,6 @@ pub(super) async fn handle_command(
 /// snapshot (the only previously-borrowed field).
 struct DialContext {
     resources: EndpointResources,
-    pending_pushlog_replies: PendingPushLogReplies,
     subscription_senders: SubscriptionSenders,
     event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
 }
@@ -915,11 +866,7 @@ async fn handle_dial(
     // leave the count stuck above zero, which is worse than the race it was
     // meant to close: the revoked peer would sit in `connected_peers` forever,
     // looking connected when it holds nothing.
-    let stream_context = ConnectionStreamContext::new(
-        &ctx.resources,
-        Arc::clone(&ctx.pending_pushlog_replies),
-        ctx.event_tx.clone(),
-    );
+    let stream_context = ConnectionStreamContext::new(&ctx.resources, ctx.event_tx.clone());
     let _ = spawn_task(&ctx.resources.spawned_tasks, async move {
         super::endpoint_streams::handle_connection_streams(connection, endpoint_id, stream_context)
             .await;

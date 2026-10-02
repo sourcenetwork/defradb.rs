@@ -668,6 +668,7 @@ pub(super) struct NoopTransport {
     two_stream_handler: Arc<AtomOption<TwoStreamHandler>>,
     branchable_replies: Arc<Atom<Vec<BranchableSyncReply>>>,
     car_requests: Arc<Atom<Vec<Cid>>>,
+    same_stream_reply: Arc<Atom<bool>>,
 }
 
 /// Appends to a recorder that tests read back cumulatively.
@@ -694,7 +695,14 @@ impl NoopTransport {
             two_stream_handler: Arc::new(AtomOption::none()),
             branchable_replies: Arc::new(Atom::new(Vec::new())),
             car_requests: Arc::new(Atom::new(Vec::new())),
+            same_stream_reply: Arc::new(Atom::new(false)),
         }
+    }
+
+    /// Stand in for an iroh-shaped transport, which answers on the request's
+    /// own stream. The default is libp2p's reverse-stream shape.
+    fn set_same_stream_reply(&self, enabled: bool) {
+        self.same_stream_reply.store(enabled);
     }
 
     fn set_connected_peers(&self, peers: Vec<PeerId>) {
@@ -824,6 +832,10 @@ impl P2PTransport for NoopTransport {
             return handler(peer_id.clone(), req).await;
         }
         Ok(crate::message::PushLogReply::success("noop"))
+    }
+
+    fn prefers_same_stream_reply(&self) -> bool {
+        self.same_stream_reply.load_clone()
     }
 
     async fn send_two_stream_response(
@@ -3735,8 +3747,9 @@ async fn two_stream_reply_with_response_token_does_not_reverse_dial() {
     let transport = coordinator.runtime.transport.clone();
     let peer = random_peer_id();
 
+    transport.set_same_stream_reply(true);
     coordinator
-        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7), true)
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7))
         .await;
 
     assert_eq!(transport.pushlog_response_tokens(), vec![7]);
@@ -3748,32 +3761,36 @@ async fn two_stream_reply_with_response_token_does_not_reverse_dial() {
 }
 
 #[tokio::test]
-async fn two_stream_reply_without_response_token_falls_back_to_reverse_dial() {
+async fn two_stream_reply_without_response_token_drops_the_ack() {
     let replicators = Arc::new(ReplicatorRegistry::new());
     let peer_state = Arc::new(PeerStateTracker::new());
     let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
     let transport = coordinator.runtime.transport.clone();
     let peer = random_peer_id();
 
+    transport.set_same_stream_reply(true);
     coordinator
-        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), None, true)
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), None)
         .await;
 
+    // A same-stream transport has no reverse-dial to fall back to: the ACK is
+    // dropped and the sender's durable retry re-offers the head.
     assert!(transport.pushlog_response_tokens().is_empty());
     assert!(transport.pushlog_replies().is_empty());
-    assert_eq!(transport.two_stream_replies().len(), 1);
+    assert!(transport.two_stream_replies().is_empty());
 }
 
 #[tokio::test]
-async fn two_stream_reply_for_legacy_sender_falls_back_to_reverse_dial() {
+async fn two_stream_reply_on_reverse_stream_transport_ignores_the_token() {
     let replicators = Arc::new(ReplicatorRegistry::new());
     let peer_state = Arc::new(PeerStateTracker::new());
     let (coordinator, _events) = create_test_coordinator(AccessMode::Open, replicators, peer_state);
     let transport = coordinator.runtime.transport.clone();
     let peer = random_peer_id();
 
+    // Default shape: libp2p keeps Go's reverse stream even when a token exists.
     coordinator
-        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7), false)
+        .send_two_stream_reply(&peer, PushLogReply::success("message-1"), Some(7))
         .await;
 
     assert!(transport.pushlog_response_tokens().is_empty());
