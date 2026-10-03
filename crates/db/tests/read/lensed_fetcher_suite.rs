@@ -98,6 +98,17 @@ async fn readonly_alias_reads_reuse_schema_history_without_rescanning_storage() 
         repeated < 16,
         "a repeated alias rescanned schema history: {repeated} iterator keys"
     );
+    let before = db.store().keys_read();
+    let mut stream = fetcher
+        .stream_all_with_deleted("HistoryProbe", false)
+        .await
+        .unwrap();
+    assert!(stream.next().await.unwrap().is_none());
+    stream.close().await.unwrap();
+    assert!(
+        db.store().keys_read() - before < 16,
+        "a stream rescanned schema history"
+    );
     let _ = fetcher.take_txn().await.unwrap().discard();
     assert!(
         fetcher.get_all("HistoryProbe").await.is_err(),
