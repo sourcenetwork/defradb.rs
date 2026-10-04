@@ -63,6 +63,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 );
             }
             ScanSource::Docs(documents_to_plan_docs(&result.into_docs(), &mapping)?)
+        } else if crate::plan::ScanNode::point_id_for(None, select.filter.as_ref()).is_some() {
+            ScanSource::Fetcher(Arc::new(FetcherWrapper::new(fetcher)))
         } else if let Some(ref filter) = select.filter {
             // Try to use an index if available
             if fetcher.supports_index_queries() && !collection.indexes.is_empty() {
@@ -153,5 +155,109 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let results = plan_drive::close_after(plan.as_mut(), outcome).await?;
 
         Ok(JsonValue::Array(results))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::doc_stream::DocStream;
+    use crate::fetcher::{FetchByIdsResult, IndexScanResult};
+    use crate::planner::index_selection::IndexScanParams;
+    use crate::test_utils::MockFetcher;
+    use async_trait::async_trait;
+    use document::Document;
+    use schema::{FieldDescription, FieldKind, IndexDescription, IndexedFieldDescription};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct PointOnlyFetcher {
+        inner: MockFetcher,
+        reads: Arc<AtomicUsize>,
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl DocFetcher for PointOnlyFetcher {
+        async fn get_all(&self, _: &str) -> Result<Vec<Document>> {
+            panic!("unexpected full scan")
+        }
+        async fn stream_all_with_deleted(&self, _: &str, _: bool) -> Result<Box<dyn DocStream>> {
+            panic!("unexpected stream")
+        }
+        async fn stream_by_doc_short_ids(
+            &self,
+            _: &str,
+            _: &[u64],
+            _: bool,
+        ) -> Result<Box<dyn DocStream>> {
+            panic!("unexpected short-ID scan")
+        }
+        async fn get_by_field_value(&self, _: &str, _: &str, _: &str) -> Result<Vec<Document>> {
+            panic!("unexpected field lookup")
+        }
+        async fn get_by_ids(&self, collection: &str, ids: &[String]) -> Result<FetchByIdsResult> {
+            assert_eq!(ids.len(), 1);
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.inner.get_by_ids(collection, ids).await
+        }
+        fn supports_index_queries(&self) -> bool {
+            true
+        }
+        async fn get_by_index_scan(&self, _: &str, _: &IndexScanParams) -> Result<IndexScanResult> {
+            panic!("exact ID used a scope index")
+        }
+        async fn estimate_index_scan(
+            &self,
+            _: &str,
+            _: &IndexScanParams,
+            _: u64,
+        ) -> Result<Option<u64>> {
+            panic!("exact ID estimated indexes")
+        }
+    }
+
+    #[tokio::test]
+    async fn ordinary_scoped_id_queries_seek_without_index_prefetch() {
+        let id = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
+        let inner = MockFetcher::new();
+        inner.add_doc(
+            "Note",
+            Document::from_json_str(&format!(r#"{{"_docID":"{id}","owner":"shared"}}"#)).unwrap(),
+        );
+        let reads = Arc::new(AtomicUsize::new(0));
+        let fetcher = PointOnlyFetcher {
+            inner,
+            reads: reads.clone(),
+        };
+        let mut collection = CollectionVersion::new(
+            "Note",
+            "v1",
+            "notes",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new("2", "owner", FieldKind::string()),
+            ],
+        );
+        collection.indexes.push(IndexDescription {
+            id: 1,
+            name: "owner_idx".into(),
+            unique: false,
+            kind: None,
+            auto_generated: false,
+            fields: vec![IndexedFieldDescription {
+                name: "owner".into(),
+                descending: false,
+            }],
+        });
+        let runner = QueryRunner::new(fetcher, vec![collection]);
+        let data = runner.execute_query(&format!(r#"{{
+            matching: Note(filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "shared"}}}}) {{ _docID owner }}
+            rejected: Note(filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "other"}}}}) {{ _docID }}
+            missing: Note(filter: {{_docID: {{_eq: "missing"}}, owner: {{_eq: "shared"}}}}) {{ _docID }}
+        }}"#)).await.unwrap();
+        assert_eq!(data["matching"][0]["_docID"], id);
+        assert_eq!(data["rejected"], serde_json::json!([]));
+        assert_eq!(data["missing"], serde_json::json!([]));
+        assert_eq!(reads.load(Ordering::Relaxed), 3);
     }
 }
