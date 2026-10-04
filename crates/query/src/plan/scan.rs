@@ -352,11 +352,17 @@ impl ScanNode {
     /// A root equality is conjunctive with the remaining filter. Keep that
     /// filter on the fetched document; narrowing cannot satisfy its other terms.
     fn point_id(&self) -> Option<&str> {
-        if let Some(ids) = &self.doc_ids {
+        Self::point_id_for(self.doc_ids.as_deref(), self.filter.as_ref())
+    }
+
+    pub(crate) fn point_id_for<'a>(
+        doc_ids: Option<&'a [String]>,
+        filter: Option<&'a Filter>,
+    ) -> Option<&'a str> {
+        if let Some(ids) = doc_ids {
             return (ids.len() == 1).then(|| ids[0].as_str());
         }
-        self.filter
-            .as_ref()?
+        filter?
             .conditions()
             .get("_docID")?
             .as_object()?
