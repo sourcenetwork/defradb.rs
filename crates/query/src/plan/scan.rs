@@ -349,6 +349,21 @@ impl ScanNode {
         self
     }
 
+    /// A root equality is conjunctive with the remaining filter. Keep that
+    /// filter on the fetched document; narrowing cannot satisfy its other terms.
+    fn point_id(&self) -> Option<&str> {
+        if let Some(ids) = &self.doc_ids {
+            return (ids.len() == 1).then(|| ids[0].as_str());
+        }
+        self.filter
+            .as_ref()?
+            .conditions()
+            .get("_docID")?
+            .as_object()?
+            .get("_eq")?
+            .as_str()
+    }
+
     /// Get the collection
     pub fn collection(&self) -> &CollectionVersion {
         &self.collection
@@ -387,6 +402,21 @@ impl PlanNode for ScanNode {
                 return Ok(());
             }
             if let Some(ref fetcher) = self.fetcher {
+                // get_by_ids excludes deleted documents; showDeleted retains
+                // the existing stream so tombstones keep their deletion status.
+                if !self.show_deleted && self.doc_short_ids.is_none() {
+                    if let Some(id) = self.point_id() {
+                        let docs = fetcher
+                            .get_by_ids(&self.collection.name, &[id.to_owned()])
+                            .await?
+                            .into_docs();
+                        self.stream = Some(Box::new(crate::doc_stream::VecStream::new(
+                            docs.into_iter().map(|doc| (doc, false)).collect(),
+                        )));
+                        self.initialized = true;
+                        return Ok(());
+                    }
+                }
                 self.stream = Some(match self.doc_short_ids.as_deref() {
                     Some(ids) => {
                         fetcher
@@ -837,9 +867,17 @@ mod stream_tests {
         async fn get_by_ids(
             &self,
             _collection_name: &str,
-            _doc_ids: &[String],
+            doc_ids: &[String],
         ) -> Result<FetchByIdsResult> {
-            Ok(FetchByIdsResult::all_found(Vec::new()))
+            Ok(FetchByIdsResult::all_found(
+                self.docs
+                    .iter()
+                    .filter(|(doc, deleted)| {
+                        !deleted && doc.id().is_some_and(|id| doc_ids.contains(&id.to_string()))
+                    })
+                    .map(|(doc, _)| doc.clone())
+                    .collect(),
+            ))
         }
 
         async fn get_by_field_value(
@@ -861,6 +899,45 @@ mod stream_tests {
                 pulled: self.pulled.clone(),
             }))
         }
+    }
+
+    #[tokio::test]
+    async fn exact_document_lookup_does_not_pull_collection_and_preserves_residual_filter() {
+        let id = document::DocID::new_v0_from_seed("point-read");
+        let doc = Document::with_id(id.clone());
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let mut docs = vec![(Document::new(), false); 1000];
+        docs.push((doc, false));
+        let fetcher = Arc::new(CountingFetcher {
+            docs,
+            pulled: pulled.clone(),
+        });
+        for (filter, expected) in [
+            (serde_json::json!({"_docID":{"_eq":id.to_string()}}), true),
+            (
+                serde_json::json!({"_docID":{"_eq":id.to_string()}, "name":{"_eq":"absent"}}),
+                false,
+            ),
+            (serde_json::json!({"_docID":{"_eq":"missing"}}), false),
+        ] {
+            let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
+                .with_fetcher(fetcher.clone())
+                .with_filter(Filter::from_conditions(filter.as_object().unwrap().clone()));
+            node.init().await.unwrap();
+            assert_eq!(node.next().await.unwrap(), expected);
+            if expected {
+                assert_eq!(node.value().doc_id(), Some(id.to_string().as_str()));
+                assert!(!node.next().await.unwrap());
+            }
+        }
+        assert_eq!(pulled.load(Ordering::SeqCst), 0);
+        let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
+            .with_fetcher(fetcher)
+            .with_doc_ids(vec![id.to_string()]);
+        node.init().await.unwrap();
+        assert!(node.next().await.unwrap());
+        assert!(!node.next().await.unwrap());
+        assert_eq!(pulled.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
