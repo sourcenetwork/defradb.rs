@@ -27,14 +27,14 @@ fn fetches(value: &Value) -> u64 {
 #[tokio::test]
 async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Note { title: String }")
+    node.add_schema("type Note { title: String owner: String @index }")
         .await
         .unwrap();
     let mut id = String::new();
     for n in 0..64 {
         let row = data(
             &node,
-            &format!(r#"mutation {{ create_Note(input: {{title: "note-{n}"}}) {{ _docID }} }}"#),
+            &format!(r#"mutation {{ create_Note(input: {{title: "note-{n}", owner: "shared"}}) {{ _docID }} }}"#),
         )
         .await;
         id = row["add_Note"][0]["_docID"]
@@ -45,6 +45,8 @@ async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
     for selection in [
         format!(r#"filter: {{_docID: {{_eq: "{id}"}}}}"#),
         format!(r#"docID: "{id}""#),
+        format!(r#"filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "shared"}}}}"#),
+        format!(r#"docID: "{id}", filter: {{owner: {{_eq: "shared"}}}}"#),
     ] {
         let query = format!(r#"{{ Note({selection}) {{ _docID title }} }}"#);
         assert_eq!(data(&node, &query).await["Note"][0]["title"], "note-63");
@@ -52,7 +54,7 @@ async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
         assert_eq!(fetches(&explain), 1, "{explain}");
     }
     let excluded = format!(
-        r#"{{ Note(filter: {{_docID: {{_eq: "{id}"}}, title: {{_eq: "absent"}}}}) {{ _docID }} }}"#
+        r#"{{ Note(filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "absent"}}}}) {{ _docID }} }}"#
     );
     assert_eq!(
         data(&node, &excluded).await["Note"]
@@ -61,7 +63,8 @@ async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
             .len(),
         0
     );
-    let missing = r#"{ Note(filter: {_docID: {_eq: "missing"}}) { _docID } }"#;
+    let missing =
+        r#"{ Note(filter: {_docID: {_eq: "missing"}, owner: {_eq: "shared"}}) { _docID } }"#;
     let explain = data(&node, &format!("query @explain(type: execute) {missing}")).await;
     assert_eq!(fetches(&explain), 0, "{explain}");
     data(
