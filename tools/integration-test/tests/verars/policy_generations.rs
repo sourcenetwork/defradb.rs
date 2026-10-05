@@ -10,6 +10,9 @@ use vera_modules::acp::abi::IAcp;
 
 use super::helpers;
 
+#[path = "policy_generations/object_archive.rs"]
+mod object_archive;
+
 #[path = "policy_generations/replication.rs"]
 mod replication;
 
@@ -280,6 +283,16 @@ async fn exercise_policy_generations(replicated: bool) {
             assert_visibility("current grant", node, document, reader, &commits);
         }
     }
+    object_archive::exercise(
+        &cluster,
+        &client,
+        &trusted,
+        policy_id,
+        document,
+        [&alice, &bob],
+        &commits,
+    )
+    .await;
     let retired = submit(
         &client,
         &mut admin,
