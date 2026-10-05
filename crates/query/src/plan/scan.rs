@@ -43,8 +43,8 @@ pub struct ScanNode {
     doc_ids: Option<Vec<String>>,
     /// Documents this scan is restricted to, by short id.
     ///
-    /// Unlike [`ScanNode::doc_ids`], which drops non-matching documents after
-    /// reading them, this narrows the read itself: the fetcher seeks each one.
+    /// The fetcher seeks each short id. Multiple [`ScanNode::doc_ids`] still
+    /// filter a collection stream; a single document id also uses a direct seek.
     /// A query that already knows which documents it wants, such as one
     /// narrowed by a vector index, costs what it asked for rather than the
     /// size of the collection.
