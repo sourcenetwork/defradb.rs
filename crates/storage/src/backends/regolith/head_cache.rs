@@ -355,6 +355,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn readonly_commit_does_not_wait_for_publication() {
+        let store = RegolithStore::in_memory().unwrap();
+        let txn = store.new_txn(true).await.unwrap();
+        let shared = cache(txn.as_ref());
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard = lock(&shared).unwrap();
+            locked_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(std::time::Duration::from_secs(2));
+        });
+        locked_rx.recv().unwrap();
+        let start = std::time::Instant::now();
+        txn.commit().await.unwrap();
+        let elapsed = start.elapsed();
+        let _ = release_tx.send(());
+        holder.join().unwrap();
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "read-only completion blocked for {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn warm_reads_do_not_rescan_tombstone_history() {
         let store = RegolithStore::in_memory().unwrap();
         let first = store.new_txn(false).await.unwrap();

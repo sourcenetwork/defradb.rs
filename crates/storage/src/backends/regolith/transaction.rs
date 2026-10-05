@@ -254,19 +254,20 @@ impl Txn for RegolithTxn {
         })?;
         // Native commit and cache publication are one boundary. Never run
         // user callbacks under it, and never publish a failed transaction.
-        let outcome = super::blocking(|| {
-            let mut cache = head_cache::lock(&self.head_cache)?;
-            let outcome = match handle {
-                // Nothing was written, so there is nothing to validate and
-                // nothing to apply.
-                Handle::ReadOnly(_) => Ok(()),
-                Handle::Writable(txn) => txn.commit().map_err(map_txn_error),
-            };
-            if outcome.is_ok() {
-                cache.publish(&self.head_changes);
+        let outcome = match handle {
+            Handle::ReadOnly(snapshot) => {
+                drop(snapshot);
+                Ok(())
             }
-            outcome
-        });
+            Handle::Writable(txn) => super::blocking(|| {
+                let mut cache = head_cache::lock(&self.head_cache)?;
+                let outcome = txn.commit().map_err(map_txn_error);
+                if outcome.is_ok() {
+                    cache.publish(&self.head_changes);
+                }
+                outcome
+            }),
+        };
         match outcome {
             Ok(()) => {
                 self.stats.record_commit();
