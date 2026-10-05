@@ -574,6 +574,10 @@ mod tests {
     }
 
     /// Consumes one injected failure for `topic`, if any remain.
+    #[allow(
+        deprecated,
+        reason = "try_update requires Rust 1.95; the workspace MSRV is 1.91"
+    )]
     fn take_failure(remaining: &TopicCounters, topic: &str) -> bool {
         remaining.get(topic).is_some_and(|count| {
             count
