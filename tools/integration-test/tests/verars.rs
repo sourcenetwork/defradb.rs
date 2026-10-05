@@ -6,6 +6,8 @@ mod helpers;
 mod native_worker;
 #[path = "verars/p2p_acp.rs"]
 mod p2p_acp;
+#[path = "verars/policy_generations.rs"]
+mod policy_generations;
 #[path = "verars/policy_lifecycle.rs"]
 mod policy_lifecycle;
 #[path = "verars/smoke.rs"]

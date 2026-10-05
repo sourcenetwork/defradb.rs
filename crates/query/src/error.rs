@@ -172,6 +172,10 @@ pub enum QueryError {
         message: String,
     },
 
+    /// Commit access could not be verified; the cause may contain protected identifiers.
+    #[error("unable to verify access to commit history")]
+    CommitAccessCheckFailed(#[source] Box<QueryError>),
+
     /// ACP registration status check failed
     #[error("failed to check ACP registration status for document '{doc_id}': {message}")]
     AcpRegistrationCheckFailed { doc_id: String, message: String },
@@ -182,6 +186,11 @@ pub enum QueryError {
 }
 
 impl QueryError {
+    /// Retain verification diagnostics without exposing them through a query response.
+    pub fn commit_access_check_failed(error: Self) -> Self {
+        Self::CommitAccessCheckFailed(Box::new(error))
+    }
+
     /// Create a parse error
     pub fn parse(msg: impl Into<String>) -> Self {
         Self::Parse(msg.into())
@@ -325,6 +334,30 @@ impl QueryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_access_error_keeps_protected_details_out_of_responses() {
+        use std::error::Error as _;
+        let document = "private-document-id";
+        let provider = "private-proof-provider-detail";
+        for cause in [
+            QueryError::acp_check_failed("read", document, provider),
+            QueryError::Internal(format!("{document}: {provider}")),
+        ] {
+            let error = QueryError::commit_access_check_failed(cause);
+            let display = error.to_string();
+            assert_eq!(display, "unable to verify access to commit history");
+            let source = error.source().unwrap().to_string();
+            assert!(source.contains(document));
+            assert!(source.contains(provider));
+            let response = crate::executor::QueryResponseError::from_query_error(error);
+            let serialized = serde_json::to_string(&response).unwrap();
+            for text in [display, serialized] {
+                assert!(!text.contains(document));
+                assert!(!text.contains(provider));
+            }
+        }
+    }
 
     #[test]
     fn test_error_display() {

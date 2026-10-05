@@ -49,7 +49,7 @@ impl ObjectAccessChecker for DirectChecker<'_> {
             .await?
         {
             return Ok(DocAccess {
-                has_access: true,
+                has_access: self.acp.unregistered_documents_are_public(),
                 explicit: false,
             });
         }
@@ -84,7 +84,7 @@ pub async fn check_doc_read_access(
         let access = checker
             .object_access(policy_id, resource_name, doc_id)
             .await?;
-        if access.explicit {
+        if access.explicit || !is_branchable {
             return Ok(access.has_access);
         }
     }

@@ -5,7 +5,7 @@ overlay consistency — a txn-local ACP projection gates reads exactly as the co
 would; fail-closed across commit/rollback.*
 
 This slice models the **deferred-ACP overlay** in
-`crates/query/src/txn/primitives/context.rs`: a `DeferredAcpMutations` object that an explicit
+`crates/query/src/txn/context.rs`: a `DeferredAcpMutations` object that an explicit
 DefraDB transaction uses to (a) maintain a txn-LOCAL `projected_registrations` map and (b)
 buffer the real ACP register/unregister writes as commit-time hooks. Access checks within
 the txn consult the projection FIRST (`check_doc_access_with_overlay`); the buffered hooks
@@ -16,6 +16,12 @@ ACP state (Zanzibar soundness + revocation cache; dual-path commit gating). This
 only one that models the **uncommitted projection → committed transition** itself: isolation
 between concurrent txns, atomic commit-time hook application, no-op rollback, and the
 fail-closed gate across the projected→committed boundary.
+
+The model assumes public access to unregistered objects, matching the local and
+Cosmos backends. Rust now obtains that rule from
+`DocumentACP::unregistered_documents_are_public()`. Native Vera returns `false`;
+its missing-registration behavior is covered by Rust and integration tests, not
+by this model. Branchable collection inheritance is also outside this slice.
 
 ## Property
 
@@ -32,7 +38,7 @@ unregister / read / commit / rollback:
 ### Independent oracle (why GREEN is not vacuous)
 
 Correctness is judged from `committed` — the actually-committed ACP registration state — via
-`Grant(state, d, r)`, the ground-truth ACP rule (`Unregistered ⇒ anyone`; `Registered{o} ⇒
+`Grant(state, d, r)`, the modeled backend's ACP rule (`Unregistered ⇒ anyone`; `Registered{o} ⇒
 only the authenticated identity o`). This is **not** the overlay's own decision
 (`OverlayGrant`). The `Read` action records, for each granted read, the *oracle* verdict
 `Grant(ProspectiveCommitted(t), d, r)` computed by the independent `Grant`. `ProspectiveCommitted(t)`
@@ -56,14 +62,14 @@ states, so the invariants hold over a non-trivial space:
 
 | Symbol in model | Code | Anchor |
 |---|---|---|
-| `Reg(o)` / `Unreg` (`ProjectedDocRegistration::Registered{owner}` / `Unregistered`) | `enum ProjectedDocRegistration` | `crates/query/src/txn/primitives/context.rs:30-34` |
+| `Reg(o)` / `Unreg` (`ProjectedDocRegistration::Registered{owner}` / `Unregistered`) | `enum ProjectedDocRegistration` | `crates/query/src/txn/context.rs:30-34` |
 | `proj[t]` (txn-local `projected_registrations`) | `DeferredAcpState.projected_registrations` | `context.rs:48-52` |
 | one `DeferredAcpMutations` per txn (isolation by construction) | `Arc::new(DeferredAcpMutations::new())` at `begin()` | `crates/db/src/txn/registry/lifecycle.rs:216-229` |
 | `proj[t][d] := Reg(o)` + buffer hook (`Register` action) | `schedule_register_doc_object` | `context.rs:120-158` (projection insert 131-137; hook push 141-157) |
 | `proj[t][d] := Unreg` + buffer hook (`Unregister` action) | `schedule_unregister_doc_object` | `context.rs:161-204` (projection insert 172-176) |
 | `EffectiveProj` / `OverlayGrant` (the gate: projection-first, else committed) | `check_doc_access_with_overlay` | `context.rs:328-351` |
 | `OwnerCheck="Strict"` (Registered grants only to owner) | `matches!(identity, Identity::Authenticated(did) if did == &owner)` | `context.rs:342-344` |
-| projected `Unregistered ⇒ open` | `ProjectedDocRegistration::Unregistered => true` | `context.rs:341` |
+| projected `Unregistered ⇒ open` for the modeled backend | `ProjectedDocRegistration::Unregistered => acp.unregistered_documents_are_public()` | `crates/query/src/txn/context.rs`, `check_doc_access_with_overlay` |
 | `Commit` runs hooks atomically (one action) | `run_all_logged` drains and runs all hooks | `context.rs:207-237` |
 | commit hook wired to **commit only** (`on_success_async`), never rollback | `db_txn.on_success_async(... run_all_logged ...)` | `txn/registry/lifecycle.rs:218-229` |
 | `on_success_async` semantics: fired on `commit()`, NOT on `discard()` | corekv `Transaction` trait docs | `crates/storage/src/corekv/traits.rs:304-369` |
@@ -127,7 +133,7 @@ the named invariant "is violated" with a concrete two-txn counterexample trace.
   witnessing shape; conclusions are structural (the gate, the isolation boundary, the
   commit-vs-rollback hook split), not quantity-sensitive.
 - **Abstracted:** the actual Zanzibar/`DocumentACP` relation evaluation is collapsed into the
-  `Grant` rule (Unregistered ⇒ anyone; Registered{owner} ⇒ owner-only). Multi-relation policies,
+  `Grant` rule for public-absence backends (Unregistered ⇒ anyone; Registered{owner} ⇒ owner-only). Native Vera's deny-on-absence behavior and branchable collection inheritance are not modeled. Multi-relation policies,
   the bearer-token guard (`RequestBearerTokenGuard`), and hook fail-soft/`catch_unwind` logging
   are out of scope — modeled as an atomic, total commit application. The relation engine itself
   is the Acp slice's job and is exercised by `--test acp`.
