@@ -574,6 +574,10 @@ impl Blockstore for ConflictOnceBlockstore {
         self.inner.get(cid).await
     }
 
+    #[allow(
+        deprecated,
+        reason = "try_update requires Rust 1.95; the workspace MSRV is 1.91"
+    )]
     async fn put(&self, cid: &Cid, data: &[u8]) -> blockstore::Result<()> {
         self.put_attempts.fetch_add(1, Ordering::SeqCst);
         if self
@@ -595,6 +599,10 @@ impl Blockstore for ConflictOnceBlockstore {
         self.inner.put(cid, data).await
     }
 
+    #[allow(
+        deprecated,
+        reason = "try_update requires Rust 1.95; the workspace MSRV is 1.91"
+    )]
     async fn put_many(&self, blocks: &[(&Cid, &[u8])]) -> blockstore::Result<()> {
         self.put_many_attempts.fetch_add(1, Ordering::SeqCst);
         if self

@@ -226,6 +226,10 @@ impl PeerStateTracker {
     }
 
     /// Remove a peer entry and release its CIDs from the global count.
+    #[allow(
+        deprecated,
+        reason = "try_update requires Rust 1.95; the workspace MSRV is 1.91"
+    )]
     pub(super) fn remove_peer(&self, peer_id: &str) {
         if let Some(info) = self.peers.remove(peer_id) {
             let released = info.known_cids.len();
