@@ -13,6 +13,9 @@ use super::helpers;
 #[path = "policy_generations/replication.rs"]
 mod replication;
 
+#[path = "policy_generations/peer_authorization.rs"]
+mod peer_authorization;
+
 const WITHOUT_READER: &str = r#"name: test-user-policy
 resources:
   - name: users
