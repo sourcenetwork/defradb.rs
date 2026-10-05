@@ -87,6 +87,12 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
 
     /// Queues tasks, merging with pending ones and skipping those that add nothing over active ones.
     pub fn push_tasks(&mut self, tasks: Vec<Task<T, D>>) {
+        self.push_tasks_truncated(usize::MAX, tasks);
+    }
+
+    /// Like `push_tasks`, but never grows the pending queue past `n`: the newest tasks are dropped.
+    pub fn push_tasks_truncated(&mut self, n: usize, mut tasks: Vec<Task<T, D>>) {
+        tasks.truncate(n.saturating_sub(self.pending_tasks.len()));
         let now = Instant::now();
         for task in tasks {
             if !self.task_has_more_info_than_active_tasks(&task) {

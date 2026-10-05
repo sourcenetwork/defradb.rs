@@ -333,3 +333,23 @@ fn assert_eq_unordered<T: Ord + Eq + Debug + Clone>(a: impl AsRef<[T]>, b: impl 
     b.sort();
     assert_eq!(a, b);
 }
+
+#[test]
+fn test_push_tasks_truncated_keeps_the_oldest_pending_tasks() {
+    let mut ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
+    let peer = PeerId::random();
+    let task = |topic: u32| Task {
+        topic,
+        priority: 0,
+        work: 1,
+        data: (),
+    };
+
+    ptq.push_tasks_truncated(3, peer, (0..5).map(task).collect());
+    ptq.push_tasks_truncated(3, peer, vec![task(5), task(6)]);
+
+    let (_, popped, _) = ptq.pop_tasks(100).unwrap();
+    let mut topics: Vec<u32> = popped.iter().map(|t| t.topic).collect();
+    topics.sort_unstable();
+    assert_eq!(topics, [0, 1, 2]);
+}

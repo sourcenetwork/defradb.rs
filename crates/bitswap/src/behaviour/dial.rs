@@ -117,25 +117,47 @@ impl<S: Store> Bitswap<S> {
                     event: BitswapHandlerIn::Message(message, response),
                 })
             }
-            // Keep-alive is per connection and the recorded id can name a closed one, so the handler is
-            // addressed through `Any` and only for peers known to speak bitswap.
-            OutEvent::Protect { peer } => self.responsive(&peer).then(|| ToSwarm::NotifyHandler {
-                peer_id: peer,
-                handler: NotifyHandler::Any,
-                event: BitswapHandlerIn::Protect,
-            }),
+            // Keep-alive is per connection, so every live connection of a peer known to speak bitswap is
+            // addressed by id.
+            OutEvent::Protect { peer } => {
+                if self.responsive(&peer) {
+                    self.protected.insert(peer);
+                    self.notify_connections(&peer, || BitswapHandlerIn::Protect);
+                }
+                None
+            }
             OutEvent::Unprotect { peer, response } => {
                 let responsive = self.responsive(&peer);
                 if response.send(responsive).is_err() {
                     debug!(%peer, "unprotect response dropped");
                 }
-                responsive.then(|| ToSwarm::NotifyHandler {
-                    peer_id: peer,
-                    handler: NotifyHandler::Any,
-                    event: BitswapHandlerIn::Unprotect,
-                })
+                self.protected.remove(&peer);
+                if responsive {
+                    self.notify_connections(&peer, || BitswapHandlerIn::Unprotect);
+                }
+                None
             }
         }
+    }
+
+    /// Queues one handler event per live connection of `peer`, drained by `poll`.
+    pub(super) fn notify_connections(
+        &mut self,
+        peer: &PeerId,
+        event: impl Fn() -> BitswapHandlerIn,
+    ) {
+        let Some(connections) = self.connections.get(peer) else {
+            return;
+        };
+        self.pending_events.extend(
+            connections
+                .iter()
+                .map(|&connection| ToSwarm::NotifyHandler {
+                    peer_id: *peer,
+                    handler: NotifyHandler::One(connection),
+                    event: event(),
+                }),
+        );
     }
 
     pub(super) fn responsive(&self, peer: &PeerId) -> bool {

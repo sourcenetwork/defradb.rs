@@ -20,12 +20,13 @@ pub(crate) async fn run<S: Store>(
     commands: unbounded::Sender<Command>,
     store: S,
     filter: Option<Box<dyn PeerBlockRequestFilter>>,
+    max_wants: usize,
 ) {
     while let Some((peer, message)) = inbound.recv_async().await {
         if message.is_empty() {
             debug!(%peer, "received empty message");
         }
-        let received = prepare(peer, &message, &store, filter.as_deref()).await;
+        let received = prepare(peer, &message, &store, filter.as_deref(), max_wants).await;
         commands.send(Command::Received(received));
     }
 }
@@ -35,6 +36,7 @@ async fn prepare<S: Store>(
     message: &BitswapMessage,
     store: &S,
     filter: Option<&dyn PeerBlockRequestFilter>,
+    max_wants: usize,
 ) -> Received {
     let mut cancels: Vec<Cid> = Vec::new();
     let mut denials = Vec::new();
@@ -43,13 +45,15 @@ async fn prepare<S: Store>(
     for entry in message.wantlist() {
         if entry.cancel {
             cancels.push(entry.cid);
-        } else if let Some(filter) = filter {
-            if filter(&peer, &entry.cid).await {
-                allowed.push(entry);
-            } else {
-                denials.push(entry.clone());
-            }
-        } else {
+            continue;
+        }
+        let permitted = match filter {
+            Some(filter) => filter(&peer, &entry.cid).await,
+            None => true,
+        };
+        if !permitted {
+            denials.push(entry.clone());
+        } else if max_wants == 0 || allowed.len() < max_wants {
             allowed.push(entry);
         }
     }

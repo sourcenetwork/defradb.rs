@@ -18,6 +18,8 @@ pub struct ServerConfig {
     pub max_outstanding_bytes_per_peer: usize,
     /// Largest block a want-have is answered with the block itself.
     pub max_replace_size: usize,
+    /// Wants one peer may keep queued; 0 disables the cap.
+    pub max_queued_wantlist_entries_per_peer: usize,
 }
 
 impl fmt::Debug for ServerConfig {
@@ -35,6 +37,10 @@ impl fmt::Debug for ServerConfig {
                 &self.max_outstanding_bytes_per_peer,
             )
             .field("max_replace_size", &self.max_replace_size)
+            .field(
+                "max_queued_wantlist_entries_per_peer",
+                &self.max_queued_wantlist_entries_per_peer,
+            )
             .finish()
     }
 }
@@ -48,6 +54,7 @@ impl Default for ServerConfig {
             target_message_size: 16 * 1024,
             max_outstanding_bytes_per_peer: 1 << 20,
             max_replace_size: 1024,
+            max_queued_wantlist_entries_per_peer: 1024,
         }
     }
 }

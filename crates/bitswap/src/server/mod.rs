@@ -16,6 +16,7 @@ pub mod wantlist;
 use kovan_channel::{bounded, unbounded};
 use libp2p::PeerId;
 use thiserror::Error;
+use tokio::sync::oneshot;
 
 pub use config::ServerConfig;
 pub use filter::PeerBlockRequestFilter;
@@ -53,12 +54,14 @@ impl Server {
         let (commands, commands_rx) = kovan_channel::unbounded();
         let (reports, reports_rx) = kovan_channel::unbounded();
 
+        let max_wants = config.max_queued_wantlist_entries_per_peer;
         let engine = Engine::new(&config, store.clone(), network, reports);
         tokio::spawn(receive::run(
             inbound_rx,
             commands.clone(),
             store,
             config.peer_block_request_filter,
+            max_wants,
         ));
         tokio::spawn(engine.run(commands_rx, reports_rx));
 
@@ -83,6 +86,13 @@ impl Server {
     /// A peer became reachable over bitswap.
     pub fn peer_connected(&self, peer: PeerId) {
         self.commands.send(Command::PeerConnected(peer));
+    }
+
+    /// Wants recorded for the peer, or `None` when it holds no ledger.
+    pub async fn ledger_wants(&self, peer: PeerId) -> Option<usize> {
+        let (reply, wants) = oneshot::channel();
+        self.commands.send(Command::LedgerWants(peer, reply));
+        wants.await.ok().flatten()
     }
 
     /// A peer is gone; its wantlist is dropped.

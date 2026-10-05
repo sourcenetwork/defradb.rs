@@ -91,6 +91,11 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
 
     /// Adds a group of tasks for the peer.
     pub fn push_tasks(&mut self, peer: PeerId, tasks: Vec<Task<T, D>>) {
+        self.push_tasks_truncated(usize::MAX, peer, tasks);
+    }
+
+    /// Adds tasks for the peer without growing its pending queue past `n`; the newest tasks are dropped.
+    pub fn push_tasks_truncated(&mut self, n: usize, peer: PeerId, tasks: Vec<Task<T, D>>) {
         let mut peer_tracker = self.peer_queue.remove(&peer).unwrap_or_else(|| {
             PeerTracker::new(
                 peer,
@@ -99,7 +104,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
             )
         });
 
-        peer_tracker.push_tasks(tasks);
+        peer_tracker.push_tasks_truncated(n, tasks);
         self.peer_queue.push(peer, peer_tracker);
     }
 

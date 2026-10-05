@@ -14,6 +14,8 @@ pub struct Entry {
     pub priority: Priority,
     /// Block or HAVE.
     pub want_type: WantType,
+    /// Whether the block existed when the want was last recorded.
+    pub present: bool,
 }
 
 /// A raw list of wanted blocks and their priorities.
@@ -40,10 +42,22 @@ impl Wantlist {
 
     /// Adds an entry; a want-have never overrides a want-block. True when the list changed.
     pub fn add(&mut self, cid: Cid, priority: Priority, want_type: WantType) -> bool {
+        self.add_with_presence(cid, priority, want_type, true)
+    }
+
+    /// Like [`Wantlist::add`], recording whether the block existed; a repeated want refreshes the flag.
+    pub fn add_with_presence(
+        &mut self,
+        cid: Cid,
+        priority: Priority,
+        want_type: WantType,
+        present: bool,
+    ) -> bool {
         let entry = Entry {
             cid,
             priority,
             want_type,
+            present,
         };
         match self.set.entry(cid) {
             std::collections::hash_map::Entry::Vacant(slot) => {
@@ -51,6 +65,7 @@ impl Wantlist {
                 true
             }
             std::collections::hash_map::Entry::Occupied(mut slot) => {
+                slot.get_mut().present = present;
                 if slot.get().want_type == WantType::Block || want_type == WantType::Have {
                     return false;
                 }

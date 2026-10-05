@@ -9,6 +9,7 @@ use cid::Cid;
 use kovan_channel::unbounded;
 use libp2p::PeerId;
 use rapidhash::RapidHashMap;
+use tokio::sync::oneshot;
 use tokio::time::{interval_at, Instant};
 use tracing::debug;
 
@@ -43,6 +44,7 @@ pub(crate) enum Command {
     Received(Received),
     PeerConnected(PeerId),
     PeerDisconnected(PeerId),
+    LedgerWants(PeerId, oneshot::Sender<Option<usize>>),
 }
 
 /// Progress reports from envelope tasks.
@@ -63,6 +65,7 @@ pub(crate) struct Engine<S: Store> {
     ledgers: RapidHashMap<PeerId, Ledger>,
     send_dont_haves: bool,
     max_replace_size: usize,
+    max_queued_wants: usize,
     target_message_size: usize,
     worker_count: usize,
     in_flight: usize,
@@ -89,6 +92,7 @@ impl<S: Store> Engine<S> {
             ledgers: Default::default(),
             send_dont_haves: config.send_dont_haves,
             max_replace_size: config.max_replace_size,
+            max_queued_wants: config.max_queued_wantlist_entries_per_peer,
             target_message_size: config.target_message_size,
             worker_count: config.worker_count,
             in_flight: 0,
@@ -121,10 +125,17 @@ impl<S: Store> Engine<S> {
         match command {
             Command::Received(received) => self.message_received(received),
             Command::PeerConnected(peer) => {
-                self.ledger(peer);
+                self.ledgers
+                    .entry(peer)
+                    .or_insert_with(|| Ledger::new(peer));
             }
             Command::PeerDisconnected(peer) => {
                 self.ledgers.remove(&peer);
+            }
+            Command::LedgerWants(peer, reply) => {
+                reply
+                    .send(self.ledgers.get(&peer).map(|l| l.wantlist().len()))
+                    .ok();
             }
         }
     }
@@ -136,12 +147,13 @@ impl<S: Store> Engine<S> {
                 blocks,
                 haves,
             } => {
-                let ledger = self.ledger(peer);
-                for cid in &blocks {
-                    ledger.wantlist_mut().remove_type(cid, WantType::Block);
-                }
-                for cid in &haves {
-                    ledger.wantlist_mut().remove_type(cid, WantType::Have);
+                if let Some(ledger) = self.ledgers.get_mut(&peer) {
+                    for cid in &blocks {
+                        ledger.wantlist_mut().remove_type(cid, WantType::Block);
+                    }
+                    for cid in &haves {
+                        ledger.wantlist_mut().remove_type(cid, WantType::Have);
+                    }
                 }
             }
             Report::TasksDone { peer, tasks } => {
@@ -149,12 +161,6 @@ impl<S: Store> Engine<S> {
                 self.in_flight = self.in_flight.saturating_sub(1);
             }
         }
-    }
-
-    fn ledger(&mut self, peer: PeerId) -> &mut Ledger {
-        self.ledgers
-            .entry(peer)
-            .or_insert_with(|| Ledger::new(peer))
     }
 
     fn send_as_block(&self, want_type: WantType, block_size: usize) -> bool {
@@ -181,24 +187,49 @@ impl<S: Store> Engine<S> {
             full,
             cancels,
             denials,
-            wants,
+            mut wants,
         } = received;
 
-        let mut tasks = Vec::new();
-        let mut ledger = self
-            .ledgers
-            .remove(&peer)
-            .unwrap_or_else(|| Ledger::new(peer));
+        let tracked = self.ledgers.remove(&peer);
+        let is_tracked = tracked.is_some();
+        // A peer without a ledger has disconnected: its message is served from a throwaway ledger.
+        let mut ledger = tracked.unwrap_or_else(|| Ledger::new(peer));
 
         if full {
             ledger.clear_wantlist();
         }
+
+        let mut overflow = Vec::new();
+        wants = std::mem::take(&mut wants)
+            .into_iter()
+            .filter_map(|want| {
+                let entry = &want.entry;
+                if ledger.try_want(
+                    self.max_queued_wants,
+                    entry.cid,
+                    entry.priority,
+                    entry.want_type,
+                    want.size.is_some(),
+                ) {
+                    Some(want)
+                } else {
+                    overflow.push(want);
+                    None
+                }
+            })
+            .collect();
+        if !overflow.is_empty() {
+            debug!(%peer, overflow = overflow.len(), "wantlist overflow");
+            self.handle_overflow(&mut ledger, peer, overflow, &mut wants);
+        }
+
         for cid in &cancels {
             if ledger.cancel_want(cid).is_some() {
                 self.queue.remove(cid, peer);
             }
         }
 
+        let mut tasks = Vec::new();
         tasks.extend(
             denials
                 .iter()
@@ -206,8 +237,6 @@ impl<S: Store> Engine<S> {
         );
 
         for Want { entry, size } in &wants {
-            ledger.wants(entry.cid, entry.priority, entry.want_type);
-
             match size {
                 Some(block_size) => {
                     let is_want_block = self.send_as_block(entry.want_type, *block_size);
@@ -232,9 +261,84 @@ impl<S: Store> Engine<S> {
             }
         }
 
-        self.ledgers.insert(peer, ledger);
+        if is_tracked {
+            self.ledgers.insert(peer, ledger);
+        }
         if !tasks.is_empty() {
-            self.queue.push_tasks(peer, tasks);
+            let bound = match self.max_queued_wants {
+                0 => usize::MAX,
+                bound => bound,
+            };
+            self.queue.push_tasks_truncated(bound, peer, tasks);
+        }
+    }
+
+    /// Admits `overflow` wants by evicting existing ones, in the reference order: wants whose block is
+    /// absent first, then wants that rank no higher than the overflow. The rest is dropped silently.
+    fn handle_overflow(
+        &mut self,
+        ledger: &mut Ledger,
+        peer: PeerId,
+        mut overflow: Vec<Want>,
+        wants: &mut Vec<Want>,
+    ) {
+        overflow.sort_by_key(|want| std::cmp::Reverse(want.entry.priority));
+        let mut overflow = overflow.into_iter().peekable();
+        // The reference sorts the existing wants by descending priority although its comment says
+        // ascending; the order is kept as implemented.
+        let existing = ledger.wantlist().entries();
+
+        let mut evicted = vec![false; existing.len()];
+        for (index, entry) in existing.iter().enumerate() {
+            // The flag recorded at admission is used, not a fresh lookup: it keeps store I/O off the engine task,
+            // and a queued want is never served later when its block arrives, so a stale flag costs nothing.
+            if entry.present {
+                continue;
+            }
+            let Some(admitted) = overflow.next() else {
+                return;
+            };
+            self.evict(ledger, peer, &entry.cid);
+            evicted[index] = true;
+            self.admit_overflow(ledger, admitted, wants);
+            if overflow.peek().is_none() {
+                return;
+            }
+        }
+
+        let mut replace = 0;
+        for admitted in overflow {
+            while evicted.get(replace).copied().unwrap_or(false) {
+                replace += 1;
+            }
+            let Some(target) = existing.get(replace) else {
+                return;
+            };
+            if admitted.entry.priority < target.priority {
+                return;
+            }
+            replace += 1;
+            self.evict(ledger, peer, &target.cid);
+            self.admit_overflow(ledger, admitted, wants);
+        }
+    }
+
+    fn evict(&mut self, ledger: &mut Ledger, peer: PeerId, cid: &Cid) {
+        if ledger.cancel_want(cid).is_some() {
+            self.queue.remove(cid, peer);
+        }
+    }
+
+    fn admit_overflow(&self, ledger: &mut Ledger, want: Want, wants: &mut Vec<Want>) {
+        let entry = &want.entry;
+        if ledger.try_want(
+            self.max_queued_wants,
+            entry.cid,
+            entry.priority,
+            entry.want_type,
+            want.size.is_some(),
+        ) {
+            wants.push(want);
         }
     }
 

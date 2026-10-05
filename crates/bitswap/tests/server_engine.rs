@@ -1,107 +1,16 @@
-use std::future::{poll_fn, Future};
+use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use bitswap::network::{Network, OutEvent, SendError};
-use bitswap::server::{Server, ServerConfig};
+use bitswap::server::ServerConfig;
 use bitswap::{BitswapMessage, Block, WantType};
 use cid::Cid;
 use libp2p::PeerId;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::timeout;
 
 mod common;
-use common::mem_store::MemStore;
+mod server_harness;
 use common::{block_v1, cid_v1};
-
-struct Sent {
-    message: BitswapMessage,
-    response: oneshot::Sender<Result<(), SendError>>,
-}
-
-struct Harness {
-    server: Server,
-    sent: mpsc::UnboundedReceiver<Sent>,
-    peer: PeerId,
-}
-
-fn start(blocks: &[Block], config: ServerConfig) -> Harness {
-    let (network, mut events) = Network::new(PeerId::random());
-    let (tx, sent) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        loop {
-            match poll_fn(|cx| events.poll_next(cx)).await {
-                OutEvent::Dial { response, .. } => {
-                    let _ = response.send(Ok(None));
-                }
-                OutEvent::SendMessage {
-                    message, response, ..
-                } => {
-                    let _ = tx.send(Sent { message, response });
-                }
-                OutEvent::Protect { .. } | OutEvent::Unprotect { .. } => {}
-            }
-        }
-    });
-    Harness {
-        server: Server::new(network, MemStore::new(blocks), config),
-        sent,
-        peer: PeerId::random(),
-    }
-}
-
-impl Harness {
-    fn send(&mut self, message: BitswapMessage) {
-        self.server
-            .try_receive_message(self.peer, message)
-            .expect("inbound queue has room");
-    }
-
-    async fn next(&mut self) -> Sent {
-        timeout(Duration::from_secs(5), self.sent.recv())
-            .await
-            .expect("a message within the deadline")
-            .expect("the capture task is alive")
-    }
-
-    /// Collects messages, acknowledging each, until one carries the sentinel block.
-    async fn until_sentinel(&mut self, sentinel: &Cid) -> Vec<BitswapMessage> {
-        let mut out = Vec::new();
-        loop {
-            let sent = self.next().await;
-            let _ = sent.response.send(Ok(()));
-            let done = sent.message.blocks().any(|b| b.cid == *sentinel);
-            out.push(sent.message);
-            if done {
-                return out;
-            }
-        }
-    }
-}
-
-fn want(cid: Cid, want_type: WantType, send_dont_have: bool) -> BitswapMessage {
-    let mut message = BitswapMessage::new(false);
-    message.add_entry(cid, 1, want_type, send_dont_have);
-    message
-}
-
-fn cancel(cid: Cid) -> BitswapMessage {
-    let mut message = BitswapMessage::new(false);
-    message.cancel(cid);
-    message
-}
-
-fn has_block(messages: &[BitswapMessage], cid: &Cid) -> bool {
-    messages.iter().any(|m| m.blocks().any(|b| b.cid == *cid))
-}
-
-fn has_dont_have(messages: &[BitswapMessage], cid: &Cid) -> bool {
-    messages.iter().any(|m| m.dont_haves().any(|c| c == cid))
-}
-
-fn has_have(messages: &[BitswapMessage], cid: &Cid) -> bool {
-    messages.iter().any(|m| m.haves().any(|c| c == cid))
-}
+use server_harness::{cancel, has_block, has_dont_have, has_have, start, want, Sent};
 
 #[tokio::test(start_paused = true)]
 async fn want_have_of_small_block_is_answered_with_the_block() {

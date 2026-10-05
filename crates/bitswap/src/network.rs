@@ -217,7 +217,7 @@ impl Network {
                     Ok(Err(other)) => {
                         debug!(%peer, attempt, retries, error = %other, "send attempt failed");
                         errors.push(other);
-                        if attempt + 1 < retries {
+                        if attempt < retries {
                             tokio::time::sleep(backoff).await;
                         }
                     }

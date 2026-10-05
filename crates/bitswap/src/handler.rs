@@ -1,7 +1,7 @@
 //! Connection handler: one fresh outbound substream per message, inbound substreams read until EOF.
 //!
-//! Keep-alive: 30 s from connection start, reset to the idle timeout on every send and receive,
-//! held forever by `Protect` and reset to 30 s by `Unprotect`.
+//! Keep-alive: 30 s from connection start, reset to the idle timeout on every send and receive.
+//! `Protect` holds the connection regardless of activity until `Unprotect` resets it to 30 s.
 
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -63,7 +63,7 @@ pub enum BitswapHandlerIn {
 
 type HandlerEvents =
     ConnectionHandlerEvent<ProtocolConfig, (BitswapMessage, SendResponse), HandlerEvent>;
-type Substream = Framed<Stream, BitswapCodec>;
+type Substream<T = Stream> = Framed<T, BitswapCodec>;
 
 /// Handler for the bitswap substreams of one connection.
 pub struct BitswapHandler {
@@ -74,6 +74,7 @@ pub struct BitswapHandler {
     idle_timeout: Duration,
     upgrade_errors: VecDeque<StreamUpgradeError<BitswapHandlerError>>,
     keep_alive_until: Option<Instant>,
+    protected: bool,
 }
 
 impl Debug for BitswapHandler {
@@ -84,6 +85,7 @@ impl Debug for BitswapHandler {
             .field("send_queue", &self.send_queue.len())
             .field("idle_timeout", &self.idle_timeout)
             .field("keep_alive_until", &self.keep_alive_until)
+            .field("protected", &self.protected)
             .finish()
     }
 }
@@ -99,7 +101,12 @@ impl BitswapHandler {
             idle_timeout,
             upgrade_errors: VecDeque::new(),
             keep_alive_until: Some(Instant::now() + INITIAL_KEEP_ALIVE),
+            protected: false,
         }
+    }
+
+    fn note_activity(&mut self) {
+        self.keep_alive_until = Some(Instant::now() + self.idle_timeout);
     }
 
     fn on_fully_negotiated_inbound(
@@ -154,18 +161,21 @@ impl ConnectionHandler for BitswapHandler {
         match message {
             BitswapHandlerIn::Message(message, response) => {
                 self.send_queue.push_back((message, response));
-                self.keep_alive_until = Some(Instant::now() + self.idle_timeout);
+                self.note_activity();
             }
-            BitswapHandlerIn::Protect => self.keep_alive_until = None,
+            BitswapHandlerIn::Protect => self.protected = true,
             BitswapHandlerIn::Unprotect => {
+                self.protected = false;
                 self.keep_alive_until = Some(Instant::now() + INITIAL_KEEP_ALIVE);
             }
         }
     }
 
     fn connection_keep_alive(&self) -> bool {
-        self.keep_alive_until
-            .is_none_or(|until| Instant::now() < until)
+        self.protected
+            || self
+                .keep_alive_until
+                .is_none_or(|until| Instant::now() < until)
     }
 
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<HandlerEvents> {
@@ -195,7 +205,7 @@ impl ConnectionHandler for BitswapHandler {
 
         if let Poll::Ready(Some(event)) = self.inbound_substreams.poll_next_unpin(cx) {
             if let ConnectionHandlerEvent::NotifyBehaviour(HandlerEvent::Message { .. }) = event {
-                self.keep_alive_until = Some(Instant::now() + self.idle_timeout);
+                self.note_activity();
             }
             return Poll::Ready(event);
         }
@@ -225,7 +235,7 @@ impl ConnectionHandler for BitswapHandler {
     }
 }
 
-async fn close(mut substream: Substream) {
+async fn close<T: AsyncWrite + Unpin>(mut substream: Substream<T>) {
     if let Err(err) = substream.flush().await {
         debug!("failed to flush stream: {:?}", err);
     }
@@ -277,13 +287,14 @@ fn inbound_substream(substream: Substream) -> impl futures::Stream<Item = Handle
     })
 }
 
-enum Outbound {
-    Sending(Substream, BitswapMessage, SendResponse),
-    Closing(Substream),
+enum Outbound<T> {
+    Sending(Substream<T>, BitswapMessage, SendResponse),
+    Closing(Substream<T>),
 }
 
-fn outbound_substream(
-    substream: Substream,
+/// Writes one message and flushes it, answering `response` only once the bytes left the substream, then closes.
+pub fn outbound_substream<T: AsyncRead + AsyncWrite + Unpin>(
+    substream: Framed<T, BitswapCodec>,
     (message, response): (BitswapMessage, SendResponse),
 ) -> impl futures::Stream<Item = HandlerEvents> {
     stream::unfold(
@@ -291,7 +302,11 @@ fn outbound_substream(
         |state| async move {
             match state {
                 Outbound::Sending(mut substream, message, response) => {
-                    if let Err(error) = substream.feed(message).await {
+                    let written = match substream.feed(message).await {
+                        Ok(()) => substream.flush().await,
+                        Err(error) => Err(error),
+                    };
+                    if let Err(error) = written {
                         debug!("failed to write bitswap message: {:?}", error);
                         response.send(Err(SendError::Other(error.to_string()))).ok();
                         let event = HandlerEvent::FailedToSendMessage { error };

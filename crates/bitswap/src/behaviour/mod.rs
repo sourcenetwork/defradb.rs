@@ -7,6 +7,7 @@
 mod client;
 mod dial;
 
+use std::collections::VecDeque;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -14,14 +15,14 @@ use libp2p::core::transport::PortUse;
 use libp2p::core::Endpoint;
 use libp2p::swarm::{
     ConnectionClosed, ConnectionDenied, ConnectionId, DialFailure, FromSwarm, NetworkBehaviour,
-    THandler, THandlerInEvent, THandlerOutEvent, ToSwarm,
+    NotifyHandler, THandler, THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 use libp2p::{Multiaddr, PeerId};
-use rapidhash::RapidHashMap;
+use rapidhash::{RapidHashMap, RapidHashSet};
 use tracing::{debug, trace};
 
 use crate::client::{Client, Driver};
-use crate::handler::{BitswapHandler, HandlerEvent};
+use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
 use crate::message::BitswapMessage;
 use crate::network::{Network, OutEvents};
 use crate::peer_state::{Connections, Dials, PeerState};
@@ -70,6 +71,10 @@ pub struct Bitswap<S: Store> {
     /// whether a peer is still usable depends on.
     connections: Connections,
     dials: Dials,
+    /// Peers whose connections are held open; new connections of these start protected.
+    protected: RapidHashSet<PeerId>,
+    /// Handler events queued for the swarm, one per connection.
+    pending_events: VecDeque<ToSwarm<BitswapEvent, BitswapHandlerIn>>,
     /// Set when dialing is disabled because the connection limit was reached.
     pause_dialing: bool,
     server: Option<Server>,
@@ -95,6 +100,8 @@ impl<S: Store> Bitswap<S> {
             peers: Default::default(),
             connections: Default::default(),
             dials: Default::default(),
+            protected: Default::default(),
+            pending_events: Default::default(),
             pause_dialing: false,
             server,
             client: Client::new(),
@@ -213,6 +220,13 @@ impl<S: Store> Bitswap<S> {
             self.refresh_recorded_connection(&peer, connection);
         }
         self.pause_dialing = false;
+        if self.protected.contains(&peer) {
+            self.pending_events.push_back(ToSwarm::NotifyHandler {
+                peer_id: peer,
+                handler: NotifyHandler::One(connection),
+                event: BitswapHandlerIn::Protect,
+            });
+        }
 
         // A dial is satisfied the moment the peer is reachable, not once a bitswap substream negotiated.
         let protocol = self.negotiated_protocol(&peer);
@@ -235,6 +249,7 @@ impl<S: Store> Bitswap<S> {
         // While other connections remain the peer stays connected. The recorded id may now name a closed
         // connection, which is why messages are dispatched to any live connection rather than to that id.
         if remaining_established == 0 {
+            self.protected.remove(&peer);
             self.set_peer_state(&peer, PeerState::Disconnected);
         }
     }
@@ -313,6 +328,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     fn poll(&mut self, cx: &mut Context) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
         self.poll_client(cx);
         for _ in 0..MAX_EVENTS_PER_POLL {
+            if let Some(event) = self.pending_events.pop_front() {
+                return Poll::Ready(event);
+            }
             match self.out_events.poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(event) => {

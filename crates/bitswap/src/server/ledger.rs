@@ -47,6 +47,23 @@ impl Ledger {
         self.wantlist.add(cid, priority, want_type);
     }
 
+    /// Records a want unless the ledger already holds `cap` other cids (0 means no cap); true when recorded.
+    pub fn try_want(
+        &mut self,
+        cap: usize,
+        cid: Cid,
+        priority: Priority,
+        want_type: WantType,
+        present: bool,
+    ) -> bool {
+        if cap != 0 && self.wantlist.len() >= cap && self.wantlist.get(&cid).is_none() {
+            return false;
+        }
+        self.wantlist
+            .add_with_presence(cid, priority, want_type, present);
+        true
+    }
+
     /// Drops a want, returning it when present.
     pub fn cancel_want(&mut self, cid: &Cid) -> Option<Entry> {
         self.wantlist.remove(cid)
