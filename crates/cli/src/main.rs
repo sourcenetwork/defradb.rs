@@ -26,16 +26,17 @@ async fn main() -> ExitCode {
 
 /// Install the process-wide rustls crypto provider.
 ///
-/// `reqwest` and `axum-server` are both pulled in without a provider
-/// (`tls-rustls-no-provider`), which leaves choosing one to the application.
-/// Nothing did, so the first TLS client construction panicked with
-/// "No provider set" — which under `--features otel,iroh` meant telemetry
-/// silently failed to initialise and the node exported nothing.
+/// We cannot control which crypto providers our upstream deps enable, and
+/// rustls panics rather than choosing when the graph offers more than one, so
+/// install one unconditionally instead of relying on feature unification.
+///
+/// We intentionally do this in the CLI wrapper instead of the library
+/// so that embedded applications can choose their own provider.
 ///
 /// Must run before anything builds a TLS client or server. An `Err` means a
 /// provider is already installed, which is equally fine.
 fn install_crypto_provider() {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 async fn run() -> Result<()> {

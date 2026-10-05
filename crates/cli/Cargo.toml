@@ -63,12 +63,7 @@ serde_yaml = "0.9"
 # Logging
 tracing = { workspace = true }
 
-# Several TLS consumers resolve rustls without a crypto provider — `axum-server`
-# via `tls-rustls-no-provider`, and the reqwest 0.13 used by `telemetry`
-# alongside it — which leaves choosing one to the application. Nothing did, so
-# the first TLS client construction panicked. Pinned to the version those
-# crates resolve to.
-rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+rustls = { workspace = true, features = ["ring"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-chrome = { version = "0.7", optional = true }
 

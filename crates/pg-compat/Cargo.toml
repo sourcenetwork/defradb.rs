@@ -20,7 +20,9 @@ schema = { path = "../schema" }
 identity = { path = "../identity" }
 
 # Postgres wire protocol
-pgwire = "0.38"
+# `server-api-ring` in place of the default `server-api-aws-lc-rs`: ring is
+# unavoidable (libp2p-tls enables it), so this keeps one provider in the graph.
+pgwire = { version = "0.38", default-features = false, features = ["server-api-ring", "pg-ext-types"] }
 
 # SQL parsing
 sqlparser = { version = "0.55", features = ["visitor"] }
