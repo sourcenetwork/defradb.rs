@@ -307,9 +307,9 @@ pub trait DocFetcher: MaybeSendSync {
     /// Nearest documents to `query_vector` under a vector index, nearest first.
     ///
     /// Returns document short ids, which is what a scan can be narrowed by.
-    /// `admit` restricts what may be *returned* without restricting what may be
-    /// traversed, so a filtered query still gets a full `k` whenever `k`
-    /// matching documents exist.
+    /// Returns candidates without applying query filters or access checks.
+    /// The scan applies those checks, widens the candidate request as needed,
+    /// and falls back to a full scan if the index cannot fill the result page.
     ///
     /// Follows the same capability shape as
     /// [`get_by_index_scan`](Self::get_by_index_scan): defaulted to an error

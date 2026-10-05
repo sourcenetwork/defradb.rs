@@ -11,7 +11,6 @@ use cid::Cid;
 use datastore::BasicTxn;
 use events::Bus;
 use identity::{Identity, RawIdentity};
-use kovan::Atom;
 use kovan_map::HopscotchMap;
 use lens::TransformStore;
 #[cfg(not(feature = "wasmtime-runtime"))]
@@ -27,6 +26,7 @@ use storage::corekv::Store;
 pub mod action;
 pub(crate) mod dump;
 pub(crate) mod spawn;
+pub mod storage_stats;
 
 /// Default maximum number of lazy migrations written in one transaction.
 pub const DEFAULT_MIGRATION_WRITE_BACK_BATCH_SIZE: usize = 128;
@@ -196,7 +196,7 @@ pub struct DB<S: Store> {
     /// Whether the database has been closed.
     closed: AtomicBool,
     /// In-memory collection cache (name -> Collection).
-    pub(crate) collections: Atom<crate::collection::CollectionMap>,
+    pub(crate) collections: crate::collection::epoch::EpochedCollections,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -282,7 +282,9 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(crate::collection::CollectionMap::default()),
+            collections: crate::collection::epoch::EpochedCollections::new(
+                crate::collection::CollectionMap::default(),
+            ),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -347,7 +349,9 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(crate::collection::CollectionMap::default()),
+            collections: crate::collection::epoch::EpochedCollections::new(
+                crate::collection::CollectionMap::default(),
+            ),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -448,6 +452,14 @@ impl<S: Store> DB<S> {
         crate::docid::map::set_doc_id_mapping(systemstore, collection_short_id, short_id, doc_id)
             .await?;
         Ok(short_id)
+    }
+
+    /// The epoch of the committed collection set: advances on every swap of
+    /// the process-wide collection cache, so an unchanged value proves the
+    /// set of collections a query sees is unchanged. Introspection keys its
+    /// built-schema cache on it.
+    pub fn schema_epoch(&self) -> u64 {
+        self.collections.epoch()
     }
 
     /// Return the generation of the committed migration graph.

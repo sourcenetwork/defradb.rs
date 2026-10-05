@@ -19,6 +19,7 @@ use schema::{
     legacy_collection_short_id, CollectionVersion, FieldKind, IndexDescription, ScalarArrayKind,
     ScalarKind,
 };
+use std::sync::Arc;
 use storage::corekv::{IterOptions, Key};
 use storage::keys::doc_id_index::encode_doc_short_id;
 use storage::keys::systemstore::{CollectionID, CollectionIDSequenceKey};
@@ -26,6 +27,7 @@ use storage::keys::systemstore::{CollectionID, CollectionIDSequenceKey};
 pub mod acp;
 pub mod cache;
 mod crud;
+pub(crate) mod epoch;
 mod index;
 pub mod loader;
 pub(crate) mod locks;
@@ -148,6 +150,21 @@ pub struct Collection {
     def: CollectionVersion,
     write_indexes: Vec<IndexDescription>,
     queryable_indexes: Vec<IndexDescription>,
+    /// `def` with the queryable index set substituted, built once here
+    /// because a `Collection` never changes after construction. Query-side
+    /// callers take a pointer clone of this instead of deep-copying the
+    /// definition on every lookup.
+    query_schema: Arc<CollectionVersion>,
+}
+
+/// `def` with the queryable index set substituted in.
+fn query_schema_of(
+    def: &CollectionVersion,
+    queryable_indexes: &[IndexDescription],
+) -> Arc<CollectionVersion> {
+    let mut schema = def.clone();
+    schema.indexes = queryable_indexes.to_vec();
+    Arc::new(schema)
 }
 
 impl Collection {
@@ -163,10 +180,12 @@ impl Collection {
     /// Create a new collection with the given schema definition.
     pub fn new(def: CollectionVersion) -> Self {
         let indexes = def.indexes.clone();
+        let query_schema = query_schema_of(&def, &indexes);
         Self {
             def,
             write_indexes: indexes.clone(),
             queryable_indexes: indexes,
+            query_schema,
         }
     }
 
@@ -180,16 +199,18 @@ impl Collection {
             .filter(|index| actions.get(&index.id) != Some(&ActionStatus::ERRORED))
             .cloned()
             .collect();
-        let queryable_indexes = def
+        let queryable_indexes: Vec<IndexDescription> = def
             .indexes
             .iter()
             .filter(|index| !actions.contains_key(&index.id))
             .cloned()
             .collect();
+        let query_schema = query_schema_of(&def, &queryable_indexes);
         Self {
             def,
             write_indexes,
             queryable_indexes,
+            query_schema,
         }
     }
 
@@ -233,10 +254,8 @@ impl Collection {
         &self.queryable_indexes
     }
 
-    pub(crate) fn schema_for_queries(&self) -> CollectionVersion {
-        let mut schema = self.def.clone();
-        schema.indexes.clone_from(&self.queryable_indexes);
-        schema
+    pub(crate) fn schema_for_queries(&self) -> Arc<CollectionVersion> {
+        Arc::clone(&self.query_schema)
     }
 
     /// Check if an index exists on this collection.

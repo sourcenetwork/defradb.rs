@@ -84,6 +84,10 @@ pub struct ApiConfig {
     /// Max recursive filter nesting depth (0 = unlimited). Default: 50.
     #[serde(default = "default_query_max_filter_depth")]
     pub query_max_filter_depth: usize,
+    /// Cache the built introspection schema for the committed collection
+    /// set, instead of rebuilding it per query. Default: true.
+    #[serde(default = "default_introspection_cache")]
+    pub introspection_cache: bool,
     /// Postgres wire protocol address (empty = disabled). Default: "" (disabled).
     #[cfg(feature = "postgres")]
     #[serde(default)]
@@ -122,6 +126,10 @@ fn default_query_max_filter_depth() -> usize {
     DEFAULT_MAX_FILTER_DEPTH
 }
 
+fn default_introspection_cache() -> bool {
+    true
+}
+
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
@@ -140,6 +148,7 @@ impl Default for ApiConfig {
             query_max_depth: default_query_max_depth(),
             query_max_width: default_query_max_width(),
             query_max_filter_depth: default_query_max_filter_depth(),
+            introspection_cache: default_introspection_cache(),
             #[cfg(feature = "postgres")]
             pg_address: String::new(),
         }

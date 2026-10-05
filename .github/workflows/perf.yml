@@ -119,6 +119,7 @@ jobs:
           - { family: filter, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: groupby, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: identity, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: introspection, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: memory, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge_dag, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

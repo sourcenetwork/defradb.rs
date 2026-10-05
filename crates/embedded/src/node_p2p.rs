@@ -82,6 +82,7 @@ pub(crate) async fn setup_libp2p<S>(
     event_bus: Arc<dyn events::Bus>,
     config: &Libp2pConfig,
     sync_config: SyncConfig,
+    peer_keyring: Option<&crate::PeerKeyring>,
 ) -> Result<P2PSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -98,7 +99,8 @@ where
     let bitswap_store = BitswapStoreAdapter::new(blockstore.clone());
 
     let mut seed =
-        crate::node_peer_key::load_or_create(&Peerstore::new(store.clone()), None).await?;
+        crate::node_peer_key::load_with_keyring(&Peerstore::new(store.clone()), None, peer_keyring)
+            .await?;
     let p2p_keypair = libp2p::identity::Keypair::ed25519_from_bytes(&mut *seed)
         .map_err(|error| anyhow!("invalid peer key: {error}"))?;
 
@@ -443,6 +445,7 @@ pub(crate) async fn setup_iroh<S>(
     node_identity: Option<Arc<identity::RawIdentity>>,
     document_acp: Arc<dyn acp::DocumentACP>,
     strict_replicated_doc_access: bool,
+    peer_keyring: Option<&crate::PeerKeyring>,
 ) -> Result<P2PSetup>
 where
     S: storage::corekv::Store + 'static,
@@ -450,9 +453,10 @@ where
     use defra_p2p_adapter::{IrohPeer, IrohPeerConfig, TransportDocPusher};
     use storage::stores::Peerstore;
 
-    let seed = crate::node_peer_key::load_or_create(
+    let seed = crate::node_peer_key::load_with_keyring(
         &Peerstore::new(store.clone()),
         config.secret_key_path.as_deref(),
+        peer_keyring,
     )
     .await?;
     let secret_key = p2p::iroh::SecretKey::from_bytes(&seed);

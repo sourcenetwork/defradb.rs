@@ -298,6 +298,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Keep the transport identity in an application-owned keyring.
+    ///
+    /// The backend must provide durable storage and its own namespace per node.
+    /// Startup rejects existing plaintext peer keys; this does not erase or
+    /// migrate historical key material from a database or its backups.
+    pub fn with_peer_keyring(mut self, keyring: Arc<dyn keyring::Keyring>) -> Self {
+        self.config.peer_keyring = Some(crate::PeerKeyring::new(keyring));
+        self
+    }
+
     pub fn with_signing_key(mut self, key: SigningKey) -> Self {
         self.config.signing = SigningConfig::Enabled { key: Some(key) };
         self
@@ -416,7 +426,7 @@ enum ShutdownKind {
     Libp2p {
         handle: Box<p2p::P2PHostHandle>,
         coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: SegQueue<tokio::task::JoinHandle<()>>,
+        tasks: Box<SegQueue<tokio::task::JoinHandle<()>>>,
     },
     #[cfg(feature = "iroh")]
     Iroh(defra_p2p_adapter::IrohPeerShutdown),
@@ -437,7 +447,7 @@ impl ShutdownHandle {
             inner: ShutdownKind::Libp2p {
                 handle: Box::new(handle),
                 coordinator,
-                tasks: pending,
+                tasks: Box::new(pending),
             },
         }
     }
@@ -584,6 +594,7 @@ where
             event_bus.clone(),
             libp2p,
             sync_config.clone(),
+            config.peer_keyring.as_ref(),
         )
         .await
         .map(Some),
@@ -597,6 +608,7 @@ where
             raw_identity.clone(),
             document_acp.clone(),
             strict_replicated_doc_access,
+            config.peer_keyring.as_ref(),
         )
         .await
         .map(Some),

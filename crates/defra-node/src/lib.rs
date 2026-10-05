@@ -895,6 +895,7 @@ pub struct NodeBuilder {
     max_txn_retries: Option<u32>,
     query_timeout: Option<Duration>,
     query_limits: QueryLimits,
+    introspection_cache: Option<bool>,
     #[cfg(feature = "http")]
     http_config: Option<HttpConfig>,
     #[cfg(feature = "p2p")]
@@ -923,6 +924,7 @@ struct StoreBuildArgs {
     node_acp_enabled: bool,
     query_timeout: Option<Duration>,
     query_limits: QueryLimits,
+    introspection_cache: bool,
     #[cfg(feature = "http")]
     transaction_cleanup_config: Option<TransactionCleanupConfig>,
     #[cfg(feature = "p2p")]
@@ -941,6 +943,7 @@ struct PersistentStoreBuildArgs {
     node_acp_enabled: bool,
     query_timeout: Option<Duration>,
     query_limits: QueryLimits,
+    introspection_cache: bool,
     #[cfg(feature = "http")]
     transaction_cleanup_config: Option<TransactionCleanupConfig>,
     #[cfg(feature = "p2p")]
@@ -1076,6 +1079,12 @@ impl NodeBuilder {
         self
     }
 
+    /// Enable or disable the introspection schema cache. Enabled by default.
+    pub fn with_introspection_cache(mut self, enabled: bool) -> Self {
+        self.introspection_cache = Some(enabled);
+        self
+    }
+
     /// Enable the HTTP GraphQL server.
     #[cfg(feature = "http")]
     pub fn with_http(mut self, config: HttpConfig) -> Self {
@@ -1174,6 +1183,7 @@ impl NodeBuilder {
         let p2p_config = self.p2p_config;
         let query_timeout = self.query_timeout;
         let query_limits = self.query_limits;
+        let introspection_cache = self.introspection_cache.unwrap_or(true);
         let node_acp_enabled = self.node_acp_enabled;
 
         // Telemetry handle (if any) was moved into the builder via
@@ -1197,6 +1207,7 @@ impl NodeBuilder {
                 node_acp_enabled,
                 query_timeout,
                 query_limits,
+                introspection_cache,
                 #[cfg(feature = "http")]
                 transaction_cleanup_config,
                 #[cfg(feature = "p2p")]
@@ -1240,6 +1251,7 @@ impl NodeBuilder {
                     node_acp_enabled,
                     query_timeout,
                     query_limits,
+                    introspection_cache,
                     #[cfg(feature = "http")]
                     transaction_cleanup_config,
                     #[cfg(feature = "p2p")]
@@ -1351,6 +1363,7 @@ impl NodeBuilder {
             node_acp_enabled,
             query_timeout,
             query_limits,
+            introspection_cache,
             #[cfg(feature = "http")]
             transaction_cleanup_config,
             #[cfg(feature = "p2p")]
@@ -1372,6 +1385,7 @@ impl NodeBuilder {
                 node_acp_enabled,
                 query_timeout,
                 query_limits,
+                introspection_cache,
                 #[cfg(feature = "http")]
                 transaction_cleanup_config,
                 #[cfg(feature = "p2p")]
@@ -1398,6 +1412,7 @@ impl NodeBuilder {
             node_acp_enabled,
             query_timeout,
             query_limits,
+            introspection_cache,
             #[cfg(feature = "http")]
             transaction_cleanup_config,
             #[cfg(feature = "p2p")]
@@ -1614,7 +1629,8 @@ impl NodeBuilder {
                 .with_collection_truncator(db::DbCollectionTruncator::new_arc(database.clone()))
                 .with_acp(document_acp.clone())
                 .with_lens_store(database.lens_store().clone())
-                .with_query_limits(query_limits);
+                .with_query_limits(query_limits)
+                .with_introspection_cache(introspection_cache);
         let query_runner = if let Some(timeout) = query_timeout {
             query_runner.with_query_timeout(timeout_secs(timeout))
         } else {

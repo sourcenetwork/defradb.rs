@@ -1,5 +1,7 @@
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -11,10 +13,47 @@ struct CacheKey {
     permission: String,
 }
 
-#[derive(Clone)]
 struct CachedDecision {
-    allowed: bool,
+    allowed: OnceLock<bool>,
     cached_at: Instant,
+    pending: AtomicUsize,
+}
+
+const RETIRED: usize = usize::MAX;
+
+pub(crate) struct PendingDecision<'a> {
+    entry: Arc<CachedDecision>,
+    cache: &'a AccessCache,
+    key: CacheKey,
+}
+
+impl PendingDecision<'_> {
+    pub(crate) fn complete(self, allowed: bool) {
+        // An invalidated entry stays detached; completion never reinserts it.
+        let _ = self.entry.allowed.set(allowed);
+    }
+}
+
+impl Drop for PendingDecision<'_> {
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
+    fn drop(&mut self) {
+        let previous = self
+            .entry
+            .pending
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                Some(if count == 1 && self.entry.allowed.get().is_none() {
+                    RETIRED
+                } else {
+                    count - 1
+                })
+            })
+            .expect("pending decision owns a reservation");
+        if previous == 1 && self.entry.allowed.get().is_none() {
+            self.cache
+                .entries
+                .remove_if(&self.key, |entry| Arc::ptr_eq(entry, &self.entry));
+        }
+    }
 }
 
 /// In-memory cache for ACP access decisions.
@@ -25,7 +64,7 @@ struct CachedDecision {
 /// all entries for their policy so indirect grants cannot remain cached.
 pub(crate) struct AccessCache {
     ttl: Duration,
-    entries: HopscotchMap<CacheKey, CachedDecision, RandomState>,
+    entries: HopscotchMap<CacheKey, Arc<CachedDecision>, RandomState>,
 }
 
 fn cache_key(
@@ -62,13 +101,61 @@ impl AccessCache {
     ) -> Option<bool> {
         let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
         let entry = self.entries.get(&key)?;
-        if entry.cached_at.elapsed() > self.ttl {
+        if entry.cached_at.elapsed() >= self.ttl {
             None
         } else {
-            Some(entry.allowed)
+            entry.allowed.get().copied()
         }
     }
 
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
+    pub(crate) fn begin_check(
+        &self,
+        actor_did: &str,
+        policy_id: &str,
+        resource: &str,
+        doc_id: &str,
+        permission: &str,
+    ) -> PendingDecision<'_> {
+        let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
+        let entry = loop {
+            let fresh = Arc::new(CachedDecision {
+                allowed: OnceLock::new(),
+                cached_at: Instant::now(),
+                pending: AtomicUsize::new(0),
+            });
+            let entry = if self.ttl.is_zero() {
+                fresh
+            } else {
+                self.entries.get_or_insert(key.clone(), fresh)
+            };
+            if !self.ttl.is_zero() && entry.cached_at.elapsed() >= self.ttl {
+                self.entries
+                    .remove_if(&key, |current| Arc::ptr_eq(current, &entry));
+                continue;
+            }
+            // Last-caller cleanup retires an empty entry before removing it.
+            // A racing check must reserve a new entry rather than revive it.
+            if entry
+                .pending
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    count.checked_add(1).filter(|next| *next != RETIRED)
+                })
+                .is_ok()
+            {
+                break entry;
+            }
+            self.entries
+                .remove_if(&key, |current| Arc::ptr_eq(current, &entry));
+        };
+        PendingDecision {
+            entry,
+            cache: self,
+            key,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn set(
         &self,
         actor_did: &str,
@@ -78,20 +165,14 @@ impl AccessCache {
         permission: &str,
         allowed: bool,
     ) {
-        let key = cache_key(actor_did, policy_id, resource, doc_id, permission);
-        self.entries.insert(
-            key,
-            CachedDecision {
-                allowed,
-                cached_at: Instant::now(),
-            },
-        );
+        self.begin_check(actor_did, policy_id, resource, doc_id, permission)
+            .complete(allowed);
     }
 
     /// Invalidate ALL cached decisions for a specific document.
     ///
-    /// Called on document registration and archival mutations. Invalidates all
-    /// actors and permissions for the affected document.
+    /// Used for remote registration, archive, and unarchive events. Local
+    /// mutations invalidate the whole policy to include inherited grants.
     pub(crate) fn invalidate_object(&self, policy_id: &str, resource: &str, doc_id: &str) -> usize {
         let stale: Vec<CacheKey> = self
             .entries
@@ -126,6 +207,10 @@ impl AccessCache {
         count
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/access_cache_pending.rs"]
+mod pending_tests;
 
 #[cfg(test)]
 mod tests {

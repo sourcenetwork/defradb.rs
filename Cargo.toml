@@ -82,7 +82,7 @@ kovan-channel = "0.1.22"
 
 # Async runtime
 tokio = { version = "1.35" }
-async-trait = "0.1"
+async-trait = "0.1.92"
 async-lock = "3"
 futures = "0.3"
 
@@ -189,7 +189,7 @@ criterion = { version = "0.6", features = ["async_tokio"] }
 parking_lot = "0.12"
 
 # Caching
-lru = "0.16.4"
+lru = "0.18.2"
 
 # Async streams
 tokio-stream = "0.1"

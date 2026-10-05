@@ -528,6 +528,8 @@ impl TypeJoinMany {
             };
 
             // Re-run child plan for this parent
+            self.child_plan
+                .set_vector_parent(self.child_fk_index, &parent_doc_id);
             self.child_plan.init().await?;
             self.child_plan.start().await?;
 
