@@ -8,9 +8,8 @@ ignore = [
     # under which it can be removed. Narrowed as part of #705.
     # ------------------------------------------------------------------
 
-    # derivative — unmaintained. Pulled by iroh-bitswap (beetle repo).
-    # Removable when iroh is dropped per CLAUDE.md strategy (libp2p is
-    # the main transport), at which point beetle can be removed.
+    # derivative — unmaintained. Pulled by ark-ec 0.4 through decaf377 in
+    # vera.rs (vera-crypto). Removable when decaf377 moves to ark-ec 0.5+.
     "RUSTSEC-2024-0388",
 
     # fxhash — unmaintained. Pulled by bm25 2.3.x (full-text search).
@@ -19,38 +18,57 @@ ignore = [
     # (e.g. to ahash) before this can be removed.
     "RUSTSEC-2025-0057",
 
-    # instant — unmaintained. Pulled by libp2p 0.53. Newer libp2p
-    # releases replaced it with web-time. Removable when we bump libp2p
-    # — currently pinned to 0.53 to match iroh-bitswap's dep pin.
+    # instant — unmaintained. Pulled by parking_lot 0.11 through
+    # wasm-timer in iroh-bitswap (beetle repo). Removable when beetle is
+    # dropped or moves off wasm-timer.
     "RUSTSEC-2024-0384",
-
-    # opentelemetry_api — unmaintained. Pulled by iroh-metrics
-    # (beetle repo). Removable alongside iroh when we drop the iroh
-    # transport.
-    "RUSTSEC-2024-0387",
 
     # paste — unmaintained. Pulled by alloy-primitives (backbone repo,
     # ACP light client). Removable when alloy migrates off paste; our
     # direct alloy pin is already at the latest workspace version.
     "RUSTSEC-2024-0436",
 
-    # proc-macro-error — unmaintained. Pulled by multihash-derive 0.8,
-    # which is pinned to multihash 0.18 by libipld 0.16. The whole IPLD
-    # stack moves together; tracked in #652.
-    "RUSTSEC-2024-0370",
-
     # rustls-pemfile 1.x — unmaintained (2.x is current). Pulled by
-    # reqwest 0.11 inside iroh-metrics (beetle repo). Our direct reqwest
-    # deps (db-search, defra-node) already use reqwest 0.12 and pull
-    # rustls-pemfile 2.x; the 1.x copy is purely from the iroh path and
-    # will disappear when iroh does.
+    # reqwest 0.11 inside tendermint-rpc 0.40.4 (vera's Cosmos client).
+    # Removable when tendermint-rpc moves to reqwest 0.12.
     "RUSTSEC-2025-0134",
 
-    # wasmtime-related — belt-and-braces ignore after the wasmtime 41
-    # upgrade (which remediated RUSTSEC-2025-0046 / 0118 / 2026-0006).
-    # Retained until the upstream advisory is retracted for recent
-    # wasmtime releases.
-    "RUSTSEC-2024-0320",
+    # atomic-polyfill — unmaintained. Pulled by heapless 0.7 through
+    # postcard inside cranelift (wasmtime), only on targets without native
+    # atomics. Removable when postcard moves to heapless 0.8+.
+    "RUSTSEC-2023-0089",
+
+    # ------------------------------------------------------------------
+    # Vulnerabilities unreachable from our feature set, or blocked on an
+    # upstream release. Tracked in #1874; each entry names the unblocking
+    # condition.
+    # ------------------------------------------------------------------
+
+    # wasmtime 46 — dynamic record lifting can exceed the hostcall fuel
+    # limit. Component-model only; lens enables runtime/cranelift/std, no
+    # component-model. Removable on wasmtime >= 48.0.3.
+    "RUSTSEC-2026-0316",
+
+    # hickory-proto 0.25 — NSEC3 validation loop (DNSSEC, not enabled) and
+    # O(n²) name compression when dialing /dns multiaddrs. Pulled by
+    # libp2p-dns 0.44; removable with the libp2p 0.57 bump (#1875).
+    "RUSTSEC-2026-0118",
+    "RUSTSEC-2026-0119",
+
+    # h2 0.3 and rustls-webpki 0.101 — pulled by reqwest 0.11 inside
+    # tendermint-rpc 0.40.4 (vera's Cosmos client), already the latest
+    # release. Reached only over TLS to the configured Cosmos RPC endpoint.
+    # Removable when tendermint-rpc moves to reqwest 0.12.
+    "RUSTSEC-2026-0258",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+
+    # imbl-sized-chunks 0.1 (double free when an element's Drop panics) and
+    # bitmaps (unmaintained) — pulled by imbl 5 in vera.rs. Removable once
+    # a vera.rs rev on imbl 7 lands (sourcenetwork/vera.rs#112).
+    "RUSTSEC-2026-0292",
+    "RUSTSEC-2026-0247",
 ]
 
 [licenses]

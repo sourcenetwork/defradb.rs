@@ -5,11 +5,16 @@ use kovan_queue::seg_queue::SegQueue;
 
 use super::*;
 
+mod cache_mutations;
+#[path = "../../../tests/unit/access_cache_race.rs"]
+mod cache_race;
+
 /// Which relationship-emitting provider method a routing test drove, plus
 /// the structured-subject codec tuple for the EntitySet path. Each field
 /// stands alone: tests only ever read one after its own call completes, so
 /// there is no compound state that needs a single shared guard.
 struct MockProvider {
+    verify_gate: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Semaphore>)>,
     decisions: SegQueue<bool>,
     created_decision: AtomOption<String>,
     verify_calls: AtomicUsize,
@@ -26,6 +31,7 @@ impl MockProvider {
             queue.push(decision);
         }
         Self {
+            verify_gate: None,
             decisions: queue,
             created_decision: AtomOption::none(),
             verify_calls: AtomicUsize::new(0),
@@ -73,7 +79,7 @@ impl VeraProvider for MockProvider {
         _resource: &str,
         _object_id: &str,
     ) -> std::result::Result<(), ProviderError> {
-        unreachable!("register_object is not used in this test")
+        Ok(())
     }
 
     async fn archive_object(
@@ -83,7 +89,7 @@ impl VeraProvider for MockProvider {
         _resource: &str,
         _object_id: &str,
     ) -> std::result::Result<(), ProviderError> {
-        unreachable!("archive_object is not used in this test")
+        Ok(())
     }
 
     async fn set_relationship(
@@ -180,8 +186,14 @@ impl VeraProvider for MockProvider {
         _permission: &str,
         _actor_did: &str,
     ) -> std::result::Result<bool, ProviderError> {
-        self.verify_calls.fetch_add(1, Ordering::Relaxed);
+        let call = self.verify_calls.fetch_add(1, Ordering::Relaxed);
         let decision = self.decisions.pop().expect("mock verify_access decision");
+        if call == 0 {
+            if let Some((started, resume)) = &self.verify_gate {
+                started.notify_one();
+                resume.acquire().await.unwrap().forget();
+            }
+        }
         Ok(decision)
     }
 

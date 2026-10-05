@@ -19,7 +19,29 @@ fn test_context(
     Arc<PushWorkerContext<TestTransport>>,
     tokio::sync::mpsc::Receiver<PushFailure>,
 ) {
-    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    test_context_with_admission(transport, backlog, send_timeout, true)
+}
+
+fn test_context_with_admission(
+    transport: TestTransport,
+    backlog: Arc<PushBacklog>,
+    send_timeout: Duration,
+    admit: bool,
+) -> (
+    Arc<PushWorkerContext<TestTransport>>,
+    tokio::sync::mpsc::Receiver<PushFailure>,
+) {
+    let (tx, mut events) = tokio::sync::mpsc::channel::<PushFailure>(64);
+    let (forward, rx) = tokio::sync::mpsc::channel(64);
+    tokio::spawn(async move {
+        while let Some(mut event) = events.recv().await {
+            if event.admission_only {
+                event.durable_tx.take().unwrap().send(admit).unwrap();
+            } else if forward.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
     let context = Arc::new(PushWorkerContext {
         transport,
         backlog,
@@ -30,6 +52,24 @@ fn test_context(
         send_timeout,
     });
     (context, rx)
+}
+
+#[tokio::test]
+async fn persisted_backpressure_denies_live_push_before_transport_send() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let transport = TestTransport::new(Vec::new());
+    let (context, _failures) = test_context_with_admission(
+        transport.clone(),
+        backlog.clone(),
+        Duration::from_secs(1),
+        false,
+    );
+    backlog.try_enqueue(job("peer", b"active")).await;
+    let active = backlog.next_job().await.unwrap();
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    assert!(transport.sent().is_empty());
+    backlog.job_done(&active, JobCompletion::Failed).await;
+    backlog.close();
 }
 
 fn job(peer: &str, cid_seed: &[u8]) -> PushJobSpec {
@@ -185,6 +225,31 @@ async fn capacity_nack_demotes_queued_peer_work_to_persisted_retry() {
     assert_eq!(backlog.snapshot().await.queued_bytes, 0);
 
     backlog.job_done(&active, completion).await;
+    backlog.close();
+}
+
+#[tokio::test]
+async fn retry_after_rate_nack_parks_live_peer_and_hands_off_queued_hints() {
+    let backlog = PushBacklog::new(64, usize::MAX, 1, 1);
+    let mut reply =
+        crate::message::PushLogReply::error("limited", crate::error::RATE_LIMITED_MESSAGE);
+    reply.retry_after_ms = Some(45_000);
+    let (context, mut failures) = test_context(
+        TestTransport::new(vec![reply]),
+        backlog.clone(),
+        Duration::from_secs(1),
+    );
+    backlog.try_enqueue(job("peer", b"active")).await;
+    backlog.try_enqueue(job("peer", b"queued")).await;
+    let active = backlog.next_job().await.unwrap();
+    assert_eq!(run_push_job(&context, &active).await, JobCompletion::Failed);
+    for _ in 0..2 {
+        let failure = failures.recv().await.unwrap();
+        assert_eq!(failure.retry_after, Some(Duration::from_secs(45)));
+    }
+    let state = backlog.snapshot().await;
+    assert_eq!(state.queued_items, 0);
+    assert!(state.per_peer[0].cooldown_remaining_ms > 44_000);
     backlog.close();
 }
 
@@ -454,6 +519,8 @@ async fn report_push_failure_backpressures_instead_of_dropping() {
         create_retry: true,
         acknowledged: false,
         durable_tx: None,
+        retry_after: None,
+        admission_only: false,
     })
     .await
     .unwrap();

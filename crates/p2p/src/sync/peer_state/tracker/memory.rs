@@ -9,10 +9,6 @@ impl PeerStateTracker {
     /// Enforce global limits by evicting oldest disconnected peers and their CIDs.
     ///
     /// Called internally when adding peers or CIDs.
-    #[allow(
-        deprecated,
-        reason = "try_update requires Rust 1.95; the workspace MSRV is 1.91"
-    )]
     pub(super) fn enforce_global_limits(&self) {
         // Check peer count limit - evict oldest disconnected peers first
         while self.peers.len() > self.max_peers {
@@ -83,6 +79,7 @@ impl PeerStateTracker {
         }
 
         if evicted > 0 {
+            #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
             self.total_cids
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
                     Some(total.saturating_sub(evicted))

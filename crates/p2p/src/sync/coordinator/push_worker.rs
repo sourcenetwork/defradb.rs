@@ -47,6 +47,8 @@ pub(super) async fn report_push_failure(
         head_priority,
         true,
         false,
+        None,
+        false,
     )
     .await
 }
@@ -63,6 +65,8 @@ pub(super) async fn report_observed_head(
         Some(job.root_cid),
         job.head_priority(),
         false,
+        false,
+        None,
         false,
     )
     .await
@@ -81,6 +85,8 @@ pub(super) async fn report_push_ack(
         job.head_priority(),
         false,
         true,
+        None,
+        false,
     )
     .await
 }
@@ -95,6 +101,8 @@ async fn report_push_event(
     head_priority: u64,
     create_retry: bool,
     acknowledged: bool,
+    retry_after: Option<Duration>,
+    admission_only: bool,
 ) -> bool {
     // Collection commits are doc-less. Their durable obligation is a collection
     // marker whose retry rederives the current collection heads. The CID below
@@ -128,6 +136,8 @@ async fn report_push_event(
             head_priority,
             create_retry,
             acknowledged,
+            retry_after,
+            admission_only,
             durable_tx,
         };
         // reserve() is cancel-safe, so waiting in a loop lets sustained
@@ -188,6 +198,26 @@ where
         return JobCompletion::Retired;
     }
 
+    // The recorder reads the persisted peer floor, so replay-installed hints
+    // and process restarts cannot be bypassed by the volatile live queue.
+    if context.failure_tx.load().is_some()
+        && !report_push_event(
+            &context.failure_tx,
+            &job.peer_id,
+            job.doc_id.clone(),
+            job.collection_id.clone(),
+            Some(job.root_cid),
+            job.head_priority(),
+            false,
+            false,
+            None,
+            true,
+        )
+        .await
+    {
+        return JobCompletion::Failed;
+    }
+
     let root_request = build_request(&context.transport, job);
     let root_missing = root_request.is_none();
     let send_outcome = if let Some(root_request) = root_request {
@@ -218,6 +248,7 @@ where
             failed: true,
             at_capacity: false,
             failure_reason: Some(HeadHintFailureReason::Local),
+            retry_after: None,
         }
     };
     if let Some(reason) = send_outcome.failure_reason {
@@ -225,18 +256,24 @@ where
     }
     // A saturated receiver parks the whole peer: every CID we would push next
     // is going to be rejected for the same reason (defradb#1112).
-    if send_outcome.at_capacity {
-        context.backlog.park_peer_at_capacity(&job.peer_id);
+    if send_outcome.at_capacity || send_outcome.retry_after.is_some() {
+        context
+            .backlog
+            .park_peer_with_retry_after(&job.peer_id, send_outcome.retry_after);
         for queued_job in context.backlog.take_queued_for_peer(&job.peer_id).await {
             let peer_id = queued_job.peer_id.clone();
             let head_priority = queued_job.head_priority();
-            let _ = report_push_failure(
+            let _ = report_push_event(
                 &context.failure_tx,
                 &peer_id,
                 queued_job.doc_id,
                 queued_job.collection_id,
                 Some(queued_job.root_cid),
                 head_priority,
+                true,
+                false,
+                send_outcome.retry_after,
+                false,
             )
             .await;
         }
@@ -245,13 +282,17 @@ where
     let any_failed = root_missing || send_failed;
 
     if any_failed && context.backlog.is_current(job).await {
-        let _ = report_push_failure(
+        let _ = report_push_event(
             &context.failure_tx,
             &job.peer_id,
             job.doc_id.clone(),
             job.collection_id.clone(),
             Some(job.root_cid),
             job.head_priority(),
+            true,
+            false,
+            send_outcome.retry_after,
+            false,
         )
         .await;
         JobCompletion::Failed
@@ -290,6 +331,7 @@ pub(super) struct PushSendOutcome {
     /// CID (defradb#1112).
     pub at_capacity: bool,
     pub failure_reason: Option<HeadHintFailureReason>,
+    pub retry_after: Option<Duration>,
 }
 
 pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
@@ -317,6 +359,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                 failed: true,
                 at_capacity: false,
                 failure_reason: Some(HeadHintFailureReason::Transport),
+                retry_after: None,
             }
         }
         Ok(Err(e)) => {
@@ -339,6 +382,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                 failed: true,
                 at_capacity: false,
                 failure_reason: Some(HeadHintFailureReason::Transport),
+                retry_after: None,
             }
         }
         Ok(Ok(reply)) => {
@@ -354,6 +398,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                     failed: false,
                     at_capacity: false,
                     failure_reason: None,
+                    retry_after: None,
                 };
             };
             if is_at_capacity_message(error_message) {
@@ -366,6 +411,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                     failed: true,
                     at_capacity: true,
                     failure_reason: Some(HeadHintFailureReason::CapacityNack),
+                    retry_after: reply.retry_after(),
                 };
             }
             tracing::warn!(
@@ -378,6 +424,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                 failed: true,
                 at_capacity: false,
                 failure_reason: Some(HeadHintFailureReason::OtherNack),
+                retry_after: reply.retry_after(),
             }
         }
     }

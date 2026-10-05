@@ -22,7 +22,7 @@ pub struct TwoStreamRunner {
     /// tokio::sync::Mutex during network I/O in response stream reads.
     pending: Arc<PendingResponses>,
     /// Incoming request streams.
-    request_streams: stream::IncomingStreams,
+    request_streams: futures::stream::BoxStream<'static, (libp2p::PeerId, libp2p::Stream, bool)>,
     /// Incoming response streams.
     response_streams: stream::IncomingStreams,
     /// Incoming SE request streams.
@@ -67,6 +67,7 @@ impl TwoStreamRunner {
     pub(crate) fn new(
         pending: Arc<PendingResponses>,
         request_streams: stream::IncomingStreams,
+        retry_request_streams: stream::IncomingStreams,
         response_streams: stream::IncomingStreams,
         se_request_streams: stream::IncomingStreams,
         se_response_streams: stream::IncomingStreams,
@@ -88,7 +89,11 @@ impl TwoStreamRunner {
     ) -> Self {
         Self {
             pending,
-            request_streams,
+            request_streams: futures::stream::select(
+                request_streams.map(|(peer, stream)| (peer, stream, false)),
+                retry_request_streams.map(|(peer, stream)| (peer, stream, true)),
+            )
+            .boxed(),
             response_streams,
             se_request_streams,
             se_response_streams,
@@ -121,7 +126,7 @@ impl TwoStreamRunner {
         loop {
             tokio::select! {
                 // Handle incoming request streams
-                Some((peer_id, stream)) = self.request_streams.next() => {
+                Some((peer_id, stream, retry_after)) = self.request_streams.next() => {
                     tracing::info!(
                         peer_id = %peer_id,
                         "Received incoming stream on request protocol"
@@ -133,7 +138,12 @@ impl TwoStreamRunner {
                     tokio::spawn(async move {
                         let Ok(_permit) = sem.acquire().await else { return };
                         match TwoStreamHandler::handle_request_stream(peer_id, stream, max_msg_size, stream_read_timeout).await {
-                            Ok(event) => {
+                            Ok(mut event) => {
+                                if let TwoStreamEvent::InboundRequest { request, .. } = &mut event {
+                                    request.negotiated_retry_after = retry_after;
+                                    // The CBOR capability is Iroh-only, not libp2p negotiation.
+                                    request.supports_retry_after = false;
+                                }
                                 tracing::info!(peer_id = %peer_id, "Sending TwoStreamEvent to host channel");
                                 if event_tx.send(event).await.is_err() {
                                     tracing::warn!(

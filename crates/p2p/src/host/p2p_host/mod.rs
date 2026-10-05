@@ -519,6 +519,9 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let response_streams = control
             .accept(TwoStreamHandler::response_protocol())
             .map_err(|_| Error::Behaviour("Failed to register response protocol".into()))?;
+        let retry_request_streams = control
+            .accept(TwoStreamHandler::retry_request_protocol())
+            .map_err(|_| Error::Behaviour("Failed to register retry request protocol".into()))?;
         let se_request_streams = control
             .accept(TwoStreamHandler::se_request_protocol())
             .map_err(|_| Error::Behaviour("Failed to register SE request protocol".into()))?;
@@ -572,6 +575,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let runner = TwoStreamRunner::new(
             pending,
             request_streams,
+            retry_request_streams,
             response_streams,
             se_request_streams,
             se_response_streams,

@@ -80,10 +80,7 @@ impl<S: Store> DbTransactionContext<S> {
     /// Mark that a request used this transaction. `false` when a cleanup sweep
     /// has already claimed it, in which case the caller must treat the
     /// transaction as gone.
-    #[allow(
-        deprecated,
-        reason = "try_update requires Rust 1.95; the workspace MSRV is 1.91"
-    )]
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
     pub(crate) fn touch(&self) -> bool {
         let now = self.age_nanos(Instant::now());
         self.last_request_seen
@@ -95,10 +92,7 @@ impl<S: Store> DbTransactionContext<S> {
 
     /// Claim this transaction for a cleanup sweep, but only while it is still
     /// idle for longer than `max_idle_age`.
-    #[allow(
-        deprecated,
-        reason = "try_update requires Rust 1.95; the workspace MSRV is 1.91"
-    )]
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
     pub(crate) fn try_claim_stale(&self, now: Instant, max_idle_age: Duration) -> bool {
         let now = self.age_nanos(now);
         self.last_request_seen
