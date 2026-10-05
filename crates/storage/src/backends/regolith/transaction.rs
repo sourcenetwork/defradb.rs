@@ -45,25 +45,27 @@ impl RegolithTxn {
         stats: TransactionStatsHandle,
         head_cache: SharedHeadCache,
     ) -> Result<Self> {
-        let cache = head_cache::lock(&head_cache)?;
-        let handle = if readonly {
-            Handle::ReadOnly(db.db().snapshot())
-        } else {
-            Handle::Writable(Box::new(db.begin_transaction_owned(isolation)))
-        };
-        let head_snapshot = (!cache.disabled
-            && (readonly || isolation == IsolationLevel::RepeatableRead))
-            .then(|| cache.capture(db.db().snapshot()));
-        drop(cache);
-        Ok(Self {
-            handle: Some(Arc::new(handle)),
-            active_txns,
-            stats,
-            callbacks: CallbackManager::default(),
-            readonly,
-            head_cache,
-            head_snapshot,
-            head_changes: HeadChanges::default(),
+        super::blocking(|| {
+            let cache = head_cache::lock(&head_cache)?;
+            let handle = if readonly {
+                Handle::ReadOnly(db.db().snapshot())
+            } else {
+                Handle::Writable(Box::new(db.begin_transaction_owned(isolation)))
+            };
+            let head_snapshot = (!cache.disabled
+                && (readonly || isolation == IsolationLevel::RepeatableRead))
+                .then(|| cache.capture(db.db().snapshot()));
+            drop(cache);
+            Ok(Self {
+                handle: Some(Arc::new(handle)),
+                active_txns,
+                stats,
+                callbacks: CallbackManager::default(),
+                readonly,
+                head_cache,
+                head_snapshot,
+                head_changes: HeadChanges::default(),
+            })
         })
     }
 
@@ -252,7 +254,7 @@ impl Txn for RegolithTxn {
         })?;
         // Native commit and cache publication are one boundary. Never run
         // user callbacks under it, and never publish a failed transaction.
-        let outcome = {
+        let outcome = super::blocking(|| {
             let mut cache = head_cache::lock(&self.head_cache)?;
             let outcome = match handle {
                 // Nothing was written, so there is nothing to validate and
@@ -264,7 +266,7 @@ impl Txn for RegolithTxn {
                 cache.publish(&self.head_changes);
             }
             outcome
-        };
+        });
         match outcome {
             Ok(()) => {
                 self.stats.record_commit();
