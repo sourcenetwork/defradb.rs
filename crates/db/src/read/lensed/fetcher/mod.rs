@@ -47,6 +47,8 @@ pub struct PendingMigrationWriteBacks {
     pub full_scans: RapidHashMap<String, bool>,
 }
 
+type VersionCache = RapidHashMap<String, (Arc<[schema::CollectionVersion]>, bool)>;
+
 /// Document fetcher that applies lens migrations to documents.
 ///
 /// When documents are fetched from older schema versions, they are
@@ -60,8 +62,7 @@ pub struct LensedDocFetcher<S: Store> {
     #[allow(dead_code)]
     lens_store: Arc<dyn TransformStore>,
     /// Read-only snapshot facts; writable transactions always reload their own schema writes.
-    version_cache:
-        Arc<async_lock::RwLock<RapidHashMap<String, (Arc<[schema::CollectionVersion]>, bool)>>>,
+    version_cache: Arc<async_lock::RwLock<VersionCache>>,
     /// Cache of collection version histories keyed by collection name.
     pub history_cache:
         async_lock::RwLock<RapidHashMap<String, RapidHashMap<String, TargetedHistoryLink>>>,
