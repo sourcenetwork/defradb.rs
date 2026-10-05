@@ -18,6 +18,24 @@ pub(crate) struct Slot {
     pub(crate) kind: Kind,
     pub(crate) seq: u64,
     pub(crate) deadline: Option<Instant>,
+    /// Waiting in the peer's backlog: not sent, no window slot held.
+    pub(crate) queued: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Answer {
+    Have,
+    DontHave,
+    TimedOut,
+    /// The send failed or the peer disconnected.
+    Failed,
+}
+
+impl Answer {
+    /// Whether the remote may still hold the want, so it needs a cancel.
+    pub(crate) fn cancels(self) -> bool {
+        matches!(self, Answer::DontHave | Answer::TimedOut)
+    }
 }
 
 #[derive(Debug, Default)]

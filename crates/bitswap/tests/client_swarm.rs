@@ -123,6 +123,22 @@ async fn fetches_twenty_blocks_from_one_provider() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetches_1500_blocks_through_the_want_window() {
+    let blocks: Vec<Block> = (0..1500)
+        .map(|i| block_v1(format!("block {i}").as_bytes()))
+        .collect();
+    let (a, a_addr) = server(&blocks).await;
+    let (_, mut b) = client_connected_to(&[a_addr]).await;
+
+    let (_, mut rx) = b
+        .behaviour_mut()
+        .fetch(blocks.iter().map(|x| x.cid).collect(), vec![a]);
+    let got = collect(&mut b, &mut rx).await;
+    assert_eq!(got.len(), 1500);
+    assert_eq!(cids(&got), cids(&blocks));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn present_blocks_arrive_and_absent_ones_are_skipped() {
     let present: Vec<Block> = (0..5)
         .map(|i| block_v1(format!("present {i}").as_bytes()))

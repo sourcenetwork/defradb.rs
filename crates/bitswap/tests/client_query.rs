@@ -91,7 +91,9 @@ async fn have_then_block_request_to_that_peer() {
     flush(&mut client);
 
     client.on_message(&p0, &dont_have(&block));
-    assert!(flush(&mut client).is_empty());
+    let sent = flush(&mut client);
+    assert_eq!(sent.len(), 1);
+    assert!(entries(&sent, p0)[0].cancel);
     client.on_message(&p1, &have(&block));
     let sent = flush(&mut client);
     assert_eq!(sent.len(), 1);
@@ -118,7 +120,11 @@ async fn all_dont_have_completes_with_zero_blocks() {
         client.on_message(&provider, &dont_have(&block));
     }
     assert!(rx.recv().await.is_none());
-    assert!(flush(&mut client).is_empty());
+    let sent = flush(&mut client);
+    assert_eq!(sent.len(), providers.len());
+    assert!(sent
+        .iter()
+        .all(|out| out.message.wantlist().all(|e| e.cancel)));
     assert!(client.is_idle());
 }
 
@@ -166,6 +172,9 @@ async fn cancel_cancels_only_peers_with_outstanding_requests() {
     let (id, mut rx) = client.fetch(vec![block.cid], vec![p0, p1]);
     flush(&mut client);
     client.on_message(&p1, &dont_have(&block));
+    let sent = flush(&mut client);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].peer, p1);
 
     assert!(client.cancel(id));
     assert!(!client.cancel(id));

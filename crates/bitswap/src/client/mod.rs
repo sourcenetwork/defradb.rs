@@ -10,6 +10,7 @@ mod fetch;
 mod outbox;
 mod query;
 mod timeouts;
+mod window;
 
 use std::hash::Hash;
 use std::time::Duration;
@@ -25,13 +26,15 @@ use crate::block::Block;
 use crate::message::{BitswapMessage, BlockPresenceType};
 use crate::protocol::ProtocolId;
 use fetch::Fetch;
-use query::{Get, Kind, Slot};
+use query::{Answer, Get, Kind};
 use timeouts::Timeouts;
+use window::Window;
 
 pub(crate) use driver::Driver;
 pub use fetch::FetchId;
 use outbox::Outbox;
 pub use outbox::Outgoing;
+pub use window::MAX_OUTSTANDING_WANTS_PER_PEER;
 
 /// How long a request waits for its answer, counted from the moment its message was sent, before it counts
 /// as a no.
@@ -54,6 +57,8 @@ pub struct Client {
     fetches: RapidHashMap<FetchId, Fetch>,
     gets: RapidHashMap<Cid, Get>,
     by_peer: RapidHashMap<PeerId, RapidHashSet<Cid>>,
+    windows: RapidHashMap<PeerId, Window>,
+    refill: RapidHashSet<PeerId>,
     deadlines: Timeouts,
     outbox: Outbox,
     keep_alive: Vec<KeepAlive>,
@@ -78,6 +83,7 @@ impl Client {
         self.fetches.is_empty()
             && self.gets.is_empty()
             && self.by_peer.is_empty()
+            && self.windows.is_empty()
             && self.deadlines.is_empty()
             && self.outbox.is_empty()
     }
@@ -112,6 +118,12 @@ impl Client {
 
     /// Cancels a fetch; true when it was live.
     pub fn cancel(&mut self, id: FetchId) -> bool {
+        let live = self.cancel_fetch(id);
+        self.settle();
+        live
+    }
+
+    fn cancel_fetch(&mut self, id: FetchId) -> bool {
         let Some(fetch) = self.fetches.remove(&id) else {
             return false;
         };
@@ -140,8 +152,13 @@ impl Client {
             }
         }
         for presence in message.block_presences() {
-            self.answer(*peer, presence.cid, presence.typ == BlockPresenceType::Have);
+            let answer = match presence.typ {
+                BlockPresenceType::Have => Answer::Have,
+                BlockPresenceType::DontHave => Answer::DontHave,
+            };
+            self.answer(*peer, presence.cid, answer);
         }
+        self.settle();
     }
 
     /// Counts every request outstanding to `peer` as a no.
@@ -153,8 +170,9 @@ impl Client {
             .map(|cids| cids.iter().copied().collect())
             .unwrap_or_default();
         for cid in cids {
-            self.answer(*peer, cid, false);
+            self.answer(*peer, cid, Answer::Failed);
         }
+        self.settle();
     }
 
     /// Re-announces the keep-alive of a peer that just became reachable over bitswap, since a protect sent
@@ -184,9 +202,10 @@ impl Client {
                 slot.deadline = Some(deadline);
                 self.deadlines.insert(deadline, *seq, peer, *cid);
             } else {
-                self.answer(peer, *cid, false);
+                self.answer(peer, *cid, Answer::Failed);
             }
         }
+        self.settle();
     }
 
     /// Counts every request past its deadline as a no.
@@ -194,8 +213,9 @@ impl Client {
         let now = Instant::now();
         while let Some((peer, cid)) = self.deadlines.pop_expired(now) {
             trace!(%peer, %cid, "request timed out");
-            self.answer(peer, cid, false);
+            self.answer(peer, cid, Answer::TimedOut);
         }
+        self.settle();
     }
 
     /// The earliest request deadline.
@@ -217,52 +237,22 @@ impl Client {
         std::mem::take(&mut self.keep_alive)
     }
 
-    fn issue(&mut self, get: &mut Get, cid: Cid, peer: PeerId, kind: Kind) {
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        get.requests.insert(
-            peer,
-            Slot {
-                kind,
-                seq,
-                deadline: None,
-            },
-        );
-        let cids = self.by_peer.entry(peer).or_default();
-        if cids.is_empty() {
-            self.keep_alive.push(KeepAlive::Protect(peer));
-        }
-        cids.insert(cid);
-        self.outbox.want(peer, cid, kind, seq);
-    }
-
-    fn forget_request(&mut self, peer: PeerId, cid: &Cid, slot: &Slot) {
-        self.deadlines.remove(slot.deadline, slot.seq);
-        if let Some(cids) = self.by_peer.get_mut(&peer) {
-            cids.remove(cid);
-            if cids.is_empty() {
-                self.by_peer.remove(&peer);
-                self.keep_alive.push(KeepAlive::Unprotect(peer));
-            }
-        }
-    }
-
-    /// Applies the answer to `peer`'s outstanding request for `cid`; a have from a block request is ignored.
-    fn answer(&mut self, peer: PeerId, cid: Cid, have: bool) {
+    /// Applies an answer to `peer`'s outstanding request for `cid`; a have from a block request, and any
+    /// answer but a failure for a request not sent yet, is ignored.
+    fn answer(&mut self, peer: PeerId, cid: Cid, answer: Answer) {
         let Some(mut get) = self.gets.remove(&cid) else {
             return;
         };
-        let Some(slot) = get.requests.get(&peer).copied() else {
+        let Some(slot) = get.requests.get(&peer).copied().filter(|slot| {
+            (answer == Answer::Failed || !slot.queued)
+                && !(slot.kind == Kind::Block && answer == Answer::Have)
+        }) else {
             self.gets.insert(cid, get);
             return;
         };
-        if slot.kind == Kind::Block && have {
-            self.gets.insert(cid, get);
-            return;
-        }
         get.requests.remove(&peer);
-        self.forget_request(peer, &cid, &slot);
-        if let Some(next) = get.answered(slot.kind, peer, have) {
+        self.end_request(peer, &cid, &slot, answer.cancels());
+        if let Some(next) = get.answered(slot.kind, peer, answer == Answer::Have) {
             self.issue(&mut get, cid, next, Kind::Block);
         }
         if get.requests.is_empty() {
@@ -276,10 +266,8 @@ impl Client {
     /// waiting fetch, with the block when there is one.
     fn release(&mut self, cid: Cid, mut get: Get, delivered: Option<(&Block, PeerId)>) {
         for (peer, slot) in get.requests.drain() {
-            self.forget_request(peer, &cid, &slot);
-            if delivered.is_none_or(|(_, from)| from != peer) {
-                self.outbox.cancel(peer, cid);
-            }
+            let cancel = delivered.is_none_or(|(_, from)| from != peer);
+            self.end_request(peer, &cid, &slot, cancel);
         }
         for id in get.waiters {
             let Some(fetch) = self.fetches.get_mut(&id) else {
@@ -288,6 +276,8 @@ impl Client {
             if let Some((block, _)) = delivered {
                 if fetch.sender.try_send(block.clone()).is_err() {
                     trace!(%cid, "fetch receiver is gone");
+                    self.cancel_fetch(id);
+                    continue;
                 }
             }
             fetch.pending.remove(&cid);
