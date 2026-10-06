@@ -144,6 +144,10 @@ fn provider_err(e: ProviderError) -> acp::Error {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocumentACP for VeraDocumentACP {
+    fn unregistered_documents_are_public(&self) -> bool {
+        self.provider.unregistered_documents_are_public()
+    }
+
     async fn register_doc_object(
         &self,
         identity: &Did,

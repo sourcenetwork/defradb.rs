@@ -329,7 +329,7 @@ pub async fn check_doc_access_with_overlay(
             mutations.projected_registration(policy_id, resource_name, doc_id)?
         {
             return Ok(match projected {
-                ProjectedDocRegistration::Unregistered => true,
+                ProjectedDocRegistration::Unregistered => acp.unregistered_documents_are_public(),
                 ProjectedDocRegistration::Registered { owner } => {
                     matches!(identity, Identity::Authenticated(did) if did == &owner)
                 }
@@ -437,7 +437,7 @@ mod tests {
         let access = scope_deferred_acp_mutations(
             mutations.clone(),
             check_doc_access_with_overlay(
-                &NoopDocumentAcp,
+                &NoopDocumentAcp(true),
                 &Identity::Authenticated(owner),
                 DocumentPermission::Read,
                 "policy",
@@ -452,7 +452,7 @@ mod tests {
         let access = scope_deferred_acp_mutations(
             mutations,
             check_doc_access_with_overlay(
-                &NoopDocumentAcp,
+                &NoopDocumentAcp(true),
                 &Identity::Authenticated(stranger),
                 DocumentPermission::Read,
                 "policy",
@@ -480,7 +480,7 @@ mod tests {
         let access = scope_deferred_acp_mutations(
             mutations.clone(),
             check_doc_access_with_overlay(
-                &NoopDocumentAcp,
+                &NoopDocumentAcp(true),
                 &Identity::Anonymous,
                 DocumentPermission::Read,
                 "policy",
@@ -494,16 +494,73 @@ mod tests {
 
         let registered = scope_deferred_acp_mutations(
             mutations,
-            is_doc_registered_with_overlay(&NoopDocumentAcp, "policy", "User", "doc-1"),
+            is_doc_registered_with_overlay(&NoopDocumentAcp(true), "policy", "User", "doc-1"),
         )
         .await
         .expect("registration");
         assert!(!registered);
     }
 
+    #[tokio::test]
+    async fn private_unregistration_denies_overlay_and_shared_reads() {
+        use acp::read_access::{check_doc_read_access, ObjectAccessChecker};
+        let acp = NoopDocumentAcp(false);
+        let checker = crate::txn::OverlayChecker {
+            acp: &acp,
+            identity: &Identity::Anonymous,
+        };
+        let absent = checker
+            .object_access("policy", "User", "doc-1")
+            .await
+            .unwrap();
+        assert!(!absent.has_access);
+        assert!(!absent.explicit);
+        let mutations = Arc::new(DeferredAcpMutations::new());
+        mutations
+            .lock_state()
+            .unwrap()
+            .projected_registrations
+            .insert(
+                DeferredAcpMutations::doc_key("policy", "User", "doc-1"),
+                ProjectedDocRegistration::Unregistered,
+            );
+        scope_deferred_acp_mutations(mutations, async {
+            assert!(
+                !is_doc_registered_with_overlay(&acp, "policy", "User", "doc-1")
+                    .await
+                    .unwrap()
+            );
+            assert!(!check_doc_access_with_overlay(
+                &acp,
+                &Identity::Anonymous,
+                DocumentPermission::Read,
+                "policy",
+                "User",
+                "doc-1"
+            )
+            .await
+            .unwrap());
+            assert!(!check_doc_read_access(
+                &checker,
+                "policy",
+                "User",
+                "collection",
+                false,
+                "doc-1"
+            )
+            .await
+            .unwrap());
+        })
+        .await;
+    }
+
     #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
     impl DocumentACP for NoopDocumentAcp {
+        fn unregistered_documents_are_public(&self) -> bool {
+            self.0
+        }
+
         async fn register_doc_object(
             &self,
             _identity: &Did,
@@ -579,5 +636,5 @@ mod tests {
         }
     }
 
-    struct NoopDocumentAcp;
+    struct NoopDocumentAcp(bool);
 }

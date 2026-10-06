@@ -10,6 +10,9 @@ use super::*;
 /// stands alone: tests only ever read one after its own call completes, so
 /// there is no compound state that needs a single shared guard.
 struct MockProvider {
+    public_unregistered: bool,
+    registered: bool,
+    owner_error: bool,
     decisions: SegQueue<bool>,
     created_decision: AtomOption<String>,
     verify_calls: AtomicUsize,
@@ -26,6 +29,9 @@ impl MockProvider {
             queue.push(decision);
         }
         Self {
+            public_unregistered: false,
+            registered: true,
+            owner_error: false,
             decisions: queue,
             created_decision: AtomOption::none(),
             verify_calls: AtomicUsize::new(0),
@@ -47,6 +53,10 @@ impl MockProvider {
 
 #[async_trait]
 impl VeraProvider for MockProvider {
+    fn unregistered_documents_are_public(&self) -> bool {
+        self.public_unregistered
+    }
+
     fn authorized_account(&self) -> String {
         "0x0".to_string()
     }
@@ -166,8 +176,11 @@ impl VeraProvider for MockProvider {
         _resource: &str,
         _object_id: &str,
     ) -> std::result::Result<(bool, String), ProviderError> {
+        if self.owner_error {
+            return Err(ProviderError::Query("invalid owner proof".into()));
+        }
         Ok((
-            true,
+            self.registered,
             "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_string(),
         ))
     }
@@ -510,5 +523,45 @@ async fn add_relationship_subject_default_is_unsupported() {
     assert!(
         message.contains("unsupported"),
         "expected Unsupported error, got: {message}"
+    );
+}
+
+#[tokio::test]
+async fn unregistered_read_rules_follow_provider_and_preserve_proof_errors() {
+    use acp::read_access::{check_doc_read_access, DirectChecker, ObjectAccessChecker};
+    for public in [false, true] {
+        let mut provider = MockProvider::new(vec![]);
+        provider.public_unregistered = public;
+        provider.registered = false;
+        let acp = VeraDocumentACP::without_access_cache(Arc::new(provider));
+        assert_eq!(acp.unregistered_documents_are_public(), public);
+        let checker = DirectChecker {
+            acp: &acp,
+            identity: &Identity::Anonymous,
+        };
+        let access = checker
+            .object_access("policy", "users", "doc")
+            .await
+            .unwrap();
+        assert_eq!(access.has_access, public);
+        assert!(!access.explicit);
+        assert_eq!(
+            check_doc_read_access(&checker, "policy", "users", "collection", false, "doc")
+                .await
+                .unwrap(),
+            public
+        );
+    }
+    let mut provider = MockProvider::new(vec![]);
+    provider.owner_error = true;
+    let acp = VeraDocumentACP::without_access_cache(Arc::new(provider));
+    let checker = DirectChecker {
+        acp: &acp,
+        identity: &Identity::Anonymous,
+    };
+    assert!(
+        check_doc_read_access(&checker, "policy", "users", "collection", false, "doc")
+            .await
+            .is_err()
     );
 }
