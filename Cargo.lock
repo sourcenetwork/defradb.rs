@@ -49,16 +49,16 @@ dependencies = [
 [[package]]
 name = "acp"
 version = "0.5.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "async-trait",
- "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
  "thiserror 2.0.18",
- "zanzibar 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "zanzibar 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
 ]
 
 [[package]]
@@ -6306,7 +6306,7 @@ dependencies = [
 [[package]]
 name = "identity"
 version = "0.5.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "hex",
  "serde",
@@ -6556,9 +6556,9 @@ dependencies = [
  "tokio",
  "vera",
  "vera-client",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-harness 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
 ]
 
 [[package]]
@@ -7147,7 +7147,7 @@ dependencies = [
 [[package]]
 name = "jsonrpsee-server"
 version = "0.24.10"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "futures-util",
  "http 1.4.0",
@@ -13191,7 +13191,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "eyre",
  "futures",
@@ -14172,15 +14172,15 @@ dependencies = [
  "tonic-prost",
  "tracing",
  "vera-client",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "zanzibar 0.5.0",
 ]
 
 [[package]]
 name = "vera-app"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -14197,17 +14197,17 @@ dependencies = [
  "tracing",
  "vera-backend",
  "vera-consensus",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-executor",
  "vera-genesis",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-qmdb",
 ]
 
 [[package]]
 name = "vera-backend"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "bytes",
@@ -14222,8 +14222,8 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-permission 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-permission 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-qmdb",
  "vera-traits",
 ]
@@ -14231,7 +14231,7 @@ dependencies = [
 [[package]]
 name = "vera-cli"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "libc",
 ]
@@ -14239,9 +14239,9 @@ dependencies = [
 [[package]]
 name = "vera-client"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
- "acp 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "acp 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
@@ -14256,7 +14256,7 @@ dependencies = [
  "base64 0.22.1",
  "borsh",
  "hex",
- "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "k256",
  "rand 0.8.5",
  "reqwest 0.12.28",
@@ -14267,17 +14267,17 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-permission 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-permission 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "zeroize",
 ]
 
 [[package]]
 name = "vera-config"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "commonware-codec",
  "commonware-cryptography",
@@ -14292,12 +14292,12 @@ dependencies = [
 [[package]]
 name = "vera-consensus"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "commonware-codec",
  "parking_lot 0.12.5",
  "tokio",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
 ]
 
 [[package]]
@@ -14326,7 +14326,7 @@ dependencies = [
 [[package]]
 name = "vera-crypto"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "ark-bls12-381 0.4.0",
@@ -14375,7 +14375,7 @@ dependencies = [
 [[package]]
 name = "vera-domain"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -14401,9 +14401,9 @@ dependencies = [
 [[package]]
 name = "vera-executor"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
- "acp 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "acp 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
@@ -14413,16 +14413,16 @@ dependencies = [
  "commonware-parallel",
  "futures",
  "hex",
- "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-overlay",
  "vera-qmdb",
  "vera-state",
@@ -14432,7 +14432,7 @@ dependencies = [
 [[package]]
 name = "vera-genesis"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-evm",
  "commonware-codec",
@@ -14442,8 +14442,8 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
 ]
 
 [[package]]
@@ -14465,7 +14465,7 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -14484,19 +14484,19 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "test-infra 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "test-infra 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "tokio",
  "tracing",
  "vera-cli",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-node",
 ]
 
 [[package]]
 name = "vera-indexer"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "parking_lot 0.12.5",
@@ -14507,7 +14507,7 @@ dependencies = [
 [[package]]
 name = "vera-jsonrpc"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -14522,11 +14522,11 @@ dependencies = [
  "tokio",
  "tracing",
  "vera-backend",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-executor",
  "vera-indexer",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-permission 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-permission 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-traits",
 ]
 
@@ -14559,9 +14559,9 @@ dependencies = [
 [[package]]
 name = "vera-modules"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
- "acp 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "acp 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "alloy-primitives",
  "alloy-sol-types",
  "async-trait",
@@ -14570,7 +14570,7 @@ dependencies = [
  "bytes",
  "futures",
  "hex",
- "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "imbl",
  "orbis-reporting",
  "prost 0.14.3",
@@ -14578,14 +14578,14 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
- "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "zanzibar 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "zanzibar 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
 ]
 
 [[package]]
 name = "vera-node"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -14621,13 +14621,13 @@ dependencies = [
  "vera-backend",
  "vera-config",
  "vera-consensus",
- "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-executor",
  "vera-genesis",
  "vera-indexer",
  "vera-jsonrpc",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "vera-qmdb",
  "vera-traits",
 ]
@@ -14635,7 +14635,7 @@ dependencies = [
 [[package]]
 name = "vera-overlay"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "vera-qmdb",
@@ -14665,7 +14665,7 @@ dependencies = [
 [[package]]
 name = "vera-permission"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "bytes",
@@ -14676,16 +14676,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
- "zanzibar 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "vera-crypto 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-domain 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "vera-modules 0.1.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
+ "zanzibar 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
 ]
 
 [[package]]
 name = "vera-qmdb"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "thiserror 2.0.18",
@@ -14694,7 +14694,7 @@ dependencies = [
 [[package]]
 name = "vera-state"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "anyhow",
  "borsh",
@@ -14706,7 +14706,7 @@ dependencies = [
 [[package]]
 name = "vera-traits"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "alloy-primitives",
  "thiserror 2.0.18",
@@ -16065,12 +16065,12 @@ dependencies = [
 [[package]]
 name = "zanzibar"
 version = "0.5.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3#9ca695cc89aee66129dd87758d137454f86097f3"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57#a3b152ad52da095201c54a4b8b5a394084efae57"
 dependencies = [
  "async-lock",
  "async-trait",
  "futures",
- "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=9ca695cc89aee66129dd87758d137454f86097f3)",
+ "identity 0.5.0 (git+https://github.com/sourcenetwork/vera.rs?rev=a3b152ad52da095201c54a4b8b5a394084efae57)",
  "parking_lot 0.12.5",
  "serde",
  "serde_json",

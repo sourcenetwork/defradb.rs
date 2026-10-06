@@ -48,9 +48,9 @@ crypto = { path = "../crypto" }
 keyring = { path = "../keyring" }
 events = { path = "../events" }
 tempfile = "3"
-vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "9ca695cc89aee66129dd87758d137454f86097f3" }
-vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "9ca695cc89aee66129dd87758d137454f86097f3" }
-vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "9ca695cc89aee66129dd87758d137454f86097f3" }
+vera-client = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a3b152ad52da095201c54a4b8b5a394084efae57" }
+vera-domain = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a3b152ad52da095201c54a4b8b5a394084efae57" }
+vera-modules = { git = "https://github.com/sourcenetwork/vera.rs", rev = "a3b152ad52da095201c54a4b8b5a394084efae57" }
 commonware-codec = "2026.9.0"
 
 # Lock-free shared state
