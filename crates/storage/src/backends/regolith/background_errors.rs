@@ -6,6 +6,7 @@
 //! only as a repeated log line inside the engine, while the store slowly
 //! wedges. This listener turns each one into a
 //! `defradb.storage.background.errors` metric labelled with its reason.
+//! regolith logs the failure itself, so this only counts it.
 
 use regolith::{BackgroundErrorReason, Error, EventListener};
 
@@ -13,10 +14,8 @@ use regolith::{BackgroundErrorReason, Error, EventListener};
 pub(super) struct BackgroundErrorListener;
 
 impl EventListener for BackgroundErrorListener {
-    fn on_background_error(&self, reason: BackgroundErrorReason, err: &Error) {
-        let reason = reason_label(reason);
-        tracing::error!(reason, error = %err, "regolith background job failed");
-        telemetry::record_storage_background_error("regolith", reason);
+    fn on_background_error(&self, reason: BackgroundErrorReason, _err: &Error) {
+        telemetry::record_storage_background_error("regolith", reason_label(reason));
     }
 }
 
