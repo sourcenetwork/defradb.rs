@@ -198,7 +198,7 @@ pub struct StartArgs {
     #[arg(long)]
     pub max_connections_per_peer: Option<u32>,
 
-    /// Maximum DAG traversal depth for merge operations
+    /// DAG traversal depth limit; longer document histories resume in bounded turns
     #[arg(long)]
     pub max_merge_depth: Option<usize>,
 

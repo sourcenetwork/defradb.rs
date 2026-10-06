@@ -97,6 +97,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         )];
 
         while let Some(frame) = worklist.pop() {
+            if visited.len() > DEFAULT_MAX_MERGE_DEPTH || worklist.len() > DEFAULT_MAX_MERGE_DEPTH {
+                return Err(MergeError::HistoryRequired);
+            }
             let (node_cid, node_block, depth) = match frame {
                 IdentityFrame::Loaded(node_cid, node_block, depth) => {
                     self.ensure_merge_depth(&node_cid, depth)?;
@@ -158,6 +161,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 return Ok(owners.into_iter().next().expect("len checked"));
             }
 
+            if heads.len().saturating_add(worklist.len()) > DEFAULT_MAX_MERGE_DEPTH {
+                return Err(MergeError::HistoryRequired);
+            }
             // Reversed so the FIRST head is popped — and only then probed —
             // first: DFS parity with the recursive predecessor.
             for head_cid in heads.iter().rev() {

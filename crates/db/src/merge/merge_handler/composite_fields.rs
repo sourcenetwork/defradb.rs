@@ -258,6 +258,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         return Ok(EffectiveLinkedDelta::SkipField);
                     }
                     Err(error @ MergeError::Kms(_)) => return Err(error),
+                    Err(MergeError::Storage(_))
+                        if matches!(
+                            context.mode,
+                            super::composite::CompositeMergeMode::History
+                        ) =>
+                    {
+                        return Ok(EffectiveLinkedDelta::Skip(MergeOutcome::retryable_skip(
+                            "history encrypted fields are not yet readable",
+                        )));
+                    }
                     Err(error) => {
                         tracing::debug!(
                             error = %error,
@@ -289,6 +299,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         return Ok(EffectiveLinkedDelta::SkipField);
                     }
                     Err(error @ MergeError::Kms(_)) => return Err(error),
+                    Err(MergeError::Storage(_))
+                        if matches!(
+                            context.mode,
+                            super::composite::CompositeMergeMode::History
+                        ) =>
+                    {
+                        return Ok(EffectiveLinkedDelta::Skip(MergeOutcome::retryable_skip(
+                            "history encrypted fields are not yet readable",
+                        )));
+                    }
                     Err(error) => {
                         tracing::debug!(
                             error = %error,

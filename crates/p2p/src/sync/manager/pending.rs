@@ -64,6 +64,9 @@ pub struct PendingDag {
     pub next_retry_at: n0_future::time::Instant,
     /// Fetch dispatches claimed for this root (drives the backoff rung).
     pub dispatches: u32,
+    /// Committed merge work yielded with a locally ready DAG. Never persisted:
+    /// restart/TTL recovery must validate local availability again.
+    pub merge_continuation: bool,
     /// Transient local contention; discarded with this bounded pending root.
     pub storage_blocker: Option<Cid>,
 }
@@ -371,6 +374,8 @@ impl SharedPendingDags {
 
 /// Base delay before the first scheduled re-dispatch of a pending root.
 pub const PENDING_RETRY_BASE: Duration = Duration::from_secs(2);
+/// Pace committed local work without climbing the provider-failure ladder.
+pub const PENDING_MERGE_CONTINUATION_DELAY: Duration = Duration::from_secs(2);
 /// Ceiling for the per-root dispatch backoff.
 pub const PENDING_RETRY_CAP: Duration = Duration::from_secs(60);
 
