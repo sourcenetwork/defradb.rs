@@ -52,7 +52,8 @@ async fn prepare<S: Store>(
     max_wants: usize,
     lookup_timeout: Duration,
 ) -> Received {
-    let deadline = Instant::now() + lookup_timeout;
+    // A timeout too large to represent as an instant means no deadline rather than a panic.
+    let deadline = Instant::now().checked_add(lookup_timeout);
     let mut fallbacks = 0usize;
     let mut cancels: Vec<Cid> = Vec::new();
     let mut denials = Vec::new();
@@ -108,7 +109,10 @@ async fn prepare<S: Store>(
     }
 }
 
-async fn before<T>(deadline: Instant, lookup: impl Future<Output = T>) -> Option<T> {
+async fn before<T>(deadline: Option<Instant>, lookup: impl Future<Output = T>) -> Option<T> {
+    let Some(deadline) = deadline else {
+        return Some(lookup.await);
+    };
     if Instant::now() >= deadline {
         return None;
     }

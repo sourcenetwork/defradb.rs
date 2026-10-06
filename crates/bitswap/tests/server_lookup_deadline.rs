@@ -186,3 +186,16 @@ async fn a_cancel_is_applied_when_the_message_lookups_hang() {
     past_deadline().await;
     assert_eq!(h.server.ledger_wants(h.peer).await, Some(1));
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_unrepresentable_lookup_timeout_means_no_deadline() {
+    let good = block_v1(b"good");
+    let store = HangStore::new(std::slice::from_ref(&good), None);
+    let config = ServerConfig {
+        message_lookup_timeout: std::time::Duration::MAX,
+        ..ServerConfig::default()
+    };
+    let mut h = start_with(store, config);
+
+    still_serves(&mut h, &good).await;
+}
