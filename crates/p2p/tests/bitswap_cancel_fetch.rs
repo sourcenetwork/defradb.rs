@@ -1,19 +1,15 @@
 #![cfg(feature = "test-utils")]
 
-//! Cancelling a Bitswap query must actually stop its session.
+//! Cancelling a Bitswap query must actually stop its fetch.
 //!
-//! `handle_bitswap_cancel` aborts the fetch task and stops the session by id.
-//! `abort` only schedules cancellation, so the task's `Session` clone can still
-//! be alive when the stop runs, and `Session::stop` refuses to run at all while
-//! any other handle exists (`ensure!(count == 2)`, iroh-bitswap
-//! `client/session.rs`): the stop returns an error, the session stays in the
-//! manager's map, and its worker tasks run forever. That is the same leak this
-//! branch removed from the completion path, surviving on the cancel path.
+//! `handle_bitswap_cancel` aborts the fetch task and cancels the fetch by id in
+//! the behaviour. `abort` only schedules cancellation, so the task can still be
+//! running when the cancel lands; the fetch must end regardless and leave no
+//! task behind.
 //!
 //! The interleaving is forced rather than raced: the fetch task blocks its
-//! worker thread while holding its clone, which is a window an `abort` cannot
-//! land inside, so the stop is guaranteed to meet a live clone. The runtime's
-//! task census is the observable, as in `bitswap_session_lifecycle`.
+//! worker thread, a window an `abort` cannot land inside. The runtime's task
+//! census is the observable, as in `bitswap_fetch_lifecycle`.
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -65,8 +61,8 @@ async fn settled_live_tasks(hold: Duration) -> usize {
     last
 }
 
-/// Starts a fetch that can never complete, waits for it to take hold of its
-/// session, then cancels it.
+/// Starts a fetch that can never complete, waits for its task to start, then
+/// cancels it.
 async fn cancelled_fetch(handle: &P2PHostHandle, cid: cid::Cid) {
     let query = handle.bitswap_sync(cid, vec![], vec![cid]).await.unwrap();
     tokio::time::sleep(REACH_BLOCK).await;
@@ -77,7 +73,7 @@ async fn cancelled_fetch(handle: &P2PHostHandle, cid: cid::Cid) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_cancelled_bitswap_fetch_leaves_no_session_tasks_behind() {
+async fn a_cancelled_bitswap_fetch_leaves_no_tasks_behind() {
     let cid = make_data_block();
     let (host, handle, _events, _) = P2PHost::new(MockBitswapStore::new()).await.unwrap();
     tokio::spawn(host.run());
@@ -100,8 +96,7 @@ async fn a_cancelled_bitswap_fetch_leaves_no_session_tasks_behind() {
     assert!(
         after <= baseline,
         "{FETCHES} cancelled Bitswap fetches left {} live tasks behind ({} per fetch): \
-         the session stop ran while the aborted task still held a handle, so it \
-         refused and the session is still registered and running",
+         the cancelled fetch's task or want state is still alive",
         after.saturating_sub(baseline),
         after.saturating_sub(baseline) / FETCHES,
     );

@@ -4,7 +4,7 @@
 //! composite behaviour that handles:
 //! - Peer identification (identify)
 //! - Kademlia DHT for peer discovery
-//! - Bitswap for block exchange (Go compatibility via iroh-bitswap)
+//! - Bitswap for block exchange (Go compatibility via the bitswap crate)
 //! - Request-response for PushLog synchronization
 //! - GossipSub for pubsub messaging
 //! - Circuit relay client for NAT traversal (optional)
@@ -22,7 +22,7 @@
 //! For GossipSub, we use libp2p's native message signing via
 //! `MessageAuthenticity::Signed` which matches Go's approach.
 //!
-//! For Bitswap, we use iroh-bitswap which implements the standard
+//! For Bitswap, we use the bitswap crate which implements the standard
 //! IPFS block exchange protocol (1.0.0, 1.1.0, 1.2.0), enabling
 //! interoperability with Go DefraDB.
 
@@ -30,7 +30,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iroh_bitswap::{Bitswap, BitswapEvent, Config as BitswapConfig, Store};
+use ::bitswap::{Bitswap, BitswapEvent, Config as BitswapConfig, Store};
 use libp2p::{
     connection_limits::{self, ConnectionLimits},
     gossipsub::{self, MessageAuthenticity, MessageId, ValidationMode},
@@ -98,7 +98,6 @@ pub struct DefraBehaviour<S: Store> {
     pub kademlia: DualKademlia,
 
     /// Bitswap block exchange protocol (Go compatibility).
-    /// Uses iroh-bitswap for IPFS block exchange.
     pub bitswap: Bitswap<S>,
 
     /// Request-response protocol for PushLog messages.
@@ -283,7 +282,6 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
         let kademlia = DualKademlia::new(local_peer_id);
 
         // Configure Bitswap for block exchange (Go compatibility).
-        // iroh-bitswap implements the standard IPFS bitswap protocols.
         //
         // Install a per-peer block-request filter to enforce ACP on the
         // egress path. Without this, any connected peer could fetch any
@@ -299,9 +297,9 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
         );
         let mut bitswap_config = BitswapConfig::default();
         if let Some(server_cfg) = bitswap_config.server.as_mut() {
-            server_cfg.decision_config.peer_block_request_filter = Some(Box::new(filter));
+            server_cfg.peer_block_request_filter = Some(Box::new(filter));
         }
-        let bitswap = Bitswap::new(local_peer_id, bitswap_store, bitswap_config).await;
+        let bitswap = Bitswap::new(local_peer_id, bitswap_store, bitswap_config);
 
         // Configure stream behaviour for Go two-stream compatibility
         let stream = stream::Behaviour::new();
@@ -383,7 +381,7 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
 
         // Configure Bitswap for block exchange
         let bitswap_config = BitswapConfig::default();
-        let bitswap = Bitswap::new(local_peer_id, bitswap_store, bitswap_config).await;
+        let bitswap = Bitswap::new(local_peer_id, bitswap_store, bitswap_config);
 
         // Configure stream behaviour for Go two-stream compatibility
         let stream = stream::Behaviour::new();
@@ -495,16 +493,8 @@ impl<S: Store + Clone + Send + Sync + 'static> DefraBehaviour<S> {
     }
 
     // === Bitswap operations ===
-    // Note: iroh-bitswap uses a client/server model. The Bitswap behaviour
-    // handles protocol negotiation, but block fetching is done through the client.
-
-    /// Get a reference to the Bitswap client for block fetching.
-    pub fn bitswap_client(&self) -> &iroh_bitswap::Client<S> {
-        self.bitswap.client()
-    }
-
     /// Called when identify reports peer protocols - informs bitswap about supported protocols.
-    pub fn on_identify(&self, peer: &PeerId, protocols: &[String]) {
+    pub fn on_identify(&mut self, peer: &PeerId, protocols: &[String]) {
         self.bitswap.on_identify(peer, protocols);
     }
 }

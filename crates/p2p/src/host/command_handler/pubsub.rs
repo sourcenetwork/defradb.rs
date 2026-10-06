@@ -1,6 +1,6 @@
 //! PubSub commands: Subscribe, Unsubscribe, Publish, SubscribedTopics.
 
-use iroh_bitswap::Store;
+use ::bitswap::Store;
 use libp2p::gossipsub;
 use tracing::debug;
 

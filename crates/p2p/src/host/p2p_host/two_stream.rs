@@ -1,6 +1,6 @@
 //! Two-stream protocol event handling.
 
-use iroh_bitswap::Store;
+use ::bitswap::Store;
 use tracing::{debug, error, info, warn};
 
 use crate::explicit_replay;

@@ -30,7 +30,7 @@ kovan-channel = { workspace = true }
 
 # libp2p transport
 libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "identify", "request-response", "macros", "tokio", "gossipsub", "kad", "relay", "dns", "quic", "websocket", "memory-connection-limits"], optional = true }
-iroh-bitswap = { workspace = true, optional = true }
+bitswap = { path = "../bitswap", optional = true }
 libp2p-stream = { workspace = true, optional = true }
 multiaddr = { workspace = true, optional = true }
 
@@ -96,7 +96,7 @@ blake3 = { version = "1", optional = true }
 default = []
 test-utils = ["libp2p-transport"]
 libp2p-transport = [
-    "dep:iroh-bitswap",
+    "dep:bitswap",
     "kms",
     "dep:libp2p",
     "dep:libp2p-stream",
