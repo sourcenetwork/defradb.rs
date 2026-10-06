@@ -13202,7 +13202,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e5e13a10f88d6736a47a83e8593755442dd6cf2c#e5e13a10f88d6736a47a83e8593755442dd6cf2c"
+source = "git+https://github.com/sourcenetwork/vera.rs?rev=d50ab9e5f94b81cccd1c70c36190dea7e7cd74c2#d50ab9e5f94b81cccd1c70c36190dea7e7cd74c2"
 dependencies = [
  "eyre",
  "futures",
@@ -13218,7 +13218,7 @@ dependencies = [
 [[package]]
 name = "test-infra"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/vera.rs?rev=d50ab9e5f94b81cccd1c70c36190dea7e7cd74c2#d50ab9e5f94b81cccd1c70c36190dea7e7cd74c2"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=e5e13a10f88d6736a47a83e8593755442dd6cf2c#e5e13a10f88d6736a47a83e8593755442dd6cf2c"
 dependencies = [
  "eyre",
  "futures",
@@ -14427,22 +14427,6 @@ dependencies = [
 [[package]]
 name = "vera-harness"
 version = "0.1.0"
-source = "git+https://github.com/sourcenetwork/backbone.git?rev=e5e13a10f88d6736a47a83e8593755442dd6cf2c#e5e13a10f88d6736a47a83e8593755442dd6cf2c"
-dependencies = [
- "cosmrs",
- "eyre",
- "hex",
- "regex",
- "reqwest 0.12.28",
- "serde_json",
- "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e5e13a10f88d6736a47a83e8593755442dd6cf2c)",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "vera-harness"
-version = "0.1.0"
 source = "git+https://github.com/sourcenetwork/vera.rs?rev=d50ab9e5f94b81cccd1c70c36190dea7e7cd74c2#d50ab9e5f94b81cccd1c70c36190dea7e7cd74c2"
 dependencies = [
  "alloy-consensus",
@@ -14469,6 +14453,22 @@ dependencies = [
  "vera-domain",
  "vera-modules",
  "vera-node",
+]
+
+[[package]]
+name = "vera-harness"
+version = "0.1.0"
+source = "git+https://github.com/sourcenetwork/backbone.git?rev=e5e13a10f88d6736a47a83e8593755442dd6cf2c#e5e13a10f88d6736a47a83e8593755442dd6cf2c"
+dependencies = [
+ "cosmrs",
+ "eyre",
+ "hex",
+ "regex",
+ "reqwest 0.12.28",
+ "serde_json",
+ "test-infra 0.1.0 (git+https://github.com/sourcenetwork/backbone.git?rev=e5e13a10f88d6736a47a83e8593755442dd6cf2c)",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

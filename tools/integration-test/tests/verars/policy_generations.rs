@@ -19,6 +19,9 @@ mod replication;
 #[path = "policy_generations/peer_authorization.rs"]
 mod peer_authorization;
 
+#[path = "policy_generations/strict_replication.rs"]
+mod strict_replication;
+
 const WITHOUT_READER: &str = r#"name: test-user-policy
 resources:
   - name: users
