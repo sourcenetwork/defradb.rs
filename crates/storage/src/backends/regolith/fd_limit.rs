@@ -64,8 +64,15 @@ mod tests {
             "lowered the soft limit {before} -> {after}"
         );
         assert!(after <= hard);
-        if before < TARGET && hard >= TARGET {
-            assert!(after > before, "left the soft limit at {before}");
+        if before < TARGET {
+            // The OS may cap below the hard limit (macOS clamps to
+            // `kern.maxfilesperproc`), so the check is that nothing was
+            // left to raise, not that the limit reached the target.
+            let ceiling = rlimit::increase_nofile_limit(TARGET).unwrap();
+            assert_eq!(
+                after, ceiling,
+                "left the soft limit at {after}, below {ceiling}"
+            );
         }
     }
 }
