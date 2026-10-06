@@ -122,6 +122,21 @@ pub fn record_storage_conflict(backend: &'static str, rule: &'static str) {
     emit_storage_conflict(backend, rule);
 }
 
+static STORAGE_BACKGROUND_ERRORS: AtomicU64 = AtomicU64::new(0);
+
+/// Record a failed background storage job (flush, compaction, manifest
+/// or WAL write). The engine keeps running after one, so without this a
+/// job that fails on every retry is visible only in the log.
+pub fn record_storage_background_error(backend: &'static str, reason: &'static str) {
+    STORAGE_BACKGROUND_ERRORS.fetch_add(1, Ordering::Relaxed);
+    emit_storage_background_error(backend, reason);
+}
+
+/// Failed background storage jobs recorded in this process.
+pub fn storage_background_error_count() -> u64 {
+    STORAGE_BACKGROUND_ERRORS.load(Ordering::Relaxed)
+}
+
 pub fn record_commit_gate_wait(backend: &'static str, seconds: f64) {
     emit_commit_gate_wait(backend, seconds);
 }
@@ -191,6 +206,19 @@ fn emit_storage_conflict(backend: &'static str, rule: &'static str) {
 }
 
 #[cfg(feature = "otlp")]
+fn emit_storage_background_error(backend: &'static str, reason: &'static str) {
+    with_instruments(|metrics| {
+        metrics.storage_background_errors.add(
+            1,
+            &[
+                KeyValue::new("backend", backend),
+                KeyValue::new("reason", reason),
+            ],
+        );
+    });
+}
+
+#[cfg(feature = "otlp")]
 fn emit_commit_gate_wait(backend: &'static str, seconds: f64) {
     with_instruments(|metrics| {
         metrics
@@ -234,6 +262,8 @@ fn emit_escaped_conflict(_surface: &'static str) {}
 #[cfg(not(feature = "otlp"))]
 fn emit_storage_conflict(_backend: &'static str, _rule: &'static str) {}
 #[cfg(not(feature = "otlp"))]
+fn emit_storage_background_error(_backend: &'static str, _reason: &'static str) {}
+#[cfg(not(feature = "otlp"))]
 fn emit_commit_gate_wait(_backend: &'static str, _seconds: f64) {}
 #[cfg(not(feature = "otlp"))]
 fn emit_conflict_tracker_size(
@@ -247,6 +277,7 @@ fn emit_conflict_tracker_size(
 #[cfg(feature = "otlp")]
 struct Instruments {
     storage_conflicts: Counter<u64>,
+    storage_background_errors: Counter<u64>,
     retry_attempts: Counter<u64>,
     retry_successes: Counter<u64>,
     retry_exhaustions: Counter<u64>,
@@ -269,6 +300,10 @@ pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -
         storage_conflicts: meter
             .u64_counter("defradb.storage.transaction.conflicts")
             .with_description("Storage transaction conflicts")
+            .build(),
+        storage_background_errors: meter
+            .u64_counter("defradb.storage.background.errors")
+            .with_description("Failed background storage jobs")
             .build(),
         retry_attempts: meter
             .u64_counter("defradb.transaction.retry.attempts")

@@ -1,6 +1,8 @@
 //! regolith-backed storage: the one backend, on every target.
 
+mod background_errors;
 mod config;
+mod fd_limit;
 mod handle;
 mod head_cache;
 pub(crate) mod iterator;

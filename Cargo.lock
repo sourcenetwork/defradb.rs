@@ -12811,6 +12811,7 @@ dependencies = [
  "proptest",
  "rapidhash",
  "regolith",
+ "rlimit",
  "schema",
  "serde",
  "serde_json",

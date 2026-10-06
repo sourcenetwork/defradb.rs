@@ -28,7 +28,8 @@ pub use handle::TelemetryHandle;
 pub use metrics::{
     conflict_metrics_snapshot, record_commit_gate_wait, record_conflict_tracker_size,
     record_escaped_conflict, record_retry_attempt, record_retry_exhaustion, record_retry_success,
-    record_storage_conflict, ConflictMetricsSnapshot, RetryLayer, RetryLayerSnapshot,
+    record_storage_background_error, record_storage_conflict, storage_background_error_count,
+    ConflictMetricsSnapshot, RetryLayer, RetryLayerSnapshot,
 };
 
 #[cfg(feature = "otlp")]
