@@ -55,6 +55,7 @@ impl Server {
         let (reports, reports_rx) = kovan_channel::unbounded();
 
         let max_wants = config.max_queued_wantlist_entries_per_peer;
+        let lookup_timeout = config.message_lookup_timeout;
         let engine = Engine::new(&config, store.clone(), network, reports);
         tokio::spawn(receive::run(
             inbound_rx,
@@ -62,6 +63,7 @@ impl Server {
             store,
             config.peer_block_request_filter,
             max_wants,
+            lookup_timeout,
         ));
         tokio::spawn(engine.run(commands_rx, reports_rx));
 

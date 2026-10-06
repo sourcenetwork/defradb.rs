@@ -1,12 +1,16 @@
 //! The serial receive stage: classifies each inbound message and looks up block sizes before the engine sees it.
 //!
-//! Messages are handled strictly in arrival order, one at a time, so a slow filter or store delays later
-//! messages rather than reordering them.
+//! Messages are handled strictly in arrival order, one at a time. Each message has one lookup deadline, so a
+//! hung filter or store costs it at most that long: unanswered checks fall back to denied and sizes to absent.
+
+use std::future::Future;
+use std::time::Duration;
 
 use cid::Cid;
 use kovan_channel::{bounded, unbounded};
 use libp2p::PeerId;
-use tracing::debug;
+use tokio::time::{timeout_at, Instant};
+use tracing::{debug, warn};
 
 use super::engine::{Command, Received, Want};
 use super::filter::PeerBlockRequestFilter;
@@ -21,12 +25,21 @@ pub(crate) async fn run<S: Store>(
     store: S,
     filter: Option<Box<dyn PeerBlockRequestFilter>>,
     max_wants: usize,
+    lookup_timeout: Duration,
 ) {
     while let Some((peer, message)) = inbound.recv_async().await {
         if message.is_empty() {
             debug!(%peer, "received empty message");
         }
-        let received = prepare(peer, &message, &store, filter.as_deref(), max_wants).await;
+        let received = prepare(
+            peer,
+            &message,
+            &store,
+            filter.as_deref(),
+            max_wants,
+            lookup_timeout,
+        )
+        .await;
         commands.send(Command::Received(received));
     }
 }
@@ -37,7 +50,10 @@ async fn prepare<S: Store>(
     store: &S,
     filter: Option<&dyn PeerBlockRequestFilter>,
     max_wants: usize,
+    lookup_timeout: Duration,
 ) -> Received {
+    let deadline = Instant::now() + lookup_timeout;
+    let mut fallbacks = 0usize;
     let mut cancels: Vec<Cid> = Vec::new();
     let mut denials = Vec::new();
     let mut allowed = Vec::new();
@@ -48,7 +64,13 @@ async fn prepare<S: Store>(
             continue;
         }
         let permitted = match filter {
-            Some(filter) => filter(&peer, &entry.cid).await,
+            Some(filter) => match before(deadline, filter(&peer, &entry.cid)).await {
+                Some(verdict) => verdict,
+                None => {
+                    fallbacks += 1;
+                    false
+                }
+            },
             None => true,
         };
         if !permitted {
@@ -60,11 +82,21 @@ async fn prepare<S: Store>(
 
     let mut wants = Vec::with_capacity(allowed.len());
     for entry in allowed {
-        let size = store.get_size(&entry.cid).await.ok();
+        let size = match before(deadline, store.get_size(&entry.cid)).await {
+            Some(result) => result.ok(),
+            None => {
+                fallbacks += 1;
+                None
+            }
+        };
         wants.push(Want {
             entry: entry.clone(),
             size,
         });
+    }
+
+    if fallbacks > 0 {
+        warn!(%peer, fallbacks, "message lookups hit the deadline");
     }
 
     Received {
@@ -74,4 +106,11 @@ async fn prepare<S: Store>(
         denials,
         wants,
     }
+}
+
+async fn before<T>(deadline: Instant, lookup: impl Future<Output = T>) -> Option<T> {
+    if Instant::now() >= deadline {
+        return None;
+    }
+    timeout_at(deadline, lookup).await.ok()
 }

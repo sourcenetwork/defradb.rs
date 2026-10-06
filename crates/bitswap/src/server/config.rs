@@ -1,6 +1,7 @@
 //! Server tuning.
 
 use std::fmt;
+use std::time::Duration;
 
 use super::filter::PeerBlockRequestFilter;
 
@@ -20,6 +21,8 @@ pub struct ServerConfig {
     pub max_replace_size: usize,
     /// Wants one peer may keep queued; 0 disables the cap.
     pub max_queued_wantlist_entries_per_peer: usize,
+    /// The most time one inbound message may spend on filter checks and block-size lookups.
+    pub message_lookup_timeout: Duration,
 }
 
 impl fmt::Debug for ServerConfig {
@@ -41,6 +44,7 @@ impl fmt::Debug for ServerConfig {
                 "max_queued_wantlist_entries_per_peer",
                 &self.max_queued_wantlist_entries_per_peer,
             )
+            .field("message_lookup_timeout", &self.message_lookup_timeout)
             .finish()
     }
 }
@@ -55,6 +59,7 @@ impl Default for ServerConfig {
             max_outstanding_bytes_per_peer: 1 << 20,
             max_replace_size: 1024,
             max_queued_wantlist_entries_per_peer: 1024,
+            message_lookup_timeout: Duration::from_secs(10),
         }
     }
 }
