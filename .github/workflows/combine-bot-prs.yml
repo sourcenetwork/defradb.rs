@@ -97,7 +97,7 @@ jobs:
               const date = new Date().toISOString().slice(0, 10);
               await github.rest.pulls.create({
                 owner, repo,
-                title: `bot: Combine dependabot PRs ${date}`,
+                title: `bot: Combine ${BRANCH_PREFIX} PRs ${date}`,
                 head,
                 base: baseRef,
                 body,

@@ -17,6 +17,8 @@ expect 2 'feat: One' 'feat: Two'
 
 expect 3 'chore: This title  has  everything     valid except that    its too long'
 expect 3 'bot Bump github.com/alternativesourcenetwork/defradb from 1.1.0.1.0.0 to 1.1.0.1.0.1'
+expect 3 "feat: A$(printf 'a%.0s' {1..54})"
+expect 0 "feat: A$(printf 'a%.0s' {1..53})"
 
 expect 4 'chore This title has no colon'
 expect 4 'bot Bump tokio from 1.2.3 to 1.2.4'
@@ -32,10 +34,12 @@ expect 6 'fix(query):No space after scope'
 
 expect 7 'ci: lowercase first character after label'
 expect 7 'fix(query): lowercase after scope'
+expect 7 'feat: Ångström support'
 
 expect 8 'ci: Last character should not be period.'
 expect 8 'ci: Last character is a space '
 expect 8 'ci: Last character is a `tick`'
+expect 8 'feat: Support for ångströmé'
 
 expect 9 'bug: This is an invalid label'
 expect 9 'bug(p2p): This is an invalid label'

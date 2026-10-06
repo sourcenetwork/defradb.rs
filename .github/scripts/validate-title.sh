@@ -4,6 +4,9 @@
 # optional `(scope)` and breaking-change `!`: `fix(query)!: Capitalized summary`.
 # Exit codes match the Go script so failures read the same in both repos.
 
+# Character ranges below must mean ASCII, not the locale's collation order.
+export LC_COLLATE=C
+
 readonly BOT_LABEL="bot"
 readonly -a VALID_LABELS=(chore ci docs feat fix perf refactor test tools "${BOT_LABEL}")
 readonly HEADER_RE='^([^:(!]+)(\([^()]+\))?(!)?:(.*)$'
@@ -43,12 +46,12 @@ if [ "${DESCRIPTION:0:1}" != " " ]; then
     exit 6
 fi
 
-if [[ "${DESCRIPTION:1:1}" != [[:upper:]] ]]; then
+if [[ "${DESCRIPTION:1:1}" != [A-Z] ]]; then
     echo "Error: First character after the label is not an uppercase alphabet."
     exit 7
 fi
 
-if [[ "${DESCRIPTION: -1}" != [[:alnum:]] ]]; then
+if [[ "${DESCRIPTION: -1}" != [a-zA-Z0-9] ]]; then
     echo "Error: Last character is an invalid character."
     exit 8
 fi
