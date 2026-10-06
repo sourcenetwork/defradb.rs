@@ -71,10 +71,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 # test can link it.
 futures.workspace = true
 
-# Raises the open-file soft limit before regolith opens (backends::regolith::fd_limit).
-[target.'cfg(unix)'.dependencies]
-rlimit = "0.9"
-
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 

@@ -14,7 +14,6 @@ use regolith::{OptimisticTransactionDb, StreamOptions};
 
 use super::background_errors::BackgroundErrorListener;
 use super::config::RegolithStoreOptions;
-use super::fd_limit;
 use super::head_cache::{self, SharedHeadCache};
 use super::transaction::RegolithTxn;
 use crate::backends::shared::TransactionStatsHandle;
@@ -69,7 +68,6 @@ impl RegolithStore {
                 })?;
             }
         }
-        fd_limit::raise_nofile_limit();
         let mut engine = options.engine.clone();
         engine
             .listeners

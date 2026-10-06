@@ -115,6 +115,10 @@ optional = true
 version = "0.9"
 optional = true
 
+# Raises the open-file soft limit at `start` (commands::start::fd_limit).
+[target.'cfg(unix)'.dependencies]
+rlimit = "0.9"
+
 [features]
 default = []
 release-full = ["postgres", "vera", "orbis"]

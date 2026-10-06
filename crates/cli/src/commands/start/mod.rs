@@ -1,5 +1,6 @@
 //! Start command implementation
 
+mod fd_limit;
 mod node;
 mod node_identity;
 mod p2p;
@@ -336,6 +337,10 @@ impl StartArgs {
         if self.signer_type.as_deref() == Some("orbis") {
             self.setup_orbis_signer(&user_identity).await?;
         }
+
+        // regolith keeps a descriptor per live SSTable; a service manager's
+        // default soft limit (256 under macOS launchd) runs out.
+        fd_limit::raise_nofile_limit();
 
         // Start the node
         let node = Node::new(config, user_identity).await?;
