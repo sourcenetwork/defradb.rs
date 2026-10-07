@@ -216,17 +216,19 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 .has_restart_safe_root_authority(peer_id, root_cid)
                 .await;
         let granted_cids = if rooted_grant {
-            match crate::sync::car_authorization::requested_descendants(
-                self.manager.blockstore().as_ref(),
-                *root_cid,
-                blocks
-                    .blocks
-                    .iter()
-                    .map(|(cid, _)| *cid)
-                    .chain(blocks.oversized_blocks.iter().map(|(cid, _)| *cid))
-                    .collect(),
-            )
-            .await
+            match self
+                .rooted_authorization
+                .walk(
+                    self.manager.blockstore().as_ref(),
+                    *root_cid,
+                    blocks
+                        .blocks
+                        .iter()
+                        .map(|(cid, _)| *cid)
+                        .chain(blocks.oversized_blocks.iter().map(|(cid, _)| *cid))
+                        .collect(),
+                )
+                .await
             {
                 Ok(cids) => Some(cids),
                 Err(error) => {
