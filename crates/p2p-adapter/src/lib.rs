@@ -19,6 +19,8 @@ mod libp2p;
 pub mod manage;
 mod read_gate;
 mod replication_events;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod replicator_installs;
 mod replicator_status;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod retry;
