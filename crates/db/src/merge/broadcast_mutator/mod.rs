@@ -34,7 +34,7 @@ use self::broadcast::{broadcast_with_retry_with_creator, log_broadcast_failure};
 use crate::block::builder::{build_blocks_from_document, BlockResult};
 use crate::block::reader::read_latest_composite_block;
 use crate::database::DB;
-use crate::write::autocommit::AutoCommitMutator;
+use crate::write::mutator::autocommit::AutoCommitMutator;
 
 fn capture_marker_error(slot: &mut Option<String>, result: p2p::error::Result<()>) {
     if let Err(error) = result {

@@ -5,10 +5,8 @@
 //! without explicit transaction management while still providing proper
 //! transactional semantics per operation.
 
-pub mod batch;
 mod create;
 mod delete;
-pub(crate) mod helpers;
 mod read;
 pub mod update;
 
@@ -22,7 +20,7 @@ use std::sync::{Arc, OnceLock};
 use storage::corekv::Store;
 use tracing::warn;
 
-use crate::block::builder::{write_collection_block, write_delete_block, write_document_blocks};
+use crate::block::builder::write_delete_block;
 use crate::collection::Collection;
 use crate::database::DB;
 use crate::index::IndexManager;
@@ -32,10 +30,10 @@ use crate::txn::DbTxn;
 /// Captured per-mutation commit data: the document block (cid + bytes) plus,
 /// for branchable collections, the collection block (cid + bytes).
 pub(super) type CommitArtifacts = (Cid, Bytes, Option<(Cid, Bytes)>);
-use defra_core::encryption::get_encryption_config;
 use defra_core::signing::get_signing_config;
 
-pub use batch::BatchMutator;
+use crate::write::mutator::batch::BatchMutator;
+use crate::write::persist::ensure_collection_is_active;
 
 /// Document mutator that auto-commits transactions for each operation.
 ///
@@ -180,7 +178,10 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         collection_name: &str,
         doc: Document,
     ) -> query::error::Result<CreateResult> {
-        self.create_impl(collection_name, doc).await
+        let mut created = self.create_many_impl(collection_name, vec![doc]).await?;
+        created
+            .pop()
+            .ok_or_else(|| query::error::QueryError::execution("create produced no document"))
     }
 
     async fn create_many(
@@ -230,5 +231,76 @@ impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
         doc_id: &DocID,
     ) -> query::error::Result<Option<Document>> {
         self.get_for_update_impl(collection_name, doc_id).await
+    }
+}
+
+impl<S: Store + 'static> AutoCommitMutator<S> {
+    /// The collection's read guard, then its definition: resolved after the
+    /// guard, so a patch or an index committed under the write guard is the
+    /// definition this write uses.
+    pub(super) async fn guarded_collection(
+        &self,
+        collection_name: &str,
+    ) -> query::error::Result<(async_lock::RwLockReadGuardArc<()>, Collection)> {
+        let guard = self
+            .db
+            .collection_read_guard_by_name(collection_name)
+            .await
+            .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+            .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
+        let collection = self.get_collection_or_err(collection_name)?;
+        ensure_collection_is_active(&self.db, collection_name, &collection)?;
+        Ok((guard, collection))
+    }
+
+    /// Get collection from DB cache or return a not-found error.
+    pub(super) fn get_collection_or_err(
+        &self,
+        collection_name: &str,
+    ) -> query::error::Result<Collection> {
+        self.db
+            .get_collection(collection_name)
+            .map_err(|e| query::error::QueryError::execution(format!("db error: {}", e)))?
+            .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))
+    }
+
+    /// Emit update events for subscriptions, carrying the actual block bytes
+    /// so downstream consumers can traverse the DAG without an extra fetch.
+    ///
+    /// For branchable collections, emits a second event keyed by collection_id
+    /// using the collection block's own cid/bytes (Go publishes the collection
+    /// block separately at internal/db/collection.go:789).
+    pub(super) fn emit_update_events(
+        &self,
+        collection: &Collection,
+        doc_id_str: &str,
+        doc_cid: Cid,
+        doc_block: Bytes,
+        collection_block: Option<(Cid, Bytes)>,
+    ) {
+        if let Some(bus) = self.db.event_bus() {
+            let update = Update::new(
+                doc_id_str.to_string(),
+                doc_cid,
+                collection.collection_id().to_string(),
+                doc_block,
+                false, // is_retry
+                false, // is_relay (local mutation)
+            );
+            bus.publish(Message::update(update));
+
+            if let Some((col_cid, col_block)) = collection_block {
+                let col_update = Update::new_with_subject_doc_id(
+                    String::new(), // empty doc_id → keyed by collection_id
+                    doc_id_str.to_string(),
+                    col_cid,
+                    collection.collection_id().to_string(),
+                    col_block,
+                    false,
+                    false,
+                );
+                bus.publish(Message::update(col_update));
+            }
+        }
     }
 }

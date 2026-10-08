@@ -97,10 +97,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             crate::event::arrivals::record(
                 systemstore,
                 collection.resolved_root_id(),
+                context.doc_short_id,
                 context.doc_id_str,
             )
             .await
             .map_err(MergeError::Database)?;
+            state.arrival = Some(collection.resolved_root_id());
         }
 
         let short_id = collection.resolved_root_id();

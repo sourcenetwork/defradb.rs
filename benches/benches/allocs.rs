@@ -80,7 +80,7 @@ fn main() {
     let db = Arc::new(rt.block_on(DB::open_from_arc(store)).expect("a database"));
     rt.block_on(db.create_collection(collection_version()))
         .expect("the collection");
-    let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
+    let mutator = db::write::mutator::autocommit::AutoCommitMutator::new(db.clone());
     let fetcher = db::AutoCommitFetcher::new(db.clone());
 
     // The document set both the write and the read rows work over. Seeded

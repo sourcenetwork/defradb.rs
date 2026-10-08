@@ -123,8 +123,8 @@ async fn test_composite_block_has_field_links() {
     }
 }
 
-#[test]
-fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries() {
+#[tokio::test]
+async fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries() {
     let mut doc = Document::new();
     doc.set("secret", NormalValue::String("classified".to_string()));
 
@@ -133,19 +133,58 @@ fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries
         encrypt_fields: vec!["secret".to_string()],
     };
 
-    let computed = compute_document_blocks(
+    let db = db::DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+    let txn = db.new_txn(true).await.unwrap();
+    let identity = DocStorageIdentity::new(1, 1);
+    let plan = plan_document_blocks(
+        &txn.blockstore().unwrap(),
+        &txn.headstore().unwrap(),
         &doc,
-        "schema-v1",
-        DocStorageIdentity::new(1, 1),
+        identity,
+        None,
         Some(&enc),
         None,
     )
-    .expect("blocks should compute");
+    .await
+    .expect("plan should resolve");
+    let computed = compute_document_blocks(&doc, "schema-v1", identity, &plan, None)
+        .expect("blocks should compute");
 
     assert!(
         computed.blockstore_entries.len() >= 3,
         "encryption metadata should be included in blockstore entries alongside field and composite blocks"
     );
+}
+
+#[tokio::test]
+async fn test_update_keeps_doc_id_without_composite_heads() {
+    let mut doc = Document::new();
+    doc.set("name", NormalValue::String("Erin".to_string()));
+    let created = build_blocks_from_document(&doc, "schema-v1", &make_test_blockstore())
+        .await
+        .unwrap();
+    doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
+    doc.set("name", NormalValue::String("Erin B".to_string()));
+
+    let db = db::DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+    let txn = db.new_txn(true).await.unwrap();
+    let identity = DocStorageIdentity::new(1, 1);
+    let modified: rapidhash::RapidHashSet<String> = ["name".to_string()].into_iter().collect();
+    let plan = plan_document_blocks(
+        &txn.blockstore().unwrap(),
+        &txn.headstore().unwrap(),
+        &doc,
+        identity,
+        Some(&modified),
+        None,
+        None,
+    )
+    .await
+    .expect("plan should resolve");
+    let computed = compute_document_blocks(&doc, "schema-v1", identity, &plan, None)
+        .expect("blocks should compute");
+
+    assert_eq!(computed.block_result.doc_id, created.doc_id);
 }
 
 struct LocalSecp256r1Signer {

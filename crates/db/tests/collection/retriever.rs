@@ -1,6 +1,6 @@
 use db::collection::retriever::*;
 use db::database::DB;
-use db::write::doc::DbDocMutator;
+use db::write::mutator::txn::DbDocMutator;
 use document::Document;
 use query::mutator::DocMutator;
 use schema::CollectionVersion;

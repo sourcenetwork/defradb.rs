@@ -10,7 +10,7 @@ use crdt::NumericKind;
 use db::database::DB;
 use db::index::IndexManager;
 use db::txn::registry::DbTransactionRegistry;
-use db::write::doc::*;
+use db::write::mutator::txn::*;
 use document::DocID;
 use document::Document;
 use document::NormalValue;

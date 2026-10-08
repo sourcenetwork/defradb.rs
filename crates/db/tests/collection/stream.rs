@@ -2,7 +2,7 @@ use crate::common::schema::test_schema;
 use async_lock::Mutex;
 use db::database::DB;
 use db::read::doc::DbDocFetcher;
-use db::write::doc::DbDocMutator;
+use db::write::mutator::txn::DbDocMutator;
 use document::Document;
 use document::NormalValue;
 use query::mutator::DocMutator;

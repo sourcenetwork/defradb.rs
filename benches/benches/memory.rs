@@ -80,7 +80,7 @@ async fn run_case(profile: &str, workload: &str) {
     db.create_collection(collection_version())
         .await
         .expect("the collection to register");
-    let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
+    let mutator = db::write::mutator::autocommit::AutoCommitMutator::new(db.clone());
     for seq in 0..DOCS {
         let mut doc = Document::new();
         doc.set("name", NormalValue::String(format!("name-{seq}")));

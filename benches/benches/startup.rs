@@ -71,7 +71,7 @@ async fn seed(path: &Path, options: RegolithStoreOptions, count: usize, docs: us
             .expect("the collection to register");
     }
     if count > 0 && docs > 0 {
-        let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
+        let mutator = db::write::mutator::autocommit::AutoCommitMutator::new(db.clone());
         let name = collection_version(0).name.clone();
         for seq in 0..docs {
             let mut doc = Document::new();

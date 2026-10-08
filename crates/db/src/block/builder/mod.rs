@@ -3,18 +3,21 @@
 //! Creates proper Block structures with CRDT delta payloads for P2P synchronization.
 //! Matches Go DefraDB's block format for wire compatibility.
 //!
-//! This module provides two main functions:
-//! - `build_blocks_from_document`: For P2P broadcast (uses external blockstore)
-//! - `write_document_blocks`: For FFI/local storage (uses transaction stores)
+//! Local writes go plan -> compute -> insert: `plan_document_blocks` resolves
+//! everything that needs storage or a KMS, `compute_document_blocks` builds
+//! every block without touching storage, and `insert_computed_blocks` stores
+//! them. `write_document_blocks` runs all three.
 
 mod build;
 pub mod collection;
 mod compute;
+mod plan;
 mod write;
 
 pub use build::build_blocks_from_document;
 pub use collection::write_collection_block;
 pub use compute::{compute_document_blocks, insert_computed_blocks, ComputedBlocks};
+pub use plan::{plan_document_blocks, BlockPlan, DagPosition, FieldPlan, KeyLink, ResolvedKey};
 pub use write::{write_delete_block, write_document_blocks};
 
 use bytes::Bytes;

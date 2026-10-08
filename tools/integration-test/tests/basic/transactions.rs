@@ -580,9 +580,13 @@ async fn rust_txn_discard_publishes_no_events() {
     txn_discard_publishes_no_events(cluster).await;
 }
 
-/// Two overlapping interactive txns creating different documents that share a
-/// field value must not both commit. See crates/db/src/write/doc.rs (#1599).
-async fn txn_create_conflicting_block_aborts_second_commit(cluster: TestCluster) {
+/// Two overlapping interactive txns creating unrelated documents that share a
+/// field value both commit. Their identical LWW field blocks are the same
+/// content-addressed key, but neither txn read anything the other wrote, so
+/// there is no conflict to report. Go aborts the second commit here because its
+/// blockstore checks for a block before putting it; defradb.rs deliberately
+/// diverges from that (#1890).
+async fn txn_creates_sharing_a_field_block_both_commit(cluster: TestCluster) {
     let client = cluster.client(0);
 
     client
@@ -606,33 +610,26 @@ async fn txn_create_conflicting_block_aborts_second_commit(cluster: TestCluster)
         .expect("tx1 create Book By Online");
 
     client.tx_commit(&tx0).expect("tx0 commit");
-    let err = client
-        .tx_commit(&tx1)
-        .expect_err("tx1 commit must abort: both creates write the same rating block");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("transaction conflict"),
-        "expected a transaction conflict, got: {msg}"
-    );
+    client.tx_commit(&tx1).expect("tx1 commit");
 
     let books = client
-        .query("query { Book { name } }")
+        .query("query { Book(order: {name: ASC}) { name rating } }")
         .expect("query Book after commits");
     let books = books["Book"].as_array().expect("Book result not array");
-    assert_eq!(books.len(), 1, "only tx0's Book should survive: {books:?}");
-    assert_eq!(books[0]["name"], "Book By Website");
+    let names: Vec<_> = books.iter().map(|b| b["name"].clone()).collect();
+    assert_eq!(names, vec!["Book By Online", "Book By Website"]);
+    assert!(books.iter().all(|b| b["rating"] == 4.0), "{books:?}");
 }
 
 #[tokio::test]
-async fn rust_txn_create_conflicting_block_aborts_second_commit() {
+async fn rust_txn_creates_sharing_a_field_block_both_commit() {
     let _root = integration_test::workspace_root();
     let cluster = TestCluster::builder().rust_nodes(1).build().await.unwrap();
-    txn_create_conflicting_block_aborts_second_commit(cluster).await;
+    txn_creates_sharing_a_field_block_both_commit(cluster).await;
 }
 
 /// An `encrypt: true` create inside an interactive txn must commit: the KMS
-/// writes the DEK block in its own txn, so reading it back would abort every
-/// encrypted create. See crates/db/src/write/doc.rs (#1599).
+/// writes the DEK block in its own txn, so the create must not read it back.
 async fn txn_encrypted_create_commits(cluster: TestCluster) {
     let client = cluster.client(0);
 

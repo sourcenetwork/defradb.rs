@@ -62,7 +62,9 @@ async fn fixture(count: usize) -> impl QueryExecutor {
         .await
         .expect("the collection to register");
 
-    let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(db.clone()));
+    let mutator = Arc::new(db::write::mutator::autocommit::AutoCommitMutator::new(
+        db.clone(),
+    ));
     // Ten cities and a spread of ages, so a filter selects a tenth of the
     // corpus rather than all of it or none: a predicate nothing matches
     // measures the scan and never the rest of the pipeline.

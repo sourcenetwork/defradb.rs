@@ -45,7 +45,7 @@ async fn seed_user_in_txn(
     name: &str,
     age: Option<i64>,
 ) -> (db::txn::DbTxn<RegolithStore>, document::DocID) {
-    let mutator = db::write::doc::DbDocMutator::new(db.clone(), txn);
+    let mutator = db::write::mutator::txn::DbDocMutator::new(db.clone(), txn);
     let mut doc = Document::new();
     doc.set("name", NormalValue::String(name.to_string()));
     if let Some(age) = age {

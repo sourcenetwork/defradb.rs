@@ -12,17 +12,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use storage::corekv::Store;
 
-use super::helpers::{
-    ensure_collection_is_active, register_block_doc_id_mappings, register_created_doc,
-    write_branchable_collection_block, write_local_create, write_local_update,
-};
-use crate::block::builder::DocStorageIdentity;
-use crate::block::builder::{write_delete_block, write_document_blocks};
+use crate::block::builder::write_delete_block;
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::database::DB;
+use crate::event::arrivals::sequence_on_commit;
 use crate::event::emission::register_update_event_callback;
 use crate::txn::DbTxn;
-use defra_core::encryption::get_encryption_config;
+use crate::write::create::{create_documents, TxnStores};
+use crate::write::persist::{ensure_collection_is_active, write_branchable_collection_block};
+use crate::write::update::{embed_update, update_document, CounterWrite};
 use defra_core::signing::get_signing_config;
 
 pub struct BatchMutator<S: Store> {
@@ -178,109 +176,57 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
     async fn create(
         &self,
         collection_name: &str,
-        mut doc: Document,
+        doc: Document,
     ) -> query::error::Result<CreateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let (collection, datastore, systemstore, index_manager) =
+        let (collection, _datastore, _systemstore, index_manager) =
             get_collection_with_index_manager(&self.txn, collection_name).await?;
         self.acquire_collection_read_lock(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
-        let embedding_config = self.db.options().embedding_config();
-
-        crate::search::set_embedding(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            true,
-            None,
-            &embedding_config,
-        )
-        .await
-        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
 
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn; the mapping duplicate check is the gate.
-
-        self.db
-            .validate_downsample_write(&datastore, &systemstore, collection.schema(), &doc, None)
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-        let short_id = collection.resolved_root_id();
-        let schema_version_id = collection.version_id();
-        let enc_config = get_encryption_config();
-        let sign_config = get_signing_config();
-
-        let doc_short_id = self
-            .db
-            .next_doc_short_id()
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        let identity = DocStorageIdentity::new(short_id, doc_short_id);
-
-        let (doc_id, doc_cid, doc_block, col_block_data) = {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
-
-            let block_result = write_document_blocks(
-                &blockstore,
-                &headstore,
-                &doc,
-                schema_version_id,
-                identity,
-                None,
-                enc_config.as_ref(),
-                sign_config.as_ref(),
-                None,
-            )
-            .await
-            .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to write document blocks for create on collection {}: {}",
-                    collection_name, e
-                ))
+        let stores = {
+            let mut txn_guard = self.txn.lock().await;
+            let txn = txn_guard.as_mut().ok_or_else(|| {
+                query::error::QueryError::execution(
+                    "mutation batch transaction is no longer active",
+                )
             })?;
-
-            let doc_id = register_created_doc(
-                &systemstore,
-                &datastore,
-                &collection,
-                doc_short_id,
-                &block_result,
-            )
-            .await?;
-            doc.set_id(doc_id.clone());
-
-            write_local_create(&datastore, &collection, &doc, doc_short_id, &index_manager).await?;
-
-            let col_block_data = write_branchable_collection_block(
-                &self.db,
-                collection_name,
-                &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                sign_config.as_ref(),
-            )
-            .await?;
-
-            (doc_id, block_result.cid, block_result.block, col_block_data)
+            sequence_on_commit(txn, &self.db, collection.resolved_root_id())
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+            TxnStores::of(txn)?
         };
+        let created = create_documents(
+            &self.db,
+            &stores,
+            collection_name,
+            &collection,
+            &index_manager,
+            vec![doc],
+        )
+        .await?
+        .pop()
+        .ok_or_else(|| query::error::QueryError::execution("create produced no document"))?;
+        drop(stores);
 
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
-            doc_id.to_string(),
-            doc_cid,
-            doc_block.clone(),
-            col_block_data.clone(),
+            created.doc_id.to_string(),
+            created.cid,
+            created.block.clone(),
+            created.collection_block.clone(),
         )
         .await?;
 
-        let mut result = CreateResult::with_commit(doc_id, doc, doc_cid, doc_block);
-        if let Some((col_cid, col_bytes)) = col_block_data {
+        let mut result =
+            CreateResult::with_commit(created.doc_id, created.doc, created.cid, created.block);
+        if let Some((col_cid, col_bytes)) = created.collection_block {
             result.broadcast_cid = Some(col_cid);
             result.broadcast_block = Some(col_bytes);
         }
@@ -298,25 +244,11 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let (collection, datastore, systemstore, index_manager) =
+        let (collection, _datastore, systemstore, index_manager) =
             get_collection_with_index_manager(&self.txn, collection_name).await?;
         self.acquire_collection_read_lock(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
-        let embedding_config = self.db.options().embedding_config();
-
-        let generated = crate::search::set_embedding(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            false,
-            Some(&modified_fields),
-            &embedding_config,
-        )
-        .await
-        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
-
-        for field in generated {
-            modified_fields.insert(field);
-        }
+        embed_update(&self.db, &collection, &mut doc, &mut modified_fields).await?;
 
         let doc_id = doc
             .id()
@@ -337,73 +269,30 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         // merges/writes on the canonical document, held until the batch commits.
         self.ensure_doc_guard(&canonical_doc_id.to_string()).await;
 
-        self.db
-            .validate_downsample_write(
-                &datastore,
-                &systemstore,
-                collection.schema(),
-                &doc,
-                Some(&modified_fields),
-            )
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-        write_local_update(
-            &datastore,
+        let stores = {
+            let txn_guard = self.txn.lock().await;
+            let txn = txn_guard.as_ref().ok_or_else(|| {
+                query::error::QueryError::execution(
+                    "mutation batch transaction is no longer active",
+                )
+            })?;
+            TxnStores::of(txn)?
+        };
+        let updated = update_document(
+            &self.db,
+            &stores,
+            collection_name,
             &collection,
+            &index_manager,
             &mut doc,
             doc_short_id,
-            &index_manager,
+            &modified_fields,
+            CounterWrite::Now,
         )
         .await?;
-
-        let short_id = collection.resolved_root_id();
-        let schema_version_id = collection.version_id();
-        let enc_config = get_encryption_config();
-        let sign_config = get_signing_config();
-
-        let (doc_cid, doc_block, col_block_data) = {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
-
-            let block_result = write_document_blocks(
-                &blockstore,
-                &headstore,
-                &doc,
-                schema_version_id,
-                DocStorageIdentity::new(short_id, doc_short_id),
-                Some(&modified_fields),
-                enc_config.as_ref(),
-                sign_config.as_ref(),
-                None,
-            )
-            .await
-            .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to write document blocks for update on collection {}: {}",
-                    collection_name, e
-                ))
-            })?;
-
-            register_block_doc_id_mappings(
-                &systemstore,
-                &block_result,
-                &canonical_doc_id.to_string(),
-            )
-            .await?;
-
-            let col_block_data = write_branchable_collection_block(
-                &self.db,
-                collection_name,
-                &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                sign_config.as_ref(),
-            )
-            .await?;
-
-            (block_result.cid, block_result.block, col_block_data)
-        };
+        drop(stores);
+        let (doc_cid, doc_block, col_block_data) =
+            (updated.cid, updated.block, updated.collection_block);
 
         if let Some(doc_id) = doc.id() {
             self.register_update_callback(

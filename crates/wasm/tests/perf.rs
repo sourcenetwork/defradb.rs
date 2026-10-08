@@ -108,7 +108,7 @@ async fn document_ops() {
         db.create_collection(collection_version(fields))
             .await
             .expect("the collection to register");
-        let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
+        let mutator = db::write::mutator::autocommit::AutoCommitMutator::new(db.clone());
 
         let started = now();
         let mut ids = Vec::with_capacity(OPS);

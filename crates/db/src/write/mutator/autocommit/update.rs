@@ -1,9 +1,7 @@
-use super::helpers::{
-    register_block_doc_id_mappings, write_branchable_collection_block, write_local_update,
-};
 use super::*;
+use crate::write::create::TxnStores;
+use crate::write::update::{embed_update, update_document, CounterWrite};
 
-use crate::block::builder::DocStorageIdentity;
 use query::runner::DocFetcher;
 
 #[allow(clippy::type_complexity)]
@@ -22,24 +20,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
-        // Generate embeddings if source fields were modified
         let mut doc = doc;
         let mut modified_fields = modified_fields;
-        let embedding_config = self.db.options().embedding_config();
-
-        let generated = crate::search::set_embedding(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            false,
-            Some(&modified_fields),
-            &embedding_config,
-        )
-        .await
-        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
-
-        for field in generated {
-            modified_fields.insert(field);
-        }
+        embed_update(&self.db, &collection, &mut doc, &mut modified_fields).await?;
 
         let input_doc_id = doc
             .id()
@@ -134,30 +117,14 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         doc = current_doc;
 
         let txn = self.new_mutation_txn().await?;
-
-        // Acquire store views up front (dropped before commit); the mutation
-        // itself runs in an async block so errors fall through to the discard.
-        let datastore = txn.datastore().map_err(|e| {
-            query::error::QueryError::execution(format!(
-                "failed to get datastore for collection '{}': {}",
-                collection_name, e
-            ))
-        })?;
-        let systemstore = txn.systemstore().map_err(|e| {
-            query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
-        })?;
-        let blockstore = txn.blockstore().map_err(|e| {
-            query::error::QueryError::execution(format!("failed to get blockstore: {}", e))
-        })?;
-        let headstore = txn.headstore().map_err(|e| {
-            query::error::QueryError::execution(format!("failed to get headstore: {}", e))
-        })?;
-
+        let stores = TxnStores::of(&txn);
         let result: query::error::Result<CommitArtifacts> = async {
-            // Create an IndexManager for index maintenance
-            let short_id = collection.resolved_root_id();
+            let stores = match &stores {
+                Ok(stores) => stores,
+                Err(e) => return Err(query::error::QueryError::execution(e.to_string())),
+            };
             let index_manager = IndexManager::from_indexes(
-                short_id,
+                collection.resolved_root_id(),
                 collection.schema(),
                 collection.write_indexes(),
             )
@@ -169,7 +136,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             })?;
 
             let (doc_short_id, canonical_doc_id) = collection
-                .require_doc_identity(&systemstore, &input_doc_id)
+                .require_doc_identity(&stores.systemstore, &input_doc_id)
                 .await
                 .map_err(|e| match e {
                     crate::error::Error::DocumentNotFound(id) => {
@@ -179,86 +146,22 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 })?;
             doc.set_id(canonical_doc_id);
 
-            self.db
-                .validate_downsample_write(
-                    &datastore,
-                    &systemstore,
-                    collection.schema(),
-                    &doc,
-                    Some(&modified_fields),
-                )
-                .await
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-            // Bundle the counter RMW (#1021) with the doc blob + index write so
-            // the authoritative CRDT accumulation store always advances before the
-            // blob is persisted — enforced by construction in `write_local_update`.
-            write_local_update(
-                &datastore,
-                &collection,
-                &mut doc,
-                doc_short_id,
-                &index_manager,
-            )
-            .await?;
-
-            // Use version_id for collectionVersionID (matches Go's VersionID())
-            let schema_version_id = collection.version_id();
-            // Explicit config from the mutation only. A document created
-            // encrypted keeps its encryption because the block writer
-            // inherits it from the previous block, matching Go's
-            // determineBlockEncryption.
-            let enc_config = get_encryption_config();
-            // Get signing config from thread-local (set by FFI exec_request)
-            let sign_config = get_signing_config();
-
-            let identity = DocStorageIdentity::new(collection.resolved_root_id(), doc_short_id);
-
-            // For update operations, pass the modified fields to only create blocks
-            // for the fields that actually changed
-            let block_result = write_document_blocks(
-                &blockstore,
-                &headstore,
-                &doc,
-                schema_version_id,
-                identity,
-                Some(&modified_fields),
-                enc_config.as_ref(),
-                sign_config.as_ref(),
-                None,
-            )
-            .await
-            .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to write document blocks for update on collection {}: {}",
-                    collection_name, e
-                ))
-            })?;
-
-            if let Some(doc_id) = doc.id() {
-                register_block_doc_id_mappings(&systemstore, &block_result, &doc_id.to_string())
-                    .await?;
-            }
-
-            let col_block_data = write_branchable_collection_block(
+            let updated = update_document(
                 &self.db,
+                stores,
                 collection_name,
                 &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                sign_config.as_ref(),
+                &index_manager,
+                &mut doc,
+                doc_short_id,
+                &modified_fields,
+                CounterWrite::Now,
             )
             .await?;
-
-            Ok((block_result.cid, block_result.block, col_block_data))
+            Ok((updated.cid, updated.block, updated.collection_block))
         }
         .await;
-
-        drop(datastore);
-        drop(systemstore);
-        drop(blockstore);
-        drop(headstore);
+        drop(stores);
 
         let commit_result = self
             .finish_mutation(txn, result, collection_name, "update")

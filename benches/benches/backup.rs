@@ -55,7 +55,9 @@ async fn fixture(count: usize) -> Fixture {
         .await
         .expect("the collection to register");
 
-    let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(db.clone()));
+    let mutator = Arc::new(db::write::mutator::autocommit::AutoCommitMutator::new(
+        db.clone(),
+    ));
     for seq in 0..count {
         let mut doc = Document::new();
         doc.set("name", NormalValue::String(format!("person-{seq}")));

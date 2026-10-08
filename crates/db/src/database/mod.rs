@@ -402,7 +402,8 @@ impl<S: Store> DB<S> {
         self.load_collections().await?;
         self.initialize_migrations().await?;
         self.migrate_index_format().await?;
-        self.resume_index_backfills().await
+        self.resume_index_backfills().await?;
+        crate::event::arrivals::sequence_all(self).await
     }
 
     /// Set the event bus for subscription notifications.

@@ -66,7 +66,7 @@ fn document(field_count: usize, seq: usize) -> Document {
     doc
 }
 
-type Mutator = db::write::autocommit::AutoCommitMutator<RegolithStore>;
+type Mutator = db::write::mutator::autocommit::AutoCommitMutator<RegolithStore>;
 
 /// A fresh in-memory database with the collection already registered. In
 /// memory on purpose: this measures the write path, and putting a real disk

@@ -98,13 +98,11 @@ impl DocWriteQueue {
         }
     }
 
-    /// Serialize arrival allocation before opening a transaction. The `arrival:`
-    /// prefix is disjoint from content-addressed document IDs. Acquire collection
-    /// guards first, then arrival guards in sorted collection-ID order, then any
-    /// document guards. Explicit transactions retain optimistic conflict handling
-    /// and never acquire this guard after opening their snapshot.
-    pub(crate) async fn acquire_arrival(&self, collection_id: &str) -> MutexGuardArc<()> {
-        self.acquire(&format!("arrival:{collection_id}")).await
+    /// Serialize arrival cursor assignment for one collection. The `arrival:`
+    /// prefix is disjoint from content-addressed document IDs. Taken only by
+    /// `event::arrivals::sequence`, which holds no other guard.
+    pub(crate) async fn acquire_arrival(&self, collection: u32) -> MutexGuardArc<()> {
+        self.acquire(&format!("arrival:{collection}")).await
     }
 
     /// Acquire the multi-document batch gate.

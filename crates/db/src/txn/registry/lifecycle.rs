@@ -110,7 +110,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         ops: &[crate::txn::PendingCounterOp],
     ) -> query::error::Result<()> {
         use crate::collection::loader::load_collection_from_systemstore;
-        use crate::write::autocommit::helpers::apply_pending_counter_op;
+        use crate::write::counter::apply_pending_counter_op;
         use rapidhash::{HashMapExt, RapidHashMap};
 
         // Load each touched collection once (keyed by name) and build its index manager.
@@ -160,7 +160,6 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
                 &op.field,
                 op.base.as_ref(),
                 &op.delta,
-                op.is_create,
             )
             .await?;
             if let Some(value) = post {

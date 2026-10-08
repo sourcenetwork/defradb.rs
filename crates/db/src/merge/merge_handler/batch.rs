@@ -120,8 +120,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // takes them, so this can never deadlock against a truncate spanning
         // several collections. Acquired before the per-doc merge queue below.
         let mut batch_collection_ids = Vec::with_capacity(blocks.len());
+        let mut arrival_collections = Vec::with_capacity(blocks.len());
         for block in blocks {
             if let Some(collection) = self.block_collection(&block.collection_id, None).await? {
+                arrival_collections.push(collection.resolved_root_id());
                 batch_collection_ids.push(collection.collection_id().to_string());
             }
         }
@@ -130,11 +132,6 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         let mut _collection_guards = Vec::with_capacity(batch_collection_ids.len());
         for collection_id in &batch_collection_ids {
             _collection_guards.push(self.db.collection_read_guard(collection_id).await?);
-        }
-
-        let mut _arrival_guards = Vec::with_capacity(batch_collection_ids.len());
-        for collection_id in &batch_collection_ids {
-            _arrival_guards.push(self.merge_queue.acquire_arrival(collection_id).await);
         }
 
         // Serialize this batch against concurrent same-doc writes/merges (#1021).
@@ -245,6 +242,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
 
         txn.force_commit().await?;
+        arrival_collections.sort_unstable();
+        arrival_collections.dedup();
+        for collection in arrival_collections {
+            crate::event::arrivals::sequence(&self.db, collection).await;
+        }
 
         // Move batch-merged CIDs into the permanent dedup set
         self.merged_composites
