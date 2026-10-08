@@ -18,6 +18,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     }
 
     // DEFRALEVEL(S7): Once ops are blind operands, gate and guards go away and finalize becomes direct write.
+    // DEFRALEVEL(S10): Commit via regolith txn trait; regolith owns conflict detection/commit, defra only hands it ordered counter ops
     /// Apply the txn's recorded counter ops (#1044) then durably commit.
     ///
     /// LOCK LIFECYCLE — conforms to `proofs/tla/InteractiveTxnCounter.tla` GREEN
@@ -201,7 +202,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             for (field, value) in fields {
                 doc.set(field, value);
             }
-            // DEFRALEVEL(S3): Disappears once reads see their own merges and counter fields resolve from merge store.
+            // DEFRALEVEL(S3): Drop blob correction: needs a post-merge counter read that un-blinds the merge; resolve counters at read (S5)
             collection
                 .update_with_indexes(datastore, &doc, doc_short_id, index_manager)
                 .await
@@ -314,6 +315,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         }
     }
 
+    // DEFRALEVEL(S10): Hand commit to regolith's txn CRUD/conflict API; registry keeps only handle lookup and ownership checks
     async fn commit(
         &self,
         handle: &TransactionHandle,
@@ -332,6 +334,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         self.finalize_and_commit(handle, txn).await
     }
 
+    // DEFRALEVEL(S10): Delegate discard to regolith's txn lifecycle API; drop the take_txn/action_lock ownership dance (pair with commit)
     async fn rollback(
         &self,
         handle: &TransactionHandle,
@@ -355,6 +358,7 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         })
     }
 
+    // DEFRALEVEL(S10): Drop read snapshot via regolith txn release on owning worker; lens write-back stays separate autocommit txns
     async fn finish_implicit_read(
         &self,
         handle: &TransactionHandle,

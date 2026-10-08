@@ -36,7 +36,7 @@ const PENDING_STORE_TXN_MAX_ATTEMPTS: usize = 3;
 /// selective-CAR attempt, so this durable list must remain bounded too.
 pub(crate) const MAX_PENDING_DAG_ALTERNATE_PROVIDERS: usize = 3;
 
-// DEFRALEVEL(S8): Consider removing per-root keys; blind puts should stop conflicting under DefraLevel.
+// DEFRALEVEL(S8): Keep per-root keys (Ordinary); differing puts/deletes to a root still conflict; fold retry into S8 safety net
 async fn retry_pending_store_conflicts<T, F, Fut>(
     operation: &'static str,
     mut attempt: F,
@@ -198,6 +198,7 @@ pub trait PendingDagStorage: MaybeSendSync {
     async fn remove_quarantined(&self, root_cid: &Cid) -> Result<()>;
 }
 
+// DEFRALEVEL(S10): Hand txn lifecycle + conflict retry to regolith; keep only pending/quarantine key+value encoding here
 /// `PendingDagStorage` over the systemstore keyspace (`/p2p/pending_dag/`).
 pub struct PendingDagStore<S: Store> {
     systemstore: Systemstore<S>,
@@ -210,6 +211,7 @@ impl<S: Store> PendingDagStore<S> {
         }
     }
 
+    // DEFRALEVEL(S10): Single-key txn+set/delete+commit and local retry loop become one regolith write op that owns conflicts
     async fn write_value(
         &self,
         operation: &'static str,
@@ -250,6 +252,7 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
             .filter(|old| *old != root_cid)
             .map(|old| P2PPendingDagKey::new(old.to_string()).bytes());
         let value = record.to_bytes()?;
+        // DEFRALEVEL(S10): Hand put-new/delete-old to a regolith write-txn trait; regolith owns begin/commit and conflict retry
         retry_pending_store_conflicts("pending_store.replace_scope_head", || async {
             let mut txn = self.systemstore.new_txn(false).await?;
             txn.set(&new_key, &value).await?;
@@ -268,6 +271,7 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
             .await
     }
 
+    // DEFRALEVEL(S10): Swap new_txn(true)+iterator+close for a regolith snapshot prefix-scan trait call; keep only CID/record decode
     async fn load_all(&self) -> Result<Vec<(Cid, PersistedPendingDag)>> {
         let txn = self
             .systemstore
@@ -311,6 +315,7 @@ impl<S: Store + 'static> PendingDagStorage for PendingDagStore<S> {
         Ok(records)
     }
 
+    // DEFRALEVEL(S10): Make quarantine an atomic move (put quarantined + delete pending_dag in one regolith txn); drop caller-ordered 2 writes
     async fn quarantine(&self, root_cid: &Cid, entry: &PersistedQuarantinedDag) -> Result<()> {
         let key = P2PQuarantinedDagKey::new(root_cid.to_string());
         let value = entry.to_bytes()?;

@@ -198,7 +198,7 @@ impl DocShortIDToDocIDAliasKey {
 }
 
 impl Key for DocShortIDToDocIDAliasKey {
-    // DEFRALEVEL(S1): Classify as unique-append; key determines bytes.
+    // DEFRALEVEL(S1): Stays Ordinary in phase 1, not ContentAddressed; blind identical rewrites elide (regolith.commit.writes_elided)
     fn bytes(&self) -> Vec<u8> {
         doc_id_index_key(&[
             DOC_SHORT_ID_TO_DOC_ID_ALIAS.as_bytes(),

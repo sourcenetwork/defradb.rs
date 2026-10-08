@@ -121,7 +121,6 @@ impl FullTextIndex {
         self.metadata_prefix(STATS_SHARD_TAG)
     }
 
-    // DEFRALEVEL(S3): Make blind merge operands (delta add); drop the get; classifier handles be_bytes
     fn stats_shard_key(&self, doc_short_id: u64) -> Vec<u8> {
         let mut key = self.stats_shard_prefix();
         key.push((doc_short_id.wrapping_mul(STATS_SHARD_HASH) >> (u64::BITS - u8::BITS)) as u8);
@@ -168,6 +167,7 @@ impl FullTextIndex {
         field_len_delta: i128,
     ) -> Result<()> {
         let key = self.stats_shard_key(doc_short_id);
+        // DEFRALEVEL(S3): Replace get+checked_add+set with one blind merge of the i128 (docs, field_len) delta; merge op sums with overflow check
         let (docs, field_len) = Self::decode_stats_delta(txn.get(&key).await?);
         let docs = docs
             .checked_add(docs_delta)

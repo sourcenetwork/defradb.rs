@@ -203,6 +203,7 @@ async fn handle_se_artifacts_received<S: storage::corekv::Store + 'static>(
     peer_id: String,
     data: Vec<u8>,
 ) {
+    // DEFRALEVEL(S10): SE ingest: replace raw store txn + manual commit with one regolith-owned txn op; node task only hands it bytes
     let mut txn = match store.new_txn(false).await {
         Ok(txn) => txn,
         Err(error) => {
@@ -219,6 +220,7 @@ async fn handle_se_artifacts_received<S: storage::corekv::Store + 'static>(
         }
     };
 
+    // DEFRALEVEL(S10): Raw store txn in libp2p task: route SE artifact write via regolith-owned txn; conflict now drops artifacts
     if let Err(error) = txn.commit().await {
         tracing::warn!(peer_id = %peer_id, error = %error, "failed to commit SE artifacts");
         return;

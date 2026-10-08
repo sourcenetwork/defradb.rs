@@ -159,6 +159,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         let mut index_manager =
             IndexManager::from_collection(short_id, &schema).map_err(|e| format!("{}", e))?;
 
+        // DEFRALEVEL(S10): Move delete_index into a db op like create_index; regolith owns txn+commit, adapter stops writing CollectionKey
         let txn = self
             .database
             .new_txn(false)

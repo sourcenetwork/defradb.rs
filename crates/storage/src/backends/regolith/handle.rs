@@ -2,6 +2,7 @@
 
 use regolith::{OwnedTransaction, Snapshot};
 
+// DEFRALEVEL(S10): Retire Handle: regolith's txn trait owns the ReadOnly-snapshot vs Writable-txn split and the branching on it
 /// A read-only transaction pins a point in time; a writing one begins a
 /// regolith transaction that validates at commit.
 ///

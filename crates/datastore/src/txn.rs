@@ -44,6 +44,7 @@ enum RegisteredCallback {
     },
 }
 
+// DEFRALEVEL(S10): Shrink to txn id + on_success/error/discard hooks over a regolith txn; CRUD, conflicts, commit state go there
 /// BasicTxn wraps a corekv transaction with DefraDB-specific functionality.
 ///
 /// This matches Go's BasicTxn in internal/datastore/txn.go, providing:
@@ -66,6 +67,7 @@ impl BasicTxn {
         id: u64,
         readonly: bool,
     ) -> storage::corekv::Result<Self> {
+        // DEFRALEVEL(S10): Begin through regolith's txn trait; regolith owns txn CRUD and conflicts, BasicTxn keeps only id/state/callbacks
         let txn = store.new_txn(readonly).await?;
         Ok(Self::from_txn(txn, id, readonly))
     }
@@ -255,6 +257,7 @@ impl BasicTxn {
 
         // Callbacks run directly so the runtime's panic strategy stays explicit:
         // unwind propagates in dev/test, and release aborts the process.
+        // DEFRALEVEL(S9): Sync commit on worker can't await; post async success/error callbacks (events, lens, lifecycle) to edge tokio
         for callback in async_fns {
             callback().await;
         }
@@ -296,6 +299,7 @@ impl BasicTxn {
         let shared = Arc::try_unwrap(self.shared_txn).map_err(|_| Error::TxnStillInUse)?;
 
         let txn = shared.into_txn();
+        // DEFRALEVEL(S10): Rollback becomes a call to regolith's txn-lifecycle trait; defra keeps only on_discard callback dispatch
         txn.discard();
 
         self.state = TxnState::Discarded;
@@ -313,6 +317,7 @@ impl BasicTxn {
                 count = callback_count,
                 "Spawning async discard callbacks in background"
             );
+            // DEFRALEVEL(S9): Worker has no tokio context: tokio::spawn panics here; hand async discard callbacks to the edge runtime handle
             for callback in discard_async_fns {
                 #[cfg(not(target_arch = "wasm32"))]
                 tokio::spawn(async move {

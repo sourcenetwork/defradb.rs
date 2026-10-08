@@ -24,6 +24,7 @@ pub use registry::{
     SubscriptionsAccess, GRAPHQL_SUBSCRIPTIONS, NODES, SUBSCRIPTIONS,
 };
 
+// DEFRALEVEL(S10): Collapse one-variant FfiStore to the regolith handle; its async_trait Store forwarding (new_txn/close) goes (S9 sync)
 /// Storage backend enum for FFI nodes.
 ///
 /// The store `DB<FfiStore>` runs on.

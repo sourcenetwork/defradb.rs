@@ -10,6 +10,7 @@ use std::sync::Arc;
 use storage::corekv::{Error, IterOptions, Iterator, Reader, Result, Txn, Writer};
 use storage::namespace::Namespace;
 
+// DEFRALEVEL(S10): Regolith owns SharedTxn's txn CRUD; prefix_key namespacing becomes a regolith keyspace/key-composition trait
 /// Shared transaction wrapper allowing multiple namespace views.
 pub struct SharedTxn {
     // DEFRALEVEL(S9): Replace async RwLock with sync handle; add merge(namespace,key,operand)
@@ -141,6 +142,7 @@ impl SharedTxn {
     }
 }
 
+// DEFRALEVEL(S10): Regolith composes namespace prefixes; NamespaceView becomes a thin key-family handle over regolith's txn trait
 /// A view into a specific namespace of a shared transaction.
 pub struct NamespaceView {
     txn: Arc<SharedTxn>,
@@ -237,6 +239,7 @@ impl Reader for NamespaceView {
         self.txn.iterator(self.namespace, opts).await
     }
 
+    // DEFRALEVEL(S2): Delete NamespaceView's collection_head_entries forwarder (2nd of 'Delete both' at SharedTxn); drop from Reader
     async fn collection_head_entries(
         &self,
         head_prefix: &[u8],
@@ -248,7 +251,7 @@ impl Reader for NamespaceView {
     }
 }
 
-// DEFRALEVEL(S3): Add merge operand passthrough (S3) and become sync (S9)
+// DEFRALEVEL(S3,S9): Add merge(key, operand) passthrough to txn (S3); Writer drops async_trait, becomes sync (S9, 2 of 3 sites)
 /// Implement Writer trait for NamespaceView to enable index operations.
 ///
 /// The `&mut self` signature is required by the trait, but NamespaceView uses
@@ -265,6 +268,7 @@ impl Writer for NamespaceView {
     }
 }
 
+// DEFRALEVEL(S10): Fold RootView into a regolith-owned root keyspace handle; namespace vs root key composition moves to regolith
 /// A view into the rootstore (no namespace prefix).
 pub struct RootView {
     txn: Arc<SharedTxn>,
@@ -292,6 +296,7 @@ impl RootView {
     }
 }
 
+// DEFRALEVEL(S10): Namespace byte prefixing for all get/set/iter keys moves into a regolith keyspace trait; drop unprefix_key too
 /// Helper to prefix a key with namespace.
 fn prefix_key(namespace: Namespace, key: &[u8]) -> Vec<u8> {
     let mut prefixed = Vec::with_capacity(1 + key.len());
@@ -316,6 +321,7 @@ fn unprefix_key(namespace: Namespace, key: &[u8]) -> Result<Vec<u8>> {
     Ok(key[1..].to_vec())
 }
 
+// DEFRALEVEL(S10): Move namespace-prefixed scan bounds into regolith (namespace as column family/keyspace + regolith Range)
 /// Helper to prefix iterator options.
 fn prefix_iter_options(namespace: Namespace, opts: IterOptions) -> IterOptions {
     let mut prefixed_opts = IterOptions::new();
@@ -339,6 +345,7 @@ fn prefix_iter_options(namespace: Namespace, opts: IterOptions) -> IterOptions {
     prefixed_opts
 }
 
+// DEFRALEVEL(S10): Map Namespace to regolith column families; CF-scoped iterators strip the prefix, so this wrapper goes
 /// Iterator that strips namespace prefix from keys.
 struct NamespacedIterator {
     iter: Box<dyn Iterator>,

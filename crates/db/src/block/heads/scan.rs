@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use storage::corekv::{Error, IterOptions, Iterator, KvPair, Reader, Result};
 use storage::keys::headstore::{HeadstoreColKey, HeadstoreColSuperseded};
 
-// DEFRALEVEL(S2): Keep only lines 21-30 and delete the Rows shim (34-87).
+// DEFRALEVEL(S2): Drop the collection_head_entries branch and Rows shim; keep only the two native prefix iterators.
 pub(super) async fn head_iterators<R: Reader + ?Sized>(
     reader: &R,
     collection: u32,

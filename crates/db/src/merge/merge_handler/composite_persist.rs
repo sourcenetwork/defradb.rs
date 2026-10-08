@@ -38,6 +38,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let doc_id = DocID::from_string(context.doc_id_str)
             .map_err(|e| MergeError::MergeFailed(format!("Invalid doc_id: {}", e)))?;
 
+        // DEFRALEVEL(S5): Validated blob read is the merge RMW; resolve it like collection/index.rs read and diff indexes off old_doc
         let (mut doc, old_doc) = match collection
             .get_with_datastore(datastore, context.doc_short_id, &doc_id)
             .await

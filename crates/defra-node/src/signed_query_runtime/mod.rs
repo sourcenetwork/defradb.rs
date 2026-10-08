@@ -31,6 +31,7 @@ pub(super) async fn execute_with_signing_context(
             }
         })
     };
+    // DEFRALEVEL(S9): Run signed queries as worker-pool jobs carrying signing/identity context; drop spawn_blocking+block_on bridge
     let result = spawn_handle.spawn_blocking(run_query).await;
 
     match result {
@@ -159,6 +160,7 @@ impl SignedQueryRuntime {
         let owner_thread = std::thread::Builder::new()
             .name("defra-signed-query-owner".to_string())
             .spawn(move || {
+                // DEFRALEVEL(S9): Drop this second tokio runtime; run signed queries on the worker pool with signing ctx, not spawn_blocking+block_on
                 let runtime = match tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(1)
                     .thread_name("defra-signed-query")

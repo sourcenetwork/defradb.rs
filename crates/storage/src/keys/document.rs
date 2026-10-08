@@ -31,6 +31,7 @@ pub fn deleted_doc_key(collection_id: &str, doc_short_id: u64) -> Vec<u8> {
     build_key(DELETED_KEY_PREFIX, collection_id, doc_short_id)
 }
 
+// DEFRALEVEL(S10): Expose /d/ + /del/ layout as a defradb key-codec impl of a regolith trait; regolith composes write keys
 fn build_key(prefix: &[u8], collection_id: &str, doc_short_id: u64) -> Vec<u8> {
     let encoded = encode_doc_short_id(doc_short_id);
     let mut key = Vec::with_capacity(prefix.len() + collection_id.len() + 1 + encoded.len());

@@ -75,6 +75,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // pusher was already acked), so dropping a conflicted merge silently
         // loses the document (observed as encrypted filtered-replication poll
         // timeouts on the Linux CI runner).
+        // DEFRALEVEL(S8): Bound by self.db.options().max_txn_retries() (single S8 knob), not hard-coded 5; align attempts vs retries count
         const MAX_TXN_RETRIES: usize = 5;
 
         let mut result = self

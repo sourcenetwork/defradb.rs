@@ -72,6 +72,7 @@ pub unsafe extern "C" fn add_encrypted_index(
             let enc_idx = schema::EncryptedIndexDescription::new(&field_name_str);
 
             // Create a transaction
+            // DEFRALEVEL(S10): Move the FFI-owned txn and the schema/name-key writes into a db update-schema op on regolith; drop the manual commit+reload_cache
             let txn = database
                 .new_txn(false)
                 .await

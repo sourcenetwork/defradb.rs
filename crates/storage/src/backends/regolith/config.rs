@@ -14,7 +14,6 @@ pub struct RegolithStoreOptions {
     /// needs a different memory budget picks it up by construction rather
     /// than by a caller remembering to tune it.
     pub engine: Options,
-    // DEFRALEVEL(S1): Switch default to DefraLevel; install KeyClassifier through store.rs.
     // DEFRALEVEL(S1): Rewrite doc for DefraLevel: blind merges commute, CommutativePrefix drops.
     /// Commit-time validation. Defaults to [`IsolationLevel::RepeatableRead`]:
     /// every point read is validated, which is what the index and docid

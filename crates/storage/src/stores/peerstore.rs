@@ -33,9 +33,12 @@ fn legacy_retry_commit_key(peer_id: &str, collection_id: &str, cid: &str) -> Vec
     format!("{LEGACY_RETRY_COMMIT_PREFIX}{peer_id}/{collection_id}/{cid}").into_bytes()
 }
 
+// DEFRALEVEL(S9): Drop async per-peer RwLock serializing retry vs forget; use ReplicatorKey read conflict or per-peer worker affinity
 type RetryPeerLock = RwLock<()>;
 type RetryPeerLocks = HopscotchMap<String, Weak<RetryPeerLock>, RandomState>;
 
+// DEFRALEVEL(S7): Per-peer async lock serializes RetryIDKey RMW; drop, let S8 retry the Ordinary-key conflicts; keep only delete fence
+// DEFRALEVEL(S10): Per-peer async RwLock serializes RetryInfo read-modify-write; replace with regolith conflict resolution (S9 drop)
 fn retry_peer_lock(peer_id: &str) -> Arc<RetryPeerLock> {
     static LOCKS: OnceLock<RetryPeerLocks> = OnceLock::new();
     let locks = LOCKS.get_or_init(|| HopscotchMap::with_hasher(RandomState::default()));
@@ -67,7 +70,7 @@ pub struct ReplicatorRetryGuard {
     _guard: RwLockWriteGuardArc<()>,
 }
 
-// DEFRALEVEL(S8): Fold into safety net or keep durable-write retry; marker writes per-(peer,doc) shouldn't conflict.
+// DEFRALEVEL(S8): Keep: Ordinary same-(peer,doc) RMWs still conflict; marker Io/Backend retry stays; only conflict-only path may fold
 async fn retry_push_txn<T, F, Fut, P>(mut operation: F, is_retryable: P) -> Result<T>
 where
     F: FnMut() -> Fut,
@@ -137,6 +140,7 @@ async fn wait_before_marker_retry(_attempt: usize) {
     tokio::time::sleep(PUSH_MARKER_IO_RETRY_DELAY * _attempt as u32).await;
 }
 
+// DEFRALEVEL(S10): Keep peer/retry key layout; hand txn CRUD, peer-lock and retry_push_txn conflict handling to regolith traits
 /// Peerstore provides storage for peer and replication metadata
 pub struct Peerstore<S: Store> {
     store: NamespacedStore<S>,
@@ -371,6 +375,7 @@ impl<S: Store> Peerstore<S> {
         collection_id: &str,
         retry_info_bytes: &[u8],
     ) -> Result<()> {
+        // DEFRALEVEL(S10): Submit RetryInfo read-modify-write + scope-marker set as one regolith txn; regolith owns its conflict retry
         let mut txn = self.store.new_txn(false).await?;
         let id_key = ReplicatorRetryIDKey::new(peer_id);
         let requested = super::RetryInfo::from_bytes(retry_info_bytes)

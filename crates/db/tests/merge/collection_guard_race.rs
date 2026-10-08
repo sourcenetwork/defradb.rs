@@ -80,6 +80,7 @@ where
 
     // Stand in for a concurrent truncate/delete/patch, which holds this same
     // guard exclusively for the duration of its own write.
+    // DEFRALEVEL(S7): Rewrite: truncate-vs-merge must conflict via CollectionKey read/fence, no stranded keys; drop guard trace events
     let guards = db
         .collection_write_guards(std::iter::once(collection_id.to_string()))
         .await

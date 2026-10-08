@@ -1,3 +1,4 @@
+// DEFRALEVEL(S7): Delete this file and `mod queue;` in tests/write/main.rs along with DocWriteQueue (after S3, S5, S6)
 use db::write::queue::*;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;

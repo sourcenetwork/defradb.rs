@@ -2,6 +2,7 @@ use crate::corekv::{Result, Store, Txn};
 use async_trait::async_trait;
 use std::sync::Arc;
 
+// DEFRALEVEL(S10): Store pass-through without a namespace, only tests use it (Multistore.root); delete when regolith traits replace Store
 /// RootStore wraps a backend store and provides the foundation for
 /// all specialized stores
 pub struct RootStore<S: Store> {

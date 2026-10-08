@@ -309,6 +309,7 @@ pub unsafe extern "C" fn exec_request_with_signing(
             }
 
             // Execute
+            // DEFRALEVEL(S8): FFI autocommit skips every retry loop and escaped-conflict metric; route through the single S8 safety net
             let response = runner.execute(request).await;
 
             // Serialize response

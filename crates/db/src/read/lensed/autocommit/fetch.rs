@@ -355,6 +355,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
             query::error::QueryError::execution(format!("failed to create txn: {}", e))
         })?;
 
+        // DEFRALEVEL(S9): Same holder change: give CommitsFetcher the worker-owned txn handle; drop TokioMutex and the lock().await discard
         let txn_holder: std::sync::Arc<TokioMutex<Option<DbTxn<S>>>> =
             std::sync::Arc::new(TokioMutex::new(Some(txn)));
 

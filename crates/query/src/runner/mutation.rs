@@ -206,6 +206,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             false
         };
 
+        // DEFRALEVEL(S10): Drop policy-backed carve-out once ACP post-write effects commit in the same regolith txn; batch all multi-mutations
         if mutations.len() > 1 && fetcher_override.is_none() && !has_policy_backed_mutation {
             if let Some(batch) = mutator.begin_batch().await? {
                 let batch_mutator = batch.mutator();

@@ -10,6 +10,7 @@ use bytes::Bytes;
 use cid::Cid;
 use std::sync::Arc;
 
+// DEFRALEVEL(S10): Drop Store/Txn wrapper boilerplate for regolith traits; defradb keeps only block + to-merge index key layout
 /// Blockstore provides storage for IPLD blocks with merge tracking
 pub struct Blockstore<S: Store> {
     store: NamespacedStore<S>,
@@ -55,6 +56,7 @@ impl<S: Store> Store for Blockstore<S> {
     }
 }
 
+// DEFRALEVEL(S10): Drop delegating Txn wrapper; block + to-merge key builds become business writes handed to a regolith txn
 /// Blockstore transaction with merge tracking
 pub struct BlockstoreTxn {
     txn: Box<dyn Txn>,
@@ -62,6 +64,7 @@ pub struct BlockstoreTxn {
 }
 
 impl BlockstoreTxn {
+    // DEFRALEVEL(S10): Hand regolith block + p2p-only ToMergeIndexKey marker as one ordered write batch; regolith composes and commits
     /// Put a block with automatic merge tracking
     pub async fn put_block(&mut self, cid: &Cid, data: &[u8]) -> Result<()> {
         let block_key = BlockstoreKey::new(*cid);
@@ -147,6 +150,7 @@ impl BlockstoreTxn {
         Ok(cids)
     }
 
+    // DEFRALEVEL(S10): Drop the has() probe; hand block + merge-marker keys to regolith as one blind delete set
     /// Delete a block and its merge tracking
     pub async fn delete_block(&mut self, cid: &Cid) -> Result<()> {
         let block_key = BlockstoreKey::new(*cid);

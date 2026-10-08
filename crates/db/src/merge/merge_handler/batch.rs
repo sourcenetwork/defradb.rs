@@ -59,7 +59,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         results
     }
 
-    // DEFRALEVEL(S7): GateContended disappears when batch_gate is dropped; bisect simplifies rare
+    // DEFRALEVEL(S7): Treat commit conflict (force_commit Err) as retryable: whole-batch S8 retry, not bisect; split only bad blocks
     /// Attempt batch merge with binary-split retry on failure.
     ///
     /// Tries the whole batch first. On failure, splits into two halves and
@@ -91,6 +91,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     );
                     self.merge_blocks_individually(blocks).await
                 }
+                // DEFRALEVEL(S8): On TxnConflict (commit or in-batch), retry the whole batch, counted as RetryLayer::Merge; bisect only other errors
                 Err(e) => {
                     if blocks.len() == 1 {
                         return self.merge_blocks_individually(blocks).await;
@@ -135,7 +136,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             _collection_guards.push(self.db.collection_read_guard(collection_id).await?);
         }
 
-        // DEFRALEVEL(S6,S7): Remove loop; S6 removes with other changes, S7 removes S6 loop
+        // DEFRALEVEL(S6,S7): Delete arrival-guard loop (S7) once S6 makes arrivals::record a blind per-doc append with no head RMW
         let mut _arrival_guards = Vec::with_capacity(batch_collection_ids.len());
         for collection_id in &batch_collection_ids {
             _arrival_guards.push(self.merge_queue.acquire_arrival(collection_id).await);
@@ -147,6 +148,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // batch — in SORTED doc-id order so it can never deadlock against any other
         // guard taker (a single-doc update/merge, or another batch). Held for the
         // whole batch txn.
+        // DEFRALEVEL(S7): Delete #1021 comment, batch_doc_ids and _doc_guards; per-doc serialization moves to DefraLevel commit validation
         let mut batch_doc_ids: Vec<String> = blocks.iter().map(|b| b.doc_id.clone()).collect();
         batch_doc_ids.sort();
         batch_doc_ids.dedup();
@@ -171,6 +173,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             }
         }
 
+        // DEFRALEVEL(S10): Route batch txn begin/force_discard/force_commit through regolith txn trait; defra only stages ordered keys
         let txn = self.db.new_txn(false).await?;
         let batch_merged = cid_set();
         let batch_merged_collections = cid_set();
@@ -490,7 +493,6 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     ));
                 };
                 let mut ds = datastore.clone();
-                // DEFRALEVEL(S7): Drop per-doc guards for counter blocks once merges are blind
                 let result = self
                     .process_counter_delta_in_txn(
                         &mut ds,

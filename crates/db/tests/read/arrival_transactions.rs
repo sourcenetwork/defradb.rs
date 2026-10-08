@@ -89,6 +89,7 @@ async fn rollback_is_atomic_and_duplicate_arrivals_do_not_advance() {
     txn.commit().await.unwrap();
 }
 
+// DEFRALEVEL(S6): Reopen must recover sequencer watermark and sequence leftover pending markers; assert cursors via read()
 #[tokio::test]
 async fn cursor_survives_database_reopen() {
     let dir = tempfile::tempdir().unwrap();

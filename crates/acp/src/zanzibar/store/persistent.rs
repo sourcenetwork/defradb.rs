@@ -33,6 +33,7 @@ impl<S: Store> PersistentZanzibarStore<S> {
 impl PersistentZanzibarStore<RegolithStore> {
     /// Open a persistent store at the given path.
     pub fn open(path: &std::path::Path) -> Result<Self> {
+        // DEFRALEVEL(S1): Separate NAC db (nac.db) inherits default DefraLevel+classifier; all 'a' keys incl. counter must stay Ordinary
         let store = RegolithStore::open(path).map_err(|e| Error::Serialization(e.to_string()))?;
         Ok(Self::from_store(Arc::new(store)))
     }
@@ -46,6 +47,7 @@ const POLICY_PREFIX: &str = "/zanzibar/policy/";
 const MAX_COUNTER_CONFLICT_RETRIES: u32 = 16;
 
 impl<S: Store> PersistentZanzibarStore<S> {
+    // DEFRALEVEL(S10): Move /zanzibar policy+relationship key composition behind a regolith key trait; defradb supplies segments only
     fn policy_key(policy_id: &str) -> String {
         format!("{}{}", POLICY_PREFIX, policy_id)
     }
@@ -74,6 +76,7 @@ impl<S: Store> PersistentZanzibarStore<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
+    // DEFRALEVEL(S10): Replace begin/set/commit with one regolith write call carrying the policy key and value; same for sibling methods
     async fn store_policy(&self, policy: &Policy) -> Result<()> {
         let mut txn = self.store.new_txn(false).await.map_err(|e| {
             Error::Serialization(format!("store_policy: create transaction: {}", e))
@@ -139,9 +142,10 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
         Ok(policies)
     }
 
-    // DEFRALEVEL(S3): Keep seeding scan validated to prevent counter double-issue
     async fn next_policy_counter(&self) -> Result<u64> {
+        // DEFRALEVEL(S9): Drop async counter_lock; Ordinary counter key conflicts at commit and the loop's 16 capped retries re-issue it
         let _guard = self.counter_lock.lock().await;
+        // DEFRALEVEL(S8): Keep Ordinary RMW retry; count conflicts via regolith tickers, return a conflict error (not Serialization) when retries run out
         let mut conflicts = 0;
 
         loop {
@@ -191,6 +195,7 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
                 .await
                 .map_err(|e| Error::Serialization(format!("next_policy_counter: set: {}", e)))?;
 
+            // DEFRALEVEL(S10): Move this conflict-retry loop into regolith: it issues the counter atomically and returns next; key stays Ordinary
             match txn.commit().await {
                 Ok(()) => return Ok(next),
                 // DEFRALEVEL(S1): POLICY_COUNTER_KEY must stay Ordinary to prevent ID duplication
@@ -209,6 +214,7 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
         }
     }
 
+    // DEFRALEVEL(S10): Replace rel-prefix collect+delete loop with a regolith prefix range delete that conflicts with concurrent rel writes
     async fn delete_policy(&self, policy_id: &str) -> Result<bool> {
         let mut txn = self
             .store
@@ -261,6 +267,7 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
         Ok(exists)
     }
 
+    // DEFRALEVEL(S10): Keep relationship_key and value encoding here; hand the begin/set/commit cycle to one regolith write op
     async fn store_relationship(&self, policy_id: &str, rel: &Relationship) -> Result<()> {
         let mut txn = self
             .store
@@ -282,6 +289,7 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
         Ok(())
     }
 
+    // DEFRALEVEL(S10): Replace the txn open/has/delete/commit with one regolith delete-if-exists call that returns whether the key existed
     async fn delete_relationship(&self, policy_id: &str, rel: &Relationship) -> Result<bool> {
         let mut txn = self
             .store
@@ -450,6 +458,7 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
         Ok(targets)
     }
 
+    // DEFRALEVEL(S10): Replace scan+per-key delete with one regolith Transaction::delete_range(prefix, prefix_end) in a worker txn
     async fn delete_object_relationships(
         &self,
         policy_id: &str,

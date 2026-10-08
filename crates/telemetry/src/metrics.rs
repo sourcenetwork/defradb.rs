@@ -122,7 +122,7 @@ pub fn record_escaped_conflict(surface: &'static str) {
     emit_escaped_conflict(surface);
 }
 
-// DEFRALEVEL(S8): Delete or rewire to regolith.policy.* conflict-on-read/write tickers
+// DEFRALEVEL(S8): Delete (no callers); conflict telemetry comes from regolith.commit.conflicts_on_read/_on_write tickers
 pub fn record_storage_conflict(backend: &'static str, rule: &'static str) {
     emit_storage_conflict(backend, rule);
 }
@@ -303,7 +303,7 @@ static INSTRUMENTS: OnceLock<InstrumentRegistry> = OnceLock::new();
 pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -> u64 {
     let meter = provider.meter("defradb");
     let instruments = Arc::new(Instruments {
-        // DEFRALEVEL(S1): Add counters mirroring regolith tickers from store stats snapshot, not hot path
+        // DEFRALEVEL(S8): Register OTLP counters for regolith.commit.*/policy.* tickers here; feed from shared.rs stats snapshot, off hot path
         storage_conflicts: meter
             .u64_counter("defradb.storage.transaction.conflicts")
             .with_description("Storage transaction conflicts")

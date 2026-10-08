@@ -172,6 +172,7 @@ pub unsafe extern "C" fn add_dac_policy(
                 return FfiResult::error("local ACP backend is not available");
             };
 
+            // DEFRALEVEL(S10): Counter mint and policy store commit in separate txns (a failed store burns an ID); do both in one regolith txn
             let counter = match rt.block_on(local_zanzibar_store.next_policy_counter()) {
                 Ok(counter) => counter,
                 Err(e) => {

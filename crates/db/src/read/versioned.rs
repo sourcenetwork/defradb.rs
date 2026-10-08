@@ -27,6 +27,7 @@ const BLOCK_NOT_FOUND: &str =
 /// collects all blocks from the target CID to genesis, then replays
 /// the CRDT deltas in forward order to reconstruct the document state.
 pub struct VersionedFetcher<S: Store> {
+    // DEFRALEVEL(S9): Same holder change as DbDocMutator: hold the worker-owned txn handle; new/with_kms signatures follow
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
     kms: Option<Arc<dyn kms::KmsService>>,
     caller_identity: Option<identity::Did>,

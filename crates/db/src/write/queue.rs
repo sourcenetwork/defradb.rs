@@ -6,7 +6,7 @@ use std::sync::Arc;
 const PRUNE_THRESHOLD: usize = 10_000;
 
 // DEFRALEVEL(S7): Delete the arrival sentence when the guard goes.
-// DEFRALEVEL(S7): Delete the struct and its module once S3, S5 and S6 land.
+// DEFRALEVEL(S7): Delete the struct and module once S3-S6 land; regolith DefraLevel commit conflicts replace per-doc serialization
 /// Per-document write serialization queue.
 ///
 /// Serializes mutations that touch the same document so that a local write and

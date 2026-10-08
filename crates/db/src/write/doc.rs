@@ -186,6 +186,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
+    // DEFRALEVEL(S10): Hand create's ordered writes (blocks, heads, doc id, blob, indexes) to regolith write trait; keep key building
     async fn create(
         &self,
         collection_name: &str,
@@ -277,7 +278,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                     })?;
             }
 
-            // DEFRALEVEL(S6): With S6, two explicit creates of different docs in the same collection no longer conflict. They are sequenced after commit.
+            // DEFRALEVEL(S6): Explicit creates of different docs stop conflicting on the arrival head; cursors are sequenced post-commit
             let doc_id = crate::write::autocommit::helpers::register_created_doc(
                 &systemstore,
                 &datastore,
@@ -363,6 +364,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         Ok(CreateResult::new(doc_id, doc))
     }
 
+    // DEFRALEVEL(S10): Build update's ordered blob/index/head/counter ops; submit via regolith write trait (it owns CRUD + conflicts)
     async fn update(
         &self,
         collection_name: &str,
@@ -444,6 +446,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                     .as_ref()
                     .and_then(|d| d.get(&field.name))
                     .cloned();
+                // DEFRALEVEL(S3): Emit the delta as a blind merge operand at record time; drop this PendingCounterOp and its finalize RMW
                 counter_ops.push(crate::txn::PendingCounterOp {
                     collection_name: collection_name.to_string(),
                     schema_version_id: collection.version_id().to_string(),
@@ -550,6 +553,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         Ok(UpdateResult::new(doc, fields_modified))
     }
 
+    // DEFRALEVEL(S10): Build delete's ordered doc/index deletes and block/head writes as one write set handed to regolith's write trait
     async fn delete(
         &self,
         collection_name: &str,

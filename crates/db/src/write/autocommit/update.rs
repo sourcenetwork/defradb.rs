@@ -8,6 +8,7 @@ use query::runner::DocFetcher;
 
 #[allow(clippy::type_complexity)]
 impl<S: Store + 'static> AutoCommitMutator<S> {
+    // DEFRALEVEL(S10): Hand update's write set (counters, blob+index, field/composite blocks, heads) to a regolith write trait
     pub(super) async fn update_impl(
         &self,
         collection_name: &str,
@@ -94,6 +95,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // fetcher under the guard and rebase only the caller's declared patch;
         // otherwise an unrelated field from the concurrent update is silently
         // replaced by the stale snapshot.
+        // DEFRALEVEL(S5): Move this reload, expected check and patch rebase inside the mutation txn; a pre-begin commit is otherwise lost
+        // DEFRALEVEL(S7): Reload, expected-check and rebase inside the mutation txn, not a fresh fetcher, so DefraLevel conflict-checks them
         let fresh_fetcher =
             crate::LensedAutoCommitFetcher::new_without_write_back(Arc::clone(&self.db));
         let canonical_id = canonical_lock_id.to_string();
@@ -116,6 +119,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 || expected.is_deleted() != current_doc.is_deleted()
                 || !values_unchanged
             {
+                // DEFRALEVEL(S8): App-level conflict invisible to regolith.commit.* tickers; meter it, or reload inside the txn so regolith sees it
                 return Err(query::error::QueryError::transaction_conflict(
                     "transaction conflict. Please retry",
                 ));

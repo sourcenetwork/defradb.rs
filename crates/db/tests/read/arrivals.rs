@@ -5,7 +5,7 @@ use query::{DocMutator, QueryExecutor, QueryRequest};
 use std::sync::Arc;
 use storage::RegolithStore;
 
-// DEFRALEVEL(S6): Cursor values stay valid only if the sequencer assigns cursors synchronously on the autocommit path (or the test waits for sequencing).
+// DEFRALEVEL(S6): Asserts head "3" right after autocommit creates: S6 must assign cursors at commit, or the test waits
 #[tokio::test]
 async fn graphql_creation_cursor_pages_and_docid_lookup() {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
@@ -88,6 +88,7 @@ async fn hidden_arrivals_advance_page_without_disclosing_document_ids() {
     );
 }
 
+// DEFRALEVEL(S6): Asserts head==1 inside uncommitted txn; update to the own-writes decision on DocumentArrivalPage.head
 #[tokio::test]
 async fn explicit_transaction_sees_arrival_and_rollback_hides_both() {
     use query::fetcher::{DocFetcher, DocumentArrivalOptions};

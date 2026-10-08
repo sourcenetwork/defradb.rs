@@ -118,6 +118,7 @@ impl IndexScanResult {
     }
 }
 
+// DEFRALEVEL(S9): Make DocFetcher (and DocStream) sync once reads run on the txn-owning worker; impls drop the TokioMutex txn holder
 /// Storage abstraction for fetching documents.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -211,7 +212,6 @@ pub trait DocFetcher: MaybeSendSync {
         value: &str,
     ) -> Result<Vec<Document>>;
 
-    // DEFRALEVEL(S6): Signature stays stable. Update the doc wording if head semantics change.
     async fn get_document_arrivals(
         &self,
         options: &DocumentArrivalOptions,
@@ -524,7 +524,6 @@ mod tests {
     }
 }
 
-// DEFRALEVEL(S6): Keep `after` as a u64 cursor. A sequencer that stays contiguous preserves public contract.
 /// Node-local first materialization order, never a cross-replica creation clock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentArrivalOptions {
@@ -549,7 +548,6 @@ pub struct DocumentArrivalPage {
     pub entries: Vec<DocumentArrival>,
 }
 
-// DEFRALEVEL(S6): Unchanged if cursors stay u64 and contiguous.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentArrival {
     pub cursor: u64,

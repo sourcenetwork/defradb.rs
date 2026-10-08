@@ -99,6 +99,7 @@ enum Source {
     Empty,
 }
 
+// DEFRALEVEL(S10): Retire per-page rebuild of txn-borrowing merged scan; consume an owned 'static regolith txn scan trait
 /// A streaming scan over one key range.
 pub(crate) struct RegolithIterator {
     source: Source,
@@ -247,7 +248,6 @@ impl RegolithIterator {
         // call, so the iterator outlives no borrow.
         let entries: Box<dyn std::iter::Iterator<Item = (Vec<u8>, regolith::DbSlice)>> =
             match &reverse_end {
-                // DEFRALEVEL(S1,S2): Classifier must validate run bounds for prefix-bounded scans.
                 Some(end) => Box::new(txn.scan_stream_in(
                     self.start.as_deref(),
                     end.as_deref(),

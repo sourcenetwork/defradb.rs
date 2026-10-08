@@ -101,6 +101,7 @@ pub fn decode_progress(bytes: &[u8]) -> Option<(u64, u64)> {
 }
 
 impl<S: Store> DB<S> {
+    // DEFRALEVEL(S10): Run backfill batches as regolith txns (commit/conflict); defradb keeps batch sizing, progress fence, index keys
     /// Run `plan` to the end and settle its action either way.
     pub(crate) async fn backfill_index(
         &self,
@@ -285,6 +286,7 @@ impl<S: Store> DB<S> {
         let mut retries_at_one = 0;
         loop {
             let collection = self.require_collection(&plan.collection_name)?;
+            // DEFRALEVEL(S10): Run backfill txn begin/commit/discard on regolith worker; keep defra's adaptive max_docs halving on conflicts
             let txn = self.new_txn(false).await?;
             let outcome = {
                 let datastore = txn.datastore()?;

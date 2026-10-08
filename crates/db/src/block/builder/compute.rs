@@ -134,7 +134,6 @@ pub fn compute_document_blocks(
         blockstore_entries.push((field_cid.to_bytes(), field_block_bytes.into()));
 
         // Head entry: /d/{doc_short_id}/{field_name}/{cid} -> priority
-        // DEFRALEVEL(S1): Stays Ordinary in phase 1 (identical blind writes already elide); no delete to convert
         let head_key = HeadstoreDocKey::new(identity.doc_short_id, field_name, field_cid);
         let priority_bytes = encode_priority_varint(priority);
         headstore_entries.push((head_key.bytes(), priority_bytes));

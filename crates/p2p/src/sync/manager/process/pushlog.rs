@@ -67,7 +67,7 @@ fn retriable_pushlog_delay(attempt: usize) -> Duration {
 }
 
 impl<B: Blockstore + 'static> SyncManager<B> {
-    // DEFRALEVEL(S8): Fold into the single safety net once block writes stop conflicting (identical writes elide at S1).
+    // DEFRALEVEL(S8): Keep: DefraBlockstore::put reads has_block before put_block, so at DefraLevel the put never elides; meter retries
     async fn retry_retriable_pushlog_op<T, F, Fut>(
         &self,
         cid: &Cid,

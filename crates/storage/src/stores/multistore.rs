@@ -16,6 +16,7 @@ use crate::stores::{
 };
 use std::sync::Arc;
 
+// DEFRALEVEL(S10): Replace Arc<S> fan-out to 7 namespace wrappers with regolith storage traits; keep only namespace prefix/key layout
 /// Multistore coordinates access to all specialized stores
 pub struct Multistore<S: Store> {
     /// Root store (no namespace)
@@ -72,6 +73,7 @@ impl MemoryMultistore {
         Ok(Self::new(Arc::new(RegolithStore::in_memory()?)))
     }
 }
+// DEFRALEVEL(S10): Regolith owns store open/lifecycle; defradb only supplies KeyClassifier, merge operator and options via a trait
 /// A multistore on a persistent regolith database.
 pub type PersistentMultistore = Multistore<RegolithStore>;
 

@@ -132,6 +132,7 @@ pub async fn get_collection_with_lazy_load<S: Store + 'static>(
 ) -> query::error::Result<(Collection, NamespaceView, NamespaceView)> {
     // Extract what we need from the transaction while holding the lock briefly
     let (collection_opt, systemstore, datastore) = {
+        // DEFRALEVEL(S9): Take the worker-owned txn handle, not Arc<TokioMutex<Option<DbTxn>>>; drop both locks (here, cache write ~163)
         let txn_guard = txn.lock().await;
         let db_txn = txn_guard
             .as_ref()

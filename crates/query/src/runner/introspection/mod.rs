@@ -154,7 +154,6 @@ pub fn build_introspection_schema(
         );
     }
 
-    // DEFRALEVEL(S6): None if the shape is preserved.
     let arrival = Object::new("DocumentArrival")
         .field(Field::new("cursor", TypeRef::named_nn("String"), |_| {
             FieldFuture::new(async { Ok(Some(GqlValue::Null)) })

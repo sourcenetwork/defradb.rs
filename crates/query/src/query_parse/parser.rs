@@ -730,7 +730,6 @@ pub(super) fn parse_field_to_select(
             ));
         }
         match arg_name.as_str() {
-            // DEFRALEVEL(S6): None if cursors stay u64.
             "collection" if collection_name == "_documentArrivals" => {
                 select.arrival_collection =
                     Some(resolve_string_value(arg_value, variables, "collection")?);

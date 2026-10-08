@@ -137,6 +137,7 @@ pub unsafe extern "C" fn collection_create(
 
         ffi_async!(rt, {
             let request = query::QueryRequest::new(mutation);
+            // DEFRALEVEL(S8): Raw query_runner skips embedded retry loop; route via shared safety net and keep TXN_CONFLICT code, not a string
             let response = runner.execute(request).await;
 
             if !response.errors.is_empty() {

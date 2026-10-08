@@ -99,6 +99,7 @@ impl ExecuteRetryPolicy {
     }
 }
 
+// DEFRALEVEL(S8): Derive max_retries from db::DEFAULT_MAX_TXN_RETRIES/node max_txn_retries, not a hard-coded 3; one bound per safety net
 impl Default for ExecuteRetryPolicy {
     fn default() -> Self {
         Self {

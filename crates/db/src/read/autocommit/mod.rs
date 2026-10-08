@@ -382,6 +382,7 @@ impl<S: Store + 'static> DocFetcher for AutoCommitFetcher<S> {
         })?;
 
         // Wrap in Arc<Mutex<Option>> for VersionedFetcher
+        // DEFRALEVEL(S9): Same holder change: give VersionedFetcher the worker-owned txn handle; discard without lock().await
         let txn_holder: Arc<TokioMutex<Option<DbTxn<S>>>> = Arc::new(TokioMutex::new(Some(txn)));
 
         let versioned_fetcher =

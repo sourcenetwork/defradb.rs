@@ -118,7 +118,7 @@ async fn next_parent(
     Ok(false)
 }
 
-// DEFRALEVEL(S2,S4): No change in S2. In S4 generalize for per-doc heads with key type.
+// DEFRALEVEL(S4): Generalize to doc/field/composite heads: take a head key type, not collection_short_id.
 /// Record that `child` superseded each of `parents`.
 ///
 /// Every key written names `child`, so this is safe to run concurrently with

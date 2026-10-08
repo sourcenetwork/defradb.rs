@@ -56,6 +56,7 @@ pub enum MergeError {
     #[error("block signature verification failed for cid={cid}: {reason}")]
     SignatureVerificationFailed { cid: Cid, reason: String },
 
+    // DEFRALEVEL(S7): Delete GateContended variant and its Retryable arm in disposition() once S7 drops batch_gate
     /// The shared per-doc batch gate is currently held (e.g. by a long-lived
     /// local/interactive transaction). Batch merging is an optimization, so the
     /// caller should degrade to the gate-free per-block merge path rather than

@@ -12,6 +12,7 @@ use std::sync::atomic::{fence, AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 
+// DEFRALEVEL(S10): Per-CID single-flight guards merge-marker txn conflicts; let regolith own conflicts, keep it only as ingest work dedupe
 /// A queue that serializes processing of the same CID.
 ///
 /// When multiple sync requests arrive for the same CID concurrently,

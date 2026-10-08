@@ -1,6 +1,7 @@
 use super::*;
 
 impl<S: Store> crate::database::DB<S> {
+    // DEFRALEVEL(S10): Hand version-activate txn (target set, name ptr, sibling deactivate scan) to regolith trait; stop dropping set errs
     /// Set the active collection version.
     ///
     /// This activates the collection with the given version ID and deactivates
@@ -224,6 +225,7 @@ impl<S: Store> crate::database::DB<S> {
         Ok(versions)
     }
 
+    // DEFRALEVEL(S10): Put validation reads (version, children, has_data) and version/index/name/block deletes in one regolith txn
     /// Delete a specific collection version by version_id.
     ///
     /// This performs true deletion (not deactivation): removes the version from

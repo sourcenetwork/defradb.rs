@@ -464,6 +464,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc_id_str: &str,
         collection_lookup: Option<Collection>,
     ) -> std::result::Result<MergeOutcome, MergeError> {
+        // DEFRALEVEL(S10): Hand composite-merge txn begin/commit/discard to regolith txn traits; drop manual force_commit/force_discard paths
         let txn = self.db.new_txn(false).await?;
         let doc_short_id = {
             let collection = collection_lookup.as_ref().ok_or_else(|| {
@@ -708,6 +709,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
     }
 
+    // DEFRALEVEL(S10): Keep key/value build+order here (and in _body); submit the ordered write set to regolith's trait in the worker txn
     /// Process a Composite delta within a shared transaction (batch mode).
     ///
     /// Same logic as `process_composite_delta` but:

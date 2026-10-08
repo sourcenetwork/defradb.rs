@@ -852,7 +852,7 @@ impl IndexManager {
         Ok(())
     }
 
-    // DEFRALEVEL(S5): Simple-index keys include the doc short id, so they are per-doc; unique keys are cross-doc and must stay validated (has/get reads are the uniqueness check)
+    // DEFRALEVEL(S5): Simple keys append doc short id (per-doc, blind put); unique keys are cross-doc (except NULL): keep has/get
     /// Update indexes when a document is updated.
     ///
     /// For array fields, this deletes all old index entries and creates new ones.

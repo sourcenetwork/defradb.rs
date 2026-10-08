@@ -31,7 +31,7 @@ pub struct DbTransactionContext<S: Store> {
     fetcher: Arc<LensedDocFetcher<S>>,
     deferred_acp_mutations: Arc<DeferredAcpMutations>,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
-    // DEFRALEVEL(S9): Keep for serialization unless worker-owned txn serializes naturally.
+    // DEFRALEVEL(S9): Delete action_lock: owning worker's queue serializes this txn's actions and cleanup; drop both accessors
     action_lock: Arc<async_lock::Mutex<()>>,
     created_at: Instant,
     last_request_seen: AtomicU64,

@@ -397,7 +397,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
 
         let max_retries = self.db.options().max_txn_retries();
         let mut retry = 0;
-        // DEFRALEVEL(S7): Loop holds per-doc queue guards across retries; when S7 drops DocWriteQueue the loop becomes the only conflict defense here - keep as safety net
+        // DEFRALEVEL(S7): Keep this loop once guards go: it re-reads and re-migrates on each try, so it becomes the conflict defense (S8 net)
         loop {
             let active_collection = self.db.get_collection(collection.name()).map_err(|error| {
                 query::error::QueryError::execution(format!(
@@ -418,6 +418,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
                 return Ok(());
             }
 
+            // DEFRALEVEL(S10): Hand lens write-back txn begin/commit/discard + conflict retry to regolith; defra supplies only the cache writes
             let txn = self.db.new_txn(false).await.map_err(|e| {
                 query::error::QueryError::execution(format!(
                     "failed to create lens write-back transaction: {}",
@@ -535,6 +536,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
                         "Retrying conflicting lens write-back transaction"
                     );
                 }
+                // DEFRALEVEL(S8): Map exhausted conflicts to QueryError::transaction_conflict (as commit_query_error does) so the safety net retries
                 Err(error) => {
                     return Err(query::error::QueryError::execution(format!(
                         "failed to commit lens write-back transaction: {}",

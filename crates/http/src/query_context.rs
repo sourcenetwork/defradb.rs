@@ -56,7 +56,7 @@ async fn execute_once_with_context(
     let batch_session_key = signing_config.as_ref().map(|s| s.public_key_hex.clone());
     let acting_did = identity.did().map(|d| d.as_str().to_string());
 
-    // DEFRALEVEL(S9): Keep bridge until thread-locals become explicit context; independent of storage.
+    // DEFRALEVEL(S9): Replace spawn_blocking+block_on (and fast path) with worker-pool submit; pass identity/signing/DAC as context
     match tokio::task::spawn_blocking(move || {
         let _identity_guard = defra_core::current_identity::scoped_current_identity(acting_did);
         defra_core::signing::set_signing_config(signing_config);
@@ -148,6 +148,7 @@ pub async fn execute_in_txn_with_context(
     let batch_session_key = signing_config.as_ref().map(|s| s.public_key_hex.clone());
     let acting_did = identity.did().map(|d| d.as_str().to_string());
 
+    // DEFRALEVEL(S9): Send execute_in_txn to the txn's owning worker with identity/signing as explicit ctx; drop spawn_blocking+block_on
     match tokio::task::spawn_blocking(move || {
         let _identity_guard = defra_core::current_identity::scoped_current_identity(acting_did);
         defra_core::signing::set_signing_config(signing_config);

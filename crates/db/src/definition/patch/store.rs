@@ -3,6 +3,7 @@ use lens::TransformStore;
 use storage::keys::systemstore::LensConfigKey;
 
 impl<S: Store> crate::database::DB<S> {
+    // DEFRALEVEL(S10): Hand version-swap writes (old/new CollectionKey, name ptr, version index, lens, field blocks) to regolith txn
     /// Create and store a new schema version from a validated patched schema.
     ///
     /// Handles default CRDTs for new fields, cross-collection validation,

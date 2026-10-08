@@ -79,7 +79,6 @@ impl Collection {
         datastore.set(&key, &data).await.map_err(Error::Storage)?;
 
         // Update schema version to current collection version
-        // DEFRALEVEL(S5): Classify as identical-write elision in S1; no code change needed
         self.store_version(datastore, doc_short_id).await?;
 
         // Update indexes
@@ -112,6 +111,7 @@ impl Collection {
         }
 
         // Get the document for index cleanup
+        // DEFRALEVEL(S5): Keep blob read validated (Ordinary) if update goes merge; else concurrent update's index entries leak on delete
         let doc = match datastore.get(&key).await.map_err(Error::Storage)? {
             Some(bytes) => {
                 let mut d = Document::from_cbor(&bytes)?;

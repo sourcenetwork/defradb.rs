@@ -32,6 +32,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
     ) -> Result<()> {
         self.ensure_policy(policy_id, resource_name).await?;
 
+        // DEFRALEVEL(S10): Owner check+write span two txns (TOCTOU); do both in one regolith txn with an Ordinary-validated owner read
         let subjects = self
             .store
             .get_relation_subjects(policy_id, resource_name, doc_id, OWNER_RELATION)
@@ -240,6 +241,7 @@ impl<S: ZanzibarStore + ?Sized + 'static> DocumentACP for ZanzibarDocumentACP<S>
             rel.validate(&policy)?;
         }
 
+        // DEFRALEVEL(S10): has_relationship+store_relationship are separate txns; fold into one regolith insert-if-absent so added/audit is exact
         let has = self
             .store
             .has_relationship(policy_id, collection_id, doc_id, relation, &rel.subject)

@@ -7,6 +7,7 @@ use super::StorePolicyOptions;
 use crate::error::Result;
 use crate::types::{ObjectRef, Policy, Relationship, Subject};
 
+// DEFRALEVEL(S10): Make ZanzibarStore sync and take a regolith txn; drop per-method new_txn/commit so chained policy+rel writes are atomic
 /// Trait for Zanzibar policy and relationship storage.
 ///
 /// Provides operations for:

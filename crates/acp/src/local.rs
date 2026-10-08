@@ -285,6 +285,7 @@ impl DocumentACP for LocalDocumentACP {
 
         let tuple = RelationTuple::new(target.clone(), relation, &ns_collection, doc_id);
 
+        // DEFRALEVEL(S10): auth reads, has_tuple and put_tuple each open their own txn; one regolith txn with insert-if-absent makes added exact
         // Check if already exists
         if self.store.has_tuple(&tuple).await? {
             tracing::debug!(
@@ -358,6 +359,7 @@ impl DocumentACP for LocalDocumentACP {
 
         let tuple = RelationTuple::new(target.clone(), relation, &ns_collection, doc_id);
 
+        // DEFRALEVEL(S10): authz check, has_tuple and delete_tuple each open own txn; do as one regolith txn: delete returning prior presence
         // Check if exists
         if !self.store.has_tuple(&tuple).await? {
             tracing::debug!(

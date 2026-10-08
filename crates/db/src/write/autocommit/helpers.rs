@@ -57,6 +57,7 @@ pub(crate) async fn write_branchable_collection_block<S: storage::corekv::Store 
 }
 
 // DEFRALEVEL(S3): Counter RMW becomes merge operands; blob write stays S5
+// DEFRALEVEL(S10): Hand counter+blob+index writes to regolith as one ordered write set via trait; same for write_local_create
 /// Persist a local UPDATE: apply CRDT field deltas to the authoritative store
 /// (the counter RMW, #1021) and then write the document + maintain indexes. These
 /// are bundled so no mutator can write a document blob without first advancing the
@@ -81,6 +82,7 @@ pub(crate) async fn write_local_update(
         })
 }
 
+// DEFRALEVEL(S10): Hand blob+index+counter-seed to regolith as one ordered write set via trait; regolith enforces the bundling
 /// Persist a local CREATE: write the document + maintain indexes, then seed the
 /// CRDT accumulation store for counter fields (#1021). Bundled for the same
 /// by-construction reason as `write_local_update`.
@@ -139,6 +141,7 @@ pub(crate) async fn write_local_create_deferred(
     Ok(())
 }
 
+// DEFRALEVEL(S10): Submit dup-check, idmap and block-ownership writes to regolith as one ordered insert-if-absent op
 /// Register the identity of a freshly created document (Go `save()` isAdd):
 /// duplicate-check the derived DocID against the mapping, persist the
 /// short-ID <-> DocID mapping, and record block ownership for the genesis
@@ -346,6 +349,7 @@ pub(crate) async fn apply_pending_counter_op(
         .await
         .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
 
+    // DEFRALEVEL(S3): Drop post-merge read-back: get on merged key records a read, un-blinding it; return None, drop lifecycle fixup
     let bytes = ValueReader::value(&counter, &rw)
         .await
         .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
@@ -408,6 +412,7 @@ async fn apply_local_counter_deltas(
     // Freshly read committed doc (inside this write txn) to seed the store the
     // first time it is touched (init-if-absent). A first update of a doc with no
     // committed value seeds 0.
+    // DEFRALEVEL(S3): Seed-base blob read for reconcile only; drop once creates seed operands and legacy docs migrate
     let committed = collection
         .get_with_datastore(datastore, doc_short_id, &doc_id)
         .await
@@ -730,7 +735,7 @@ pub(crate) fn ensure_collection_is_active<S: Store>(
 }
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
-    // DEFRALEVEL(S7): Replace guard with in-txn CollectionKey version_id read
+    // DEFRALEVEL(S7): Drop guard; build Collection from the CollectionKey bytes read in the mutation txn (index add keeps version_id)
     /// The collection's read guard, then its definition: resolved after the
     /// guard, so a patch or an index committed under the write guard is the
     /// definition this write uses.

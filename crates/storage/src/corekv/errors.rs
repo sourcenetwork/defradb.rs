@@ -11,6 +11,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub const UNIQUE_CONSTRAINT_VIOLATION_MESSAGE: &str =
     "can not index a doc's field(s) that violates unique index.";
 
+// DEFRALEVEL(S10): Wrap regolith's txn/conflict/closed errors; keep only UniqueConstraintViolation; is_retriable defers to regolith
 /// CoreKV error types.
 ///
 /// These errors match the error types defined in the Go corekv package

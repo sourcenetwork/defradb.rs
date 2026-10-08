@@ -2,7 +2,7 @@ use super::*;
 use bytes::Bytes;
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
-    // DEFRALEVEL(S3): Replace blob read/reconcile with seed operand; drop guards (S7).
+    // DEFRALEVEL(S3): Turn reconcile into a seed merge operand; the blob read stays (is_create + seed value); guards go in S7
     /// Process a Counter delta from a block (standalone, with its own transaction).
     pub async fn process_counter_delta(
         &self,
@@ -39,6 +39,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .db
             .collection_read_guard(collection.collection_id())
             .await?;
+        // DEFRALEVEL(S7): Delete guard-only re-resolve; keep first resolve, in-txn CollectionKey read conflicts on a concurrent change
         // Resolved again under the guard: a definition committed under the
         // write guard since is the one this merge writes with.
         let collection = self
@@ -84,6 +85,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let allow_decrement = field.crdt_type.allows_decrement();
 
         // Create a new transaction for this merge
+        // DEFRALEVEL(S10): Hand counter-merge txn scope (begin, force_commit, force_discard) to a regolith-owned txn with conflict retry
         let txn = self.db.new_txn(false).await?;
         let doc_short_id = crate::docid::map::get_doc_ref(&txn.systemstore()?, &doc_id_str)
             .await

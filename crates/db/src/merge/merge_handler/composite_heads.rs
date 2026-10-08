@@ -29,7 +29,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
-        // DEFRALEVEL(S1): Stays Ordinary (identical blind writes elide); unchanged
         let composite_head_key =
             storage::keys::headstore::HeadstoreDocKey::new(context.doc_short_id, "C", *context.cid);
         if let Err(e) = headstore

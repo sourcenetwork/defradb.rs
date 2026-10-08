@@ -74,6 +74,7 @@ impl<S: Store + 'static> DB<S> {
                         continue;
                     }
                 };
+                // DEFRALEVEL(S10): Hand per-index rebuild txn begin/commit/discard to regolith txn traits; sweep keeps only the rebuild_if_due logic
                 let txn = match self.new_txn(false).await {
                     Ok(txn) => txn,
                     Err(error) => {

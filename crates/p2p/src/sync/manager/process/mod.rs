@@ -127,6 +127,8 @@ pub struct SyncManager<B: Blockstore> {
     pub(super) pending_store:
         std::sync::OnceLock<Arc<dyn crate::sync::pending_store::PendingDagStorage>>,
 
+    // DEFRALEVEL(S9): tokio Mutex serializes pending-DAG OCC writes + persisted_roots cap reserve; move to one owning worker, no async lock
+    // DEFRALEVEL(S10): Move pending-DAG writes, persisted_roots/scope_heads mirrors and cap reserve into regolith txns; drop this mutex
     /// Serializes every durable pending-DAG metadata transition. Registration,
     /// terminal removal, quarantine, and migration must not become competing
     /// OCC writers for the same root or sender scope.
@@ -388,6 +390,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         Ok(())
     }
 
+    // DEFRALEVEL(S10): Commit merged bit + pending-record delete in one regolith txn; drops reconcile_merged_pending and metadata lock
     /// Mark multiple blocks as merged in a single transaction.
     pub async fn mark_batch_as_merged(&self, cids: &[Cid]) -> crate::error::Result<()> {
         self.blockstore
@@ -439,6 +442,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.process_queue.clone()
     }
 
+    // DEFRALEVEL(S10): Contained-CID owners exist only for the ToMergeIndexKey SSI conflict; move it into regolith, keep the root owner
     /// Try to acquire the shared ingest/merge owners for a rooted block batch.
     ///
     /// The root is included even when an exact selective-CAR response only

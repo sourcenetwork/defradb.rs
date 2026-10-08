@@ -27,6 +27,7 @@ use defra_core::signing::get_signing_config;
 
 pub struct BatchMutator<S: Store> {
     db: Arc<DB<S>>,
+    // DEFRALEVEL(S9): Same holder change as DbDocMutator: hold the worker-owned txn handle shared with the fetcher, not an async mutex
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
     /// Per-doc write guards held across the WHOLE batch txn so a local counter
     /// read-modify-write and a P2P merge on the same document never interleave
@@ -432,6 +433,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         Ok(result)
     }
 
+    // DEFRALEVEL(S10): Pass delete's ordered write plan (doc+index removal, delete block/head, docid map, col head) to a regolith trait
     async fn delete(
         &self,
         collection_name: &str,

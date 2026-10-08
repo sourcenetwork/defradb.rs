@@ -410,6 +410,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ),
             None => None,
         };
+        // DEFRALEVEL(S10): Hand collection-merge txn (begin, supersede+head writes, force_commit) to regolith txn CRUD on the worker
         let txn = self.db.new_txn(false).await?;
         let short_id = if let Ok(systemstore) = txn.systemstore() {
             crate::collection::require_persisted_collection_short_id(&systemstore, collection_id)
@@ -424,7 +425,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             // them. Two peers replicating siblings would otherwise both delete
             // the shared parent's key, and one of the merges would be refused.
             if let Some(heads) = &block.heads {
-                // DEFRALEVEL(S2): bug: error swallowed here
                 if let Err(e) =
                     crate::block::heads::record_supersedes(&headstore, short_id, heads, *cid).await
                 {
@@ -818,7 +818,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         {
             if let Some(heads) = &block.heads {
-                // DEFRALEVEL(S2): bug: error swallowed here
                 let _ =
                     crate::block::heads::record_supersedes(headstore, short_id, heads, *cid).await;
             }

@@ -137,6 +137,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         };
 
         if matches!(&parsed, ParsedOperation::Query { .. }) {
+            // DEFRALEVEL(S10): Implicit read becomes a regolith read snapshot; finish = snapshot drop + separate lens write-back txn if any
             match self.registry.begin_implicit_read().await {
                 Ok(handle) => {
                     let response = self.execute_in_txn(request.clone(), &handle).await;
@@ -333,7 +334,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                 ));
             }
         };
-        // DEFRALEVEL(S9): Follows action_lock decision
+        // DEFRALEVEL(S9): Drop async action_lock guard; enqueue onto the txn's owning worker, which keeps per-handle actions serialized
         let action_lock = txn_ctx.action_lock();
         let _action_guard = match action_lock.as_ref() {
             Some(lock) => Some(lock.lock().await),

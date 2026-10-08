@@ -130,6 +130,7 @@ impl<S: Store> DB<S> {
                     ))
                 })?;
 
+        // DEFRALEVEL(S10): Hand reindex txn begin/commit to regolith; defradb supplies migrated doc blobs + rebuilt index entries
         let write_txn = self.new_txn(false).await?;
         let mut materialized_count = 0usize;
 

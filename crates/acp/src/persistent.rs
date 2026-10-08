@@ -18,6 +18,7 @@ use crate::error::{Error, Result};
 use crate::relation::RelationTuple;
 use crate::store::AcpStore;
 
+// DEFRALEVEL(S10): Move Acpstore prefixing and per-op txn begin/commit into regolith; keep only tuple key/value encoding here
 /// Persistent ACP store backed by any Store implementation.
 ///
 /// Stores relation tuples with namespace isolation, providing:
@@ -132,6 +133,7 @@ impl PersistentAcpStore<RegolithStore> {
             }
         }
 
+        // DEFRALEVEL(S1): ACP DB opens via RegolithStoreOptions::default(), so it inherits DefraLevel+classifier; route all 'a' keys Ordinary
         let store = RegolithStore::open(&db_path).map_err(|e| {
             Error::Storage(format!(
                 "failed to open ACP database '{}': {}",
@@ -412,7 +414,7 @@ impl<S: Store + Send + Sync> AcpStore for PersistentAcpStore<S> {
             .await
             .map_err(|e| Error::storage_txn("register_doc_atomic:begin", e))?;
 
-        // DEFRALEVEL(S1): keep a/acp/ Ordinary: register_doc_atomic needs this prefix scan validated
+        // DEFRALEVEL(S1): keep a/acp/ Ordinary; an empty prefix scan records no run, so only the /acp-reg/ sentinel can catch a racing owner
         let prefix = RelationTuple::doc_prefix(collection_id, doc_id);
         let iter_opts = IterOptions::new().with_prefix(prefix.into_bytes());
 
@@ -438,6 +440,7 @@ impl<S: Store + Send + Sync> AcpStore for PersistentAcpStore<S> {
             return Ok(false);
         }
 
+        // DEFRALEVEL(S10): Hand the owner claim to a regolith insert-if-absent rule on the a/acp/ doc prefix; drop the no-op /acp-reg sentinel
         let tuple = RelationTuple::owner(owner.clone(), collection_id, doc_id);
         let key = tuple.storage_key();
         let value = serde_json::to_vec(&tuple)?;
@@ -450,12 +453,13 @@ impl<S: Store + Send + Sync> AcpStore for PersistentAcpStore<S> {
         // Without this, two owners writing different keys would both succeed under
         // snapshot isolation (the conflict tracker only detects write-write conflicts
         // on the same key).
-        // DEFRALEVEL(S1): hazard: every registrant writes identical bytes, so DefraLevel elides this sentinel's conflict; single-owner rests on the a/acp/ scan staying Ordinary
+        // DEFRALEVEL(S1): hazard: [1] sentinel write elides at every level and scans miss phantoms; get it before set so racing owners conflict
         let sentinel = format!("/acp-reg/{}/{}", collection_id, doc_id);
         txn.set(sentinel.as_bytes(), &[1])
             .await
             .map_err(|e| Error::storage_write("register_doc_atomic:set_sentinel", e))?;
 
+        // DEFRALEVEL(S10): Replace scan+sentinel+conflict->Ok(false) with a regolith insert-if-absent; defradb reads registered/exists
         match txn.commit().await {
             Ok(()) => Ok(true),
             Err(e) if e.is_txn_conflict() => Ok(false),

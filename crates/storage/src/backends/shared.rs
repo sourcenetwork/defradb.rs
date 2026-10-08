@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::corekv::{AsyncTxnCallback, TxnCallback};
 
+// DEFRALEVEL(S10): Use regolith's DurabilityMode instead of this mirror enum; drop the with_durability mapping in regolith/config.rs
 /// When a write is made durable.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -70,6 +71,7 @@ struct CallbackLists {
     discard_async: SegQueue<AsyncTxnCallback>,
 }
 
+// DEFRALEVEL(S10): Fire success/error/discard queues from regolith's commit/discard outcome hook; defradb only registers callbacks
 /// Callbacks a transaction runs when it resolves.
 ///
 /// Registration takes `&self` because a transaction is shareable. Each list

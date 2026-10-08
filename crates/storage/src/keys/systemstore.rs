@@ -647,7 +647,7 @@ impl IndexIDSequenceKey {
 }
 
 impl Key for IndexIDSequenceKey {
-    // DEFRALEVEL(S1): Ordinary; fix namespace split
+    // DEFRALEVEL(S1): Stays Ordinary: /seq/index/ is a read-modify-write index-ID counter; concurrent allocators must conflict
     fn bytes(&self) -> Vec<u8> {
         format!("/seq/index/{}", self.collection_id).into_bytes()
     }

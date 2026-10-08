@@ -334,6 +334,7 @@ impl Error {
     pub fn is_txn_conflict(&self) -> bool {
         match self {
             Error::BlockstoreTxnConflict => true,
+            // DEFRALEVEL(S8): Drop the string-suffix fallback; classify regolith conflicts by type so both p2p retry loops keep working
             Error::BlockstoreError(msg) | Error::Storage(msg) => {
                 msg.ends_with(Self::TXN_CONFLICT_SUFFIX)
             }

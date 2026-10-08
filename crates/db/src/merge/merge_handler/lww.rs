@@ -172,6 +172,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         );
 
         // Create a new transaction for this merge
+        // DEFRALEVEL(S10): Hand LWW merge txn begin/commit/4 discards to a regolith txn trait; drop manual force_commit/force_discard
         let txn = self.db.new_txn(false).await?;
         let doc_short_id = {
             let systemstore = txn.systemstore()?;

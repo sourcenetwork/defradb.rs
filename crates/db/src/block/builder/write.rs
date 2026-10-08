@@ -507,7 +507,6 @@ pub async fn write_document_blocks(
     let composite_cid = generate_cid_from_bytes(&composite_bytes)
         .map_err(|e| format!("Failed to generate composite CID: {}", e))?;
 
-    // DEFRALEVEL(S1): Stays Ordinary (identical blind writes elide); no code change.
     blockstore
         .set(&composite_cid.to_bytes(), &composite_bytes)
         .await

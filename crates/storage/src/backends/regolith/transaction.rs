@@ -17,6 +17,7 @@ use bytes::Bytes;
 use regolith::{IsolationLevel, OptimisticTransactionDb, OwnedTransaction, TransactionError};
 
 use super::handle::Handle;
+// DEFRALEVEL(S2): Remove head_cache import and the head_cache/head_snapshot/head_changes fields on RegolithTxn with the module.
 use super::head_cache::{self, HeadChanges, HeadSnapshot, SharedHeadCache};
 use super::iterator::RegolithIterator;
 use crate::backends::shared::{CallbackManager, TransactionStatsHandle};
@@ -24,6 +25,7 @@ use crate::corekv::{
     AsyncTxnCallback, Error, IterOptions, Iterator, Reader, Result, Txn, TxnCallback, Writer,
 };
 
+// DEFRALEVEL(S10): Shrink to thin glue: regolith's txn trait owns CRUD/read set/conflicts; keep only defra callbacks+stats here
 /// Transaction over a regolith store.
 pub struct RegolithTxn {
     handle: Option<Arc<Handle>>,
@@ -31,6 +33,7 @@ pub struct RegolithTxn {
     stats: TransactionStatsHandle,
     callbacks: CallbackManager,
     readonly: bool,
+    // DEFRALEVEL(S2): Delete head_cache, head_snapshot, head_changes fields and the head_cache import with the retired cache.
     pub(super) head_cache: SharedHeadCache,
     head_snapshot: Option<HeadSnapshot>,
     head_changes: HeadChanges,
@@ -50,12 +53,14 @@ impl RegolithTxn {
             stats: TransactionStatsHandle::for_backend("regolith"),
             callbacks: CallbackManager::default(),
             readonly: true,
+            // DEFRALEVEL(S2): Drop head_cache/head_snapshot/head_changes initializers here; read-only snapshot needs no cache state.
             head_cache: SharedHeadCache::default(),
             head_snapshot: None,
             head_changes: HeadChanges::default(),
         })
     }
 
+    // DEFRALEVEL(S10): Hand txn lifecycle to regolith: snapshot vs writable, active_txns slot and stats move into its txn trait; worker calls it
     pub(crate) fn new(
         db: &Arc<OptimisticTransactionDb>,
         readonly: bool,
@@ -64,19 +69,17 @@ impl RegolithTxn {
         stats: TransactionStatsHandle,
         head_cache: SharedHeadCache,
     ) -> Result<Self> {
-        // DEFRALEVEL(S1): Ensure isolation check accepts DefraLevel or coordinate with S2; begin on worker.
-        // DEFRALEVEL(S2,S9): Drop lock and publish; move commit to worker thread.
+        // DEFRALEVEL(S9): Begin runs on the owning core-pinned worker; remove blocking()/block_in_place wrapper.
         super::blocking(|| {
             // DEFRALEVEL(S2): Drop cache lock and capture; begin becomes lock-free.
             let cache = head_cache::lock(&head_cache)?;
             let handle = if readonly {
                 Handle::ReadOnly(db.db().snapshot())
             } else {
-                // DEFRALEVEL(S1): No change; classifier on db reaches every txn.
                 Handle::Writable(Box::new(db.begin_transaction_owned(isolation)))
             };
             // DEFRALEVEL(S2): Delete head_snapshot, collection_head_entries, and cache calls; retire cache.
-            // DEFRALEVEL(S1,S2): RepeatableRead disables cache at DefraLevel; install classifier with S1/S2.
+            // DEFRALEVEL(S1,S2): Gate matches RepeatableRead only: DefraLevel writers lose head cache and rescan; land with S2 or widen gate
             let head_snapshot = (!cache.disabled
                 && (readonly || isolation == IsolationLevel::RepeatableRead))
                 .then(|| cache.capture(db.db().snapshot()));
@@ -114,6 +117,7 @@ impl RegolithTxn {
     }
 }
 
+// DEFRALEVEL(S10): Move active_txns slot tracking (close waits on it) into regolith txn lifecycle; regolith already rolls back on drop
 impl Drop for RegolithTxn {
     fn drop(&mut self) {
         // A transaction dropped without `commit` or `discard` still holds
@@ -241,7 +245,7 @@ impl Reader for RegolithTxn {
     }
 }
 
-// DEFRALEVEL(S3): Add async merge fn to Writer; add to corekv Writer trait with forwarding impl.
+// DEFRALEVEL(S3,S9): Add merge(key, operand) to RegolithTxn Writer as a blind merge operand; sync under S9
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Writer for RegolithTxn {
@@ -268,6 +272,7 @@ impl Writer for RegolithTxn {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Txn for RegolithTxn {
+    // DEFRALEVEL(S10): Move commit lifecycle (iterator guard, native commit, conflict stats) into regolith; keep only defra callbacks
     async fn commit(mut self: Box<Self>) -> Result<()> {
         let handle = self.handle.take().ok_or(Error::DiscardedTxn)?;
         self.active_txns.fetch_sub(1, Ordering::AcqRel);
@@ -288,6 +293,7 @@ impl Txn for RegolithTxn {
                 drop(snapshot);
                 Ok(())
             }
+            // DEFRALEVEL(S9): Commit synchronously on the owning worker; drop super::blocking (block_in_place) and make Txn::commit sync
             Handle::Writable(txn) => super::blocking(|| {
                 // DEFRALEVEL(S2): Remove head_cache lock; commit becomes txn.commit alone.
                 let mut cache = head_cache::lock(&self.head_cache)?;
@@ -301,12 +307,13 @@ impl Txn for RegolithTxn {
         match outcome {
             Ok(()) => {
                 self.stats.record_commit();
+                // DEFRALEVEL(S9): Sync commit on worker can't await; hand run_success/run_error callbacks off to the edge tokio runtime
                 self.callbacks.run_success().await;
                 Ok(())
             }
             Err(error) => {
                 if matches!(error, Error::TxnConflict) {
-                    // DEFRALEVEL(S2,S8): Use regolith Statistics tickers for conflict attribution.
+                    // DEFRALEVEL(S8): Replace ad hoc record_conflict count with regolith.commit.* conflict tickers.
                     self.stats.record_conflict();
                 }
                 self.callbacks.run_error().await;

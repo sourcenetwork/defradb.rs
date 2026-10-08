@@ -75,7 +75,7 @@ impl HeadstoreDocKey {
 }
 
 impl Key for HeadstoreDocKey {
-    // DEFRALEVEL(S4): Stop eager parent delete; adopt supersede-marker scheme like collection heads, then CommutativePrefix per doc
+    // DEFRALEVEL(S4): Stop eager parent delete; use per-doc supersede markers; h/d/ stays Ordinary until LWW re-anchor (lww.rs)
     fn bytes(&self) -> Vec<u8> {
         let mut buf = Self::field_prefix(self.doc_short_id, &self.field_id);
         buf.extend_from_slice(self.cid.to_string().as_bytes());
@@ -179,7 +179,7 @@ impl HeadstoreColKey {
 }
 
 impl Key for HeadstoreColKey {
-    // DEFRALEVEL(S2): KeyClass::CommutativePrefix{len=1+len("/c/{col}/")}
+    // DEFRALEVEL(S1): CommutativePrefix{len: 1+collection_prefix(id).len()}; parse canonical-decimal id like head_cache collection(); test
     fn bytes(&self) -> Vec<u8> {
         format!("/c/{}/{}", self.collection_id, self.cid).into_bytes()
     }
@@ -237,7 +237,6 @@ impl HeadstoreColSuperseded {
 }
 
 impl Key for HeadstoreColSuperseded {
-    // DEFRALEVEL(S2): KeyClass::CommutativePrefix{len=1+len("/cs/{col}/")}
     fn bytes(&self) -> Vec<u8> {
         format!("/cs/{}/{}/{}", self.collection_id, self.parent, self.child).into_bytes()
     }

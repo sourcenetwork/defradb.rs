@@ -156,7 +156,7 @@ pub(super) struct HeadSnapshot {
 }
 
 impl HeadSnapshot {
-    // DEFRALEVEL(S2): Replaced by the native scan in scan.rs:21-30; CommutativePrefix ignores stretches.
+    // DEFRALEVEL(S2): Replaced by head_iterators' native prefix scans; DefraLevel drops those scan runs at commit.
     pub(super) fn read(
         &self,
         cache: &SharedHeadCache,

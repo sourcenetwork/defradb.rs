@@ -8,6 +8,7 @@ use crate::block::builder::{compute_document_blocks, insert_computed_blocks, Com
 
 #[allow(clippy::type_complexity)]
 impl<S: Store + 'static> AutoCommitMutator<S> {
+    // DEFRALEVEL(S10): Give regolith the txn open/commit; hand it create's ordered block/head/idmap/arrival/blob/index writes as a trait
     pub(super) async fn create_impl(
         &self,
         collection_name: &str,
@@ -185,6 +186,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         Ok(result)
     }
 
+    // DEFRALEVEL(S10): Submit all N docs' ordered create writes as one regolith txn via its write trait; regolith owns commit+conflicts
     pub(super) async fn create_many_impl(
         &self,
         collection_name: &str,
@@ -421,6 +423,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         }
 
         // Commit ONCE for the entire batch
+        // DEFRALEVEL(S10): Hand batch commit to regolith's txn API; regolith owns commit + conflict resolution, defra only supplies keys
         if let Err(e) = txn.commit().await {
             warn!(
                 collection = %collection_name,

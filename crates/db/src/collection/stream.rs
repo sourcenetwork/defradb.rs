@@ -23,6 +23,7 @@ pub struct CollectionDocStream {
     collection: Collection,
     datastore: NamespaceView,
     systemstore: NamespaceView,
+    // DEFRALEVEL(S9): Drop async_lock Mutex (held only for Sync, accessed via get_mut); worker-owned DocStream needs no Sync bound
     iter: Mutex<Box<dyn KvIterator>>,
     prefix_len: usize,
     show_deleted: bool,

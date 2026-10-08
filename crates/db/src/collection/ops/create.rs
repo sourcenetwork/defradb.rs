@@ -2,6 +2,7 @@ use super::*;
 use rapidhash::HashMapExt;
 
 impl<S: Store> crate::database::DB<S> {
+    // DEFRALEVEL(S10): Hand regolith one ordered schema-create batch: seq bumps, CollectionKey, def blocks, name, version index
     /// Create a collection within an existing transaction.
     ///
     /// This method validates the collection schema, assigns a unique short ID,

@@ -117,6 +117,7 @@ impl<S: Store> DocShortIdAllocator<S> {
         let key = DocShortIDSequenceKey::new().bytes();
         let mut conflicts = 0;
         loop {
+            // DEFRALEVEL(S10): Hand regolith the short-ID range RMW (key + range math) via trait; regolith owns txn, commit, conflict retry
             let mut txn = self
                 .systemstore
                 .new_txn(false)
@@ -136,7 +137,7 @@ impl<S: Store> DocShortIdAllocator<S> {
 
             match txn.commit().await {
                 Ok(()) => return Ok(start),
-                // DEFRALEVEL(S8): Record under RetryLayer or drop once S1 classifies it; key must stay Ordinary
+                // DEFRALEVEL(S8): Keep loop: /seq/doc is a validated read-then-write on an Ordinary key; add a RetryLayer variant for its retries
                 Err(error)
                     if error.is_txn_conflict() && conflicts < MAX_RESERVATION_CONFLICT_RETRIES =>
                 {

@@ -171,6 +171,7 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     // DEFRALEVEL(S7): bug: unfiltered truncate takes no collection write guard (locks.rs expects one)
+    // DEFRALEVEL(S10): Let regolith own chunked truncate txns (chunks + metadata); defradb supplies per-doc and collection key prefixes
     /// Truncate a collection: delete all documents, heads, blocks, and index entries
     /// while preserving the collection schema.
     ///
@@ -265,6 +266,7 @@ impl<S: Store> crate::database::DB<S> {
     async fn truncate_chunk(&self, collection: &Collection, doc_short_ids: &[u64]) -> Result<()> {
         use storage::keys::{HeadstoreDocKey, HeadstorePriorityKey};
 
+        // DEFRALEVEL(S10): Hand truncate-chunk txn begin/commit/discard and multi-store delete batch to a regolith-owned transaction
         let txn = self.new_txn(false).await?;
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
@@ -355,7 +357,7 @@ impl<S: Store> crate::database::DB<S> {
         }
     }
 
-    // DEFRALEVEL(S2): Under CommutativePrefix scan-then-deletes become blind; concurrent append won't be caught
+    // DEFRALEVEL(S1): CommutativePrefix drops this h/c/ scan read; a concurrent append's head and block survive.
     /// Delete collection-level metadata: index entries and collection heads.
     async fn truncate_collection_metadata(&self, collection_id: &str, short_id: u32) -> Result<()> {
         use storage::keys::headstore::HeadstoreColSuperseded;

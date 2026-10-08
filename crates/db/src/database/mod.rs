@@ -555,6 +555,7 @@ impl<S: Store> DB<S> {
         self.txn_id_counter.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    // DEFRALEVEL(S10): Replace BasicTxn::new with begin on a regolith txn trait; this is the sole begin site for every db txn
     /// Create a new transaction.
     ///
     /// If `readonly` is true, the transaction cannot perform writes.
@@ -570,7 +571,6 @@ impl<S: Store> DB<S> {
         Ok(DbTxn::new(basic_txn))
     }
 
-    // DEFRALEVEL(S2): Changes with the head-cache/marker retirement
     /// Reclaim superseded collection head keys, if enough have built up.
     ///
     /// Called after a branchable append commits. One in
@@ -590,6 +590,7 @@ impl<S: Store> DB<S> {
             // losing costs nothing: the head set is a function of the markers,
             // so the next pass repeats the work.
             // DEFRALEVEL(S2,S4): With CommutativePrefix head scans this loses fewer races.
+            // DEFRALEVEL(S8): Count head-reclamation conflicts via regolith.commit.* tickers; drop this ad hoc debug log, no retry needed
             Err(error) if error.is_txn_conflict() => tracing::debug!(
                 collection_short_id,
                 %error,
@@ -605,7 +606,6 @@ impl<S: Store> DB<S> {
         }
     }
 
-    // DEFRALEVEL(S8): Account conflicts from regolith.commit.* tickers, not ad hoc logs.
     /// Delete collection head keys that a marker supersedes, with their
     /// markers, in a transaction of its own.
     ///
@@ -616,6 +616,7 @@ impl<S: Store> DB<S> {
         &self,
         collection_short_id: u32,
     ) -> Result<crate::block::heads::PruneOutcome> {
+        // DEFRALEVEL(S10): Hand prune txn begin/discard/commit to regolith; defradb keeps only choosing which h/c/ heads h/cs/ supersedes
         let txn = self.new_txn(false).await?;
         let outcome = {
             // A live view keeps the transaction referenced, and commit refuses
@@ -637,6 +638,7 @@ impl<S: Store> DB<S> {
         Ok(outcome)
     }
 
+    // DEFRALEVEL(S10): Replace with_txn/with_txn_async with regolith's txn runner (commit on Ok, discard on Err); both now uncalled
     /// Execute a function within a transaction.
     ///
     /// If the function returns Ok, the transaction is committed.
@@ -666,6 +668,7 @@ impl<S: Store> DB<S> {
         }
     }
 
+    // DEFRALEVEL(S10): Delete: no callers. Keep sync with_txn as the shape for regolith's runner (regolith owns commit/discard)
     /// Execute an async function within a transaction.
     ///
     /// If the function returns Ok, the transaction is committed.

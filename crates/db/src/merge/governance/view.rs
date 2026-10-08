@@ -92,6 +92,7 @@ type ChosenIndexes = RapidHashMap<(String, String), Option<Arc<SimpleIndex>>>;
 
 pub(crate) struct DbMergeView<'a, S: Store, B: blockstore::Blockstore> {
     handler: &'a DbMergeHandler<S, B>,
+    // DEFRALEVEL(S9): Replace async_lock Mutex<DbTxn> with a worker-owned sync read txn; stop holding the guard across awaited reads
     snapshot: Mutex<Option<DbTxn<S>>>,
     /// The index chosen for each (collection, field) looked up this verdict.
     pub(super) indexes: Mutex<ChosenIndexes>,
