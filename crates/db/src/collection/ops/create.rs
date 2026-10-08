@@ -118,6 +118,7 @@ impl<S: Store> crate::database::DB<S> {
         // Go assigns them via IndexManager.next_index_id() which uses a per-collection
         // sequence key. We replicate that here so IDs match Go exactly.
         if !schema.indexes.is_empty() {
+            // DEFRALEVEL(S7): bug: IndexIDSequenceKey written here in the systemstore and in the datastore at index/manager/mod.rs
             let seq_key = IndexIDSequenceKey::new(format!("{}", short_id));
             let key_bytes = seq_key.bytes();
             let mut current: u32 =

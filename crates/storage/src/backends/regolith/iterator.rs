@@ -1,3 +1,4 @@
+// DEFRALEVEL(S2): Cost model update: per-append instead of per-transaction.
 //! Iteration over a regolith transaction or snapshot.
 //!
 //! Nothing here ever holds the range. A read-only scan is a cursor that
@@ -246,6 +247,7 @@ impl RegolithIterator {
         // call, so the iterator outlives no borrow.
         let entries: Box<dyn std::iter::Iterator<Item = (Vec<u8>, regolith::DbSlice)>> =
             match &reverse_end {
+                // DEFRALEVEL(S1,S2): Classifier must validate run bounds for prefix-bounded scans.
                 Some(end) => Box::new(txn.scan_stream_in(
                     self.start.as_deref(),
                     end.as_deref(),

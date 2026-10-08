@@ -283,6 +283,7 @@ impl Collection {
         storage::keys::deleted_doc_key(&self.def.collection_id, doc_short_id)
     }
 
+    // DEFRALEVEL(S5): Fold with doc blob decision; watch for /v/ prefix collision with short id 118.
     /// Generate the storage key for a document's schema version.
     ///
     /// The version is stored separately from the document data to enable

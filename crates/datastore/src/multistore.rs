@@ -12,6 +12,7 @@ use storage::namespace::Namespace;
 
 /// Shared transaction wrapper allowing multiple namespace views.
 pub struct SharedTxn {
+    // DEFRALEVEL(S9): Replace async RwLock with sync handle; add merge(namespace,key,operand)
     txn: RwLock<Box<dyn Txn>>,
 }
 
@@ -83,6 +84,7 @@ impl SharedTxn {
         Ok(Box::new(NamespacedIterator { iter, namespace }))
     }
 
+    // DEFRALEVEL(S2): Delete both.
     pub async fn collection_head_entries(
         &self,
         namespace: Namespace,
@@ -130,6 +132,7 @@ impl SharedTxn {
         txn.is_readonly()
     }
 
+    // DEFRALEVEL(S9): Goes away or changes with worker-owned txn; commit becomes message
     /// Consume self and return the underlying transaction.
     ///
     /// This takes ownership of the inner RwLock and extracts the transaction.
@@ -209,6 +212,7 @@ impl Clone for NamespaceView {
 
 impl storage::corekv::private::Sealed for NamespaceView {}
 
+// DEFRALEVEL(S9): Becomes sync Reader once storage traits drop async_trait (1 of 3 sites)
 /// Implement Reader trait for NamespaceView to enable index operations.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -244,6 +248,7 @@ impl Reader for NamespaceView {
     }
 }
 
+// DEFRALEVEL(S3): Add merge operand passthrough (S3) and become sync (S9)
 /// Implement Writer trait for NamespaceView to enable index operations.
 ///
 /// The `&mut self` signature is required by the trait, but NamespaceView uses
@@ -342,6 +347,7 @@ struct NamespacedIterator {
 
 impl storage::corekv::private::Sealed for NamespacedIterator {}
 
+// DEFRALEVEL(S9): Sync iterator; CommutativePrefix scans (S2) through here unchanged
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Iterator for NamespacedIterator {

@@ -320,6 +320,7 @@ impl Node {
     }
 }
 
+// DEFRALEVEL(S1): Opt in if S1 is not default; coordinate with server_dump.rs:24 and lib.rs:912
 /// Options for the regolith store, with the value-log-file-size flag
 /// applied when the operator set it.
 ///

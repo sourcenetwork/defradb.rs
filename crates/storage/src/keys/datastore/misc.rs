@@ -46,6 +46,7 @@ impl DatastoreSE {
 }
 
 impl Key for DatastoreSE {
+    // DEFRALEVEL(S1): Stays Ordinary in phase 1; ContentAddressed candidate once no guard read exists
     fn bytes(&self) -> Vec<u8> {
         let search_tag_hex = hex::encode(&self.search_tag);
         let s = format!(
@@ -100,6 +101,7 @@ impl ViewCacheKey {
 }
 
 impl Key for ViewCacheKey {
+    // DEFRALEVEL(S1): Classify as Ordinary
     fn bytes(&self) -> Vec<u8> {
         let mut buf = Self::view_cache_prefix();
         buf = encode_uvarint_ascending(buf, self.collection_id as u64);

@@ -614,6 +614,7 @@ impl EmbeddedNode {
         &self.embedding_config
     }
 
+    // DEFRALEVEL(S1): Update doc comment; new fields appear when TransactionStatsSnapshot grows.
     /// Capture backend-neutral transaction conflict and commit-gate diagnostics.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn transaction_stats(&self) -> Option<storage::TransactionStatsSnapshot> {
@@ -748,6 +749,7 @@ impl EmbeddedNode {
     }
 }
 
+// DEFRALEVEL(S8): Decide: single embedded safety net or unify with HTTP layer.
 async fn execute_request_with_retry_loop<F, Fut>(
     request: QueryRequest,
     policy: ExecuteRetryPolicy,

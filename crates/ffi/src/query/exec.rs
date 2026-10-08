@@ -228,6 +228,7 @@ pub unsafe extern "C" fn exec_request_with_signing(
                         let bypass = sub_dac_bypass;
                         let acting_did = sub_acting_did.clone();
                         let handle = tokio::runtime::Handle::current();
+                        // DEFRALEVEL(S9): Same as http
                         let response = match tokio::task::spawn_blocking(move || {
                             let _identity_guard =
                                 defra_core::current_identity::scoped_current_identity(acting_did);

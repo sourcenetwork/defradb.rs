@@ -333,6 +333,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                 ));
             }
         };
+        // DEFRALEVEL(S9): Follows action_lock decision
         let action_lock = txn_ctx.action_lock();
         let _action_guard = match action_lock.as_ref() {
             Some(lock) => Some(lock.lock().await),

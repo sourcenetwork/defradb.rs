@@ -218,6 +218,7 @@ pub async fn write_document_blocks(
     let snapshot = if is_create {
         None
     } else {
+        // DEFRALEVEL(S4): Snapshot must become marker-aware; skip keys by per-doc marker.
         Some(DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?)
     };
     let composite_priority: u64 = if is_create {
@@ -414,11 +415,13 @@ pub async fn write_document_blocks(
                 }
             }
 
+            // DEFRALEVEL(S1): Blocks stay Ordinary (#1599 guard read, GC deletes); identical blind puts already elide.
             blockstore
                 .set(&field_cid.to_bytes(), &field_block_bytes)
                 .await
                 .map_err(|e| format!("Failed to store field block: {}", e))?;
 
+            // DEFRALEVEL(S4): Replace delete with per-doc marker (parent, child=field_cid).
             for old_head in &field_head_entries {
                 headstore
                     .delete(&old_head.key)
@@ -428,10 +431,12 @@ pub async fn write_document_blocks(
 
             let head_key = HeadstoreDocKey::new(identity.doc_short_id, field_name, field_cid);
             let priority_bytes = encode_priority_varint(field_priority);
+            // DEFRALEVEL(S1): Unchanged write; CID key stays Ordinary in phase 1, identical rewrites elide.
             headstore
                 .set(&head_key.bytes(), &priority_bytes)
                 .await
                 .map_err(|e| format!("Failed to write field head: {}", e))?;
+            // DEFRALEVEL(S1): Keep /p/ Ordinary: it doubles as the counter applied-once guard.
             headstore
                 .set(
                     &priority_index_key(identity.doc_short_id, field_priority, field_cid),
@@ -502,11 +507,13 @@ pub async fn write_document_blocks(
     let composite_cid = generate_cid_from_bytes(&composite_bytes)
         .map_err(|e| format!("Failed to generate composite CID: {}", e))?;
 
+    // DEFRALEVEL(S1): Stays Ordinary (identical blind writes elide); no code change.
     blockstore
         .set(&composite_cid.to_bytes(), &composite_bytes)
         .await
         .map_err(|e| format!("Failed to store composite block: {}", e))?;
 
+    // DEFRALEVEL(S4): Replace with per-doc marker (parent C cid -> composite_cid).
     for old_head in &composite_head_entries {
         headstore
             .delete(&old_head.key)
@@ -516,6 +523,7 @@ pub async fn write_document_blocks(
 
     let composite_head_key = HeadstoreDocKey::new(identity.doc_short_id, "C", composite_cid);
     let priority_bytes = encode_priority_varint(composite_priority);
+    // DEFRALEVEL(S1): Unchanged; stays Ordinary (identical blind writes elide).
     headstore
         .set(&composite_head_key.bytes(), &priority_bytes)
         .await
@@ -569,6 +577,7 @@ pub async fn write_delete_block(
     schema_version_id: &str,
     signing_config: Option<&SigningConfig>,
 ) -> Result<BlockResult, String> {
+    // DEFRALEVEL(S4): Marker-aware snapshot as above.
     let snapshot = DocHeadsSnapshot::load(headstore, doc_short_id).await?;
     let priority: u64 = snapshot.max_priority() + 1;
 
@@ -608,6 +617,7 @@ pub async fn write_delete_block(
         .await
         .map_err(|e| format!("Failed to store delete composite block: {}", e))?;
 
+    // DEFRALEVEL(S4): Per-doc superseded markers instead of deletes.
     for old_head in &composite_head_entries {
         headstore
             .delete(&old_head.key)

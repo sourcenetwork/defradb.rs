@@ -211,6 +211,7 @@ pub trait DocFetcher: MaybeSendSync {
         value: &str,
     ) -> Result<Vec<Document>>;
 
+    // DEFRALEVEL(S6): Signature stays stable. Update the doc wording if head semantics change.
     async fn get_document_arrivals(
         &self,
         options: &DocumentArrivalOptions,
@@ -523,6 +524,7 @@ mod tests {
     }
 }
 
+// DEFRALEVEL(S6): Keep `after` as a u64 cursor. A sequencer that stays contiguous preserves public contract.
 /// Node-local first materialization order, never a cross-replica creation clock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentArrivalOptions {
@@ -536,6 +538,7 @@ pub struct DocumentArrivalOptions {
     pub doc_ids: Option<Vec<String>>,
 }
 
+// DEFRALEVEL(S6): The 'including own writes' guarantee on head is the contract S6 must decide on: drop or emulate it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DocumentArrivalPage {
     /// High-water mark in the same transaction snapshot as the entries, including own writes.
@@ -546,6 +549,7 @@ pub struct DocumentArrivalPage {
     pub entries: Vec<DocumentArrival>,
 }
 
+// DEFRALEVEL(S6): Unchanged if cursors stay u64 and contiguous.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentArrival {
     pub cursor: u64,

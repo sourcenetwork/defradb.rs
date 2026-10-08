@@ -2,6 +2,7 @@ use super::*;
 use bytes::Bytes;
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    // DEFRALEVEL(S3): Replace blob read/reconcile with seed operand; drop guards (S7).
     /// Process a Counter delta from a block (standalone, with its own transaction).
     pub async fn process_counter_delta(
         &self,
@@ -33,6 +34,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .block_collection(&payload.schema_version_id, metadata.collection_id)
             .await?
             .ok_or_else(missing_collection)?;
+        // DEFRALEVEL(S7): Remove guard; add CollectionKey read in txn
         let _collection_guard = self
             .db
             .collection_read_guard(collection.collection_id())
@@ -43,6 +45,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .block_collection(&payload.schema_version_id, metadata.collection_id)
             .await?
             .ok_or_else(missing_collection)?;
+        // DEFRALEVEL(S7): Remove after S3 makes counter accumulation a merge operand.
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 
         tracing::debug!(
@@ -190,6 +193,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
     }
 
+    // DEFRALEVEL(S3): Seed through operand; is_create needs doc-exists read (S5 blob).
     /// Process a Counter delta within an existing transaction, returning the merge result
     /// and the accumulated value for document reconstruction.
     #[allow(clippy::too_many_arguments)]
@@ -301,6 +305,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         .await
     }
 
+    // DEFRALEVEL(S3): Keep the applied-marker key Ordinary (applied-once guard); drop post-merge read_counter_value.
     #[allow(clippy::too_many_arguments)]
     async fn merge_counter_once_for_document(
         &self,
@@ -314,6 +319,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         delta: &CounterDelta,
         numeric_kind: NumericKind,
     ) -> std::result::Result<CounterMergeResult, MergeError> {
+        // DEFRALEVEL(S3): hazard: h/p/ doubles as applied-once guard; never ContentAddress it.
         let applied_key =
             storage::keys::HeadstorePriorityKey::new(doc_short_id, payload.priority, *cid);
         if headstore

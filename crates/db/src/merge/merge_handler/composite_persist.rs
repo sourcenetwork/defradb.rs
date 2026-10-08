@@ -76,6 +76,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // BEFORE any field block is persisted, so a rejected block leaves no
         // partial write.
 
+        // DEFRALEVEL(S5): Same per-doc blob resolution as the local path
         collection
             .save_with_datastore(datastore, &doc, context.doc_short_id)
             .await
@@ -93,6 +94,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
+        // DEFRALEVEL(S6): Same blind per-doc append as the local create. No arrival guard is needed once the head RMW is gone.
         if old_doc.is_none() && !doc_is_tombstoned {
             crate::event::arrivals::record(
                 systemstore,

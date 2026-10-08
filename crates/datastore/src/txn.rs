@@ -51,6 +51,7 @@ enum RegisteredCallback {
 /// - Transaction ID for tracking
 /// - Lifecycle callbacks
 pub struct BasicTxn {
+    // DEFRALEVEL(S9): Holds the worker-owned txn handle instead
     shared_txn: Arc<SharedTxn>,
     id: u64,
     readonly: bool,
@@ -234,6 +235,7 @@ impl BasicTxn {
         // The SharedTxn holds it in an Arc<RwLock<Box<dyn Txn>>>
         // We need to get ownership to call commit
         let callbacks = std::mem::take(&mut self.callbacks);
+        // DEFRALEVEL(S9): Commit-by-message removes the outstanding-reference failure mode
         let shared = Arc::try_unwrap(self.shared_txn).map_err(|_| {
             Error::Storage(storage::corekv::Error::Other(
                 "Cannot commit: transaction still has references".into(),

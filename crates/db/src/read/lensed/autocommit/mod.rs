@@ -85,6 +85,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
+    // DEFRALEVEL(S6): Reads the sequencer watermark.
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,

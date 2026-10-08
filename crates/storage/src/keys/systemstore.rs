@@ -78,6 +78,7 @@ impl ActionStatusKey {
 }
 
 impl Key for ActionStatusKey {
+    // DEFRALEVEL(S1): Ordinary
     fn bytes(&self) -> Vec<u8> {
         action_key(
             ACTION_STATUS_PREFIX,
@@ -179,6 +180,7 @@ impl CollectionKey {
 }
 
 impl Key for CollectionKey {
+    // DEFRALEVEL(S7): Ordinary; definition-key read replaces collection RwLock for schema exclusion
     fn bytes(&self) -> Vec<u8> {
         format!("/collection/id/{}", self.collection_id).into_bytes()
     }
@@ -407,6 +409,7 @@ impl P2PCollectionKey {
 }
 
 impl Key for P2PCollectionKey {
+    // DEFRALEVEL(S1): Ordinary
     fn bytes(&self) -> Vec<u8> {
         format!("/p2p/collection/{}", self.collection_id).into_bytes()
     }
@@ -475,6 +478,7 @@ impl P2PPendingDagKey {
 }
 
 impl Key for P2PPendingDagKey {
+    // DEFRALEVEL(S1): Ordinary
     fn bytes(&self) -> Vec<u8> {
         format!("/p2p/pending_dag/{}", self.root_cid).into_bytes()
     }
@@ -574,6 +578,7 @@ impl Default for CollectionIDSequenceKey {
 }
 
 impl Key for CollectionIDSequenceKey {
+    // DEFRALEVEL(S1): Ordinary
     fn bytes(&self) -> Vec<u8> {
         b"/seq/collection".to_vec()
     }
@@ -642,6 +647,7 @@ impl IndexIDSequenceKey {
 }
 
 impl Key for IndexIDSequenceKey {
+    // DEFRALEVEL(S1): Ordinary; fix namespace split
     fn bytes(&self) -> Vec<u8> {
         format!("/seq/index/{}", self.collection_id).into_bytes()
     }

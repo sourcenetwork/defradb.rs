@@ -177,6 +177,7 @@ impl CollectionIndex for SimpleIndex {
         &self.desc
     }
 
+    // DEFRALEVEL(S5): Per-doc keys; blind writes under DefraLevel
     async fn save<T: Reader + Writer + MaybeSend>(
         &self,
         txn: &mut T,

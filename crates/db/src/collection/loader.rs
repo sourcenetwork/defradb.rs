@@ -118,6 +118,7 @@ pub(crate) async fn load_collection_from_systemstore(
     }
 }
 
+// DEFRALEVEL(S7): Natural place to record the CollectionKey read so resolution and validation happen together
 /// Get a collection by name with lazy loading from the SystemStore.
 ///
 /// This function checks the transaction's cache first. On cache miss, it loads

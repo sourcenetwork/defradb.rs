@@ -35,6 +35,7 @@ impl<S: Store> crate::database::DB<S> {
 
         let collection_id = collection.collection_id().to_string();
         let short_id = collection.resolved_root_id();
+        // DEFRALEVEL(S7): Replace guard with fence (truncate/action key that writers read); open design
         let _collection_guards = self
             .collection_write_guards(std::iter::once(collection_id.clone()))
             .await?;

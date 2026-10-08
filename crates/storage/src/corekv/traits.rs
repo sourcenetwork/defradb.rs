@@ -62,6 +62,7 @@ pub type AsyncTxnCallback = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>
 
 pub use defra_core::thread_bounds::{MaybeSend, MaybeSendSync, MaybeSync};
 
+// DEFRALEVEL(S9): Sync trait; collection_head_entries default/override tied to head cache (S2)
 /// Reader trait for read-only key-value operations.
 ///
 /// This trait provides the core read operations: get, has, and iterator.
@@ -150,6 +151,7 @@ pub trait Reader: MaybeSendSync + private::Sealed {
     /// The caller is responsible for closing the iterator when done.
     async fn iterator(&self, opts: IterOptions) -> Result<Box<dyn Iterator>>;
 
+    // DEFRALEVEL(S2): Delete the method, its doc, and the Box forwarding at line 460.
     /// Optional materialization of the exact head and marker prefixes supplied
     /// by the collection-head owner, in this reader's key coordinates.
     /// This reads the captured snapshot plus own writes;
@@ -170,6 +172,7 @@ pub trait Reader: MaybeSendSync + private::Sealed {
     }
 }
 
+// DEFRALEVEL(S3): Add merge(key, operand) for blind merge operands; sync under S9
 /// Writer trait for write operations.
 ///
 /// This trait provides the core write operations: set and delete.
@@ -220,6 +223,7 @@ pub trait ReaderWriter: Reader + Writer {}
 /// automatically implements ReaderWriter.
 impl<T> ReaderWriter for T where T: Reader + Writer {}
 
+// DEFRALEVEL(S1): No per-txn policy needed; stats handle for regolith.commit.*/policy.* tickers (S8)
 /// Store trait for key-value stores that support transactions.
 ///
 /// This trait defines the basic store interface with transaction support.
@@ -257,6 +261,7 @@ pub trait Store: MaybeSendSync + private::Sealed {
     async fn close(&self) -> Result<()>;
 }
 
+// DEFRALEVEL(S9): Sync
 /// Dropable trait for stores that support bulk deletion.
 ///
 /// This is an optional interface implemented by some stores. It provides a
@@ -282,6 +287,7 @@ pub trait Dropable: Store + private::Sealed {
     async fn drop_all(&self) -> Result<()>;
 }
 
+// DEFRALEVEL(S9): Sync commit; async callbacks need an executor handoff outside storage
 /// Transaction trait with ACID guarantees and callback support.
 ///
 /// Transactions provide atomicity, consistency, isolation, and durability (ACID).
@@ -431,6 +437,7 @@ pub trait TxnStore: Store {}
 /// Blanket implementation: any Store automatically implements TxnStore.
 impl<T> TxnStore for T where T: Store {}
 
+// DEFRALEVEL(S3): Add merge delegation; sync under S9
 /// Blanket implementation of Reader for Box<dyn Txn>.
 ///
 /// This allows boxed transactions to be used where Reader is required.

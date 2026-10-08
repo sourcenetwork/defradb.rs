@@ -59,6 +59,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         results
     }
 
+    // DEFRALEVEL(S7): GateContended disappears when batch_gate is dropped; bisect simplifies rare
     /// Attempt batch merge with binary-split retry on failure.
     ///
     /// Tries the whole batch first. On failure, splits into two halves and
@@ -78,6 +79,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
 
             match self.try_batch_merge(blocks).await {
                 Ok(results) => results,
+                // DEFRALEVEL(S7): Delete GateContended branch and MergeError::GateContended
                 Err(MergeError::GateContended) => {
                     // A long-lived local/interactive txn holds the per-doc batch
                     // gate. Don't block node-wide inbound replication — degrade to
@@ -129,9 +131,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         batch_collection_ids.dedup();
         let mut _collection_guards = Vec::with_capacity(batch_collection_ids.len());
         for collection_id in &batch_collection_ids {
+            // DEFRALEVEL(S7): Remove; use one CollectionKey read per distinct collection in txn
             _collection_guards.push(self.db.collection_read_guard(collection_id).await?);
         }
 
+        // DEFRALEVEL(S6,S7): Remove loop; S6 removes with other changes, S7 removes S6 loop
         let mut _arrival_guards = Vec::with_capacity(batch_collection_ids.len());
         for collection_id in &batch_collection_ids {
             _arrival_guards.push(self.merge_queue.acquire_arrival(collection_id).await);
@@ -157,6 +161,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             // gate is held by a long-lived local/interactive txn we signal the
             // caller to fall back to the gate-free per-block path rather than stall
             // node-wide inbound replication (#1041).
+            // DEFRALEVEL(S7): Remove gate and guards; batch txn relies on DefraLevel validation
             let _batch_gate = self
                 .merge_queue
                 .try_acquire_batch_gate()
@@ -485,6 +490,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     ));
                 };
                 let mut ds = datastore.clone();
+                // DEFRALEVEL(S7): Drop per-doc guards for counter blocks once merges are blind
                 let result = self
                     .process_counter_delta_in_txn(
                         &mut ds,

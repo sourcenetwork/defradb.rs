@@ -7,6 +7,7 @@ use storage::keys::{HeadstoreDocKey, HeadstorePriorityKey};
 
 use crate::{Error, Result, DB};
 
+// DEFRALEVEL(S1): Ordinary
 pub const COMMIT_PRIORITY_INDEX_MARKER_KEY: &[u8] = b"/meta/commit-priority-index-complete";
 
 impl<S: Store> DB<S> {
@@ -52,6 +53,7 @@ impl<S: Store> DB<S> {
             let mut root_heads: Vec<(Cid, u64)> = Vec::new();
             let mut seen_root_heads = RapidHashSet::new();
             while let Some(pair) = head_iter.next().await.map_err(Error::Storage)? {
+                // DEFRALEVEL(S4): Ensure HeadstoreDocKey::parse rejects marker keys to avoid collision.
                 let Some(head_key) = HeadstoreDocKey::parse(&pair.key) else {
                     continue;
                 };

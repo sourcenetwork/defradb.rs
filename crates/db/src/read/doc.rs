@@ -41,6 +41,7 @@ use crate::txn::DbTxn;
 /// not true snapshot isolation - if collections are accessed at different times,
 /// they reflect the store state at the time of first access.
 pub struct DbDocFetcher<S: Store> {
+    // DEFRALEVEL(S9): Same holder change
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
 }
 
@@ -256,6 +257,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         Ok(matching_docs)
     }
 
+    // DEFRALEVEL(S6): Own-writes semantics depend on S6 design; transaction lock changes S9.
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,

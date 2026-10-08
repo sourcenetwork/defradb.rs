@@ -104,6 +104,7 @@ impl<S: Store> crate::database::DB<S> {
         let actual_name = old_schema.name.clone();
         let old_version_id = old_schema.version_id.clone();
         let collection_id = old_schema.collection_id.clone();
+        // DEFRALEVEL(S7): Remove guard; the old-version CollectionKey write is what conflicts in-flight writers that read it
         let _collection_guards = self
             .collection_write_guards(std::iter::once(collection_id.clone()))
             .await?;

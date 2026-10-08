@@ -366,6 +366,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
         }
     }
 
+    // DEFRALEVEL(S7): Remove the guards; write-back loses to concurrent writers through DefraLevel conflict and retries.
     async fn persist_migrated_document_batch(
         &self,
         collection: &Collection,
@@ -396,6 +397,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
 
         let max_retries = self.db.options().max_txn_retries();
         let mut retry = 0;
+        // DEFRALEVEL(S7): Loop holds per-doc queue guards across retries; when S7 drops DocWriteQueue the loop becomes the only conflict defense here - keep as safety net
         loop {
             let active_collection = self.db.get_collection(collection.name()).map_err(|error| {
                 query::error::QueryError::execution(format!(
@@ -523,6 +525,7 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
 
             match txn.commit().await {
                 Ok(()) => return Ok(()),
+                // DEFRALEVEL(S8): Meter it, or consolidate it into the safety net.
                 Err(error) if error.is_txn_conflict() && retry < max_retries => {
                     retry += 1;
                     debug!(

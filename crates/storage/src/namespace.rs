@@ -38,6 +38,7 @@ pub enum Namespace {
 }
 
 impl Namespace {
+    // DEFRALEVEL(S1): KeyClassifier dispatches on byte 0 then parses the per-namespace logical layout
     /// Get the byte prefix for this namespace
     pub fn prefix(&self) -> u8 {
         match self {
@@ -153,6 +154,7 @@ impl crate::corekv::private::Sealed for NamespacedTxn {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Reader for NamespacedTxn {
+    // DEFRALEVEL(S2): Delete.
     async fn collection_head_entries(
         &self,
         head_prefix: &[u8],

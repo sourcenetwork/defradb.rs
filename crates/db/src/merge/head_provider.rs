@@ -59,6 +59,7 @@ impl<S: Store + 'static> DocumentHeadProvider for DbHeadProvider<S> {
         let doc_short_id = doc_ref.doc_short_id;
 
         // Query composite heads with prefix /d/{doc_short_id}/C/
+        // DEFRALEVEL(S4): Marker-aware
         let prefix = HeadstoreDocKey::field_prefix(doc_short_id, "C");
         let prefix_len = prefix.len();
         let opts = IterOptions::new().with_prefix(prefix);
@@ -237,6 +238,7 @@ impl<S: Store + 'static> DocumentHeadProvider for DbHeadProvider<S> {
             .map_err(|e| {
                 p2p::error::Error::HeadProvider(format!("failed to load short id: {}", e))
             })?;
+        // DEFRALEVEL(S2): Served by the native scan once the cache is gone.
         let found = crate::block::heads::live_collection_heads(&headstore, short_id)
             .await
             .map_err(|e| {

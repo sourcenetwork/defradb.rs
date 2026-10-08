@@ -51,6 +51,7 @@ impl<S: Store + 'static> TransactionOperations for TxnRegistryAdapter<S> {
         let handle = tokio::runtime::Handle::current();
         let acting_identity = defra_core::current_identity::get_effective_identity();
 
+        // DEFRALEVEL(S9): Can drop once DbTxn holder is Send (worker-owned txn) and identity is passed explicitly
         tokio::task::spawn_blocking(move || {
             let _identity_guard =
                 defra_core::current_identity::scoped_current_identity(acting_identity);

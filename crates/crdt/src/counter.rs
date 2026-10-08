@@ -322,6 +322,7 @@ impl Counter {
         })
     }
 
+    // DEFRALEVEL(S3): Remove from write paths; keep only for read surfaces.
     /// Get current value as i64
     async fn get_int64(&self, reader: &dyn Reader) -> Result<i64> {
         match reader
@@ -421,6 +422,7 @@ impl Counter {
             .map_err(|e| Error::Storage(e.to_string()))
     }
 
+    // DEFRALEVEL(S3): Replace read+set with rw.merge; is_create becomes seed operand.
     /// Apply an increment/decrement.
     ///
     /// Merge is unconditional: every delta that reaches this method is
@@ -497,6 +499,7 @@ impl Counter {
         Ok(MergeResult::Applied)
     }
 
+    // DEFRALEVEL(S3): Turn seed into operand; make PCounter max-migration one-shot or drop.
     /// Initialize the CRDT accumulation store (`value_key`) from the document's
     /// current materialized value, but only if the store has no value yet.
     ///
@@ -570,6 +573,7 @@ impl Counter {
         Ok(())
     }
 
+    // DEFRALEVEL(S3): Delete; superseded by the seed operand.
     /// Whether the accumulation store (`value_key`) currently holds a value.
     async fn has_value(&self, reader: &dyn Reader) -> Result<bool> {
         Ok(reader
@@ -579,6 +583,7 @@ impl Counter {
             .is_some())
     }
 
+    // DEFRALEVEL(S5): Must not be called in same txn after merge; move to read/query side.
     /// Get current value bytes (for internal use)
     async fn get_value_internal(&self, reader: &dyn Reader) -> Result<Bytes> {
         reader
@@ -597,6 +602,7 @@ impl Counter {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl ReplicatedData for Counter {
+    // DEFRALEVEL(S3): Signature unchanged; behavior becomes a blind merge.
     async fn merge(
         &self,
         rw: &mut dyn ReaderWriter,

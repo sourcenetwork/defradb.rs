@@ -11,12 +11,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let priority_bytes = encode_priority_varint(context.payload.priority);
 
         if let Some(heads) = &context.block.heads {
+            // DEFRALEVEL(S4): Replace with per-doc superseded marker (parent -> context.cid)
             for parent_cid in heads {
                 let parent_key = storage::keys::headstore::HeadstoreDocKey::new(
                     context.doc_short_id,
                     "C",
                     *parent_cid,
                 );
+                // DEFRALEVEL(S4): Replace delete with per-child marker write
                 let _ = headstore
                     .delete(
                         &<storage::keys::headstore::HeadstoreDocKey as storage::corekv::Key>::bytes(
@@ -27,6 +29,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         }
 
+        // DEFRALEVEL(S1): Stays Ordinary (identical blind writes elide); unchanged
         let composite_head_key =
             storage::keys::headstore::HeadstoreDocKey::new(context.doc_short_id, "C", *context.cid);
         if let Err(e) = headstore
@@ -68,6 +71,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     continue;
                 }
                 if let Some(parent_cids) = state.field_block_heads.get(&dag_link.name) {
+                    // DEFRALEVEL(S4): Per-doc markers keyed by field
                     for parent_cid in parent_cids {
                         let parent_key = storage::keys::headstore::HeadstoreDocKey::new(
                             context.doc_short_id,

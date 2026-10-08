@@ -273,6 +273,7 @@ impl<S: Store> DB<S> {
         })
     }
 
+    // DEFRALEVEL(S5): Watch conflicts with concurrent index writes; S5 per-doc resolution reduces most; keep adaptive loop
     async fn backfill_batch(
         &self,
         plan: &BackfillPlan,
@@ -325,6 +326,7 @@ impl<S: Store> DB<S> {
                     *max_docs = (*max_docs * 2).min(BACKFILL_BATCH_DOCS);
                     return Ok(batch);
                 }
+                // DEFRALEVEL(S8): Add telemetry or count under new layer; concurrent conflicts more likely without S7 RwLock
                 Err(error)
                     if error.is_txn_conflict()
                         && (*max_docs > 1 || retries_at_one < max_retries) =>

@@ -207,6 +207,7 @@ impl CallbackManager {
     }
 }
 
+// DEFRALEVEL(S1): Add ticker fields and read from Arc<regolith::Statistics> through get_ticker.
 /// What a store reports about its transactions.
 ///
 /// Deliberately small. regolith reports that a commit conflicted, not
@@ -230,6 +231,7 @@ struct TransactionMetrics {
     conflicts: AtomicU64,
 }
 
+// DEFRALEVEL(S1): Hold an Option<Arc<regolith::Statistics>> to return ticker values in snapshot().
 /// Cloneable handle for reading a live store's transaction diagnostics.
 #[derive(Clone)]
 pub struct TransactionStatsHandle {
@@ -245,6 +247,7 @@ impl TransactionStatsHandle {
         }
     }
 
+    // DEFRALEVEL(S8): Source these from regolith::Statistics tickers or extend snapshot.
     pub(crate) fn record_commit(&self) {
         self.metrics.commits.fetch_add(1, Ordering::Relaxed);
     }

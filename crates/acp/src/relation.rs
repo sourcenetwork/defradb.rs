@@ -148,6 +148,7 @@ impl RelationTuple {
         self.relation == OWNER_RELATION
     }
 
+    // DEFRALEVEL(S1): Classify storage_key as Ordinary.
     /// Get the storage key for this tuple.
     ///
     /// Key format: `/acp/{collection_id}/{doc_id}/{relation}/{subject_did}`

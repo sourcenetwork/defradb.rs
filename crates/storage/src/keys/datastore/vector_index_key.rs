@@ -87,6 +87,7 @@ pub fn vector_epoch_prefix(collection_short_id: u32, index_id: u32, epoch: u32) 
     epoch_prefix(collection_short_id, index_id, epoch)
 }
 
+// DEFRALEVEL(S1): Keep Ordinary for graph nodes mutated by neighbours and meta pointer shared
 /// `/<collShortID>/<indexID>/<epoch>/`, shared by every key in this space.
 fn epoch_prefix(collection_short_id: u32, index_id: u32, epoch: u32) -> Vec<u8> {
     let mut buf = vec![SEPARATOR];

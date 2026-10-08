@@ -35,6 +35,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn, so no identity exists to guard yet.
         // The DocID-mapping duplicate check is the gate.
+        // DEFRALEVEL(S7,S6): Remove guard; contiguity from S6 sequencer once arrivals use per-doc append keys.
         let _arrival_guard = self
             .db
             .doc_write_queue()
@@ -245,6 +246,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // the txn; the DocID-mapping duplicate check is the gate.
 
         // === Phase 2: Transaction — allocate identities, then compute blocks ===
+        // DEFRALEVEL(S7,S6): Remove guard once S6 arrival redesign complete.
         let _arrival_guard = self
             .db
             .doc_write_queue()
@@ -275,6 +277,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     let identity = *identity;
                     let enc = enc_config.clone();
                     let sign = sign_config.clone();
+                    // DEFRALEVEL(S9): Move to sync worker pool instead of tokio blocking pool.
                     tokio::task::spawn_blocking(move || {
                         compute_document_blocks(
                             &doc_clone,

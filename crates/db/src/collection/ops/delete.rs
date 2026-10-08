@@ -76,6 +76,7 @@ impl<S: Store> crate::database::DB<S> {
         let collection = self
             .get_collection(name)?
             .ok_or_else(|| Error::CollectionNotFound(name.to_string()))?;
+        // DEFRALEVEL(S7): Remove guard; CollectionKey delete conflicts writers
         let _collection_guards = self
             .collection_write_guards(std::iter::once(collection.collection_id().to_string()))
             .await?;
@@ -169,6 +170,7 @@ impl<S: Store> crate::database::DB<S> {
         self.delete_collection_versions_batch(version_ids).await
     }
 
+    // DEFRALEVEL(S7): bug: unfiltered truncate takes no collection write guard (locks.rs expects one)
     /// Truncate a collection: delete all documents, heads, blocks, and index entries
     /// while preserving the collection schema.
     ///
@@ -284,6 +286,7 @@ impl<S: Store> crate::database::DB<S> {
                     .await
                     .map_err(Error::Storage)?;
 
+                // DEFRALEVEL(S4): Must also remove or carry the per-doc marker range
                 let head_prefix = HeadstoreDocKey::document_prefix(doc_short_id);
                 let mut block_cids = Vec::new();
                 {
@@ -352,6 +355,7 @@ impl<S: Store> crate::database::DB<S> {
         }
     }
 
+    // DEFRALEVEL(S2): Under CommutativePrefix scan-then-deletes become blind; concurrent append won't be caught
     /// Delete collection-level metadata: index entries and collection heads.
     async fn truncate_collection_metadata(&self, collection_id: &str, short_id: u32) -> Result<()> {
         use storage::keys::headstore::HeadstoreColSuperseded;

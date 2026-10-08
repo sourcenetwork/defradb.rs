@@ -38,6 +38,7 @@ impl PersistentZanzibarStore<RegolithStore> {
     }
 }
 
+// DEFRALEVEL(S1): Keep Ordinary
 /// Key holding the last issued policy-ID counter.
 const POLICY_COUNTER_KEY: &str = "/zanzibar/counter";
 
@@ -138,6 +139,7 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
         Ok(policies)
     }
 
+    // DEFRALEVEL(S3): Keep seeding scan validated to prevent counter double-issue
     async fn next_policy_counter(&self) -> Result<u64> {
         let _guard = self.counter_lock.lock().await;
         let mut conflicts = 0;
@@ -191,6 +193,7 @@ impl<S: Store> ZanzibarStore for PersistentZanzibarStore<S> {
 
             match txn.commit().await {
                 Ok(()) => return Ok(next),
+                // DEFRALEVEL(S1): POLICY_COUNTER_KEY must stay Ordinary to prevent ID duplication
                 Err(error)
                     if error.is_txn_conflict() && conflicts < MAX_COUNTER_CONFLICT_RETRIES =>
                 {

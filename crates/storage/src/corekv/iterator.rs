@@ -73,6 +73,7 @@ impl KvPair {
     }
 }
 
+// DEFRALEVEL(S9): Sync iterator
 /// Iterator trait for traversing key-value pairs.
 ///
 /// Iterators are created from stores using the `iterator()` method with

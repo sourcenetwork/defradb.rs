@@ -32,6 +32,7 @@ impl EncstoreKey {
 }
 
 impl Key for EncstoreKey {
+    // DEFRALEVEL(S1): Namespace e stays Ordinary in phase 1; ContentAddressed candidate later
     fn bytes(&self) -> Vec<u8> {
         // Use raw CID bytes directly (binary format)
         self.cid.to_bytes()

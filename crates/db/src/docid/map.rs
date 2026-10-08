@@ -112,6 +112,7 @@ impl<S: Store> DocShortIdAllocator<S> {
         }
     }
 
+    // DEFRALEVEL(S1): Keep Ordinary; already outside doc txn
     async fn reserve_range(&self) -> Result<u64> {
         let key = DocShortIDSequenceKey::new().bytes();
         let mut conflicts = 0;
@@ -121,6 +122,7 @@ impl<S: Store> DocShortIdAllocator<S> {
                 .new_txn(false)
                 .await
                 .map_err(Error::Storage)?;
+            // DEFRALEVEL(S3): Real read-modify-write counter; stays conflicting, likely keep loop and add telemetry
             let current = decode_sequence(txn.get(&key).await.map_err(Error::Storage)?)?;
             let start = current
                 .checked_add(1)
@@ -134,6 +136,7 @@ impl<S: Store> DocShortIdAllocator<S> {
 
             match txn.commit().await {
                 Ok(()) => return Ok(start),
+                // DEFRALEVEL(S8): Record under RetryLayer or drop once S1 classifies it; key must stay Ordinary
                 Err(error)
                     if error.is_txn_conflict() && conflicts < MAX_RESERVATION_CONFLICT_RETRIES =>
                 {

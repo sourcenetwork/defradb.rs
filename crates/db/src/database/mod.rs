@@ -30,6 +30,7 @@ pub mod storage_stats;
 
 /// Default maximum number of lazy migrations written in one transaction.
 pub const DEFAULT_MIGRATION_WRITE_BACK_BATCH_SIZE: usize = 128;
+// DEFRALEVEL(S8): Single knob for the remaining safety net
 /// Default maximum number of retries after an auto-commit transaction conflict.
 pub const DEFAULT_MAX_TXN_RETRIES: u32 = 5;
 
@@ -241,6 +242,7 @@ pub struct DB<S: Store> {
     /// awaiting what the write created are released.
     local_commit_release:
         std::sync::OnceLock<Arc<dyn crate::merge::governance::LocalCommitRelease>>,
+    // DEFRALEVEL(S7): Remove the field, both constructors' initializers and the accessor.
     /// Per-document write serialization queue. Shared with the merge handler so
     /// local writes and P2P merges that touch the same document never interleave
     /// their CRDT read-modify-write (#1021 counter convergence).
@@ -254,6 +256,7 @@ pub struct DB<S: Store> {
     /// behind. The registry provides cancellation-safe mutual exclusion for
     /// operations running in this database instance.
     pub active_actions: Arc<crate::database::action::ActionRegistry>,
+    // DEFRALEVEL(S7): Delete field and both initializers once no acquirer remains
     /// Per-collection locks coordinating document writes with schema changes.
     pub(crate) collection_locks: HopscotchMap<String, Arc<async_lock::RwLock<()>>, RandomState>,
 }
@@ -567,6 +570,7 @@ impl<S: Store> DB<S> {
         Ok(DbTxn::new(basic_txn))
     }
 
+    // DEFRALEVEL(S2): Changes with the head-cache/marker retirement
     /// Reclaim superseded collection head keys, if enough have built up.
     ///
     /// Called after a branchable append commits. One in
@@ -585,6 +589,7 @@ impl<S: Store> DB<S> {
             // Reclamation is the one path here that can lose a write race, and
             // losing costs nothing: the head set is a function of the markers,
             // so the next pass repeats the work.
+            // DEFRALEVEL(S2,S4): With CommutativePrefix head scans this loses fewer races.
             Err(error) if error.is_txn_conflict() => tracing::debug!(
                 collection_short_id,
                 %error,
@@ -600,6 +605,7 @@ impl<S: Store> DB<S> {
         }
     }
 
+    // DEFRALEVEL(S8): Account conflicts from regolith.commit.* tickers, not ad hoc logs.
     /// Delete collection head keys that a marker supersedes, with their
     /// markers, in a transaction of its own.
     ///

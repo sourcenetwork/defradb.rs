@@ -29,6 +29,7 @@ fn retriable_event_delay(attempt: usize) -> Duration {
 }
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
+    // DEFRALEVEL(S8): Same as pushlog helper
     async fn retry_retriable_event<F, Fut, Output>(
         &self,
         event_kind: &'static str,

@@ -4,6 +4,7 @@ const DATA_PREFIX: &[u8] = b"/data/";
 const PRIORITY_SUFFIX: &[u8] = b"/priority";
 const NONCES_SUFFIX: &[u8] = b"/nonces/";
 
+// DEFRALEVEL(S1): Leave KeyClassifier as Default; seeding from blob during schema migration
 /// CRDTValueKey: Stores a CRDT field value.
 ///
 /// Structure: /data/[SchemaVersionID]/[DocID bytes]/[FieldName]
@@ -51,6 +52,7 @@ impl CRDTValueKey {
 }
 
 impl Key for CRDTValueKey {
+    // DEFRALEVEL(S3): Counter values become merge operands; reconcile path reads/writes with no type tag
     fn bytes(&self) -> Vec<u8> {
         let mut key = Vec::with_capacity(
             DATA_PREFIX.len()

@@ -12,6 +12,7 @@ pub use config::RegolithStoreOptions;
 pub use store::RegolithStore;
 pub use transaction::RegolithTxn;
 
+// DEFRALEVEL(S9): Replace with dispatch to a sync worker over kovan-channel.
 /// Native storage and publication locks may wait synchronously. Let Tokio
 /// replace the worker while keeping the operation on this stack: detaching a
 /// commit would allow cancellation to release its caller's serialization guard

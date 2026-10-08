@@ -60,6 +60,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeHandler
 }
 
 impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, B> {
+    // DEFRALEVEL(S8): Keep as merge safety net; fix stale /seq/doc rationale once S2/S4/S5 land.
     async fn merge_with_retries(
         &self,
         cid: &Cid,

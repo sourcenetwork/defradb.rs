@@ -6,6 +6,7 @@
 /// - Search engine retry tracking
 use crate::corekv::Key;
 
+// DEFRALEVEL(S1): Classify as Ordinary.
 /// ReplicatorKey: Stores replicator configuration and state
 ///
 /// Structure: /rep/id/[ReplicatorID]
@@ -77,6 +78,7 @@ impl Key for ReplicatorKey {
     }
 }
 
+// DEFRALEVEL(S1): Classify as Ordinary.
 /// ReplicatorRetryIDKey: Tracks failed replication attempts by peer
 ///
 /// Structure: /rep/retry/id/[PeerID]
@@ -111,6 +113,7 @@ impl Key for ReplicatorRetryIDKey {
     }
 }
 
+// DEFRALEVEL(S1): Classify as Ordinary.
 /// ReplicatorRetryDocIDKey: Tracks document-specific replication failures
 ///
 /// Structure: /rep/retry/doc/[PeerID]/[DocID]
@@ -154,6 +157,7 @@ impl Key for ReplicatorRetryDocIDKey {
     }
 }
 
+// DEFRALEVEL(S1): Classify as Ordinary.
 /// Presence marker for collection-scoped head rederivation.
 /// Structure: `/rep/retry/col/{peer}/{collection}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +193,7 @@ impl Key for ReplicatorRetryCollectionKey {
     }
 }
 
+// DEFRALEVEL(S1): Classify as Ordinary.
 /// PeerstoreSERetry: Tracks search engine indexing failures on peer
 ///
 /// Structure: /se-retry/[PeerID]/[CollectionID]/[DocID]

@@ -412,6 +412,7 @@ impl<S: Store + Send + Sync> AcpStore for PersistentAcpStore<S> {
             .await
             .map_err(|e| Error::storage_txn("register_doc_atomic:begin", e))?;
 
+        // DEFRALEVEL(S1): keep a/acp/ Ordinary: register_doc_atomic needs this prefix scan validated
         let prefix = RelationTuple::doc_prefix(collection_id, doc_id);
         let iter_opts = IterOptions::new().with_prefix(prefix.into_bytes());
 
@@ -449,6 +450,7 @@ impl<S: Store + Send + Sync> AcpStore for PersistentAcpStore<S> {
         // Without this, two owners writing different keys would both succeed under
         // snapshot isolation (the conflict tracker only detects write-write conflicts
         // on the same key).
+        // DEFRALEVEL(S1): hazard: every registrant writes identical bytes, so DefraLevel elides this sentinel's conflict; single-owner rests on the a/acp/ scan staying Ordinary
         let sentinel = format!("/acp-reg/{}/{}", collection_id, doc_id);
         txn.set(sentinel.as_bytes(), &[1])
             .await

@@ -61,6 +61,7 @@ impl<S: Store> crate::database::DB<S> {
 
             let name = target_schema.name.clone();
             let collection_id = target_schema.collection_id.clone();
+            // DEFRALEVEL(S7): Remove guard; sibling CollectionKey writes conflict writers
             let collection_guards = self
                 .collection_write_guards(std::iter::once(collection_id.clone()))
                 .await?;
@@ -397,6 +398,7 @@ impl<S: Store> crate::database::DB<S> {
             }
         }
 
+        // DEFRALEVEL(S7): Remove guard
         let _collection_guards = self
             .collection_write_guards(version_ids.iter().filter_map(|version_id| {
                 version_map

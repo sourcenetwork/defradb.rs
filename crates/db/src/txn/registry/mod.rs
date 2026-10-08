@@ -88,6 +88,7 @@ impl CleanupResult {
 /// async document fetching operations.
 pub struct DbTransactionRegistry<S: Store + 'static> {
     db: Arc<DB<S>>,
+    // DEFRALEVEL(S9): No change needed; already lock-free
     transactions: HopscotchMap<String, Arc<TransactionSlot<S>>, RandomState>,
     id_counter: AtomicU64,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,

@@ -6,6 +6,7 @@ use regolith::{DurabilityMode as EngineDurability, IsolationLevel, Options};
 
 use crate::backends::shared::DurabilityMode;
 
+// DEFRALEVEL(S1): Add policy: Arc<dyn regolith::KeyClassifier>; add or reuse statistics.
 /// How a [`super::RegolithStore`] opens and commits.
 #[derive(Clone)]
 pub struct RegolithStoreOptions {
@@ -13,6 +14,8 @@ pub struct RegolithStoreOptions {
     /// needs a different memory budget picks it up by construction rather
     /// than by a caller remembering to tune it.
     pub engine: Options,
+    // DEFRALEVEL(S1): Switch default to DefraLevel; install KeyClassifier through store.rs.
+    // DEFRALEVEL(S1): Rewrite doc for DefraLevel: blind merges commute, CommutativePrefix drops.
     /// Commit-time validation. Defaults to [`IsolationLevel::RepeatableRead`]:
     /// every point read is validated, which is what the index and docid
     /// paths need, and a scan is recorded per stretch rather than per key.
@@ -33,6 +36,7 @@ impl RegolithStoreOptions {
                 durability: EngineDurability::Immediate,
                 ..Options::default()
             },
+            // DEFRALEVEL(S1): Change to IsolationLevel::DefraLevel; install KeyClassifier and Statistics.
             isolation: IsolationLevel::RepeatableRead,
             close_timeout: Duration::from_secs(30),
         }
@@ -83,6 +87,7 @@ impl RegolithStoreOptions {
         opts
     }
 
+    // DEFRALEVEL(S1): Add with_key_classifier() and with_statistics() builders.
     /// Change commit validation. `RepeatableRead` is the default because it is
     /// what the merge, index and head-set paths need together; a caller
     /// that knows its unit of work is a blind write can ask for less.

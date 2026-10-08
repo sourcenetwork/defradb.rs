@@ -56,6 +56,7 @@ async fn execute_once_with_context(
     let batch_session_key = signing_config.as_ref().map(|s| s.public_key_hex.clone());
     let acting_did = identity.did().map(|d| d.as_str().to_string());
 
+    // DEFRALEVEL(S9): Keep bridge until thread-locals become explicit context; independent of storage.
     match tokio::task::spawn_blocking(move || {
         let _identity_guard = defra_core::current_identity::scoped_current_identity(acting_did);
         defra_core::signing::set_signing_config(signing_config);
@@ -70,6 +71,7 @@ async fn execute_once_with_context(
     }
 }
 
+// DEFRALEVEL(S8): Keep as single safety net at request boundary; re-executes whole autocommit.
 async fn execute_request_with_retry_loop<F, Fut>(
     request: QueryRequest,
     max_retries: u32,

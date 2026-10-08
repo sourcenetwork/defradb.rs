@@ -79,6 +79,7 @@ impl UpdateInput {
                         validate_pcounter_increment(&normal_value)?;
                     }
                     // Store the raw increment for block builder (delta encoding)
+                    // DEFRALEVEL(S5): Blind operands: provisional value lands in blob; requires post-merge correction if needed.
                     doc.set_counter_delta(field_name.clone(), normal_value.clone());
                     let current = doc.get(field_name);
                     let new_value = increment_value(current, &normal_value)?;

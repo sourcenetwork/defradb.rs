@@ -49,12 +49,14 @@ pub(crate) async fn write_branchable_collection_block<S: storage::corekv::Store 
     // which is sound: transactions are optimistic so neither blocks the other,
     // and the keys it removes were superseded before the caller began, so it
     // cannot touch anything the caller wrote.
+    // DEFRALEVEL(S2): Consider pruning more often as scan cost grows with backlog
     db.maybe_prune_collection_heads(collection.resolved_root_id())
         .await;
 
     Ok(written)
 }
 
+// DEFRALEVEL(S3): Counter RMW becomes merge operands; blob write stays S5
 /// Persist a local UPDATE: apply CRDT field deltas to the authoritative store
 /// (the counter RMW, #1021) and then write the document + maintain indexes. These
 /// are bundled so no mutator can write a document blob without first advancing the
@@ -96,6 +98,7 @@ pub(crate) async fn write_local_create(
     init_counter_stores_on_create(datastore, collection, doc).await
 }
 
+// DEFRALEVEL(S5): Same blob semantics as write_local_update
 /// Persist a local UPDATE WITHOUT the counter read-modify-write (#1044
 /// interactive path). The doc blob + indexes are written with the provisional
 /// value; the counter RMW (and the blob correction) is deferred to the
@@ -178,6 +181,7 @@ pub(crate) async fn register_created_doc(
     .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
 
     register_block_doc_id_mappings(systemstore, block_result, doc_id_str).await?;
+    // DEFRALEVEL(S6): Becomes the blind per-doc arrival append with no cursor return
     crate::event::arrivals::record(systemstore, collection.resolved_root_id(), doc_id_str)
         .await
         .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
@@ -186,6 +190,7 @@ pub(crate) async fn register_created_doc(
         .map_err(|e| query::error::QueryError::execution(format!("invalid derived DocID: {}", e)))
 }
 
+// DEFRALEVEL(S1): Stays Ordinary in phase 1; ContentAddressed only if no guard read of this key exists
 /// Record block ownership (`/d/b/{cid}/{docID}`) for every block produced by
 /// a mutation: the composite, each field block, and each encryption block.
 pub(crate) async fn register_block_doc_id_mappings(
@@ -205,6 +210,7 @@ pub(crate) async fn register_block_doc_id_mappings(
     Ok(())
 }
 
+// DEFRALEVEL(S3): Emit one combined operand seed_if_absent and add with no read
 /// Apply a SINGLE recorded counter delta (or create-seed) to the authoritative
 /// accumulation store at the commit-time finalize (#1044). For updates this is
 /// the delta-driven equivalent of `apply_local_counter_deltas` for one field;
@@ -346,6 +352,7 @@ pub(crate) async fn apply_pending_counter_op(
     Ok(decode_counter_value(&bytes, kind))
 }
 
+// DEFRALEVEL(S3): Same operand conversion as apply_pending_counter_op
 /// Apply local counter-field increments to the CRDT accumulation store (the
 /// single source of truth) via a fresh read-modify-write, then mirror the
 /// resulting value back into the document blob.
@@ -515,6 +522,7 @@ async fn apply_local_counter_deltas(
     Ok(())
 }
 
+// DEFRALEVEL(S3): Plain blind put or seed operand of the created value
 /// Initialize the CRDT accumulation store for counter fields on document
 /// creation so the store is authoritative from creation (matching the
 /// single-store invariant). The created value is absolute (no delta recorded on
@@ -722,6 +730,7 @@ pub(crate) fn ensure_collection_is_active<S: Store>(
 }
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
+    // DEFRALEVEL(S7): Replace guard with in-txn CollectionKey version_id read
     /// The collection's read guard, then its definition: resolved after the
     /// guard, so a patch or an index committed under the write guard is the
     /// definition this write uses.

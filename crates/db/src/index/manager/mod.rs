@@ -419,6 +419,7 @@ impl IndexManager {
     /// to index creation within a collection, either through transaction isolation or
     /// external synchronization.
     async fn next_index_id(&self, datastore: &NamespaceView) -> Result<u32> {
+        // DEFRALEVEL(S7): bug: IndexIDSequenceKey written here in the datastore and in the systemstore at collection/ops/create.rs
         let seq_key = IndexIDSequenceKey::new(format!("{}", self.collection_short_id));
         let key_bytes = seq_key.bytes();
 
@@ -779,6 +780,7 @@ impl IndexManager {
         Ok(())
     }
 
+    // DEFRALEVEL(S5): Same keys as the local path; merge semantics already convergent
     /// Merge-path variant of [`Self::on_document_update`]: resolves live
     /// unique conflicts deterministically instead of erroring (#1111).
     pub async fn on_document_update_merge(
@@ -850,6 +852,7 @@ impl IndexManager {
         Ok(())
     }
 
+    // DEFRALEVEL(S5): Simple-index keys include the doc short id, so they are per-doc; unique keys are cross-doc and must stay validated (has/get reads are the uniqueness check)
     /// Update indexes when a document is updated.
     ///
     /// For array fields, this deletes all old index entries and creates new ones.

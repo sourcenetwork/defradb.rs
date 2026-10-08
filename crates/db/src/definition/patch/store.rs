@@ -290,6 +290,7 @@ impl<S: Store> crate::database::DB<S> {
         let txn = self.new_txn(false).await?;
 
         // Prepare serialized data before getting systemstore reference
+        // DEFRALEVEL(S1): Must stay a validated key class (not ContentAddressed) so writers' reads conflict with it
         let old_version_key = CollectionKey::new(old_version_id);
         let old_version_data = serde_json::to_vec(&old_schema_inactive).map_err(|e| {
             Error::collection_schema_json(

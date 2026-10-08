@@ -55,6 +55,7 @@ fn document_json_value(doc: &Document) -> Option<serde_json::Value> {
 /// they reflect the store state at the time of first access.
 pub struct DbDocMutator<S: Store> {
     db: Arc<DB<S>>,
+    // DEFRALEVEL(S9): Replace async mutex holder with handle to worker-owned txn; Option/take semantics for commit stay
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
 }
@@ -103,6 +104,7 @@ impl<S: Store> DbDocMutator<S> {
         self.txn.lock().await.is_none()
     }
 
+    // DEFRALEVEL(S7): Call becomes the definition-key read only
     async fn ensure_collection_can_write(
         &self,
         collection_name: &str,
@@ -262,6 +264,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             // distinct documents share a delta block (#1194). Encryption
             // blocks stay out: the KMS commits the DEK in its own txn, so
             // reading it back aborts every encrypted create.
+            // DEFRALEVEL(S1): keep blocks Ordinary: this #1599 Go-parity has_for_update must stay a validated read (not ContentAddressed)
             for cid in block_result.field_cids.iter().chain([&block_result.cid]) {
                 blockstore
                     .has_for_update(&cid.to_bytes())
@@ -274,6 +277,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                     })?;
             }
 
+            // DEFRALEVEL(S6): With S6, two explicit creates of different docs in the same collection no longer conflict. They are sequenced after commit.
             let doc_id = crate::write::autocommit::helpers::register_created_doc(
                 &systemstore,
                 &datastore,
@@ -323,6 +327,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 let Some(value) = doc.get(&field.name) else {
                     continue;
                 };
+                // DEFRALEVEL(S3): Write the seed directly with a blind put or operand.
                 counter_ops.push(crate::txn::PendingCounterOp {
                     collection_name: collection_name.to_string(),
                     schema_version_id: collection.version_id().to_string(),
@@ -419,6 +424,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             .iter()
             .any(|f| f.crdt_type.is_counter() && doc.get_counter_delta(&f.name).is_some())
         {
+            // DEFRALEVEL(S3): Base read is validated; with seed operand it's still needed unless creation seeds and legacy docs migrate.
             collection
                 .get_with_datastore(&datastore, doc_short_id, &canonical_doc_id)
                 .await

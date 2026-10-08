@@ -3668,6 +3668,7 @@ async fn resolve_composite_doc_id_explores_first_head_before_probing_later_sibli
     );
 }
 
+// DEFRALEVEL(S6): Sequencer must preserve the order record() was called within one transaction.
 #[tokio::test]
 async fn first_materialization_arrivals_include_peer_batches_once() {
     use query::fetcher::{DocFetcher, DocumentArrivalOptions};

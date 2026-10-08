@@ -226,6 +226,7 @@ impl DocFetcher for FetcherWrapper {
         self.get_fetcher().supports_index_queries()
     }
 
+    // DEFRALEVEL(S6): None.
     async fn get_document_arrivals(
         &self,
         options: &crate::fetcher::DocumentArrivalOptions,

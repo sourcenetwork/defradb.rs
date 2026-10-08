@@ -16,6 +16,7 @@ pub async fn write_collection_block(
     doc_composite_cid: Cid,
     signing_config: Option<&SigningConfig>,
 ) -> Result<(Cid, Bytes), String> {
+    // DEFRALEVEL(S1,S2): Confirm CommutativePrefix contract; at DefraLevel, every append pays paged scans of both prefixes.
     let found = crate::block::heads::live_collection_heads(headstore, collection_short_id)
         .await
         .map_err(|e| format!("Failed to read collection heads: {}", e))?;
@@ -76,6 +77,7 @@ pub async fn write_collection_block(
     // (`MC_HeadSet_Red_EagerDelete.cfg` is that defect) and
     // `HeadSet.applyDerived_parents_not_head` for why this reaches the same
     // head set without the shared write.
+    // DEFRALEVEL(S2): Head-set scan becomes CommutativePrefix when head cache is retired.
     crate::block::heads::record_supersedes(
         headstore,
         collection_short_id,
@@ -88,6 +90,7 @@ pub async fn write_collection_block(
     // Write new collection head: /c/{collection_id}/{cid} → priority
     let col_head_key = HeadstoreColKey::new(collection_short_id, collection_cid);
     let priority_bytes = encode_priority_varint(priority);
+    // DEFRALEVEL(S2): Already unique-append; out-of-prefix write must be content-addressed for CommutativePrefix.
     headstore
         .set(&col_head_key.bytes(), &priority_bytes)
         .await

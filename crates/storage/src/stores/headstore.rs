@@ -3,6 +3,7 @@ use crate::namespace::{Namespace, NamespacedStore};
 use async_trait::async_trait;
 use std::sync::Arc;
 
+// DEFRALEVEL(S2): Delete if it has no other users.
 /// A transaction's raw collection-head projection, in the reader's key coordinates.
 /// Both prefixes are required: orphan markers suppress parents received later.
 #[derive(Default)]

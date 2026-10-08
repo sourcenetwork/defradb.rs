@@ -2,6 +2,7 @@ use super::*;
 use crate::DB;
 use storage::RegolithStore;
 
+// DEFRALEVEL(S6): Invert assertion to expect no conflict and commit-ordered cursors.
 #[tokio::test]
 async fn reversed_concurrent_commits_retry_without_late_lower_cursor() {
     let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();

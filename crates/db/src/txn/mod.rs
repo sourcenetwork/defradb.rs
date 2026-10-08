@@ -20,6 +20,7 @@ pub mod context;
 pub(crate) mod lenses;
 pub mod registry;
 
+// DEFRALEVEL(S3): Could be emitted directly as merge operand at record time, removes deferral entirely.
 /// A counter mutation RECORDED during an interactive/explicit transaction but
 /// not yet applied to the authoritative CRDT accumulation store. The
 /// read-modify-write (and the per-doc guard that protects it) is deferred to the
@@ -57,6 +58,7 @@ struct PendingCollectionAcpRegistration {
     schemas: Vec<CollectionVersion>,
 }
 
+// DEFRALEVEL(S7): Delete enum
 enum CollectionGuard {
     Read { _guard: RwLockReadGuardArc<()> },
     Write { _guard: RwLockWriteGuardArc<()> },
@@ -95,6 +97,7 @@ impl PendingCollectionAcpRegistration {
     }
 }
 
+// DEFRALEVEL(S7): Drop doc_guards and collection_guards; drop pending_counter_ops for blind merges.
 /// Database transaction wrapper.
 ///
 /// This wraps a BasicTxn and provides:
@@ -124,6 +127,7 @@ pub struct DbTxn<S: Store> {
     collection_cache: CollectionCache,
     /// Collection IDs created inside this transaction.
     locally_created_collection_ids: RapidHashSet<String>,
+    // DEFRALEVEL(S7): Remove doc_guards and insert_doc_guard; release_doc_guards clears collection_guards.
     /// Per-doc write guards held so a local counter read-modify-write and a P2P
     /// merge on the same document never interleave (#1021). The merge handler
     /// shares the same `DocWriteQueue`. For the interactive/explicit path
@@ -134,6 +138,7 @@ pub struct DbTxn<S: Store> {
     /// commit. See the finalize driver in `txn/registry/lifecycle.rs` and
     /// `InteractiveTxnCounter.tla`.
     doc_guards: BTreeMap<String, MutexGuardArc<()>>,
+    // DEFRALEVEL(S7): Delete field and accessors; definition-key read idempotency uses small per-txn set.
     /// Collection locks held until this transaction commits or rolls back.
     collection_guards: BTreeMap<String, CollectionGuard>,
     /// Counter deltas RECORDED by the interactive mutator during the txn but not
@@ -792,6 +797,7 @@ impl<S: Store> DbTxn<S> {
         }
     }
 
+    // DEFRALEVEL(S7): Drop collection_guards.clear(); function disappears with DocWriteQueue doc_guards.
     /// Release mutation guards after the transaction is durably committed or discarded.
     fn release_doc_guards(&mut self) {
         self.doc_guards.clear();

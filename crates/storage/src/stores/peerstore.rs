@@ -67,6 +67,7 @@ pub struct ReplicatorRetryGuard {
     _guard: RwLockWriteGuardArc<()>,
 }
 
+// DEFRALEVEL(S8): Fold into safety net or keep durable-write retry; marker writes per-(peer,doc) shouldn't conflict.
 async fn retry_push_txn<T, F, Fut, P>(mut operation: F, is_retryable: P) -> Result<T>
 where
     F: FnMut() -> Fut,

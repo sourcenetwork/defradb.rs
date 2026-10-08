@@ -31,6 +31,7 @@ pub struct DbTransactionContext<S: Store> {
     fetcher: Arc<LensedDocFetcher<S>>,
     deferred_acp_mutations: Arc<DeferredAcpMutations>,
     broadcaster: Option<Arc<dyn crate::event::emission::TxnBroadcaster>>,
+    // DEFRALEVEL(S9): Keep for serialization unless worker-owned txn serializes naturally.
     action_lock: Arc<async_lock::Mutex<()>>,
     created_at: Instant,
     last_request_seen: AtomicU64,
@@ -214,6 +215,7 @@ impl<S: Store + 'static> DbTransactionContext<S> {
         ))
     }
 
+    // DEFRALEVEL(S9): Return type changes with the holder.
     /// Get the underlying fetcher's shared transaction.
     ///
     /// This is used by `DbTransactionRegistry::set_migration_in_txn` to perform

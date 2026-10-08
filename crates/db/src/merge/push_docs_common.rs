@@ -77,6 +77,7 @@ pub async fn load_latest_composite_head_cids<R: Reader + ?Sized, B: Reader + ?Si
     // collapsing this set to the maximum priority loses an obligation when a
     // marker retry is the sender's only durable source of truth. This matches
     // Go's getHeadsForDocShortID path.
+    // DEFRALEVEL(S4): Marker-aware
     let head_prefix = HeadstoreDocKey::field_prefix(doc_short_id, "C");
     let head_prefix_len = head_prefix.len();
     if let Ok(mut iter) = head_reader
@@ -152,6 +153,7 @@ pub async fn load_latest_composite_head_cids<R: Reader + ?Sized, B: Reader + ?Si
     cids
 }
 
+// DEFRALEVEL(S2): Same as head_provider.
 pub(crate) async fn load_collection_head_cids<R: Reader + ?Sized>(
     head_reader: &R,
     collection_short_id: u32,

@@ -40,6 +40,7 @@ use crate::router::{AppState, NodePermission};
 use super::TX_HEADER_NAME;
 
 fn record_response_metrics(response: &QueryResponse) {
+    // DEFRALEVEL(S8): Keep as client-visible conflict metric; consider adding embedded and FFI surfaces.
     if let Some(surface) = escaped_conflict_surface(response) {
         telemetry::record_escaped_conflict(surface);
     }

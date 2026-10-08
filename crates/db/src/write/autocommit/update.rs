@@ -81,6 +81,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // their txns can race in a way the store's optimistic-conflict detection
         // does not always catch, dropping increments (#1021). The guard is held
         // across the whole write + commit.
+        // DEFRALEVEL(S7): Drop guard after S3 and S5 when counters become blind merges and blob resolution no longer needs RMW under lock.
         let _doc_guard = self
             .db
             .doc_write_queue()

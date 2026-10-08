@@ -36,6 +36,7 @@ const PENDING_STORE_TXN_MAX_ATTEMPTS: usize = 3;
 /// selective-CAR attempt, so this durable list must remain bounded too.
 pub(crate) const MAX_PENDING_DAG_ALTERNATE_PROVIDERS: usize = 3;
 
+// DEFRALEVEL(S8): Consider removing per-root keys; blind puts should stop conflicting under DefraLevel.
 async fn retry_pending_store_conflicts<T, F, Fut>(
     operation: &'static str,
     mut attempt: F,
@@ -47,6 +48,7 @@ where
     for attempt_number in 1..=PENDING_STORE_TXN_MAX_ATTEMPTS {
         match attempt().await {
             Ok(value) => return Ok(value),
+            // DEFRALEVEL(S8): Add telemetry or fold retry conflict logic into tracking.
             Err(error)
                 if error.is_txn_conflict() && attempt_number < PENDING_STORE_TXN_MAX_ATTEMPTS =>
             {

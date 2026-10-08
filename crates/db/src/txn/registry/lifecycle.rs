@@ -17,6 +17,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             })
     }
 
+    // DEFRALEVEL(S7): Once ops are blind operands, gate and guards go away and finalize becomes direct write.
     /// Apply the txn's recorded counter ops (#1044) then durably commit.
     ///
     /// LOCK LIFECYCLE — conforms to `proofs/tla/InteractiveTxnCounter.tla` GREEN
@@ -65,6 +66,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         // IBeginFinalize / IAcquire: take the gate, acquire per-doc guards in
         // sorted order, then IFinalizeCommit drops the gate (the bounded hold).
         {
+            // DEFRALEVEL(S3,S7): With blind counter operands, write operands; delete gate/guards with S3 merges and S7 lock removal.
             let _gate = self.db.doc_write_queue().acquire_batch_gate().await;
             for id in &sorted_doc_ids {
                 let guard = self.db.doc_write_queue().acquire(id).await;
@@ -101,6 +103,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         })
     }
 
+    // DEFRALEVEL(S5): Drop blob-correction re-read if counters are overlaid at read time.
     /// Perform the recorded counter RMWs into the txn datastore and correct the
     /// materialized blob for update ops (the blob-mirror-at-commit). Called with
     /// the per-doc guards already held by the caller (the finalize driver).
@@ -198,6 +201,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             for (field, value) in fields {
                 doc.set(field, value);
             }
+            // DEFRALEVEL(S3): Disappears once reads see their own merges and counter fields resolve from merge store.
             collection
                 .update_with_indexes(datastore, &doc, doc_short_id, index_manager)
                 .await

@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 const PRUNE_THRESHOLD: usize = 10_000;
 
+// DEFRALEVEL(S7): Delete the arrival sentence when the guard goes.
+// DEFRALEVEL(S7): Delete the struct and its module once S3, S5 and S6 land.
 /// Per-document write serialization queue.
 ///
 /// Serializes mutations that touch the same document so that a local write and
@@ -20,7 +22,9 @@ const PRUNE_THRESHOLD: usize = 10_000;
 /// Arrival allocation also uses collection guards from this queue. Document
 /// updates that do not allocate arrivals can still proceed independently.
 pub struct DocWriteQueue {
+    // DEFRALEVEL(S7): Delete once counters are blind merges (S3) and heads use markers (S4).
     locks: HopscotchMap<String, Arc<AsyncMutex<()>>, RandomState>,
+    // DEFRALEVEL(S7): Delete together with per-doc locks.
     /// Serializes the guard-ACQUISITION phase of multi-document writers (local
     /// mutation batches, batch merges) against one another. A caller that will
     /// hold more than one per-doc guard at once must hold this gate while
@@ -53,6 +57,7 @@ impl DocWriteQueue {
         Self::default()
     }
 
+    // DEFRALEVEL(S7): Removed; conflicts surface instead as regolith DefraLevel commit conflicts.
     /// Acquire the write lock for a document.
     ///
     /// Returns an owned guard that serializes access. Different documents
@@ -98,6 +103,7 @@ impl DocWriteQueue {
         }
     }
 
+    // DEFRALEVEL(S7,S6): Delete it; with S6 there is no shared RMW key left to serialize.
     /// Serialize arrival allocation before opening a transaction. The `arrival:`
     /// prefix is disjoint from content-addressed document IDs. Acquire collection
     /// guards first, then arrival guards in sorted collection-ID order, then any
@@ -107,6 +113,7 @@ impl DocWriteQueue {
         self.acquire(&format!("arrival:{collection_id}")).await
     }
 
+    // DEFRALEVEL(S7): Removed together with the per-doc guards.
     /// Acquire the multi-document batch gate.
     ///
     /// Any caller that will simultaneously hold more than one per-doc guard must
@@ -119,6 +126,7 @@ impl DocWriteQueue {
         self.batch_gate.lock_arc().await
     }
 
+    // DEFRALEVEL(S7): Removed; batch merge no longer needs a gate and MergeError::GateContended.
     /// Non-blocking variant of [`Self::acquire_batch_gate`]. Returns `None` if the
     /// gate is currently held. A caller for whom batching is an optimization (the
     /// batch-merge path) uses this to degrade to the gate-free per-block path

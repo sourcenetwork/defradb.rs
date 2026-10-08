@@ -29,6 +29,7 @@ pub struct RegolithStore {
     inner: Arc<StoreInner>,
 }
 
+// DEFRALEVEL(S2,S8): Add Arc<Statistics>; delete head_cache field and its plumbing
 struct StoreInner {
     db: Arc<OptimisticTransactionDb>,
     options: RegolithStoreOptions,
@@ -68,13 +69,16 @@ impl RegolithStore {
                 })?;
             }
         }
+        // DEFRALEVEL(S1): Set engine.statistics and merge_operator in options
         let mut engine = options.engine.clone();
         engine
             .listeners
             .push(Arc::new(BackgroundErrorListener) as Arc<dyn regolith::EventListener>);
+        // DEFRALEVEL(S1): Append classifier conditionally with db.with_policy()
         let db = OptimisticTransactionDb::open(&path, engine)
             .map_err(|error| Error::Backend(format!("failed to open regolith: {error}")))?
             .with_isolation(options.isolation);
+        // DEFRALEVEL(S1): Set engine.statistics; pass to TransactionStatsHandle with classifier
         Ok(Self {
             inner: Arc::new(StoreInner {
                 db: Arc::new(db),
@@ -82,6 +86,7 @@ impl RegolithStore {
                 closed: AtomicBool::new(false),
                 active_txns: Arc::new(AtomicUsize::new(0)),
                 stats: TransactionStatsHandle::for_backend("regolith"),
+                // DEFRALEVEL(S2): Remove head_cache field and its plumbing
                 head_cache: Arc::default(),
                 path,
                 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
@@ -179,12 +184,14 @@ impl RegolithStore {
         &self.inner.path
     }
 
+    // DEFRALEVEL(S2): Head-cache disable goes away; streaming_writer changes
     /// A writer that bounds its own memory rather than the caller's
     /// input, for a bulk load whose size the caller does not control.
     ///
     /// Each flush is atomic; the stream as a whole is not. Work that must
     /// land all-or-nothing belongs in a transaction.
     pub fn streaming_writer(&self, opts: StreamOptions) -> regolith::StreamingWriter<'_> {
+        // DEFRALEVEL(S2): Remove head_cache.disable() call
         super::blocking(|| {
             // A borrowed native writer can flush after this call returns, outside
             // transaction publication. Disable caching for this store's lifetime.
@@ -250,6 +257,7 @@ impl Store for RegolithStore {
         Some(self.inner.stats.clone())
     }
 
+    // DEFRALEVEL(S9): Becomes sync worker-dispatched transaction creation
     async fn new_txn(&self, readonly: bool) -> Result<Box<dyn Txn>> {
         self.ensure_open()?;
         self.inner.active_txns.fetch_add(1, Ordering::AcqRel);
@@ -260,6 +268,7 @@ impl Store for RegolithStore {
             self.inner.active_txns.fetch_sub(1, Ordering::AcqRel);
             return Err(Error::DBClosed);
         }
+        // DEFRALEVEL(S1): Remove head_cache argument; level flows through options
         let txn = RegolithTxn::new(
             &self.inner.db,
             readonly,
@@ -299,8 +308,10 @@ impl Store for RegolithStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Dropable for RegolithStore {
     async fn drop_all(&self) -> Result<()> {
+        // DEFRALEVEL(S2): Head-cache reset removed; sync worker dispatch
         super::blocking(|| {
             self.ensure_open()?;
+            // DEFRALEVEL(S2): Remove head_cache reset and lock
             let mut cache = head_cache::lock(&self.inner.head_cache)?;
             cache.reset();
             self.inner

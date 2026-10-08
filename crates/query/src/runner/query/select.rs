@@ -22,6 +22,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         caller_identity: Option<Did>,
         warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
+        // DEFRALEVEL(S6): None. It belongs to the GraphQL surface.
         if select.collection_name == "_documentArrivals" {
             return self
                 .execute_arrivals_query(select, fetcher, caller_identity)

@@ -401,6 +401,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Only remove heads that this block explicitly supersedes (listed in block.heads),
         // preserving concurrent branches for later merge via write_collection_block.
         let collection_id = metadata.collection_id.unwrap_or(&payload.schema_version_id);
+        // DEFRALEVEL(S7): Remove guard; add CollectionKey read in txn
         let _collection_guard = match self.db.find_collection_by_id(collection_id)? {
             Some(collection) => Some(
                 self.db
@@ -423,6 +424,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             // them. Two peers replicating siblings would otherwise both delete
             // the shared parent's key, and one of the merges would be refused.
             if let Some(heads) = &block.heads {
+                // DEFRALEVEL(S2): bug: error swallowed here
                 if let Err(e) =
                     crate::block::heads::record_supersedes(&headstore, short_id, heads, *cid).await
                 {
@@ -816,6 +818,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         {
             if let Some(heads) = &block.heads {
+                // DEFRALEVEL(S2): bug: error swallowed here
                 let _ =
                     crate::block::heads::record_supersedes(headstore, short_id, heads, *cid).await;
             }

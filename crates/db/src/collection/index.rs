@@ -60,6 +60,7 @@ impl Collection {
         let key = self.doc_key(doc_short_id);
 
         // Get old document for index update
+        // DEFRALEVEL(S5): Replace validated read with merge/coalesce to resolve per-doc RMW conflict
         let old_doc = match datastore.get(&key).await.map_err(Error::Storage)? {
             Some(bytes) => {
                 let mut d = Document::from_cbor(&bytes)?;
@@ -74,12 +75,15 @@ impl Collection {
         // Serialize and store
         let data = doc.to_cbor()?;
 
+        // DEFRALEVEL(S5): Use merge operand (field patch) or deferred coalesce for per-doc shared write
         datastore.set(&key, &data).await.map_err(Error::Storage)?;
 
         // Update schema version to current collection version
+        // DEFRALEVEL(S5): Classify as identical-write elision in S1; no code change needed
         self.store_version(datastore, doc_short_id).await?;
 
         // Update indexes
+        // DEFRALEVEL(S5): Make index entries follow S5 blob resolution outcome
         index_manager
             .on_document_update(datastore, &old_doc, doc, doc_short_id, &self.def)
             .await?;

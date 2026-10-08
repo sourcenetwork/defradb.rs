@@ -379,6 +379,7 @@ impl<S: Store> CommitsFetcher<S> {
             col_iter.close().await.map_err(Error::Storage)?;
 
             for collection_id in collection_ids {
+                // DEFRALEVEL(S2): Same as head_provider.
                 let heads =
                     crate::block::heads::live_collection_heads(&headstore, collection_id).await?;
                 cids.extend(heads.live.into_iter().map(|cid| (cid, None)));
@@ -399,6 +400,7 @@ impl<S: Store> CommitsFetcher<S> {
                             doc_ref.doc_short_id
                         ))
                     })?;
+            // DEFRALEVEL(S4): Marker-aware
             (
                 storage::keys::headstore::HeadstoreDocKey::document_prefix(doc_ref.doc_short_id),
                 Some(canonical_doc_id),

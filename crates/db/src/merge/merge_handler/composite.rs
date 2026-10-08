@@ -135,6 +135,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // (matches local writes via DB::collection_read_guard); reversed, a
         // truncate waiting on the write lock can deadlock against a write that
         // holds this read guard while waiting on the merge queue.
+        // DEFRALEVEL(S7): Remove guard and the lock-order comment; add CollectionKey read in txn
         let _collection_guard = match collection.as_ref() {
             Some(collection) => Some(
                 self.db
@@ -143,6 +144,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ),
             None => None,
         };
+        // DEFRALEVEL(S6,S7): Remove with S6; S7 throughput win: unrelated doc merges no longer serialize
         let _arrival_guard = match collection.as_ref() {
             Some(collection) => Some(
                 self.merge_queue
@@ -151,6 +153,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ),
             None => None,
         };
+        // DEFRALEVEL(S7): Remove after S3, S4 and S5.
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 
         self.process_composite_delta_locked(

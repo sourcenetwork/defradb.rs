@@ -39,6 +39,7 @@ pub struct RegolithTxn {
 impl RegolithTxn {
     /// Open a snapshot of an existing on-disk database without modifying files.
     pub fn open_read_only(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        // DEFRALEVEL(S3): Use same engine options as writer to support merge_operator for counters.
         let db = regolith::Db::open_read_only(path, super::RegolithStoreOptions::default().engine)
             .map_err(|error| {
                 Error::Backend(format!("failed to open regolith read-only: {error}"))
@@ -63,13 +64,19 @@ impl RegolithTxn {
         stats: TransactionStatsHandle,
         head_cache: SharedHeadCache,
     ) -> Result<Self> {
+        // DEFRALEVEL(S1): Ensure isolation check accepts DefraLevel or coordinate with S2; begin on worker.
+        // DEFRALEVEL(S2,S9): Drop lock and publish; move commit to worker thread.
         super::blocking(|| {
+            // DEFRALEVEL(S2): Drop cache lock and capture; begin becomes lock-free.
             let cache = head_cache::lock(&head_cache)?;
             let handle = if readonly {
                 Handle::ReadOnly(db.db().snapshot())
             } else {
+                // DEFRALEVEL(S1): No change; classifier on db reaches every txn.
                 Handle::Writable(Box::new(db.begin_transaction_owned(isolation)))
             };
+            // DEFRALEVEL(S2): Delete head_snapshot, collection_head_entries, and cache calls; retire cache.
+            // DEFRALEVEL(S1,S2): RepeatableRead disables cache at DefraLevel; install classifier with S1/S2.
             let head_snapshot = (!cache.disabled
                 && (readonly || isolation == IsolationLevel::RepeatableRead))
                 .then(|| cache.capture(db.db().snapshot()));
@@ -116,6 +123,7 @@ impl Drop for RegolithTxn {
     }
 }
 
+// DEFRALEVEL(S8): Add conflict attribution from CommitConflictsOnRead/Write tickers; Busy unreachable.
 fn map_txn_error(error: TransactionError) -> Error {
     match error {
         TransactionError::Conflict {
@@ -205,6 +213,7 @@ impl Reader for RegolithTxn {
         }
     }
 
+    // DEFRALEVEL(S2): Delete collection_head_entries method.
     async fn collection_head_entries(
         &self,
         head_prefix: &[u8],
@@ -232,6 +241,7 @@ impl Reader for RegolithTxn {
     }
 }
 
+// DEFRALEVEL(S3): Add async merge fn to Writer; add to corekv Writer trait with forwarding impl.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Writer for RegolithTxn {
@@ -240,6 +250,7 @@ impl Writer for RegolithTxn {
             return Err(Error::EmptyKey);
         }
         self.writable()?.put(key, value).map_err(map_txn_error)?;
+        // DEFRALEVEL(S2): Delete head_changes.record calls.
         self.head_changes.record(key, Some(value));
         Ok(())
     }
@@ -278,6 +289,7 @@ impl Txn for RegolithTxn {
                 Ok(())
             }
             Handle::Writable(txn) => super::blocking(|| {
+                // DEFRALEVEL(S2): Remove head_cache lock; commit becomes txn.commit alone.
                 let mut cache = head_cache::lock(&self.head_cache)?;
                 let outcome = txn.commit().map_err(map_txn_error);
                 if outcome.is_ok() {
@@ -294,6 +306,7 @@ impl Txn for RegolithTxn {
             }
             Err(error) => {
                 if matches!(error, Error::TxnConflict) {
+                    // DEFRALEVEL(S2,S8): Use regolith Statistics tickers for conflict attribution.
                     self.stats.record_conflict();
                 }
                 self.callbacks.run_error().await;

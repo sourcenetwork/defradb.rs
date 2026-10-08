@@ -5,6 +5,7 @@ use query::{DocMutator, QueryExecutor, QueryRequest};
 use std::sync::Arc;
 use storage::RegolithStore;
 
+// DEFRALEVEL(S6): Cursor values stay valid only if the sequencer assigns cursors synchronously on the autocommit path (or the test waits for sequencing).
 #[tokio::test]
 async fn graphql_creation_cursor_pages_and_docid_lookup() {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
@@ -120,6 +121,7 @@ async fn explicit_transaction_sees_arrival_and_rollback_hides_both() {
         .is_empty());
 }
 
+// DEFRALEVEL(S7): The key regression test for removing the guard. The S6 sequencer must keep cursors contiguous.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn concurrent_autocommit_arrivals_are_contiguous() {
     use query::fetcher::{DocFetcher, DocumentArrivalOptions};

@@ -95,6 +95,7 @@ impl FullTextIndex {
         prefix
     }
 
+    // DEFRALEVEL(S1): Classify as Ordinary; value is content-derived but deleted on update
     fn posting_key(&self, term: &str, doc_short_id: u64) -> Vec<u8> {
         let mut key = self.index_prefix();
         key.extend_from_slice(term.as_bytes());
@@ -120,6 +121,7 @@ impl FullTextIndex {
         self.metadata_prefix(STATS_SHARD_TAG)
     }
 
+    // DEFRALEVEL(S3): Make blind merge operands (delta add); drop the get; classifier handles be_bytes
     fn stats_shard_key(&self, doc_short_id: u64) -> Vec<u8> {
         let mut key = self.stats_shard_prefix();
         key.push((doc_short_id.wrapping_mul(STATS_SHARD_HASH) >> (u64::BITS - u8::BITS)) as u8);

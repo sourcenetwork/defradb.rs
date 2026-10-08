@@ -7,6 +7,7 @@ use identity::Did;
 use serde_json::{json, Map, Value};
 
 impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
+    // DEFRALEVEL(S6): No change while the page shape holds.
     pub(crate) async fn execute_arrivals_query(
         &self,
         select: &Select,

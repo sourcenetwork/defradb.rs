@@ -333,6 +333,7 @@ impl CompositeDAG {
                     )));
                 }
 
+                // DEFRALEVEL(S3): Inherits the blind merge automatically.
                 let counter = Counter::new(
                     self.schema_version_id.clone(),
                     self.doc_id.as_str().as_bytes(),

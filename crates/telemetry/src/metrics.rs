@@ -10,6 +10,7 @@ use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider as _};
 #[cfg(feature = "otlp")]
 use opentelemetry::KeyValue;
 
+// DEFRALEVEL(S8): Collapse to surviving safety-net layer(s); add regolith.commit.* ticker export as conflict signal
 /// A retry loop that absorbs transaction conflicts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
@@ -47,6 +48,7 @@ pub struct RetryLayerSnapshot {
     pub exhaustions: u64,
 }
 
+// DEFRALEVEL(S8): Add optional per-layer conflict count before retry to measure DefraLevel's effect
 /// Process-lifetime conflict retry and escape counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ConflictMetricsSnapshot {
@@ -98,6 +100,7 @@ pub fn conflict_metrics_snapshot() -> ConflictMetricsSnapshot {
     }
 }
 
+// DEFRALEVEL(S8): Keep for remaining safety-net loop; remove calls from deleted loops
 pub fn record_retry_attempt(layer: RetryLayer) {
     RETRIES.attempts[layer as usize].fetch_add(1, Ordering::Relaxed);
     emit_retry_attempt(layer);
@@ -113,11 +116,13 @@ pub fn record_retry_exhaustion(layer: RetryLayer) {
     emit_retry_exhaustion(layer);
 }
 
+// DEFRALEVEL(S8): Keep as the end-to-end 'safety net failed' signal; consider adding embedded surface
 pub fn record_escaped_conflict(surface: &'static str) {
     RETRIES.escaped_to_clients.fetch_add(1, Ordering::Relaxed);
     emit_escaped_conflict(surface);
 }
 
+// DEFRALEVEL(S8): Delete or rewire to regolith.policy.* conflict-on-read/write tickers
 pub fn record_storage_conflict(backend: &'static str, rule: &'static str) {
     emit_storage_conflict(backend, rule);
 }
@@ -137,6 +142,7 @@ pub fn storage_background_error_count() -> u64 {
     STORAGE_BACKGROUND_ERRORS.load(Ordering::Relaxed)
 }
 
+// DEFRALEVEL(S8): Delete both functions, emit_* counterparts, Instruments fields, and meter registrations
 pub fn record_commit_gate_wait(backend: &'static str, seconds: f64) {
     emit_commit_gate_wait(backend, seconds);
 }
@@ -297,6 +303,7 @@ static INSTRUMENTS: OnceLock<InstrumentRegistry> = OnceLock::new();
 pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -> u64 {
     let meter = provider.meter("defradb");
     let instruments = Arc::new(Instruments {
+        // DEFRALEVEL(S1): Add counters mirroring regolith tickers from store stats snapshot, not hot path
         storage_conflicts: meter
             .u64_counter("defradb.storage.transaction.conflicts")
             .with_description("Storage transaction conflicts")

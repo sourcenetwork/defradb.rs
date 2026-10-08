@@ -118,6 +118,7 @@ impl IndexDataStoreKey {
         buf
     }
 
+    // DEFRALEVEL(S1): Simple entries stay Ordinary in phase 1; unique entries must stay Ordinary (uniqueness check)
     /// Convert the key to bytes, returning an error if encoding fails.
     ///
     /// Use this method when you need to handle encoding errors (e.g., unsupported

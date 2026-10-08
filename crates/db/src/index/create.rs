@@ -65,6 +65,7 @@ impl<S: Store> DB<S> {
             .require_collection(collection_name)?
             .collection_id()
             .to_string();
+        // DEFRALEVEL(S7): Remove guard; CollectionKey set conflicts writers reading the definition.
         let _guards = self
             .collection_write_guards(std::iter::once(collection_id.clone()))
             .await?;
