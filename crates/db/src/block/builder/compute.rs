@@ -237,5 +237,11 @@ pub async fn insert_computed_blocks(
             .await
             .map_err(|e| format!("Failed to write head: {}", e))?;
     }
+    if let Some(session_key) = defra_core::batch_signing::get_batch_session_key() {
+        for cid in &blocks.block_result.field_cids {
+            defra_core::batch_signing::batch_collect_cid(&session_key, *cid);
+        }
+        defra_core::batch_signing::batch_collect_cid(&session_key, blocks.block_result.cid);
+    }
     Ok(())
 }
