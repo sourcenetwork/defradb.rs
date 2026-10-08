@@ -66,9 +66,26 @@ pub struct Document {
     /// (not the accumulated value). Populated during UpdateInput::apply_to.
     #[serde(skip)]
     counter_deltas: RapidHashMap<String, NormalValue>,
+
+    #[serde(skip)]
+    write_preparation: Option<std::sync::Arc<crate::WritePreparation>>,
 }
 
 impl Document {
+    /// Precomputed storage identity and keys for this write, if any.
+    pub fn write_preparation(&self) -> Option<&std::sync::Arc<crate::WritePreparation>> {
+        self.write_preparation.as_ref()
+    }
+
+    /// Attach transient write inputs without changing document values or dirty fields.
+    pub fn set_write_preparation(&mut self, preparation: std::sync::Arc<crate::WritePreparation>) {
+        self.write_preparation = Some(preparation);
+    }
+
+    pub fn clear_write_preparation(&mut self) {
+        self.write_preparation = None;
+    }
+
     /// Create a new empty document.
     pub fn new() -> Self {
         Self {
@@ -81,6 +98,7 @@ impl Document {
             schema_version_id: None,
             deleted: false,
             counter_deltas: RapidHashMap::new(),
+            write_preparation: None,
         }
     }
 
@@ -97,6 +115,7 @@ impl Document {
             schema_version_id: Some(version_id),
             deleted: false,
             counter_deltas: RapidHashMap::new(),
+            write_preparation: None,
         }
     }
 
@@ -112,6 +131,7 @@ impl Document {
             schema_version_id: None,
             deleted: false,
             counter_deltas: RapidHashMap::new(),
+            write_preparation: None,
         }
     }
 

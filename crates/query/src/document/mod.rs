@@ -8,3 +8,5 @@ pub use convert::{
     documents_with_status_to_plan_docs, DELETED_FIELD_NAME,
 };
 pub use mapping::{DocumentMapping, RenderKey, DOC_ID_FIELD_INDEX};
+
+pub(crate) use convert::matches_document_filter;

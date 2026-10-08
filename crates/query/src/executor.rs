@@ -318,6 +318,23 @@ pub struct ErrorLocation {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait QueryExecutor: MaybeSendSync {
+    /// Resolve persistent write inputs before retrying request execution.
+    async fn prepare_request(
+        &self,
+        _request: &QueryRequest,
+    ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
+        Ok(None)
+    }
+
+    /// Execute with immutable write inputs prepared for this logical request.
+    async fn execute_prepared(
+        &self,
+        request: QueryRequest,
+        _prepared: Option<std::sync::Arc<crate::prepared::PreparedMutations>>,
+    ) -> QueryResponse {
+        self.execute(request).await
+    }
+
     /// Execute a GraphQL query and return the response.
     ///
     /// This handles the full pipeline: parsing → planning → execution → response.

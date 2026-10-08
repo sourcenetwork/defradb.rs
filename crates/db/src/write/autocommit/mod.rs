@@ -50,7 +50,7 @@ pub use batch::BatchMutator;
 /// to each other - if you need multiple operations to be atomic, use
 /// `DbDocMutator` with explicit transaction management instead.
 pub struct AutoCommitMutator<S: Store> {
-    db: Arc<DB<S>>,
+    pub(super) db: Arc<DB<S>>,
     document_acp: OnceLock<Arc<dyn acp::DocumentACP>>,
 }
 
@@ -164,6 +164,21 @@ impl<S: Store> AutoCommitMutator<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
+    fn requires_write_preparation(&self) -> bool {
+        self.db.kms().is_some()
+    }
+
+    async fn prepare_write(
+        &self,
+        collection_name: &str,
+        doc: Document,
+        modified_fields: Option<rapidhash::RapidHashSet<String>>,
+        encryption: Option<defra_core::encryption::EncryptionConfig>,
+    ) -> query::error::Result<Document> {
+        self.prepare_request_write(collection_name, doc, modified_fields, encryption)
+            .await
+    }
+
     fn set_document_acp(&self, acp: Arc<dyn acp::DocumentACP>) {
         AutoCommitMutator::set_document_acp(self, acp);
     }

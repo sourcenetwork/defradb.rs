@@ -15,6 +15,7 @@ mod write;
 pub use build::build_blocks_from_document;
 pub use collection::write_collection_block;
 pub use compute::{compute_document_blocks, insert_computed_blocks, ComputedBlocks};
+pub(crate) use write::inherited_encryption_policy;
 pub use write::{write_delete_block, write_document_blocks};
 
 use bytes::Bytes;

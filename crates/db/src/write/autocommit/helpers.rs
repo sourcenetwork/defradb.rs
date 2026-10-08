@@ -149,6 +149,15 @@ pub(crate) async fn register_created_doc(
 ) -> query::error::Result<DocID> {
     let doc_id_str = &block_result.doc_id;
 
+    if let Some(existing_id) = crate::docid::map::get_doc_id(systemstore, doc_short_id)
+        .await
+        .map_err(|e| query::error::QueryError::execution(e.to_string()))?
+    {
+        return Err(query::error::QueryError::execution(format!(
+            "Document with ID {existing_id} already exists"
+        )));
+    }
+
     let existing = crate::docid::map::get_doc_ref(systemstore, doc_id_str)
         .await
         .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
@@ -741,7 +750,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
     }
 
     /// Get collection from DB cache or return a not-found error.
-    pub(super) fn get_collection_or_err(
+    pub(crate) fn get_collection_or_err(
         &self,
         collection_name: &str,
     ) -> query::error::Result<Collection> {

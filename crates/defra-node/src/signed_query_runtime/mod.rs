@@ -8,10 +8,12 @@ use query::{QueryExecutor, QueryRequest, QueryResponse, TransactionHandle};
 mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn execute_with_signing_context(
     executor: Arc<dyn QueryExecutor>,
     request: QueryRequest,
     txn_handle: Option<TransactionHandle>,
+    retry_policy: Option<super::ExecuteRetryPolicy>,
     signing_config: SigningConfig,
     node_did: String,
     runtime_handle: tokio::runtime::Handle,
@@ -27,7 +29,10 @@ pub(super) async fn execute_with_signing_context(
         runtime_handle.block_on(async {
             match txn_handle {
                 Some(txn_handle) => executor.execute_in_txn(request, &txn_handle).await,
-                None => executor.execute(request).await,
+                None => {
+                    super::execute_autocommit_request(executor.as_ref(), request, retry_policy)
+                        .await
+                }
             }
         })
     };

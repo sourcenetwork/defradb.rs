@@ -45,7 +45,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .id()
             .cloned()
             .ok_or_else(|| query::error::QueryError::execution("update requires a document ID"))?;
-        let canonical_lock_id = {
+        let (prepared_short_id, canonical_lock_id) = {
             let identity_txn = self.db.new_txn(true).await.map_err(|e| {
                 query::error::QueryError::execution(format!(
                     "failed to create identity transaction: {e}"
@@ -64,7 +64,6 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                         }
                         other => query::error::QueryError::execution(other.to_string()),
                     })?
-                    .1
             };
             identity_txn.discard().map_err(|e| {
                 query::error::QueryError::execution(format!(
@@ -131,7 +130,18 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 current_doc.set(field_name.clone(), value);
             }
         }
+        if let Some(prepared) = doc.write_preparation().cloned() {
+            current_doc.set_write_preparation(prepared);
+        }
         doc = current_doc;
+        crate::write::prepare::prepare_keys(
+            &self.db,
+            &mut doc,
+            DocStorageIdentity::new(collection.resolved_root_id(), prepared_short_id),
+            Some(&modified_fields),
+            get_encryption_config().as_ref(),
+        )
+        .await?;
 
         let txn = self.new_mutation_txn().await?;
 
@@ -225,7 +235,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 Some(&modified_fields),
                 enc_config.as_ref(),
                 sign_config.as_ref(),
-                None,
+                self.db.kms().as_ref(),
             )
             .await
             .map_err(|e| {
@@ -278,6 +288,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // Count modified fields
         let fields_modified = doc.values().len();
         let (cid, block, col_data) = commit_result;
+        doc.clear_write_preparation();
         let mut result = UpdateResult::with_commit(doc, fields_modified, cid, block);
         if let Some((col_cid, col_bytes)) = col_data {
             result.broadcast_cid = Some(col_cid);

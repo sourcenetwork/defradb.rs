@@ -148,6 +148,7 @@ pub struct UpsertNode {
     update_input: Option<UpsertInput>,
     /// Single input to apply to all doc_ids (same fields for create and update)
     single_input: Option<UpsertInput>,
+    prepared_writes: Option<crate::prepared::PreparedMutation>,
     /// Upserted documents (populated after first next())
     upserted_docs: Vec<Doc>,
     /// Actions taken for each document
@@ -180,6 +181,7 @@ impl UpsertNode {
             create_input: None,
             update_input: None,
             single_input: None,
+            prepared_writes: None,
             upserted_docs: Vec::new(),
             actions: Vec::new(),
             position: 0,
@@ -187,6 +189,14 @@ impl UpsertNode {
             did_upsert: false,
             initialized: false,
         }
+    }
+
+    pub fn with_prepared_writes(
+        mut self,
+        prepared: Option<crate::prepared::PreparedMutation>,
+    ) -> Self {
+        self.prepared_writes = prepared;
+        self
     }
 
     /// Set the collection schema for schema-aware type coercion.
@@ -285,6 +295,13 @@ impl UpsertNode {
             // Collect the modified field names for block creation
             let modified_fields: RapidHashSet<String> = input.fields.keys().cloned().collect();
 
+            if let Some(prepared) = &self.prepared_writes {
+                let id = doc.id().map(ToString::to_string).unwrap_or_default();
+                let write = prepared.updates.get(&id).ok_or_else(|| {
+                    QueryError::transaction_conflict("upsert target changed after key preparation")
+                })?;
+                doc.set_write_preparation(Arc::clone(write));
+            }
             let result = self
                 .mutator
                 .update(&self.collection_name, doc, modified_fields)
@@ -334,6 +351,7 @@ impl UpsertNode {
                     })?;
             }
 
+            let doc = self.prepared_create(doc)?;
             let result = self.mutator.create(&self.collection_name, doc).await?;
 
             let plan_doc = self.result_to_doc(&result.document)?;
@@ -342,6 +360,15 @@ impl UpsertNode {
         }
 
         Ok(())
+    }
+
+    fn prepared_create(&self, doc: Document) -> Result<Document> {
+        match &self.prepared_writes {
+            None => Ok(doc),
+            Some(prepared) => prepared.creates.first().cloned().ok_or_else(|| {
+                QueryError::transaction_conflict("upsert target changed after key preparation")
+            }),
+        }
     }
 
     /// Create a new document (no ID specified - generates new ID).
@@ -357,6 +384,7 @@ impl UpsertNode {
             create_input.to_document()?
         };
 
+        let doc = self.prepared_create(doc)?;
         let result = self.mutator.create(&self.collection_name, doc).await?;
 
         let plan_doc = self.result_to_doc(&result.document)?;

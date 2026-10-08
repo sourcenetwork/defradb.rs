@@ -32,6 +32,25 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         .await
         .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
 
+        let identity = match crate::write::prepare::prepared_identity(&doc) {
+            Some(identity) => identity,
+            None => DocStorageIdentity::new(
+                collection.resolved_root_id(),
+                self.db
+                    .next_doc_short_id()
+                    .await
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+            ),
+        };
+        let doc_short_id = identity.doc_short_id;
+        crate::write::prepare::prepare_keys(
+            &self.db,
+            &mut doc,
+            identity,
+            None,
+            get_encryption_config().as_ref(),
+        )
+        .await?;
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn, so no identity exists to guard yet.
         // The DocID-mapping duplicate check is the gate.
@@ -86,13 +105,6 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 .await
                 .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
 
-            let doc_short_id = self
-                .db
-                .next_doc_short_id()
-                .await
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-            let identity = DocStorageIdentity::new(short_id, doc_short_id);
-
             // Use version_id for collectionVersionID (matches Go's VersionID())
             let schema_version_id = collection.version_id();
             let enc_config = get_encryption_config();
@@ -114,7 +126,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 None,
                 enc_config.as_ref(),
                 sign_config.as_ref(),
-                None,
+                self.db.kms().as_ref(),
             )
             .await
             .map_err(|e| {
@@ -176,6 +188,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             col_data.clone(),
         );
 
+        doc.clear_write_preparation();
         let mut result = CreateResult::with_commit(doc_id, doc, cid, block);
         if let Some((col_cid, col_bytes)) = col_data {
             result.broadcast_cid = Some(col_cid);
@@ -253,13 +266,20 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let txn = self.new_mutation_txn().await?;
 
         let mut identities = Vec::with_capacity(prepared_docs.len());
-        for _ in &prepared_docs {
-            let doc_short_id = self
-                .db
-                .next_doc_short_id()
-                .await
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-            identities.push(DocStorageIdentity::new(short_id, doc_short_id));
+        for doc in &mut prepared_docs {
+            let identity = match crate::write::prepare::prepared_identity(doc) {
+                Some(identity) => identity,
+                None => DocStorageIdentity::new(
+                    short_id,
+                    self.db
+                        .next_doc_short_id()
+                        .await
+                        .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+                ),
+            };
+            crate::write::prepare::prepare_keys(&self.db, doc, identity, None, enc_config.as_ref())
+                .await?;
+            identities.push(identity);
         }
 
         // Compute blocks (parallel on native, sequential on WASM). A failure
@@ -434,7 +454,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         // Emit events and build results
         let mut create_results = Vec::with_capacity(results.len());
-        for (doc_id, doc, cid, block, col_data) in results {
+        for (doc_id, mut doc, cid, block, col_data) in results {
             self.emit_update_events(
                 &collection,
                 &doc_id.to_string(),
@@ -443,6 +463,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 col_data.clone(),
             );
 
+            doc.clear_write_preparation();
             let mut result = CreateResult::with_commit(doc_id, doc, cid, block);
             if let Some((col_cid, col_bytes)) = col_data {
                 result.broadcast_cid = Some(col_cid);

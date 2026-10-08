@@ -35,6 +35,8 @@ mod plan_aggregates;
 mod plan_drive;
 mod plan_formatting;
 mod plan_validation;
+mod prepare;
+mod prepare_fetcher;
 mod query;
 mod se_transport;
 mod version;

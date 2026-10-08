@@ -113,6 +113,30 @@ async fn inherited_encryption(
     Ok(Some((key, enc_cid)))
 }
 
+pub(crate) async fn inherited_encryption_policy(
+    blockstore: &NamespaceView,
+    headstore: &NamespaceView,
+    identity: DocStorageIdentity,
+    fields: &[String],
+) -> Result<(bool, rapidhash::RapidHashSet<String>), String> {
+    let snapshot = DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?;
+    let heads: Vec<_> = snapshot.field_heads("C").iter().map(|h| h.cid).collect();
+    let encrypt_doc = inherited_encryption_cid(blockstore, &heads)
+        .await?
+        .is_some();
+    let mut encrypted_fields = rapidhash::RapidHashSet::default();
+    for field in fields {
+        let heads: Vec<_> = snapshot.field_heads(field).iter().map(|h| h.cid).collect();
+        if inherited_encryption_cid(blockstore, &heads)
+            .await?
+            .is_some()
+        {
+            encrypted_fields.insert(field.clone());
+        }
+    }
+    Ok((encrypt_doc, encrypted_fields))
+}
+
 /// Mint a fresh key for a field, seal its delta with it, and persist the
 /// `Encryption` block the new block will link to.
 ///
@@ -125,7 +149,16 @@ async fn encrypt_with_new_key(
     field_name: &str,
     key_field_name: Option<&str>,
     value_bytes: &[u8],
+    prepared: Option<&document::WritePreparation>,
 ) -> Result<(Vec<u8>, Cid), String> {
+    if let Some((cid, key)) = prepared.and_then(|p| p.key(field_name)) {
+        return Ok((encrypt_delta(value_bytes, key)?, cid));
+    }
+    if prepared.is_some() {
+        return Err(format!(
+            "encryption key for field {field_name} was not prepared"
+        ));
+    }
     if let Some(kms_svc) = kms {
         // KMS path: the KMS generates + persists the Encryption block (in its
         // KeyStore) and returns the CID + plain key for us to encrypt the field
@@ -307,6 +340,7 @@ pub async fn write_document_blocks(
                     field_name,
                     key_field_name,
                     &value_bytes,
+                    doc.write_preparation().map(AsRef::as_ref),
                 )
                 .await?;
                 encryption_cids.push(enc_cid);
@@ -334,6 +368,7 @@ pub async fn write_document_blocks(
                     field_name,
                     None,
                     &value_bytes,
+                    doc.write_preparation().map(AsRef::as_ref),
                 )
                 .await?;
                 encryption_cids.push(enc_cid);

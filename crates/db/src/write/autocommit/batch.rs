@@ -214,12 +214,30 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let enc_config = get_encryption_config();
         let sign_config = get_signing_config();
 
-        let doc_short_id = self
-            .db
-            .next_doc_short_id()
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        let identity = DocStorageIdentity::new(short_id, doc_short_id);
+        let identity = match crate::write::prepare::prepared_identity(&doc) {
+            Some(identity) => identity,
+            None => DocStorageIdentity::new(
+                short_id,
+                self.db
+                    .next_doc_short_id()
+                    .await
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
+            ),
+        };
+        let doc_short_id = identity.doc_short_id;
+        {
+            let (blockstore, headstore) = self.block_and_head_stores().await?;
+            crate::write::prepare::prepare_keys_with_stores(
+                &self.db,
+                &mut doc,
+                identity,
+                None,
+                enc_config.as_ref(),
+                Some((&blockstore, &headstore)),
+                None,
+            )
+            .await?;
+        }
 
         let (doc_id, doc_cid, doc_block, col_block_data) = {
             let (blockstore, headstore) = self.block_and_head_stores().await?;
@@ -233,7 +251,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 None,
                 enc_config.as_ref(),
                 sign_config.as_ref(),
-                None,
+                self.db.kms().as_ref(),
             )
             .await
             .map_err(|e| {
@@ -279,6 +297,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         )
         .await?;
 
+        doc.clear_write_preparation();
         let mut result = CreateResult::with_commit(doc_id, doc, doc_cid, doc_block);
         if let Some((col_cid, col_bytes)) = col_block_data {
             result.broadcast_cid = Some(col_cid);
@@ -362,6 +381,20 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         let enc_config = get_encryption_config();
         let sign_config = get_signing_config();
 
+        {
+            let (blockstore, headstore) = self.block_and_head_stores().await?;
+            crate::write::prepare::prepare_keys_with_stores(
+                &self.db,
+                &mut doc,
+                DocStorageIdentity::new(short_id, doc_short_id),
+                Some(&modified_fields),
+                enc_config.as_ref(),
+                Some((&blockstore, &headstore)),
+                None,
+            )
+            .await?;
+        }
+
         let (doc_cid, doc_block, col_block_data) = {
             let (blockstore, headstore) = self.block_and_head_stores().await?;
 
@@ -374,7 +407,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 Some(&modified_fields),
                 enc_config.as_ref(),
                 sign_config.as_ref(),
-                None,
+                self.db.kms().as_ref(),
             )
             .await
             .map_err(|e| {
@@ -418,6 +451,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         }
 
         let fields_modified = doc.values().len();
+        doc.clear_write_preparation();
         let mut result = UpdateResult::with_commit(doc, fields_modified, doc_cid, doc_block);
         if let Some((col_cid, col_bytes)) = col_block_data {
             result.broadcast_cid = Some(col_cid);

@@ -242,26 +242,27 @@ impl EmbeddedNode {
         request: QueryRequest,
         policy: ExecuteRetryPolicy,
     ) -> QueryResponse {
-        execute_request_with_retry_loop(request, policy, |request| {
-            self.execute_request_once(request)
-        })
-        .await
+        self.execute_prepared_request(request, None, Some(policy))
+            .await
     }
 
     async fn execute_request_once(&self, request: QueryRequest) -> QueryResponse {
-        self.execute_prepared_request(request, None).await
+        self.execute_prepared_request(request, None, None).await
     }
 
     async fn execute_prepared_request(
         &self,
         request: QueryRequest,
         txn_handle: Option<TransactionHandle>,
+        retry_policy: Option<ExecuteRetryPolicy>,
     ) -> QueryResponse {
         let request = self.with_default_query_identity(request);
         let Some(node_identity_did) = self.node_identity_did.as_deref() else {
             return match txn_handle {
                 Some(handle) => self.runner.execute_in_txn(request, &handle).await,
-                None => self.runner.execute(request).await,
+                None => {
+                    execute_autocommit_request(self.runner.as_ref(), request, retry_policy).await
+                }
             };
         };
 
@@ -295,6 +296,7 @@ impl EmbeddedNode {
             self.runner.clone(),
             request,
             txn_handle,
+            retry_policy,
             signing_config,
             node_identity_did.to_string(),
             signed_query_runtime.handle(),
@@ -313,7 +315,7 @@ impl EmbeddedNode {
         request: QueryRequest,
         handle: &TransactionHandle,
     ) -> QueryResponse {
-        self.execute_prepared_request(request, Some(handle.clone()))
+        self.execute_prepared_request(request, Some(handle.clone()), None)
             .await
     }
 
@@ -747,6 +749,34 @@ impl EmbeddedNode {
         }
     }
 }
+
+async fn execute_autocommit_request(
+    executor: &dyn QueryExecutor,
+    request: QueryRequest,
+    policy: Option<ExecuteRetryPolicy>,
+) -> QueryResponse {
+    let Some(policy) = policy else {
+        return executor.execute(request).await;
+    };
+    let prepared = match executor.prepare_request(&request).await {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return QueryResponse {
+                data: None,
+                errors: vec![query::QueryResponseError::from_query_error(error)],
+                extensions: None,
+            }
+        }
+    };
+    execute_request_with_retry_loop(request, policy, |request| {
+        executor.execute_prepared(request, prepared.clone())
+    })
+    .await
+}
+
+#[cfg(test)]
+#[path = "request_preparation_tests.rs"]
+mod request_preparation_tests;
 
 async fn execute_request_with_retry_loop<F, Fut>(
     request: QueryRequest,
