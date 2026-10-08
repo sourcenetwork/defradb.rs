@@ -80,6 +80,11 @@ kovan-map = "0.1.22"
 kovan-queue = "0.1.22"
 kovan-channel = "0.1.22"
 
+# One rustls version workspace-wide: a crypto provider is installed into the
+# process registry of a single rustls major, so a second major in the graph
+# would leave TLS built from an uninitialised registry.
+rustls = { version = "0.23", default-features = false }
+
 # Async runtime
 tokio = { version = "1.35" }
 async-trait = "0.1.92"
