@@ -20,7 +20,7 @@ go_root     := tooling / "go"
 jdk_root    := tooling / "jdk"
 
 # Pinned to what CI uses. ci.yml pins Go 1.25 (:449); Cargo.toml sets
-# rust-version 1.91; proofs/lean/lean-toolchain pins Lean v4.18.0; #1310 pins
+# rust-version 1.98; proofs/lean/lean-toolchain pins Lean v4.18.0; #1310 pins
 # TLC 1.7.4 by checksum. The upstream 1.8.0 pre-release asset is rolling and
 # cannot provide a reproducible clean-checkout gate.
 protoc_version := "35.1"

@@ -140,7 +140,7 @@ Each worktree is isolated, no branch switching overhead.
 
 ## Build Dependencies
 
-- **Rust** (1.91+): `rustup`
+- **Rust** (1.98+): `rustup`
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.7`
