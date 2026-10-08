@@ -136,6 +136,7 @@ jobs:
           - { family: transport, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: vector_mutations, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: vector_search, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: write_baseline, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: backup, os: macos-latest, target: aarch64-apple-darwin }
           - { family: crypto, os: macos-latest, target: aarch64-apple-darwin }
           - { family: document_read, os: macos-latest, target: aarch64-apple-darwin }
@@ -176,6 +177,8 @@ jobs:
       - name: Run ${{ matrix.family }}
         env:
           DEFRA_BENCH_OUT: ${{ github.workspace }}/bench-${{ matrix.family }}.jsonl
+          DEFRA_BASELINE_LOAD_GUARD: ${{ github.workspace }}/loadguard.json
+          DEFRA_BASELINE_PROFILE: bench
         run: cargo bench -p benches --bench ${{ matrix.family }} -- $DEFRA_BENCH_CRITERION_ARGS
       - name: Collect what criterion recorded
         run: |

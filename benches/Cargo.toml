@@ -34,6 +34,7 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile = "3.8"
 tower = { workspace = true, features = ["util"] }
+telemetry = { path = "../crates/telemetry" }
 
 blockstore = { path = "../crates/blockstore" }
 crdt = { path = "../crates/crdt" }
@@ -90,6 +91,10 @@ harness = false
 
 [[bench]]
 name = "contention"
+harness = false
+
+[[bench]]
+name = "write_baseline"
 harness = false
 
 [[bench]]
