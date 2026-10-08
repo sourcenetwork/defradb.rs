@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 #[cfg(feature = "otlp")]
 use kovan::Atom;
 #[cfg(feature = "otlp")]
-use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider as _};
+use opentelemetry::metrics::{Counter, MeterProvider as _};
 #[cfg(feature = "otlp")]
 use opentelemetry::KeyValue;
 
@@ -118,10 +118,6 @@ pub fn record_escaped_conflict(surface: &'static str) {
     emit_escaped_conflict(surface);
 }
 
-pub fn record_storage_conflict(backend: &'static str, rule: &'static str) {
-    emit_storage_conflict(backend, rule);
-}
-
 static STORAGE_BACKGROUND_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 /// Record a failed background storage job (flush, compaction, manifest
@@ -135,19 +131,6 @@ pub fn record_storage_background_error(backend: &'static str, reason: &'static s
 /// Failed background storage jobs recorded in this process.
 pub fn storage_background_error_count() -> u64 {
     STORAGE_BACKGROUND_ERRORS.load(Ordering::Relaxed)
-}
-
-pub fn record_commit_gate_wait(backend: &'static str, seconds: f64) {
-    emit_commit_gate_wait(backend, seconds);
-}
-
-pub fn record_conflict_tracker_size(
-    backend: &'static str,
-    committed: u64,
-    pending: u64,
-    active_snapshots: u64,
-) {
-    emit_conflict_tracker_size(backend, committed, pending, active_snapshots);
 }
 
 #[cfg(feature = "otlp")]
@@ -193,19 +176,6 @@ fn emit_escaped_conflict(surface: &'static str) {
 }
 
 #[cfg(feature = "otlp")]
-fn emit_storage_conflict(backend: &'static str, rule: &'static str) {
-    with_instruments(|metrics| {
-        metrics.storage_conflicts.add(
-            1,
-            &[
-                KeyValue::new("backend", backend),
-                KeyValue::new("rule", rule),
-            ],
-        );
-    });
-}
-
-#[cfg(feature = "otlp")]
 fn emit_storage_background_error(backend: &'static str, reason: &'static str) {
     with_instruments(|metrics| {
         metrics.storage_background_errors.add(
@@ -218,39 +188,6 @@ fn emit_storage_background_error(backend: &'static str, reason: &'static str) {
     });
 }
 
-#[cfg(feature = "otlp")]
-fn emit_commit_gate_wait(backend: &'static str, seconds: f64) {
-    with_instruments(|metrics| {
-        metrics
-            .commit_gate_wait
-            .record(seconds, &[KeyValue::new("backend", backend)]);
-    });
-}
-
-#[cfg(feature = "otlp")]
-fn emit_conflict_tracker_size(
-    backend: &'static str,
-    committed: u64,
-    pending: u64,
-    active_snapshots: u64,
-) {
-    with_instruments(|metrics| {
-        for (state, value) in [
-            ("committed", committed),
-            ("pending", pending),
-            ("active_snapshots", active_snapshots),
-        ] {
-            metrics.conflict_tracker_size.record(
-                value,
-                &[
-                    KeyValue::new("backend", backend),
-                    KeyValue::new("state", state),
-                ],
-            );
-        }
-    });
-}
-
 #[cfg(not(feature = "otlp"))]
 fn emit_retry_attempt(_layer: RetryLayer) {}
 #[cfg(not(feature = "otlp"))]
@@ -260,30 +197,15 @@ fn emit_retry_exhaustion(_layer: RetryLayer) {}
 #[cfg(not(feature = "otlp"))]
 fn emit_escaped_conflict(_surface: &'static str) {}
 #[cfg(not(feature = "otlp"))]
-fn emit_storage_conflict(_backend: &'static str, _rule: &'static str) {}
-#[cfg(not(feature = "otlp"))]
 fn emit_storage_background_error(_backend: &'static str, _reason: &'static str) {}
-#[cfg(not(feature = "otlp"))]
-fn emit_commit_gate_wait(_backend: &'static str, _seconds: f64) {}
-#[cfg(not(feature = "otlp"))]
-fn emit_conflict_tracker_size(
-    _backend: &'static str,
-    _committed: u64,
-    _pending: u64,
-    _active_snapshots: u64,
-) {
-}
 
 #[cfg(feature = "otlp")]
 struct Instruments {
-    storage_conflicts: Counter<u64>,
     storage_background_errors: Counter<u64>,
     retry_attempts: Counter<u64>,
     retry_successes: Counter<u64>,
     retry_exhaustions: Counter<u64>,
     escaped_conflicts: Counter<u64>,
-    commit_gate_wait: Histogram<f64>,
-    conflict_tracker_size: Gauge<u64>,
 }
 
 #[cfg(feature = "otlp")]
@@ -297,10 +219,6 @@ static INSTRUMENTS: OnceLock<InstrumentRegistry> = OnceLock::new();
 pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -> u64 {
     let meter = provider.meter("defradb");
     let instruments = Arc::new(Instruments {
-        storage_conflicts: meter
-            .u64_counter("defradb.storage.transaction.conflicts")
-            .with_description("Storage transaction conflicts")
-            .build(),
         storage_background_errors: meter
             .u64_counter("defradb.storage.background.errors")
             .with_description("Failed background storage jobs")
@@ -320,15 +238,6 @@ pub(crate) fn install(provider: &opentelemetry_sdk::metrics::SdkMeterProvider) -
         escaped_conflicts: meter
             .u64_counter("defradb.transaction.conflicts.escaped")
             .with_description("Transaction conflicts returned to clients")
-            .build(),
-        commit_gate_wait: meter
-            .f64_histogram("defradb.storage.commit_gate.wait")
-            .with_unit("s")
-            .with_description("Time waiting to publish a committed storage version")
-            .build(),
-        conflict_tracker_size: meter
-            .u64_gauge("defradb.storage.conflict_tracker.size")
-            .with_description("Current conflict tracker entries")
             .build(),
     });
 
