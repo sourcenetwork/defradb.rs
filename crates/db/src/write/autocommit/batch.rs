@@ -354,6 +354,8 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             &mut doc,
             doc_short_id,
             &index_manager,
+            &mut modified_fields,
+            None,
         )
         .await?;
 
