@@ -41,6 +41,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
       - run: .github/scripts/install-linux-ci-deps.sh
       - name: Free unused hosted SDKs for release builds
         run: sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet
