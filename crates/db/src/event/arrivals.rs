@@ -4,16 +4,20 @@ use datastore::NamespaceView;
 use query::fetcher::{DocumentArrival, DocumentArrivalOptions, DocumentArrivalPage};
 use storage::corekv::Store;
 
+// DEFRALEVEL(S6): Remove head from commit path; sequencer manages cursor high-water.
 fn head_key(collection: u32) -> Vec<u8> {
     format!("/arrival/{collection}/head").into_bytes()
 }
+// DEFRALEVEL(S6): Paginated index written by sequencer post-commit; rows gap-free.
 fn row_key(collection: u32, cursor: u64) -> Vec<u8> {
     format!("/arrival/{collection}/row/{cursor:020}").into_bytes()
 }
+// DEFRALEVEL(S6): Keep as doc->cursor index the sequencer writes post-commit; the in-txn blind pending marker gets its own per-doc key
 fn doc_key(collection: u32, doc: &str) -> Vec<u8> {
     format!("/arrival/{collection}/doc/{doc}").into_bytes()
 }
 
+// DEFRALEVEL(S6): DefraLevel validates head reads; reused by sequencer and read().
 async fn number(store: &NamespaceView, key: &[u8]) -> Result<u64> {
     match store.get(key).await {
         Ok(Some(bytes)) => {
@@ -26,6 +30,8 @@ async fn number(store: &NamespaceView, key: &[u8]) -> Result<u64> {
     }
 }
 
+// DEFRALEVEL(S6): Rewrite invariant; moves from OCC on head to sequencing.
+// DEFRALEVEL(S6): Blind per-doc pending marker as merge operand; /arrival/ is Ordinary, puts conflict; sequence post-commit
 /// The head and arrival row share the document transaction. The shared head
 /// key is an OCC write conflict: a stale writer must retry its entire transaction,
 /// so no lower cursor can commit after a higher one. This journal starts at
@@ -35,6 +41,7 @@ pub(crate) async fn record(store: &NamespaceView, collection: u32, doc: &str) ->
     if existing != 0 {
         return Ok(existing);
     }
+    // DEFRALEVEL(S6): Drop head get+1+set (collection-wide RMW serializing creates); write only per-doc marker, sequencer assigns cursor
     let cursor = number(store, &head_key(collection))
         .await?
         .checked_add(1)
@@ -51,6 +58,7 @@ pub(crate) async fn record(store: &NamespaceView, collection: u32, doc: &str) ->
     Ok(cursor)
 }
 
+// DEFRALEVEL(S6): Read sequencer watermark, not txn-written head.
 pub(crate) async fn read<S: Store>(
     txn: &mut DbTxn<S>,
     options: &DocumentArrivalOptions,
@@ -103,6 +111,7 @@ pub(crate) async fn read<S: Store>(
     })
 }
 
+// DEFRALEVEL(S6): Rewrite tests against the sequencer API.
 #[cfg(test)]
 #[path = "../../tests/read/arrival_transactions.rs"]
 mod tests;

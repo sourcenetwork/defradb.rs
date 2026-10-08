@@ -2,6 +2,7 @@ use super::*;
 use crate::block::builder::decode_priority_varint;
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    // DEFRALEVEL(S4): Max scan grows with markers or unpruned heads; consider prune or use live set.
     async fn current_field_priority(
         &self,
         headstore: &NamespaceView,
@@ -58,6 +59,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // headstore priority, so the merge resolves against the true current
         // state instead of the stale CRDT entry (otherwise a re-walked ancestor
         // delta clobbers a concurrent local write — replicas diverge).
+        // DEFRALEVEL(S4): hazard: decides an out-of-prefix LWW write from a field-head scan; re-anchor on the stored LWW priority point read before h/d/ can be CommutativePrefix
         let hs_priority = self
             .current_field_priority(headstore, doc_short_id, &payload.field_name)
             .await?;
@@ -150,6 +152,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let collection = self
             .block_collection(&payload.schema_version_id, metadata.collection_id)
             .await?;
+        // DEFRALEVEL(S7): Remove guard; add CollectionKey read in the merge txn
         let _collection_guard = match collection.as_ref() {
             Some(collection) => Some(
                 self.db
@@ -158,6 +161,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ),
             None => None,
         };
+        // DEFRALEVEL(S7): Remove after S4 and S5 land; guard not needed with marker-scheme heads.
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 
         tracing::debug!(
@@ -168,6 +172,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         );
 
         // Create a new transaction for this merge
+        // DEFRALEVEL(S10): Hand LWW merge txn begin/commit/4 discards to a regolith txn trait; drop manual force_commit/force_discard
         let txn = self.db.new_txn(false).await?;
         let doc_short_id = {
             let systemstore = txn.systemstore()?;

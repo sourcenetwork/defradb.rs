@@ -9,6 +9,7 @@ use storage::corekv::MaybeSendSync;
 use crate::error::Result;
 use crate::relation::RelationTuple;
 
+// DEFRALEVEL(S10): Persistent impl stops opening/committing its own txns; hands tuple keys/values to regolith traits
 /// Trait for storing and querying relation tuples.
 ///
 /// This abstraction allows different storage backends to be used

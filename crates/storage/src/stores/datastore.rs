@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// Chunk size for large values (1MB)
 pub const CHUNK_SIZE: usize = 1_048_576;
 
+// DEFRALEVEL(S10): Move namespaced wrapper + >1MB chunking behind regolith storage traits; defradb keeps doc/index key families
 /// Datastore provides storage for documents and collection data
 pub struct Datastore<S: Store> {
     store: NamespacedStore<S>,
@@ -46,6 +47,7 @@ impl<S: Store> Store for Datastore<S> {
     }
 }
 
+// DEFRALEVEL(S10): Txn wrapper goes under regolith; its chunking is reached only via test downcasts, so move it to regolith or drop it
 /// Datastore transaction with chunking support
 pub struct DatastoreTxn {
     txn: Box<dyn Txn>,
@@ -57,6 +59,7 @@ impl DatastoreTxn {
         value.len() > CHUNK_SIZE
     }
 
+    // DEFRALEVEL(S10): Move value chunking (chunk-key derivation, split/reassemble/delete) into regolith; defradb passes only the base key
     /// Generate chunk key by appending a single-byte suffix
     #[doc(hidden)]
     pub fn chunk_key(base_key: &[u8], chunk_index: u8) -> Vec<u8> {
@@ -101,6 +104,7 @@ impl DatastoreTxn {
         }
     }
 
+    // DEFRALEVEL(S10): Regolith owns chunked-value delete; drop this up-to-256 has+delete probe loop for one logical value delete
     /// Delete a value, including all chunks if present
     ///
     /// This method handles both chunked and non-chunked values:
@@ -170,6 +174,7 @@ impl DatastoreTxn {
         Ok(())
     }
 
+    // DEFRALEVEL(S10): Large-value chunking (chunk_key split, write-new-then-trim via has() probes) moves into regolith storage
     /// Put a chunked value (internal)
     ///
     /// This method writes new chunks first (overwriting existing ones at the same indices),

@@ -57,6 +57,7 @@ impl<S: Store + 'static> EncryptedIndexOperations for EncryptedIndexAdapter<S> {
 
         let enc_idx = schema::EncryptedIndexDescription::new(field_name);
 
+        // DEFRALEVEL(S10): Move add_encrypted_index schema RMW + name-key write into a db op on regolith traits; adapter stops composing keys
         let txn = self
             .database
             .new_txn(false)

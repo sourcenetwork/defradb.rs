@@ -55,6 +55,7 @@ impl InstanceType {
     }
 }
 
+// DEFRALEVEL(S1): Classifier must decode structurally, not match ASCII prefixes
 /// Encodes a uint64 as a variable-length unsigned integer in ascending order.
 /// This matches CockroachDB's EncodeUvarintAscending encoding.
 ///

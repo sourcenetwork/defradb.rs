@@ -259,6 +259,7 @@ pub struct FieldHeadEntry {
     pub key: Vec<u8>,
 }
 
+// DEFRALEVEL(S4): Marker-aware filtering
 /// Get all existing heads for a specific field of a document.
 ///
 /// During concurrent P2P updates, a field can have multiple heads (branches).
@@ -314,6 +315,7 @@ pub struct DocHeadsSnapshot {
 }
 
 impl DocHeadsSnapshot {
+    // DEFRALEVEL(S4): Add merge-walk for per-doc marker prefix; count superseded keys
     /// Load all heads for a document in a single headstore scan.
     pub async fn load(headstore: &NamespaceView, doc_short_id: u64) -> Result<Self, String> {
         use storage::corekv::IterOptions;

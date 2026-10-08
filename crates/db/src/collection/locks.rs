@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::txn::DbTxn;
 
 impl<S: Store> DB<S> {
+    // DEFRALEVEL(S7): Delete with the module
     fn collection_lock(&self, collection_id: &str) -> Result<Arc<RwLock<()>>> {
         if let Some(lock) = self.collection_locks.get(collection_id) {
             return Ok(lock);
@@ -19,6 +20,7 @@ impl<S: Store> DB<S> {
             .get_or_insert(collection_id.to_string(), Arc::new(RwLock::new(()))))
     }
 
+    // DEFRALEVEL(S7): Delete; replace calls with in-txn CollectionKey read
     pub(crate) async fn collection_read_guard(
         &self,
         collection_id: &str,
@@ -30,6 +32,7 @@ impl<S: Store> DB<S> {
         Ok(guard)
     }
 
+    // DEFRALEVEL(S7): Delete; only caller is AutoCommitMutator::guarded_collection
     /// The read guard of the collection `name` maps to, or `None` when no
     /// collection has that name. A writer takes it before resolving the
     /// definition it writes with, so a patch or an index committed under
@@ -48,6 +51,7 @@ impl<S: Store> DB<S> {
         Ok(Some(self.collection_read_guard(&collection_id).await?))
     }
 
+    // DEFRALEVEL(S7): Keep only CollectionKey read as conflict anchor; drop guard acquisition
     /// Hold the collection's read guard for the rest of the transaction.
     ///
     /// The transaction resolved `collection` from its own snapshot, possibly
@@ -79,6 +83,7 @@ impl<S: Store> DB<S> {
         Ok(())
     }
 
+    // DEFRALEVEL(S7): Delete; registry callers rely on CollectionKey writes to conflict
     pub(crate) async fn acquire_collection_write_locks_for_txn(
         &self,
         txn: &mut DbTxn<S>,
@@ -104,6 +109,7 @@ impl<S: Store> DB<S> {
         Ok(())
     }
 
+    // DEFRALEVEL(S7): Delete; pub API removal breaks guard_race and index/create tests
     /// The lock a truncate, delete, or patch holds for the collections it writes.
     pub async fn collection_write_guards(
         &self,

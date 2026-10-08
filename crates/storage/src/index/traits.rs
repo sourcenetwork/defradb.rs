@@ -6,6 +6,7 @@ use schema::IndexDescription;
 
 use crate::corekv::{MaybeSend, MaybeSendSync, Reader, Result, Writer};
 
+// DEFRALEVEL(S9): Sync trait with corekv Reader/Writer: drop async_trait on save/update/delete/remove_all
 /// Trait for collection index implementations.
 ///
 /// Indexes maintain secondary lookup structures for efficient querying

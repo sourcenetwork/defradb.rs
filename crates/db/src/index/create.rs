@@ -65,10 +65,12 @@ impl<S: Store> DB<S> {
             .require_collection(collection_name)?
             .collection_id()
             .to_string();
+        // DEFRALEVEL(S7): Remove guard; CollectionKey set conflicts writers reading the definition.
         let _guards = self
             .collection_write_guards(std::iter::once(collection_id.clone()))
             .await?;
         let collection = self.require_collection(collection_name)?;
+        // DEFRALEVEL(S7): Fence peeks the in-memory allocator, outside the txn; without the guard a writer committing first gets id >= fence, never indexed
         let fence = self.peek_doc_short_id().await?;
 
         let txn = self.new_txn(false).await?;
@@ -89,6 +91,7 @@ impl<S: Store> DB<S> {
                     &collection.schema().fields,
                 )
                 .await?;
+            // DEFRALEVEL(S7): Build from an in-txn CollectionKey read, not the cached schema; a cache clone blind-overwrites a racing patch/index
             let mut schema = collection.schema().clone();
             schema.indexes.push(index.clone());
             let data = serde_json::to_vec(&schema).map_err(|error| {

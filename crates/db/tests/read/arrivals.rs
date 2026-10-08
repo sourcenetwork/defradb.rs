@@ -5,6 +5,7 @@ use query::{DocMutator, QueryExecutor, QueryRequest};
 use std::sync::Arc;
 use storage::RegolithStore;
 
+// DEFRALEVEL(S6): Asserts head "3" right after autocommit creates: S6 must assign cursors at commit, or the test waits
 #[tokio::test]
 async fn graphql_creation_cursor_pages_and_docid_lookup() {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
@@ -87,6 +88,7 @@ async fn hidden_arrivals_advance_page_without_disclosing_document_ids() {
     );
 }
 
+// DEFRALEVEL(S6): Asserts head==1 inside uncommitted txn; update to the own-writes decision on DocumentArrivalPage.head
 #[tokio::test]
 async fn explicit_transaction_sees_arrival_and_rollback_hides_both() {
     use query::fetcher::{DocFetcher, DocumentArrivalOptions};
@@ -120,6 +122,7 @@ async fn explicit_transaction_sees_arrival_and_rollback_hides_both() {
         .is_empty());
 }
 
+// DEFRALEVEL(S7): The key regression test for removing the guard. The S6 sequencer must keep cursors contiguous.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn concurrent_autocommit_arrivals_are_contiguous() {
     use query::fetcher::{DocFetcher, DocumentArrivalOptions};

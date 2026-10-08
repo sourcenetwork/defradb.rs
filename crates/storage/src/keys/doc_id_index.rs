@@ -121,6 +121,7 @@ impl DocShortIDToDocIDKey {
 }
 
 impl Key for DocShortIDToDocIDKey {
+    // DEFRALEVEL(S1): Stays Ordinary; fresh short ids never contend.
     fn bytes(&self) -> Vec<u8> {
         doc_id_index_key(&[
             DOC_SHORT_ID_TO_DOC_ID.as_bytes(),
@@ -152,6 +153,7 @@ impl DocIDToDocRefKey {
 }
 
 impl Key for DocIDToDocRefKey {
+    // DEFRALEVEL(S1): Keep Ordinary; concurrent same DocID creation must abort.
     fn bytes(&self) -> Vec<u8> {
         doc_id_index_key(&[DOC_ID_TO_DOC_REF.as_bytes(), self.doc_id.as_bytes()])
     }
@@ -196,6 +198,7 @@ impl DocShortIDToDocIDAliasKey {
 }
 
 impl Key for DocShortIDToDocIDAliasKey {
+    // DEFRALEVEL(S1): Stays Ordinary in phase 1, not ContentAddressed; blind identical rewrites elide (regolith.commit.writes_elided)
     fn bytes(&self) -> Vec<u8> {
         doc_id_index_key(&[
             DOC_SHORT_ID_TO_DOC_ID_ALIAS.as_bytes(),
@@ -241,6 +244,7 @@ impl BlockCIDToDocIDKey {
 }
 
 impl Key for BlockCIDToDocIDKey {
+    // DEFRALEVEL(S1): Stays Ordinary: deleted on purge.
     fn bytes(&self) -> Vec<u8> {
         doc_id_index_key(&[
             BLOCK_CID_TO_DOC_ID.as_bytes(),

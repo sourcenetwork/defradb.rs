@@ -16,6 +16,7 @@ use rapidhash::fast::RandomState;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+// DEFRALEVEL(S7): Delete this recorder and its common/mod.rs entry; nothing emits these locks.rs guard events after S7
 const GUARD_TARGET: &str = "db::collection::locks";
 
 pub const READ_WAITING: &str = "waiting for the collection guard";

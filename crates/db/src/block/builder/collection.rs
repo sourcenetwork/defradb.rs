@@ -16,6 +16,7 @@ pub async fn write_collection_block(
     doc_composite_cid: Cid,
     signing_config: Option<&SigningConfig>,
 ) -> Result<(Cid, Bytes), String> {
+    // DEFRALEVEL(S1,S2): Contract bend: scanned heads/priority feed a blockstore CID block outside h/c/; safe only as a DAG fork
     let found = crate::block::heads::live_collection_heads(headstore, collection_short_id)
         .await
         .map_err(|e| format!("Failed to read collection heads: {}", e))?;
@@ -60,6 +61,7 @@ pub async fn write_collection_block(
         .map_err(|e| format!("Failed to generate collection CID: {}", e))?;
 
     // Store the collection block in blockstore
+    // DEFRALEVEL(S1): Out-of-prefix block write depends on the head scan; allowed only if Theo confirms the fresh-CID exception (Q1). Block stays Ordinary.
     blockstore
         .set(&collection_cid.to_bytes(), &collection_bytes)
         .await
@@ -88,6 +90,7 @@ pub async fn write_collection_block(
     // Write new collection head: /c/{collection_id}/{cid} → priority
     let col_head_key = HeadstoreColKey::new(collection_short_id, collection_cid);
     let priority_bytes = encode_priority_varint(priority);
+    // DEFRALEVEL(S1,S2): Head key h/c/{id}/{cid} is inside its own CommutativePrefix; unique per CID, so blind appends commute
     headstore
         .set(&col_head_key.bytes(), &priority_bytes)
         .await

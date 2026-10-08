@@ -102,6 +102,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 
         let registry = Arc::clone(self);
 
+        // DEFRALEVEL(S9): Idle sweep sends discard to each txn's owning worker; no tokio task taking action_lock and force_discard
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(sweep_interval).await;

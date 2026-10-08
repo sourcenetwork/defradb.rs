@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use document::Document;
 use storage::corekv::MaybeSendSync;
 
+// DEFRALEVEL(S9): Sync DocStream over sync KvIterator; drop async_trait; async close() (Drop can't await) becomes sync/Drop
 /// A pull-based source of documents paired with their deletion status.
 ///
 /// Returned by [`crate::fetcher::DocFetcher::stream_all_with_deleted`]. Each

@@ -312,6 +312,7 @@ impl CollectionIndex for VectorIndex {
             return Ok(());
         };
         let id = NodeId(doc_short_id);
+        // DEFRALEVEL(S5): Insert RMWs the shared HNSW meta (live/entry) and neighbour nodes; non-HNSW build runs inline: move both off write txn
         let mut engine = self.engine(txn).map_err(into_storage)?;
         match indexable {
             Indexable::Narrow(v) => engine.insert(id, v).await,

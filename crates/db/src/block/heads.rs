@@ -48,6 +48,7 @@ pub struct CollectionHeads {
     pub superseded: usize,
 }
 
+// DEFRALEVEL(S2): Unchanged logic. Its scans become the CommutativePrefix scans.
 /// The collection's live heads.
 ///
 /// Walks the head prefix and the marker prefix together. Both are sorted by
@@ -117,6 +118,7 @@ async fn next_parent(
     Ok(false)
 }
 
+// DEFRALEVEL(S4): Generalize to doc/field/composite heads: take a head key type, not collection_short_id.
 /// Record that `child` superseded each of `parents`.
 ///
 /// Every key written names `child`, so this is safe to run concurrently with
@@ -149,6 +151,7 @@ pub struct PruneOutcome {
     pub more_remaining: bool,
 }
 
+// DEFRALEVEL(S2): Decide how prune is anchored at DefraLevel; deletes are blind.
 /// Delete superseded head keys, each together with the markers against it.
 ///
 /// A head key and its markers go in one transaction, so no reader can observe
@@ -229,6 +232,7 @@ pub async fn prune_superseded_heads(
         // A materialized head read does not add native scan observations.
         // Prune writes shared keys, so anchor each deletion to this snapshot;
         // a concurrent sweep remains the side allowed to lose the race.
+        // DEFRALEVEL(S2): Keep as anchor or drop once prune uses blind-delete semantics.
         headstore.has_for_update(&key).await?;
         headstore.delete(&key).await?;
     }

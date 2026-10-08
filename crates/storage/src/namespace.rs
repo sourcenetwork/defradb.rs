@@ -37,7 +37,9 @@ pub enum Namespace {
     Acpstore,
 }
 
+// DEFRALEVEL(S10): Hand namespaces to regolith as keyspaces; regolith adds/strips byte 0, retiring the NamespacedStore/Txn wrappers
 impl Namespace {
+    // DEFRALEVEL(S1): KeyClassifier dispatches on byte 0 then parses the per-namespace logical layout
     /// Get the byte prefix for this namespace
     pub fn prefix(&self) -> u8 {
         match self {
@@ -141,6 +143,7 @@ pub struct NamespacedTxn {
     namespace: Namespace,
 }
 
+// DEFRALEVEL(S10): NamespacedTxn retires: regolith owns namespace keyspaces and the txn; defra passes (namespace, logical key)
 impl NamespacedTxn {
     /// Create a new namespaced transaction
     pub fn new(txn: Box<dyn Txn>, namespace: Namespace) -> Self {
@@ -153,6 +156,7 @@ impl crate::corekv::private::Sealed for NamespacedTxn {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Reader for NamespacedTxn {
+    // DEFRALEVEL(S2): Delete.
     async fn collection_head_entries(
         &self,
         head_prefix: &[u8],
@@ -294,6 +298,7 @@ pub struct NamespacedIterator {
     namespace: Namespace,
 }
 
+// DEFRALEVEL(S10): Retire with NamespacedTxn: regolith scopes iteration to the namespace byte and strips it from keys and seek targets
 impl crate::corekv::private::Sealed for NamespacedIterator {}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

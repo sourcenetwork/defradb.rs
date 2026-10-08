@@ -7,6 +7,7 @@ use storage::keys::{HeadstoreDocKey, HeadstorePriorityKey};
 
 use crate::{Error, Result, DB};
 
+// DEFRALEVEL(S1): Ordinary
 pub const COMMIT_PRIORITY_INDEX_MARKER_KEY: &[u8] = b"/meta/commit-priority-index-complete";
 
 impl<S: Store> DB<S> {

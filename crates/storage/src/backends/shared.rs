@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::corekv::{AsyncTxnCallback, TxnCallback};
 
+// DEFRALEVEL(S10): Use regolith's DurabilityMode instead of this mirror enum; drop the with_durability mapping in regolith/config.rs
 /// When a write is made durable.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -70,6 +71,7 @@ struct CallbackLists {
     discard_async: SegQueue<AsyncTxnCallback>,
 }
 
+// DEFRALEVEL(S10): Fire success/error/discard queues from regolith's commit/discard outcome hook; defradb only registers callbacks
 /// Callbacks a transaction runs when it resolves.
 ///
 /// Registration takes `&self` because a transaction is shareable. Each list
@@ -207,6 +209,7 @@ impl CallbackManager {
     }
 }
 
+// DEFRALEVEL(S1): Add ticker fields and read from Arc<regolith::Statistics> through get_ticker.
 /// What a store reports about its transactions.
 ///
 /// Deliberately small. regolith reports that a commit conflicted, not
@@ -230,6 +233,7 @@ struct TransactionMetrics {
     conflicts: AtomicU64,
 }
 
+// DEFRALEVEL(S1): Hold an Option<Arc<regolith::Statistics>> to return ticker values in snapshot().
 /// Cloneable handle for reading a live store's transaction diagnostics.
 #[derive(Clone)]
 pub struct TransactionStatsHandle {
@@ -245,6 +249,7 @@ impl TransactionStatsHandle {
         }
     }
 
+    // DEFRALEVEL(S8): Source these from regolith::Statistics tickers or extend snapshot.
     pub(crate) fn record_commit(&self) {
         self.metrics.commits.fetch_add(1, Ordering::Relaxed);
     }

@@ -2,6 +2,7 @@ use super::*;
 use bytes::Bytes;
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    // DEFRALEVEL(S3): Turn reconcile into a seed merge operand; the blob read stays (is_create + seed value); guards go in S7
     /// Process a Counter delta from a block (standalone, with its own transaction).
     pub async fn process_counter_delta(
         &self,
@@ -33,16 +34,19 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .block_collection(&payload.schema_version_id, metadata.collection_id)
             .await?
             .ok_or_else(missing_collection)?;
+        // DEFRALEVEL(S7): Remove guard; add CollectionKey read in txn
         let _collection_guard = self
             .db
             .collection_read_guard(collection.collection_id())
             .await?;
+        // DEFRALEVEL(S7): Delete guard-only re-resolve; keep first resolve, in-txn CollectionKey read conflicts on a concurrent change
         // Resolved again under the guard: a definition committed under the
         // write guard since is the one this merge writes with.
         let collection = self
             .block_collection(&payload.schema_version_id, metadata.collection_id)
             .await?
             .ok_or_else(missing_collection)?;
+        // DEFRALEVEL(S7): Remove after S3 makes counter accumulation a merge operand.
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 
         tracing::debug!(
@@ -81,6 +85,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let allow_decrement = field.crdt_type.allows_decrement();
 
         // Create a new transaction for this merge
+        // DEFRALEVEL(S10): Hand counter-merge txn scope (begin, force_commit, force_discard) to a regolith-owned txn with conflict retry
         let txn = self.db.new_txn(false).await?;
         let doc_short_id = crate::docid::map::get_doc_ref(&txn.systemstore()?, &doc_id_str)
             .await
@@ -190,6 +195,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
     }
 
+    // DEFRALEVEL(S3): Seed through operand; is_create needs doc-exists read (S5 blob).
     /// Process a Counter delta within an existing transaction, returning the merge result
     /// and the accumulated value for document reconstruction.
     #[allow(clippy::too_many_arguments)]
@@ -301,6 +307,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         .await
     }
 
+    // DEFRALEVEL(S3): Keep the applied-marker key Ordinary (applied-once guard); drop post-merge read_counter_value.
     #[allow(clippy::too_many_arguments)]
     async fn merge_counter_once_for_document(
         &self,
@@ -314,6 +321,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         delta: &CounterDelta,
         numeric_kind: NumericKind,
     ) -> std::result::Result<CounterMergeResult, MergeError> {
+        // DEFRALEVEL(S3): hazard: h/p/ doubles as applied-once guard; never ContentAddress it.
         let applied_key =
             storage::keys::HeadstorePriorityKey::new(doc_short_id, payload.priority, *cid);
         if headstore

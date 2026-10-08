@@ -8,6 +8,7 @@ use crate::error::TransactionError;
 use super::handle::TransactionHandle;
 use super::result::GetTransactionResult;
 
+// DEFRALEVEL(S10): Keep as defra's txn API; impl delegates begin/commit/rollback/abandon to regolith txn CRUD on owning worker
 /// Registry for managing active transactions.
 ///
 /// The database layer implements this to track transactions that can be

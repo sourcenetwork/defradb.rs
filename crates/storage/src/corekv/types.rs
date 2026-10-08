@@ -4,6 +4,7 @@
 /// including the Key trait for typed keys and iteration options.
 use std::fmt;
 
+// DEFRALEVEL(S10): Key::bytes() becomes regolith's key-composition trait; defradb key families supply only segment order/layout
 /// Trait for keys that can be serialized to bytes.
 ///
 /// All key types in the storage layer must implement this trait to convert

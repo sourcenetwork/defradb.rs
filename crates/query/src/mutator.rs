@@ -287,6 +287,8 @@ impl DeleteResult {
     }
 }
 
+// DEFRALEVEL(S9): Drop async_trait: commit/rollback become sync calls on the worker that owns the txn, replacing the TokioMutex holder
+// DEFRALEVEL(S10): Make commit/rollback thin delegates to regolith's txn-lifecycle trait; defradb keeps only batch scoping
 /// Controller for a request-scoped mutation batch.
 ///
 /// Implementations own the shared transaction lifecycle for an implicit
@@ -344,6 +346,8 @@ impl MutationBatch {
     }
 }
 
+// DEFRALEVEL(S9): Drop async_trait (both cfg variants); Db/AutoCommit/Batch impls run sync on the worker that owns the txn
+// DEFRALEVEL(S10): Keep DocMutator as business logic handing ordered KV writes to a regolith trait; move begin_batch commit/rollback out
 /// Storage abstraction for mutating documents.
 ///
 /// This trait provides write operations for mutations, complementing `DocFetcher`

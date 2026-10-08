@@ -77,6 +77,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> RestOperationsImpl<F, R> {
                 .data
                 .ok_or_else(|| RestError::internal("transaction returned no data"));
         }
+        // DEFRALEVEL(S8): Autocommit REST mutation has no retry; a conflict returns 409. Route it through the single S8 safety net (HttpAutoCommit)
         if mutation {
             Ok(self
                 .runner

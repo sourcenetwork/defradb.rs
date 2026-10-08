@@ -39,6 +39,7 @@ impl<S: Store> AutoCommitFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for AutoCommitFetcher<S> {
+    // DEFRALEVEL(S6): Reads the sequencer watermark. Otherwise no change.
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,
@@ -381,6 +382,7 @@ impl<S: Store + 'static> DocFetcher for AutoCommitFetcher<S> {
         })?;
 
         // Wrap in Arc<Mutex<Option>> for VersionedFetcher
+        // DEFRALEVEL(S9): Same holder change: give VersionedFetcher the worker-owned txn handle; discard without lock().await
         let txn_holder: Arc<TokioMutex<Option<DbTxn<S>>>> = Arc::new(TokioMutex::new(Some(txn)));
 
         let versioned_fetcher =

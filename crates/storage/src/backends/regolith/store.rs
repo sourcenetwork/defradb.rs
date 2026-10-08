@@ -14,11 +14,13 @@ use regolith::{OptimisticTransactionDb, StreamOptions};
 
 use super::background_errors::BackgroundErrorListener;
 use super::config::RegolithStoreOptions;
+// DEFRALEVEL(S2): Drop head_cache import (SharedHeadCache, head_cache::lock) once the cache module is deleted
 use super::head_cache::{self, SharedHeadCache};
 use super::transaction::RegolithTxn;
 use crate::backends::shared::TransactionStatsHandle;
 use crate::corekv::{Dropable, Error, Result, Store, Txn};
 
+// DEFRALEVEL(S10): Shrink to a thin regolith trait impl; closed flag, active_txns and close's in-flight drain move into regolith
 /// Key-value store backed by regolith.
 ///
 /// Cloning hands back another handle on the same database, not another
@@ -29,6 +31,7 @@ pub struct RegolithStore {
     inner: Arc<StoreInner>,
 }
 
+// DEFRALEVEL(S2,S8): Add Arc<Statistics>; delete head_cache field and its plumbing
 struct StoreInner {
     db: Arc<OptimisticTransactionDb>,
     options: RegolithStoreOptions,
@@ -52,6 +55,7 @@ impl RegolithStore {
         Self::open_with_options(path, RegolithStoreOptions::default())
     }
 
+    // DEFRALEVEL(S10): Move dir creation, listener install, open and isolation/classifier setup into regolith; defradb hands over only its policy
     /// Open at `path` with explicit options.
     pub fn open_with_options<P: AsRef<Path>>(
         path: P,
@@ -68,13 +72,17 @@ impl RegolithStore {
                 })?;
             }
         }
+        // DEFRALEVEL(S1): Set engine.statistics = Some(Arc<Statistics>) so regolith.commit/policy tickers count; merge_operator waits for S3
+        // DEFRALEVEL(S3): Put one defra MergeOperator in default engine opts; dispatch counter/fulltext-shard keys; no float partial_merge
         let mut engine = options.engine.clone();
         engine
             .listeners
             .push(Arc::new(BackgroundErrorListener) as Arc<dyn regolith::EventListener>);
+        // DEFRALEVEL(S1): Append classifier conditionally with db.with_policy()
         let db = OptimisticTransactionDb::open(&path, engine)
             .map_err(|error| Error::Backend(format!("failed to open regolith: {error}")))?
             .with_isolation(options.isolation);
+        // DEFRALEVEL(S1): Build TransactionStatsHandle from the Arc<Statistics> given to engine.statistics, not from private atomics
         Ok(Self {
             inner: Arc::new(StoreInner {
                 db: Arc::new(db),
@@ -82,6 +90,7 @@ impl RegolithStore {
                 closed: AtomicBool::new(false),
                 active_txns: Arc::new(AtomicUsize::new(0)),
                 stats: TransactionStatsHandle::for_backend("regolith"),
+                // DEFRALEVEL(S2): Remove head_cache field and its plumbing
                 head_cache: Arc::default(),
                 path,
                 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
@@ -179,12 +188,15 @@ impl RegolithStore {
         &self.inner.path
     }
 
+    // DEFRALEVEL(S2): Head-cache disable goes away; streaming_writer changes
     /// A writer that bounds its own memory rather than the caller's
     /// input, for a bulk load whose size the caller does not control.
     ///
     /// Each flush is atomic; the stream as a whole is not. Work that must
     /// land all-or-nothing belongs in a transaction.
     pub fn streaming_writer(&self, opts: StreamOptions) -> regolith::StreamingWriter<'_> {
+        // DEFRALEVEL(S2): Remove head_cache.disable() call
+        // DEFRALEVEL(S9): Drop block_in_place wrapper; create streaming_writer and run its flushes on the owning storage worker
         super::blocking(|| {
             // A borrowed native writer can flush after this call returns, outside
             // transaction publication. Disable caching for this store's lifetime.
@@ -197,6 +209,7 @@ impl RegolithStore {
         })
     }
 
+    // DEFRALEVEL(S10): Drop active_txns counting and drain-on-close polling; regolith tracks open txns and quiesces them on close
     /// Wait for in-flight transactions to finish, up to the configured
     /// timeout.
     ///
@@ -212,6 +225,7 @@ impl RegolithStore {
             if web_time::Instant::now() >= deadline {
                 return Err(self.in_flight_error());
             }
+            // DEFRALEVEL(S9): Sync close: drain/join worker pool instead of tokio-sleep polling active_txns; drop counter (wasm variant too)
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(std::time::Duration::from_millis(50));
         }
@@ -250,6 +264,7 @@ impl Store for RegolithStore {
         Some(self.inner.stats.clone())
     }
 
+    // DEFRALEVEL(S9): Becomes sync worker-dispatched transaction creation
     async fn new_txn(&self, readonly: bool) -> Result<Box<dyn Txn>> {
         self.ensure_open()?;
         self.inner.active_txns.fetch_add(1, Ordering::AcqRel);
@@ -277,6 +292,7 @@ impl Store for RegolithStore {
         }
     }
 
+    // DEFRALEVEL(S10): Regolith owns close lifecycle: closed flag, active-txn quiescence, OPFS persist, db close; defra just delegates
     async fn close(&self) -> Result<()> {
         if self.inner.closed.swap(true, Ordering::AcqRel) {
             return Ok(());
@@ -299,8 +315,10 @@ impl Store for RegolithStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Dropable for RegolithStore {
     async fn drop_all(&self) -> Result<()> {
+        // DEFRALEVEL(S9): Make drop_all sync; run it on the storage worker instead of super::blocking/block_in_place
         super::blocking(|| {
             self.ensure_open()?;
+            // DEFRALEVEL(S2): Remove head_cache reset and lock
             let mut cache = head_cache::lock(&self.inner.head_cache)?;
             cache.reset();
             self.inner

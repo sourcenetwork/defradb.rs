@@ -62,6 +62,7 @@ pub type AsyncTxnCallback = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>
 
 pub use defra_core::thread_bounds::{MaybeSend, MaybeSendSync, MaybeSync};
 
+// DEFRALEVEL(S9): Sync trait; collection_head_entries default/override tied to head cache (S2)
 /// Reader trait for read-only key-value operations.
 ///
 /// This trait provides the core read operations: get, has, and iterator.
@@ -100,6 +101,7 @@ pub trait Reader: MaybeSendSync + private::Sealed {
     /// to check existence.
     async fn has(&self, key: &[u8]) -> Result<bool>;
 
+    // DEFRALEVEL(S10): Move #1599 read-set entry into regolith conflict policy; remove has_for_update from defradb's Reader trait
     /// [`Reader::has`] that also enters `key` into the transaction's
     /// conflict-detection read set, even when this transaction already wrote
     /// it — a read served from its own write buffer never reaches the engine,
@@ -150,6 +152,7 @@ pub trait Reader: MaybeSendSync + private::Sealed {
     /// The caller is responsible for closing the iterator when done.
     async fn iterator(&self, opts: IterOptions) -> Result<Box<dyn Iterator>>;
 
+    // DEFRALEVEL(S2): Delete collection_head_entries, its doc, and its Box<dyn Txn> forwarding impl below.
     /// Optional materialization of the exact head and marker prefixes supplied
     /// by the collection-head owner, in this reader's key coordinates.
     /// This reads the captured snapshot plus own writes;
@@ -170,6 +173,7 @@ pub trait Reader: MaybeSendSync + private::Sealed {
     }
 }
 
+// DEFRALEVEL(S3,S9): Add merge(key, operand) for blind counter operands (S3); drop async_trait, make set/delete sync (S9)
 /// Writer trait for write operations.
 ///
 /// This trait provides the core write operations: set and delete.
@@ -220,6 +224,7 @@ pub trait ReaderWriter: Reader + Writer {}
 /// automatically implements ReaderWriter.
 impl<T> ReaderWriter for T where T: Reader + Writer {}
 
+// DEFRALEVEL(S9): Sync trait: drop async_trait; new_txn/close become sync calls on the worker pool (with Dropable::drop_all)
 /// Store trait for key-value stores that support transactions.
 ///
 /// This trait defines the basic store interface with transaction support.
@@ -257,6 +262,7 @@ pub trait Store: MaybeSendSync + private::Sealed {
     async fn close(&self) -> Result<()>;
 }
 
+// DEFRALEVEL(S9): Sync
 /// Dropable trait for stores that support bulk deletion.
 ///
 /// This is an optional interface implemented by some stores. It provides a
@@ -282,6 +288,7 @@ pub trait Dropable: Store + private::Sealed {
     async fn drop_all(&self) -> Result<()>;
 }
 
+// DEFRALEVEL(S9): Sync commit; async callbacks need an executor handoff outside storage
 /// Transaction trait with ACID guarantees and callback support.
 ///
 /// Transactions provide atomicity, consistency, isolation, and durability (ACID).
@@ -422,6 +429,7 @@ pub trait Txn: ReaderWriter + private::Sealed {
     fn callback_count(&self) -> usize;
 }
 
+// DEFRALEVEL(S10): Delete unused TxnStore marker + blanket impl and re-exports; regolith's txn trait is the sole store contract
 /// TxnStore trait for stores that support transactions.
 ///
 /// This is a marker trait combining Store with the ability to create transactions.
@@ -431,6 +439,7 @@ pub trait TxnStore: Store {}
 /// Blanket implementation: any Store automatically implements TxnStore.
 impl<T> TxnStore for T where T: Store {}
 
+// DEFRALEVEL(S3,S9): Add merge forward in the Writer impl below (S3); both Box<dyn Txn> forwarding impls drop async_trait (S9)
 /// Blanket implementation of Reader for Box<dyn Txn>.
 ///
 /// This allows boxed transactions to be used where Reader is required.
@@ -457,6 +466,7 @@ impl Reader for Box<dyn Txn> {
         (**self).iterator(opts).await
     }
 
+    // DEFRALEVEL(S2): Delete this Box<dyn Txn> forwarding of collection_head_entries with the trait method (S2 cache retirement).
     async fn collection_head_entries(
         &self,
         head_prefix: &[u8],

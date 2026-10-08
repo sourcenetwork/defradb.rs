@@ -145,6 +145,7 @@ pub unsafe extern "C" fn delete_index(
                 })?;
 
             // Create a transaction
+            // DEFRALEVEL(S10): Fold FFI drop_index txn (delete_index + CollectionKey/CollectionNameKey sets) into one db op regolith commits
             let txn = database
                 .new_txn(false)
                 .await
@@ -206,6 +207,7 @@ pub unsafe extern "C" fn delete_index(
             }
 
             // Commit the transaction (datastore reference is now dropped)
+            // DEFRALEVEL(S10): clear_action commits in a second txn after this; do drop+clear in one regolith txn, reload_cache as post-commit hook
             txn.commit()
                 .await
                 .map_err(|e| format!("failed to commit: {}", e))?;

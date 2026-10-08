@@ -3,6 +3,7 @@ use crate::namespace::{Namespace, NamespacedStore};
 use async_trait::async_trait;
 use std::sync::Arc;
 
+// DEFRALEVEL(S2): Delete CollectionHeadEntries; only the retired head-cache collection_head_entries chain uses it.
 /// A transaction's raw collection-head projection, in the reader's key coordinates.
 /// Both prefixes are required: orphan markers suppress parents received later.
 #[derive(Default)]

@@ -38,6 +38,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let doc_id = DocID::from_string(context.doc_id_str)
             .map_err(|e| MergeError::MergeFailed(format!("Invalid doc_id: {}", e)))?;
 
+        // DEFRALEVEL(S5): Validated blob read is the merge RMW; resolve it like collection/index.rs read and diff indexes off old_doc
         let (mut doc, old_doc) = match collection
             .get_with_datastore(datastore, context.doc_short_id, &doc_id)
             .await
@@ -76,6 +77,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // BEFORE any field block is persisted, so a rejected block leaves no
         // partial write.
 
+        // DEFRALEVEL(S5): Same per-doc blob resolution as the local path
         collection
             .save_with_datastore(datastore, &doc, context.doc_short_id)
             .await
@@ -93,6 +95,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
+        // DEFRALEVEL(S6): Same blind per-doc append as the local create. No arrival guard is needed once the head RMW is gone.
         if old_doc.is_none() && !doc_is_tombstoned {
             crate::event::arrivals::record(
                 systemstore,

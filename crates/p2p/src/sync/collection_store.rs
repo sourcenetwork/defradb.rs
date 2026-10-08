@@ -37,6 +37,7 @@ pub trait P2PCollectionStorage: MaybeSendSync {
     async fn is_subscribed(&self, collection_id: &str) -> Result<bool>;
 }
 
+// DEFRALEVEL(S10): Hand new_txn/set/delete/commit to regolith via storage trait; defra keeps only P2PCollectionKey bytes + marker
 /// Implementation of P2P collection storage backed by a key-value store.
 pub struct P2PCollectionStore<S: Store> {
     systemstore: Systemstore<S>,
@@ -127,6 +128,7 @@ impl<S: Store + 'static> P2PCollectionStorage for P2PCollectionStore<S> {
         Ok(())
     }
 
+    // DEFRALEVEL(S10): Swap begin/iter/close for a regolith snapshot prefix scan; decode via a P2PCollectionKey trait, not strip_prefix
     async fn get_all_collections(&self) -> Result<Vec<String>> {
         let txn = self
             .systemstore

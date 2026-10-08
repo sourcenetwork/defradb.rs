@@ -79,6 +79,7 @@ impl<S: Store + 'static> CollectionProvider for DbCollectionProvider<S> {
 /// writes like newly added schemas), then falls back to the process-wide cache.
 pub struct TxnCollectionProvider<S: Store + 'static> {
     db: Arc<DB<S>>,
+    // DEFRALEVEL(S9): Apply same holder change
     shared_txn: Arc<AsyncMutex<Option<DbTxn<S>>>>,
 }
 

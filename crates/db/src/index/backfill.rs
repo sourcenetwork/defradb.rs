@@ -101,6 +101,7 @@ pub fn decode_progress(bytes: &[u8]) -> Option<(u64, u64)> {
 }
 
 impl<S: Store> DB<S> {
+    // DEFRALEVEL(S10): Run backfill batches as regolith txns (commit/conflict); defradb keeps batch sizing, progress fence, index keys
     /// Run `plan` to the end and settle its action either way.
     pub(crate) async fn backfill_index(
         &self,
@@ -273,6 +274,7 @@ impl<S: Store> DB<S> {
         })
     }
 
+    // DEFRALEVEL(S5): Watch conflicts with concurrent index writes; S5 per-doc resolution reduces most; keep adaptive loop
     async fn backfill_batch(
         &self,
         plan: &BackfillPlan,
@@ -284,6 +286,7 @@ impl<S: Store> DB<S> {
         let mut retries_at_one = 0;
         loop {
             let collection = self.require_collection(&plan.collection_name)?;
+            // DEFRALEVEL(S10): Run backfill txn begin/commit/discard on regolith worker; keep defra's adaptive max_docs halving on conflicts
             let txn = self.new_txn(false).await?;
             let outcome = {
                 let datastore = txn.datastore()?;
@@ -325,6 +328,7 @@ impl<S: Store> DB<S> {
                     *max_docs = (*max_docs * 2).min(BACKFILL_BATCH_DOCS);
                     return Ok(batch);
                 }
+                // DEFRALEVEL(S8): Add telemetry or count under new layer; concurrent conflicts more likely without S7 RwLock
                 Err(error)
                     if error.is_txn_conflict()
                         && (*max_docs > 1 || retries_at_one < max_retries) =>

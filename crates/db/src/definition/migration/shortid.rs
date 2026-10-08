@@ -35,6 +35,7 @@ struct LegacyDocument {
 }
 
 impl<S: Store> DB<S> {
+    // DEFRALEVEL(S10): Run as one regolith-owned txn across all namespaces; defra supplies old->new key layouts via traits
     /// Upgrade pre-v0.16 document storage to the genesis-CID/short-ID layout.
     ///
     /// Every key rewrite, identity mapping, ACP rewrite, and index rebuild is

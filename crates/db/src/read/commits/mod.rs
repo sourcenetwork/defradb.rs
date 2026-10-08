@@ -38,6 +38,7 @@ pub struct CommitsQueryOptions {
 
 /// Fetcher for commit history from the merkle DAG
 pub struct CommitsFetcher<S: Store> {
+    // DEFRALEVEL(S9): Same holder change: hold worker-owned txn handle, not async-mutex holder; drop lock().await in fetch_commits
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
 }
 
@@ -379,6 +380,7 @@ impl<S: Store> CommitsFetcher<S> {
             col_iter.close().await.map_err(Error::Storage)?;
 
             for collection_id in collection_ids {
+                // DEFRALEVEL(S2): Same as head_provider.
                 let heads =
                     crate::block::heads::live_collection_heads(&headstore, collection_id).await?;
                 cids.extend(heads.live.into_iter().map(|cid| (cid, None)));
@@ -407,6 +409,7 @@ impl<S: Store> CommitsFetcher<S> {
             (b"/d/".to_vec(), None)
         };
 
+        // DEFRALEVEL(S4): Skip /d/ keys superseded by per-doc markers so neither the single-doc nor the all-/d/ scan returns non-heads
         let opts = IterOptions::new().with_prefix(doc_prefix);
         let mut iter = headstore.iterator(opts).await.map_err(Error::Storage)?;
 

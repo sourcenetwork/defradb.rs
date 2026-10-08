@@ -1249,6 +1249,7 @@ async fn handle_block_serializes_standalone_counter_by_doc_id() {
         false,
     );
 
+    // DEFRALEVEL(S7): Rewrite: drop the merge_queue wait; assert concurrent counter merges both apply as blind operands (S3)
     let guard = handler.merge_queue().acquire(&doc_id_str).await;
     let merge = handler.handle_block(&cid, &block_data, metadata);
     tokio::pin!(merge);
@@ -3668,6 +3669,7 @@ async fn resolve_composite_doc_id_explores_first_head_before_probing_later_sibli
     );
 }
 
+// DEFRALEVEL(S6): Sequencer must preserve the order record() was called within one transaction.
 #[tokio::test]
 async fn first_materialization_arrivals_include_peer_batches_once() {
     use query::fetcher::{DocFetcher, DocumentArrivalOptions};

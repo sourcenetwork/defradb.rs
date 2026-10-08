@@ -57,6 +57,7 @@ struct DeferredAcpState {
     hooks: Vec<DeferredAcpHookEntry>,
 }
 
+// DEFRALEVEL(S10): Local Acpstore ACP writes join the caller's regolith txn; keep post-commit hooks only for remote ACP backends
 /// Deferred ACP mutations and their transaction-local registration projection.
 ///
 /// Explicit database transactions use this to:
@@ -341,6 +342,7 @@ pub async fn check_doc_access_with_overlay(
         .await
 }
 
+// DEFRALEVEL(S10): Make trait a handle to a regolith-owned txn; DocFetcher/DocMutator go sync, drop async action_lock
 /// Transaction context that provides storage access within a transaction.
 ///
 /// This is implemented by the database layer to provide transaction-scoped
@@ -384,6 +386,7 @@ pub trait TransactionContext: MaybeSendSync {
         None
     }
 
+    // DEFRALEVEL(S9): Drop async_lock from trait API: remove if worker-owned txn serializes actions, else sync guard; matches ctx field
     /// Get the mutex that serializes top-level actions on this transaction.
     ///
     /// Implementations that share one underlying storage transaction across

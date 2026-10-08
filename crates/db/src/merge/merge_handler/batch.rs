@@ -59,6 +59,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         results
     }
 
+    // DEFRALEVEL(S7): Treat commit conflict (force_commit Err) as retryable: whole-batch S8 retry, not bisect; split only bad blocks
     /// Attempt batch merge with binary-split retry on failure.
     ///
     /// Tries the whole batch first. On failure, splits into two halves and
@@ -78,6 +79,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
 
             match self.try_batch_merge(blocks).await {
                 Ok(results) => results,
+                // DEFRALEVEL(S7): Delete GateContended branch and MergeError::GateContended
                 Err(MergeError::GateContended) => {
                     // A long-lived local/interactive txn holds the per-doc batch
                     // gate. Don't block node-wide inbound replication — degrade to
@@ -89,6 +91,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     );
                     self.merge_blocks_individually(blocks).await
                 }
+                // DEFRALEVEL(S8): On TxnConflict (commit or in-batch), retry the whole batch, counted as RetryLayer::Merge; bisect only other errors
                 Err(e) => {
                     if blocks.len() == 1 {
                         return self.merge_blocks_individually(blocks).await;
@@ -129,9 +132,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         batch_collection_ids.dedup();
         let mut _collection_guards = Vec::with_capacity(batch_collection_ids.len());
         for collection_id in &batch_collection_ids {
+            // DEFRALEVEL(S7): Remove; use one CollectionKey read per distinct collection in txn
             _collection_guards.push(self.db.collection_read_guard(collection_id).await?);
         }
 
+        // DEFRALEVEL(S6,S7): Delete arrival-guard loop (S7) once S6 makes arrivals::record a blind per-doc append with no head RMW
         let mut _arrival_guards = Vec::with_capacity(batch_collection_ids.len());
         for collection_id in &batch_collection_ids {
             _arrival_guards.push(self.merge_queue.acquire_arrival(collection_id).await);
@@ -143,6 +148,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // batch — in SORTED doc-id order so it can never deadlock against any other
         // guard taker (a single-doc update/merge, or another batch). Held for the
         // whole batch txn.
+        // DEFRALEVEL(S7): Delete #1021 comment, batch_doc_ids and _doc_guards; per-doc serialization moves to DefraLevel commit validation
         let mut batch_doc_ids: Vec<String> = blocks.iter().map(|b| b.doc_id.clone()).collect();
         batch_doc_ids.sort();
         batch_doc_ids.dedup();
@@ -157,6 +163,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             // gate is held by a long-lived local/interactive txn we signal the
             // caller to fall back to the gate-free per-block path rather than stall
             // node-wide inbound replication (#1041).
+            // DEFRALEVEL(S7): Remove gate and guards; batch txn relies on DefraLevel validation
             let _batch_gate = self
                 .merge_queue
                 .try_acquire_batch_gate()
@@ -166,6 +173,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             }
         }
 
+        // DEFRALEVEL(S10): Route batch txn begin/force_discard/force_commit through regolith txn trait; defra only stages ordered keys
         let txn = self.db.new_txn(false).await?;
         let batch_merged = cid_set();
         let batch_merged_collections = cid_set();

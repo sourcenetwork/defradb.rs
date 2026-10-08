@@ -62,6 +62,7 @@ impl<S: Store> crate::database::DB<S> {
             .await
     }
 
+    // DEFRALEVEL(S10): Make patch+lens one regolith txn on a worker; today split across read, write, index txns and post-commit lens
     /// Apply a JSON Patch and its migration as one operation.
     #[instrument(skip(self, patch, migration), fields(collection = %collection_name), name = "db.patch_collection")]
     pub async fn patch_collection_with_migration(
@@ -100,10 +101,12 @@ impl<S: Store> crate::database::DB<S> {
             }
         };
 
+        // DEFRALEVEL(S7): Read old CollectionKey inside the patch txn and patch those bytes; cached base drops concurrent index creates
         let old_schema = collection.schema().clone();
         let actual_name = old_schema.name.clone();
         let old_version_id = old_schema.version_id.clone();
         let collection_id = old_schema.collection_id.clone();
+        // DEFRALEVEL(S7): Remove guard; the old-version CollectionKey write is what conflicts in-flight writers that read it
         let _collection_guards = self
             .collection_write_guards(std::iter::once(collection_id.clone()))
             .await?;

@@ -27,6 +27,7 @@ use defra_core::signing::get_signing_config;
 
 pub struct BatchMutator<S: Store> {
     db: Arc<DB<S>>,
+    // DEFRALEVEL(S9): Same holder change as DbDocMutator: hold the worker-owned txn handle shared with the fetcher, not an async mutex
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
     /// Per-doc write guards held across the WHOLE batch txn so a local counter
     /// read-modify-write and a P2P merge on the same document never interleave
@@ -48,6 +49,7 @@ impl<S: Store> BatchMutator<S> {
         }
     }
 
+    // DEFRALEVEL(S7): Delete ensure_doc_guard, release_doc_guards and both fields.
     /// Serialize this batch's writes to `doc_id` against concurrent merges/writes
     /// on the same document, holding the guard until the batch commits/rolls back
     /// (#1021). Idempotent per doc within the batch. The first guard taken also
@@ -94,6 +96,7 @@ impl<S: Store> BatchMutator<S> {
         Ok((blockstore, headstore))
     }
 
+    // DEFRALEVEL(S7): Becomes definition-key read only
     async fn acquire_collection_read_lock(
         &self,
         collection: &crate::collection::Collection,
@@ -158,6 +161,7 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
         let txn = self.take_txn().await?;
         let result = txn.commit().await.map_err(crate::error::commit_query_error);
         // Release per-doc guards only after the durable commit (#1021).
+        // DEFRALEVEL(S7): Remove the release calls.
         self.release_doc_guards();
         result
     }
@@ -167,6 +171,7 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
         let result = txn
             .discard()
             .map_err(|e| query::error::QueryError::execution(format!("discard error: {}", e)));
+        // DEFRALEVEL(S7): Remove the release calls.
         self.release_doc_guards();
         result
     }
@@ -243,6 +248,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 ))
             })?;
 
+            // DEFRALEVEL(S6): With S6 it stops conflicting with concurrent arrivals in the collection.
             let doc_id = register_created_doc(
                 &systemstore,
                 &datastore,
@@ -335,6 +341,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
 
         // Serialize this update's counter read-modify-write against concurrent
         // merges/writes on the canonical document, held until the batch commits.
+        // DEFRALEVEL(S7): Remove after S3.
         self.ensure_doc_guard(&canonical_doc_id.to_string()).await;
 
         self.db
@@ -426,6 +433,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         Ok(result)
     }
 
+    // DEFRALEVEL(S10): Pass delete's ordered write plan (doc+index removal, delete block/head, docid map, col head) to a regolith trait
     async fn delete(
         &self,
         collection_name: &str,

@@ -118,6 +118,7 @@ impl IndexScanResult {
     }
 }
 
+// DEFRALEVEL(S9): Make DocFetcher (and DocStream) sync once reads run on the txn-owning worker; impls drop the TokioMutex txn holder
 /// Storage abstraction for fetching documents.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -536,6 +537,7 @@ pub struct DocumentArrivalOptions {
     pub doc_ids: Option<Vec<String>>,
 }
 
+// DEFRALEVEL(S6): The 'including own writes' guarantee on head is the contract S6 must decide on: drop or emulate it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DocumentArrivalPage {
     /// High-water mark in the same transaction snapshot as the entries, including own writes.

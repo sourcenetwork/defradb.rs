@@ -1,3 +1,4 @@
+// DEFRALEVEL(S2): Cost model update: per-append instead of per-transaction.
 //! Iteration over a regolith transaction or snapshot.
 //!
 //! Nothing here ever holds the range. A read-only scan is a cursor that
@@ -98,6 +99,7 @@ enum Source {
     Empty,
 }
 
+// DEFRALEVEL(S10): Retire per-page rebuild of txn-borrowing merged scan; consume an owned 'static regolith txn scan trait
 /// A streaming scan over one key range.
 pub(crate) struct RegolithIterator {
     source: Source,

@@ -8,6 +8,7 @@ use crate::block::builder::{compute_document_blocks, insert_computed_blocks, Com
 
 #[allow(clippy::type_complexity)]
 impl<S: Store + 'static> AutoCommitMutator<S> {
+    // DEFRALEVEL(S10): Give regolith the txn open/commit; hand it create's ordered block/head/idmap/arrival/blob/index writes as a trait
     pub(super) async fn create_impl(
         &self,
         collection_name: &str,
@@ -35,6 +36,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn, so no identity exists to guard yet.
         // The DocID-mapping duplicate check is the gate.
+        // DEFRALEVEL(S7,S6): Remove guard; contiguity from S6 sequencer once arrivals use per-doc append keys.
         let _arrival_guard = self
             .db
             .doc_write_queue()
@@ -184,6 +186,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         Ok(result)
     }
 
+    // DEFRALEVEL(S10): Submit all N docs' ordered create writes as one regolith txn via its write trait; regolith owns commit+conflicts
     pub(super) async fn create_many_impl(
         &self,
         collection_name: &str,
@@ -245,6 +248,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         // the txn; the DocID-mapping duplicate check is the gate.
 
         // === Phase 2: Transaction — allocate identities, then compute blocks ===
+        // DEFRALEVEL(S7,S6): Remove guard once S6 arrival redesign complete.
         let _arrival_guard = self
             .db
             .doc_write_queue()
@@ -275,6 +279,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     let identity = *identity;
                     let enc = enc_config.clone();
                     let sign = sign_config.clone();
+                    // DEFRALEVEL(S9): Move to sync worker pool instead of tokio blocking pool.
                     tokio::task::spawn_blocking(move || {
                         compute_document_blocks(
                             &doc_clone,
@@ -418,6 +423,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         }
 
         // Commit ONCE for the entire batch
+        // DEFRALEVEL(S10): Hand batch commit to regolith's txn API; regolith owns commit + conflict resolution, defra only supplies keys
         if let Err(e) = txn.commit().await {
             warn!(
                 collection = %collection_name,

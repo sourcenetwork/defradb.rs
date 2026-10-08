@@ -58,6 +58,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         Ok(heights)
     }
 
+    // DEFRALEVEL(S4): Make marker-aware: drop superseded heads from the live set, else GC never prunes them once eager deletes stop
     async fn current_head_cids(&self, doc_short_id: u64) -> Result<RapidHashSet<Cid>> {
         let txn = self.new_txn(true).await?;
         let headstore = txn.headstore()?;
@@ -125,6 +126,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         };
 
         let current_head_cids = self.current_head_cids(doc_short_id).await?;
+        // DEFRALEVEL(S10): Hand GC prune txn begin/commit/discard to regolith worker; defradb only yields priority keys + owned commits
         let txn = self.new_txn(false).await?;
         let headstore = txn.headstore()?;
         let blockstore = txn.blockstore()?;
@@ -154,6 +156,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
 
             let mut deleted_commits = RapidHashSet::new();
 
+            // DEFRALEVEL(S4): Under S4 build current heads from h/d/ minus marked keys; when pruning a CID, also delete its h/d/ key and supersede marker
             for (key, cid) in keys_to_delete {
                 headstore.delete(&key).await.map_err(Error::Storage)?;
 

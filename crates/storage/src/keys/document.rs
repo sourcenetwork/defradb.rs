@@ -19,16 +19,19 @@ pub const DOC_KEY_PREFIX: &[u8] = b"/d/";
 /// Prefix for logical-deletion markers: `/del/{collection_id}/{doc_short_id}`.
 pub const DELETED_KEY_PREFIX: &[u8] = b"/del/";
 
+// DEFRALEVEL(S5): Resolve per-doc shared write via CRDT merge/coalesce (open design)
 /// Storage key for a document body.
 pub fn doc_key(collection_id: &str, doc_short_id: u64) -> Vec<u8> {
     build_key(DOC_KEY_PREFIX, collection_id, doc_short_id)
 }
 
+// DEFRALEVEL(S1): Keep as Ordinary validated key; identical writes elide
 /// Storage key for a document's logical-deletion marker.
 pub fn deleted_doc_key(collection_id: &str, doc_short_id: u64) -> Vec<u8> {
     build_key(DELETED_KEY_PREFIX, collection_id, doc_short_id)
 }
 
+// DEFRALEVEL(S10): Expose /d/ + /del/ layout as a defradb key-codec impl of a regolith trait; regolith composes write keys
 fn build_key(prefix: &[u8], collection_id: &str, doc_short_id: u64) -> Vec<u8> {
     let encoded = encode_doc_short_id(doc_short_id);
     let mut key = Vec::with_capacity(prefix.len() + collection_id.len() + 1 + encoded.len());

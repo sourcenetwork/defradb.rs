@@ -1,3 +1,4 @@
+// DEFRALEVEL(S10): Move Store contract suite (CRUD, iterators, isolation, LWW, callbacks) to regolith; keep only defra adapter tests
 /// Shared test suite for all backend implementations.
 ///
 /// This module provides a comprehensive test suite that verifies backend correctness.

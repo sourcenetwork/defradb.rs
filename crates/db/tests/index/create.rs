@@ -208,6 +208,7 @@ async fn create_index_backfills_more_documents_than_a_batch_holds() {
     );
 }
 
+// DEFRALEVEL(S7): Delete with the collection RwLock; the backfill-vs-writers test below covers create_index racing writers
 /// Stand in for a truncate, delete or patch by holding the collection write
 /// guard; the definition must wait on it, write nothing meanwhile, and land
 /// once it is released. The guard events are counted per collection: the

@@ -2,6 +2,7 @@ use super::helpers::write_branchable_collection_block;
 use super::*;
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
+    // DEFRALEVEL(S10): Submit delete's ordered writes (doc+index removal, delete block/heads, docid map, col block) to regolith
     pub(super) async fn delete_impl(
         &self,
         collection_name: &str,
@@ -149,6 +150,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         Ok(result)
     }
 
+    // DEFRALEVEL(S10): Run batch as one regolith txn: pass each doc's ordered delete writes via traits; regolith owns commit/conflicts
     /// Delete multiple documents in a single transaction.
     ///
     /// Mirrors `create_many_impl`: one transaction for all deletes, one commit.
@@ -171,6 +173,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 .map(|r| vec![r]);
         }
 
+        // DEFRALEVEL(S7): Drop collection guard; resolve definition via in-txn CollectionKey read after new_mutation_txn below
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
         let short_id = collection.resolved_root_id();
         let schema_version_id = collection.version_id().to_string();

@@ -35,6 +35,7 @@ impl<S: Store> crate::database::DB<S> {
 
         let collection_id = collection.collection_id().to_string();
         let short_id = collection.resolved_root_id();
+        // DEFRALEVEL(S7): Replace guard with fence (truncate/action key that writers read); open design
         let _collection_guards = self
             .collection_write_guards(std::iter::once(collection_id.clone()))
             .await?;
@@ -93,6 +94,7 @@ impl<S: Store> crate::database::DB<S> {
         collection: &Collection,
         doc_ids: &[String],
     ) -> Result<usize> {
+        // DEFRALEVEL(S10): Hand chunk delete body to regolith txn trait; regolith owns begin/commit/discard + conflict handling
         let txn = self.new_txn(false).await?;
         let datastore = txn.datastore()?;
         let headstore = txn.headstore()?;
@@ -199,6 +201,7 @@ impl<S: Store> crate::database::DB<S> {
                     .await?;
                 }
 
+                // DEFRALEVEL(S4): Also delete_prefix the per-doc supersede-marker range (outside h/d/); a stale marker would supersede a recreated CID
                 let head_prefix = HeadstoreDocKey::document_prefix(*doc_short_id);
                 let mut block_cids = Vec::new();
                 let mut head_iter = headstore

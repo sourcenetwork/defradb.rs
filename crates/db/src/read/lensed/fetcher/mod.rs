@@ -54,8 +54,10 @@ pub struct PendingMigrationWriteBacks {
 /// lens migrations.
 pub struct LensedDocFetcher<S: Store> {
     db: Arc<DB<S>>,
+    // DEFRALEVEL(S9): Same holder change as DbDocMutator
     txn: Arc<TokioMutex<Option<DbTxn<S>>>>,
     defer_readonly_write_back: bool,
+    // DEFRALEVEL(S9): Make write-back buffer plain worker-owned txn state; drop Arc<TokioMutex> shared via stream_clone and .await locks
     pending_write_backs: Arc<TokioMutex<PendingMigrationWriteBacks>>,
     #[allow(dead_code)]
     lens_store: Arc<dyn TransformStore>,
@@ -236,6 +238,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .await
     }
 
+    // DEFRALEVEL(S6): Same as DbDocFetcher::get_document_arrivals (read/doc.rs): own-writes arrival read follows the S6 arrival-key design
     async fn get_document_arrivals(
         &self,
         options: &query::fetcher::DocumentArrivalOptions,

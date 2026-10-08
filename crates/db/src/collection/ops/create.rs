@@ -2,6 +2,7 @@ use super::*;
 use rapidhash::HashMapExt;
 
 impl<S: Store> crate::database::DB<S> {
+    // DEFRALEVEL(S10): Hand regolith one ordered schema-create batch: seq bumps, CollectionKey, def blocks, name, version index
     /// Create a collection within an existing transaction.
     ///
     /// This method validates the collection schema, assigns a unique short ID,
@@ -118,6 +119,7 @@ impl<S: Store> crate::database::DB<S> {
         // Go assigns them via IndexManager.next_index_id() which uses a per-collection
         // sequence key. We replicate that here so IDs match Go exactly.
         if !schema.indexes.is_empty() {
+            // DEFRALEVEL(S7): bug: IndexIDSequenceKey written here in the systemstore and in the datastore at index/manager/mod.rs
             let seq_key = IndexIDSequenceKey::new(format!("{}", short_id));
             let key_bytes = seq_key.bytes();
             let mut current: u32 =

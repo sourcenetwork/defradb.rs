@@ -48,6 +48,7 @@ fn encrypt_value(
     storage_key: &[u8],
     value: &[u8],
 ) -> Result<Vec<u8>> {
+    // DEFRALEVEL(S1): hazard: random nonce makes identical rewrites byte-distinct; DefraLevel write elision never fires when encrypted
     let (ciphertext, _nonce) = crypto::encrypt_aes(value, key, storage_key, true)
         .map_err(|e| Error::Other(format!("at-rest encryption failed: {e}")))?;
     Ok(ciphertext)
@@ -150,6 +151,7 @@ impl Reader for EncryptedTxn {
     }
 }
 
+// DEFRALEVEL(S3): Add merge: AES-GCM base+operands can't be folded by MergeOperator; decrypt-RMW here or store counters unencrypted
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Writer for EncryptedTxn {

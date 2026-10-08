@@ -1,3 +1,4 @@
+// DEFRALEVEL(S2): Delete the whole module; head reads become ordinary transactional scans inside CommutativePrefix.
 //! Snapshot-coherent materialization of the two collection-head prefixes.
 //!
 //! `HeadSet.Cache` proves publication and cold-fill rules. This is a cache of
@@ -25,6 +26,7 @@ fn rows_bytes(rows: &Rows) -> usize {
     rows.iter().map(|(key, value)| row_bytes(key, value)).sum()
 }
 
+// DEFRALEVEL(S1,S2): Move parsing into S1 KeyClassifier; retire this function for S2.
 fn collection(key: &[u8]) -> Option<u32> {
     let rest = key
         .strip_prefix(b"h/c/")
@@ -35,6 +37,7 @@ fn collection(key: &[u8]) -> Option<u32> {
     (text == id.to_string()).then_some(id)
 }
 
+// DEFRALEVEL(S2): Removed with the cache.
 pub(super) fn matching_collection(head_prefix: &[u8], marker_prefix: &[u8]) -> Option<u32> {
     let id = collection(head_prefix)?;
     (head_prefix == [b"h".as_slice(), &HeadstoreColKey::collection_prefix(id)].concat()
@@ -108,6 +111,7 @@ impl HeadCache {
         self.invalidate();
     }
 
+    // DEFRALEVEL(S2): Removed. There is no post-commit publication step.
     pub(super) fn publish(&mut self, changes: &HeadChanges) {
         let Some(writes) = &changes.writes else {
             self.invalidate();
@@ -143,6 +147,7 @@ pub(super) fn lock(cache: &SharedHeadCache) -> Result<MutexGuard<'_, HeadCache>>
         .map_err(|_| Error::Backend("collection head cache publication poisoned".into()))
 }
 
+// DEFRALEVEL(S2): Removed. The transaction's own begin snapshot serves head scans.
 pub(super) struct HeadSnapshot {
     snapshot: Snapshot,
     epoch: u64,
@@ -151,6 +156,7 @@ pub(super) struct HeadSnapshot {
 }
 
 impl HeadSnapshot {
+    // DEFRALEVEL(S2): Replaced by head_iterators' native prefix scans; DefraLevel drops those scan runs at commit.
     pub(super) fn read(
         &self,
         cache: &SharedHeadCache,
@@ -251,6 +257,7 @@ fn apply(rows: &mut Rows, key: &[u8], value: &Option<Bytes>) {
     }
 }
 
+// DEFRALEVEL(S2): Removed. regolith's write buffer already serves own writes in transactional scans.
 /// The native transaction remains the write buffer and conflict owner. This
 /// bounded journal only updates cached rows after a successful native commit;
 /// exceeding its budget evicts the cache rather than retaining a second buffer.

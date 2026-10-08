@@ -109,6 +109,7 @@ pub async fn read_latest_composite_block<S: storage::corekv::Store>(
         .map(|doc_ref| doc_ref.doc_short_id)
         .ok_or_else(|| format!("No doc-ID mapping found for doc {}", doc_id))?;
 
+    // DEFRALEVEL(S4): Marker-aware via get_all_field_heads
     let composite_heads = get_all_field_heads(&headstore, doc_short_id, "C").await?;
 
     let composite_cid = composite_heads

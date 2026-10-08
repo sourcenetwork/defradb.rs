@@ -286,6 +286,7 @@ impl ManagedP2PSystem {
     }
 }
 
+// DEFRALEVEL(S10): Collapse EmbeddedStore to the regolith handle via regolith traits; at-rest encryption becomes a regolith concern
 /// How the public `NodeBuilder` stores data.
 ///
 /// regolith is the store, whether it is keeping the database in memory or

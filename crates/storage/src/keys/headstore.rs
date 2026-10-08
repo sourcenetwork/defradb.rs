@@ -5,6 +5,7 @@ use std::str::FromStr;
 
 const PRIORITY_HEX_WIDTH: usize = 16;
 
+// DEFRALEVEL(S4): Add a per-doc superseded key outside /d/{short}/ (as /cs/ is outside /c/)
 /// HeadstoreDocKey: Links documents to their current block head CID
 ///
 /// Structure: /d/[DocShortID uvarint]/[FieldID]/[CID]
@@ -74,6 +75,7 @@ impl HeadstoreDocKey {
 }
 
 impl Key for HeadstoreDocKey {
+    // DEFRALEVEL(S4): Stop eager parent delete; use per-doc supersede markers; h/d/ stays Ordinary until LWW re-anchor (lww.rs)
     fn bytes(&self) -> Vec<u8> {
         let mut buf = Self::field_prefix(self.doc_short_id, &self.field_id);
         buf.extend_from_slice(self.cid.to_string().as_bytes());
@@ -133,6 +135,7 @@ impl HeadstorePriorityKey {
 }
 
 impl Key for HeadstorePriorityKey {
+    // DEFRALEVEL(S1): ContentAddressed only if the counter guard moves elsewhere; otherwise Ordinary
     fn bytes(&self) -> Vec<u8> {
         let mut bytes = Self::priority_prefix(self.doc_short_id, self.priority);
         bytes.extend_from_slice(&self.cid.to_bytes());
@@ -150,6 +153,7 @@ impl Key for HeadstorePriorityKey {
     }
 }
 
+// DEFRALEVEL(S1): Classifier maps 'h/c/{id}/' to CommutativePrefix{len=5+digits(id)}; not ContentAddressed (prune deletes it)
 /// HeadstoreColKey: Stores current collection head CID
 ///
 /// Structure: /c/[CollectionShortID]/[CID]
@@ -175,6 +179,7 @@ impl HeadstoreColKey {
 }
 
 impl Key for HeadstoreColKey {
+    // DEFRALEVEL(S1): CommutativePrefix{len: 1+collection_prefix(id).len()}; parse canonical-decimal id like head_cache collection(); test
     fn bytes(&self) -> Vec<u8> {
         format!("/c/{}/{}", self.collection_id, self.cid).into_bytes()
     }
@@ -184,6 +189,7 @@ impl Key for HeadstoreColKey {
     }
 }
 
+// DEFRALEVEL(S1): Same CommutativePrefix treatment for 'h/cs/{id}/'; identical blind writes elide
 /// HeadstoreColSuperseded: records that one collection head superseded another.
 ///
 /// Structure: `/cs/[CollectionID]/[ParentCID]/[ChildCID]`

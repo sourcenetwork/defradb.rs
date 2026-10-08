@@ -88,6 +88,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         crate::collection::populate_collection_root_id(&systemstore, &mut target).await?;
         let was_active = target.is_active;
 
+        // DEFRALEVEL(S7): Remove call
         self.db
             .acquire_collection_write_locks_for_txn(
                 txn,
@@ -331,6 +332,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
             ));
         }
 
+        // DEFRALEVEL(S7): Remove call
         self.db
             .acquire_collection_write_locks_for_txn(
                 txn,

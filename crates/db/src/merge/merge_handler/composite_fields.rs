@@ -147,6 +147,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     }
                 }
                 CrdtDelta::Counter(counter_payload) => {
+                    // DEFRALEVEL(S5): Drop counter from field_values and overlay from store at read time, or accept stale mirror.
                     let result = self
                         .process_counter_delta_in_txn(
                             datastore,

@@ -4,6 +4,7 @@ const DATA_PREFIX: &[u8] = b"/data/";
 const PRIORITY_SUFFIX: &[u8] = b"/priority";
 const NONCES_SUFFIX: &[u8] = b"/nonces/";
 
+// DEFRALEVEL(S1): KeyClassifier: /data/ value, /priority and /nonces/ keys stay Ordinary in phase 1; counter merge operands are S3
 /// CRDTValueKey: Stores a CRDT field value.
 ///
 /// Structure: /data/[SchemaVersionID]/[DocID bytes]/[FieldName]
@@ -51,6 +52,7 @@ impl CRDTValueKey {
 }
 
 impl Key for CRDTValueKey {
+    // DEFRALEVEL(S3): Key can't tell counter from LWW or i64 from f64: tag merge operands with NumericKind; stored base stays untagged
     fn bytes(&self) -> Vec<u8> {
         let mut key = Vec::with_capacity(
             DATA_PREFIX.len()

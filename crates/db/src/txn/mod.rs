@@ -20,6 +20,7 @@ pub mod context;
 pub(crate) mod lenses;
 pub mod registry;
 
+// DEFRALEVEL(S3): Emit merge operand at record time; delete PendingCounterOp, record/take_counter_ops, finalize RMW, Unfinalized check
 /// A counter mutation RECORDED during an interactive/explicit transaction but
 /// not yet applied to the authoritative CRDT accumulation store. The
 /// read-modify-write (and the per-doc guard that protects it) is deferred to the
@@ -57,6 +58,7 @@ struct PendingCollectionAcpRegistration {
     schemas: Vec<CollectionVersion>,
 }
 
+// DEFRALEVEL(S7): Delete enum
 enum CollectionGuard {
     Read { _guard: RwLockReadGuardArc<()> },
     Write { _guard: RwLockWriteGuardArc<()> },
@@ -95,6 +97,8 @@ impl PendingCollectionAcpRegistration {
     }
 }
 
+// DEFRALEVEL(S7): Drop doc_guards and collection_guards fields with DocWriteQueue removal.
+// DEFRALEVEL(S10): Shrink DbTxn to a handle on a regolith-owned txn; regolith owns liveness/commit/discard, DbTxn keeps explicit flag
 /// Database transaction wrapper.
 ///
 /// This wraps a BasicTxn and provides:
@@ -124,6 +128,7 @@ pub struct DbTxn<S: Store> {
     collection_cache: CollectionCache,
     /// Collection IDs created inside this transaction.
     locally_created_collection_ids: RapidHashSet<String>,
+    // DEFRALEVEL(S7): Remove doc_guards field and insert_doc_guard; release_doc_guards goes too (collection_guards dropped below)
     /// Per-doc write guards held so a local counter read-modify-write and a P2P
     /// merge on the same document never interleave (#1021). The merge handler
     /// shares the same `DocWriteQueue`. For the interactive/explicit path
@@ -134,6 +139,7 @@ pub struct DbTxn<S: Store> {
     /// commit. See the finalize driver in `txn/registry/lifecycle.rs` and
     /// `InteractiveTxnCounter.tla`.
     doc_guards: BTreeMap<String, MutexGuardArc<()>>,
+    // DEFRALEVEL(S7): Delete field and accessors; definition-key read idempotency uses small per-txn set.
     /// Collection locks held until this transaction commits or rolls back.
     collection_guards: BTreeMap<String, CollectionGuard>,
     /// Counter deltas RECORDED by the interactive mutator during the txn but not
@@ -209,6 +215,7 @@ impl<S: Store> DbTxn<S> {
             .ok_or(Error::TxnNotActive)
     }
 
+    // DEFRALEVEL(S10): Swap NamespaceView/RootView for sync regolith store traits; regolith owns namespace prefix + CRUD, defra builds keys
     /// Get the blockstore.
     ///
     /// Returns an error if the transaction has been committed or discarded.
@@ -696,6 +703,7 @@ impl<S: Store> DbTxn<S> {
     // Transaction Lifecycle Methods
     // =========================================================================
 
+    // DEFRALEVEL(S10): Delegate commit/force_commit to regolith txn commit; ACP registrations become defra-registered pre-commit hooks
     /// Commit the transaction.
     ///
     /// Returns an error for explicit transactions - use `force_commit()` instead.
@@ -721,6 +729,7 @@ impl<S: Store> DbTxn<S> {
         match self.txn.take() {
             Some(txn) => {
                 txn.commit().await.map_err(Error::Datastore)?;
+                // DEFRALEVEL(S7): Delete release call + #1021 commit-then-release comment; S3 blind counter merges remove the partial-RMW race
                 // Release per-doc guards only AFTER the durable commit so a
                 // concurrent merge observes the committed counter state, never a
                 // partial RMW (#1021).
@@ -731,6 +740,7 @@ impl<S: Store> DbTxn<S> {
         }
     }
 
+    // DEFRALEVEL(S10): Delegate discard to regolith txn lifecycle (drop handle = discard); keep only explicit-txn check; same for force_discard
     /// Discard the transaction.
     ///
     /// Returns an error for explicit transactions - use `force_discard()` instead.
@@ -750,6 +760,7 @@ impl<S: Store> DbTxn<S> {
         }
     }
 
+    // DEFRALEVEL(S10): Merge commit/force_commit into one regolith-backed commit; keep the explicit-txn check at the registry, not in DbTxn
     /// Actually commit the transaction, even if explicit.
     ///
     /// This should only be called by the transaction creator.
@@ -768,6 +779,7 @@ impl<S: Store> DbTxn<S> {
         }
         match self.txn.take() {
             Some(txn) => {
+                // DEFRALEVEL(S6): Hand committed per-doc arrivals to the S6 sequencer here too; explicit txns and merge handlers commit via this path
                 txn.commit().await.map_err(Error::Datastore)?;
                 // Release per-doc guards only AFTER the durable commit so a
                 // concurrent merge observes the committed counter state (#1021).
@@ -792,6 +804,7 @@ impl<S: Store> DbTxn<S> {
         }
     }
 
+    // DEFRALEVEL(S7): Drop collection_guards.clear(); function disappears with DocWriteQueue doc_guards.
     /// Release mutation guards after the transaction is durably committed or discarded.
     fn release_doc_guards(&mut self) {
         self.doc_guards.clear();

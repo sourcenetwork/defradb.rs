@@ -343,6 +343,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> MutationBatchController
     for BroadcastBatchMutator<S, B, T>
 {
+    // DEFRALEVEL(S10): Write outbound P2P markers in the same regolith commit as the batch; only the broadcast runs post-commit
     /// Commit the inner mutation batch, then durably register its outbound P2P
     /// markers. An error reporting `undurable P2P head markers` is post-commit:
     /// callers must not interpret it as a rolled-back mutation and retry the

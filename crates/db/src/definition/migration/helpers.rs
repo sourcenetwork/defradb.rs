@@ -183,6 +183,7 @@ pub(crate) async fn cache_migrated_document_with_indexes(
     };
 
     let key = collection.doc_key(doc_short_id);
+    // DEFRALEVEL(S5): Migration write-back is a blob RMW plus index diff: follow S5 per-doc blob resolution and yield to concurrent writers
     let Some(old_data) = datastore.get(&key).await.map_err(Error::Storage)? else {
         return Ok(false);
     };

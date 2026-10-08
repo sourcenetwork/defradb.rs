@@ -211,6 +211,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         blockstore: Arc<B>,
         max_merge_depth: usize,
     ) -> Self {
+        // DEFRALEVEL(S7): Remove the field and accessor.
         let merge_queue = db.doc_write_queue();
         Self {
             db,

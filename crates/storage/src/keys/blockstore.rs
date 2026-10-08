@@ -39,6 +39,7 @@ impl BlockstoreKey {
 }
 
 impl Key for BlockstoreKey {
+    // DEFRALEVEL(S1): BlockstoreKey stays Ordinary: #1599 has_for_update guard read and GC deletes.
     fn bytes(&self) -> Vec<u8> {
         // Use raw CID bytes directly (binary format)
         self.cid.to_bytes()
@@ -89,6 +90,7 @@ impl ToMergeIndexKey {
 }
 
 impl Key for ToMergeIndexKey {
+    // DEFRALEVEL(S1): Keep ToMergeIndexKey Ordinary; ContentAddressed would lose set/delete ordering.
     fn bytes(&self) -> Vec<u8> {
         // Prefix with merge marker byte
         let mut buf = vec![MERGE_PREFIX];

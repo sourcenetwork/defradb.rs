@@ -275,6 +275,7 @@ impl CollectionIndex for UniqueIndex {
         // save() should never encounter the same key for the same document — that
         // would indicate duplicate values within the same document (e.g., JSON
         // array self-duplicates like [5, 8, 5]).
+        // DEFRALEVEL(S5): Keep validated; this is the intended conflict
         if txn.has(&key).await? {
             return Err(crate::corekv::Error::UniqueConstraintViolation);
         }
@@ -343,6 +344,7 @@ impl CollectionIndex for UniqueIndex {
             // conflict resolution (#1111) a document can exist UNINDEXED for a
             // value another document holds; deleting that loser must not free
             // the winner's slot.
+            // DEFRALEVEL(S5): Keep owner read validated: another doc concurrently claiming this slot must abort us, not lose its entry
             if let Some(existing) = txn.get(&key).await? {
                 if !existing.is_empty() && existing != encode_doc_short_id(doc_short_id) {
                     return Ok(());

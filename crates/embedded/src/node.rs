@@ -140,6 +140,7 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
             ));
         }
 
+        // DEFRALEVEL(S10): Move add_encrypted_index schema+name-key write into a db schema-update op on regolith; node stops building sys keys
         let txn = self
             .database
             .new_txn(false)

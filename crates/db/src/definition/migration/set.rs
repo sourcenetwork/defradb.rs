@@ -17,6 +17,7 @@ pub(crate) struct SetMigrationInTxnOutcome {
 }
 
 impl<S: Store> DB<S> {
+    // DEFRALEVEL(S10): Hand placeholder, collection, version-link and lens-config writes to regolith's write trait as one ordered txn
     /// Set a migration between two schema versions.
     ///
     /// This registers a lens transform that will be applied to documents

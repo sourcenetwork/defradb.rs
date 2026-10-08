@@ -70,6 +70,7 @@ impl AcpOperations for AcpAdapter {
         }
         acp::policy_yaml::validate_policy_expressions(&parsed)?;
 
+        // DEFRALEVEL(S10): Issue policy counter and store policy in one regolith txn (also ffi dac.rs:175); drops the counter_lock mutex
         let counter = self
             .store
             .next_policy_counter()

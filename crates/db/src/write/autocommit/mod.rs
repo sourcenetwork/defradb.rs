@@ -73,6 +73,7 @@ impl<S: Store> AutoCommitMutator<S> {
         })
     }
 
+    // DEFRALEVEL(S10): Delegate commit-on-Ok/discard-on-Err to regolith txn lifecycle; keep only conflict-to-QueryError mapping here
     async fn finish_mutation<T>(
         &self,
         txn: DbTxn<S>,

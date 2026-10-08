@@ -95,6 +95,7 @@ impl FullTextIndex {
         prefix
     }
 
+    // DEFRALEVEL(S1): Classify as Ordinary; value is content-derived but deleted on update
     fn posting_key(&self, term: &str, doc_short_id: u64) -> Vec<u8> {
         let mut key = self.index_prefix();
         key.extend_from_slice(term.as_bytes());
@@ -166,6 +167,7 @@ impl FullTextIndex {
         field_len_delta: i128,
     ) -> Result<()> {
         let key = self.stats_shard_key(doc_short_id);
+        // DEFRALEVEL(S3): Replace get+checked_add+set with one blind merge of the i128 (docs, field_len) delta; merge op sums with overflow check
         let (docs, field_len) = Self::decode_stats_delta(txn.get(&key).await?);
         let docs = docs
             .checked_add(docs_delta)

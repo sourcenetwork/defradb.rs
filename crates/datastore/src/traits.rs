@@ -2,6 +2,7 @@
 use crate::multistore::{NamespaceView, RootView};
 use storage::corekv::{MaybeSendSync, TxnCallback};
 
+// DEFRALEVEL(S10): Rebase Txn on regolith's txn trait: namespace views become key-family handles; commit callbacks move to regolith
 /// Transaction trait for DefraDB operations.
 ///
 /// This matches Go's Txn interface in internal/datastore/txn.go.
