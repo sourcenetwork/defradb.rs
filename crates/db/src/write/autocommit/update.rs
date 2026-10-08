@@ -22,24 +22,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
-        // Generate embeddings if source fields were modified
         let mut doc = doc;
         let mut modified_fields = modified_fields;
-        let embedding_config = self.db.options().embedding_config();
-
-        let generated = crate::search::set_embedding(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            false,
-            Some(&modified_fields),
-            &embedding_config,
-        )
-        .await
-        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
-
-        for field in generated {
-            modified_fields.insert(field);
-        }
 
         let input_doc_id = doc
             .id()
@@ -133,6 +117,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         }
         doc = current_doc;
 
+        let embedding_config = self.db.options().embedding_config();
+
         let txn = self.new_mutation_txn().await?;
 
         // Acquire store views up front (dropped before commit); the mutation
@@ -199,6 +185,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &mut doc,
                 doc_short_id,
                 &index_manager,
+                &mut modified_fields,
+                Some(&embedding_config),
             )
             .await?;
 
