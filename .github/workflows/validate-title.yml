@@ -1,0 +1,31 @@
+name: Validate Title
+
+on:
+  pull_request:
+    types: [edited, opened, reopened, synchronize]
+    branches: [main]
+  merge_group:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-title:
+    name: Validate title
+    # Skipped (and so passing) in the merge queue, where there is no PR title
+    # to check but a required check must still report.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Test the validator
+        run: .github/scripts/validate-title_test.sh
+
+      - name: Validate the PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: .github/scripts/validate-title.sh "$TITLE"
