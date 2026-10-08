@@ -15,7 +15,7 @@ use crate::collection::provider::TxnCollectionProvider;
 use crate::database::DB;
 use crate::read::lensed::fetcher::LensedDocFetcher;
 use crate::txn::DbTxn;
-use crate::write::doc::DbDocMutator;
+use crate::write::mutator::txn::DbDocMutator;
 use crate::LensedAutoCommitFetcher;
 
 /// Transaction context for query execution.

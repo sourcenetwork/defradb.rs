@@ -1,7 +1,7 @@
 use crate::common::fixture::make_test_db_with_bus;
 use crate::common::schema::test_collection;
 use async_lock::Mutex as TokioMutex;
-use db::write::autocommit::batch::*;
+use db::write::mutator::batch::*;
 use document::Document;
 use events::EventName;
 use query::mutator::DocMutator;

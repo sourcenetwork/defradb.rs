@@ -16,7 +16,7 @@ use tracing::{error, warn};
 
 use crate::block::builder::BlockResult;
 use crate::database::DB;
-use crate::write::autocommit::BatchMutator;
+use crate::write::mutator::batch::BatchMutator;
 
 fn document_json_value(doc: &Document) -> Option<serde_json::Value> {
     Some(serde_json::Value::Object(

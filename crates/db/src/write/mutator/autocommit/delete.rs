@@ -1,5 +1,5 @@
-use super::helpers::write_branchable_collection_block;
 use super::*;
+use crate::write::persist::write_branchable_collection_block;
 
 impl<S: Store + 'static> AutoCommitMutator<S> {
     pub(super) async fn delete_impl(

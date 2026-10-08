@@ -12,26 +12,21 @@ pub struct ComputedBlocks {
     pub block_result: BlockResult,
 }
 
-/// Compute all document blocks without any storage access.
+/// Compute every block of a document create without touching storage.
 ///
-/// This is the CREATE-only path extracted from `write_document_blocks()`.
-/// For creates: priority is always 1, no headstore reads, no prev heads.
-/// The entire computation is a pure function of the inputs.
-///
-/// For each field: CBOR encode -> optional encrypt -> build Block -> optional sign ->
-/// serialize -> CID. Then builds composite block the same way. The public
-/// DocID is derived from the genesis composite block CID and returned in
-/// `block_result.doc_id`; the caller persists the short-ID mappings.
-/// Accumulates all (key, value) pairs instead of writing to storage.
+/// For each field: CBOR encode -> optional encrypt -> build Block -> optional
+/// sign -> serialize -> CID. Then the composite block the same way. Every key
+/// is resolved beforehand (`resolve_document_keys`), so this is a pure function
+/// of its inputs: no field block exists anywhere until the whole document,
+/// and its DocID, is known. The public DocID is derived from the genesis
+/// composite CID and returned in `block_result.doc_id`.
 pub fn compute_document_blocks(
     doc: &Document,
     schema_version_id: &str,
     identity: DocStorageIdentity,
-    encryption_config: Option<&EncryptionConfig>,
+    keys: &DocumentKeys,
     signing_config: Option<&SigningConfig>,
 ) -> Result<ComputedBlocks, String> {
-    let doc_ref_bytes = identity.doc_ref_bytes();
-
     let mut blockstore_entries: Vec<(Vec<u8>, Bytes)> = Vec::new();
     let mut headstore_entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     let mut field_links: Vec<DAGLink> = Vec::new();
@@ -54,39 +49,16 @@ pub fn compute_document_blocks(
 
         let value_bytes = encode_value_as_cbor(cbor_value)?;
 
-        // Encrypt delta and create Encryption metadata block if configured
-        let (value_bytes, encryption_cid) = if let Some(enc) = encryption_config {
-            if enc.should_encrypt_field(field_name) {
-                let key_field_name = if enc.should_encrypt_individual_field(field_name) {
-                    Some(field_name.as_str())
-                } else {
-                    None
-                };
-                let key = defra_core::encryption::generate_encryption_key_for(
-                    &doc_ref_bytes,
-                    key_field_name,
-                );
-                let encrypted = encrypt_delta(&value_bytes, &key)?;
-
-                let enc_block = Encryption { key: key.to_vec() };
-                let enc_bytes = enc_block
-                    .to_dag_cbor()
-                    .map_err(|e| format!("Failed to encode encryption block: {}", e))?;
-                let enc_cid = generate_cid_from_bytes(&enc_bytes)
-                    .map_err(|e| format!("Failed to generate encryption CID: {}", e))?;
-                blockstore_entries.push((enc_cid.to_bytes(), enc_bytes.into()));
-
-                (encrypted, Some(enc_cid))
-            } else {
-                (value_bytes, None)
+        let (value_bytes, encryption_cid) = match keys.fields.get(field_name) {
+            Some(key) => {
+                if let Some(block) = &key.block {
+                    blockstore_entries.push((key.cid.to_bytes(), block.clone()));
+                }
+                encryption_cids.push(key.cid);
+                (encrypt_delta(&value_bytes, &key.key)?, Some(key.cid))
             }
-        } else {
-            (value_bytes, None)
+            None => (value_bytes, None),
         };
-
-        if let Some(enc_cid) = encryption_cid {
-            encryption_cids.push(enc_cid);
-        }
 
         let is_counter = doc
             .fields()
@@ -146,28 +118,13 @@ pub fn compute_document_blocks(
         field_cids.push(field_cid);
     }
 
-    // Composite encryption CID for doc-level encryption
-    let composite_encryption_cid = if let Some(enc) = encryption_config {
-        if enc.encrypt_doc {
-            let key = defra_core::encryption::generate_encryption_key_for(&doc_ref_bytes, None);
-            let enc_block = Encryption { key: key.to_vec() };
-            let enc_bytes = enc_block
-                .to_dag_cbor()
-                .map_err(|e| format!("Failed to encode composite encryption block: {}", e))?;
-            let enc_cid = generate_cid_from_bytes(&enc_bytes)
-                .map_err(|e| format!("Failed to generate composite encryption CID: {}", e))?;
-            blockstore_entries.push((enc_cid.to_bytes(), enc_bytes.into()));
-            Some(enc_cid)
-        } else {
-            None
+    let composite_encryption_cid = keys.composite.as_ref().map(|key| {
+        if let Some(block) = &key.block {
+            blockstore_entries.push((key.cid.to_bytes(), block.clone()));
         }
-    } else {
-        None
-    };
-
-    if let Some(enc_cid) = composite_encryption_cid {
-        encryption_cids.push(enc_cid);
-    }
+        encryption_cids.push(key.cid);
+        key.cid
+    });
 
     let composite_payload = CompositeDeltaPayload {
         schema_version_id: schema_version_id.to_string(),

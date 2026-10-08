@@ -114,63 +114,22 @@ async fn inherited_encryption(
 }
 
 /// Mint a fresh key for a field, seal its delta with it, and persist the
-/// `Encryption` block the new block will link to.
-///
-/// Shared by the explicit-config path and the document-policy path so both
-/// route through the KMS whenever one is configured.
+/// `Encryption` block the new block will link to (a KMS persists its own).
 async fn encrypt_with_new_key(
     blockstore: &NamespaceView,
     kms: Option<&std::sync::Arc<dyn kms::KmsService>>,
     doc_ref_bytes: &[u8],
-    field_name: &str,
     key_field_name: Option<&str>,
     value_bytes: &[u8],
 ) -> Result<(Vec<u8>, Cid), String> {
-    if let Some(kms_svc) = kms {
-        // KMS path: the KMS generates + persists the Encryption block (in its
-        // KeyStore) and returns the CID + plain key for us to encrypt the field
-        // delta with. The scope is keyed by the node-local DocRef: the public
-        // DocID is not yet known on the create path.
-        let scope = kms::KeyScope::Document {
-            doc_id: hex::encode(doc_ref_bytes),
-            field: key_field_name.map(str::to_owned),
-        };
-        let ctx = kms::RequestContext::anonymous();
-        let (enc_cid, key) = kms_svc
-            .generate_key(&ctx, scope)
+    let key = super::keys::new_key(kms, doc_ref_bytes, key_field_name).await?;
+    if let Some(block) = &key.block {
+        blockstore
+            .set(&key.cid.to_bytes(), block)
             .await
-            .map_err(|e| format!("kms generate_key: {e}"))?;
-        let encrypted = encrypt_delta(value_bytes, &key)?;
-        tracing::debug!(
-            field = %field_name,
-            ciphertext_len = encrypted.len(),
-            "Encrypted field delta via KMS"
-        );
-        return Ok((encrypted, enc_cid));
+            .map_err(|e| format!("Failed to store encryption block: {}", e))?;
     }
-
-    // Legacy path: inline key generation + direct block store.
-    let key = defra_core::encryption::generate_encryption_key_for(doc_ref_bytes, key_field_name);
-    let encrypted = encrypt_delta(value_bytes, &key)?;
-
-    tracing::debug!(
-        field = %field_name,
-        ciphertext_len = encrypted.len(),
-        "Encrypted field delta"
-    );
-
-    let enc_block = Encryption { key: key.to_vec() };
-    let enc_bytes = enc_block
-        .to_dag_cbor()
-        .map_err(|e| format!("Failed to encode encryption block: {}", e))?;
-    let enc_cid = generate_cid_from_bytes(&enc_bytes)
-        .map_err(|e| format!("Failed to generate encryption CID: {}", e))?;
-    blockstore
-        .set(&enc_cid.to_bytes(), &enc_bytes)
-        .await
-        .map_err(|e| format!("Failed to store encryption block: {}", e))?;
-
-    Ok((encrypted, enc_cid))
+    Ok((encrypt_delta(value_bytes, &key.key)?, key.cid))
 }
 
 /// Write document blocks to blockstore and heads to headstore.
@@ -304,7 +263,6 @@ pub async fn write_document_blocks(
                     blockstore,
                     kms,
                     &doc_ref_bytes,
-                    field_name,
                     key_field_name,
                     &value_bytes,
                 )
@@ -327,15 +285,9 @@ pub async fn write_document_blocks(
                 // The document is encrypted as a whole but this field has no
                 // history of its own to inherit from, so mint it a key under
                 // the document-level policy rather than dropping to plaintext.
-                let (encrypted, enc_cid) = encrypt_with_new_key(
-                    blockstore,
-                    kms,
-                    &doc_ref_bytes,
-                    field_name,
-                    None,
-                    &value_bytes,
-                )
-                .await?;
+                let (encrypted, enc_cid) =
+                    encrypt_with_new_key(blockstore, kms, &doc_ref_bytes, None, &value_bytes)
+                        .await?;
                 encryption_cids.push(enc_cid);
                 (encrypted, Some(enc_cid))
             } else {

@@ -60,6 +60,8 @@ pub struct CompositeMergeState {
     pub(crate) linked_field_cids: Vec<Cid>,
     pub(crate) linked_encryption_cids: Vec<Cid>,
     pub(crate) is_branchable: bool,
+    /// The collection this merge journaled a first arrival in.
+    pub(crate) arrival: Option<u32>,
 }
 
 enum CompositeMergePreparation {
@@ -140,14 +142,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 self.db
                     .collection_read_guard(collection.collection_id())
                     .await?,
-            ),
-            None => None,
-        };
-        let _arrival_guard = match collection.as_ref() {
-            Some(collection) => Some(
-                self.merge_queue
-                    .acquire_arrival(collection.collection_id())
-                    .await,
             ),
             None => None,
         };
@@ -596,6 +590,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     ))
                 })?;
                 txn.force_commit().await?;
+                if let Some(collection) = state.arrival {
+                    crate::event::arrivals::sequence(&self.db, collection).await;
+                }
 
                 self.best_effort_finalize_linked_field_blocks(&state.linked_field_cids)
                     .await;

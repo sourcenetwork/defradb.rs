@@ -4,6 +4,7 @@ mod common;
 
 mod batch;
 mod doc_suite;
+mod embedding;
 mod identical_delta;
 mod queue;
 mod update;

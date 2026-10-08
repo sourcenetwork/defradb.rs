@@ -1,7 +1,7 @@
-use super::helpers::{
+use super::*;
+use crate::write::persist::{
     register_block_doc_id_mappings, write_branchable_collection_block, write_local_update,
 };
-use super::*;
 
 use crate::block::builder::DocStorageIdentity;
 use query::runner::DocFetcher;

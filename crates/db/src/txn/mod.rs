@@ -35,19 +35,16 @@ pub struct PendingCounterOp {
     pub doc_id: String,
     /// Counter field name.
     pub field: String,
-    /// For updates: the recorded increment delta. For creates: the seeded value.
+    /// The recorded increment delta.
     pub delta: document::NormalValue,
-    /// For UPDATE ops: the PRE-WRITE committed counter value, captured at record
+    /// The PRE-WRITE committed counter value, captured at record
     /// time, used as the reconcile (init-if-absent) base at finalize. This must
     /// be read BEFORE the provisional deferred blob write so the finalize does not
     /// re-read the already-overwritten provisional blob as the "committed" value —
     /// re-reading it would double-apply the delta for an increment-only PCounter
     /// (whose reconcile migrates a present store UPWARD when blob > store). `None`
-    /// when the doc had no committed value for the field (seed 0). Unused for
-    /// creates.
+    /// when the doc had no committed value for the field (seed 0).
     pub base: Option<document::NormalValue>,
-    /// Whether this op was recorded on a CREATE (seed) vs an UPDATE (delta RMW).
-    pub is_create: bool,
 }
 
 struct PendingCollectionAcpRegistration {

@@ -14,8 +14,8 @@ use db::merge::governance::{
     RedrivenMerge, RedrivenMergeSink, SignatureStatus,
 };
 use db::merge::merge_handler::DbMergeHandler;
-use db::write::autocommit::batch::BatchMutator;
-use db::write::autocommit::AutoCommitMutator;
+use db::write::mutator::autocommit::AutoCommitMutator;
+use db::write::mutator::batch::BatchMutator;
 use db::AutoCommitFetcher;
 use defra_core::block::{
     Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload, Signature, SignatureHeader,

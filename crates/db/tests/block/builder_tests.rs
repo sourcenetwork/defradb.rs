@@ -133,14 +133,11 @@ fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries
         encrypt_fields: vec!["secret".to_string()],
     };
 
-    let computed = compute_document_blocks(
-        &doc,
-        "schema-v1",
-        DocStorageIdentity::new(1, 1),
-        Some(&enc),
-        None,
-    )
-    .expect("blocks should compute");
+    let identity = DocStorageIdentity::new(1, 1);
+    let keys = futures::executor::block_on(resolve_document_keys(&doc, identity, Some(&enc), None))
+        .expect("keys should resolve");
+    let computed = compute_document_blocks(&doc, "schema-v1", identity, &keys, None)
+        .expect("blocks should compute");
 
     assert!(
         computed.blockstore_entries.len() >= 3,

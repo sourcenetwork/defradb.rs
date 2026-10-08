@@ -54,7 +54,7 @@ async fn fixture(count: usize) -> (Fetcher, Vec<String>) {
         .await
         .expect("the collection to register");
 
-    let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
+    let mutator = db::write::mutator::autocommit::AutoCommitMutator::new(db.clone());
     let mut ids = Vec::with_capacity(count);
     for seq in 0..count {
         let mut doc = Document::new();

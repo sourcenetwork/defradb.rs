@@ -88,7 +88,7 @@ async fn hidden_arrivals_advance_page_without_disclosing_document_ids() {
 }
 
 #[tokio::test]
-async fn explicit_transaction_sees_arrival_and_rollback_hides_both() {
+async fn explicit_transaction_arrival_gets_a_cursor_only_on_commit() {
     use query::fetcher::{DocFetcher, DocumentArrivalOptions};
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     db.create_collection(users_schema()).await.unwrap();
@@ -103,21 +103,70 @@ async fn explicit_transaction_sees_arrival_and_rollback_hides_both() {
         limit: 10,
         doc_ids: None,
     };
-    let page = reader.get_document_arrivals(&options).await.unwrap();
-    assert_eq!(page.head, 1);
-    assert_eq!(page.entries[0].doc_id, id.to_string());
-    reader.take_txn().await.unwrap().discard().unwrap();
-    let reader = LensedAutoCommitFetcher::new(db);
     assert_eq!(
         reader.get_document_arrivals(&options).await.unwrap().head,
         0
     );
-    assert!(reader
-        .get_by_ids("Users", &[id.to_string()])
+    reader
+        .take_txn()
         .await
         .unwrap()
-        .docs()
-        .is_empty());
+        .force_commit()
+        .await
+        .unwrap();
+    let page = LensedAutoCommitFetcher::new(db)
+        .get_document_arrivals(&options)
+        .await
+        .unwrap();
+    assert_eq!(page.head, 1);
+    assert_eq!(page.entries[0].doc_id, id.to_string());
+}
+
+#[tokio::test]
+async fn overlapping_explicit_transaction_creates_both_commit() {
+    use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    db.create_collection(users_schema()).await.unwrap();
+    let first = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
+    let second = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
+    let mut ids = Vec::new();
+    for (mutator, name) in [(&first, "first"), (&second, "second")] {
+        let mut doc = Document::new();
+        doc.set("name", name);
+        ids.push(
+            mutator
+                .create("Users", doc)
+                .await
+                .unwrap()
+                .doc_id
+                .to_string(),
+        );
+    }
+    second
+        .take_txn()
+        .await
+        .unwrap()
+        .force_commit()
+        .await
+        .unwrap();
+    first
+        .take_txn()
+        .await
+        .unwrap()
+        .force_commit()
+        .await
+        .unwrap();
+    let page = LensedAutoCommitFetcher::new(db)
+        .get_document_arrivals(&DocumentArrivalOptions {
+            collection: "Users".into(),
+            after: 0,
+            limit: 10,
+            doc_ids: None,
+        })
+        .await
+        .unwrap();
+    let arrived: Vec<_> = page.entries.iter().map(|e| e.doc_id.clone()).collect();
+    assert_eq!(arrived, [ids[1].clone(), ids[0].clone()]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

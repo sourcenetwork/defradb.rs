@@ -14,9 +14,11 @@ use crate::block::builder::{write_delete_block, write_document_blocks};
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::collection::Collection;
 use crate::database::DB;
+use crate::event::arrivals::sequence_on_commit;
 use crate::event::emission::register_update_event_callback;
 use crate::txn::DbTxn;
-use crate::write::autocommit::helpers::write_branchable_collection_block;
+use crate::write::create::{create_documents, TxnStores};
+use crate::write::persist::write_branchable_collection_block;
 use defra_core::encryption::get_encryption_config;
 use defra_core::signing::get_signing_config;
 
@@ -187,175 +189,52 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
     async fn create(
         &self,
         collection_name: &str,
-        mut doc: Document,
+        doc: Document,
     ) -> query::error::Result<CreateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)
             .await
             .map_err(|e| query::error::QueryError::permission_denied(e.to_string()))?;
 
-        let (collection, datastore, systemstore, index_manager) =
+        let (collection, _datastore, _systemstore, index_manager) =
             get_collection_with_index_manager(&self.txn, collection_name).await?;
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
 
-        self.db
-            .validate_downsample_write(&datastore, &systemstore, collection.schema(), &doc, None)
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-        let doc_short_id = self
-            .db
-            .next_doc_short_id()
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        let identity = DocStorageIdentity::new(collection.resolved_root_id(), doc_short_id);
-
-        // Blocks first: the public DocID is derived from the genesis composite
-        // block CID (Go #4838).
-        let (doc_id, doc_cid, doc_block, col_block_data) = {
-            let txn_guard = self.txn.lock().await;
-            let txn = txn_guard.as_ref().ok_or_else(|| {
+        let stores = {
+            let mut txn_guard = self.txn.lock().await;
+            let txn = txn_guard.as_mut().ok_or_else(|| {
                 query::error::QueryError::execution("transaction is no longer active")
             })?;
-
-            let blockstore = txn.blockstore().map_err(|e| {
-                query::error::QueryError::execution(format!("failed to get blockstore: {}", e))
-            })?;
-            let headstore = txn.headstore().map_err(|e| {
-                query::error::QueryError::execution(format!("failed to get headstore: {}", e))
-            })?;
-
-            let schema_version_id = collection.version_id();
-            let enc_config = get_encryption_config();
-            let sign_config = get_signing_config();
-            let kms = self.db.kms();
-
-            let block_result = write_document_blocks(
-                &blockstore,
-                &headstore,
-                &doc,
-                schema_version_id,
-                identity,
-                None,
-                enc_config.as_ref(),
-                sign_config.as_ref(),
-                kms.as_ref(),
-            )
-            .await
-            .map_err(|e| {
-                query::error::QueryError::execution(format!(
-                    "failed to write document blocks for transaction create on collection {}: {}",
-                    collection_name, e
-                ))
-            })?;
-
-            // Two creates with the same field value encode to the same
-            // byte-identical delta and so to the same content-addressed key,
-            // which the engine may treat as a non-conflicting blind write.
-            // `has_for_update` records the read even though this txn just
-            // wrote the block, so the second commit is validated against it
-            // and aborts (#1599).
-            //
-            // Interactive creates only: autocommit, batch and merge keep the
-            // blind write, and interactive updates rely on that to let
-            // distinct documents share a delta block (#1194). Encryption
-            // blocks stay out: the KMS commits the DEK in its own txn, so
-            // reading it back aborts every encrypted create.
-            for cid in block_result.field_cids.iter().chain([&block_result.cid]) {
-                blockstore
-                    .has_for_update(&cid.to_bytes())
-                    .await
-                    .map_err(|e| {
-                        query::error::QueryError::execution(format!(
-                            "failed to record block read for {}: {}",
-                            cid, e
-                        ))
-                    })?;
-            }
-
-            let doc_id = crate::write::autocommit::helpers::register_created_doc(
-                &systemstore,
-                &datastore,
-                &collection,
-                doc_short_id,
-                &block_result,
-            )
-            .await?;
-            doc.set_id(doc_id.clone());
-
-            let col_block_data = write_branchable_collection_block(
-                &self.db,
-                collection_name,
-                &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                sign_config.as_ref(),
-            )
-            .await?;
-
-            (doc_id, block_result.cid, block_result.block, col_block_data)
+            sequence_on_commit(txn, &self.db, collection.resolved_root_id())
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+            TxnStores::of(txn)?
         };
-
-        // #1044 record-then-finalize: write the doc blob + indexes WITHOUT seeding
-        // the counter store and WITHOUT taking any per-doc guard/batch gate. The
-        // counter-store seeding (and its per-doc guard) is deferred to the
-        // commit-time finalize so an interactive txn holds no gate over its
-        // user-controlled lifetime. See `InteractiveTxnCounter.tla`.
-        crate::write::autocommit::helpers::write_local_create_deferred(
-            &datastore,
+        let created = create_documents(
+            &self.db,
+            &stores,
+            collection_name,
             &collection,
-            &doc,
-            doc_short_id,
             &index_manager,
+            vec![doc],
         )
-        .await?;
-
-        // Record a seed op for each counter field present so the finalize seeds
-        // the authoritative accumulation store (the created value is absolute).
-        {
-            let mut counter_ops = Vec::new();
-            for field in &collection.schema().fields {
-                if !field.crdt_type.is_counter() {
-                    continue;
-                }
-                let Some(value) = doc.get(&field.name) else {
-                    continue;
-                };
-                counter_ops.push(crate::txn::PendingCounterOp {
-                    collection_name: collection_name.to_string(),
-                    schema_version_id: collection.version_id().to_string(),
-                    doc_id: doc_id.to_string(),
-                    field: field.name.clone(),
-                    delta: value.clone(),
-                    base: None,
-                    is_create: true,
-                });
-            }
-            if !counter_ops.is_empty() {
-                let mut txn_guard = self.txn.lock().await;
-                let txn = txn_guard.as_mut().ok_or_else(|| {
-                    query::error::QueryError::execution("transaction is no longer active")
-                })?;
-                for op in counter_ops {
-                    txn.record_counter_op(op);
-                }
-            }
-        }
+        .await?
+        .pop()
+        .ok_or_else(|| query::error::QueryError::execution("create produced no document"))?;
+        drop(stores);
 
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
-            doc_id.to_string(),
-            doc_cid,
-            doc_block,
-            document_json_value(&doc),
-            col_block_data,
+            created.doc_id.to_string(),
+            created.cid,
+            created.block,
+            document_json_value(&created.doc),
+            created.collection_block,
         )
         .await?;
 
-        Ok(CreateResult::new(doc_id, doc))
+        Ok(CreateResult::new(created.doc_id, created.doc))
     }
 
     async fn update(
@@ -445,12 +324,11 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                     field: field.name.clone(),
                     delta: delta.clone(),
                     base,
-                    is_create: false,
                 });
             }
         }
 
-        crate::write::autocommit::helpers::write_local_update_deferred(
+        crate::write::persist::write_local_update_deferred(
             &datastore,
             &collection,
             &doc,
@@ -506,7 +384,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 ))
             })?;
 
-            crate::write::autocommit::helpers::register_block_doc_id_mappings(
+            crate::write::persist::register_block_doc_id_mappings(
                 &systemstore,
                 &block_result,
                 &canonical_doc_id.to_string(),

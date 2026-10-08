@@ -115,8 +115,8 @@ pub use txn::registry::{
 };
 pub use txn::DbTxn;
 pub use view::ops::is_refreshable_view;
-pub use write::autocommit::AutoCommitMutator;
-pub use write::doc::DbDocMutator;
+pub use write::mutator::autocommit::AutoCommitMutator;
+pub use write::mutator::txn::DbDocMutator;
 pub use write::queue::DocWriteQueue;
 
 // NAC exports
