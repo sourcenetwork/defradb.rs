@@ -6,4 +6,5 @@ mod batch;
 mod doc_suite;
 mod identical_delta;
 mod queue;
+mod size_constraint;
 mod update;
