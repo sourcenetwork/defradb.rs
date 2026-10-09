@@ -96,6 +96,11 @@ class Tests(unittest.TestCase):
         self.assertEqual(env['PATH'], '/usr/bin')
         self.assertEqual(env['CARGO_BUILD_JOBS'], '2')
 
+    def test_node_readiness_events_remain_enabled_with_inherited_log_filters(self):
+        for inherited in ('warn', 'error', 'off', 'trace', 'defra_http=off'):
+            env = driver.clean_environment({'RUST_LOG': inherited})
+            self.assertEqual(env['RUST_LOG'], 'info')
+
     def test_numeric_summary_cannot_include_commands_or_private_output(self):
         runner = object.__new__(driver.Runner)
         runner.private = self.root
