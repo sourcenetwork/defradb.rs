@@ -42,6 +42,22 @@ LIVE_CASES = (
 )
 CARGO = ["cargo", "+1.98.0"]
 BUILD = ["--release", "--frozen", "-j", "2"]
+PUBLIC_FIELDS = ("phase", "exit_code", "seconds", "passed", "panic_site")
+
+
+def public_phase(record):
+    return {key: record[key] for key in PUBLIC_FIELDS if key in record}
+
+
+def panic_site(log):
+    pattern = re.compile(r"panicked at (?:[^\n]*[/\\])?([A-Za-z0-9_-]+\.rs):(\d+):(\d+):")
+    with log.open() as stream:
+        for line in stream:
+            match = pattern.search(line)
+            if match is not None:
+                file, row, column = match.groups()
+                return {"file": file, "line": int(row), "column": int(column)}
+    return None
 
 
 def revision(root):
@@ -170,8 +186,7 @@ class Runner:
                 raise ValueError("staged executable changed")
 
     def save(self):
-        public = [{key: record[key] for key in ("phase", "exit_code", "seconds", "passed") if key in record}
-                  for record in self.records]
+        public = [public_phase(record) for record in self.records]
         self.summary.write_text(json.dumps({"phases": public}, indent=2) + "\n")
         (self.private / "manifest.json").write_text(json.dumps({"sources": self.sources, "binaries": self.binaries,
                                                               "phases": self.records}, indent=2) + "\n")
@@ -193,7 +208,12 @@ class Runner:
                 stop_group(child)
                 record["seconds"] = round(time.monotonic() - started, 3)
                 self.save()
-        print(json.dumps({key: record[key] for key in ("phase", "exit_code", "seconds")}), flush=True)
+        if record["exit_code"] != 0:
+            site = panic_site(log)
+            if site is not None:
+                record["panic_site"] = site
+                self.save()
+        print(json.dumps(public_phase(record)), flush=True)
         if record["exit_code"] != 0:
             raise RuntimeError("qualification phase failed")
         self.guard()

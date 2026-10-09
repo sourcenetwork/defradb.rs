@@ -25,6 +25,28 @@ class Tests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.addCleanup(self.directory.cleanup)
 
+    def test_failed_phase_exports_location_without_private_paths_or_assertion_values(self):
+        log = self.root / 'private.log'
+        log.write_text("thread 'policy' panicked at /private/keys/poll.rs:47:9:\n"
+                       "assertion failed: secret=private-key-value\n")
+        site = driver.panic_site(log)
+        self.assertEqual(site, {'file': 'poll.rs', 'line': 47, 'column': 9})
+        record = {'phase': 'policy-lifecycle', 'exit_code': 101, 'seconds': 30.4,
+                  'panic_site': site, 'command': ['--secret', 'private-key-value'],
+                  'log': str(log)}
+        public = json.dumps(driver.public_phase(record))
+        self.assertNotIn('private-key-value', public)
+        self.assertNotIn('/private/keys', public)
+        self.assertNotIn(str(self.root), public)
+
+    def test_panic_location_accepts_relative_and_windows_paths_but_not_messages(self):
+        log = self.root / 'private.log'
+        for path in ('src/poll.rs', r'C:\private\poll.rs', 'poll.rs'):
+            log.write_text("thread 'test' panicked at " + path + ":47:9:\nprivate assertion\n")
+            self.assertEqual(driver.panic_site(log), {'file': 'poll.rs', 'line': 47, 'column': 9})
+        log.write_text('qualification failed without a Rust panic\n')
+        self.assertIsNone(driver.panic_site(log))
+
     def test_sdk_pin_reader_requires_all_seven_exact_matching_declarations(self):
         for file, count in zip(driver.SDK_MANIFESTS, (3, 4)):
             path = self.root / file
@@ -98,6 +120,26 @@ class Tests(unittest.TestCase):
             text = ''.join(str(c) for c in output.call_args_list)
             self.assertNotIn('private-argument', text)
             self.assertEqual(runner.records[0]['exit_code'], 7)
+
+    def test_real_runner_retains_panic_location_after_closing_private_log(self):
+        runner = object.__new__(driver.Runner)
+        runner.root = runner.private = self.root
+        runner.summary = self.root / 'summary.json'
+        runner.env, runner.sources, runner.binaries, runner.records = {}, {}, {}, []
+
+        def process(*args, **kwargs):
+            kwargs['stdout'].write("thread 'policy' panicked at /private/poll.rs:47:9:\nsecret-value\n")
+            child = unittest.mock.Mock()
+            child.wait.return_value = 101
+            return child
+
+        with patch.object(runner, 'guard'), patch.object(driver.subprocess, 'Popen', side_effect=process), \
+                patch.object(driver, 'stop_group'), patch('builtins.print'):
+            with self.assertRaises(RuntimeError):
+                runner.run('policy-lifecycle', ['test-binary'])
+        public = json.loads(runner.summary.read_text())
+        self.assertEqual(public['phases'][0]['panic_site'], {'file': 'poll.rs', 'line': 47, 'column': 9})
+        self.assertNotIn('secret-value', runner.summary.read_text())
 
     def test_pipeline_stages_normal_binaries_before_tests_and_runs_exact_cases_once(self):
         class Fake:
