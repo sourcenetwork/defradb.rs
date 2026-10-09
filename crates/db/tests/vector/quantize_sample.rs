@@ -1,7 +1,7 @@
 //! The bounded training sample.
 
-use db::index::vector::engine::ann::Sampler;
 use db::index::vector::quantize::Reservoir;
+use db::index::vector::quantize::Sampler;
 
 const DIMENSIONS: usize = 8;
 

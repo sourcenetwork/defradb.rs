@@ -1,7 +1,7 @@
 //! The index's private blob space, over both store implementations.
 
 use bytes::Bytes;
-use db::index::vector::kv_store::KvNodeStore;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::MemoryNodeStore;
 use db::index::vector::store::Node;
 use db::index::vector::store::NodeId;

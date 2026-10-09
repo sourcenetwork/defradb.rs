@@ -5,15 +5,15 @@
 //! trained structures actually persist rather than that the algorithm works.
 
 use db::index::vector::engine::ann::VectorIndexEngine;
-use db::index::vector::engine::ivfflat::IvfFlat;
-use db::index::vector::engine::ivfflat::IvfFlatParams;
-use db::index::vector::engine::ivfpq::IvfPq;
-use db::index::vector::engine::ivfpq::IvfPqParams;
+use db::index::vector::engine::ivf::flat::IvfFlat;
+use db::index::vector::engine::ivf::flat::IvfFlatParams;
+use db::index::vector::engine::ivf::pq::IvfPq;
+use db::index::vector::engine::ivf::pq::IvfPqParams;
 use db::index::vector::engine::ssg::Ssg;
 use db::index::vector::engine::ssg::SsgParams;
-use db::index::vector::kv_store::KvNodeStore;
 use db::index::vector::params::Params;
 use db::index::vector::params::DEFAULT_M;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::vector::Metric;
 use storage::corekv::Store;

@@ -13,10 +13,10 @@
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::flat::Flat;
 use db::index::vector::engine::hnsw::Hnsw;
-use db::index::vector::engine::ivfflat::IvfFlat;
-use db::index::vector::engine::ivfflat::IvfFlatParams;
-use db::index::vector::engine::ivfpq::IvfPq;
-use db::index::vector::engine::ivfpq::IvfPqParams;
+use db::index::vector::engine::ivf::flat::IvfFlat;
+use db::index::vector::engine::ivf::flat::IvfFlatParams;
+use db::index::vector::engine::ivf::pq::IvfPq;
+use db::index::vector::engine::ivf::pq::IvfPqParams;
 use db::index::vector::params::Params;
 use db::index::vector::params::DEFAULT_EF_SEARCH;
 use db::index::vector::params::DEFAULT_M;

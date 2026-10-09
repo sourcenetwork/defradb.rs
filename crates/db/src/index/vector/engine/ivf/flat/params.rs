@@ -9,7 +9,7 @@ pub const DEFAULT_NPROBE: u32 = 8;
 pub const DEFAULT_SAMPLE_BYTES: u64 = 128 << 20;
 
 /// `0` means derive `nlist` from the corpus, matching
-/// [`IvfPqParams`](crate::index::vector::engine::ivfpq::IvfPqParams). There is
+/// [`IvfPqParams`](crate::index::vector::engine::ivf::pq::IvfPqParams). There is
 /// no `m`: a list holds the full vector, so there is nothing to quantize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IvfFlatParams {

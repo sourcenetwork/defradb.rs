@@ -1,8 +1,8 @@
 //! Edge selection: the diversity heuristic and SSG's angular pruning.
 
 use db::index::vector::engine::ann::Candidate;
-use db::index::vector::engine::ann::EdgeSelector;
 use db::index::vector::engine::select::Angular;
+use db::index::vector::engine::select::EdgeSelector;
 use db::index::vector::engine::select::Heuristic;
 use db::index::vector::engine::select::DEFAULT_ANGLE_DEGREES;
 use db::index::vector::store::NodeId;
