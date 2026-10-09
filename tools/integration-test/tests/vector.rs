@@ -149,3 +149,8 @@ async fn rust_ivfpq_vector_lifecycle() {
 async fn rust_ssg_vector_lifecycle() {
     lifecycle("ssg: {metric: EUCLIDEAN, R: 4}").await;
 }
+
+#[tokio::test]
+async fn rust_diskann_vector_lifecycle() {
+    lifecycle("diskann: {metric: COSINE, R: 8, m: 2}").await;
+}

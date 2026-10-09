@@ -415,6 +415,9 @@ vector_algorithms! {
     IvfFlat => "IVF_FLAT" / "ivfflat",
     /// Satellite System Graph: one flat layer, edges pruned by angle.
     Ssg => "SSG" / "ssg",
+    /// FreshDiskANN: a Vamana graph walked by product-quantized codes stored
+    /// beside each node, so memory stays bounded whatever the corpus size.
+    DiskAnn => "DISKANN" / "diskann",
 }
 
 impl VectorAlgorithm {
@@ -449,7 +452,7 @@ impl VectorAlgorithm {
     /// document is indexed.
     pub fn supports_metric(self, metric: DistanceMetric) -> bool {
         match self {
-            Self::IvfPq | Self::IvfFlat => metric == DistanceMetric::Cosine,
+            Self::IvfPq | Self::IvfFlat | Self::DiskAnn => metric == DistanceMetric::Cosine,
             Self::Hnsw | Self::Flat | Self::Ssg => true,
         }
     }
@@ -580,6 +583,70 @@ pub struct VectorIndexDescription {
     /// Present when `algorithm` is SSG.
     #[serde(rename = "SSG", default, skip_serializing_if = "Option::is_none")]
     pub ssg: Option<SsgParams>,
+    /// Present when `algorithm` is DISKANN.
+    #[serde(rename = "DISKANN", default, skip_serializing_if = "Option::is_none")]
+    pub diskann: Option<DiskAnnParams>,
+}
+
+/// DiskANN build and search parameters.
+///
+/// `alpha_percent` is the pruning slack in hundredths, so 120 is the paper's
+/// `alpha = 1.2`: an integer because this replicates inside a collection
+/// definition, where a float is a value two runtimes can round differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiskAnnParams {
+    /// Maximum out-degree of a node.
+    #[serde(rename = "R", default = "default_diskann_r")]
+    pub r: u32,
+    /// Candidate-list size while inserting.
+    #[serde(rename = "LBuild", default = "default_diskann_l_build")]
+    pub l_build: u32,
+    /// Candidate-list size while searching.
+    #[serde(rename = "LSearch", default = "default_diskann_l_search")]
+    pub l_search: u32,
+    /// Pruning slack in hundredths; must be at least 100.
+    #[serde(rename = "AlphaPercent", default = "default_diskann_alpha_percent")]
+    pub alpha_percent: u32,
+    /// Subquantizers, and therefore bytes per code. `0` derives it from the
+    /// vector width.
+    #[serde(rename = "M", default)]
+    pub m: u32,
+    /// Cap on the resident training sample.
+    #[serde(rename = "SampleBytes", default = "default_diskann_sample_bytes")]
+    pub sample_bytes: u64,
+}
+
+fn default_diskann_r() -> u32 {
+    64
+}
+
+fn default_diskann_l_build() -> u32 {
+    100
+}
+
+fn default_diskann_l_search() -> u32 {
+    100
+}
+
+fn default_diskann_alpha_percent() -> u32 {
+    120
+}
+
+fn default_diskann_sample_bytes() -> u64 {
+    128 << 20
+}
+
+impl Default for DiskAnnParams {
+    fn default() -> Self {
+        Self {
+            r: default_diskann_r(),
+            l_build: default_diskann_l_build(),
+            l_search: default_diskann_l_search(),
+            alpha_percent: default_diskann_alpha_percent(),
+            m: 0,
+            sample_bytes: default_diskann_sample_bytes(),
+        }
+    }
 }
 
 /// SSG build and search parameters.
@@ -712,6 +779,7 @@ impl VectorIndexDescription {
             ivfpq: matches!(algorithm, VectorAlgorithm::IvfPq).then(IvfPqParams::default),
             ivfflat: matches!(algorithm, VectorAlgorithm::IvfFlat).then(IvfFlatParams::default),
             ssg: matches!(algorithm, VectorAlgorithm::Ssg).then(SsgParams::default),
+            diskann: matches!(algorithm, VectorAlgorithm::DiskAnn).then(DiskAnnParams::default),
         }
     }
 }

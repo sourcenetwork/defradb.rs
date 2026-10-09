@@ -5,9 +5,11 @@ use defra_core::vector::Metric;
 
 mod angular;
 mod heuristic;
+mod robust_prune;
 
 pub use angular::{Angular, DEFAULT_ANGLE_DEGREES};
 pub use heuristic::Heuristic;
+pub use robust_prune::RobustPrune;
 
 /// Taking the nearest `max` loses the long edges a walk needs, so every graph
 /// kind prunes for direction and differs only in how it measures it.

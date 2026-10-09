@@ -1,13 +1,15 @@
-//! Edge selection: the diversity heuristic and SSG's angular pruning.
+//! Edge selection: the diversity heuristic, SSG's angular pruning, and
+//! Vamana's alpha pruning.
 
 use db::index::vector::engine::ann::Candidate;
 use db::index::vector::engine::select::Angular;
 use db::index::vector::engine::select::EdgeSelector;
 use db::index::vector::engine::select::Heuristic;
+use db::index::vector::engine::select::RobustPrune;
 use db::index::vector::engine::select::DEFAULT_ANGLE_DEGREES;
 use db::index::vector::store::NodeId;
-use defra_core::vector::dot;
 use defra_core::vector::Metric;
+use defra_core::vector::{dot, squared_euclidean};
 use std::sync::Arc;
 
 fn candidate(id: u64, vector: &[f32], base: &[f32]) -> Candidate {
@@ -202,4 +204,84 @@ fn a_candidate_on_the_base_is_skipped() {
     let kept = Angular::default().select(Metric::Cosine, &base, &candidates, 8);
     assert!(!kept.iter().any(|c| c.id == NodeId(1)));
     assert_eq!(kept.len(), 2);
+}
+
+fn unit(vector: &[f32]) -> Vec<f32> {
+    Metric::Cosine.prepare(vector)
+}
+
+/// With no slack, Vamana's pruning is HNSW's diversity heuristic: both keep a
+/// candidate only when it is nearer the base than to every edge already kept.
+#[test]
+fn robust_prune_without_slack_is_the_heuristic() {
+    let mut corpus = crate::support::Corpus::new(0xA1FA);
+    let base = unit(&corpus.vectors(1, 8)[0]);
+    let candidates: Vec<Candidate> = corpus
+        .vectors(120, 8)
+        .iter()
+        .enumerate()
+        .map(|(i, v)| candidate(i as u64 + 1, &unit(v), &base))
+        .collect();
+
+    for max in [4usize, 16, 64] {
+        let ids = |kept: Vec<Candidate>| kept.into_iter().map(|c| c.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(RobustPrune::new(1.0).select(Metric::Cosine, &base, &candidates, max)),
+            ids(Heuristic.select(Metric::Cosine, &base, &candidates, max)),
+        );
+    }
+}
+
+/// The alpha-RNG property FreshVamana's recall stability rests on: a kept edge
+/// `c` is never `alpha` times closer to an earlier kept edge than to the base.
+#[test]
+fn robust_prune_holds_the_alpha_rng_property() {
+    let mut corpus = crate::support::Corpus::new(0x5A1F);
+    let base = unit(&corpus.vectors(1, 16)[0]);
+    let candidates: Vec<Candidate> = corpus
+        .vectors(300, 16)
+        .iter()
+        .enumerate()
+        .map(|(i, v)| candidate(i as u64 + 1, &unit(v), &base))
+        .collect();
+
+    let alpha = 1.2;
+    let kept = RobustPrune::new(alpha).select(Metric::Cosine, &base, &candidates, 32);
+    assert!(kept.len() > 1, "nothing was kept to compare");
+    assert!(kept.len() <= 32);
+    for (i, c) in kept.iter().enumerate() {
+        for k in &kept[..i] {
+            let to_kept = squared_euclidean(&k.vector, &c.vector).sqrt();
+            let to_base = squared_euclidean(&base, &c.vector).sqrt();
+            assert!(
+                alpha * to_kept > to_base,
+                "kept {:?} although {:?} covers it",
+                c.id,
+                k.id
+            );
+        }
+    }
+}
+
+/// Slack is what keeps a FreshVamana graph dense enough to survive updates:
+/// on the same candidates it never keeps fewer edges than no slack does.
+#[test]
+fn robust_prune_slack_keeps_more_edges() {
+    let mut corpus = crate::support::Corpus::new(0xDE45);
+    let base = unit(&corpus.vectors(1, 16)[0]);
+    let candidates: Vec<Candidate> = corpus
+        .vectors(300, 16)
+        .iter()
+        .enumerate()
+        .map(|(i, v)| candidate(i as u64 + 1, &unit(v), &base))
+        .collect();
+
+    let tight = RobustPrune::new(1.0).select(Metric::Cosine, &base, &candidates, 64);
+    let slack = RobustPrune::new(1.2).select(Metric::Cosine, &base, &candidates, 64);
+    assert!(
+        slack.len() > tight.len(),
+        "{} vs {}",
+        slack.len(),
+        tight.len()
+    );
 }

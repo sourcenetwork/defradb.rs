@@ -617,7 +617,8 @@ impl<'a> SdlParser<'a> {
         value: &SchemaValue<'_>,
     ) -> Result<super::directives::VectorIndexConfig> {
         use super::directives::{
-            directive_u32, FlatConfig, HnswConfig, IvfFlatConfig, IvfPqConfig, SsgConfig,
+            directive_u32, DiskAnnConfig, FlatConfig, HnswConfig, IvfFlatConfig, IvfPqConfig,
+            SsgConfig,
         };
 
         let SchemaValue::Object(members) = value else {
@@ -719,6 +720,26 @@ impl<'a> SdlParser<'a> {
                         *slot = Some(read_block_u32(name, value)?);
                     }
                     config.ssg = Some(block);
+                }
+                block if block == schema::VectorAlgorithm::DiskAnn.sdl_block() => {
+                    let mut block = DiskAnnConfig::default();
+                    for (name, value) in vector_block(member, member_value)? {
+                        let slot = match name.as_str() {
+                            "metric" => {
+                                block.metric = Some(read_metric(member, value)?);
+                                continue;
+                            }
+                            "R" => &mut block.r,
+                            "lBuild" => &mut block.l_build,
+                            "lSearch" => &mut block.l_search,
+                            "alphaPercent" => &mut block.alpha_percent,
+                            "m" => &mut block.m,
+                            "sampleBytes" => &mut block.sample_bytes,
+                            other => return Err(unknown_vector_member(member, other)),
+                        };
+                        *slot = Some(read_block_u32(name, value)?);
+                    }
+                    config.diskann = Some(block);
                 }
                 other => {
                     return Err(QueryError::parse(format!(
