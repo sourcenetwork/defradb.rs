@@ -1,13 +1,10 @@
-//! Implementations of the sampling, clustering and quantization traits.
-//!
-//! The traits themselves live in [`engine::ann`](crate::index::vector::engine::ann),
-//! beside every other abstraction a kind implements. Nothing here imports
-//! storage.
+//! Sampling, clustering and quantization, each trait beside its
+//! implementation. Nothing here imports storage.
 
 mod kmeans;
 mod pq;
 mod sample;
 
-pub use kmeans::KMeans;
-pub use pq::{ProductQuantizer, CODEBOOK_SIZE};
-pub use sample::Reservoir;
+pub use kmeans::{Centroids, Clusterer, Fit, KMeans};
+pub use pq::{ProductQuantizer, Quantizer, CODEBOOK_SIZE};
+pub use sample::{Reservoir, Sampler};

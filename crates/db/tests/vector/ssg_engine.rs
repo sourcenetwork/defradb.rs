@@ -3,7 +3,7 @@
 use db::index::vector::engine::ann::EngineKind;
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::flat::Flat;
-use db::index::vector::engine::ivfpq::TRAIN_PER_LIST;
+use db::index::vector::engine::ivf::pq::TRAIN_PER_LIST;
 use db::index::vector::engine::ssg::Ssg;
 use db::index::vector::engine::ssg::SsgParams;
 use db::index::vector::params::Params;

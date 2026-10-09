@@ -1,6 +1,6 @@
 //! Ranking centroids for probing: which lists a query actually scans.
 
-use crate::index::vector::engine::ann::Centroids;
+use crate::index::vector::quantize::Centroids;
 use defra_core::vector::Metric;
 
 /// The lists a query probes, nearest centroid first.

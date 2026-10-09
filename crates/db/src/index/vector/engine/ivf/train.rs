@@ -2,8 +2,8 @@
 //! resolve the same way.
 
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::{Centroids, Clusterer};
 use crate::index::vector::quantize::KMeans;
+use crate::index::vector::quantize::{Centroids, Clusterer};
 
 /// FAISS's stated minimum for a usable k-means fit. Below `TRAIN_PER_LIST *
 /// nlist` vectors an index stays exact rather than training on too little.
