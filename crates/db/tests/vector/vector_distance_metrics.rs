@@ -9,7 +9,7 @@
 //! here rather than on a corpus where the difference does not show.
 
 use db::index::vector::index::VectorIndex;
-use db::index::vector::kv_store::KvNodeStore;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::NodeId;
 use db::index::vector::store::VectorNodeStore;
 use document::NormalValue;

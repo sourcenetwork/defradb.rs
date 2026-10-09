@@ -2,9 +2,9 @@
 
 use super::IvfFlat;
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::Sampler;
 use crate::index::vector::engine::ivf::{self, TrainedState};
 use crate::index::vector::quantize::Reservoir;
+use crate::index::vector::quantize::Sampler;
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 
 /// What a build did, so a caller can report it rather than guess.
@@ -31,7 +31,7 @@ impl<S: VectorNodeStore> IvfFlat<S> {
 
     /// Whether at least `wanted` live vectors are stored, counting no further.
     ///
-    /// See [`IvfPq::live_count_at_least`](super::super::ivfpq::IvfPq::live_count_at_least)
+    /// See [`IvfPq::live_count_at_least`](super::super::pq::IvfPq::live_count_at_least)
     /// for why returning an error from the visitor is what stops the walk
     /// early.
     pub async fn live_count_at_least(&self, wanted: u64) -> Result<bool> {

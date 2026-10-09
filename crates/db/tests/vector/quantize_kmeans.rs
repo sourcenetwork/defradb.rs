@@ -1,6 +1,6 @@
 //! Fitting centroids.
 
-use db::index::vector::engine::ann::Clusterer;
+use db::index::vector::quantize::Clusterer;
 use db::index::vector::quantize::KMeans;
 use defra_core::vector::squared_euclidean;
 

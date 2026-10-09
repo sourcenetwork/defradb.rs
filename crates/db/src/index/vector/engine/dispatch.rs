@@ -7,8 +7,8 @@
 use super::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
 use super::flat::Flat;
 use super::hnsw::Hnsw;
-use super::ivfflat::IvfFlat;
-use super::ivfpq::IvfPq;
+use super::ivf::flat::IvfFlat;
+use super::ivf::pq::IvfPq;
 use super::ssg::Ssg;
 use crate::index::error::Result;
 use crate::index::vector::store::{NodeId, VectorNodeStore};
