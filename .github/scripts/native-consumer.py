@@ -85,7 +85,8 @@ def clean_environment(environ):
                                           "DEFRA_", "DEFRADB_", "VERA_E2E_", "ORBIS_LOCAL_STORAGE_")) or (
                 key.startswith("CARGO_TARGET_") and key.endswith("_RUSTFLAGS")):
             del env[key]
-    env.update(CARGO_BUILD_JOBS="2", CARGO_TERM_COLOR="never", RUST_LOG="warn")
+    # The node harness observes INFO-level HTTP and P2P readiness events.
+    env.update(CARGO_BUILD_JOBS="2", CARGO_TERM_COLOR="never", RUST_LOG="info")
     return env
 
 
