@@ -7,6 +7,7 @@ on:
       - Cargo.toml
       - crates/vera/Cargo.toml
       - tools/integration-test/Cargo.toml
+      - proofs/Cargo.toml
       - .github/scripts/resolve-native-release.sh
       - .github/workflows/native-release-lockfile.yml
   workflow_dispatch:
