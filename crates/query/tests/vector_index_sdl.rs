@@ -537,6 +537,38 @@ fn ssg_defaults_are_kept() {
 }
 
 #[test]
+fn diskann_parameters_are_read() {
+    let vector = only_vector(
+        r#"type Doc {
+            e: [Float!] @index(vector: {dimensions: 128, diskann: {
+                R: 32, lBuild: 80, lSearch: 60, alphaPercent: 130, m: 16, sampleBytes: 1048576
+            }})
+        }"#,
+    );
+    assert_eq!(vector.algorithm, VectorAlgorithm::DiskAnn);
+    let diskann = vector.diskann.expect("DISKANN params");
+    assert_eq!(
+        (
+            diskann.r,
+            diskann.l_build,
+            diskann.l_search,
+            diskann.alpha_percent,
+            diskann.m,
+            diskann.sample_bytes
+        ),
+        (32, 80, 60, 130, 16, 1_048_576)
+    );
+}
+
+#[test]
+fn diskann_defaults_are_kept() {
+    let vector =
+        only_vector(r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, alg: DISKANN}) }"#);
+    assert_eq!(vector.diskann, Some(schema::DiskAnnParams::default()));
+    assert!(vector.hnsw.is_none());
+}
+
+#[test]
 fn flat_carries_no_build_parameters() {
     let vector =
         only_vector(r#"type Doc { e: [Float!] @index(vector: {dimensions: 4, alg: FLAT}) }"#);
@@ -545,6 +577,7 @@ fn flat_carries_no_build_parameters() {
     assert!(vector.ivfpq.is_none());
     assert!(vector.ivfflat.is_none());
     assert!(vector.ssg.is_none());
+    assert!(vector.diskann.is_none());
 }
 
 #[test]
@@ -565,6 +598,10 @@ fn an_unknown_block_argument_is_refused() {
         (
             r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, ivfflat: {m: 4}}) }"#,
             "m",
+        ),
+        (
+            r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, diskann: {alpha: 1}}) }"#,
+            "alpha",
         ),
     ] {
         let err = parse_sdl(sdl).expect_err("a misspelled argument must not parse");

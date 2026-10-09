@@ -41,6 +41,7 @@ fn description(algorithm: VectorAlgorithm, hnsw: Option<HnswParams>) -> IndexDes
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     })
 }
 
@@ -219,6 +220,7 @@ async fn the_ivfpq_algorithm_is_selectable() {
         }),
         ivfflat: None,
         ssg: None,
+        diskann: None,
     });
     let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF-PQ description");
 
@@ -266,6 +268,7 @@ fn an_ivfpq_index_with_an_unrankable_metric_is_refused() {
             ivfpq: Some(schema::IvfPqParams::default()),
             ivfflat: None,
             ssg: None,
+            diskann: None,
         });
     let err = VectorIndex::try_new(COLLECTION, desc).unwrap_err();
     assert!(
@@ -285,6 +288,7 @@ async fn the_ssg_algorithm_is_selectable() {
         ivfpq: None,
         ivfflat: None,
         ssg: Some(schema::SsgParams::default()),
+        diskann: None,
     });
     let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid SSG description");
 
@@ -323,7 +327,110 @@ fn out_of_range_ssg_parameters_are_refused() {
             angle: 200,
             ..schema::SsgParams::default()
         }),
+        diskann: None,
     });
     let err = VectorIndex::try_new(COLLECTION, desc).unwrap_err();
     assert!(err.to_string().contains("angle"), "got: {err}");
+}
+
+fn diskann_description(params: schema::DiskAnnParams) -> schema::IndexDescription {
+    description(VectorAlgorithm::DiskAnn, None).as_vector(schema::VectorIndexDescription {
+        algorithm: VectorAlgorithm::DiskAnn,
+        metric: DistanceMetric::Cosine,
+        dimensions: DIMENSIONS,
+        hnsw: None,
+        ivfpq: None,
+        ivfflat: None,
+        ssg: None,
+        diskann: Some(params),
+    })
+}
+
+/// DiskANN dispatched through `VectorIndex`, the way a collection reaches it.
+///
+/// Enough vectors that a save trains and builds the graph on the writing
+/// transaction, so the read on a fresh one walks what regolith persisted.
+#[tokio::test]
+async fn the_diskann_algorithm_is_selectable() {
+    let params = schema::DiskAnnParams {
+        r: 16,
+        l_build: 48,
+        m: 4,
+        ..Default::default()
+    };
+    let index = VectorIndex::try_new(COLLECTION, diskann_description(params))
+        .expect("a valid DISKANN description");
+
+    let store = RegolithStore::in_memory().unwrap();
+    let mut corpus = crate::support::Corpus::new(0xD15C);
+    let count = db::index::vector::engine::diskann::TRAIN_THRESHOLD as usize + 100;
+    let vectors = corpus.clustered(count, DIMENSIONS as usize, 6, 0.2);
+
+    let mut write = txn(&store).await;
+    for (i, vector) in vectors.iter().enumerate() {
+        let wide: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
+        index
+            .save(&mut write, i as u64 + 1, &[NormalValue::Float64Array(wide)])
+            .await
+            .unwrap();
+    }
+    write.commit().await.unwrap();
+
+    let query: Vec<f64> = vectors[4].iter().map(|x| *x as f64).collect();
+    let mut read = txn(&store).await;
+    let hits = index.search(&mut read, &query, 5, None).await.unwrap();
+    assert_eq!(hits.len(), 5);
+    assert_eq!(hits[0].id.0, 5, "a vector is nearest itself");
+
+    let engine = db::index::vector::engine::diskann::DiskAnn::try_new(
+        KvNodeStore::new(&mut read, COLLECTION, INDEX_ID, 0),
+        defra_core::vector::Metric::Cosine,
+        params.into(),
+        0,
+    )
+    .unwrap();
+    let state = engine
+        .state()
+        .await
+        .unwrap()
+        .expect("a save trained the index");
+    assert_eq!(state.live, count as u64);
+}
+
+/// Out-of-range DiskANN parameters are refused where the index is built.
+#[test]
+fn out_of_range_diskann_parameters_are_refused() {
+    for (params, named) in [
+        (
+            schema::DiskAnnParams {
+                alpha_percent: 90,
+                ..Default::default()
+            },
+            "alphaPercent",
+        ),
+        (
+            schema::DiskAnnParams {
+                r: 0,
+                ..Default::default()
+            },
+            "R",
+        ),
+        (
+            schema::DiskAnnParams {
+                l_build: 0,
+                ..Default::default()
+            },
+            "lBuild",
+        ),
+        (
+            schema::DiskAnnParams {
+                m: 3,
+                ..Default::default()
+            },
+            "m",
+        ),
+    ] {
+        let err = VectorIndex::try_new(COLLECTION, diskann_description(params)).unwrap_err();
+        assert!(err.to_string().contains(named), "got: {err}");
+    }
 }

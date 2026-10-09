@@ -130,6 +130,8 @@ pub enum EngineKind {
     IvfFlat,
     /// Satellite System Graph: one flat, angle-pruned layer.
     Ssg,
+    /// FreshVamana graph walked by product-quantized codes.
+    DiskAnn,
 }
 
 impl EngineKind {
@@ -140,6 +142,7 @@ impl EngineKind {
             EngineKind::IvfPq => "IVF_PQ",
             EngineKind::IvfFlat => "IVF_FLAT",
             EngineKind::Ssg => "SSG",
+            EngineKind::DiskAnn => "DISKANN",
         }
     }
 }

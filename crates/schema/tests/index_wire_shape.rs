@@ -45,6 +45,7 @@ fn vector() -> VectorIndexDescription {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     }
 }
 
@@ -346,6 +347,7 @@ fn ivfpq_is_an_algorithm_go_cannot_parse() {
                 sample_bytes: 1 << 20,
             }),
             ssg: None,
+            diskann: None,
             ..vector()
         })
         .normalized();

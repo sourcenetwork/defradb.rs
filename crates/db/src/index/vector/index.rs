@@ -11,6 +11,7 @@ use storage::corekv::{MaybeSend, Reader, Writer};
 use storage::index::CollectionIndex;
 
 use super::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
+use super::engine::diskann::{DiskAnn, DiskAnnParams};
 use super::engine::dispatch::Engine;
 use super::engine::flat::Flat;
 use super::engine::hnsw::Hnsw;
@@ -38,6 +39,7 @@ pub struct VectorIndex {
     ivfpq: IvfPqParams,
     ivfflat: IvfFlatParams,
     ssg: SsgParams,
+    diskann: DiskAnnParams,
     metric: Metric,
     seed: u64,
 }
@@ -100,6 +102,13 @@ impl VectorIndex {
         if vector.algorithm == VectorAlgorithm::IvfFlat {
             IvfFlat::try_new(super::store::MemoryNodeStore::new(), metric, ivfflat, 0)?;
         }
+        let diskann = DiskAnnParams::from(vector.diskann.unwrap_or_default());
+        if vector.algorithm == VectorAlgorithm::DiskAnn {
+            if vector.dimensions != 0 {
+                diskann.validate_dimensions(vector.dimensions as usize)?;
+            }
+            DiskAnn::try_new(super::store::MemoryNodeStore::new(), metric, diskann, 0)?;
+        }
 
         Ok(Self {
             collection_short_id,
@@ -112,6 +121,7 @@ impl VectorIndex {
             ivfpq,
             ivfflat,
             ssg,
+            diskann,
             metric,
         })
     }
@@ -172,6 +182,12 @@ impl VectorIndex {
                 self.metric,
                 self.params,
                 self.ssg,
+                self.seed,
+            )?),
+            VectorAlgorithm::DiskAnn => Engine::DiskAnn(DiskAnn::try_new(
+                store,
+                self.metric,
+                self.diskann,
                 self.seed,
             )?),
         })
