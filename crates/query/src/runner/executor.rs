@@ -18,10 +18,10 @@ use super::{DocFetcher, QueryRunner};
 
 /// Await a future with an optional timeout (native only, WASM always awaits directly).
 #[cfg(not(target_arch = "wasm32"))]
-async fn await_with_timeout<F: Future<Output = Result<JsonValue>>>(
+async fn await_with_timeout<T, F: Future<Output = Result<T>>>(
     future: F,
     timeout_secs: u64,
-) -> Result<JsonValue> {
+) -> Result<T> {
     if timeout_secs > 0 {
         let timeout = std::time::Duration::from_secs(timeout_secs);
         match tokio::time::timeout(timeout, future).await {
@@ -37,10 +37,10 @@ async fn await_with_timeout<F: Future<Output = Result<JsonValue>>>(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn await_with_timeout<F: Future<Output = Result<JsonValue>>>(
+async fn await_with_timeout<T, F: Future<Output = Result<T>>>(
     future: F,
     _timeout_secs: u64,
-) -> Result<JsonValue> {
+) -> Result<T> {
     future.await
 }
 
@@ -73,7 +73,7 @@ fn permission_for_operation(parsed: &ParsedOperation) -> NodePermission {
 /// Go enforces NAC at the data layer — denied queries return HTTP 200 with
 /// empty data (not a GraphQL error). We match that by returning an empty
 /// JSON object as data when NAC denies a request.
-async fn check_nac<F: DocFetcher + 'static, R: crate::txn::TransactionRegistry>(
+pub(super) async fn check_nac<F: DocFetcher + 'static, R: crate::txn::TransactionRegistry>(
     runner: &QueryRunner<F, R>,
     identity: &Option<Did>,
     parsed: &ParsedOperation,
@@ -92,7 +92,9 @@ async fn check_nac<F: DocFetcher + 'static, R: crate::txn::TransactionRegistry>(
 /// Convert JSON variables from request format to parser format.
 /// Variables in requests are `Option<JsonValue>` (a JSON object), but the
 /// parser expects `Option<RapidHashMap<String, JsonValue>>`.
-fn convert_variables(variables: &Option<JsonValue>) -> Option<RapidHashMap<String, JsonValue>> {
+pub(super) fn convert_variables(
+    variables: &Option<JsonValue>,
+) -> Option<RapidHashMap<String, JsonValue>> {
     variables.as_ref().and_then(|v| {
         if let JsonValue::Object(map) = v {
             Some(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -105,12 +107,18 @@ fn convert_variables(variables: &Option<JsonValue>) -> Option<RapidHashMap<Strin
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRunner<F, R> {
-    #[instrument(
-        name = "query.execute_request",
-        skip(self, request),
-        fields(query_len = request.query.len() as i64)
-    )]
-    async fn execute(&self, request: QueryRequest) -> QueryResponse {
+    async fn prepare_request(
+        &self,
+        request: &QueryRequest,
+    ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
+        await_with_timeout(self.prepare_mutations(request), self.query_timeout).await
+    }
+
+    async fn execute_prepared(
+        &self,
+        request: QueryRequest,
+        prepared: Option<std::sync::Arc<crate::prepared::PreparedMutations>>,
+    ) -> QueryResponse {
         // Convert variables from JSON to RapidHashMap format for the parser
         let variables = convert_variables(&request.variables);
 
@@ -248,6 +256,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                                     mutator.clone(),
                                     identity,
                                     None,
+                                    prepared.as_deref(),
                                 )
                                 .await
                             }
@@ -306,6 +315,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
                 .with_warnings(warnings)
             }
         }
+    }
+
+    #[instrument(name = "query.execute_request", skip(self, request), fields(query_len = request.query.len() as i64))]
+    async fn execute(&self, request: QueryRequest) -> QueryResponse {
+        self.execute_prepared(request, None).await
     }
 
     #[instrument(

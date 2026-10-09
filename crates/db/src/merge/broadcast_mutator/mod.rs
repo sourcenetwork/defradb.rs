@@ -412,6 +412,22 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> BroadcastMuta
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
     for BroadcastMutator<S, B, T>
 {
+    fn requires_write_preparation(&self) -> bool {
+        self.inner.requires_write_preparation()
+    }
+
+    async fn prepare_write(
+        &self,
+        collection_name: &str,
+        doc: Document,
+        modified_fields: Option<rapidhash::RapidHashSet<String>>,
+        encryption: Option<defra_core::encryption::EncryptionConfig>,
+    ) -> query::error::Result<Document> {
+        self.inner
+            .prepare_write(collection_name, doc, modified_fields, encryption)
+            .await
+    }
+
     fn set_document_acp(&self, acp: Arc<dyn acp::DocumentACP>) {
         BroadcastMutator::set_document_acp(self, acp);
     }

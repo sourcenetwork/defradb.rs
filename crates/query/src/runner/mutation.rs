@@ -1,6 +1,6 @@
 //! Mutation execution methods for QueryRunner.
 
-use acp::DocumentPermission;
+use acp::{DocumentPermission, Identity};
 use chrono::{DateTime, FixedOffset, Utc};
 use identity::Did;
 use rapidhash::RapidHashMap;
@@ -18,6 +18,13 @@ use crate::txn::TransactionRegistry;
 
 use super::plan_drive;
 use super::{DocFetcher, QueryRunner};
+
+pub(super) struct AuthorizedMutation {
+    pub collection: Arc<schema::CollectionVersion>,
+    pub mapping: crate::document::DocumentMapping,
+    pub resolved_doc_ids: Option<Vec<String>>,
+    pub acp_filtered_doc_ids: Option<Vec<String>>,
+}
 
 /// RAII guard that clears the `encryption_config` thread-local on Drop.
 ///
@@ -127,6 +134,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             mutator,
             caller_identity,
             fetcher_override,
+            None,
         ));
         defra_core::current_identity::with_scoped_identity(
             acting_identity,
@@ -142,6 +150,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         mutator: Arc<dyn DocMutator>,
         caller_identity: Option<Did>,
         fetcher_override: Option<Arc<dyn crate::fetcher::DocFetcher>>,
+        prepared: Option<&crate::prepared::PreparedMutations>,
     ) -> Result<JsonValue> {
         if mutations
             .iter()
@@ -179,7 +188,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // This ensures UTC_NOW resolves to the same timestamp across all mutations,
         // matching Go DefraDB's behavior.
         let utc_offset = FixedOffset::east_opt(0).unwrap();
-        let request_time = Utc::now().with_timezone(&utc_offset);
+        let request_time =
+            prepared.map_or_else(|| Utc::now().with_timezone(&utc_offset), |p| p.request_time);
+        let mut created_ids = RapidHashMap::default();
 
         // Batch implicit multi-mutation requests when the mutator supports it.
         //
@@ -220,6 +231,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             caller_identity.clone(),
                             request_time,
                             Some(batch_fetcher.clone()),
+                            prepared.and_then(|p| p.mutations.get(&mutation.output_name())),
+                            &mut created_ids,
                         )
                         .await
                     {
@@ -253,6 +266,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     caller_identity.clone(),
                     request_time,
                     fetcher_override.clone(),
+                    prepared.and_then(|p| p.mutations.get(&mutation.output_name())),
+                    &mut created_ids,
                 )
                 .await?;
             // Use alias if provided, otherwise full mutation name (e.g., "add_Users")
@@ -263,27 +278,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         Ok(JsonValue::Object(results))
     }
 
-    /// Execute a single mutation operation with ACP enforcement.
-    async fn execute_single_mutation(
+    pub(super) async fn authorize_mutation(
         &self,
         mutation: &Mutation,
-        mutator: Arc<dyn DocMutator>,
-        caller_identity: Option<Did>,
-        request_time: DateTime<FixedOffset>,
-        fetcher_override: Option<Arc<dyn crate::fetcher::DocFetcher>>,
-    ) -> Result<JsonValue> {
-        struct SigningConfigReset(Option<defra_core::signing::SigningConfig>);
-
-        impl Drop for SigningConfigReset {
-            fn drop(&mut self) {
-                defra_core::signing::set_signing_config(self.0.clone());
-            }
-        }
-
-        let fetcher: Arc<dyn crate::fetcher::DocFetcher> =
-            fetcher_override.unwrap_or_else(|| self.fetcher.clone());
-        use acp::Identity;
-
+        caller_identity: &Option<Did>,
+        fetcher: &dyn crate::fetcher::DocFetcher,
+        projected_ids: Option<&rapidhash::RapidHashSet<String>>,
+    ) -> Result<AuthorizedMutation> {
         // Validate collection exists - resolve on-demand from provider
         let collection = self.get_collection(&mutation.collection_name).await?;
 
@@ -311,9 +312,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mapping = self.build_mutation_mapping(mutation)?;
 
         // Resolve filter to doc_ids if filter is provided without doc_ids
-        let resolved_doc_ids = self
-            .resolve_filter_to_doc_ids(mutation, fetcher.as_ref())
-            .await?;
+        let resolved_doc_ids = self.resolve_filter_to_doc_ids(mutation, fetcher).await?;
 
         // Get doc_ids for permission checking (UPDATE/DELETE need this)
         let doc_ids_for_check = resolved_doc_ids
@@ -331,11 +330,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // This matches Go's behavior where GQL mutations on invisible documents return
         // empty results, while mutations on visible-but-unauthorized documents return errors.
         if let Some(validator) = &self.write_validator {
+            let validation_ids: Vec<_> = doc_ids_for_check
+                .iter()
+                .flatten()
+                .filter(|id| !projected_ids.is_some_and(|ids| ids.contains(*id)))
+                .cloned()
+                .collect();
             let request = crate::access_hooks::WriteRequest {
                 identity: caller_identity.as_ref(),
                 collection: &collection,
                 kind: mutation.mutation_type,
-                doc_ids: doc_ids_for_check.as_deref().unwrap_or_default(),
+                doc_ids: &validation_ids,
                 create_input: &mutation.create_input,
                 update_input: &mutation.update_input,
             };
@@ -353,6 +358,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         let identity_for_acp = Identity::from(caller_identity.as_ref());
                         let mut visible_doc_ids = Vec::new();
                         for doc_id in doc_ids {
+                            // Projected creates have no ACP object yet. Execution checks
+                            // the real ID after its preceding create has registered it.
+                            if projected_ids.is_some_and(|ids| ids.contains(doc_id)) {
+                                visible_doc_ids.push(doc_id.clone());
+                                continue;
+                            }
                             // Phase 1: Check if the identity can read the document
                             let can_read = crate::txn::check_doc_access_with_overlay(
                                 self.acp.as_ref(),
@@ -397,6 +408,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         let identity_for_acp = Identity::from(caller_identity.as_ref());
                         let mut visible_doc_ids = Vec::new();
                         for doc_id in doc_ids {
+                            // Projected creates have no ACP object yet. Execution checks
+                            // the real ID after its preceding create has registered it.
+                            if projected_ids.is_some_and(|ids| ids.contains(doc_id)) {
+                                visible_doc_ids.push(doc_id.clone());
+                                continue;
+                            }
                             // Phase 1: Check if the identity can read the document
                             let can_read = crate::txn::check_doc_access_with_overlay(
                                 self.acp.as_ref(),
@@ -443,6 +460,89 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 MutationType::Truncate => unreachable!("truncate bypasses document ACP checks"),
             }
         }
+
+        Ok(AuthorizedMutation {
+            collection,
+            mapping,
+            resolved_doc_ids,
+            acp_filtered_doc_ids,
+        })
+    }
+
+    /// Execute a single mutation operation with ACP enforcement.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_single_mutation(
+        &self,
+        mutation: &Mutation,
+        mutator: Arc<dyn DocMutator>,
+        caller_identity: Option<Did>,
+        request_time: DateTime<FixedOffset>,
+        fetcher_override: Option<Arc<dyn crate::fetcher::DocFetcher>>,
+        prepared: Option<&crate::prepared::PreparedMutation>,
+        created_ids: &mut RapidHashMap<String, String>,
+    ) -> Result<JsonValue> {
+        struct SigningConfigReset(Option<defra_core::signing::SigningConfig>);
+
+        impl Drop for SigningConfigReset {
+            fn drop(&mut self) {
+                defra_core::signing::set_signing_config(self.0.clone());
+            }
+        }
+
+        let fetcher: Arc<dyn crate::fetcher::DocFetcher> =
+            fetcher_override.unwrap_or_else(|| self.fetcher.clone());
+        let mut selected_mutation = mutation.clone();
+        let mut authorization = None;
+        if let Some(ids) = prepared.and_then(|prepared| prepared.doc_ids.as_ref()) {
+            let mut ids: Vec<_> = ids
+                .iter()
+                .map(|id| created_ids.get(id).unwrap_or(id).clone())
+                .collect();
+            if mutation.doc_ids.is_none()
+                && mutation.filter.is_some()
+                && matches!(
+                    mutation.mutation_type,
+                    MutationType::Delete | MutationType::Upsert
+                )
+            {
+                let mut current = self
+                    .authorize_mutation(mutation, &caller_identity, fetcher.as_ref(), None)
+                    .await?;
+                let matching = current
+                    .acp_filtered_doc_ids
+                    .as_ref()
+                    .or(current.resolved_doc_ids.as_ref())
+                    .cloned()
+                    .unwrap_or_default();
+                if mutation.mutation_type == MutationType::Upsert
+                    && (matching.len() != ids.len() || matching.iter().any(|id| !ids.contains(id)))
+                {
+                    return Err(QueryError::execution(
+                        "upsert target changed after key preparation",
+                    ));
+                }
+                ids.retain(|id| matching.contains(id));
+                current.resolved_doc_ids = Some(ids.clone());
+                if current.acp_filtered_doc_ids.is_some() {
+                    current.acp_filtered_doc_ids = Some(ids.clone());
+                }
+                authorization = Some(current);
+            }
+            selected_mutation.doc_ids = Some(ids);
+        }
+        let mutation = &selected_mutation;
+        let AuthorizedMutation {
+            collection,
+            mapping,
+            resolved_doc_ids,
+            acp_filtered_doc_ids,
+        } = match authorization {
+            Some(authorization) => authorization,
+            None => {
+                self.authorize_mutation(mutation, &caller_identity, fetcher.as_ref(), None)
+                    .await?
+            }
+        };
 
         // Bind a RAII guard so the thread-local is cleared on every exit
         // path (including `?`, panic unwind, and the happy path). See #757.
@@ -557,6 +657,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             None
         };
 
+        let bound_prepared = prepared.map(|prepared| {
+            let mut prepared = prepared.clone();
+            for (projected, actual) in created_ids.iter() {
+                if let Some(write) = prepared.updates.remove(projected) {
+                    prepared.updates.insert(actual.clone(), write);
+                }
+            }
+            prepared
+        });
+        let prepared = bound_prepared.as_ref();
+
         // Build and execute the appropriate mutation plan
         let mut plan: Box<dyn PlanNode> = match mutation.mutation_type {
             MutationType::Create => {
@@ -565,7 +676,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     CreateNode::new(&mutation.collection_name, mutator, mapping.clone())
                         .with_collection(collection.clone())
                         .with_request_time(request_time)
-                        .with_inputs(inputs),
+                        .with_inputs(inputs)
+                        .with_prepared_documents(prepared.map(|p| p.creates.clone())),
                 )
             }
             MutationType::Update => {
@@ -578,7 +690,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 )
                 .with_collection(collection.clone())
                 .with_request_time(request_time)
-                .with_input(input);
+                .with_input(input)
+                .with_prepared_writes(prepared.map(|p| p.updates.clone()));
 
                 // Use ACP-filtered doc_ids (invisible docs removed), or resolved/original
                 if let Some(ref doc_ids) = acp_filtered_doc_ids {
@@ -629,7 +742,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             MutationType::Upsert => {
                 let mut node = UpsertNode::new(&mutation.collection_name, mutator, mapping.clone())
                     .with_collection(collection.clone())
-                    .with_request_time(request_time);
+                    .with_request_time(request_time)
+                    .with_prepared_writes(prepared.cloned());
 
                 // Set create_input (from Go's 'add' argument)
                 if !mutation.create_input.is_empty() {
@@ -706,6 +820,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let (mut results, result_doc_ids) = plan_drive::close_after(plan.as_mut(), outcome)
             .await
             .map_err(map_doc_not_found)?;
+
+        if let Some(prepared) = prepared {
+            for (created, actual) in prepared.creates.iter().zip(&result_doc_ids) {
+                if let Some(write) = created.write_preparation() {
+                    created_ids.insert(
+                        crate::prepared::prepared_doc_id(write).to_string(),
+                        actual.clone(),
+                    );
+                }
+            }
+        }
 
         // Note: encryption_config and broadcast_creator_did are cleared
         // automatically by the RAII guards declared above when this
@@ -1107,7 +1232,13 @@ mod tests {
 
         let mutations = crate::parse_mutations(r#"mutation { truncate_User }"#).unwrap();
         let transaction = runner
-            .execute_parsed_mutations(mutations, mutator, None, Some(Arc::new(MockFetcher::new())))
+            .execute_parsed_mutations(
+                mutations,
+                mutator,
+                None,
+                Some(Arc::new(MockFetcher::new())),
+                None,
+            )
             .await
             .unwrap_err();
         assert!(transaction

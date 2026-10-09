@@ -29,6 +29,7 @@ fn cancelled_caller_runtime_does_not_own_signed_query_runtime() {
                 executor,
                 QueryRequest::new("{ delayed }"),
                 None,
+                None,
                 test_signing_config(),
                 "did:key:zCancellationTest".to_string(),
                 signed_runtime_handle,
@@ -64,6 +65,7 @@ fn signed_query_runtime_keeps_spawned_work_alive_after_query_returns() {
         executor,
         QueryRequest::new("{ spawnBackgroundWork }"),
         None,
+        None,
         test_signing_config(),
         "did:key:zSpawnTest".to_string(),
         signed_runtime.handle(),
@@ -92,6 +94,7 @@ async fn signed_query_context_survives_awaits_on_node_owned_runtime() {
     let response = super::execute_with_signing_context(
         executor,
         QueryRequest::new("{ observeContext }"),
+        None,
         None,
         signing_config,
         expected_did,

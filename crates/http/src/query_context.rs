@@ -26,21 +26,6 @@ pub async fn execute_with_context(
     identity: &ExtractIdentity,
     request: QueryRequest,
 ) -> QueryResponse {
-    execute_request_with_retry_loop(
-        request,
-        state.max_txn_retries,
-        INITIAL_RETRY_BACKOFF,
-        MAX_RETRY_BACKOFF,
-        |request| execute_once_with_context(state, identity, request),
-    )
-    .await
-}
-
-async fn execute_once_with_context(
-    state: &AppState,
-    identity: &ExtractIdentity,
-    request: QueryRequest,
-) -> QueryResponse {
     let signing_config = resolve_signing_config(state, identity);
 
     let dac_bypass = resolve_dac_bypass(state, identity).await;
@@ -48,9 +33,10 @@ async fn execute_once_with_context(
     // Fast path: when there is nothing to put on the thread-locals, skip
     // spawn_blocking entirely.
     if signing_config.is_none() && state.nac.is_none() && !dac_bypass {
-        return state.executor.execute(request).await;
+        return execute_prepared_request(state, request).await;
     }
     let executor = state.executor.clone();
+    let max_retries = state.max_txn_retries;
     let handle = tokio::runtime::Handle::current();
 
     let batch_session_key = signing_config.as_ref().map(|s| s.public_key_hex.clone());
@@ -61,13 +47,42 @@ async fn execute_once_with_context(
         defra_core::signing::set_signing_config(signing_config);
         defra_core::batch_signing::set_batch_session_key(batch_session_key);
         defra_core::dac_bypass::set_dac_bypass(dac_bypass);
-        handle.block_on(async { executor.execute(request).await })
+        handle.block_on(async {
+            execute_prepared_with_executor(executor.as_ref(), request, max_retries).await
+        })
     })
     .await
     {
         Ok(response) => response,
         Err(join_err) => QueryResponse::error(format!("query execution task failed: {join_err}")),
     }
+}
+
+async fn execute_prepared_request(state: &AppState, request: QueryRequest) -> QueryResponse {
+    execute_prepared_with_executor(state.executor.as_ref(), request, state.max_txn_retries).await
+}
+
+async fn execute_prepared_with_executor(
+    executor: &dyn QueryExecutor,
+    request: QueryRequest,
+    max_retries: u32,
+) -> QueryResponse {
+    let prepared = match executor.prepare_request(&request).await {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return QueryResponse::error(query::executor::QueryResponseError::from_query_error(
+                error,
+            ))
+        }
+    };
+    execute_request_with_retry_loop(
+        request,
+        max_retries,
+        INITIAL_RETRY_BACKOFF,
+        MAX_RETRY_BACKOFF,
+        |request| executor.execute_prepared(request, prepared.clone()),
+    )
+    .await
 }
 
 async fn execute_request_with_retry_loop<F, Fut>(
@@ -135,7 +150,7 @@ pub async fn execute_in_txn_with_context(
 
     let dac_bypass = resolve_dac_bypass(state, identity).await;
 
-    // Fast path: see the note in `execute_once_with_context`.
+    // Fast path: see the note in `execute_with_context`.
     if signing_config.is_none() && state.nac.is_none() && !dac_bypass {
         return state.executor.execute_in_txn(request, &txn_handle).await;
     }
@@ -232,15 +247,25 @@ mod tests {
 
     #[derive(Default)]
     struct ConflictExecutor {
+        preparations: AtomicUsize,
         auto_commit_attempts: AtomicUsize,
         explicit_txn_attempts: AtomicUsize,
     }
 
     #[async_trait]
     impl QueryExecutor for ConflictExecutor {
+        async fn prepare_request(
+            &self,
+            _request: &QueryRequest,
+        ) -> Result<Option<Arc<query::prepared::PreparedMutations>>> {
+            self.preparations.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+
         fn abandon_txn(&self, _handle: &TransactionHandle) {}
 
         async fn execute(&self, _request: QueryRequest) -> QueryResponse {
+            assert_eq!(self.preparations.load(Ordering::SeqCst), 1);
             if self.auto_commit_attempts.fetch_add(1, Ordering::SeqCst) < 2 {
                 QueryResponse::transaction_conflict("transaction conflict")
             } else {
@@ -298,6 +323,7 @@ mod tests {
         )
         .await;
 
+        assert_eq!(executor.preparations.load(Ordering::SeqCst), 1);
         assert_eq!(executor.auto_commit_attempts.load(Ordering::SeqCst), 3);
         assert!(!response.has_errors());
         let metrics_after = telemetry::conflict_metrics_snapshot().http_auto_commit;
@@ -391,7 +417,7 @@ mod tests {
             .with_signing_enabled(false)
             .build();
 
-        execute_once_with_context(
+        execute_with_context(
             &state,
             &owner_identity(),
             QueryRequest::new("{ __typename }"),
@@ -409,7 +435,7 @@ mod tests {
             .with_signing_enabled(false)
             .build();
 
-        execute_once_with_context(
+        execute_with_context(
             &state,
             &ExtractIdentity::from_did(Some(identity::Did::new_unchecked(
                 "did:key:z6MkSomeoneElse".to_string(),

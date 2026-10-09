@@ -197,6 +197,7 @@ pub struct UpdateNode {
     filter: Option<Filter>,
     /// Update input (fields to patch)
     input: UpdateInput,
+    prepared_writes: Option<RapidHashMap<String, Arc<document::WritePreparation>>>,
     /// Updated documents (populated after first next())
     updated_docs: Vec<Doc>,
     /// Document IDs that were requested but not found
@@ -236,6 +237,7 @@ impl UpdateNode {
             doc_ids: None,
             filter: None,
             input: UpdateInput::new(),
+            prepared_writes: None,
             updated_docs: Vec::new(),
             not_found_ids: Vec::new(),
             position: 0,
@@ -260,6 +262,14 @@ impl UpdateNode {
     /// Set the update input (fields to patch).
     pub fn with_input(mut self, input: UpdateInput) -> Self {
         self.input = input;
+        self
+    }
+
+    pub fn with_prepared_writes(
+        mut self,
+        writes: Option<RapidHashMap<String, Arc<document::WritePreparation>>>,
+    ) -> Self {
+        self.prepared_writes = writes;
         self
     }
 
@@ -393,17 +403,13 @@ impl PlanNode for UpdateNode {
                     // Revalidate against the exact snapshot used for the
                     // update so a document that stopped matching is skipped.
                     if let Some(ref filter) = self.filter {
-                        let filter_mapping = if let Some(collection) = &self.collection {
-                            let mut mapping = DocumentMapping::new();
-                            for (index, field) in collection.fields.iter().enumerate() {
-                                mapping.add(index, &field.name);
-                            }
-                            mapping
+                        let matches = if let Some(collection) = &self.collection {
+                            crate::document::matches_document_filter(&doc, collection, filter)?
                         } else {
-                            self.document_mapping.clone()
+                            let plan_doc = document_to_plan_doc(&doc, &self.document_mapping)?;
+                            filter.matches(plan_doc.fields(), &self.document_mapping)?
                         };
-                        let plan_doc = document_to_plan_doc(&doc, &filter_mapping)?;
-                        if !filter.matches(plan_doc.fields(), &filter_mapping)? {
+                        if !matches {
                             continue;
                         }
                     }
@@ -419,6 +425,16 @@ impl PlanNode for UpdateNode {
                     // Collect the modified field names for block creation
                     let modified_fields: RapidHashSet<String> =
                         self.input.fields.keys().cloned().collect();
+
+                    if let Some(writes) = &self.prepared_writes {
+                        let id = doc.id().map(ToString::to_string).unwrap_or_default();
+                        let prepared = writes.get(&id).ok_or_else(|| {
+                            QueryError::transaction_conflict(
+                                "mutation target changed after key preparation",
+                            )
+                        })?;
+                        doc.set_write_preparation(Arc::clone(prepared));
+                    }
 
                     // Persist update with modified field tracking
                     let result = self

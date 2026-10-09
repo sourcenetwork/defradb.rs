@@ -180,6 +180,7 @@ pub struct CreateNode {
     request_time: Option<DateTime<FixedOffset>>,
     /// Input documents to create
     inputs: Vec<CreateInput>,
+    prepared_documents: Option<Vec<Document>>,
     /// Created documents (populated after first next())
     created_docs: Vec<Doc>,
     /// Current position in created_docs
@@ -212,6 +213,7 @@ impl CreateNode {
             collection: None,
             request_time: None,
             inputs: Vec::new(),
+            prepared_documents: None,
             created_docs: Vec::new(),
             position: 0,
             current_doc: Doc::default(),
@@ -229,6 +231,11 @@ impl CreateNode {
     /// Add multiple input documents.
     pub fn with_inputs(mut self, inputs: Vec<CreateInput>) -> Self {
         self.inputs = inputs;
+        self
+    }
+
+    pub fn with_prepared_documents(mut self, docs: Option<Vec<Document>>) -> Self {
+        self.prepared_documents = docs;
         self
     }
 
@@ -301,15 +308,20 @@ impl PlanNode for CreateNode {
         // On first call, create all documents in a single batch transaction
         if !self.did_create {
             // Convert all inputs to Documents
-            let mut docs = Vec::with_capacity(self.inputs.len());
-            for input in &self.inputs {
-                let doc = if let Some(ref collection) = self.collection {
-                    input.to_document_with_schema_and_time(collection, self.request_time)?
-                } else {
-                    input.to_document()?
-                };
-                docs.push(doc);
-            }
+            let docs = if let Some(docs) = &self.prepared_documents {
+                docs.clone()
+            } else {
+                let mut docs = Vec::with_capacity(self.inputs.len());
+                for input in &self.inputs {
+                    let doc = if let Some(ref collection) = self.collection {
+                        input.to_document_with_schema_and_time(collection, self.request_time)?
+                    } else {
+                        input.to_document()?
+                    };
+                    docs.push(doc);
+                }
+                docs
+            };
 
             // Batch create: single transaction, single commit/fsync
             let results = self

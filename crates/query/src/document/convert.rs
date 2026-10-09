@@ -125,3 +125,17 @@ pub fn documents_with_status_to_plan_docs(
     }
     Ok(result)
 }
+
+/// Evaluate a mutation predicate using the complete collection field mapping.
+pub(crate) fn matches_document_filter(
+    doc: &Document,
+    collection: &schema::CollectionVersion,
+    filter: &crate::mapper::Filter,
+) -> Result<bool> {
+    let mut mapping = DocumentMapping::new();
+    for (index, field) in collection.fields.iter().enumerate() {
+        mapping.add(index, &field.name);
+    }
+    let doc = document_to_plan_doc(doc, &mapping)?;
+    filter.matches(doc.fields(), &mapping)
+}

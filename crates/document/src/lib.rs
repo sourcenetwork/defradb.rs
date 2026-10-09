@@ -37,6 +37,7 @@ mod normal;
 mod normal_conversions;
 pub mod rfc3339;
 mod value;
+mod write_preparation;
 
 pub use doc_id::{validate_doc_ids, DocID, DOC_ID_V0, SDN_NAMESPACE_V0};
 pub use document::Document;
@@ -48,6 +49,7 @@ pub use json_traverse::{index_traverse_options, traverse_json, TraverseOptions};
 pub use normal::NormalValue;
 pub use rfc3339::{is_leap_second, is_valid_rfc3339, parse_rfc3339};
 pub use value::FieldValue;
+pub use write_preparation::WritePreparation;
 
 // Re-export schema types commonly used with documents
 pub use schema::{CType, CollectionVersion};

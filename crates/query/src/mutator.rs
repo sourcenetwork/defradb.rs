@@ -371,6 +371,22 @@ impl MutationBatch {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocMutator: MaybeSendSync {
+    /// Whether this mutator resolves persistent inputs before request retries.
+    fn requires_write_preparation(&self) -> bool {
+        false
+    }
+
+    /// Resolve persistent inputs without staging a document mutation.
+    async fn prepare_write(
+        &self,
+        _collection_name: &str,
+        doc: Document,
+        _modified_fields: Option<rapidhash::RapidHashSet<String>>,
+        _encryption: Option<defra_core::encryption::EncryptionConfig>,
+    ) -> Result<Document> {
+        Ok(doc)
+    }
+
     /// Configure document ACP for mutation-side ordering guarantees.
     fn set_document_acp(&self, _acp: Arc<dyn acp::DocumentACP>) {}
 

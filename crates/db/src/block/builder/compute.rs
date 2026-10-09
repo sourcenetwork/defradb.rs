@@ -62,19 +62,33 @@ pub fn compute_document_blocks(
                 } else {
                     None
                 };
-                let key = defra_core::encryption::generate_encryption_key_for(
-                    &doc_ref_bytes,
-                    key_field_name,
-                );
-                let encrypted = encrypt_delta(&value_bytes, &key)?;
+                let (encrypted, enc_cid) = if let Some((cid, key)) = doc
+                    .write_preparation()
+                    .and_then(|prepared| prepared.key(field_name))
+                {
+                    (encrypt_delta(&value_bytes, key)?, cid)
+                } else {
+                    if doc.write_preparation().is_some() {
+                        return Err(format!(
+                            "encryption key for field {field_name} was not prepared"
+                        ));
+                    }
+                    let key = defra_core::encryption::generate_encryption_key_for(
+                        &doc_ref_bytes,
+                        key_field_name,
+                    );
+                    let encrypted = encrypt_delta(&value_bytes, &key)?;
 
-                let enc_block = Encryption { key: key.to_vec() };
-                let enc_bytes = enc_block
-                    .to_dag_cbor()
-                    .map_err(|e| format!("Failed to encode encryption block: {}", e))?;
-                let enc_cid = generate_cid_from_bytes(&enc_bytes)
-                    .map_err(|e| format!("Failed to generate encryption CID: {}", e))?;
-                blockstore_entries.push((enc_cid.to_bytes(), enc_bytes.into()));
+                    let enc_block = Encryption { key: key.to_vec() };
+                    let enc_bytes = enc_block
+                        .to_dag_cbor()
+                        .map_err(|e| format!("Failed to encode encryption block: {}", e))?;
+                    let enc_cid = generate_cid_from_bytes(&enc_bytes)
+                        .map_err(|e| format!("Failed to generate encryption CID: {}", e))?;
+                    blockstore_entries.push((enc_cid.to_bytes(), enc_bytes.into()));
+
+                    (encrypted, enc_cid)
+                };
 
                 (encrypted, Some(enc_cid))
             } else {
