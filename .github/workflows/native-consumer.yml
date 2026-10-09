@@ -1,0 +1,64 @@
+name: Native consumer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-consumer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-consumer:
+    name: Native ACP consumer
+    runs-on: ubuntu-24.04
+    # Cold normal-release builds use both repositories; fixture gates are unchanged.
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check qualification driver
+        run: python3 .github/scripts/test-native-consumer.py
+      - name: Read matching Vera revision
+        id: vera
+        run: |
+          revision="$(python3 .github/scripts/native-consumer.py --vera-ref)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: sourcenetwork/vera.rs
+          ref: ${{ steps.vera.outputs.revision }}
+          path: .native/vera
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - name: Free unused hosted SDKs for release builds
+        run: sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-consumer-1.98
+          cache-targets: false
+          workspaces: |
+            .
+            .native/vera
+      - name: Qualify native provider and replicated authorization
+        run: python3 .github/scripts/native-consumer.py --vera .native/vera
+      - name: Retain numeric qualification results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-consumer-summary
+          path: ${{ runner.temp }}/native-consumer-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
