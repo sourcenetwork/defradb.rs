@@ -116,7 +116,7 @@ path = "tests/http_contract.rs"
 [dependencies]
 vera-harness = { git = "https://github.com/sourcenetwork/vera.rs", rev = "c8a718743b19e6e8b9320baa5643380ada2a6932" }
 commonware-codec = "2026.9.0"
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7747f66d75e9554e69a6b98b4eec36d0f2db46ac" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "30a22c14af885d90af0de2ebc38ddef7c4d04781" }
 document = { path = "../../crates/document" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { version = "0.12", default-features = false, features = [
