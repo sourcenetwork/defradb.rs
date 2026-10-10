@@ -99,8 +99,8 @@ impl<S: VectorNodeStore> DiskAnn<S> {
     }
 
     /// Insert (paper Algorithm 2): walk to the new node's neighbourhood, prune
-    /// its out-edges from what the walk expanded, then add the back-edges,
-    /// pruning any neighbour pushed over `R`.
+    /// its out-edges from what the walk expanded, then add the back-edges. A
+    /// neighbour is pruned back to `R` only once it passes the slack limit.
     pub(super) async fn graph_insert(
         &mut self,
         state: &mut State,
@@ -150,7 +150,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         )
         .await?;
 
-        let r = self.params.r as usize;
+        let limit = self.params.slack_limit();
         for (neighbor, _) in neighbors {
             let Some(mut record) = self.record(m, neighbor).await? else {
                 continue;
@@ -160,7 +160,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 Some(edge) => edge.1 = code.clone(),
                 None => record.neighbors.push((id, code.clone())),
             }
-            if record.neighbors.len() > r {
+            if record.neighbors.len() > limit {
                 let base = decode(&pq, &record.code);
                 record.neighbors = self.prune(&pq, &base, std::mem::take(&mut record.neighbors));
             }

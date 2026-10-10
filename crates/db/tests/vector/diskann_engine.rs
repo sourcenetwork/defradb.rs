@@ -110,29 +110,36 @@ async fn a_trained_graph_meets_the_recall_gate() {
     assert!(recall >= 0.9, "recall@{K} is {recall}");
 }
 
-/// The memory bound rests on this: a record never holds more than `R` edges,
-/// so one read and one record's codes rank any hop.
+/// The memory bound rests on this: a record never holds more than the slack
+/// limit of edges, so one read and one record's codes rank any hop. Back-edges
+/// may grow a record past `R` without a re-prune, which is what keeps an insert
+/// from pruning every full neighbour it links to.
 #[tokio::test]
-async fn no_record_exceeds_the_degree_bound() {
+async fn records_stay_within_the_slack_limit() {
     let (vectors, _) = corpus();
     let index = built(&vectors).await;
     let m = index.state().await.unwrap().unwrap().m as usize;
-    let mut records = 0;
+    let limit = params().slack_limit();
+    let r = params().r as usize;
+    assert!(limit > r);
+    let (mut records, mut over_r) = (0, 0);
     index
         .store()
         .iterate_aux(codec::GRAPH, b"", |_, value| {
             let record = codec::decode_record(value, m)?;
-            assert!(record.neighbors.len() <= params().r as usize);
+            assert!(record.neighbors.len() <= limit);
             assert!(
                 !record.neighbors.is_empty(),
                 "an isolated node is unreachable"
             );
             records += 1;
+            over_r += usize::from(record.neighbors.len() > r);
             Ok(())
         })
         .await
         .unwrap();
     assert_eq!(records, CORPUS);
+    assert!(over_r > 0, "no record used its slack");
 }
 
 #[tokio::test]
