@@ -816,6 +816,7 @@ impl<'a> SdlParser<'a> {
                     (config.ivfpq.is_some(), schema::VectorAlgorithm::IvfPq),
                     (config.ivfflat.is_some(), schema::VectorAlgorithm::IvfFlat),
                     (config.ssg.is_some(), schema::VectorAlgorithm::Ssg),
+                    (config.diskann.is_some(), schema::VectorAlgorithm::DiskAnn),
                 ] {
                     if !present {
                         continue;
@@ -861,6 +862,9 @@ impl<'a> SdlParser<'a> {
                     schema::VectorAlgorithm::Ssg => {
                         config.ssg.as_ref().and_then(|b| b.metric.clone())
                     }
+                    schema::VectorAlgorithm::DiskAnn => {
+                        config.diskann.as_ref().and_then(|b| b.metric.clone())
+                    }
                 };
                 let metric = match named_metric.as_deref() {
                     None => schema::DistanceMetric::default(),
@@ -901,7 +905,8 @@ impl<'a> SdlParser<'a> {
                             schema::VectorAlgorithm::Flat
                             | schema::VectorAlgorithm::IvfPq
                             | schema::VectorAlgorithm::IvfFlat
-                            | schema::VectorAlgorithm::Ssg => None,
+                            | schema::VectorAlgorithm::Ssg
+                            | schema::VectorAlgorithm::DiskAnn => None,
                         },
                         ivfpq: match algorithm {
                             schema::VectorAlgorithm::IvfPq => {
@@ -940,6 +945,25 @@ impl<'a> SdlParser<'a> {
                                     r: ssg.r.unwrap_or(defaults.r),
                                     angle: ssg.angle.unwrap_or(defaults.angle),
                                     pool: ssg.pool.unwrap_or(defaults.pool),
+                                })
+                            }
+                            _ => None,
+                        },
+                        diskann: match algorithm {
+                            schema::VectorAlgorithm::DiskAnn => {
+                                let diskann = config.diskann.clone().unwrap_or_default();
+                                let defaults = schema::DiskAnnParams::default();
+                                Some(schema::DiskAnnParams {
+                                    r: diskann.r.unwrap_or(defaults.r),
+                                    l_build: diskann.l_build.unwrap_or(defaults.l_build),
+                                    l_search: diskann.l_search.unwrap_or(defaults.l_search),
+                                    alpha_percent: diskann
+                                        .alpha_percent
+                                        .unwrap_or(defaults.alpha_percent),
+                                    m: diskann.m.unwrap_or(defaults.m),
+                                    sample_bytes: diskann
+                                        .sample_bytes
+                                        .map_or(defaults.sample_bytes, u64::from),
                                 })
                             }
                             _ => None,

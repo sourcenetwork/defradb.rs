@@ -54,6 +54,7 @@ fn schema() -> CollectionVersion {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     })];
     version
 }

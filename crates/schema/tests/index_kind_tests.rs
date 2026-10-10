@@ -3,8 +3,8 @@
 
 use proptest::prelude::*;
 use schema::{
-    DistanceMetric, HnswParams, IndexDescription, IndexKind, IvfFlatParams, IvfPqParams,
-    OrderedIndexDescription, SsgParams, VectorAlgorithm, VectorIndexDescription,
+    DiskAnnParams, DistanceMetric, HnswParams, IndexDescription, IndexKind, IvfFlatParams,
+    IvfPqParams, OrderedIndexDescription, SsgParams, VectorAlgorithm, VectorIndexDescription,
 };
 
 fn vector_description() -> VectorIndexDescription {
@@ -16,6 +16,7 @@ fn vector_description() -> VectorIndexDescription {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     }
 }
 
@@ -151,6 +152,7 @@ fn index_kinds() -> impl Strategy<Value = IndexKind> {
         Just(VectorAlgorithm::IvfPq),
         Just(VectorAlgorithm::IvfFlat),
         Just(VectorAlgorithm::Ssg),
+        Just(VectorAlgorithm::DiskAnn),
     ];
     let metrics = prop_oneof![Just(DistanceMetric::Cosine), Just(DistanceMetric::Dot)];
     let hnsw = prop::option::of((any::<u32>(), any::<u32>(), any::<u32>()).prop_map(
@@ -184,22 +186,53 @@ fn index_kinds() -> impl Strategy<Value = IndexKind> {
             pool,
         }),
     );
+    let diskann = prop::option::of(
+        (
+            any::<u32>(),
+            any::<u32>(),
+            any::<u32>(),
+            any::<u32>(),
+            any::<u32>(),
+            any::<u64>(),
+        )
+            .prop_map(|(r, l_build, l_search, alpha_percent, m, sample_bytes)| {
+                DiskAnnParams {
+                    r,
+                    l_build,
+                    l_search,
+                    alpha_percent,
+                    m,
+                    sample_bytes,
+                }
+            }),
+    );
 
     prop_oneof![
         any::<bool>().prop_map(|unique| IndexKind::Ordered(OrderedIndexDescription { unique })),
-        (algorithms, metrics, any::<u32>(), hnsw, ivfpq, ivfflat, ssg).prop_map(
-            |(algorithm, metric, dimensions, hnsw, ivfpq, ivfflat, ssg)| {
-                IndexKind::Vector(VectorIndexDescription {
-                    algorithm,
-                    metric,
-                    dimensions,
-                    hnsw,
-                    ivfpq,
-                    ivfflat,
-                    ssg,
-                })
-            }
+        (
+            algorithms,
+            metrics,
+            any::<u32>(),
+            hnsw,
+            ivfpq,
+            ivfflat,
+            ssg,
+            diskann
         )
+            .prop_map(
+                |(algorithm, metric, dimensions, hnsw, ivfpq, ivfflat, ssg, diskann)| {
+                    IndexKind::Vector(VectorIndexDescription {
+                        algorithm,
+                        metric,
+                        dimensions,
+                        hnsw,
+                        ivfpq,
+                        ivfflat,
+                        ssg,
+                        diskann,
+                    })
+                }
+            )
     ]
 }
 

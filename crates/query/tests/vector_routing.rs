@@ -32,6 +32,7 @@ fn vector_index(id: u32, field: &str, dimensions: u32) -> IndexDescription {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     })
 }
 
@@ -72,6 +73,7 @@ fn vector_index_with_metric(id: u32, field: &str, metric: DistanceMetric) -> Ind
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     })
 }
 

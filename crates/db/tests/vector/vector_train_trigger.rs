@@ -51,6 +51,7 @@ fn ivfpq_vector_description() -> VectorIndexDescription {
         }),
         ivfflat: None,
         ssg: None,
+        diskann: None,
     }
 }
 
@@ -63,6 +64,7 @@ fn hnsw_vector_description() -> VectorIndexDescription {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     }
 }
 

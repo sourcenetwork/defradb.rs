@@ -5,6 +5,7 @@
 //! making it so would cost a monomorphised kernel per call site.
 
 use super::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
+use super::diskann::DiskAnn;
 use super::flat::Flat;
 use super::hnsw::Hnsw;
 use super::ivf::flat::IvfFlat;
@@ -21,6 +22,7 @@ pub enum Engine<S> {
     IvfPq(IvfPq<S>),
     IvfFlat(IvfFlat<S>),
     Ssg(Ssg<S>),
+    DiskAnn(DiskAnn<S>),
 }
 
 macro_rules! dispatch {
@@ -31,6 +33,7 @@ macro_rules! dispatch {
             Engine::IvfPq($engine) => $call,
             Engine::IvfFlat($engine) => $call,
             Engine::Ssg($engine) => $call,
+            Engine::DiskAnn($engine) => $call,
         }
     };
 }
