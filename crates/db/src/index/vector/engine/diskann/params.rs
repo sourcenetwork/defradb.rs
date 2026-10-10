@@ -9,6 +9,12 @@ pub const TRAIN_THRESHOLD: u64 = 1_024;
 /// Tombstones a consolidation is worth running for, whatever the live count.
 pub const CONSOLIDATE_MIN_DELETED: u64 = 64;
 
+/// How far past `R` a record may grow from back-edges before it is pruned
+/// back to `R`, in percent. Microsoft's DiskANN uses the same 1.3: without
+/// slack every back-edge to a full node re-prunes it, which made pruning
+/// three quarters of a build.
+pub const SLACK_PERCENT: usize = 130;
+
 pub const MAX_R: u32 = 1_024;
 pub const MAX_L: u32 = 100_000;
 pub const MAX_M: u32 = 4_096;
@@ -88,6 +94,11 @@ impl DiskAnnParams {
             .rev()
             .find(|m| dimensions.is_multiple_of(*m))
             .unwrap_or(1)
+    }
+
+    /// The most edges a record holds: `R` plus its slack, rounded up.
+    pub fn slack_limit(&self) -> usize {
+        (self.r as usize * SLACK_PERCENT).div_ceil(100)
     }
 
     pub fn alpha(&self) -> f64 {
