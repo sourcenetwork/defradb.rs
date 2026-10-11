@@ -2577,7 +2577,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -4738,7 +4738,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5996,7 +5996,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -8609,7 +8609,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10764,6 +10764,29 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "regolith"
+version = "0.1.7"
+source = "git+https://github.com/sourcenetwork/regolith?rev=e7cf2732d0178defb02d9306cd8d1dae6406e4d8#e7cf2732d0178defb02d9306cd8d1dae6406e4d8"
+dependencies = [
+ "js-sys",
+ "kovan",
+ "kovan-channel",
+ "kovan-map",
+ "kovan-mvcc",
+ "kovan-queue",
+ "loom",
+ "lz4_flex",
+ "portable-atomic",
+ "rustix 1.1.4",
+ "snap",
+ "thiserror 1.0.69",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "regolith"
 version = "0.1.8"
 source = "git+https://github.com/sourcenetwork/regolith.git?rev=8f462e8370a670f923eefde562f83de1c42a55ef#8f462e8370a670f923eefde562f83de1c42a55ef"
 dependencies = [
@@ -11409,7 +11432,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11422,7 +11445,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11547,7 +11570,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11568,7 +11591,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs 1.0.6",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11894,7 +11917,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12518,6 +12541,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
+ "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
@@ -12562,7 +12586,7 @@ dependencies = [
  "kovan-queue",
  "proptest",
  "rapidhash",
- "regolith",
+ "regolith 0.1.8",
  "schema",
  "serde",
  "serde_json",
@@ -12853,7 +12877,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13707,7 +13731,7 @@ checksum = "51b70b87d15e91f553711b40df3048faf27a7a04e01e0ddc0cf9309f0af7c2ca"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -14305,6 +14329,7 @@ dependencies = [
  "hex",
  "libc",
  "parking_lot 0.12.5",
+ "regolith 0.1.7",
  "serde",
  "serde_json",
  "tempfile",
