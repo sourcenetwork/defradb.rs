@@ -15,12 +15,6 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  GIT_CONFIG_COUNT: "1"
-  GIT_CONFIG_KEY_0: url.https://${{ secrets.PRIVATE_REPO_PAT }}@github.com/sourcenetwork/.insteadOf
-  GIT_CONFIG_VALUE_0: https://github.com/sourcenetwork/
-
 jobs:
   lockfile:
     runs-on: ubuntu-24.04
@@ -31,6 +25,11 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0
       - name: Resolve the updated native release graph
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://${{ secrets.PRIVATE_REPO_PAT }}@github.com/sourcenetwork/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/sourcenetwork/
         run: bash .github/scripts/resolve-native-release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
