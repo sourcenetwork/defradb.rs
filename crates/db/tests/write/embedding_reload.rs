@@ -31,6 +31,8 @@ async fn fixture_with_counter(counter: bool) -> Fixture {
                     let vector = match request["input"].as_str().unwrap() {
                         "first\nold\n" | "5\nold\n" => vec![1.0, 2.0],
                         "first\nnew\n" | "7\nold\n" => vec![3.0, 4.0],
+                        "6\nold\n" => vec![9.0, 10.0],
+                        "8\nold\n" => vec![11.0, 12.0],
                         "second\nold\n" => vec![5.0, 6.0],
                         "second\nnew\n" => vec![7.0, 8.0],
                         text => panic!("unexpected embedding input: {text}"),
@@ -126,23 +128,31 @@ async fn update_embeds_the_applied_counter_value() {
     doc.set("text", 5_i64);
     doc.set("suffix", "old");
     let created = mutator.create("Texts", doc).await.unwrap();
-    let mut incremented = created.document;
-    incremented.set("text", 7_i64);
-    incremented.set_counter_delta("text".to_string(), NormalValue::Int(2));
-    let updated = mutator
+    let mut concurrent = created.document.clone();
+    concurrent.set("text", 6_i64);
+    concurrent.set_counter_delta("text".to_string(), NormalValue::Int(1));
+    mutator
         .update(
             "Texts",
-            incremented,
+            concurrent,
             ["text".to_string()].into_iter().collect(),
         )
         .await
         .unwrap();
-    assert_eq!(updated.document.get("text"), Some(&NormalValue::Int(7)));
-    assert_vector(&updated.document, vec![3.0, 4.0]);
+    let mut stale = created.document;
+    stale.set("text", 7_i64);
+    stale.set_counter_delta("text".to_string(), NormalValue::Int(2));
+    let updated = mutator
+        .update("Texts", stale, ["text".to_string()].into_iter().collect())
+        .await
+        .unwrap();
+    assert_eq!(updated.document.get("text"), Some(&NormalValue::Int(8)));
+    assert_vector(&updated.document, vec![11.0, 12.0]);
     let stored = mutator
         .get_for_update("Texts", &created.doc_id)
         .await
         .unwrap()
         .unwrap();
-    assert_vector(&stored, vec![3.0, 4.0]);
+    assert_eq!(stored.get("text"), Some(&NormalValue::Int(8)));
+    assert_vector(&stored, vec![11.0, 12.0]);
 }
