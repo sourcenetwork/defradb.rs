@@ -96,13 +96,21 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let fresh_fetcher =
             crate::LensedAutoCommitFetcher::new_without_write_back(Arc::clone(&self.db));
         let canonical_id = canonical_lock_id.to_string();
-        let mut current_doc = fresh_fetcher
+        let Some(mut current_doc) = fresh_fetcher
             .get_by_ids(collection_name, std::slice::from_ref(&canonical_id))
             .await?
             .into_docs()
             .into_iter()
             .next()
-            .ok_or_else(|| query::error::QueryError::document_not_found(canonical_id))?;
+        else {
+            // A delete committed after the caller's snapshot is a stale
+            // snapshot like any other: the retry re-plans and skips the doc.
+            return Err(if expected.is_some() {
+                query::error::QueryError::transaction_conflict("transaction conflict. Please retry")
+            } else {
+                query::error::QueryError::document_not_found(canonical_id)
+            });
+        };
         if let Some(expected) = expected {
             let values_unchanged = expected.values().len() == current_doc.values().len()
                 && expected
