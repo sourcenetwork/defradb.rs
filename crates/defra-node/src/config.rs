@@ -73,7 +73,8 @@ impl HttpConfig {
     /// Binding first is the only way to serve on an ephemeral port (bind
     /// port 0) and know which one it is: choosing a free port, releasing it
     /// and handing over the address leaves a window in which another process
-    /// can take it.
+    /// can take it. The node serves on this listener even if `address` is
+    /// changed afterwards.
     pub fn with_listener(listener: std::net::TcpListener) -> std::io::Result<Self> {
         let mut config = Self::with_addr(listener.local_addr()?);
         config.listener = Some(listener);

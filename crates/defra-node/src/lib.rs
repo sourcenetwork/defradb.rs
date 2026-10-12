@@ -1307,8 +1307,12 @@ impl NodeBuilder {
 
                     let listener = match bound {
                         Some(listener) => {
-                            listener.set_nonblocking(true)?;
-                            tokio::net::TcpListener::from_std(listener)?
+                            listener.set_nonblocking(true).map_err(|e| {
+                                anyhow::anyhow!("failed to prepare listener on {}: {}", addr, e)
+                            })?;
+                            tokio::net::TcpListener::from_std(listener).map_err(|e| {
+                                anyhow::anyhow!("failed to adopt listener on {}: {}", addr, e)
+                            })?
                         }
                         None => tokio::net::TcpListener::bind(addr).await.map_err(|e| {
                             let hint = match e.kind() {
