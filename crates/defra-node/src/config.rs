@@ -46,6 +46,7 @@ pub struct HttpConfig {
     pub(crate) transaction_idle_timeout: Duration,
     pub(crate) transaction_cleanup_interval: Duration,
     pub(crate) extra_routes: Option<axum::Router>,
+    pub(crate) listener: Option<std::net::TcpListener>,
 }
 
 #[cfg(feature = "http")]
@@ -63,7 +64,20 @@ impl HttpConfig {
             transaction_idle_timeout: DEFAULT_TRANSACTION_IDLE_TIMEOUT,
             transaction_cleanup_interval: DEFAULT_TRANSACTION_CLEANUP_INTERVAL,
             extra_routes: None,
+            listener: None,
         }
+    }
+
+    /// Serve on a listener the caller has already bound.
+    ///
+    /// Binding first is the only way to serve on an ephemeral port (bind
+    /// port 0) and know which one it is: choosing a free port, releasing it
+    /// and handing over the address leaves a window in which another process
+    /// can take it.
+    pub fn with_listener(listener: std::net::TcpListener) -> std::io::Result<Self> {
+        let mut config = Self::with_addr(listener.local_addr()?);
+        config.listener = Some(listener);
+        Ok(config)
     }
 
     /// Set the HTTP request timeout.
