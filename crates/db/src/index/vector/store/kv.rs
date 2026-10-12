@@ -9,9 +9,9 @@ use defra_core::thread_bounds::MaybeSend;
 use storage::corekv::{IterOptions, Key, Reader, Writer};
 use storage::keys::datastore::{vector_epoch_prefix, VectorAuxKey, VectorIndexKey};
 
-use super::codec::{decode_meta, decode_node, encode_meta, encode_node};
-use super::store::{Meta, Node, NodeId, VectorNodeStore};
+use super::{Meta, Node, NodeId, VectorNodeStore};
 use crate::index::error::Result;
+use crate::index::vector::codec::{decode_meta, decode_node, encode_meta, encode_node};
 
 /// One epoch of one vector index, over a transaction.
 #[derive(Debug)]

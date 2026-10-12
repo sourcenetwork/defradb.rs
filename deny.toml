@@ -44,11 +44,6 @@ ignore = [
     # condition.
     # ------------------------------------------------------------------
 
-    # wasmtime 46 — dynamic record lifting can exceed the hostcall fuel
-    # limit. Component-model only; lens enables runtime/cranelift/std, no
-    # component-model. Removable on wasmtime >= 48.0.3.
-    "RUSTSEC-2026-0316",
-
     # hickory-proto 0.25 — NSEC3 validation loop (DNSSEC, not enabled) and
     # O(n²) name compression when dialing /dns multiaddrs. Pulled by
     # libp2p-dns 0.44; removable with the libp2p 0.57 bump (#1875).

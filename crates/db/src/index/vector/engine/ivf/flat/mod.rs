@@ -1,6 +1,6 @@
 //! IVF_FLAT: coarse lists of full-precision vectors.
 //!
-//! The same partitioning [`ivfpq`](super::ivfpq) uses, with nothing
+//! The same partitioning [`pq`](super::pq) uses, with nothing
 //! compressed: a list holds the full vector rather than a product-quantized
 //! code, so inside the probed lists the ranking is exactly
 //! [`Flat`]'s. The only recall loss is a true neighbour sitting in an
@@ -28,11 +28,10 @@ pub use build::BuildReport;
 pub use params::{IvfFlatParams, DEFAULT_NPROBE, DEFAULT_SAMPLE_BYTES, MAX_NLIST, TRAIN_PER_LIST};
 
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::{
-    Admit, Centroids, EngineKind, Neighbor, VectorIndexEngine,
-};
+use crate::index::vector::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
 use crate::index::vector::engine::flat::Flat;
 use crate::index::vector::engine::ivf::{self, TrainedState};
+use crate::index::vector::quantize::Centroids;
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 use defra_core::vector::{Element, Metric};
 use std::sync::OnceLock;

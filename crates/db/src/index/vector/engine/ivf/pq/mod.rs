@@ -23,10 +23,9 @@ pub use params::{
 };
 
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::{
-    Admit, Centroids, EngineKind, Neighbor, VectorIndexEngine,
-};
+use crate::index::vector::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
 use crate::index::vector::engine::flat::Flat;
+use crate::index::vector::quantize::Centroids;
 use crate::index::vector::quantize::ProductQuantizer;
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 use defra_core::vector::{Element, Metric};

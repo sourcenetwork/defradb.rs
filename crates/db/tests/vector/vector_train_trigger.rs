@@ -5,11 +5,11 @@
 use db::database::DB;
 use db::index::manager::IndexManager;
 use db::index::manager::SliceSource;
-use db::index::vector::engine::ivfpq::IvfPq;
-use db::index::vector::engine::ivfpq::IvfPqParams;
-use db::index::vector::engine::ivfpq::TRAIN_PER_LIST;
+use db::index::vector::engine::ivf::pq::IvfPq;
+use db::index::vector::engine::ivf::pq::IvfPqParams;
+use db::index::vector::engine::ivf::pq::TRAIN_PER_LIST;
 use db::index::vector::index::VectorIndex;
-use db::index::vector::kv_store::KvNodeStore;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::thread_bounds::MaybeSend;
 use defra_core::vector::Metric;

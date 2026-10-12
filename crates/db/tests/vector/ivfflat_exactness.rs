@@ -20,8 +20,8 @@
 
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::flat::Flat;
-use db::index::vector::engine::ivfflat::IvfFlat;
-use db::index::vector::engine::ivfflat::IvfFlatParams;
+use db::index::vector::engine::ivf::flat::IvfFlat;
+use db::index::vector::engine::ivf::flat::IvfFlatParams;
 use db::index::vector::store::MemoryNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::vector::Metric;

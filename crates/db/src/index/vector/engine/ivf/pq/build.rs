@@ -3,8 +3,8 @@
 use super::codec::{self, TrainedState};
 use super::IvfPq;
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::{Centroids, Quantizer, Sampler};
 use crate::index::vector::engine::ivf;
+use crate::index::vector::quantize::{Centroids, Quantizer, Sampler};
 use crate::index::vector::quantize::{KMeans, ProductQuantizer, Reservoir};
 use crate::index::vector::store::VectorNodeStore;
 

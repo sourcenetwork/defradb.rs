@@ -5,8 +5,9 @@ use std::collections::BinaryHeap;
 use super::codec::{self, TrainedState};
 use super::IvfPq;
 use crate::index::error::Result;
-use crate::index::vector::engine::ann::{Admit, Neighbor, Quantizer};
+use crate::index::vector::engine::ann::{Admit, Neighbor};
 use crate::index::vector::engine::ivf;
+use crate::index::vector::quantize::Quantizer;
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 use defra_core::vector::Element;
 
