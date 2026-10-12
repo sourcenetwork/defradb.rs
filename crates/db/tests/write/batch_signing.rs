@@ -35,3 +35,51 @@ async fn create_many_collects_field_and_composite_cids_for_both_documents() {
     collected.sort();
     assert_eq!(collected, expected);
 }
+
+async fn collect_failed_write<F, Fut>(session: &str, write: F) -> Vec<cid::Cid>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    batch_signing::batch_start(session);
+    batch_signing::set_batch_session_key(Some(session.to_string()));
+    let failed = write().await;
+    batch_signing::set_batch_session_key(None);
+    assert!(failed, "the write must fail and roll back");
+    batch_signing::batch_take_cids(session).unwrap()
+}
+
+#[tokio::test]
+async fn create_many_rollback_collects_no_cids() {
+    let (db, _) = make_test_db_with_bus().await;
+    db.create_collection(test_collection()).await.unwrap();
+    let mutator = AutoCommitMutator::new(db);
+    let collected = collect_failed_write("create-many-rollback", || async {
+        mutator
+            .create_many(
+                "TestDoc",
+                vec![
+                    Document::from_json_str(r#"{"x":1}"#).unwrap(),
+                    Document::from_json_str(r#"{"x":1}"#).unwrap(),
+                ],
+            )
+            .await
+            .is_err()
+    })
+    .await;
+    assert_eq!(collected, Vec::new());
+}
+
+#[tokio::test]
+async fn create_rollback_collects_no_cids() {
+    let (db, _) = make_test_db_with_bus().await;
+    db.create_collection(test_collection()).await.unwrap();
+    let mutator = AutoCommitMutator::new(db);
+    let doc = || Document::from_json_str(r#"{"x":1}"#).unwrap();
+    mutator.create("TestDoc", doc()).await.unwrap();
+    let collected = collect_failed_write("create-rollback", || async {
+        mutator.create("TestDoc", doc()).await.is_err()
+    })
+    .await;
+    assert_eq!(collected, Vec::new());
+}
