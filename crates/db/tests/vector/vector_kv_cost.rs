@@ -15,11 +15,11 @@ use crate::support::QUERY_SEED;
 use db::index::error::Result;
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::hnsw::Hnsw;
-use db::index::vector::engine::ivfflat::IvfFlat;
-use db::index::vector::engine::ivfflat::IvfFlatParams;
-use db::index::vector::kv_store::KvNodeStore;
+use db::index::vector::engine::ivf::flat::IvfFlat;
+use db::index::vector::engine::ivf::flat::IvfFlatParams;
 use db::index::vector::params::Params;
 use db::index::vector::params::DEFAULT_M;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::Meta;
 use db::index::vector::store::Node;
 use db::index::vector::store::NodeId;
@@ -180,7 +180,7 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ivfpq_build_streams_two_passes_over_live_nodes() {
-    use db::index::vector::engine::ivfpq::{IvfPq, IvfPqParams};
+    use db::index::vector::engine::ivf::pq::{IvfPq, IvfPqParams};
     let store = RegolithStore::in_memory().unwrap();
     let mut txn: Box<dyn Txn> = store.new_txn(false).await.unwrap();
     let counting = Counting::new(KvNodeStore::new(&mut txn, 1, 1, 0));

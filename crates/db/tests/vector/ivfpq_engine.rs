@@ -3,9 +3,9 @@
 use db::index::vector::engine::ann::EngineKind;
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::flat::Flat;
-use db::index::vector::engine::ivfpq::IvfPq;
-use db::index::vector::engine::ivfpq::IvfPqParams;
-use db::index::vector::engine::ivfpq::TRAIN_PER_LIST;
+use db::index::vector::engine::ivf::pq::IvfPq;
+use db::index::vector::engine::ivf::pq::IvfPqParams;
+use db::index::vector::engine::ivf::pq::TRAIN_PER_LIST;
 use db::index::vector::store::MemoryNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::vector::Metric;

@@ -6,7 +6,7 @@ use crate::common::schema::vector_kind;
 use crate::common::schema::COLLECTION_SHORT_ID;
 use crate::common::schema::DIMENSIONS;
 use db::database::DB;
-use db::index::vector::kv_store::KvNodeStore;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::NodeId;
 use db::index::vector::store::VectorNodeStore;
 use db::index::IndexManager;

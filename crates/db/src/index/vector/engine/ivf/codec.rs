@@ -2,7 +2,7 @@
 //! keys, and the marker that a coarse build has completed.
 
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::Centroids;
+use crate::index::vector::quantize::Centroids;
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 
 pub const CENTROID: u8 = b'c';
@@ -86,7 +86,7 @@ pub fn node_from_list_key(key: &[u8]) -> Result<NodeId> {
 /// centroids and the vector width.
 ///
 /// IVF-PQ's own trained state additionally carries `m`, the subquantizer
-/// count, so it keeps a wider struct and its own codec in `ivfpq::codec`
+/// count, so it keeps a wider struct and its own codec in `pq::codec`
 /// rather than growing this one with a field that means nothing to IVF_FLAT;
 /// changing this shape would also change IVF-PQ's on-disk encoding and stop an
 /// index trained before this split from decoding. IVF_FLAT has nothing beyond

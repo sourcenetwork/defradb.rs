@@ -3,7 +3,7 @@
 
 use db::index::vector::engine::ivf;
 use db::index::vector::index::VectorIndex;
-use db::index::vector::kv_store::KvNodeStore;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::NodeId;
 use db::index::vector::store::VectorNodeStore;
 use document::NormalValue;
@@ -110,7 +110,7 @@ fn parameter_validation_requires_pq_m_to_divide_dimensions() {
 async fn parameter_validation_rejects_inferred_pq_width_before_writing() {
     use db::index::vector::engine::{
         ann::VectorIndexEngine,
-        ivfpq::{IvfPq, IvfPqParams},
+        ivf::pq::{IvfPq, IvfPqParams},
     };
     use db::index::vector::store::MemoryNodeStore;
     use defra_core::vector::Metric;
