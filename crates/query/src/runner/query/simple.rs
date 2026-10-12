@@ -216,13 +216,18 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn ordinary_scoped_id_queries_seek_without_index_prefetch() {
-        let id = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
+    const NOTE_ID: &str = "bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0";
+
+    /// A runner over one `Note`, with an index on each of `indexed`, whose
+    /// fetcher serves only point reads and counts them.
+    fn point_only_runner(indexed: &[&str]) -> (QueryRunner<PointOnlyFetcher>, Arc<AtomicUsize>) {
         let inner = MockFetcher::new();
         inner.add_doc(
             "Note",
-            Document::from_json_str(&format!(r#"{{"_docID":"{id}","owner":"shared"}}"#)).unwrap(),
+            Document::from_json_str(&format!(
+                r#"{{"_docID":"{NOTE_ID}","owner":"shared","status":"open"}}"#
+            ))
+            .unwrap(),
         );
         let reads = Arc::new(AtomicUsize::new(0));
         let fetcher = PointOnlyFetcher {
@@ -236,20 +241,29 @@ mod tests {
             vec![
                 FieldDescription::new("1", "_docID", FieldKind::doc_id()),
                 FieldDescription::new("2", "owner", FieldKind::string()),
+                FieldDescription::new("3", "status", FieldKind::string()),
             ],
         );
-        collection.indexes.push(IndexDescription {
-            id: 1,
-            name: "owner_idx".into(),
-            unique: false,
-            kind: None,
-            auto_generated: false,
-            fields: vec![IndexedFieldDescription {
-                name: "owner".into(),
-                descending: false,
-            }],
-        });
-        let runner = QueryRunner::new(fetcher, vec![collection]);
+        for (id, field) in (1..).zip(indexed) {
+            collection.indexes.push(IndexDescription {
+                id,
+                name: format!("{field}_idx"),
+                unique: false,
+                kind: None,
+                auto_generated: false,
+                fields: vec![IndexedFieldDescription {
+                    name: (*field).into(),
+                    descending: false,
+                }],
+            });
+        }
+        (QueryRunner::new(fetcher, vec![collection]), reads)
+    }
+
+    #[tokio::test]
+    async fn ordinary_scoped_id_queries_seek_without_index_prefetch() {
+        let id = NOTE_ID;
+        let (runner, reads) = point_only_runner(&["owner"]);
         let data = runner.execute_query(&format!(r#"{{
             matching: Note(filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "shared"}}}}) {{ _docID owner }}
             rejected: Note(filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "other"}}}}) {{ _docID }}
@@ -259,5 +273,20 @@ mod tests {
         assert_eq!(data["rejected"], serde_json::json!([]));
         assert_eq!(data["missing"], serde_json::json!([]));
         assert_eq!(reads.load(Ordering::Relaxed), 3);
+    }
+
+    /// Ordering by an indexed field routes through the planner, and two
+    /// eligible indexes are the case where estimation would otherwise run.
+    #[tokio::test]
+    async fn planner_scoped_id_queries_seek_without_index_estimates() {
+        let id = NOTE_ID;
+        let (runner, reads) = point_only_runner(&["owner", "status"]);
+        let data = runner.execute_query(&format!(r#"{{
+            matching: Note(filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "shared"}}, status: {{_eq: "open"}}}}, order: {{owner: ASC}}) {{ _docID }}
+            rejected: Note(filter: {{_docID: {{_eq: "{id}"}}, owner: {{_eq: "shared"}}, status: {{_eq: "closed"}}}}, order: {{owner: ASC}}) {{ _docID }}
+        }}"#)).await.unwrap();
+        assert_eq!(data["matching"][0]["_docID"], id);
+        assert_eq!(data["rejected"], serde_json::json!([]));
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
     }
 }
