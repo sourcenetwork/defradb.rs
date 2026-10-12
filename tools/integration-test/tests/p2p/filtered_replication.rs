@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use integration_test::{
     extract_doc_id, extract_p2p_addr, generate_identity, poll_until, TestCluster,
-    P2P_POLL_INTERVAL, P2P_TIMEOUT, USER_ACP_POLICY,
+    TestClusterBuilder, P2P_POLL_INTERVAL, P2P_TIMEOUT, USER_ACP_POLICY,
 };
 
 const AGENT_SCHEMA: &str = "type AgentDoc { agent_did: String @immutable  body: String }";
@@ -28,6 +28,12 @@ const CAROL: &str = "did:key:carol";
 /// know the push pipeline ran, so continued absence of the non-matching doc is
 /// meaningful rather than merely "not yet replicated".
 const ABSENCE_GRACE: Duration = Duration::from_secs(3);
+
+/// Replicator pushes that fail transiently must retry within `P2P_TIMEOUT`;
+/// the default ladder's first retry lands 15-30s out.
+fn replicating_cluster() -> TestClusterBuilder {
+    TestCluster::builder().with_extra_rust_args(["--replicator-retry-intervals=1,2"])
+}
 
 /// The CLI `--url` flag expects a bare `host:port`, while `api_url` carries the
 /// `http://` scheme. The harness's own client uses the node's bare address.
@@ -282,7 +288,7 @@ async fn filtered_excludes_nonmatching(cluster: TestCluster) {
 /// #1 + #2 over libp2p.
 #[tokio::test]
 async fn rust_filtered_replication_excludes_nonmatching() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -308,7 +314,7 @@ async fn rust_filtered_replication_excludes_nonmatching_iroh() {
 /// documents matching its predicate.
 #[tokio::test]
 async fn rust_filtered_replication_backfill_respects_filter() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -375,7 +381,7 @@ async fn rust_filtered_replication_backfill_respects_filter() {
 
 #[tokio::test]
 async fn rust_filtered_replication_backfill_controlled_mode() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_acp_local()
@@ -526,7 +532,7 @@ async fn rust_immutable_field_rejects_local_update() {
 /// before any network call (clap `requires`).
 #[tokio::test]
 async fn rust_filtered_replicator_cli_requires_filter_field() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -570,12 +576,10 @@ async fn rust_filtered_replicator_cli_requires_filter_field() {
 #[tokio::test]
 async fn rust_filtered_replication_encrypted_respects_filter() {
     const SECRET_SCHEMA: &str = "type SecretDoc { agent_did: String @immutable  secret: String }";
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_encryption()
-        // A transient replay failure must retry within the 15-second assertion window.
-        .with_extra_rust_args(["--replicator-retry-intervals=1,2"])
         .build()
         .await
         .unwrap();
@@ -660,7 +664,7 @@ async fn rust_filtered_replication_encrypted_respects_filter() {
 #[tokio::test]
 async fn rust_filtered_replication_encrypted_rich_filter() {
     const SECRET_SCHEMA: &str = "type SecretDoc { agent_did: String @immutable  secret: String }";
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -758,7 +762,7 @@ const DUMMY_PEER_ADDR: &str =
 /// runs before any dial, so an unreachable dummy peer address is fine.
 #[tokio::test]
 async fn rust_filtered_replicator_rejects_unknown_field() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -790,7 +794,7 @@ async fn rust_filtered_replicator_rejects_unknown_field() {
 /// must be `@immutable` (the B3 split-ownership guard).
 #[tokio::test]
 async fn rust_filtered_replicator_rejects_non_immutable_field() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -819,7 +823,7 @@ async fn rust_filtered_replicator_rejects_non_immutable_field() {
 #[tokio::test]
 async fn rust_filtered_replicator_rejects_type_mismatch() {
     const INT_SCHEMA: &str = "type IntDoc { count: Int @immutable  body: String }";
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -874,7 +878,7 @@ async fn rust_schema_rejects_immutable_non_lww_field() {
 /// `controlled_mode_denies_filtered_replicator_data_block_requests`.)
 #[tokio::test]
 async fn rust_filtered_replication_excludes_nonmatching_controlled_mode() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_acp_local()
@@ -983,7 +987,7 @@ async fn rust_filtered_replication_excludes_nonmatching_controlled_mode() {
 #[tokio::test]
 async fn rust_filtered_replication_float_filter_matches_numerically() {
     const SCORE_SCHEMA: &str = "type ScoreDoc { score: Float @immutable  body: String }";
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1147,7 +1151,7 @@ fn add_filtered_replicator_json_with_identity(
 /// is then attributable to the filter, not to a not-yet-delivered race.
 #[tokio::test]
 async fn rust_filtered_replication_in_set() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1237,7 +1241,7 @@ async fn rust_filtered_replication_composite_and() {
     const AND_SCHEMA: &str =
         "type AndDoc { agent_did: String @immutable  kind: String @immutable  seq: Int }";
 
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1325,7 +1329,7 @@ async fn rust_filtered_replication_composite_and() {
 /// A predicate on a mutable field (`body`) must be rejected at add time.
 #[tokio::test]
 async fn rust_filtered_replicator_rejects_predicate_non_immutable_field() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -1359,7 +1363,7 @@ async fn rust_filtered_replicator_rejects_predicate_non_immutable_field() {
 /// that coverage.)
 #[tokio::test]
 async fn rust_filtered_replicator_rejects_empty_field_over_http() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -1391,7 +1395,7 @@ async fn rust_filtered_replicator_rejects_empty_field_over_http() {
 /// the `Conditions` shape.
 #[tokio::test]
 async fn rust_filtered_replication_legacy_format_back_compat() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1484,7 +1488,7 @@ async fn rust_filtered_replication_legacy_format_back_compat() {
 /// requiring a remove/re-add cycle.
 #[tokio::test]
 async fn rust_filtered_replication_mutable_filter_upsert() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1615,11 +1619,9 @@ async fn rust_filtered_replication_mutable_filter_upsert() {
 /// `_in` has no `_eq` key — EqOnly would match nothing and silently drop ALL docs.
 #[tokio::test]
 async fn rust_filtered_replication_in_set_backfill() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
-        // The default first retry takes 15–30s, beyond this test's 15s delivery window.
-        .with_extra_rust_args(["--replicator-retry-intervals=1,2"])
         .build()
         .await
         .unwrap();
@@ -1712,7 +1714,7 @@ async fn rust_filtered_replication_in_set_backfill() {
 async fn rust_filtered_replication_or() {
     const OR_SCHEMA: &str = "type OrDoc { agent_did: String @immutable  kind: String @immutable }";
 
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1798,7 +1800,7 @@ async fn rust_filtered_replication_or() {
 /// NE predicate: docs where `agent_did != bob` replicate; bob is excluded.
 #[tokio::test]
 async fn rust_filtered_replication_ne_excludes() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1887,7 +1889,7 @@ async fn rust_filtered_replication_ne_excludes() {
 async fn rust_filtered_replication_range() {
     const TIER_SCHEMA: &str = "type TierDoc { tier: Int @immutable  body: String }";
 
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -1975,7 +1977,7 @@ async fn rust_filtered_replication_range() {
 async fn rust_filtered_replication_int_match() {
     const INT_SCHEMA: &str = "type IntDoc { code: Int @immutable  body: String }";
 
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -2056,7 +2058,7 @@ async fn rust_filtered_replication_int_match() {
 async fn rust_filtered_replication_bool_match() {
     const FLAG_SCHEMA: &str = "type FlagDoc { active: Boolean @immutable  body: String }";
 
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -2137,7 +2139,7 @@ async fn rust_filtered_replication_bool_match() {
 async fn rust_filtered_replication_datetime() {
     const EVENT_SCHEMA: &str = "type EventDoc { at: DateTime @immutable  body: String }";
 
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -2314,7 +2316,7 @@ async fn rust_filtered_replication_in_set_iroh() {
 /// AFTER the delete must not, even though it satisfies the (now-removed) filter.
 #[tokio::test]
 async fn rust_filtered_replication_delete_stops_push() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
@@ -2490,7 +2492,7 @@ async fn rust_filtered_replication_delete_stops_push_iroh() {
 /// coverage for the create -> list rich-predicate seam).
 #[tokio::test]
 async fn rust_filtered_replication_http_conditions_roundtrip() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -2547,7 +2549,7 @@ async fn rust_filtered_replication_http_conditions_roundtrip() {
 /// and re-serializes the `Filters` field.
 #[tokio::test]
 async fn rust_filtered_replication_cli_list_renders_filter() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(1)
         .with_p2p()
         .build()
@@ -2759,7 +2761,7 @@ async fn rust_filtered_replication_backfill_iroh() {
 /// bob (out of set) is excluded, all under Controlled access.
 #[tokio::test]
 async fn rust_filtered_replication_acp_in_set_controlled_mode() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_acp_local()
@@ -2884,7 +2886,7 @@ async fn rust_filtered_replication_acp_in_set_controlled_mode() {
 /// Controlled access.
 #[tokio::test]
 async fn rust_filtered_replication_acp_composite_controlled_mode() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_acp_local()
@@ -3007,7 +3009,7 @@ async fn rust_filtered_replication_retry_respects_filter() {
     // survives restart (without it the node uses an ephemeral peer key and comes
     // back with a new peer ID, which the source node's replicator can never reach).
     // A persistent store likewise keeps node1's prior data across the restart.
-    let mut cluster = TestCluster::builder()
+    let mut cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_keyring()
@@ -3148,7 +3150,7 @@ async fn rust_filtered_replication_retry_respects_filter() {
 /// forgotten peer nor deliver the document that previously entered retry.
 #[tokio::test]
 async fn rust_forget_replicator_prevents_retry_redial_after_restart() {
-    let mut cluster = TestCluster::builder()
+    let mut cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_keyring()
@@ -3315,7 +3317,7 @@ async fn rust_forget_replicator_prevents_retry_redial_after_restart() {
 async fn rust_filtered_replication_source_restart_preserves_filter() {
     // Keyring => stable peer identity across restart; regolith => persistent
     // peerstore/data so the persisted replicator (and its filter) survive.
-    let mut cluster = TestCluster::builder()
+    let mut cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_keyring()
@@ -3491,7 +3493,7 @@ async fn rust_filtered_replication_partial_delete_keeps_remaining() {
 
     // Keyring => stable peer identity across restart; regolith => persistent peerstore
     // so the survivor's re-persisted row must actually be reloaded after restart.
-    let mut cluster = TestCluster::builder()
+    let mut cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .with_keyring()
@@ -3696,7 +3698,7 @@ async fn rust_filtered_replication_partial_delete_keeps_remaining() {
 /// is correct end to end.
 #[tokio::test]
 async fn rust_replicator_getall_reports_replicator_lifecycle() {
-    let cluster = TestCluster::builder()
+    let cluster = replicating_cluster()
         .rust_nodes(2)
         .with_p2p()
         .build()
