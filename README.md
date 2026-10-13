@@ -54,6 +54,24 @@ before use. The host needs `bash`, `curl`, `tar`, `unzip` and `git`.
 
 `just doctor` reports what resolved and what is missing.
 
+### Nix
+
+`just setup` cannot work on NixOS: the archives it downloads are prebuilt and
+dynamically linked against a loader that does not exist there. Use the flake
+instead, which provides the toolchain and every native build dependency
+(`protoc`, `cmake`, `pkg-config`, OpenSSL, D-Bus, libclang):
+
+```bash
+nix develop                      # or `direnv allow`, via the tracked .envrc
+cargo test -p cli
+```
+
+The toolchain comes from [fenix](https://github.com/nix-community/fenix)
+rather than nixpkgs, which trails the `rust-version` in `Cargo.toml`.
+The shell deliberately omits tooling that is version-matched elsewhere --
+`wasm-bindgen-cli` (pinned to `Cargo.lock`), `wasm-pack`, Go, the JDK and TLC
+jar, and Lean -- so run the matching `just setup-*` recipe for those.
+
 `just setup` includes browser setup. On macOS, missing Firefox produces a
 warning rather than blocking setup; install it in `/Applications` or
 `~/Applications` before running `just test-wasm` or `just test-browser-p2p`.
