@@ -273,3 +273,171 @@ fn a_dot_product_metric_is_refused() {
         DiskAnn::try_new(MemoryNodeStore::new(), Metric::NegativeDot, params(), SEED).unwrap_err();
     assert!(err.to_string().contains("squared distance"), "got: {err}");
 }
+
+/// Counts graph-record reads: one per node a walk expands.
+struct Counting {
+    inner: MemoryNodeStore,
+    record_reads: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl VectorNodeStore for Counting {
+    async fn get_node(
+        &self,
+        id: NodeId,
+    ) -> db::index::error::Result<Option<db::index::vector::store::Node>> {
+        self.inner.get_node(id).await
+    }
+    async fn put_node(
+        &mut self,
+        node: db::index::vector::store::Node,
+    ) -> db::index::error::Result<()> {
+        self.inner.put_node(node).await
+    }
+    async fn get_meta(&self) -> db::index::error::Result<Option<db::index::vector::store::Meta>> {
+        self.inner.get_meta().await
+    }
+    async fn put_meta(
+        &mut self,
+        meta: db::index::vector::store::Meta,
+    ) -> db::index::error::Result<()> {
+        self.inner.put_meta(meta).await
+    }
+    async fn iterate_nodes<F>(&self, visit: F) -> db::index::error::Result<()>
+    where
+        F: FnMut(db::index::vector::store::Node) -> db::index::error::Result<()> + Send,
+    {
+        self.inner.iterate_nodes(visit).await
+    }
+    async fn clear(&mut self) -> db::index::error::Result<()> {
+        self.inner.clear().await
+    }
+    async fn get_aux(
+        &self,
+        kind: u8,
+        key: &[u8],
+    ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        if kind == codec::GRAPH {
+            self.record_reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.inner.get_aux(kind, key).await
+    }
+    async fn put_aux(
+        &mut self,
+        kind: u8,
+        key: &[u8],
+        value: &[u8],
+    ) -> db::index::error::Result<()> {
+        self.inner.put_aux(kind, key, value).await
+    }
+    async fn write_aux_from_nodes<F>(
+        &mut self,
+        kind: u8,
+        encode: F,
+    ) -> db::index::error::Result<u64>
+    where
+        F: FnMut(db::index::vector::store::Node) -> db::index::error::Result<(Vec<u8>, Vec<u8>)>
+            + Send,
+    {
+        self.inner.write_aux_from_nodes(kind, encode).await
+    }
+    async fn delete_aux(&mut self, kind: u8, key: &[u8]) -> db::index::error::Result<()> {
+        self.inner.delete_aux(kind, key).await
+    }
+    async fn iterate_aux<F>(
+        &self,
+        kind: u8,
+        key_prefix: &[u8],
+        visit: F,
+    ) -> db::index::error::Result<()>
+    where
+        F: FnMut(&[u8], &[u8]) -> db::index::error::Result<()> + Send,
+    {
+        self.inner.iterate_aux(kind, key_prefix, visit).await
+    }
+}
+
+/// A walk's memory must not grow with the corpus. Rewire the graph into a
+/// chain where each node's only edge leads somewhere nearer the query: an
+/// unbounded walk follows it through every node even at `L = 1`.
+#[tokio::test]
+async fn a_walk_is_bounded_even_along_an_ever_closer_chain() {
+    use db::index::vector::engine::ivf;
+    use db::index::vector::quantize::{ProductQuantizer, Quantizer};
+    use std::sync::atomic::Ordering;
+
+    let (vectors, queries) = corpus();
+    let store = Counting {
+        inner: MemoryNodeStore::new(),
+        record_reads: Default::default(),
+    };
+    let mut index = DiskAnn::try_new(store, Metric::Cosine, params(), SEED).unwrap();
+    for (i, vector) in vectors.iter().enumerate() {
+        index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
+    }
+    index.build().await.unwrap();
+    let mut state = index.state().await.unwrap().unwrap();
+    let m = state.m as usize;
+
+    let mut books = Vec::new();
+    for sub in 0..state.m {
+        let bytes = index
+            .store()
+            .get_aux(codec::CODEBOOK, &sub.to_be_bytes())
+            .await
+            .unwrap()
+            .unwrap();
+        books.push(ivf::decode_centroids(&bytes).unwrap());
+    }
+    let pq = ProductQuantizer::from_books(DIMENSIONS, books).unwrap();
+    let query = Metric::Cosine.prepare(&queries[0]);
+    let table = pq.distance_table(&query);
+
+    let mut codes = Vec::new();
+    index
+        .store()
+        .iterate_aux(codec::GRAPH, b"", |key, value| {
+            let record = codec::decode_record(value, m)?;
+            codes.push((codec::id_from_key(key)?, record.code));
+            Ok(())
+        })
+        .await
+        .unwrap();
+    // Farthest first, so every hop is an improvement and the walk never stops
+    // on its own.
+    codes.sort_by(|a, b| {
+        pq.distance(&table, &b.1)
+            .total_cmp(&pq.distance(&table, &a.1))
+    });
+    for pair in codes.windows(2) {
+        let record = codec::Record {
+            code: pair[0].1.clone(),
+            neighbors: vec![(pair[1].0, pair[1].1.clone())],
+        };
+        index
+            .store_mut()
+            .put_aux(
+                codec::GRAPH,
+                &codec::record_key(pair[0].0),
+                &codec::encode_record(&record),
+            )
+            .await
+            .unwrap();
+    }
+    state.entry = Some(codes[0].0);
+    index
+        .store_mut()
+        .put_aux(codec::STATE, b"", &codec::encode_state(&state))
+        .await
+        .unwrap();
+
+    index.store().record_reads.store(0, Ordering::Relaxed);
+    index.search(query.as_slice(), 1, Some(1)).await.unwrap();
+    let reads = index.store().record_reads.load(Ordering::Relaxed);
+    let budget = params().walk_budget(1);
+    assert!(
+        reads <= budget + 1,
+        "a walk at L = 1 read {reads} records of {CORPUS}; its budget is {budget}"
+    );
+}

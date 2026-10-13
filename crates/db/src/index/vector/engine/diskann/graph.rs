@@ -50,6 +50,11 @@ impl<S: VectorNodeStore> DiskAnn<S> {
 
     /// GreedySearch (paper Algorithm 1) over codes: every node expanded, with
     /// its own code, nearest first. One record read per expansion.
+    ///
+    /// Stops after [`walk_budget`](super::DiskAnnParams::walk_budget)
+    /// expansions, so what a walk holds is bounded by `l` and `R`, never by
+    /// the corpus: the frontier keeps `l`, and `seen`, `expanded` and the
+    /// visited list grow only per expansion.
     pub(super) async fn walk(
         &self,
         pq: &ProductQuantizer,
@@ -70,12 +75,16 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         let mut seen = HashSet::from([entry]);
         let mut expanded = HashSet::new();
         let mut visited = Vec::new();
+        let budget = self.params.walk_budget(l);
 
-        while let Some(next) = frontier
-            .iter()
-            .find(|visit| !expanded.contains(&visit.id))
-            .cloned()
-        {
+        while expanded.len() < budget {
+            let Some(next) = frontier
+                .iter()
+                .find(|visit| !expanded.contains(&visit.id))
+                .cloned()
+            else {
+                break;
+            };
             expanded.insert(next.id);
             // Absent when consolidation removed it after an edge was read.
             let Some(record) = self.record(m, next.id).await? else {

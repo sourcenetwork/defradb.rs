@@ -49,6 +49,10 @@ async fn assert_page(http: &reqwest::Client, api: &str, first: usize) -> u64 {
 }
 
 async fn lifecycle(algorithm: &str) {
+    lifecycle_with(algorithm, 156).await;
+}
+
+async fn lifecycle_with(algorithm: &str, corpus: usize) {
     let mut cluster = TestCluster::builder()
         .rust_nodes(1)
         .with_store("regolith")
@@ -83,7 +87,7 @@ async fn lifecycle(algorithm: &str) {
         .build()
         .unwrap();
     // Four lists / four SSG edges need 4 * 39 live vectors to trigger a build.
-    let input = (0..156)
+    let input = (0..corpus)
         .map(|i| format!("{{title: \"n{i}\", embedding: [{i}, 1, 0, 0]}}"))
         .collect::<Vec<_>>()
         .join(",");
@@ -94,7 +98,7 @@ async fn lifecycle(algorithm: &str) {
     )
     .await;
     let rows = created["add_Note"].as_array().unwrap();
-    assert_eq!(rows.len(), 156);
+    assert_eq!(rows.len(), corpus);
     let id = |title: &str| {
         rows.iter().find(|row| row["title"] == title).unwrap()["_docID"]
             .as_str()
@@ -153,4 +157,12 @@ async fn rust_ssg_vector_lifecycle() {
 #[tokio::test]
 async fn rust_diskann_vector_lifecycle() {
     lifecycle("diskann: {metric: COSINE, R: 8, m: 2}").await;
+}
+
+/// Past DiskANN's training threshold, so the creating mutation builds the
+/// graph and every later step (restart, update, delete, restart) runs against
+/// it rather than the exact scan.
+#[tokio::test]
+async fn rust_diskann_graph_vector_lifecycle() {
+    lifecycle_with("diskann: {metric: COSINE, R: 8, m: 2}", 1_124).await;
 }

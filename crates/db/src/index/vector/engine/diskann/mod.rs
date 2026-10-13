@@ -7,8 +7,9 @@
 //!
 //! Each node keeps a record of its own code and its neighbours' ids and codes,
 //! so one read ranks every edge out of it. Full vectors are read only to
-//! re-rank the walk's final candidates. Memory is the codebooks plus one walk's
-//! candidate list, whatever the corpus size.
+//! re-rank the walk's final candidates. Memory is the codebooks plus one walk,
+//! and a walk expands at most a fixed multiple of its candidate list `L`, so
+//! it holds `O(L * R)` ids and codes whatever the corpus size.
 //!
 //! Inserts and deletes follow FreshVamana: edges are pruned with `alpha > 1`,
 //! and a delete tombstones the node, which a walk still passes through. Once
@@ -20,7 +21,9 @@
 //! which keeps the index transactional without any state between calls.
 //!
 //! ADC ranks by squared distance, which orders cosine only on unit vectors and
-//! Euclidean by definition, so a dot-product metric is refused.
+//! Euclidean by definition, so the engine refuses only a dot-product metric.
+//! The schema accepts cosine alone, as it does for IVF_PQ: Euclidean is sound
+//! here but its recall has never been measured.
 
 mod build;
 pub mod codec;

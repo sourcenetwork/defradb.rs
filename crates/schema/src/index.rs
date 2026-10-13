@@ -448,6 +448,10 @@ impl VectorAlgorithm {
     /// cost recall in a way no cosine-corpus test would catch, so it stays
     /// refused for the same reason IVF-PQ's `EUCLIDEAN` does: unmeasured.
     ///
+    /// DISKANN walks and ranks by the same ADC as IVF-PQ, so it takes the same
+    /// line: cosine only, with `EUCLIDEAN` refused as unmeasured rather than
+    /// unsound.
+    ///
     /// Refused when the definition is written rather than when the first
     /// document is indexed.
     pub fn supports_metric(self, metric: DistanceMetric) -> bool {

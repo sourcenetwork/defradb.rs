@@ -15,6 +15,13 @@ pub const CONSOLIDATE_MIN_DELETED: u64 = 64;
 /// three quarters of a build.
 pub const SLACK_PERCENT: usize = 130;
 
+/// A walk expands at most this many times its candidate list.
+pub const WALK_BUDGET_FACTOR: usize = 4;
+
+/// Expansions a walk is allowed whatever its candidate list, so a small `l`
+/// still gets past the entry's neighbourhood.
+pub const WALK_MIN_BUDGET: usize = 32;
+
 pub const MAX_R: u32 = 1_024;
 pub const MAX_L: u32 = 100_000;
 pub const MAX_M: u32 = 4_096;
@@ -99,6 +106,17 @@ impl DiskAnnParams {
     /// The most edges a record holds: `R` plus its slack, rounded up.
     pub fn slack_limit(&self) -> usize {
         (self.r as usize * SLACK_PERCENT).div_ceil(100)
+    }
+
+    /// Most nodes one walk with candidate list `l` expands.
+    ///
+    /// An ordinary walk expands about `1.2 * l` (115 at `l = 100` on 20k
+    /// vectors), so this only stops a pathological one, such as a chain of
+    /// ever-closer nodes that would otherwise lead through the whole graph.
+    /// It is what bounds a walk's memory: at most this many records, and
+    /// `slack_limit` edges each.
+    pub fn walk_budget(&self, l: usize) -> usize {
+        (WALK_BUDGET_FACTOR * l).max(WALK_MIN_BUDGET)
     }
 
     pub fn alpha(&self) -> f64 {
