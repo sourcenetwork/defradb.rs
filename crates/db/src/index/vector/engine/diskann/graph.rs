@@ -1,9 +1,9 @@
-//! The walk, the insert, and the pruning they share.
+//! The walk, linking a node in, and the pruning they share.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::codec::{self, Record, State};
+use super::codec::{self, GraphState, Record, Trained};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Admit, Candidate, Neighbor, VectorIndexEngine};
@@ -59,17 +59,16 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         &self,
         pq: &ProductQuantizer,
         entry: NodeId,
-        query: &[f32],
+        table: &[f32],
         l: usize,
     ) -> Result<Vec<Visit>> {
         let m = pq.code_len();
-        let table = pq.distance_table(query);
         let Some(start) = self.record(m, entry).await? else {
             return Ok(Vec::new());
         };
         let mut frontier = vec![Visit {
             id: entry,
-            distance: pq.distance(&table, &start.code),
+            distance: pq.distance(table, &start.code),
             code: start.code,
         }];
         let mut seen = HashSet::from([entry]);
@@ -95,7 +94,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 if seen.insert(id) {
                     frontier.push(Visit {
                         id,
-                        distance: pq.distance(&table, &code),
+                        distance: pq.distance(table, &code),
                         code,
                     });
                 }
@@ -107,42 +106,40 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         Ok(visited)
     }
 
-    /// Insert (paper Algorithm 2): walk to the new node's neighbourhood, prune
-    /// its out-edges from what the walk expanded, then add the back-edges. A
-    /// neighbour is pruned back to `R` only once it passes the slack limit.
-    pub(super) async fn graph_insert(
+    /// Walks to `vector`'s neighbourhood and writes `id`'s record with the
+    /// out-edges RobustPrune keeps from what the walk expanded. Returns those
+    /// out-edges, each of which owes `id` a back-edge.
+    ///
+    /// The first node of an empty graph becomes its entry, with no edges.
+    pub(super) async fn link(
         &mut self,
-        state: &mut State,
+        pq: &ProductQuantizer,
+        graph: &mut GraphState,
         id: NodeId,
         vector: &[f32],
-    ) -> Result<()> {
-        let pq = self.quantizer(state).await?;
-        let m = pq.code_len();
-        let mut code = vec![0u8; m];
-        pq.encode(vector, &mut code);
-        let existed = self.record(m, id).await?.is_some();
-        if !existed {
-            state.live += 1;
+        code: &[u8],
+    ) -> Result<Vec<(NodeId, Vec<u8>)>> {
+        if self.record(pq.code_len(), id).await?.is_none() {
+            graph.live += 1;
         }
-
-        let Some(entry) = state.entry else {
-            state.entry = Some(id);
-            return self
-                .put_record(
-                    id,
-                    &Record {
-                        code,
-                        neighbors: Vec::new(),
-                    },
-                )
-                .await;
+        let Some(entry) = graph.entry else {
+            graph.entry = Some(id);
+            self.put_record(
+                id,
+                &Record {
+                    code: code.to_vec(),
+                    neighbors: Vec::new(),
+                },
+            )
+            .await?;
+            return Ok(Vec::new());
         };
-
+        let table = pq.distance_table(vector);
         let visited = self
-            .walk(&pq, entry, vector, self.params.l_build as usize)
+            .walk(pq, entry, &table, self.params.l_build as usize)
             .await?;
         let neighbors = self.prune(
-            &pq,
+            pq,
             vector,
             visited
                 .into_iter()
@@ -153,27 +150,57 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         self.put_record(
             id,
             &Record {
-                code: code.clone(),
+                code: code.to_vec(),
                 neighbors: neighbors.clone(),
             },
         )
         .await?;
+        Ok(neighbors)
+    }
 
-        let limit = self.params.slack_limit();
-        for (neighbor, _) in neighbors {
-            let Some(mut record) = self.record(m, neighbor).await? else {
+    /// Adds `edges` to `target`'s record, replacing the code of an edge it
+    /// already has, and prunes it back to `R` only once it passes the slack
+    /// limit. A target consolidated away meanwhile is skipped.
+    pub(super) async fn add_back_edges(
+        &mut self,
+        pq: &ProductQuantizer,
+        target: NodeId,
+        edges: Vec<(NodeId, Vec<u8>)>,
+    ) -> Result<()> {
+        let Some(mut record) = self.record(pq.code_len(), target).await? else {
+            return Ok(());
+        };
+        for (id, code) in edges {
+            if id == target {
                 continue;
-            };
+            }
             match record.neighbors.iter_mut().find(|(n, _)| *n == id) {
-                // A re-insert: the edge stays, under the vector's new code.
-                Some(edge) => edge.1 = code.clone(),
-                None => record.neighbors.push((id, code.clone())),
+                Some(edge) => edge.1 = code,
+                None => record.neighbors.push((id, code)),
             }
-            if record.neighbors.len() > limit {
-                let base = decode(&pq, &record.code);
-                record.neighbors = self.prune(&pq, &base, std::mem::take(&mut record.neighbors));
-            }
-            self.put_record(neighbor, &record).await?;
+        }
+        if record.neighbors.len() > self.params.slack_limit() {
+            let base = decode(pq, &record.code);
+            record.neighbors = self.prune(pq, &base, std::mem::take(&mut record.neighbors));
+        }
+        self.put_record(target, &record).await
+    }
+
+    /// Insert (paper Algorithm 2), back-edges applied at once: how training
+    /// builds the graph one node at a time.
+    pub(super) async fn graph_insert(
+        &mut self,
+        trained: &Trained,
+        graph: &mut GraphState,
+        id: NodeId,
+        vector: &[f32],
+    ) -> Result<()> {
+        let pq = self.quantizer(trained).await?;
+        let mut code = vec![0u8; pq.code_len()];
+        pq.encode(vector, &mut code);
+        for (neighbor, _) in self.link(&pq, graph, id, vector, &code).await? {
+            self.add_back_edges(&pq, neighbor, vec![(id, code.clone())])
+                .await?;
         }
         Ok(())
     }
@@ -205,15 +232,18 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .collect()
     }
 
-    /// Walks by code, then re-ranks the best `L` admitted nodes by their full
-    /// vectors.
+    /// Walks the graph and scans the pending codes, then re-ranks the best `L`
+    /// admitted candidates of both by their full vectors.
     ///
-    /// Falls back to the exact scan when the walk admits fewer than `k`: a
-    /// selective filter, or a graph smaller than `k`. That scan is bounded by
-    /// the corpus, which is what the unrouted query would have read anyway.
+    /// A node both in the graph and pending (an update not merged yet) is
+    /// ranked once, by its nearer code; re-ranking reads its current vector.
+    ///
+    /// Falls back to the exact scan when fewer than `k` survive: a selective
+    /// filter, or a corpus smaller than `k`. That scan is bounded by the
+    /// corpus, which is what the unrouted query would have read anyway.
     pub(super) async fn search_graph<E: Element, A: Admit>(
         &self,
-        state: &State,
+        trained: &Trained,
         query: &[E],
         k: usize,
         effort: Option<usize>,
@@ -222,35 +252,50 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         if k == 0 {
             return Ok(Vec::new());
         }
-        if query.len() != state.dimensions as usize {
+        if query.len() != trained.dimensions as usize {
             return Err(Error::VectorDimensionMismatch {
-                indexed: state.dimensions as usize,
+                indexed: trained.dimensions as usize,
                 got: query.len(),
             });
         }
-        let Some(entry) = state.entry else {
-            return Ok(Vec::new());
-        };
         let prepared = self.metric.prepare(query);
         let l = effort.unwrap_or(self.params.l_search as usize).max(k);
-        let pq = self.quantizer(state).await?;
+        let pq = self.quantizer(trained).await?;
+        let table = pq.distance_table(&prepared);
 
+        let mut candidates = match self.graph_state().await?.entry {
+            Some(entry) => self.walk(&pq, entry, &table, l).await?,
+            None => Vec::new(),
+        };
+        self.store()
+            .iterate_aux(codec::PENDING, b"", |key, code| {
+                candidates.push(Visit {
+                    id: codec::id_from_key(key)?,
+                    distance: pq.distance(&table, code),
+                    code: Vec::new(),
+                });
+                Ok(())
+            })
+            .await?;
+        candidates.sort_by(by_distance);
+
+        let mut seen = HashSet::new();
         let mut ranked = Vec::with_capacity(l);
-        for visit in self.walk(&pq, entry, &prepared, l).await? {
+        for candidate in candidates {
             if ranked.len() >= l {
                 break;
             }
-            if !admit.admits(visit.id) {
+            if !seen.insert(candidate.id) || !admit.admits(candidate.id) {
                 continue;
             }
-            let Some(node) = self.store().get_node(visit.id).await? else {
+            let Some(node) = self.store().get_node(candidate.id).await? else {
                 continue;
             };
             if node.deleted {
                 continue;
             }
             ranked.push(Neighbor {
-                id: visit.id,
+                id: candidate.id,
                 distance: self.metric.distance_stored(&prepared, &node.vector),
             });
         }

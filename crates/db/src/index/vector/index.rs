@@ -11,7 +11,7 @@ use storage::corekv::{MaybeSend, Reader, Writer};
 use storage::index::CollectionIndex;
 
 use super::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
-use super::engine::diskann::{DiskAnn, DiskAnnParams};
+use super::engine::diskann::{DiskAnn, DiskAnnParams, MergePlan};
 use super::engine::dispatch::Engine;
 use super::engine::flat::Flat;
 use super::engine::hnsw::Hnsw;
@@ -224,6 +224,40 @@ impl VectorIndex {
         Ok(true)
     }
 
+    /// The DiskANN merge this index is due, read on `txn`, or `None` when it
+    /// is not a DiskANN index or nothing is due.
+    ///
+    /// Meant for a read-only snapshot: the plan is applied with
+    /// [`merge`](Self::merge) on another transaction, which then reads only
+    /// the keys it names.
+    pub async fn merge_plan<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+    ) -> Result<Option<MergePlan>> {
+        if self.vector.algorithm != VectorAlgorithm::DiskAnn {
+            return Ok(None);
+        }
+        let plan = self.diskann(txn)?.merge_plan().await?;
+        Ok((!plan.is_empty()).then_some(plan))
+    }
+
+    /// Applies a plan from [`merge_plan`](Self::merge_plan) on `txn`.
+    pub async fn merge<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+        plan: MergePlan,
+    ) -> Result<()> {
+        self.diskann(txn)?.merge(plan).await
+    }
+
+    fn diskann<'txn, T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &'txn mut T,
+    ) -> Result<DiskAnn<KvNodeStore<'txn, T>>> {
+        let store = KvNodeStore::new(txn, self.collection_short_id, self.desc.id, LIVE_EPOCH);
+        DiskAnn::try_new(store, self.metric, self.diskann, self.seed)
+    }
+
     /// The vector a document contributes, if any.
     ///
     /// `None` means the document is simply not in the index, which is the same
@@ -336,12 +370,10 @@ impl CollectionIndex for VectorIndex {
         }
         .map_err(into_storage)?;
 
-        // Once built, `should_build`'s trained/built check is an O(1) aux
-        // lookup, so this costs one extra read per write and nothing else.
-        // HNSW is excluded: its build is a whole-graph reinsert, far too heavy
-        // to price into a single write. The background task owns that
-        // rebuild, through `rebuild_if_due`.
-        if engine.kind() != EngineKind::Hnsw && engine.should_build().await.map_err(into_storage)? {
+        // Once built, the trained/built check is an O(1) aux lookup, so this
+        // costs one extra read per write and nothing else. A kind that leaves
+        // its build to the background sweep answers false.
+        if engine.should_build_inline().await.map_err(into_storage)? {
             engine.build().await.map_err(into_storage)?;
         }
         Ok(())

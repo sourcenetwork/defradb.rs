@@ -2,7 +2,7 @@
 //! but the codebooks.
 //!
 //! An index answers by exhaustive scan, as [`Flat`] does, until it holds
-//! [`TRAIN_THRESHOLD`] vectors. It then trains a product quantizer from a
+//! [`TRAIN_THRESHOLD`] vectors. That write trains a product quantizer from a
 //! byte-bounded sample and inserts every vector into a Vamana graph.
 //!
 //! Each node keeps a record of its own code and its neighbours' ids and codes,
@@ -11,14 +11,22 @@
 //! and a walk expands at most a fixed multiple of its candidate list `L`, so
 //! it holds `O(L * R)` ids and codes whatever the corpus size.
 //!
-//! Inserts and deletes follow FreshVamana: edges are pruned with `alpha > 1`,
-//! and a delete tombstones the node, which a walk still passes through. Once
-//! tombstones reach a tenth of the graph, [`build`](VectorIndexEngine::build)
-//! consolidates them (the paper's Algorithm 4).
+//! Once trained, an insert stores its vector and joins a pending set with its
+//! code; it writes no graph record and no shared state, so concurrent writers
+//! do not conflict. A delete tombstones the node, and a node already in the
+//! graph also joins a delete list; walks still pass through it. Searches walk
+//! the graph, scan the pending codes, and re-rank both.
 //!
-//! Unlike the paper there is no in-memory temporary index and no streaming
-//! merge: an insert goes straight into the graph on the writing transaction,
-//! which keeps the index transactional without any state between calls.
+//! [`merge`](DiskAnn::merge) is the paper's StreamingMerge, in its three
+//! phases: consolidate tombstones (Algorithm 4), insert pending vectors with
+//! their back-edges buffered, then patch the buffered back-edges in. The
+//! background sweep plans a merge on a snapshot and applies it on its own
+//! transaction with point reads and writes only, so a writer appending to the
+//! pending set meanwhile does not abort it.
+//!
+//! Unlike the paper the pending set is not an in-memory graph: it lives in the
+//! store, which keeps it transactional and durable without a redo log, and is
+//! scanned by code between merges.
 //!
 //! ADC ranks by squared distance, which orders cosine only on unit vectors and
 //! Euclidean by definition, so the engine refuses only a dot-product metric.
@@ -28,20 +36,25 @@
 mod build;
 pub mod codec;
 mod graph;
+mod merge;
 mod params;
 
 pub use codec::State;
+pub use merge::MergePlan;
 pub use params::{
-    DiskAnnParams, CONSOLIDATE_MIN_DELETED, MAX_ALPHA_PERCENT, MAX_L, MAX_M, MAX_R, TRAIN_THRESHOLD,
+    DiskAnnParams, CONSOLIDATE_MIN_DELETED, MAX_ALPHA_PERCENT, MAX_L, MAX_M, MAX_PLAN_PENDING,
+    MAX_R, MERGE_MIN_BATCH, SLACK_PERCENT, TRAIN_THRESHOLD,
 };
 
 use std::sync::{Arc, OnceLock};
+
+use codec::{GraphState, Trained};
 
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
 use crate::index::vector::engine::flat::Flat;
 use crate::index::vector::engine::ivf;
-use crate::index::vector::quantize::ProductQuantizer;
+use crate::index::vector::quantize::{ProductQuantizer, Quantizer};
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 use defra_core::vector::{Element, Metric};
 
@@ -85,26 +98,41 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         self.params
     }
 
-    /// The trained state, or `None` while the index is still exact.
-    pub async fn state(&self) -> Result<Option<State>> {
-        match self.store().get_aux(codec::STATE, b"").await? {
-            Some(bytes) => codec::decode_state(&bytes).map(Some),
+    /// What training fixed, or `None` while the index is still exact.
+    pub(super) async fn trained(&self) -> Result<Option<Trained>> {
+        match self.store().get_aux(codec::TRAINED, b"").await? {
+            Some(bytes) => codec::decode_trained(&bytes).map(Some),
             None => Ok(None),
         }
     }
 
-    async fn put_state(&mut self, state: &State) -> Result<()> {
+    pub(super) async fn graph_state(&self) -> Result<GraphState> {
+        match self.store().get_aux(codec::GRAPH_STATE, b"").await? {
+            Some(bytes) => codec::decode_graph_state(&bytes),
+            None => Ok(GraphState::default()),
+        }
+    }
+
+    pub(super) async fn put_graph_state(&mut self, state: &GraphState) -> Result<()> {
         self.store_mut()
-            .put_aux(codec::STATE, b"", &codec::encode_state(state))
+            .put_aux(codec::GRAPH_STATE, b"", &codec::encode_graph_state(state))
             .await
     }
 
-    async fn quantizer(&self, state: &State) -> Result<Arc<ProductQuantizer>> {
+    /// The trained state and the graph's, or `None` while the index is exact.
+    pub async fn state(&self) -> Result<Option<State>> {
+        match self.trained().await? {
+            Some(trained) => Ok(Some(State::new(trained, self.graph_state().await?))),
+            None => Ok(None),
+        }
+    }
+
+    pub(super) async fn quantizer(&self, trained: &Trained) -> Result<Arc<ProductQuantizer>> {
         if let Some(quantizer) = self.quantizer.get() {
             return Ok(quantizer.clone());
         }
-        let mut books = Vec::with_capacity(state.m as usize);
-        for sub in 0..state.m {
+        let mut books = Vec::with_capacity(trained.m as usize);
+        for sub in 0..trained.m {
             let bytes = self
                 .store()
                 .get_aux(codec::CODEBOOK, &sub.to_be_bytes())
@@ -113,7 +141,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             books.push(ivf::decode_centroids(&bytes)?);
         }
         let quantizer = Arc::new(ProductQuantizer::from_books(
-            state.dimensions as usize,
+            trained.dimensions as usize,
             books,
         )?);
         Ok(self.quantizer.get_or_init(|| quantizer).clone())
@@ -127,61 +155,77 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
         EngineKind::DiskAnn
     }
 
-    /// The vector is always stored, trained or not: it is what training samples,
-    /// what re-ranking reads, and what keeps the index exact until training.
+    /// The vector is always stored, trained or not: it is what training
+    /// samples, what re-ranking reads, and what keeps the index exact until
+    /// training.
+    ///
+    /// Once trained it joins the pending set with its code. The writes that
+    /// clear a tombstone are blind, so an insert reads nothing a merge writes
+    /// but the node itself.
     async fn insert<E: Element>(&mut self, id: NodeId, vector: &[E]) -> Result<()> {
         self.params.validate_dimensions(vector.len())?;
-        let Some(mut state) = self.state().await? else {
+        let Some(trained) = self.trained().await? else {
             return self.staging.insert(id, vector).await;
         };
-        if vector.len() != state.dimensions as usize {
+        if vector.len() != trained.dimensions as usize {
             return Err(Error::VectorDimensionMismatch {
-                indexed: state.dimensions as usize,
+                indexed: trained.dimensions as usize,
                 got: vector.len(),
             });
         }
         self.staging.insert(id, vector).await?;
+        let pq = self.quantizer(&trained).await?;
+        let mut code = vec![0u8; pq.code_len()];
+        pq.encode(&self.metric.prepare(vector), &mut code);
         let key = codec::record_key(id);
-        if self.store().get_aux(codec::DELETED, &key).await?.is_some() {
-            self.store_mut().delete_aux(codec::DELETED, &key).await?;
-            state.deleted = state.deleted.saturating_sub(1);
-        }
-        let prepared = self.metric.prepare(vector);
-        self.graph_insert(&mut state, id, &prepared).await?;
-        self.put_state(&state).await
+        self.store_mut().delete_aux(codec::DELETED, &key).await?;
+        self.store_mut().put_aux(codec::PENDING, &key, &code).await
     }
 
-    /// Tombstones the node. Once trained it also joins the delete list, and
-    /// its record stays in the graph for walks to pass through until
-    /// consolidation.
+    /// Tombstones the node. A pending node simply leaves the pending set; one
+    /// already in the graph joins the delete list, and its record stays for
+    /// walks to pass through until a merge consolidates it.
     async fn delete(&mut self, id: NodeId) -> Result<bool> {
         if !self.staging.delete(id).await? {
             return Ok(false);
         }
-        if let Some(mut state) = self.state().await? {
+        if self.trained().await?.is_some() {
             let key = codec::record_key(id);
+            self.store_mut().delete_aux(codec::PENDING, &key).await?;
             if self.store().get_aux(codec::GRAPH, &key).await?.is_some() {
                 self.store_mut().put_aux(codec::DELETED, &key, b"").await?;
-                state.deleted += 1;
-                self.put_state(&state).await?;
             }
         }
         Ok(true)
     }
 
+    /// Training is due at [`TRAIN_THRESHOLD`] vectors; after that a merge is
+    /// due whenever anything is pending or enough tombstones accumulated.
     async fn should_build(&self) -> Result<bool> {
-        match self.state().await? {
+        match self.trained().await? {
             None => self.live_count_at_least(TRAIN_THRESHOLD).await,
-            Some(state) => Ok(state.deleted >= CONSOLIDATE_MIN_DELETED.max(state.live / 10)),
+            Some(_) => self.merge_due().await,
         }
     }
 
-    /// Trains and builds the graph the first time; consolidates tombstones
-    /// after that.
+    /// Only training runs on a write. Deciding a merge reads the pending set,
+    /// which every concurrent writer appends to; a write that read it would
+    /// conflict with all of them, so merges are left to the background sweep.
+    async fn should_build_inline(&self) -> Result<bool> {
+        match self.trained().await? {
+            None => self.live_count_at_least(TRAIN_THRESHOLD).await,
+            Some(_) => Ok(false),
+        }
+    }
+
+    /// Trains and builds the graph the first time; merges after that.
     async fn build(&mut self) -> Result<()> {
-        match self.state().await? {
+        match self.trained().await? {
             None => self.train_and_build().await,
-            Some(state) => self.consolidate(state).await,
+            Some(_) => {
+                let plan = self.merge_plan().await?;
+                self.merge(plan).await
+            }
         }
     }
 
@@ -192,9 +236,9 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
         effort: Option<usize>,
         admit: &A,
     ) -> Result<Vec<Neighbor>> {
-        match self.state().await? {
+        match self.trained().await? {
             None => self.staging.search_where(query, k, effort, admit).await,
-            Some(state) => self.search_graph(&state, query, k, effort, admit).await,
+            Some(trained) => self.search_graph(&trained, query, k, effort, admit).await,
         }
     }
 }

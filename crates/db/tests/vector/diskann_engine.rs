@@ -12,13 +12,13 @@ use db::index::vector::engine::flat::Flat;
 use db::index::vector::store::{MemoryNodeStore, NodeId, VectorNodeStore};
 use defra_core::vector::Metric;
 
-const SEED: u64 = 0x0D15_CA11;
-const DIMENSIONS: usize = 16;
-const K: usize = 10;
+pub const SEED: u64 = 0x0D15_CA11;
+pub const DIMENSIONS: usize = 16;
+pub const K: usize = 10;
 const QUERIES: usize = 20;
-const CORPUS: usize = TRAIN_THRESHOLD as usize + 200;
+pub const CORPUS: usize = TRAIN_THRESHOLD as usize + 200;
 
-fn params() -> DiskAnnParams {
+pub fn params() -> DiskAnnParams {
     DiskAnnParams {
         r: 24,
         l_build: 64,
@@ -28,18 +28,18 @@ fn params() -> DiskAnnParams {
     }
 }
 
-fn index() -> DiskAnn<MemoryNodeStore> {
+pub fn index() -> DiskAnn<MemoryNodeStore> {
     DiskAnn::try_new(MemoryNodeStore::new(), Metric::Cosine, params(), SEED).unwrap()
 }
 
-fn corpus() -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
+pub fn corpus() -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
     let mut corpus = crate::support::Corpus::new(SEED);
     let vectors = corpus.clustered(CORPUS, DIMENSIONS, 12, 0.3);
     let queries = corpus.clustered(QUERIES, DIMENSIONS, 12, 0.3);
     (vectors, queries)
 }
 
-async fn built(vectors: &[Vec<f32>]) -> DiskAnn<MemoryNodeStore> {
+pub async fn built(vectors: &[Vec<f32>]) -> DiskAnn<MemoryNodeStore> {
     let mut index = index();
     for (i, vector) in vectors.iter().enumerate() {
         index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
@@ -50,7 +50,7 @@ async fn built(vectors: &[Vec<f32>]) -> DiskAnn<MemoryNodeStore> {
 }
 
 /// recall@K of `index` against an exact scan over the `live` vectors.
-async fn recall(
+pub async fn recall(
     index: &DiskAnn<MemoryNodeStore>,
     vectors: &[Vec<f32>],
     live: &HashSet<u64>,
@@ -78,7 +78,7 @@ async fn recall(
     hit as f64 / total as f64
 }
 
-fn all(count: usize) -> HashSet<u64> {
+pub fn all(count: usize) -> HashSet<u64> {
     (1..=count as u64).collect()
 }
 
@@ -154,8 +154,10 @@ async fn an_insert_after_training_is_found() {
     assert_eq!(hits[0].id, id, "a vector is nearest itself");
     assert_eq!(
         index.state().await.unwrap().unwrap().live,
-        CORPUS as u64 + 1
+        CORPUS as u64,
+        "the insert is pending, not in the graph yet"
     );
+    assert_eq!(count(&index, codec::PENDING).await, 1);
 }
 
 #[tokio::test]
@@ -195,7 +197,8 @@ async fn deletes_are_never_returned_and_consolidate() {
     );
     index.build().await.unwrap();
     let state = index.state().await.unwrap().unwrap();
-    assert_eq!((state.live, state.deleted), (live.len() as u64, 0));
+    assert_eq!(state.live, live.len() as u64);
+    assert_eq!(count(&index, codec::DELETED).await, 0);
     assert!(!index.should_build().await.unwrap());
 
     let recall = recall(&index, &vectors, &live, &queries).await;
@@ -428,7 +431,11 @@ async fn a_walk_is_bounded_even_along_an_ever_closer_chain() {
     state.entry = Some(codes[0].0);
     index
         .store_mut()
-        .put_aux(codec::STATE, b"", &codec::encode_state(&state))
+        .put_aux(
+            codec::GRAPH_STATE,
+            b"",
+            &codec::encode_graph_state(&state.graph()),
+        )
         .await
         .unwrap();
 
@@ -440,4 +447,18 @@ async fn a_walk_is_bounded_even_along_an_ever_closer_chain() {
         reads <= budget + 1,
         "a walk at L = 1 read {reads} records of {CORPUS}; its budget is {budget}"
     );
+}
+
+/// Entries of one aux kind: graph records, pending inserts, or tombstones.
+pub async fn count(index: &DiskAnn<MemoryNodeStore>, kind: u8) -> usize {
+    let mut n = 0;
+    index
+        .store()
+        .iterate_aux(kind, b"", |_, _| {
+            n += 1;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    n
 }

@@ -9,6 +9,16 @@ pub const TRAIN_THRESHOLD: u64 = 1_024;
 /// Tombstones a consolidation is worth running for, whatever the live count.
 pub const CONSOLIDATE_MIN_DELETED: u64 = 64;
 
+/// Pending inserts one merge plan takes on; the rest wait for the next. Bounds
+/// what one merge transaction holds and writes.
+pub const MAX_PLAN_PENDING: usize = 16_384;
+
+/// Smallest slice of pending inserts a merge links before patching their
+/// back-edges in. A merge works in slices of a tenth of the graph, at least
+/// this, so a node merged early in a large merge is reachable by the ones
+/// after it.
+pub const MERGE_MIN_BATCH: usize = 256;
+
 /// How far past `R` a record may grow from back-edges before it is pruned
 /// back to `R`, in percent. Microsoft's DiskANN uses the same 1.3: without
 /// slack every back-edge to a full node re-prunes it, which made pruning

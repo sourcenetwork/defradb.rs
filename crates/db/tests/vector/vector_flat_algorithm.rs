@@ -394,7 +394,14 @@ async fn the_diskann_algorithm_is_selectable() {
         .await
         .unwrap()
         .expect("a save trained the index");
-    assert_eq!(state.live, count as u64);
+    let trained = db::index::vector::engine::diskann::TRAIN_THRESHOLD;
+    assert_eq!(state.live, trained, "training indexed what it saw");
+    let plan = engine.merge_plan().await.unwrap();
+    assert_eq!(
+        plan.pending.len(),
+        count - trained as usize,
+        "the rest are pending"
+    );
 }
 
 /// Out-of-range DiskANN parameters are refused where the index is built.

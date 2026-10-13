@@ -1,62 +1,119 @@
 //! Byte layout of DiskANN's private keyspace, little-endian throughout.
 //!
 //! ```text
-//! State   1 version  4 dimensions  4 m  1 has entry  8 entry  8 live  8 deleted
-//! Record  m own code  4 neighbor count  per neighbor: 8 id, m code
+//! Trained  1 version  4 dimensions  4 m
+//! Graph    1 version  1 has entry  8 entry  8 live
+//! Record   m own code  4 neighbor count  per neighbor: 8 id, m code
+//! Pending  m code of a vector inserted since the last merge
+//! Deleted  empty: a tombstone with a graph record, awaiting consolidation
 //! ```
 //!
 //! A record carries its neighbours' codes so one read ranks every edge out of
 //! a node: the layout of AiSAQ and LM-DiskANN, and the reason the walk needs
 //! nothing resident.
+//!
+//! What training fixes and what a merge changes are separate keys: an insert
+//! reads only the first, so a merge committing under it cannot abort it.
 
 use crate::index::error::{Error, Result};
 use crate::index::vector::store::NodeId;
 
-pub const STATE: u8 = b's';
+pub const TRAINED: u8 = b't';
+pub const GRAPH_STATE: u8 = b's';
 pub const CODEBOOK: u8 = b'b';
 pub const GRAPH: u8 = b'g';
 pub const DELETED: u8 = b'd';
+pub const PENDING: u8 = b'p';
 
-const STATE_VERSION: u8 = 0x01;
-const STATE_LEN: usize = 1 + 4 + 4 + 1 + 8 + 8 + 8;
+const VERSION: u8 = 0x01;
+const TRAINED_LEN: usize = 1 + 4 + 4;
+const GRAPH_STATE_LEN: usize = 1 + 1 + 8 + 8;
 
+/// What training fixed: the width and the quantizer's subspace count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Trained {
+    pub dimensions: u32,
+    pub m: u32,
+}
+
+/// What merges change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GraphState {
+    /// Where every walk starts; `None` while the graph is empty.
+    pub entry: Option<NodeId>,
+    /// Graph records written and not consolidated away.
+    pub live: u64,
+}
+
+/// Both halves, for a caller that wants the whole picture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct State {
     pub dimensions: u32,
     pub m: u32,
-    /// Where every walk starts; `None` once consolidation removed the last
-    /// node, until the next insert.
     pub entry: Option<NodeId>,
-    /// Graph records written and not consolidated away.
     pub live: u64,
-    /// Tombstones awaiting consolidation.
-    pub deleted: u64,
 }
 
-pub fn encode_state(state: &State) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(STATE_LEN);
-    buf.push(STATE_VERSION);
-    buf.extend_from_slice(&state.dimensions.to_le_bytes());
-    buf.extend_from_slice(&state.m.to_le_bytes());
-    buf.push(u8::from(state.entry.is_some()));
-    buf.extend_from_slice(&state.entry.map_or(0, |id| id.0).to_le_bytes());
-    buf.extend_from_slice(&state.live.to_le_bytes());
-    buf.extend_from_slice(&state.deleted.to_le_bytes());
+impl State {
+    pub fn new(trained: Trained, graph: GraphState) -> Self {
+        Self {
+            dimensions: trained.dimensions,
+            m: trained.m,
+            entry: graph.entry,
+            live: graph.live,
+        }
+    }
+
+    pub fn trained(&self) -> Trained {
+        Trained {
+            dimensions: self.dimensions,
+            m: self.m,
+        }
+    }
+
+    pub fn graph(&self) -> GraphState {
+        GraphState {
+            entry: self.entry,
+            live: self.live,
+        }
+    }
+}
+
+pub fn encode_trained(trained: &Trained) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(TRAINED_LEN);
+    buf.push(VERSION);
+    buf.extend_from_slice(&trained.dimensions.to_le_bytes());
+    buf.extend_from_slice(&trained.m.to_le_bytes());
     buf
 }
 
-pub fn decode_state(bytes: &[u8]) -> Result<State> {
-    if bytes.len() != STATE_LEN || bytes[0] != STATE_VERSION {
-        return Err(invalid("unsupported DISKANN state encoding"));
+pub fn decode_trained(bytes: &[u8]) -> Result<Trained> {
+    if bytes.len() != TRAINED_LEN || bytes[0] != VERSION {
+        return Err(invalid("unsupported DISKANN trained-state encoding"));
     }
-    let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    Ok(Trained {
+        dimensions: u32::from_le_bytes(bytes[1..5].try_into().unwrap()),
+        m: u32::from_le_bytes(bytes[5..9].try_into().unwrap()),
+    })
+}
+
+pub fn encode_graph_state(state: &GraphState) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(GRAPH_STATE_LEN);
+    buf.push(VERSION);
+    buf.push(u8::from(state.entry.is_some()));
+    buf.extend_from_slice(&state.entry.map_or(0, |id| id.0).to_le_bytes());
+    buf.extend_from_slice(&state.live.to_le_bytes());
+    buf
+}
+
+pub fn decode_graph_state(bytes: &[u8]) -> Result<GraphState> {
+    if bytes.len() != GRAPH_STATE_LEN || bytes[0] != VERSION {
+        return Err(invalid("unsupported DISKANN graph-state encoding"));
+    }
     let u64_at = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
-    Ok(State {
-        dimensions: u32_at(1),
-        m: u32_at(5),
-        entry: (bytes[9] != 0).then(|| NodeId(u64_at(10))),
-        live: u64_at(18),
-        deleted: u64_at(26),
+    Ok(GraphState {
+        entry: (bytes[1] != 0).then(|| NodeId(u64_at(2))),
+        live: u64_at(10),
     })
 }
 

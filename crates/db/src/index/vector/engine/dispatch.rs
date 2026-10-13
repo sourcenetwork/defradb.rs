@@ -57,6 +57,10 @@ impl<S: VectorNodeStore> VectorIndexEngine for Engine<S> {
         dispatch!(self, e => e.should_build().await)
     }
 
+    async fn should_build_inline(&self) -> Result<bool> {
+        dispatch!(self, e => e.should_build_inline().await)
+    }
+
     async fn build(&mut self) -> Result<()> {
         // Method resolution prefers IvfPq's, IvfFlat's and Ssg's own inherent
         // `build`, which return their kind's report, over this trait method;
