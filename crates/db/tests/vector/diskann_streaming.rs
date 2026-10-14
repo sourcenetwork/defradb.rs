@@ -6,7 +6,7 @@ use crate::diskann_engine::{all, built, corpus, count, params, recall, CORPUS, D
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::diskann::codec;
 use db::index::vector::index::VectorIndex;
-use db::index::vector::store::{NodeId, VectorNodeStore};
+use db::index::vector::store::{KvNodeStore, NodeId, VectorNodeStore};
 use document::NormalValue;
 use schema::{
     DistanceMetric, IndexDescription, IndexedFieldDescription, VectorAlgorithm,
@@ -552,9 +552,15 @@ async fn a_delete_spanning_a_merge_commits_after_it() {
     let mut delete = store.new_txn(false).await.unwrap();
     let plan = index.merge_plan(&mut snapshot).await.unwrap().unwrap();
     snapshot.discard();
+    let before = graph_record(&store, target).await;
     let mut merge = store.new_txn(false).await.unwrap();
     index.merge(&mut merge, plan).await.unwrap();
     merge.commit().await.expect("the merge commits");
+    assert_ne!(
+        graph_record(&store, target).await,
+        before,
+        "the merge rewrote the record the delete targets"
+    );
 
     let (vectors, _) = corpus();
     let vector = &vectors[target as usize - 1];
@@ -570,6 +576,15 @@ async fn a_delete_spanning_a_merge_commits_after_it() {
     let mut read = store.new_txn(true).await.unwrap();
     let hits = index.search(&mut read, vector, K, None).await.unwrap();
     assert!(hits.iter().all(|hit| hit.id.0 != target));
+}
+
+async fn graph_record(store: &RegolithStore, id: u64) -> Option<Vec<u8>> {
+    let mut txn = store.new_txn(true).await.unwrap();
+    let kv = KvNodeStore::new(&mut txn, COLLECTION, INDEX_ID, 0);
+    let record = kv
+        .get_aux(codec::GRAPH, &codec::record_key(NodeId(id)))
+        .await;
+    record.unwrap().map(|bytes| bytes.to_vec())
 }
 
 /// Training still happens inline, on the write that crosses the threshold;
