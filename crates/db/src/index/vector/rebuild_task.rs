@@ -23,6 +23,9 @@ const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 impl<S: Store + 'static> DB<S> {
     /// Starts the vector index rebuild task.
     ///
+    /// Scheduled on tokio for now: once the core owns its worker pools this
+    /// becomes a periodic job there (#1942).
+    ///
     /// HNSW maintenance is lazy by design: updates keep the graph reachable
     /// but leave waste behind, and a whole-graph rebuild is far too heavy to
     /// price into a single write. This task owns that rebuild instead. Each

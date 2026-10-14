@@ -1,0 +1,77 @@
+//! An embedded node runs the vector sweep, so a DiskANN index's pending
+//! inserts are merged into its graph without the CLI server.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use db::index::vector::index::VectorIndex;
+use embedded::{EmbeddedNode, NodeBuilder};
+
+const TRAIN_THRESHOLD: usize = db::index::vector::engine::diskann::TRAIN_THRESHOLD as usize;
+
+async fn pending<S: storage::Store + 'static>(node: &EmbeddedNode<S>) -> usize {
+    let collection = node.database.get_collection("Note").unwrap().unwrap();
+    let desc = collection
+        .get_indexes()
+        .iter()
+        .find(|index| index.is_vector())
+        .cloned()
+        .unwrap();
+    let index = VectorIndex::try_new(collection.resolved_root_id(), desc).unwrap();
+    let txn = node.database.new_txn(true).await.unwrap();
+    let plan = {
+        let mut view = txn.datastore().unwrap();
+        index.merge_plan(&mut view).await.unwrap()
+    };
+    let _ = txn.discard();
+    plan.map_or(0, |plan| plan.pending.len())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_embedded_node_merges_pending_diskann_inserts() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let corpus = TRAIN_THRESHOLD + 76;
+
+    let node = NodeBuilder::default().data_path(dir.path()).build().await?;
+    node.add_schema(
+        "type Note { title: String embedding: [Float32!] @index(vector: {dimensions: 4, diskann: {R: 8, m: 2}}) }",
+    )
+    .await?;
+    let input = (0..corpus)
+        .map(|i| format!("{{title: \"n{i}\", embedding: [{i}, 1, 0, 0]}}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let created = node
+        .execute(&format!(
+            "mutation {{ add_Note(input: [{input}]) {{ _docID }} }}"
+        ))
+        .await;
+    assert!(created.errors.is_empty(), "{:?}", created.errors);
+    let waiting = pending(&node).await;
+    node.shutdown().await;
+    drop(node);
+    // Training indexed the first `TRAIN_THRESHOLD`; the rest wait for a merge.
+    // The sweep's first tick may already have merged them.
+    assert!(waiting <= corpus - TRAIN_THRESHOLD);
+
+    // Reopened, the sweep's first tick runs at once and merges what waits.
+    let node = Arc::new(NodeBuilder::default().data_path(dir.path()).build().await?);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while pending(&node).await > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the sweep never merged the pending DiskANN inserts"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let found = node
+        .execute(
+            "{ Note(limit: 1, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [1099, 1, 0, 0]}) } }",
+        )
+        .await;
+    assert!(found.errors.is_empty(), "{:?}", found.errors);
+    node.shutdown().await;
+    Ok(())
+}
