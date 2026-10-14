@@ -116,10 +116,12 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
     ) -> query::error::Result<Vec<u64>> {
         let (collection, datastore, _) =
             get_collection_with_lazy_load(&self.txn, collection_name).await?;
+        let codes = crate::collection::loader::vector_codes(&self.txn).await?;
 
         crate::read::vector::search_vector_index(
             &collection,
             &datastore,
+            &codes,
             index_id,
             query_vector,
             k,

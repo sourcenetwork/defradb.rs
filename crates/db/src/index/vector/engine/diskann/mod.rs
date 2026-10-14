@@ -34,11 +34,13 @@
 //! here but its recall has never been measured.
 
 mod build;
+mod cache;
 pub mod codec;
 mod graph;
 mod merge;
 mod params;
 
+pub use cache::{CodeCache, CodeCaches};
 pub use codec::State;
 pub use merge::MergePlan;
 pub use params::{
@@ -67,6 +69,9 @@ pub struct DiskAnn<S> {
     /// Fixed once trained. Shared so a write can hold it while borrowing the
     /// store mutably.
     quantizer: OnceLock<Arc<ProductQuantizer>>,
+    /// Where a resident-codes search reads codes; without it each code is a
+    /// point read.
+    codes: Option<Arc<CodeCache>>,
 }
 
 impl<S: VectorNodeStore> DiskAnn<S> {
@@ -83,7 +88,13 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             params,
             seed,
             quantizer: OnceLock::new(),
+            codes: None,
         })
+    }
+
+    pub fn with_codes(mut self, codes: Arc<CodeCache>) -> Self {
+        self.codes = Some(codes);
+        self
     }
 
     pub fn store(&self) -> &S {

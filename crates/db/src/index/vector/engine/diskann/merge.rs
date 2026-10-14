@@ -108,8 +108,8 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 if deleted.contains(&id) {
                     return Ok(());
                 }
-                let record = codec::decode_record(value, m)?;
-                if record.neighbors.iter().any(|(n, _)| deleted.contains(n)) {
+                let neighbors = codec::neighbor_ids(value, m, self.params.resident_codes)?;
+                if neighbors.iter().any(|n| deleted.contains(n)) {
                     affected.push(id);
                 }
                 Ok(())
@@ -151,6 +151,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         for ids in plan.pending.chunks(slice) {
             self.merge_slice(&pq, &mut graph, ids).await?;
         }
+        graph.generation += 1;
         self.put_graph_state(&graph).await
     }
 
@@ -264,6 +265,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             let key = codec::record_key(*id);
             if self.store().get_aux(codec::GRAPH, &key).await?.is_some() {
                 self.store_mut().delete_aux(codec::GRAPH, &key).await?;
+                self.store_mut().delete_aux(codec::CODE, &key).await?;
                 removed += 1;
             }
             self.store_mut().delete_aux(codec::DELETED, &key).await?;

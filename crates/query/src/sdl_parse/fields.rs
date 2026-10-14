@@ -729,6 +729,15 @@ impl<'a> SdlParser<'a> {
                                 block.metric = Some(read_metric(member, value)?);
                                 continue;
                             }
+                            "residentCodes" => {
+                                let SchemaValue::Boolean(resident) = value else {
+                                    return Err(QueryError::parse(format!(
+                                        "@index vector {member} residentCodes must be a boolean"
+                                    )));
+                                };
+                                block.resident_codes = Some(*resident);
+                                continue;
+                            }
                             "R" => &mut block.r,
                             "lBuild" => &mut block.l_build,
                             "lSearch" => &mut block.l_search,

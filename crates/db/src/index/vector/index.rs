@@ -11,7 +11,7 @@ use storage::corekv::{MaybeSend, Reader, Writer};
 use storage::index::CollectionIndex;
 
 use super::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
-use super::engine::diskann::{DiskAnn, DiskAnnParams, MergePlan};
+use super::engine::diskann::{CodeCache, CodeCaches, DiskAnn, DiskAnnParams, MergePlan};
 use super::engine::dispatch::Engine;
 use super::engine::flat::Flat;
 use super::engine::hnsw::Hnsw;
@@ -24,6 +24,7 @@ use super::store::{NodeId, VectorNodeStore};
 use crate::index::error::{Error, Result};
 use defra_core::vector::Element;
 use defra_core::vector::Metric;
+use std::sync::Arc;
 
 /// The only epoch until something triggers a rebuild. The key layout carries
 /// the component so that day does not require migrating every entry.
@@ -42,6 +43,7 @@ pub struct VectorIndex {
     diskann: DiskAnnParams,
     metric: Metric,
     seed: u64,
+    codes: Option<Arc<CodeCache>>,
 }
 
 impl VectorIndex {
@@ -123,7 +125,17 @@ impl VectorIndex {
             ssg,
             diskann,
             metric,
+            codes: None,
         })
+    }
+
+    /// Lets a resident-codes DiskANN index search with this node's shared code
+    /// cache; any other index is unchanged.
+    pub fn with_code_caches(mut self, caches: &CodeCaches) -> Self {
+        if self.vector.algorithm == VectorAlgorithm::DiskAnn && self.diskann.resident_codes {
+            self.codes = Some(caches.get(self.collection_short_id, self.desc.id));
+        }
+        self
     }
 
     pub fn vector_description(&self) -> &VectorIndexDescription {
@@ -184,12 +196,13 @@ impl VectorIndex {
                 self.ssg,
                 self.seed,
             )?),
-            VectorAlgorithm::DiskAnn => Engine::DiskAnn(DiskAnn::try_new(
-                store,
-                self.metric,
-                self.diskann,
-                self.seed,
-            )?),
+            VectorAlgorithm::DiskAnn => {
+                let engine = DiskAnn::try_new(store, self.metric, self.diskann, self.seed)?;
+                Engine::DiskAnn(match &self.codes {
+                    Some(codes) => engine.with_codes(codes.clone()),
+                    None => engine,
+                })
+            }
         })
     }
 

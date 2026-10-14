@@ -541,7 +541,8 @@ fn diskann_parameters_are_read() {
     let vector = only_vector(
         r#"type Doc {
             e: [Float!] @index(vector: {dimensions: 128, diskann: {
-                R: 32, lBuild: 80, lSearch: 60, alphaPercent: 130, m: 16, sampleBytes: 1048576
+                R: 32, lBuild: 80, lSearch: 60, alphaPercent: 130, m: 16, sampleBytes: 1048576,
+                residentCodes: true
             }})
         }"#,
     );
@@ -554,10 +555,20 @@ fn diskann_parameters_are_read() {
             diskann.l_search,
             diskann.alpha_percent,
             diskann.m,
-            diskann.sample_bytes
+            diskann.sample_bytes,
+            diskann.resident_codes
         ),
-        (32, 80, 60, 130, 16, 1_048_576)
+        (32, 80, 60, 130, 16, 1_048_576, true)
     );
+}
+
+#[test]
+fn diskann_resident_codes_must_be_a_boolean() {
+    let err = parse_sdl(
+        r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, diskann: {residentCodes: 1}}) }"#,
+    )
+    .expect_err("residentCodes is a boolean");
+    assert!(err.to_string().contains("residentCodes"), "got: {err}");
 }
 
 #[test]

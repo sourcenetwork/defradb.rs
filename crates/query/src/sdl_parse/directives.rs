@@ -319,4 +319,5 @@ pub struct DiskAnnConfig {
     pub alpha_percent: Option<u32>,
     pub m: Option<u32>,
     pub sample_bytes: Option<u32>,
+    pub resident_codes: Option<bool>,
 }

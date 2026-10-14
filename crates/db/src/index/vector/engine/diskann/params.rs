@@ -45,6 +45,7 @@ pub struct DiskAnnParams {
     pub alpha_percent: u32,
     pub m: u32,
     pub sample_bytes: u64,
+    pub resident_codes: bool,
 }
 
 impl Default for DiskAnnParams {
@@ -62,6 +63,7 @@ impl From<schema::DiskAnnParams> for DiskAnnParams {
             alpha_percent: p.alpha_percent,
             m: p.m,
             sample_bytes: p.sample_bytes,
+            resident_codes: p.resident_codes,
         }
     }
 }

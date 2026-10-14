@@ -2,6 +2,7 @@
 
 mod diskann_disk_cost;
 mod diskann_engine;
+mod diskann_resident;
 mod diskann_streaming;
 mod edge_selection;
 mod ivfflat_engine;

@@ -595,8 +595,7 @@ pub struct VectorIndexDescription {
 /// DiskANN build and search parameters.
 ///
 /// `alpha_percent` is the pruning slack in hundredths, so 120 is the paper's
-/// `alpha = 1.2`: an integer because this replicates inside a collection
-/// definition, where a float is a value two runtimes can round differently.
+/// `alpha = 1.2`: an integer so the stored definition holds it exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiskAnnParams {
     /// Maximum out-degree of a node.
@@ -618,6 +617,11 @@ pub struct DiskAnnParams {
     /// Cap on the resident training sample.
     #[serde(rename = "SampleBytes", default = "default_diskann_sample_bytes")]
     pub sample_bytes: u64,
+    /// Keep every PQ code in memory and store only neighbour ids in graph
+    /// records. Searches read far less from disk, for `m` bytes of memory per
+    /// vector.
+    #[serde(rename = "ResidentCodes", default)]
+    pub resident_codes: bool,
 }
 
 fn default_diskann_r() -> u32 {
@@ -649,6 +653,7 @@ impl Default for DiskAnnParams {
             alpha_percent: default_diskann_alpha_percent(),
             m: 0,
             sample_bytes: default_diskann_sample_bytes(),
+            resident_codes: false,
         }
     }
 }

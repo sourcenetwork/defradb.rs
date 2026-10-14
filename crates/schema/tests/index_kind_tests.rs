@@ -194,17 +194,21 @@ fn index_kinds() -> impl Strategy<Value = IndexKind> {
             any::<u32>(),
             any::<u32>(),
             any::<u64>(),
+            any::<bool>(),
         )
-            .prop_map(|(r, l_build, l_search, alpha_percent, m, sample_bytes)| {
-                DiskAnnParams {
-                    r,
-                    l_build,
-                    l_search,
-                    alpha_percent,
-                    m,
-                    sample_bytes,
-                }
-            }),
+            .prop_map(
+                |(r, l_build, l_search, alpha_percent, m, sample_bytes, resident_codes)| {
+                    DiskAnnParams {
+                        r,
+                        l_build,
+                        l_search,
+                        alpha_percent,
+                        m,
+                        sample_bytes,
+                        resident_codes,
+                    }
+                },
+            ),
     );
 
     prop_oneof![
