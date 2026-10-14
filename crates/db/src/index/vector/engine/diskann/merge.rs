@@ -259,12 +259,16 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 None => self.any_live_record(&deleted).await?,
             };
         }
+        let mut removed = 0;
         for id in &deleted {
             let key = codec::record_key(*id);
-            self.store_mut().delete_aux(codec::GRAPH, &key).await?;
+            if self.store().get_aux(codec::GRAPH, &key).await?.is_some() {
+                self.store_mut().delete_aux(codec::GRAPH, &key).await?;
+                removed += 1;
+            }
             self.store_mut().delete_aux(codec::DELETED, &key).await?;
         }
-        graph.live = graph.live.saturating_sub(deleted.len() as u64);
+        graph.live = graph.live.saturating_sub(removed);
         Ok(())
     }
 

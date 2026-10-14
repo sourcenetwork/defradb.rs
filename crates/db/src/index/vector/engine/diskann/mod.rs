@@ -182,9 +182,13 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
         self.store_mut().put_aux(codec::PENDING, &key, &code).await
     }
 
-    /// Tombstones the node. A pending node simply leaves the pending set; one
-    /// already in the graph joins the delete list, and its record stays for
-    /// walks to pass through until a merge consolidates it.
+    /// Tombstones the node: it leaves the pending set and joins the delete
+    /// list, and any record it has stays for walks to pass through until a
+    /// merge consolidates it.
+    ///
+    /// Both writes are blind. Merges rewrite graph records they do not own, so
+    /// reading this node's record would let any overlapping merge fail the
+    /// delete; a tombstone with no record is dropped by the next consolidation.
     async fn delete(&mut self, id: NodeId) -> Result<bool> {
         if !self.staging.delete(id).await? {
             return Ok(false);
@@ -192,9 +196,7 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
         if self.trained().await?.is_some() {
             let key = codec::record_key(id);
             self.store_mut().delete_aux(codec::PENDING, &key).await?;
-            if self.store().get_aux(codec::GRAPH, &key).await?.is_some() {
-                self.store_mut().put_aux(codec::DELETED, &key, b"").await?;
-            }
+            self.store_mut().put_aux(codec::DELETED, &key, b"").await?;
         }
         Ok(true)
     }

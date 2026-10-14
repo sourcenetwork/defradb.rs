@@ -123,16 +123,36 @@ async fn a_pending_delete_never_reaches_the_graph() {
     assert!(index.delete(id).await.unwrap());
 
     assert_eq!(count(&index, codec::PENDING).await, 0);
-    assert_eq!(
-        count(&index, codec::DELETED).await,
-        0,
-        "nothing to consolidate"
-    );
     let hits = index.search(vector.as_slice(), K, None).await.unwrap();
     assert!(hits.iter().all(|hit| hit.id != id));
 
     index.build().await.unwrap();
     assert_eq!(count(&index, codec::GRAPH).await, CORPUS);
+    assert_eq!(index.state().await.unwrap().unwrap().live, CORPUS as u64);
+}
+
+/// A tombstone left for a node that never reached the graph is dropped by
+/// consolidation without counting against the live nodes.
+#[tokio::test]
+async fn a_tombstone_without_a_record_is_dropped_by_consolidation() {
+    let (vectors, _) = corpus();
+    let mut index = built(&vectors).await;
+    let orphan = NodeId(CORPUS as u64 + 1);
+    index.insert(orphan, &fresh(0x0F0F)).await.unwrap();
+    index.delete(orphan).await.unwrap();
+    let deleted: Vec<NodeId> = (1..=130).map(NodeId).collect();
+    for id in &deleted {
+        index.delete(*id).await.unwrap();
+    }
+    assert_eq!(count(&index, codec::DELETED).await, deleted.len() + 1);
+
+    index.build().await.unwrap();
+    assert_eq!(count(&index, codec::DELETED).await, 0);
+    assert_eq!(count(&index, codec::GRAPH).await, CORPUS - deleted.len());
+    assert_eq!(
+        index.state().await.unwrap().unwrap().live,
+        (CORPUS - deleted.len()) as u64
+    );
 }
 
 #[tokio::test]
@@ -501,6 +521,55 @@ async fn a_delete_during_a_merge_aborts_the_merge_not_the_delete() {
     );
     let hits = index.search(&mut read, &vectors[2], 1, None).await.unwrap();
     assert_eq!(hits[0].id.0, 3, "the rest of the graph is intact");
+}
+
+/// The reverse order: a delete that began before a merge and commits after
+/// it. The merge rewrote the deleted node's record, but the delete never read
+/// it, so both commit and the node stays deleted.
+#[tokio::test]
+async fn a_delete_spanning_a_merge_commits_after_it() {
+    let (store, index) = trained_store().await;
+    let mut write = store.new_txn(false).await.unwrap();
+    for i in 0..20u64 {
+        index
+            .save(&mut write, 60_000 + i, &value(&fresh(200 + i)))
+            .await
+            .unwrap();
+    }
+    write.commit().await.unwrap();
+
+    // The graph node nearest a pending insert takes a back-edge from it.
+    let mut snapshot = store.new_txn(true).await.unwrap();
+    let target = index
+        .search(&mut snapshot, &fresh(205), K, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|hit| hit.id.0 < 60_000)
+        .unwrap()
+        .id
+        .0;
+    let mut delete = store.new_txn(false).await.unwrap();
+    let plan = index.merge_plan(&mut snapshot).await.unwrap().unwrap();
+    snapshot.discard();
+    let mut merge = store.new_txn(false).await.unwrap();
+    index.merge(&mut merge, plan).await.unwrap();
+    merge.commit().await.expect("the merge commits");
+
+    let (vectors, _) = corpus();
+    let vector = &vectors[target as usize - 1];
+    index
+        .delete(&mut delete, target, &value(vector))
+        .await
+        .unwrap();
+    delete
+        .commit()
+        .await
+        .expect("the delete never read what the merge wrote");
+
+    let mut read = store.new_txn(true).await.unwrap();
+    let hits = index.search(&mut read, vector, K, None).await.unwrap();
+    assert!(hits.iter().all(|hit| hit.id.0 != target));
 }
 
 /// Training still happens inline, on the write that crosses the threshold;

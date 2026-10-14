@@ -28,6 +28,19 @@ async fn pending<S: storage::Store + 'static>(node: &EmbeddedNode<S>) -> usize {
     plan.map_or(0, |plan| plan.pending.len())
 }
 
+/// Directions spread over the sphere, so the quantizer trained on the first
+/// vectors also resolves the later ones.
+fn spread(i: usize) -> String {
+    let i = i as f32;
+    format!(
+        "[{:.6}, {:.6}, {:.6}, {:.6}]",
+        i.sin(),
+        (1.3 * i).cos(),
+        (0.7 * i).sin(),
+        (2.1 * i).cos()
+    )
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_embedded_node_merges_pending_diskann_inserts() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -39,7 +52,7 @@ async fn an_embedded_node_merges_pending_diskann_inserts() -> Result<()> {
     )
     .await?;
     let input = (0..corpus)
-        .map(|i| format!("{{title: \"n{i}\", embedding: [{i}, 1, 0, 0]}}"))
+        .map(|i| format!("{{title: \"n{i}\", embedding: {}}}", spread(i)))
         .collect::<Vec<_>>()
         .join(",");
     let created = node
@@ -68,10 +81,18 @@ async fn an_embedded_node_merges_pending_diskann_inserts() -> Result<()> {
 
     let found = node
         .execute(
-            "{ Note(limit: 1, order: {_alias: {sim: DESC}}) { title sim: SIMILARITY(embedding: {vector: [1099, 1, 0, 0]}) } }",
+            &format!("{{ Note(limit: 1, order: {{_alias: {{sim: DESC}}}}) {{ title sim: SIMILARITY(embedding: {{vector: {}}}) }} }}", spread(corpus - 1)),
         )
         .await;
     assert!(found.errors.is_empty(), "{:?}", found.errors);
+    assert_eq!(
+        found
+            .data
+            .as_ref()
+            .and_then(|data| data.pointer("/Note/0/title")),
+        Some(&serde_json::json!(format!("n{}", corpus - 1))),
+        "the last insert, pending until the merge, is reachable"
+    );
     node.shutdown().await;
     Ok(())
 }
