@@ -1,7 +1,9 @@
 //! StreamingMerge (FreshDiskANN §5.3): folding pending inserts and tombstones
 //! into the graph.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
+
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use super::codec::{self, GraphState, Record};
 use super::graph::decode;
@@ -93,7 +95,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             });
         }
 
-        let mut deleted = HashSet::new();
+        let mut deleted = RapidHashSet::new();
         self.store()
             .iterate_aux(codec::DELETED, b"", |key, _| {
                 deleted.insert(codec::id_from_key(key)?);
@@ -204,7 +206,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         affected: &[NodeId],
     ) -> Result<()> {
         let m = pq.code_len();
-        let mut deleted = HashSet::with_capacity(planned.len());
+        let mut deleted = RapidHashSet::with_capacity(planned.len());
         for &id in planned {
             if self
                 .store()
@@ -274,7 +276,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         Ok(())
     }
 
-    async fn any_live_record(&self, deleted: &HashSet<NodeId>) -> Result<Option<NodeId>> {
+    async fn any_live_record(&self, deleted: &RapidHashSet<NodeId>) -> Result<Option<NodeId>> {
         let mut found = None;
         let stop = "vector index: any_live_record stopped early";
         match self

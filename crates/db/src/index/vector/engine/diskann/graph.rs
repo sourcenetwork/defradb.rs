@@ -1,8 +1,10 @@
 //! The walk, linking a node in, and the pruning they share.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+
+use super::cache::Codes;
 use super::codec::{self, GraphState, Record, Trained};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
@@ -86,7 +88,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         if !self.params.resident_codes || cache.is_current(generation) {
             return Ok(());
         }
-        let mut codes = HashMap::new();
+        let codes = Codes::default();
         self.store()
             .iterate_aux(codec::CODE, b"", |key, code| {
                 codes.insert(codec::id_from_key(key)?, code.to_vec());
@@ -120,8 +122,8 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             distance: pq.distance(table, &start.code),
             code: start.code,
         }];
-        let mut seen = HashSet::from([entry]);
-        let mut expanded = HashSet::new();
+        let mut seen = RapidHashSet::from_iter([entry]);
+        let mut expanded = RapidHashSet::new();
         let mut visited = Vec::new();
         let budget = self.params.walk_budget(l);
 
@@ -267,7 +269,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         base: &[f32],
         edges: Vec<(NodeId, Vec<u8>)>,
     ) -> Vec<(NodeId, Vec<u8>)> {
-        let mut codes: HashMap<NodeId, Vec<u8>> = HashMap::with_capacity(edges.len());
+        let mut codes: RapidHashMap<NodeId, Vec<u8>> = RapidHashMap::with_capacity(edges.len());
         let candidates: Vec<Candidate> = edges
             .into_iter()
             .filter_map(|(id, code)| {
@@ -335,7 +337,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .await?;
         candidates.sort_by(by_distance);
 
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         let mut ranked = Vec::with_capacity(l);
         for candidate in candidates {
             if ranked.len() >= l {

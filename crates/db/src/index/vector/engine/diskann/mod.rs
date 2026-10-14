@@ -40,7 +40,7 @@ mod graph;
 mod merge;
 mod params;
 
-pub use cache::{CodeCache, CodeCaches};
+pub use cache::{CodeCache, CodeCaches, Codes};
 pub use codec::State;
 pub use merge::MergePlan;
 pub use params::{

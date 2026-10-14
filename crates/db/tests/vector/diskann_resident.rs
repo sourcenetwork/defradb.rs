@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::diskann_engine::{all, corpus, count, params, recall, CORPUS, K, SEED};
 use db::index::vector::engine::ann::VectorIndexEngine;
-use db::index::vector::engine::diskann::{codec, CodeCache, DiskAnn, DiskAnnParams};
+use db::index::vector::engine::diskann::{codec, CodeCache, Codes, DiskAnn, DiskAnnParams};
 use db::index::vector::store::{MemoryNodeStore, NodeId, VectorNodeStore};
 use defra_core::vector::Metric;
 
@@ -81,4 +81,21 @@ async fn the_cache_reloads_after_a_merge() {
 
     assert_eq!(hits[0].id, NodeId(7));
     assert_eq!(cache.get(NodeId(7)), Some(stored_code(&index, 7).await));
+}
+
+/// A reload that finishes after a newer one must not overwrite it.
+#[test]
+fn an_older_reload_does_not_replace_a_newer_one() {
+    let codes = |code: u8| {
+        let codes = Codes::default();
+        codes.insert(NodeId(1), vec![code]);
+        codes
+    };
+    let cache = CodeCache::default();
+
+    cache.replace(2, codes(2));
+    cache.replace(1, codes(1));
+
+    assert!(cache.is_current(2));
+    assert_eq!(cache.get(NodeId(1)), Some(vec![2]));
 }
