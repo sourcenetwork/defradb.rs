@@ -3945,6 +3945,7 @@ dependencies = [
  "query",
  "rand 0.8.8",
  "rapidhash",
+ "regolith",
  "reqwest 0.12.28",
  "schema",
  "serde",
