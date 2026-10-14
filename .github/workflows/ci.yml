@@ -157,66 +157,12 @@ jobs:
           test "$DEPENDENCIES" = success
 
   unit-tests:
-    name: Unit tests (${{ matrix.os }}, ${{ matrix.group }})
+    name: Unit tests
     needs: ci-scope
     if: needs.ci-scope.outputs.full == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            group: core
-            packages: >-
-              -p defra-core -p crdt -p storage -p blockstore -p schema
-              -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-              -p "path+file://$PWD/crates/identity" -p "path+file://$PWD/crates/zanzibar"
-              -p "path+file://$PWD/crates/acp" -p defra-version -p events -p lens
-              -p replication-filter -p telemetry
-          - os: ubuntu-latest
-            group: data
-            packages: -p query -p db -p vera -p pg-compat
-          - os: ubuntu-latest
-            group: network
-            packages: -p p2p -p defra-p2p-adapter -p orbis
-          - os: ubuntu-latest
-            group: surfaces
-            packages: >-
-              -p defra-http -p embedded -p cli -p ffi -p defra-node
-              -p lens-host -p defra-wasm -p benches -p ffi-test
-          - os: macos-latest
-            group: core
-            packages: >-
-              -p defra-core -p crdt -p storage -p blockstore -p schema
-              -p document -p crypto -p cursor -p datastore -p keyring@0.5.0 -p kms
-              -p "path+file://$PWD/crates/identity" -p "path+file://$PWD/crates/zanzibar"
-              -p "path+file://$PWD/crates/acp" -p defra-version -p events -p lens
-              -p replication-filter -p telemetry
-          - os: macos-latest
-            group: data
-            packages: -p query -p db -p vera -p pg-compat
-          - os: macos-latest
-            group: network
-            packages: -p p2p -p defra-p2p-adapter -p orbis
-          - os: macos-latest
-            group: surfaces
-            packages: >-
-              -p defra-http -p embedded -p cli -p ffi -p defra-node
-              -p lens-host -p defra-wasm -p benches -p ffi-test
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: .github/scripts/install-linux-ci-deps.sh
-      - name: Install macOS dependencies
-        if: runner.os == 'macOS'
-        run: brew install protobuf
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: unit
-          save-if: ${{ env.SAVE_CACHE == 'true' && matrix.group == 'surfaces' }}
-      - run: cargo test --profile super-dev ${{ matrix.packages }}
+    uses: ./.github/workflows/unit-tests.yml
+    with:
+      os: ubuntu-latest
 
   build-binaries:
     name: Build integration binaries
