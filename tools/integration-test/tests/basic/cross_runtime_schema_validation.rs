@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use integration_test::{DefraClient, TestCluster};
+use integration_test::{purge_node, TestCluster};
 
 #[path = "cross_runtime_schema_validation/stateful.rs"]
 mod stateful;
@@ -45,9 +45,9 @@ fn assert_outcome<RT, RE, GT, GE>(
     );
 }
 
-fn purge_both(rust: &DefraClient, go: &DefraClient) {
-    rust.purge().expect("purge Rust node");
-    go.purge().expect("purge Go node");
+async fn purge_both(cluster: &TestCluster) {
+    purge_node(cluster, 0).await;
+    purge_node(cluster, 1).await;
 }
 
 #[tokio::test]
@@ -188,7 +188,7 @@ async fn go_schema_creation_validation_parity() {
         let rust_result = rust.schema_add(case.sdl);
         let go_result = go.schema_add(case.sdl);
         assert_outcome(case.validator, case.accepted, &rust_result, &go_result);
-        purge_both(&rust, &go);
+        purge_both(&cluster).await;
     }
 }
 
@@ -376,6 +376,6 @@ async fn go_schema_patch_validation_parity() {
         let rust_result = rust.collection_patch(case.patch);
         let go_result = go.collection_patch(case.patch);
         assert_outcome(case.validator, case.accepted, &rust_result, &go_result);
-        purge_both(&rust, &go);
+        purge_both(&cluster).await;
     }
 }
