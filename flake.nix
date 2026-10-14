@@ -17,7 +17,17 @@
       flake-utils,
       ...
     }:
-    flake-utils.lib.eachDefaultSystem (
+    let
+      # Not eachDefaultSystem: that includes x86_64-darwin, which nixpkgs 26.11
+      # has dropped, so `nix flake check --all-systems` could not even evaluate
+      # a system this flake advertised.
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+    in
+    flake-utils.lib.eachSystem systems (
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
