@@ -74,6 +74,12 @@ def revision(root):
     return pins[0]
 
 
+def runtime_revision(value):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+        raise ValueError("runtime revision must be a full lowercase commit SHA")
+    return value
+
+
 def clean_environment(environ):
     env = dict(environ)
     exact = {"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTDOCFLAGS", "CARGO_ENCODED_RUSTDOCFLAGS",
@@ -165,8 +171,13 @@ def interrupted(_signal, _frame):
 
 
 class Runner:
-    def __init__(self, root, vera, temporary):
+    def __init__(self, root, vera, temporary, runtime_ref=None):
         self.root, self.vera = root, vera
+        self.sdk_revision = revision(root)
+        expected = self.sdk_revision if runtime_ref is None else runtime_revision(runtime_ref)
+        self.sources = {"defra": source(root), "vera": source(vera)}
+        if self.sources["vera"]["revision"] != expected:
+            raise ValueError("runtime does not match selected revision")
         self.private = Path(tempfile.mkdtemp(prefix="defra-native-consumer-", dir=temporary))
         self.summary = temporary / "native-consumer-summary.json"
         self.env = clean_environment(os.environ)
@@ -174,9 +185,6 @@ class Runner:
         self.env["CARGO_TARGET_DIR"] = str(self.target)
         self.env.update(VERA_E2E_DIR=str(self.private / "vera-state"), VERA_E2E_KEEP="1", DEFRA_E2E_KEEP="1")
         self.records, self.binaries = [], {}
-        self.sources = {"defra": source(root), "vera": source(vera)}
-        if self.sources["vera"]["revision"] != revision(root):
-            raise ValueError("runtime does not match native SDK")
         self.save()
 
     def guard(self):
@@ -188,8 +196,9 @@ class Runner:
 
     def save(self):
         public = [public_phase(record) for record in self.records]
-        self.summary.write_text(json.dumps({"phases": public}, indent=2) + "\n")
-        (self.private / "manifest.json").write_text(json.dumps({"sources": self.sources, "binaries": self.binaries,
+        provenance = {"sources": self.sources, "sdk_revision": self.sdk_revision}
+        self.summary.write_text(json.dumps({**provenance, "phases": public}, indent=2) + "\n")
+        (self.private / "manifest.json").write_text(json.dumps({**provenance, "binaries": self.binaries,
                                                               "phases": self.records}, indent=2) + "\n")
 
     def run(self, phase, args, cwd=None):
@@ -260,16 +269,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vera-ref", action="store_true")
     parser.add_argument("--vera", type=Path)
+    parser.add_argument("--runtime-ref", type=runtime_revision,
+                        help="Vera runtime commit; defaults to the native SDK revision")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     if args.vera_ref:
-        print(revision(root))
+        sdk = revision(root)
+        print(args.runtime_ref if args.runtime_ref is not None else sdk)
         return
     if args.vera is None or not os.environ.get("RUNNER_TEMP"):
         parser.error("--vera and RUNNER_TEMP are required")
     os.umask(0o077)
     signal.signal(signal.SIGTERM, interrupted)
-    runner = Runner(root, args.vera.resolve(), Path(os.environ["RUNNER_TEMP"]).resolve())
+    runner = Runner(root, args.vera.resolve(), Path(os.environ["RUNNER_TEMP"]).resolve(), args.runtime_ref)
     try:
         qualify(runner)
         runner.records.append({"phase": "qualification", "exit_code": 0, "passed": 21})
