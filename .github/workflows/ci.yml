@@ -23,6 +23,10 @@ env:
   CARGO_PROFILE_DEV_DEBUG: '0'
   CARGO_PROFILE_TEST_DEBUG: '0'
   CARGO_PROFILE_SUPER_DEV_DEBUG: '0'
+  # One run's caches exceed the repository's cache quota, so caches saved from
+  # pull requests evicted main's and every new pull request compiled from
+  # scratch. Only main saves, and one job saves each shared key.
+  SAVE_CACHE: ${{ github.ref == 'refs/heads/main' }}
 
 jobs:
   ci-scope:
@@ -69,6 +73,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ env.SAVE_CACHE == 'true' }}
       - run: cargo clippy --all --all-targets -- -D warnings
 
   feature-checks:
@@ -107,7 +113,8 @@ jobs:
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: feature-${{ matrix.group }}
+          shared-key: feature
+          save-if: ${{ env.SAVE_CACHE == 'true' && matrix.group == 'release' }}
       - name: Run feature checks
         run: ${{ matrix.commands }}
 
@@ -118,6 +125,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Install cargo-machete
         run: command -v cargo-machete >/dev/null 2>&1 || cargo install cargo-machete --locked
       - name: Check unused dependencies
@@ -199,7 +208,8 @@ jobs:
         run: brew install protobuf
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: unit-${{ matrix.group }}
+          shared-key: unit
+          save-if: ${{ env.SAVE_CACHE == 'true' && matrix.group == 'surfaces' }}
       - run: cargo test --profile super-dev ${{ matrix.packages }}
 
   build-binaries:
@@ -214,6 +224,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
+          save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Build binaries
         run: |
           mkdir -p artifacts/ci
@@ -254,7 +265,8 @@ jobs:
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: feature-tests
+          shared-key: integration-binaries
+          save-if: false
       - run: cargo test --profile super-dev -p telemetry --features otlp
       - run: cargo test --profile super-dev -p cli --features otel --test telemetry_dedup
       - run: cargo test --profile super-dev -p defra-node --features p2p
@@ -274,6 +286,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
+          save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Isolate the WASM dependency graph
         run: sed -i '/"tools\/integration-test"/d; /"tools\/ffi-test"/d; /"proofs"/d' Cargo.toml
       - name: Clippy (wasm32)
@@ -324,6 +337,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lean-conformance
+          save-if: ${{ env.SAVE_CACHE == 'true' }}
       - name: Build Lean proofs
         uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1
         with:
@@ -352,7 +366,8 @@ jobs:
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: conformance
+          shared-key: integration
+          save-if: false
       - uses: actions/download-artifact@v4
         with:
           name: defra-ci-binaries
@@ -392,7 +407,8 @@ jobs:
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: integration-${{ matrix.suite }}
+          shared-key: integration
+          save-if: ${{ env.SAVE_CACHE == 'true' && matrix.suite == 'go-compat' }}
       - uses: actions/download-artifact@v4
         with:
           name: defra-ci-binaries
@@ -408,9 +424,10 @@ jobs:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.7`, so an older
           # toolchain cannot build it.
           go-version: '1.26'
-      - name: Cache Go DefraDB
+      - name: Restore Go DefraDB
+        id: go-defradb
         if: matrix.suite == 'go-compat'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/defra-harness
           key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
@@ -447,6 +464,12 @@ jobs:
 
           echo "$CACHE_DIR" >> "$GITHUB_PATH"
           "$CACHE_DIR/defradb" version --format json
+      - name: Save Go DefraDB
+        if: matrix.suite == 'go-compat' && env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/defra-harness
+          key: ${{ steps.go-defradb.outputs.cache-primary-key }}
       - name: Verify Go fixtures still match Rust constants
         if: matrix.suite == 'go-compat'
         run: |
@@ -547,7 +570,8 @@ jobs:
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: p2p-linux
+          shared-key: integration
+          save-if: false
       - uses: actions/download-artifact@v4
         with:
           name: defra-ci-binaries
