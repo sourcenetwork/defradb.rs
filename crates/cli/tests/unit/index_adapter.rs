@@ -3,7 +3,7 @@ use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use schema::{DistanceMetric, HnswParams, VectorAlgorithm, VectorIndexDescription};
 use std::collections::BTreeSet;
-use storage::corekv::{IterOptions, Iterator, Reader};
+use storage::corekv::{IterOptions, Iterator};
 
 /// Every datastore key but the id sequences, which only ever grow.
 async fn datastore_keys(db: &db::DB<storage::RegolithStore>) -> BTreeSet<Vec<u8>> {
