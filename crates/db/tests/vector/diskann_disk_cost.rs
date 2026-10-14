@@ -9,7 +9,7 @@
 //! PHASE=build N=100000 DIR=/path/bench \
 //!   cargo test --release -p db --test vector -- diskann_disk_cost --ignored --nocapture
 //! ditto --nocache /path/bench /path/cold
-//! PHASE=query DIR=/path/cold LAYOUT=records|resident PROFILE=server|embedded \
+//! PHASE=query DIR=/path/cold LAYOUT=engine|records|resident PROFILE=server|embedded \
 //!   cargo test --release -p db --test vector -- diskann_disk_cost --ignored --nocapture
 //! ```
 //!
@@ -67,8 +67,8 @@ fn decode_ids(bytes: &[u8]) -> impl Iterator<Item = NodeId> + '_ {
         .map(|c| NodeId(u64::from_le_bytes(*c)))
 }
 
-/// The engine's walk and re-rank, with codes read from records or, when
-/// `codes` is given, from memory.
+/// A stand-in for the engine's walk and re-rank, reading codes from records,
+/// or from memory when `codes` is given.
 async fn search<S: VectorNodeStore>(
     store: &S,
     pq: &ProductQuantizer,
@@ -283,8 +283,6 @@ async fn query(dir: &Path, layout: &str, profile: &str, passes: usize) {
     .await
     .unwrap();
     let pq = ProductQuantizer::from_books(D, books).unwrap();
-    // The real search over the shipped layout: what the stand-in walk is
-    // checked against. It reports latency only.
     let engine = DiskAnn::try_new(kv, Metric::Cosine, params(), 7).unwrap();
 
     for pass in 0..passes {

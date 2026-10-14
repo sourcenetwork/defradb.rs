@@ -13,9 +13,9 @@
 //!
 //! Once trained, an insert stores its vector and joins a pending set with its
 //! code; it writes no graph record and no shared state, so concurrent writers
-//! do not conflict. A delete tombstones the node, and a node already in the
-//! graph also joins a delete list; walks still pass through it. Searches walk
-//! the graph, scan the pending codes, and re-rank both.
+//! do not conflict. A delete tombstones the node, and walks still pass through
+//! any record it has until a merge consolidates it. Searches walk the graph,
+//! scan the pending codes, and re-rank both.
 //!
 //! [`merge`](DiskAnn::merge) is the paper's StreamingMerge, in its three
 //! phases: consolidate tombstones (Algorithm 4), insert pending vectors with

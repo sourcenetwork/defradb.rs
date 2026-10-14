@@ -5,7 +5,7 @@
 //! Graph    1 version  1 has entry  8 entry  8 live
 //! Record   m own code  4 neighbor count  per neighbor: 8 id, m code
 //! Pending  m code of a vector inserted since the last merge
-//! Deleted  empty: a tombstone with a graph record, awaiting consolidation
+//! Deleted  empty: a tombstone awaiting consolidation
 //! ```
 //!
 //! A record carries its neighbours' codes so one read ranks every edge out of
@@ -45,7 +45,7 @@ pub struct GraphState {
     pub live: u64,
 }
 
-/// Both halves, for a caller that wants the whole picture.
+/// Both halves together, as [`DiskAnn::state`](super::DiskAnn::state) returns them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct State {
     pub dimensions: u32,
@@ -61,13 +61,6 @@ impl State {
             m: trained.m,
             entry: graph.entry,
             live: graph.live,
-        }
-    }
-
-    pub fn trained(&self) -> Trained {
-        Trained {
-            dimensions: self.dimensions,
-            m: self.m,
         }
     }
 

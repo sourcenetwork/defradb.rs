@@ -14,6 +14,8 @@ use crate::database::DB;
 use crate::index::vector::index::VectorIndex;
 use schema::VectorAlgorithm;
 
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
 /// How often the sweep looks for due rebuilds. A due check is one meta read
 /// per HNSW index, so a short interval would be cheap; this stays deliberate
 /// because a rebuild that fires is anything but.
@@ -142,68 +144,49 @@ impl<S: Store + 'static> DB<S> {
         Ok(())
     }
 
-    /// Merges one DiskANN index until nothing is pending, a plan at a time.
-    ///
-    /// Each plan is read on a read-only snapshot and applied on its own write
-    /// transaction, so writers appending to the pending set meanwhile neither
-    /// abort the merge nor are aborted by it. A merge that still conflicts
-    /// (an update to a node it is merging) is logged and retried next sweep.
+    /// Merges one DiskANN index a plan at a time until nothing is pending. A
+    /// failure, such as a conflict with an update to a node being merged, is
+    /// logged and retried next sweep.
     async fn merge_diskann(&self, collection: &str, name: &str, index: &VectorIndex) {
-        // A plan takes at most `MAX_PLAN_PENDING` inserts; a few rounds catch
-        // up a backlog without letting one index hold the sweep indefinitely.
+        // A plan takes at most `MAX_PLAN_PENDING` inserts; capping the rounds
+        // keeps one index's backlog from holding up the sweep.
         const MAX_ROUNDS: usize = 8;
         for _ in 0..MAX_ROUNDS {
-            let plan = {
-                let snapshot = match self.new_txn(true).await {
-                    Ok(txn) => txn,
-                    Err(error) => {
-                        tracing::warn!(collection, index = name, error = %error, "DiskANN merge could not open a snapshot");
-                        return;
-                    }
-                };
-                let planned = match snapshot.datastore() {
-                    Ok(mut view) => index.merge_plan(&mut view).await,
-                    Err(error) => {
-                        tracing::warn!(collection, index = name, error = %error, "DiskANN merge could not open the datastore");
-                        let _ = snapshot.discard();
-                        return;
-                    }
-                };
-                let _ = snapshot.discard();
-                match planned {
-                    Ok(Some(plan)) => plan,
-                    Ok(None) => return,
-                    Err(error) => {
-                        tracing::warn!(collection, index = name, error = %error, "DiskANN merge could not plan");
-                        return;
-                    }
-                }
-            };
-
-            let txn = match self.new_txn(false).await {
-                Ok(txn) => txn,
+            match self.merge_diskann_once(index).await {
+                Ok(true) => {}
+                Ok(false) => return,
                 Err(error) => {
-                    tracing::warn!(collection, index = name, error = %error, "DiskANN merge could not open a transaction");
+                    tracing::warn!(collection, index = name, error = %error, "DiskANN merge failed");
                     return;
                 }
-            };
-            let merged = match txn.datastore() {
-                Ok(mut view) => index.merge(&mut view, plan).await,
-                Err(error) => {
-                    tracing::warn!(collection, index = name, error = %error, "DiskANN merge could not open the datastore");
-                    let _ = txn.discard();
-                    return;
-                }
-            };
-            if let Err(error) = merged {
-                let _ = txn.discard();
-                tracing::warn!(collection, index = name, error = %error, "DiskANN merge failed");
-                return;
-            }
-            if let Err(error) = txn.commit().await {
-                tracing::warn!(collection, index = name, error = %error, "DiskANN merge failed to commit");
-                return;
             }
         }
+    }
+
+    /// Plans on a read-only snapshot and applies the plan on a write
+    /// transaction, so writers appending to the pending set meanwhile neither
+    /// abort the merge nor are aborted by it. False when nothing was due.
+    async fn merge_diskann_once(&self, index: &VectorIndex) -> Result<bool, BoxError> {
+        let snapshot = self.new_txn(true).await?;
+        let plan: Result<_, BoxError> = match snapshot.datastore() {
+            Ok(mut view) => index.merge_plan(&mut view).await.map_err(Into::into),
+            Err(error) => Err(error.into()),
+        };
+        let _ = snapshot.discard();
+        let Some(plan) = plan? else {
+            return Ok(false);
+        };
+
+        let txn = self.new_txn(false).await?;
+        let merged: Result<_, BoxError> = match txn.datastore() {
+            Ok(mut view) => index.merge(&mut view, plan).await.map_err(Into::into),
+            Err(error) => Err(error.into()),
+        };
+        if let Err(error) = merged {
+            let _ = txn.discard();
+            return Err(error);
+        }
+        txn.commit().await?;
+        Ok(true)
     }
 }
