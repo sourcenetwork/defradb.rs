@@ -1,4 +1,4 @@
-//! Insert, update and delete across every vector index kind.
+//! Insert, update, delete, build and merge across every vector index kind.
 //!
 //! ```text
 //! cargo bench -p db --bench vector_mutations
@@ -190,5 +190,48 @@ fn build(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(mutations, insert, update, delete, bulk_load, build);
+/// Folding a batch of pending inserts into a built graph: the streaming merge
+/// the kinds that defer graph work to a background sweep run there, in
+/// place of the work an insert into a graph kind does inline.
+fn merge(c: &mut Criterion) {
+    let rt = common::owned_runtime();
+    let mut corpus = Corpus::new(SEED ^ 0x4D);
+    let existing = corpus.clustered(CORPUS, DIMENSIONS, 32, 0.2);
+    let incoming = corpus.clustered(BATCH, DIMENSIONS, 32, 0.2);
+
+    let mut group = c.benchmark_group("merge");
+    group.sample_size(10);
+    group.throughput(Throughput::Elements(BATCH as u64));
+
+    for kind in ALL_KINDS
+        .iter()
+        .copied()
+        .filter(|kind| kind.merges_pending())
+    {
+        let fixture = rt.block_on(async {
+            let mut index = Index::filled(kind, &existing, true).await;
+            for (i, vector) in incoming.iter().enumerate() {
+                index.insert(NodeId((CORPUS + i + 1) as u64), vector).await;
+            }
+            index
+        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(kind.name()),
+            &kind,
+            |b, _kind| {
+                b.to_async(&rt).iter_batched(
+                    || fixture.clone(),
+                    |mut index| async move {
+                        index.build().await;
+                        index
+                    },
+                    criterion::BatchSize::LargeInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(mutations, insert, update, delete, bulk_load, build, merge);
 criterion_main!(mutations);
