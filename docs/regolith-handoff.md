@@ -2,7 +2,7 @@
 
 This is the review entry point for Theo (vertexclique). [PR #1953](https://github.com/sourcenetwork/defradb.rs/pull/1953) is the permanent handoff link: its description will point to the latest stack tip even when later steps add PRs above it. It follows §5.2 of the supplied `regolith_defralevel_docs` bundle. **The stack is incomplete and remains draft.** This file is updated as implementation and verification progress; an implemented item is not a claim that its PR is ready to merge.
 
-Target: new installations. Jack explicitly waived compatibility with existing encrypted/value layouts and migrations. Regolith is pinned to `d1e36aa747913f6b1ecc14c821f4e5e6314674cf`. Worker-pool/runtime redesign (§5.2 step 9) is outside these eight adoption steps. No PR has been merged.
+Target: new installations. Jack explicitly waived compatibility with existing encrypted/value layouts and migrations. Regolith is pinned to `e844baefe838f3af76403afd46c4b42f1a0b98a5`. Worker-pool/runtime redesign (§5.2 step 9) is outside these eight adoption steps. No PR has been merged.
 
 Latest published tip: [#1955 — receipt-ordered events](https://github.com/sourcenetwork/defradb.rs/pull/1955). Steps 5–8 remain in progress.
 
