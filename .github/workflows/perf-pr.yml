@@ -63,10 +63,10 @@ jobs:
       QUICK_FAMILIES: document_write allocs startup transaction
       CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: head
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base

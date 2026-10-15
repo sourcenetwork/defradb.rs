@@ -29,7 +29,7 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || 'e48e1d8f9f701da94554a176d913131e2e6a5277' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Check qualification driver
@@ -39,7 +39,7 @@ jobs:
         run: |
           revision="$(python3 .github/scripts/native-consumer.py --vera-ref --runtime-ref "$VERA_RUNTIME_REVISION")"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: sourcenetwork/vera.rs
           ref: ${{ steps.vera.outputs.revision }}
