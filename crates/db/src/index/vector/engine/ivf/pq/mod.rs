@@ -184,7 +184,7 @@ impl<S: VectorNodeStore> VectorIndexEngine for IvfPq<S> {
 
         let deleted = self.staging.delete(id).await?;
 
-        if let (Some(state), Some(node), true) = (trained, node, deleted) {
+        if let (Some(state), Some(node)) = (trained, node) {
             let (list, _) = self.assign(&state, &node.vector).await?;
             self.store_mut()
                 .delete_aux(codec::LIST, &codec::list_key(list, id))

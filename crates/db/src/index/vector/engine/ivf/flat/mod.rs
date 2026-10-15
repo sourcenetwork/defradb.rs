@@ -186,7 +186,7 @@ impl<S: VectorNodeStore> VectorIndexEngine for IvfFlat<S> {
 
         let deleted = self.staging.delete(id).await?;
 
-        if let (Some(state), Some(node), true) = (trained, node, deleted) {
+        if let (Some(state), Some(node)) = (trained, node) {
             let list = self.assign(&state, &node.vector).await?;
             self.store_mut()
                 .delete_aux(ivf::LIST, &ivf::list_key(list, id))
