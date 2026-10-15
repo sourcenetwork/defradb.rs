@@ -518,9 +518,10 @@ file keeps loading.
 
 Profiles come from regolith itself: `Options::default()` for a server,
 `Options::embedded()` for a 1-4 MiB working set, and `Options::wasm()` for a
-browser or wasi module. Transactions run at `RepeatableRead` (every point read
-validated, scans recorded per stretch and never per key) with
-`DurabilityMode::Immediate`.
+browser or wasi module. Every transaction runs at `IsolationLevel::DefraLevel`,
+with defradb.rs's `KeyClassifier` installed through `with_policy`: each key
+family's class (Ordinary, ContentAddressed, CommutativePrefix or Log) decides how
+its reads and writes are validated (section 8), with `DurabilityMode::Immediate`.
 
 ## Goal
 
