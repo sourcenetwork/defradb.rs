@@ -68,8 +68,8 @@ impl<S: VectorNodeStore> IvfPq<S> {
             }
         }
 
-        // A tombstoned document keeps its code, so liveness is checked once on
-        // the survivors rather than on every candidate.
+        // Delete drops the code, but a list written before it did can still
+        // name a tombstone, so the survivors are checked once more.
         let mut ranked: Vec<Ranked> = best.into_sorted_vec();
         let mut out = Vec::with_capacity(ranked.len());
         for candidate in ranked.drain(..) {

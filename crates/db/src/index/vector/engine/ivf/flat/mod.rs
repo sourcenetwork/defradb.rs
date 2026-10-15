@@ -175,10 +175,24 @@ impl<S: VectorNodeStore> VectorIndexEngine for IvfFlat<S> {
         Ok(())
     }
 
-    /// Tombstones the node. Its list entry stays and is skipped on the scan,
-    /// the same way the graph kinds skip a tombstone.
+    /// Tombstones the node and drops its list entry. A dead entry left in a
+    /// list would take one of the scan's `k` slots and shorten the answer.
     async fn delete(&mut self, id: NodeId) -> Result<bool> {
-        self.staging.delete(id).await
+        let trained = self.trained().await?;
+        let node = match trained {
+            Some(_) => self.store().get_node(id).await?,
+            None => None,
+        };
+
+        let deleted = self.staging.delete(id).await?;
+
+        if let (Some(state), Some(node), true) = (trained, node, deleted) {
+            let list = self.assign(&state, &node.vector).await?;
+            self.store_mut()
+                .delete_aux(ivf::LIST, &ivf::list_key(list, id))
+                .await?;
+        }
+        Ok(deleted)
     }
 
     async fn should_build(&self) -> Result<bool> {
