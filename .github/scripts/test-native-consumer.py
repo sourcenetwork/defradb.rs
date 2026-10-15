@@ -25,6 +25,56 @@ class Tests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.addCleanup(self.directory.cleanup)
 
+    def sdk_fixture(self):
+        for file, count in zip(driver.SDK_MANIFESTS, (3, 4)):
+            path = self.root / file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(('vera = { git = "https://github.com/sourcenetwork/vera.rs", rev = "' + 'a' * 40 + '" }\n') * count)
+
+    def test_runtime_revision_rejects_mutable_malformed_and_nonstring_values(self):
+        for value in ('', 'main', 'a' * 7, 'A' * 40, 'a' * 40 + '\n',
+                      ' a' * 20, None, 17):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                driver.runtime_revision(value)
+
+    def test_explicit_runtime_keeps_sdk_pin_and_records_both_sources(self):
+        self.sdk_fixture()
+        runtime = self.root / 'runtime'
+        sources = {self.root: {'revision': 'c' * 40, 'lock_sha256': 'd' * 64},
+                   runtime: {'revision': 'b' * 40, 'lock_sha256': 'e' * 64}}
+        with patch.object(driver, 'source', side_effect=sources.__getitem__):
+            runner = driver.Runner(self.root, runtime, self.root, 'b' * 40)
+            runner.guard()
+            summary = json.loads(runner.summary.read_text())
+            manifest = json.loads((runner.private / 'manifest.json').read_text())
+            self.assertEqual(summary['sdk_revision'], 'a' * 40)
+            self.assertEqual(summary['sources']['vera'], sources[runtime])
+            self.assertEqual(summary['sources']['defra'], sources[self.root])
+            self.assertEqual(manifest['sdk_revision'], summary['sdk_revision'])
+            sources[runtime] = {**sources[runtime], 'revision': 'f' * 40}
+            with self.assertRaises(ValueError):
+                runner.guard()
+
+    def test_default_and_explicit_runtime_reject_wrong_checkout_before_staging(self):
+        self.sdk_fixture()
+        for selected, actual in ((None, 'b' * 40), ('b' * 40, 'a' * 40)):
+            with self.subTest(selected=selected), patch.object(driver, 'source',
+                    return_value={'revision': actual, 'lock_sha256': 'c' * 64}), \
+                    self.assertRaises(ValueError):
+                driver.Runner(self.root, self.root / 'runtime', self.root, selected)
+        self.assertEqual(list(self.root.glob('defra-native-consumer-*')), [])
+        with patch.object(driver, 'source', return_value={'revision': 'a' * 40, 'lock_sha256': 'c' * 64}):
+            runner = driver.Runner(self.root, self.root / 'runtime', self.root)
+        self.assertEqual(runner.sdk_revision, 'a' * 40)
+
+    def test_runtime_override_does_not_bypass_conflicting_sdk_declarations(self):
+        self.sdk_fixture()
+        path = self.root / driver.SDK_MANIFESTS[1]
+        path.write_text(path.read_text().replace('a' * 40, 'c' * 40, 1))
+        with patch.object(driver, 'source') as source, self.assertRaises(ValueError):
+            driver.Runner(self.root, self.root / 'runtime', self.root, 'b' * 40)
+        source.assert_not_called()
+
     def test_failed_phase_exports_location_without_private_paths_or_assertion_values(self):
         log = self.root / 'private.log'
         log.write_text("thread 'policy' panicked at /private/keys/poll.rs:47:9:\n"
@@ -106,10 +156,11 @@ class Tests(unittest.TestCase):
         runner.private = self.root
         runner.summary = self.root / 'summary.json'
         runner.sources, runner.binaries = {}, {}
+        runner.sdk_revision = 'a' * 40
         runner.records = [{'phase': 'reader-update', 'command': ['private-key'], 'log': 'private-path',
                            'exit_code': 0, 'seconds': 1.5, 'passed': 1}]
         runner.save()
-        self.assertEqual(json.loads(runner.summary.read_text()), {'phases': [
+        self.assertEqual(json.loads(runner.summary.read_text()), {'sources': {}, 'sdk_revision': 'a' * 40, 'phases': [
             {'phase': 'reader-update', 'exit_code': 0, 'seconds': 1.5, 'passed': 1}]})
 
     def test_real_runner_records_failure_without_streaming_raw_log(self):
@@ -117,6 +168,7 @@ class Tests(unittest.TestCase):
         runner.root = runner.private = self.root
         runner.summary = self.root / 'summary.json'
         runner.env, runner.sources, runner.binaries, runner.records = {}, {}, {}, []
+        runner.sdk_revision = 'a' * 40
         with patch.object(runner, 'guard'), patch.object(driver.subprocess, 'Popen') as popen, \
                 patch.object(driver, 'stop_group'), patch('builtins.print') as output:
             popen.return_value.wait.return_value = 7
@@ -131,6 +183,7 @@ class Tests(unittest.TestCase):
         runner.root = runner.private = self.root
         runner.summary = self.root / 'summary.json'
         runner.env, runner.sources, runner.binaries, runner.records = {}, {}, {}, []
+        runner.sdk_revision = 'a' * 40
 
         def process(*args, **kwargs):
             kwargs['stdout'].write("thread 'policy' panicked at /private/poll.rs:47:9:\nsecret-value\n")

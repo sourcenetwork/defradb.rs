@@ -11,17 +11,18 @@ use defra_core::vector::Metric;
 /// already prepared the way that metric requires (normalized, under cosine).
 ///
 /// `effort` overrides the configured `nprobe` the way `ef_search` does for a
-/// graph; `None` takes the configured value. Either way the result holds at
-/// least one list and never more than exist.
+/// graph; `None` takes the configured value, derived from the list count when
+/// it is zero. Either way the result holds at least one list and never more
+/// than exist.
 pub fn probe_lists(
     query: &[f32],
     centroids: &Centroids,
-    configured_nprobe: usize,
+    configured_nprobe: u32,
     effort: Option<usize>,
 ) -> Vec<usize> {
     let nprobe = effort
         .map(|e| e.max(1))
-        .unwrap_or(configured_nprobe)
+        .unwrap_or_else(|| super::resolved_nprobe(configured_nprobe, centroids.k))
         .min(centroids.k)
         .max(1);
 

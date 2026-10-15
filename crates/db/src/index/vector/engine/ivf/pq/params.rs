@@ -5,19 +5,27 @@ pub use crate::index::vector::engine::ivf::{MAX_NLIST, TRAIN_PER_LIST};
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ivf;
 
-pub const DEFAULT_NPROBE: u32 = 8;
+/// Zero derives the probe count from `nlist`; see [`ivf::resolved_nprobe`].
+pub const DEFAULT_NPROBE: u32 = 0;
 pub const DEFAULT_NBITS: u32 = 8;
 pub const DEFAULT_SAMPLE_BYTES: u64 = 128 << 20;
+/// Candidates kept per result for the exact re-score. On 384-wide embeddings
+/// 10 brings recall within 0.01 of IVF_FLAT; 1 re-scores only the top `k`.
+pub const DEFAULT_RERANK: u32 = 10;
+pub const MAX_RERANK: u32 = 1_000;
 
 pub const MAX_M: u32 = 4_096;
 
-/// `0` means derive from the corpus: `nlist` from its size, `m` from the width.
+/// `0` means derive: `nlist` from the corpus size, `m` from the width, `nprobe`
+/// from `nlist`. `rerank` is how many candidates per result PQ shortlists
+/// before they are re-scored against the stored vectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IvfPqParams {
     pub nlist: u32,
     pub nprobe: u32,
     pub m: u32,
     pub sample_bytes: u64,
+    pub rerank: u32,
 }
 
 impl Default for IvfPqParams {
@@ -27,6 +35,7 @@ impl Default for IvfPqParams {
             nprobe: DEFAULT_NPROBE,
             m: 0,
             sample_bytes: DEFAULT_SAMPLE_BYTES,
+            rerank: DEFAULT_RERANK,
         }
     }
 }
@@ -37,6 +46,7 @@ impl IvfPqParams {
             ("nlist", self.nlist, MAX_NLIST),
             ("m", self.m, MAX_M),
             ("nprobe", self.nprobe, MAX_NLIST),
+            ("rerank", self.rerank, MAX_RERANK),
         ] {
             if value > max {
                 return Err(Error::Other(format!(
@@ -80,6 +90,11 @@ impl IvfPqParams {
             .rev()
             .find(|m| dimensions.is_multiple_of(*m))
             .unwrap_or(1)
+    }
+
+    /// Lists probed when a query gives no effort of its own.
+    pub fn resolved_nprobe(&self, nlist: usize) -> usize {
+        ivf::resolved_nprobe(self.nprobe, nlist)
     }
 
     /// Vectors needed before training fires. See

@@ -30,7 +30,7 @@ jobs:
     name: Combine bot PRs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         env:
           BRANCH_PREFIX: ${{ inputs.branchPrefix }}
           MUST_BE_GREEN: ${{ inputs.mustBeGreen }}

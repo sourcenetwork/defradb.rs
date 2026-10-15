@@ -696,8 +696,8 @@ impl Default for SsgParams {
 
 /// IVF-PQ build and search parameters.
 ///
-/// `0` means derive from the corpus: `nlist` from its size, `m` from the
-/// vector width.
+/// `0` means derive: `nlist` from the corpus size, `m` from the vector width,
+/// `nprobe` from `nlist`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IvfPqParams {
     /// Coarse centroids, and therefore inverted lists.
@@ -712,10 +712,17 @@ pub struct IvfPqParams {
     /// Cap on the resident training sample.
     #[serde(rename = "SampleBytes", default = "default_ivfpq_sample_bytes")]
     pub sample_bytes: u64,
+    /// Candidates per result PQ shortlists for an exact re-score.
+    #[serde(rename = "Rerank", default = "default_ivfpq_rerank")]
+    pub rerank: u32,
 }
 
 fn default_ivfpq_nprobe() -> u32 {
-    8
+    0
+}
+
+fn default_ivfpq_rerank() -> u32 {
+    10
 }
 
 fn default_ivfpq_sample_bytes() -> u64 {
@@ -729,6 +736,7 @@ impl Default for IvfPqParams {
             nprobe: default_ivfpq_nprobe(),
             m: 0,
             sample_bytes: default_ivfpq_sample_bytes(),
+            rerank: default_ivfpq_rerank(),
         }
     }
 }
@@ -752,7 +760,7 @@ pub struct IvfFlatParams {
 }
 
 fn default_ivfflat_nprobe() -> u32 {
-    8
+    0
 }
 
 fn default_ivfflat_sample_bytes() -> u64 {

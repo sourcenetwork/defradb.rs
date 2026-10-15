@@ -72,6 +72,7 @@ impl VectorIndex {
             nprobe: configured.nprobe,
             m: configured.m,
             sample_bytes: configured.sample_bytes,
+            rerank: configured.rerank,
         };
 
         let configured = vector.ivfflat.unwrap_or_default();

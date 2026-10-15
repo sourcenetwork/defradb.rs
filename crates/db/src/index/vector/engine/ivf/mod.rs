@@ -19,5 +19,6 @@ pub use codec::{
 };
 pub use probe::probe_lists;
 pub use train::{
-    fit_centroids, resolved_nlist, resolved_train_threshold, MAX_NLIST, TRAIN_PER_LIST,
+    fit_centroids, resolved_nlist, resolved_nprobe, resolved_train_threshold, MAX_NLIST,
+    TRAIN_PER_LIST,
 };
