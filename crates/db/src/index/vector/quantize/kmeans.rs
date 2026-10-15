@@ -247,35 +247,29 @@ fn for_each_parallel<T: Send>(slots: &mut [T], work: impl Fn(usize, &mut T) + Sy
 const LANES: usize = 16;
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
+    let ((x, x_tail), (y, y_tail)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
     let mut acc = [0.0f32; LANES];
-    let (mut x, mut y) = (a.chunks_exact(LANES), b.chunks_exact(LANES));
-    for (p, q) in (&mut x).zip(&mut y) {
+    for (p, q) in x.iter().zip(y) {
         for lane in 0..LANES {
             acc[lane] += p[lane] * q[lane];
         }
     }
-    let tail: f32 = x
-        .remainder()
-        .iter()
-        .zip(y.remainder())
-        .map(|(p, q)| p * q)
-        .sum();
+    let tail: f32 = x_tail.iter().zip(y_tail).map(|(p, q)| p * q).sum();
     acc.iter().sum::<f32>() + tail
 }
 
 fn squared_distance(a: &[f32], b: &[f32]) -> f32 {
+    let ((x, x_tail), (y, y_tail)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
     let mut acc = [0.0f32; LANES];
-    let (mut x, mut y) = (a.chunks_exact(LANES), b.chunks_exact(LANES));
-    for (p, q) in (&mut x).zip(&mut y) {
+    for (p, q) in x.iter().zip(y) {
         for lane in 0..LANES {
             let d = p[lane] - q[lane];
             acc[lane] += d * d;
         }
     }
-    let tail: f32 = x
-        .remainder()
+    let tail: f32 = x_tail
         .iter()
-        .zip(y.remainder())
+        .zip(y_tail)
         .map(|(p, q)| (p - q) * (p - q))
         .sum();
     acc.iter().sum::<f32>() + tail
@@ -312,15 +306,19 @@ impl Centroids {
     }
 
     /// The nearest centroid to `vector`, and its squared distance.
+    ///
+    /// Build, insert and update all assign lists through this one function,
+    /// so they agree even on a near-tie: an update finds the entry to remove
+    /// by assigning the old vector again.
     pub fn nearest(&self, vector: &[f32]) -> (usize, f64) {
-        let mut best = (0usize, f64::INFINITY);
+        let mut best = (0usize, f32::INFINITY);
         for index in 0..self.k {
-            let distance = squared_euclidean(vector, self.get(index));
+            let distance = squared_distance(vector, self.get(index));
             if distance < best.1 {
                 best = (index, distance);
             }
         }
-        best
+        (best.0, f64::from(best.1))
     }
 }
 

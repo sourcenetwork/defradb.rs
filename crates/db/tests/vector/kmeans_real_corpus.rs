@@ -21,8 +21,10 @@ const NPROBE: usize = 8;
 fn read_f32(path: &str) -> Vec<f32> {
     std::fs::read(path)
         .unwrap()
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
         .collect()
 }
 
@@ -75,8 +77,10 @@ fn kmeans_real_corpus() {
     let queries = read_f32(&format!("{dir}/queries.f32"));
     let truth: Vec<u32> = std::fs::read(format!("{dir}/gt10.u32"))
         .unwrap()
-        .chunks_exact(4)
-        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| u32::from_le_bytes(*b))
         .collect();
 
     let n = env_usize("KMEANS_N", 87_381).min(base.len() / DIMENSIONS);
@@ -90,6 +94,17 @@ fn kmeans_real_corpus() {
         started.elapsed().as_secs_f64(),
         fit.iterations,
         fit.inertia
+    );
+
+    let started = Instant::now();
+    let lists: usize = base
+        .chunks(DIMENSIONS)
+        .map(|v| centroids.nearest(v).0)
+        .sum();
+    println!(
+        "assign {} vectors one at a time: {:.1}s (checksum {lists})",
+        base.len() / DIMENSIONS,
+        started.elapsed().as_secs_f64()
     );
 
     if std::env::var("KMEANS_RECALL").is_ok() {
