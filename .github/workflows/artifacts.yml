@@ -59,12 +59,12 @@ jobs:
           cp target/release/defra artifacts/defra
           cargo build --release -p cli --features iroh
           cp target/release/defra artifacts/defra-iroh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-${{ matrix.platform }}
           path: artifacts/defra
           retention-days: 30
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-iroh-${{ matrix.platform }}
           path: artifacts/defra-iroh

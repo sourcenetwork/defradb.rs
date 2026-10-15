@@ -185,7 +185,7 @@ jobs:
           cp target/super-dev/defra artifacts/ci/defra
           cargo build -p cli --profile super-dev --features iroh
           cp target/super-dev/defra artifacts/ci/defra-iroh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-ci-binaries
           path: artifacts/ci
@@ -334,7 +334,7 @@ jobs:
         run: cargo test --profile super-dev -p conformance --lib --test tla_conformance -- --test-threads=1
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-e2e-logs
           path: target/e2e/**/logs/*.log
@@ -503,7 +503,7 @@ jobs:
             peer::create::head_hint_fanout_above_car_worker_bound_quiesces -- --test-threads=1
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-${{ matrix.suite }}-e2e-logs
           path: target/e2e/**/logs/*.log
@@ -549,7 +549,7 @@ jobs:
           cargo test --profile super-dev -p integration-test --test issue1154_repro -- --test-threads=1
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: p2p-linux-e2e-logs
           path: target/e2e/**/logs/*.log

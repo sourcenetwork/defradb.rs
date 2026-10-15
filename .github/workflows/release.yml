@@ -92,7 +92,7 @@ jobs:
           tar czf "${ARCHIVE}" -C "target/${{ matrix.target }}/release" defra
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-${{ matrix.platform }}
           path: ${{ env.ARCHIVE }}
@@ -140,7 +140,7 @@ jobs:
           tar czf "${ARCHIVE}" -C pkg/wasm defra_wasm_bg.wasm defra_wasm.js defra_wasm.d.ts
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-wasm
           path: ${{ env.ARCHIVE }}
@@ -296,7 +296,7 @@ jobs:
             > "${MANIFEST}"
           echo "MANIFEST=${MANIFEST}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}-${{ matrix.platform }}
           path: |
@@ -372,7 +372,7 @@ jobs:
             > "${MANIFEST}"
           echo "MANIFEST=${MANIFEST}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}-ios_xcframework
           path: |

@@ -64,7 +64,7 @@ jobs:
         run: python3 .github/scripts/native-consumer.py --vera .native/vera --runtime-ref "$VERA_RUNTIME_REVISION"
       - name: Retain numeric qualification results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-consumer-summary
           path: ${{ runner.temp }}/native-consumer-summary.json
