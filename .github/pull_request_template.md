@@ -18,6 +18,7 @@ Create an issue for it if none exists.
 ## How has this been tested?
 
 (*replace*) Describe the tests that verify the change and how to reproduce them.
+Show the evidence where you can: a link to a workflow run, or the output of the local run.
 
 Platform(s) tested on:
 - *(modify the list accordingly)*
