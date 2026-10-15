@@ -286,6 +286,7 @@ pub struct IvfPqConfig {
     pub nprobe: Option<u32>,
     pub m: Option<u32>,
     pub sample_bytes: Option<u32>,
+    pub rerank: Option<u32>,
 }
 
 /// The `ivfflat` block. Every member is optional; an omitted one keeps its
@@ -319,4 +320,5 @@ pub struct DiskAnnConfig {
     pub alpha_percent: Option<u32>,
     pub m: Option<u32>,
     pub sample_bytes: Option<u32>,
+    pub resident_codes: Option<bool>,
 }

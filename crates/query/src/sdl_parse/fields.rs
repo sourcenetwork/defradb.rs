@@ -681,6 +681,7 @@ impl<'a> SdlParser<'a> {
                             "nprobe" => &mut block.nprobe,
                             "m" => &mut block.m,
                             "sampleBytes" => &mut block.sample_bytes,
+                            "rerank" => &mut block.rerank,
                             other => return Err(unknown_vector_member(member, other)),
                         };
                         *slot = Some(read_block_u32(name, value)?);
@@ -727,6 +728,15 @@ impl<'a> SdlParser<'a> {
                         let slot = match name.as_str() {
                             "metric" => {
                                 block.metric = Some(read_metric(member, value)?);
+                                continue;
+                            }
+                            "residentCodes" => {
+                                let SchemaValue::Boolean(resident) = value else {
+                                    return Err(QueryError::parse(format!(
+                                        "@index vector {member} residentCodes must be a boolean"
+                                    )));
+                                };
+                                block.resident_codes = Some(*resident);
                                 continue;
                             }
                             "R" => &mut block.r,

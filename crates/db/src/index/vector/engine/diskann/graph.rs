@@ -1,8 +1,10 @@
 //! The walk, linking a node in, and the pruning they share.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+
+use super::cache::Codes;
 use super::codec::{self, GraphState, Record, Trained};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
@@ -27,25 +29,74 @@ fn by_distance(a: &Visit, b: &Visit) -> std::cmp::Ordering {
 }
 
 impl<S: VectorNodeStore> DiskAnn<S> {
+    /// A node's record, with its neighbours' codes filled in from the cache
+    /// or their own keys when codes are resident. A neighbour whose code is
+    /// gone was consolidated away and is left out.
     pub(super) async fn record(&self, m: usize, id: NodeId) -> Result<Option<Record>> {
-        match self
-            .store()
-            .get_aux(codec::GRAPH, &codec::record_key(id))
-            .await?
-        {
-            Some(bytes) => codec::decode_record(&bytes, m).map(Some),
-            None => Ok(None),
+        let key = codec::record_key(id);
+        let Some(bytes) = self.store().get_aux(codec::GRAPH, &key).await? else {
+            return Ok(None);
+        };
+        if !self.params.resident_codes {
+            return codec::decode_record(&bytes, m).map(Some);
         }
+        let Some(code) = self.code(id).await? else {
+            return Ok(None);
+        };
+        let mut neighbors = Vec::new();
+        for neighbor in codec::decode_ids(&bytes)? {
+            if let Some(code) = self.code(neighbor).await? {
+                neighbors.push((neighbor, code));
+            }
+        }
+        Ok(Some(Record { code, neighbors }))
     }
 
+    /// Writes the record's edges. A resident-codes record holds only ids; the
+    /// node's own code is written once, by [`link`](Self::link).
     pub(super) async fn put_record(&mut self, id: NodeId, record: &Record) -> Result<()> {
+        let bytes = if self.params.resident_codes {
+            codec::encode_ids(&record.neighbors)
+        } else {
+            codec::encode_record(record)
+        };
         self.store_mut()
-            .put_aux(
-                codec::GRAPH,
-                &codec::record_key(id),
-                &codec::encode_record(record),
-            )
+            .put_aux(codec::GRAPH, &codec::record_key(id), &bytes)
             .await
+    }
+
+    async fn code(&self, id: NodeId) -> Result<Option<Vec<u8>>> {
+        if let Some(code) = self.codes.as_ref().and_then(|codes| codes.get(id)) {
+            return Ok(Some(code));
+        }
+        let code = self
+            .store()
+            .get_aux(codec::CODE, &codec::record_key(id))
+            .await?
+            .map(|code| code.to_vec());
+        if let (Some(codes), Some(code)) = (&self.codes, &code) {
+            codes.insert(id, code.clone());
+        }
+        Ok(code)
+    }
+
+    /// Reloads the cache when a merge has run since it was loaded.
+    async fn refresh_codes(&self, generation: u64) -> Result<()> {
+        let Some(cache) = &self.codes else {
+            return Ok(());
+        };
+        if !self.params.resident_codes || cache.is_current(generation) {
+            return Ok(());
+        }
+        let codes = Codes::default();
+        self.store()
+            .iterate_aux(codec::CODE, b"", |key, code| {
+                codes.insert(codec::id_from_key(key)?, code.to_vec());
+                Ok(())
+            })
+            .await?;
+        cache.replace(generation, codes);
+        Ok(())
     }
 
     /// GreedySearch (paper Algorithm 1) over codes: every node expanded, with
@@ -71,8 +122,8 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             distance: pq.distance(table, &start.code),
             code: start.code,
         }];
-        let mut seen = HashSet::from([entry]);
-        let mut expanded = HashSet::new();
+        let mut seen = RapidHashSet::from_iter([entry]);
+        let mut expanded = RapidHashSet::new();
         let mut visited = Vec::new();
         let budget = self.params.walk_budget(l);
 
@@ -121,6 +172,11 @@ impl<S: VectorNodeStore> DiskAnn<S> {
     ) -> Result<Vec<(NodeId, Vec<u8>)>> {
         if self.record(pq.code_len(), id).await?.is_none() {
             graph.live += 1;
+        }
+        if self.params.resident_codes {
+            self.store_mut()
+                .put_aux(codec::CODE, &codec::record_key(id), code)
+                .await?;
         }
         let Some(entry) = graph.entry else {
             graph.entry = Some(id);
@@ -213,7 +269,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         base: &[f32],
         edges: Vec<(NodeId, Vec<u8>)>,
     ) -> Vec<(NodeId, Vec<u8>)> {
-        let mut codes: HashMap<NodeId, Vec<u8>> = HashMap::with_capacity(edges.len());
+        let mut codes: RapidHashMap<NodeId, Vec<u8>> = RapidHashMap::with_capacity(edges.len());
         let candidates: Vec<Candidate> = edges
             .into_iter()
             .filter_map(|(id, code)| {
@@ -263,7 +319,9 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         let pq = self.quantizer(trained).await?;
         let table = pq.distance_table(&prepared);
 
-        let mut candidates = match self.graph_state().await?.entry {
+        let graph = self.graph_state().await?;
+        self.refresh_codes(graph.generation).await?;
+        let mut candidates = match graph.entry {
             Some(entry) => self.walk(&pq, entry, &table, l).await?,
             None => Vec::new(),
         };
@@ -279,7 +337,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .await?;
         candidates.sort_by(by_distance);
 
-        let mut seen = HashSet::new();
+        let mut seen = RapidHashSet::new();
         let mut ranked = Vec::with_capacity(l);
         for candidate in candidates {
             if ranked.len() >= l {

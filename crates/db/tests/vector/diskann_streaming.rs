@@ -16,7 +16,7 @@ use storage::corekv::Store;
 use storage::index::CollectionIndex;
 use storage::RegolithStore;
 
-fn fresh(seed: u64) -> Vec<f32> {
+pub fn fresh(seed: u64) -> Vec<f32> {
     crate::support::Corpus::new(seed).vector(DIMENSIONS)
 }
 

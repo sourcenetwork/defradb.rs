@@ -919,6 +919,7 @@ impl<'a> SdlParser<'a> {
                                     sample_bytes: ivfpq
                                         .sample_bytes
                                         .map_or(defaults.sample_bytes, u64::from),
+                                    rerank: ivfpq.rerank.unwrap_or(defaults.rerank),
                                 })
                             }
                             _ => None,
@@ -964,6 +965,9 @@ impl<'a> SdlParser<'a> {
                                     sample_bytes: diskann
                                         .sample_bytes
                                         .map_or(defaults.sample_bytes, u64::from),
+                                    resident_codes: diskann
+                                        .resident_codes
+                                        .unwrap_or(defaults.resident_codes),
                                 })
                             }
                             _ => None,

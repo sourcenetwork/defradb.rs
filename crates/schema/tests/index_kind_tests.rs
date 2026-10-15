@@ -163,14 +163,20 @@ fn index_kinds() -> impl Strategy<Value = IndexKind> {
         },
     ));
     let ivfpq = prop::option::of(
-        (any::<u32>(), any::<u32>(), any::<u32>(), any::<u64>()).prop_map(
-            |(nlist, nprobe, m, sample_bytes)| IvfPqParams {
+        (
+            any::<u32>(),
+            any::<u32>(),
+            any::<u32>(),
+            any::<u64>(),
+            any::<u32>(),
+        )
+            .prop_map(|(nlist, nprobe, m, sample_bytes, rerank)| IvfPqParams {
                 nlist,
                 nprobe,
                 m,
                 sample_bytes,
-            },
-        ),
+                rerank,
+            }),
     );
     let ivfflat = prop::option::of((any::<u32>(), any::<u32>(), any::<u64>()).prop_map(
         |(nlist, nprobe, sample_bytes)| IvfFlatParams {
@@ -194,17 +200,21 @@ fn index_kinds() -> impl Strategy<Value = IndexKind> {
             any::<u32>(),
             any::<u32>(),
             any::<u64>(),
+            any::<bool>(),
         )
-            .prop_map(|(r, l_build, l_search, alpha_percent, m, sample_bytes)| {
-                DiskAnnParams {
-                    r,
-                    l_build,
-                    l_search,
-                    alpha_percent,
-                    m,
-                    sample_bytes,
-                }
-            }),
+            .prop_map(
+                |(r, l_build, l_search, alpha_percent, m, sample_bytes, resident_codes)| {
+                    DiskAnnParams {
+                        r,
+                        l_build,
+                        l_search,
+                        alpha_percent,
+                        m,
+                        sample_bytes,
+                        resident_codes,
+                    }
+                },
+            ),
     );
 
     prop_oneof![

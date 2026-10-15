@@ -218,6 +218,29 @@ async fn a_document_written_after_the_build_is_searchable() {
     );
 }
 
+/// PQ only shortlists: the answer is re-scored against the stored vectors, so
+/// its distances are exact rather than code estimates.
+#[tokio::test]
+async fn results_carry_exact_distances() {
+    let mut corpus = crate::support::Corpus::new(SEED ^ 0x224);
+    let vectors = corpus.clustered(400, DIMENSIONS, 8, 0.1);
+    let mut index = filled(8, 8, &vectors).await;
+    index.build().await.unwrap();
+
+    let query = corpus.vectors(1, DIMENSIONS).remove(0);
+    let hits = index.search(query.as_slice(), 10, None).await.unwrap();
+    assert_eq!(hits.len(), 10);
+    for hit in hits {
+        let exact = Metric::Cosine.distance(query.as_slice(), &vectors[hit.id.0 as usize - 1]);
+        assert!(
+            (hit.distance - exact).abs() < 1e-5,
+            "{:?} ranked at {} but sits at {exact}",
+            hit.id,
+            hit.distance
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_deleted_document_stops_ranking() {
     let mut corpus = crate::support::Corpus::new(SEED ^ 0x222);

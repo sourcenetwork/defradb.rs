@@ -197,6 +197,8 @@ pub struct DB<S: Store> {
     closed: AtomicBool,
     /// In-memory collection cache (name -> Collection).
     pub(crate) collections: crate::collection::epoch::EpochedCollections,
+    /// PQ codes of resident-codes DiskANN indexes, shared by every search.
+    vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -285,6 +287,7 @@ impl<S: Store> DB<S> {
             collections: crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             ),
+            vector_codes: Arc::default(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -352,6 +355,7 @@ impl<S: Store> DB<S> {
             collections: crate::collection::epoch::EpochedCollections::new(
                 crate::collection::CollectionMap::default(),
             ),
+            vector_codes: Arc::default(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -564,7 +568,11 @@ impl<S: Store> DB<S> {
         let basic_txn = BasicTxn::new(&*self.store, id, readonly)
             .await
             .map_err(Error::Storage)?;
-        Ok(DbTxn::new(basic_txn))
+        Ok(DbTxn::new(basic_txn).with_vector_codes(self.vector_codes.clone()))
+    }
+
+    pub(crate) fn vector_codes(&self) -> &crate::index::vector::engine::diskann::CodeCaches {
+        &self.vector_codes
     }
 
     /// Reclaim superseded collection head keys, if enough have built up.

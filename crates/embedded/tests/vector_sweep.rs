@@ -43,13 +43,22 @@ fn spread(i: usize) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_embedded_node_merges_pending_diskann_inserts() -> Result<()> {
+    merges_pending_inserts("R: 8, m: 2").await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_embedded_node_merges_pending_resident_code_inserts() -> Result<()> {
+    merges_pending_inserts("R: 8, m: 2, residentCodes: true").await
+}
+
+async fn merges_pending_inserts(diskann: &str) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let corpus = TRAIN_THRESHOLD + 76;
 
     let node = NodeBuilder::default().data_path(dir.path()).build().await?;
-    node.add_schema(
-        "type Note { title: String embedding: [Float32!] @index(vector: {dimensions: 4, diskann: {R: 8, m: 2}}) }",
-    )
+    node.add_schema(&format!(
+        "type Note {{ title: String embedding: [Float32!] @index(vector: {{dimensions: 4, diskann: {{{diskann}}}}}) }}"
+    ))
     .await?;
     let input = (0..corpus)
         .map(|i| format!("{{title: \"n{i}\", embedding: {}}}", spread(i)))

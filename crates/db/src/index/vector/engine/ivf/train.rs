@@ -11,6 +11,10 @@ pub const TRAIN_PER_LIST: u32 = 39;
 
 pub const MAX_NLIST: u32 = 65_536;
 
+/// pg_vectorsearch's floor and cap on a derived probe count.
+const MIN_DERIVED_NPROBE: usize = 10;
+const MAX_DERIVED_NPROBE: usize = 2_048;
+
 /// `4*sqrt(n)` is the usual starting point: lists stay large enough to train
 /// and small enough that probing a few is much cheaper than a scan.
 pub fn resolved_nlist(explicit: u32, corpus: u64) -> u32 {
@@ -19,6 +23,20 @@ pub fn resolved_nlist(explicit: u32, corpus: u64) -> u32 {
     }
     let derived = 4.0 * (corpus as f64).sqrt();
     (derived as u32).clamp(1, MAX_NLIST)
+}
+
+/// Lists a query probes when no effort is given. A zero `explicit` derives
+/// `0.5*sqrt(nlist)`, pg_vectorsearch's default, so the share of the index a
+/// query scans shrinks slowly as the corpus grows instead of falling with
+/// every list added. Never more lists than exist.
+pub fn resolved_nprobe(explicit: u32, nlist: usize) -> usize {
+    let nprobe = if explicit > 0 {
+        explicit as usize
+    } else {
+        ((0.5 * (nlist as f64).sqrt()).round() as usize)
+            .clamp(MIN_DERIVED_NPROBE, MAX_DERIVED_NPROBE)
+    };
+    nprobe.min(nlist).max(1)
 }
 
 /// Vectors needed before training fires, with no dependency on the count

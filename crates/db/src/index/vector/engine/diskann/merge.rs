@@ -1,7 +1,9 @@
 //! StreamingMerge (FreshDiskANN §5.3): folding pending inserts and tombstones
 //! into the graph.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
+
+use rapidhash::{HashSetExt, RapidHashSet};
 
 use super::codec::{self, GraphState, Record};
 use super::graph::decode;
@@ -93,7 +95,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             });
         }
 
-        let mut deleted = HashSet::new();
+        let mut deleted = RapidHashSet::new();
         self.store()
             .iterate_aux(codec::DELETED, b"", |key, _| {
                 deleted.insert(codec::id_from_key(key)?);
@@ -108,8 +110,8 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 if deleted.contains(&id) {
                     return Ok(());
                 }
-                let record = codec::decode_record(value, m)?;
-                if record.neighbors.iter().any(|(n, _)| deleted.contains(n)) {
+                let neighbors = codec::neighbor_ids(value, m, self.params.resident_codes)?;
+                if neighbors.iter().any(|n| deleted.contains(n)) {
                     affected.push(id);
                 }
                 Ok(())
@@ -151,6 +153,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         for ids in plan.pending.chunks(slice) {
             self.merge_slice(&pq, &mut graph, ids).await?;
         }
+        graph.generation += 1;
         self.put_graph_state(&graph).await
     }
 
@@ -203,7 +206,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         affected: &[NodeId],
     ) -> Result<()> {
         let m = pq.code_len();
-        let mut deleted = HashSet::with_capacity(planned.len());
+        let mut deleted = RapidHashSet::with_capacity(planned.len());
         for &id in planned {
             if self
                 .store()
@@ -264,6 +267,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             let key = codec::record_key(*id);
             if self.store().get_aux(codec::GRAPH, &key).await?.is_some() {
                 self.store_mut().delete_aux(codec::GRAPH, &key).await?;
+                self.store_mut().delete_aux(codec::CODE, &key).await?;
                 removed += 1;
             }
             self.store_mut().delete_aux(codec::DELETED, &key).await?;
@@ -272,7 +276,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         Ok(())
     }
 
-    async fn any_live_record(&self, deleted: &HashSet<NodeId>) -> Result<Option<NodeId>> {
+    async fn any_live_record(&self, deleted: &RapidHashSet<NodeId>) -> Result<Option<NodeId>> {
         let mut found = None;
         let stop = "vector index: any_live_record stopped early";
         match self

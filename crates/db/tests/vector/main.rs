@@ -2,8 +2,10 @@
 
 mod diskann_disk_cost;
 mod diskann_engine;
+mod diskann_resident;
 mod diskann_streaming;
 mod edge_selection;
+mod ivf_real_corpus;
 mod ivfflat_engine;
 mod ivfflat_exactness;
 mod ivfflat_recall_gate;

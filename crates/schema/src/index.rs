@@ -595,8 +595,7 @@ pub struct VectorIndexDescription {
 /// DiskANN build and search parameters.
 ///
 /// `alpha_percent` is the pruning slack in hundredths, so 120 is the paper's
-/// `alpha = 1.2`: an integer because this replicates inside a collection
-/// definition, where a float is a value two runtimes can round differently.
+/// `alpha = 1.2`: an integer so the stored definition holds it exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiskAnnParams {
     /// Maximum out-degree of a node.
@@ -618,6 +617,11 @@ pub struct DiskAnnParams {
     /// Cap on the resident training sample.
     #[serde(rename = "SampleBytes", default = "default_diskann_sample_bytes")]
     pub sample_bytes: u64,
+    /// Keep every PQ code in memory and store only neighbour ids in graph
+    /// records. Searches read far less from disk, for `m` bytes of memory per
+    /// vector.
+    #[serde(rename = "ResidentCodes", default)]
+    pub resident_codes: bool,
 }
 
 fn default_diskann_r() -> u32 {
@@ -649,6 +653,7 @@ impl Default for DiskAnnParams {
             alpha_percent: default_diskann_alpha_percent(),
             m: 0,
             sample_bytes: default_diskann_sample_bytes(),
+            resident_codes: false,
         }
     }
 }
@@ -691,8 +696,8 @@ impl Default for SsgParams {
 
 /// IVF-PQ build and search parameters.
 ///
-/// `0` means derive from the corpus: `nlist` from its size, `m` from the
-/// vector width.
+/// `0` means derive: `nlist` from the corpus size, `m` from the vector width,
+/// `nprobe` from `nlist`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IvfPqParams {
     /// Coarse centroids, and therefore inverted lists.
@@ -707,10 +712,17 @@ pub struct IvfPqParams {
     /// Cap on the resident training sample.
     #[serde(rename = "SampleBytes", default = "default_ivfpq_sample_bytes")]
     pub sample_bytes: u64,
+    /// Candidates per result PQ shortlists for an exact re-score.
+    #[serde(rename = "Rerank", default = "default_ivfpq_rerank")]
+    pub rerank: u32,
 }
 
 fn default_ivfpq_nprobe() -> u32 {
-    8
+    0
+}
+
+fn default_ivfpq_rerank() -> u32 {
+    10
 }
 
 fn default_ivfpq_sample_bytes() -> u64 {
@@ -724,6 +736,7 @@ impl Default for IvfPqParams {
             nprobe: default_ivfpq_nprobe(),
             m: 0,
             sample_bytes: default_ivfpq_sample_bytes(),
+            rerank: default_ivfpq_rerank(),
         }
     }
 }
@@ -747,7 +760,7 @@ pub struct IvfFlatParams {
 }
 
 fn default_ivfflat_nprobe() -> u32 {
-    8
+    0
 }
 
 fn default_ivfflat_sample_bytes() -> u64 {

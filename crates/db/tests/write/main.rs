@@ -9,4 +9,5 @@ mod embedding;
 mod embedding_reload;
 mod identical_delta;
 mod queue;
+mod size_constraint;
 mod update;

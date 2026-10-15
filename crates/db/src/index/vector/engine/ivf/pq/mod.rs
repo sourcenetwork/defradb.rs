@@ -18,8 +18,8 @@ mod search;
 
 pub use codec::TrainedState;
 pub use params::{
-    IvfPqParams, DEFAULT_NBITS, DEFAULT_NPROBE, DEFAULT_SAMPLE_BYTES, MAX_M, MAX_NLIST,
-    TRAIN_PER_LIST,
+    IvfPqParams, DEFAULT_NBITS, DEFAULT_NPROBE, DEFAULT_RERANK, DEFAULT_SAMPLE_BYTES, MAX_M,
+    MAX_NLIST, MAX_RERANK, TRAIN_PER_LIST,
 };
 
 use crate::index::error::{Error, Result};
