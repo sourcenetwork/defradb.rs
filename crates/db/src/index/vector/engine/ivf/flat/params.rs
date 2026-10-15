@@ -5,7 +5,8 @@ pub use crate::index::vector::engine::ivf::{MAX_NLIST, TRAIN_PER_LIST};
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ivf;
 
-pub const DEFAULT_NPROBE: u32 = 8;
+/// Zero derives the probe count from `nlist`; see [`ivf::resolved_nprobe`].
+pub const DEFAULT_NPROBE: u32 = 0;
 pub const DEFAULT_SAMPLE_BYTES: u64 = 128 << 20;
 
 /// `0` means derive `nlist` from the corpus, matching
@@ -52,6 +53,11 @@ impl IvfFlatParams {
     /// train and small enough that probing a few is much cheaper than a scan.
     pub fn resolved_nlist(&self, corpus: u64) -> u32 {
         ivf::resolved_nlist(self.nlist, corpus)
+    }
+
+    /// Lists probed when a query gives no effort of its own.
+    pub fn resolved_nprobe(&self, nlist: usize) -> usize {
+        ivf::resolved_nprobe(self.nprobe, nlist)
     }
 
     /// Vectors needed before training fires. See

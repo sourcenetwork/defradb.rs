@@ -919,6 +919,7 @@ impl<'a> SdlParser<'a> {
                                     sample_bytes: ivfpq
                                         .sample_bytes
                                         .map_or(defaults.sample_bytes, u64::from),
+                                    rerank: ivfpq.rerank.unwrap_or(defaults.rerank),
                                 })
                             }
                             _ => None,

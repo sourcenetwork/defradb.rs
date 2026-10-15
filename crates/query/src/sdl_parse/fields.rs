@@ -681,6 +681,7 @@ impl<'a> SdlParser<'a> {
                             "nprobe" => &mut block.nprobe,
                             "m" => &mut block.m,
                             "sampleBytes" => &mut block.sample_bytes,
+                            "rerank" => &mut block.rerank,
                             other => return Err(unknown_vector_member(member, other)),
                         };
                         *slot = Some(read_block_u32(name, value)?);
