@@ -317,9 +317,8 @@ that is correct but slower is not done.
 
 - Anything temporal or concurrent (an ordering, a protocol between tasks or cores, retries, recovery, a race,
   progress) has a TLA+ model. Every data structure (its invariants, encodings and round-trips, merge and operator
-  laws) has a Lean proof. This is the bare minimum.
-- Order of work: the integration code and its tests come first and are finished; the TLA+ and Lean follow, written
-  from that code so they match it exactly, and land before the change merges.
+  laws) has a Lean proof. This is the bare minimum, and the model is written before its code: the spec is the
+  contract.
 - Each TLA+ model has GREEN configurations and, for every guard, a RED configuration that removes or breaks that
   guard and must fail on its named invariant.
 - Each TLC configuration finishes in under 60 seconds, and the whole suite in under 10 minutes. A slow model is
