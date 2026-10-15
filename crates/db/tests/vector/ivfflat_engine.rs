@@ -198,6 +198,18 @@ async fn a_deleted_document_stops_ranking() {
     );
 }
 
+#[tokio::test]
+async fn a_deleted_document_does_not_shorten_the_answer() {
+    let mut corpus = crate::support::Corpus::new(SEED ^ 0x223);
+    let vectors = corpus.clustered(400, DIMENSIONS, 8, 0.1);
+    let mut index = filled(8, 8, &vectors).await;
+    index.build().await.unwrap();
+
+    assert!(index.delete(NodeId(1)).await.unwrap());
+    let hits = index.search(vectors[0].as_slice(), 10, None).await.unwrap();
+    assert_eq!(hits.len(), 10, "a tombstone took a slot: {hits:?}");
+}
+
 /// `Admit` is trait-level, so it must work here exactly as it does for a
 /// graph, as long as every list is probed.
 #[tokio::test]

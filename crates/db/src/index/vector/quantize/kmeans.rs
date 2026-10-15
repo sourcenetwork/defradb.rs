@@ -58,18 +58,14 @@ pub fn train(
     let mut centroids = seed_plus_plus(sample, dimensions, n, k, &mut rng);
 
     let mut assignment = vec![usize::MAX; n];
+    let mut nearest = vec![0usize; n];
     let mut iterations = 0;
     for _ in 0..max_iterations {
         iterations += 1;
-        let mut moved = false;
 
-        for (i, slot) in assignment.iter_mut().enumerate() {
-            let (nearest, _) = centroids.nearest(point(i));
-            if *slot != nearest {
-                *slot = nearest;
-                moved = true;
-            }
-        }
+        assign(sample, dimensions, &centroids, &mut nearest);
+        let mut moved = nearest != assignment;
+        assignment.copy_from_slice(&nearest);
 
         let mut sums = vec![0.0f64; k * dimensions];
         let mut counts = vec![0usize; k];
@@ -81,13 +77,22 @@ pub fn train(
             }
         }
 
+        // Distance from each point to its own centroid, only needed to reseed
+        // an empty cluster, and computed once however many are empty.
+        let mut own: Option<Vec<f32>> = None;
         for (c, count) in counts.iter().enumerate() {
             if *count == 0 {
                 // An empty cluster contributes nothing and would stay empty.
                 // Reseed it on the point furthest from its own centroid.
-                let mut worst = (0usize, -1.0f64);
-                for (i, &owner) in assignment.iter().enumerate() {
-                    let d = squared_euclidean(point(i), centroids.get(owner));
+                let own = own.get_or_insert_with(|| {
+                    let mut own = vec![0.0f32; n];
+                    for_each_parallel(&mut own, |i, slot| {
+                        *slot = squared_distance(point(i), centroids.get(assignment[i]));
+                    });
+                    own
+                });
+                let mut worst = (0usize, -1.0f32);
+                for (i, &d) in own.iter().enumerate() {
                     if d > worst.1 {
                         worst = (i, d);
                     }
@@ -95,6 +100,7 @@ pub fn train(
                 let at = c * dimensions;
                 centroids.values[at..at + dimensions].copy_from_slice(point(worst.0));
                 assignment[worst.0] = c;
+                own[worst.0] = 0.0;
                 moved = true;
                 continue;
             }
@@ -110,8 +116,11 @@ pub fn train(
         }
     }
 
-    let inertia = (0..n)
-        .map(|i| squared_euclidean(point(i), centroids.get(centroids.nearest(point(i)).0)))
+    assign(sample, dimensions, &centroids, &mut nearest);
+    let inertia = nearest
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| squared_euclidean(point(i), centroids.get(c)))
         .sum::<f64>()
         / n as f64;
 
@@ -141,12 +150,13 @@ fn seed_plus_plus(
     let first = (rng.next_u64() % n as u64) as usize;
     values.extend_from_slice(point(first));
 
-    let mut closest: Vec<f64> = (0..n)
-        .map(|i| squared_euclidean(point(i), point(first)))
-        .collect();
+    let mut closest = vec![0.0f32; n];
+    for_each_parallel(&mut closest, |i, slot| {
+        *slot = squared_distance(point(i), point(first));
+    });
 
     for chosen in 1..k {
-        let total: f64 = closest.iter().sum();
+        let total: f64 = closest.iter().map(|d| f64::from(*d)).sum();
         let picked = if total <= 0.0 || !total.is_finite() {
             // Every remaining point coincides with a seed; any index will do.
             (rng.next_u64() % n as u64) as usize
@@ -154,7 +164,7 @@ fn seed_plus_plus(
             let mut target = rng.next_unit() * total;
             let mut picked = n - 1;
             for (i, weight) in closest.iter().enumerate() {
-                target -= weight;
+                target -= f64::from(*weight);
                 if target <= 0.0 {
                     picked = i;
                     break;
@@ -165,12 +175,13 @@ fn seed_plus_plus(
 
         values.extend_from_slice(point(picked));
         let at = chosen * dimensions;
-        for (i, nearest) in closest.iter_mut().enumerate() {
-            let d = squared_euclidean(point(i), &values[at..at + dimensions]);
+        let seed = &values[at..at + dimensions];
+        for_each_parallel(&mut closest, |i, nearest| {
+            let d = squared_distance(point(i), seed);
             if d < *nearest {
                 *nearest = d;
             }
-        }
+        });
     }
 
     Centroids {
@@ -178,6 +189,102 @@ fn seed_plus_plus(
         dimensions,
         values,
     }
+}
+
+/// Points below this count are assigned on the calling thread: spawning costs
+/// more than the work.
+const PARALLEL_MIN: usize = 4_096;
+
+/// Writes each point's nearest centroid into `out`.
+///
+/// Ranks by `|c|^2 - 2 x.c`, which orders centroids exactly as the squared
+/// distance does (`|x|^2` is shared), so each comparison is one f32 dot
+/// product. Training is the one place this runs `n * k` times; the shared
+/// kernel widens to f64 for ranking parity, which training does not need.
+fn assign(sample: &[f32], dimensions: usize, centroids: &Centroids, out: &mut [usize]) {
+    let norms: Vec<f32> = (0..centroids.k)
+        .map(|c| dot(centroids.get(c), centroids.get(c)))
+        .collect();
+    for_each_parallel(out, |i, slot| {
+        let point = &sample[i * dimensions..(i + 1) * dimensions];
+        let mut best = (0usize, f32::INFINITY);
+        for (c, norm) in norms.iter().enumerate() {
+            let score = norm - 2.0 * dot(point, centroids.get(c));
+            if score < best.1 {
+                best = (c, score);
+            }
+        }
+        *slot = best.0;
+    });
+}
+
+/// Runs `work(index, slot)` over every slot, split across the machine's
+/// threads. Each slot depends only on its index, so the result is the same
+/// however the slots are split. A target without threads runs serially.
+///
+/// The calling thread drains the same chunk queue as the spawned ones, so a
+/// thread the OS refuses to create leaves fewer workers rather than a panic.
+fn for_each_parallel<T: Send>(slots: &mut [T], work: impl Fn(usize, &mut T) + Sync) {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    if threads == 1 || slots.len() < PARALLEL_MIN {
+        for (i, slot) in slots.iter_mut().enumerate() {
+            work(i, slot);
+        }
+        return;
+    }
+    let per = slots.len().div_ceil(threads);
+    let chunks = std::sync::Mutex::new(slots.chunks_mut(per).enumerate());
+    let drain = || loop {
+        let next = chunks.lock().unwrap_or_else(|e| e.into_inner()).next();
+        let Some((chunk, part)) = next else { return };
+        for (i, slot) in part.iter_mut().enumerate() {
+            work(chunk * per + i, slot);
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..threads {
+            if std::thread::Builder::new()
+                .spawn_scoped(scope, drain)
+                .is_err()
+            {
+                break;
+            }
+        }
+        drain();
+    });
+}
+
+/// Independent accumulators, so the compiler can keep several SIMD lanes busy
+/// without reassociating one float sum.
+const LANES: usize = 16;
+
+fn dot(a: &[f32], b: &[f32]) -> f32 {
+    let ((x, x_tail), (y, y_tail)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
+    let mut acc = [0.0f32; LANES];
+    for (p, q) in x.iter().zip(y) {
+        for lane in 0..LANES {
+            acc[lane] += p[lane] * q[lane];
+        }
+    }
+    let tail: f32 = x_tail.iter().zip(y_tail).map(|(p, q)| p * q).sum();
+    acc.iter().sum::<f32>() + tail
+}
+
+fn squared_distance(a: &[f32], b: &[f32]) -> f32 {
+    let ((x, x_tail), (y, y_tail)) = (a.as_chunks::<LANES>(), b.as_chunks::<LANES>());
+    let mut acc = [0.0f32; LANES];
+    for (p, q) in x.iter().zip(y) {
+        for lane in 0..LANES {
+            let d = p[lane] - q[lane];
+            acc[lane] += d * d;
+        }
+    }
+    let tail: f32 = x_tail
+        .iter()
+        .zip(y_tail)
+        .map(|(p, q)| (p - q) * (p - q))
+        .sum();
+    acc.iter().sum::<f32>() + tail
 }
 
 struct Rng(u64);
@@ -211,15 +318,19 @@ impl Centroids {
     }
 
     /// The nearest centroid to `vector`, and its squared distance.
+    ///
+    /// Build, insert and update all assign lists through this one function,
+    /// so they agree even on a near-tie: an update finds the entry to remove
+    /// by assigning the old vector again.
     pub fn nearest(&self, vector: &[f32]) -> (usize, f64) {
-        let mut best = (0usize, f64::INFINITY);
+        let mut best = (0usize, f32::INFINITY);
         for index in 0..self.k {
-            let distance = squared_euclidean(vector, self.get(index));
+            let distance = squared_distance(vector, self.get(index));
             if distance < best.1 {
                 best = (index, distance);
             }
         }
-        best
+        (best.0, f64::from(best.1))
     }
 }
 

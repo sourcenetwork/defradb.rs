@@ -50,8 +50,8 @@ impl<S: VectorNodeStore> IvfFlat<S> {
                 .await?;
         }
 
-        // A tombstoned document keeps its list entry, so liveness is checked
-        // once on the survivors rather than on every candidate.
+        // Delete drops the list entry, but a list written before it did can
+        // still name a tombstone, so the survivors are checked once more.
         let ranked: Vec<Ranked> = best.into_sorted_vec();
         let mut out = Vec::with_capacity(ranked.len());
         for candidate in ranked {

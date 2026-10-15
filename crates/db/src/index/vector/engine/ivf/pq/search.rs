@@ -67,8 +67,8 @@ impl<S: VectorNodeStore> IvfPq<S> {
             }
         }
 
-        // Each survivor's node is read for its full vector, and to drop a
-        // deleted document whose code is still in its list.
+        // Read each survivor's full vector for reranking. A list written
+        // before delete removed codes may still name a tombstone.
         let metric = self.metric();
         let mut out = Vec::with_capacity(best.len());
         for candidate in best.into_vec() {

@@ -12,6 +12,7 @@ mod ivfflat_recall_gate;
 mod ivfpq_engine;
 mod ivfpq_recall_baseline;
 mod ivfpq_recall_gate;
+mod kmeans_real_corpus;
 mod quantize_kmeans;
 mod quantize_pq;
 mod quantize_sample;
