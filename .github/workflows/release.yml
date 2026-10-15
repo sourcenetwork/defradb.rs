@@ -417,7 +417,7 @@ jobs:
           cd docker-context/linux/amd64 && tar xzf *.tar.gz && rm *.tar.gz
           cd ../arm64 && tar xzf *.tar.gz && rm *.tar.gz
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: docker-context
           file: Dockerfile.release
