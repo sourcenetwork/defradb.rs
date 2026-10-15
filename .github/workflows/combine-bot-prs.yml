@@ -13,7 +13,7 @@ on:
         required: true
         default: false
       combineBranchName:
-        description: 'Prefix of the branch to combine PRs into (the run ID is appended)'
+        description: 'Prefix of the branch to combine PRs into (the run ID and attempt are appended)'
         required: true
         default: 'combined-bot-prs-branch'
       ignoreLabel:
@@ -41,7 +41,7 @@ jobs:
             const { BRANCH_PREFIX, MUST_BE_GREEN, COMBINE_BRANCH, IGNORE_LABEL } = process.env;
             const { owner, repo } = context.repo;
             const baseRef = context.payload.repository.default_branch;
-            const head = `${COMBINE_BRANCH}-${context.runId}`;
+            const head = `${COMBINE_BRANCH}-${context.runId}-${process.env.GITHUB_RUN_ATTEMPT}`;
 
             const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: baseRef });
             const picked = [];

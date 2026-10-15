@@ -5,7 +5,7 @@ Resolves #
 ## Description
 
 (*replace*) Summarize the change, its motivation and context, and any new dependencies it needs.
-Create an issue for it if none exists.
+Every PR needs an issue that describes the problem simply enough for a human to understand. Create one if none exists.
 
 ## Tasks
 
