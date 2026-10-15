@@ -113,6 +113,12 @@ impl Default for ExecuteRetryPolicy {
 #[async_trait::async_trait]
 trait SchemaOps: Send + Sync {
     async fn add_schema(&self, sdl: &str) -> anyhow::Result<Vec<CollectionVersion>>;
+    async fn ensure_ordinary_index(
+        &self,
+        collection: &str,
+        name: &str,
+        fields: Vec<schema::IndexedFieldDescription>,
+    ) -> anyhow::Result<schema::IndexDescription>;
     async fn add_view(&self, source_query: &str, target_sdl: &str) -> anyhow::Result<()>;
     async fn patch_collection(
         &self,
@@ -383,6 +389,22 @@ impl EmbeddedNode {
     pub async fn add_schema(&self, sdl: &str) -> anyhow::Result<()> {
         self.as_node_identity(async { self.schema_ops.add_schema(sdl).await.map(|_| ()) })
             .await
+    }
+
+    /// Ensure a named nonunique ordinary index, preserving the collection's
+    /// version and documents. Readiness is reported only after backfill; an
+    /// existing unfinished or failed backfill returns an error.
+    pub async fn ensure_ordinary_index(
+        &self,
+        collection: &str,
+        name: &str,
+        fields: Vec<schema::IndexedFieldDescription>,
+    ) -> anyhow::Result<schema::IndexDescription> {
+        self.as_node_identity(
+            self.schema_ops
+                .ensure_ordinary_index(collection, name, fields),
+        )
+        .await
     }
 
     /// Create a materialized view from a source query and target SDL.
