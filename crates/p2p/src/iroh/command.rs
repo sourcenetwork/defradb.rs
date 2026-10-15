@@ -129,11 +129,6 @@ pub enum IrohCommand {
         request: PushLogRequest,
         reply: oneshot::Sender<crate::error::Result<PushLogReply>>,
     },
-    SendTwoStreamResponse {
-        peer_id: PeerId,
-        reply_msg: PushLogReply,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
     SendDocSyncRequest {
         peer_id: PeerId,
         request: DocSyncRequest,

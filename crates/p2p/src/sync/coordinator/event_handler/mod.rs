@@ -189,8 +189,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
             tracing::debug!(error = %sign_err, "Failed to sign two-stream backpressure nack");
         }
-        self.send_two_stream_reply(peer_id, reply, token, request.supports_same_stream_reply)
-            .await;
+        self.send_two_stream_reply(peer_id, reply, token).await;
         error
     }
 

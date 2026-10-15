@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled — 22 families (proven)
+### Modeled — 23 families (proven)
 | Family | Tool | Crates it covers |
 |---|---|---|
 | B3 filtered replication | TLA+ | p2p, db-merge |
@@ -45,6 +45,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Order-preserving key encoding | Lean | storage |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
+| Transport delivery semantics (two-stream reply / reorder / multipath) | TLA+ | p2p |
 
 ### Backlog — want to model: **none**
 **The medium-and-up correctness surface is fully modeled.** All 2 high + 11 medium backlog
@@ -100,10 +101,10 @@ substrate) — so a green run never reads as "this was proven against the
 artifact." `matrix::every_modeled_family_is_bound` fails if a model lands without
 a binding.
 
-### Realized status — all 21 families bound
+### Realized status — all 22 families bound
 
 **19 behavioral tests** (driven against fresh `target/debug/defra`, each break-tested
-for non-vacuity), **2 Lean-axis contract bindings**, **7 honest Boundaries** (one,
+for non-vacuity), **2 Lean-axis contract bindings**, **8 honest Boundaries** (one,
 Transaction & merge-queue concurrency, is now both — a Behavioral no-loss/no-double-apply
 storm leg plus a Boundary internal-serialization leg). One
 of these (`partition::convergence_concurrent_same_doc_writes_merge`) found a real
@@ -135,6 +136,7 @@ headstore); go↔go vs rust↔rust parity (`parity.rs`) localized it to Rust.
 | P2P capability replay gate | Boundary | P2P-wire internal |
 | JWT issuer / algorithm binding | Boundary | DID-binding via `acp.rs`; forge unreachable via CLI |
 | Order-preserving key encoding | Boundary | ordered query may sort in memory; consts `pub(crate)` |
+| Transport delivery semantics | Boundary | link faults (loss, reorder, multipath duplication, relay-only reverse route) are not injected against a live binary; `MC_Transport_*` |
 
 ```bash
 proofs/verify-all.sh                 # TLA + Lean + conformance (behavioral if binary present)

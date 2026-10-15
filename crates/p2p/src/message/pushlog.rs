@@ -80,19 +80,6 @@ pub struct PushLogRequest {
         default
     )]
     pub explicit_replay_capability: Option<String>,
-
-    /// Whether the sender can receive the reply on the request's bidirectional stream.
-    ///
-    /// Older iroh senders omit this field and require the legacy reverse-stream response.
-    /// This capability is iroh-only. Never set it on libp2p: Go signature verification
-    /// re-serializes the request and would omit this unknown field.
-    #[serde(
-        rename = "SupportsSameStreamReply",
-        skip_serializing_if = "is_false",
-        default
-    )]
-    pub supports_same_stream_reply: bool,
-
     /// Iroh-only capability. Libp2p negotiates this via its stream protocol.
     #[serde(
         rename = "SupportsRetryAfter",
@@ -132,7 +119,6 @@ impl PushLogRequest {
             creator,
             block,
             explicit_replay_capability: None,
-            supports_same_stream_reply: false,
             supports_retry_after: false,
             negotiated_retry_after: false,
         }

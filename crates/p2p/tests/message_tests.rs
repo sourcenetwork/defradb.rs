@@ -43,7 +43,6 @@ fn test_pushlog_request_serialization() {
     assert_eq!(decoded.collection_id, "collection1");
     assert_eq!(decoded.creator, "creator1");
     assert_eq!(decoded.block, vec![5, 6, 7, 8]);
-    assert!(!decoded.supports_same_stream_reply);
 }
 
 #[test]
@@ -71,8 +70,12 @@ fn pushlog_request_matches_go_fxamacker_fixture() {
 }
 
 #[test]
-fn test_pushlog_request_same_stream_reply_capability_is_backward_compatible() {
-    let mut request = PushLogRequest::new(
+fn test_pushlog_request_carries_no_reply_shape_capability() {
+    // The reply shape is a property of the transport (`prefers_same_stream_reply`),
+    // not of the request. Go verifies signatures by re-serializing, so any key it
+    // does not know silently breaks verification: the wire map must stay exactly
+    // the fields Go writes.
+    let request = PushLogRequest::new(
         "doc123".to_string(),
         Bytes::from(vec![1, 2, 3, 4]),
         "collection1".to_string(),
@@ -87,20 +90,8 @@ fn test_pushlog_request_same_stream_reply_capability_is_backward_compatible() {
     };
     assert!(
         !has_text_key(&map, "SupportsSameStreamReply"),
-        "false capability should be omitted for older peers"
+        "the same-stream capability must not reappear on the wire"
     );
-    let decoded: PushLogRequest = decode_with_ciborium(&encoded);
-    assert!(!decoded.supports_same_stream_reply);
-
-    request.supports_same_stream_reply = true;
-    let encoded = encode_with_ciborium(&request);
-    let value: ciborium::Value = decode_with_ciborium(&encoded);
-    let ciborium::Value::Map(map) = value else {
-        panic!("Expected CBOR map");
-    };
-    assert!(has_text_key(&map, "SupportsSameStreamReply"));
-    let decoded: PushLogRequest = decode_with_ciborium(&encoded);
-    assert!(decoded.supports_same_stream_reply);
 }
 
 #[test]

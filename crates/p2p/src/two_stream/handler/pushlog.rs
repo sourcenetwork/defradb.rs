@@ -150,7 +150,6 @@ mod tests {
                     let event = TwoStreamHandler::handle_request_stream(peer, stream, 65536, Duration::from_secs(5)).await.unwrap();
                     let crate::two_stream::event::TwoStreamEvent::InboundRequest { request, .. } = event else { panic!("expected PushLog") };
                     assert!(!request.supports_retry_after);
-                    assert!(!request.supports_same_stream_reply);
                     let mut reply = PushLogReply::error(&request.message_id, crate::error::RATE_LIMITED_MESSAGE)
                         .with_retry_after(negotiated, Duration::from_millis(1234));
                     crate::signing::sign_message(&receiver_key, &mut reply).unwrap();

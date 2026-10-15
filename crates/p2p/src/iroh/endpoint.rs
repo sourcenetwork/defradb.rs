@@ -13,15 +13,13 @@ use std::sync::Arc;
 use iroh::{Endpoint, EndpointId};
 use iroh_gossip::net::Gossip;
 use kovan_map::HopscotchMap;
-use kovan_queue::seg_queue::SegQueue;
 use n0_future::task::JoinHandle;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use defra_core::thread_bounds::MaybeSend;
 
 use crate::bitswap::ReplicatorRegistry;
-use crate::message::PushLogReply;
 use crate::tracked_task::TrackedAbort;
 use crate::transport::{PeerAddr, PeerId, TransportEvent};
 
@@ -75,9 +73,6 @@ pub(super) struct ActiveSync {
 }
 
 pub(super) type SpawnedTasks = Arc<TaskRegistry>;
-/// A reply sender parked in a queue so the responder can take ownership of it.
-pub(super) type PushLogReplySlot = Arc<SegQueue<oneshot::Sender<PushLogReply>>>;
-pub(super) type PendingPushLogReplies = Arc<HopscotchMap<String, PushLogReplySlot, RandomState>>;
 
 pub(super) fn spawn_task(
     spawned_tasks: &SpawnedTasks,
@@ -192,8 +187,6 @@ async fn run_event_loop(
 ) {
     let shutdown_started = web_time::Instant::now();
     let peer_map = Arc::new(SharedPeerMap::new());
-    let pending_pushlog_replies: PendingPushLogReplies =
-        Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let connection_cache = new_connection_cache();
     let mut subscriptions: RapidHashMap<String, TopicSubscription> = RapidHashMap::new();
     let raw_topics: RawTopics = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
@@ -242,7 +235,6 @@ async fn run_event_loop(
                     let should_shutdown = handle_command(
                         cmd,
                         &resources,
-                        &pending_pushlog_replies,
                         &mut subscriptions,
                         &raw_topics,
                         &replicators,
@@ -265,14 +257,12 @@ async fn run_event_loop(
                 match incoming {
                     Some(incoming) => {
                         let resources = resources.clone();
-                        let pending_pushlog_replies = Arc::clone(&pending_pushlog_replies);
                         let subscription_senders = snapshot_subscription_senders(&subscriptions);
                         let event_tx = event_tx.clone();
                         let _ = spawn_task(&spawned_tasks, async move {
                             handle_incoming(
                                 incoming,
                                 &resources,
-                                &pending_pushlog_replies,
                                 &subscription_senders,
                                 &event_tx,
                             )

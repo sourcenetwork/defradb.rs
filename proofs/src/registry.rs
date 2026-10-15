@@ -140,7 +140,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Replicator lifecycle (no-loss / resume)",
         name: "INV_NoLoss — reconnect recomputes the target gap, no block dropped",
         axis: Tla,
-        anchor: "crates/p2p/src/replicator.rs; crates/db/src/merge/push_docs_transport.rs",
+        anchor: "crates/p2p/src/replicator.rs; crates/db/src/merge/push_docs.rs push_existing_docs; crates/db/src/merge/push_docs_replay.rs send_pushlog",
         model_ref: "MC_Replicator_Resumable_Green.cfg",
         tiers: &[Behavioral],
     },
@@ -222,7 +222,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Encrypted LWW restart/replay",
         name: "INV_NoFilteredLoss / INV_LwwWinner — encrypted delivery remains complete and LWW-convergent",
         axis: Tla,
-        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs_transport.rs; crates/crdt/src/lww.rs",
+        anchor: "crates/db/src/merge/push_docs.rs retry_doc; crates/db/src/merge/push_docs_replay.rs send_pushlog; crates/crdt/src/lww.rs",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
         tiers: &[Behavioral],
     },
@@ -379,5 +379,34 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db (merge) LWW materialization; crates/db (index) on_document_update",
         model_ref: "MC_IndexReconciliation_Green.cfg",
         tiers: &[Behavioral],
+    },
+    Property {
+        // A send that returns Ok has not been delivered: every P2PTransport
+        // method is fire-and-forget and the 30s timeout in
+        // handle_send_two_stream_request cannot distinguish a request that never
+        // arrived from one whose reply was lost. Retiring the sender's scope
+        // marker on that timeout drops a head that was written while the
+        // previous attempt was still live — it never reaches the wire.
+        family: "Transport delivery semantics (two-stream reply / reorder / multipath)",
+        name: "INV_NoLostUpdate — the current head is registered, or someone still owes it",
+        axis: Tla,
+        anchor: "crates/p2p/src/host/command_handler/messaging.rs handle_send_two_stream_request; crates/p2p/src/transport.rs P2PTransport",
+        model_ref: "MC_Transport_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // The reply shape is a property of the transport
+        // (`prefers_same_stream_reply`), not of the peer. libp2p keeps Go's
+        // reverse stream — which needs a route back, so over a relay-only path
+        // the head merges while the sender never learns and retries forever —
+        // and iroh answers on the request's own stream, where it cannot.
+        // MC_Transport_Green_SameStream is the iroh leg of the same pair.
+        // Fault injection on a live link is not driven by this binary.
+        family: "Transport delivery semantics (two-stream reply / reorder / multipath)",
+        name: "LIVE_SenderQuiesces — the sender stops retrying once the receiver holds the head",
+        axis: Tla,
+        anchor: "crates/p2p/src/two_stream/mod.rs two-stream protocol; crates/p2p/src/transport.rs prefers_same_stream_reply",
+        model_ref: "MC_Transport_Red_RelayNoRouteBack.cfg + MC_Transport_Green_SameStream.cfg",
+        tiers: &[Boundary],
     },
 ];
