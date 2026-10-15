@@ -44,11 +44,7 @@ impl<S: Store + 'static> DbCollectionProvider<S> {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> CollectionProvider for DbCollectionProvider<S> {
     async fn get_collection(&self, name: &str) -> QueryResult<Option<Arc<CollectionVersion>>> {
-        match self.db.get_collection(name) {
-            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema_for_queries()))),
-            Ok(None) => Ok(None),
-            Err(e) => Err(QueryError::execution(e.to_string())),
-        }
+        Ok(self.db.query_schema(name))
     }
 
     async fn list_collections(&self) -> QueryResult<Vec<String>> {
@@ -57,12 +53,20 @@ impl<S: Store + 'static> CollectionProvider for DbCollectionProvider<S> {
             .map_err(|e| QueryError::execution(e.to_string()))
     }
 
+    /// The committed collection set's epoch; every swap of the process-wide
+    /// cache advances it. `TxnCollectionProvider` deliberately keeps the
+    /// `None` default: a transaction may see uncommitted schema changes that
+    /// no committed epoch describes.
+    fn schema_epoch(&self) -> Option<u64> {
+        Some(self.db.schema_epoch())
+    }
+
     async fn get_collection_by_version_id(
         &self,
         version_id: &str,
     ) -> QueryResult<Option<Arc<CollectionVersion>>> {
         match self.db.get_collection_by_version_id_full(version_id).await {
-            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema_for_queries()))),
+            Ok(Some(coll)) => Ok(Some(coll.schema_for_queries())),
             Ok(None) => Ok(None),
             Err(e) => Err(QueryError::execution(e.to_string())),
         }
@@ -116,10 +120,10 @@ impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
                         )
                         .await
                         .map_err(|e| QueryError::execution(e.to_string()))?;
-                        return Ok(Some(Arc::new(
+                        return Ok(Some(
                             collection::Collection::with_index_actions(schema, &actions)
                                 .schema_for_queries(),
-                        )));
+                        ));
                     }
                 };
 
@@ -140,20 +144,16 @@ impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
                     )
                     .await
                     .map_err(|e| QueryError::execution(e.to_string()))?;
-                    return Ok(Some(Arc::new(
+                    return Ok(Some(
                         collection::Collection::with_index_actions(schema, &actions)
                             .schema_for_queries(),
-                    )));
+                    ));
                 }
             }
         }
         drop(txn_guard);
 
-        match self.db.get_collection(name) {
-            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema_for_queries()))),
-            Ok(None) => Ok(None),
-            Err(e) => Err(QueryError::execution(e.to_string())),
-        }
+        Ok(self.db.query_schema(name))
     }
 
     async fn list_collections(&self) -> QueryResult<Vec<String>> {
@@ -207,7 +207,7 @@ impl<S: Store + 'static> CollectionProvider for TxnCollectionProvider<S> {
         // Committed history (active + inactive) is sufficient for the ACP-gated
         // `_commits` path; the DB full lookup scans all stored versions.
         match self.db.get_collection_by_version_id_full(version_id).await {
-            Ok(Some(coll)) => Ok(Some(Arc::new(coll.schema_for_queries()))),
+            Ok(Some(coll)) => Ok(Some(coll.schema_for_queries())),
             Ok(None) => Ok(None),
             Err(e) => Err(QueryError::execution(e.to_string())),
         }

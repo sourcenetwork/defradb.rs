@@ -7,7 +7,7 @@ use async_lock::RwLock;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
-use storage::corekv::{Error, IterOptions, Iterator, Reader, Result, Txn, Writer};
+use storage::corekv::{Error, IterOptions, Iterator, Reader, Result, Txn, TxnCallback, Writer};
 use storage::namespace::Namespace;
 
 /// Shared transaction wrapper allowing multiple namespace views.
@@ -83,6 +83,29 @@ impl SharedTxn {
         Ok(Box::new(NamespacedIterator { iter, namespace }))
     }
 
+    pub async fn collection_head_entries(
+        &self,
+        namespace: Namespace,
+        head_prefix: &[u8],
+        marker_prefix: &[u8],
+    ) -> Result<Option<storage::stores::headstore::CollectionHeadEntries>> {
+        let mut entries = self
+            .txn
+            .read()
+            .await
+            .collection_head_entries(
+                &prefix_key(namespace, head_prefix),
+                &prefix_key(namespace, marker_prefix),
+            )
+            .await?;
+        if let Some(entries) = &mut entries {
+            for row in entries.heads.iter_mut().chain(&mut entries.markers) {
+                row.key = unprefix_key(namespace, &row.key)?;
+            }
+        }
+        Ok(entries)
+    }
+
     /// Get from rootstore (no namespace prefix).
     pub async fn root_get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         let txn = self.txn.read().await;
@@ -99,6 +122,11 @@ impl SharedTxn {
     pub async fn root_delete(&self, key: &[u8]) -> Result<()> {
         let mut txn = self.txn.write().await;
         txn.delete(key).await
+    }
+
+    /// Register a callback to run only if the transaction commits.
+    pub async fn on_success(&self, callback: TxnCallback) {
+        self.txn.write().await.on_success(callback);
     }
 
     /// Check if readonly.
@@ -173,6 +201,11 @@ impl NamespaceView {
     pub async fn iterator(&self, opts: IterOptions) -> Result<Box<dyn Iterator>> {
         self.txn.iterator(self.namespace, opts).await
     }
+
+    /// Register a callback to run only if the shared transaction commits.
+    pub async fn on_success(&self, callback: TxnCallback) {
+        self.txn.on_success(callback).await
+    }
 }
 
 impl Clone for NamespaceView {
@@ -208,6 +241,16 @@ impl Reader for NamespaceView {
 
     async fn iterator(&self, opts: IterOptions) -> Result<Box<dyn Iterator>> {
         self.txn.iterator(self.namespace, opts).await
+    }
+
+    async fn collection_head_entries(
+        &self,
+        head_prefix: &[u8],
+        marker_prefix: &[u8],
+    ) -> Result<Option<storage::stores::headstore::CollectionHeadEntries>> {
+        self.txn
+            .collection_head_entries(self.namespace, head_prefix, marker_prefix)
+            .await
     }
 }
 

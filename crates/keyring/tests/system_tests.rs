@@ -3,6 +3,8 @@
 //! These tests interact with the actual OS keyring.
 //! Run with: cargo test -p keyring -- --ignored
 
+#![cfg(feature = "system")]
+
 use keyring::{Error, Keyring, SystemKeyring};
 
 const TEST_SERVICE: &str = "defradb-rust-test";

@@ -80,13 +80,13 @@ impl Planner {
             }
         }
 
-        // Copy BM25 virtual fields from render_mapping.
+        // Copy computed score fields from render_mapping.
         // These are not in the schema, so they need dedicated slots in the join mapping.
         for render_key in &render_mapping.render_keys {
             if let Some(field_name) = render_mapping.try_find_name_from_index(render_key.index) {
-                if field_name == "BM25" {
+                if matches!(field_name, "BM25" | "SIMILARITY") {
                     let new_index = mapping.next_index();
-                    mapping.add(new_index, "BM25");
+                    mapping.add(new_index, field_name);
                     mapping.add_render_key(new_index, &render_key.key);
                 }
             }

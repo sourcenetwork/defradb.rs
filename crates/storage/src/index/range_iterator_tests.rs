@@ -366,3 +366,65 @@ async fn test_cursor_seek_reversed_param_controls_upper_bound() {
     assert!(doc_ids.contains(&1), "doc 1 is before boundary");
     assert_eq!(entries.len(), 2);
 }
+
+#[tokio::test]
+async fn exclusive_range_bounds_survive_reverse_and_reset() {
+    // 255 exercises a carry when computing the successor of an encoded bound.
+    for descending in [false, true] {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        let mut desc = test_index_description();
+        desc.fields[0].descending = descending;
+        let index = SimpleIndex::new(1, desc.clone());
+        for (id, age) in [(1, 254), (2, 255), (3, 255), (4, 256)] {
+            index
+                .save(&mut txn, id, &[NormalValue::Int(age)])
+                .await
+                .unwrap();
+        }
+        txn.commit().await.unwrap();
+        let txn = store.new_txn(true).await.unwrap();
+        for reverse in [false, true] {
+            let (lower, upper) = if descending {
+                (Bound::Unbounded, Bound::Exclusive(NormalValue::Int(255)))
+            } else {
+                (Bound::Exclusive(NormalValue::Int(255)), Bound::Unbounded)
+            };
+            let mut iter = index
+                .scan_range(&txn, &[], lower, upper, reverse)
+                .await
+                .unwrap();
+            for _ in 0..2 {
+                let entries = iter.collect_all().await.unwrap();
+                assert_eq!(
+                    entries
+                        .iter()
+                        .map(|entry| entry.doc_short_id)
+                        .collect::<Vec<_>>(),
+                    vec![4]
+                );
+                iter.reset().await.unwrap();
+            }
+            // Moving the exclusive start beyond the inclusive end must still
+            // produce an empty scan, including after reset.
+            let (lower, upper) = if descending {
+                (
+                    Bound::Inclusive(NormalValue::Int(255)),
+                    Bound::Exclusive(NormalValue::Int(255)),
+                )
+            } else {
+                (
+                    Bound::Exclusive(NormalValue::Int(255)),
+                    Bound::Inclusive(NormalValue::Int(255)),
+                )
+            };
+            let mut empty = index
+                .scan_range(&txn, &[], lower, upper, reverse)
+                .await
+                .unwrap();
+            assert!(empty.collect_all().await.unwrap().is_empty());
+            empty.reset().await.unwrap();
+            assert!(empty.collect_all().await.unwrap().is_empty());
+        }
+    }
+}

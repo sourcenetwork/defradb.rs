@@ -45,7 +45,7 @@ hex.workspace = true
 
 # Wasmtime runtime dependencies (optional for wasm32)
 tokio = { workspace = true, features = ["rt"], optional = true }
-wasmtime = { version = "46.0.2", optional = true, default-features = false, features = [
+wasmtime = { version = "49.0.2", optional = true, default-features = false, features = [
     "runtime",
     "cranelift",
     "std",

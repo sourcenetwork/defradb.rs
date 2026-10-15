@@ -53,7 +53,7 @@ jobs:
       threshold: ${{ steps.decide.outputs.threshold }}
     steps:
       - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
       # thing that fails before it has checked anything.
@@ -119,6 +119,7 @@ jobs:
           - { family: filter, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: groupby, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: identity, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: introspection, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: memory, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: merge_dag, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
@@ -135,6 +136,7 @@ jobs:
           - { family: transport, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: vector_mutations, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: vector_search, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: write_baseline, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: backup, os: macos-latest, target: aarch64-apple-darwin }
           - { family: crypto, os: macos-latest, target: aarch64-apple-darwin }
           - { family: document_read, os: macos-latest, target: aarch64-apple-darwin }
@@ -165,7 +167,7 @@ jobs:
       - name: Fetch the SIFT corpus
         if: matrix.family == 'sift'
         continue-on-error: true
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
       - name: Fetch the SIFT corpus (run)
         if: matrix.family == 'sift'
         continue-on-error: true
@@ -175,6 +177,8 @@ jobs:
       - name: Run ${{ matrix.family }}
         env:
           DEFRA_BENCH_OUT: ${{ github.workspace }}/bench-${{ matrix.family }}.jsonl
+          DEFRA_BASELINE_LOAD_GUARD: ${{ github.workspace }}/loadguard.json
+          DEFRA_BASELINE_PROFILE: bench
         run: cargo bench -p benches --bench ${{ matrix.family }} -- $DEFRA_BENCH_CRITERION_ARGS
       - name: Collect what criterion recorded
         run: |
@@ -540,7 +544,7 @@ jobs:
           cat report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Comment on the pull request
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const body = require('fs').readFileSync('report.md', 'utf8');

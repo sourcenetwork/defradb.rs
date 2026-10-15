@@ -3,9 +3,9 @@
 use db::index::vector::engine::ann::EngineKind;
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::flat::Flat;
-use db::index::vector::engine::ivfflat::IvfFlat;
-use db::index::vector::engine::ivfflat::IvfFlatParams;
-use db::index::vector::engine::ivfflat::TRAIN_PER_LIST;
+use db::index::vector::engine::ivf::flat::IvfFlat;
+use db::index::vector::engine::ivf::flat::IvfFlatParams;
+use db::index::vector::engine::ivf::flat::TRAIN_PER_LIST;
 use db::index::vector::store::MemoryNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::vector::Metric;
@@ -447,4 +447,16 @@ async fn live_count_at_least_agrees_with_live_count() {
             "target={target}, true_count={true_count}"
         );
     }
+}
+
+/// `nprobe = 0` scales the probe with the list count, as pg_vectorsearch does:
+/// `0.5·√nlist`, at least 10, never more lists than exist.
+#[test]
+fn a_zero_nprobe_is_derived_from_nlist() {
+    let derived = params(0, 0);
+    assert_eq!(derived.resolved_nprobe(1_385), 19);
+    assert_eq!(derived.resolved_nprobe(65_536), 128);
+    assert_eq!(derived.resolved_nprobe(400), 10, "the floor holds");
+    assert_eq!(derived.resolved_nprobe(4), 4, "never more lists than exist");
+    assert_eq!(params(0, 16).resolved_nprobe(1_385), 16, "explicit wins");
 }

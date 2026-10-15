@@ -226,6 +226,13 @@ impl DocFetcher for FetcherWrapper {
         self.get_fetcher().supports_index_queries()
     }
 
+    async fn get_document_arrivals(
+        &self,
+        options: &crate::fetcher::DocumentArrivalOptions,
+    ) -> Result<crate::fetcher::DocumentArrivalPage> {
+        self.get_fetcher().get_document_arrivals(options).await
+    }
+
     async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<Document>> {
         self.get_fetcher().get_commits(options).await
     }

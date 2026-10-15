@@ -6,6 +6,73 @@ use crate::backends::RegolithStore;
 use crate::corekv::Key;
 use crate::keys::peerstore::ReplicatorKey;
 
+#[test]
+fn retry_peer_lock_is_recreated_after_the_last_caller() {
+    let lock = retry_peer_lock("expired-retry-lock");
+    let original = Arc::downgrade(&lock);
+    drop(lock);
+    assert!(original.upgrade().is_none());
+    let next = retry_peer_lock("expired-retry-lock");
+    assert!(!Weak::ptr_eq(&original, &Arc::downgrade(&next)));
+    assert!(Arc::ptr_eq(&next, &retry_peer_lock("expired-retry-lock")));
+}
+
+#[test]
+fn concurrent_retry_callers_share_a_fresh_entry() {
+    const CALLERS: usize = 16;
+    let barrier = std::sync::Barrier::new(CALLERS);
+    std::thread::scope(|scope| {
+        let callers: Vec<_> = (0..CALLERS)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    retry_peer_lock("concurrent-retry-lock")
+                })
+            })
+            .collect();
+        let locks: Vec<_> = callers
+            .into_iter()
+            .map(|caller| caller.join().unwrap())
+            .collect();
+        assert!(locks.iter().all(|lock| Arc::ptr_eq(lock, &locks[0])));
+    });
+    assert!(!Arc::ptr_eq(
+        &retry_peer_lock("concurrent-retry-lock"),
+        &retry_peer_lock("other-retry-lock")
+    ));
+}
+
+#[test]
+fn expired_entry_cleanup_preserves_a_live_successor() {
+    let locks = RetryPeerLocks::with_hasher(RandomState::default());
+    let expired = Arc::new(RetryPeerLock::new(()));
+    locks.insert("peer".to_string(), Arc::downgrade(&expired));
+    drop(expired);
+    let (observed, wait_observed) = std::sync::mpsc::channel();
+    let (resume, wait_resume) = std::sync::mpsc::channel();
+    let timeout = std::time::Duration::from_secs(5);
+
+    std::thread::scope(|scope| {
+        let locks = &locks;
+        let delayed = scope.spawn(move || {
+            let candidate = Arc::new(RetryPeerLock::new(()));
+            let stale = locks.get_or_insert("peer".to_string(), Arc::downgrade(&candidate));
+            assert!(stale.upgrade().is_none());
+            observed.send(()).unwrap();
+            wait_resume.recv_timeout(timeout).unwrap();
+
+            remove_expired_retry_peer_lock(locks, "peer");
+            retry_peer_lock_from(locks, "peer")
+        });
+        wait_observed.recv_timeout(timeout).unwrap();
+        let live = retry_peer_lock_from(locks, "peer");
+        resume.send(()).unwrap();
+        let resumed = delayed.join().unwrap();
+        assert!(Arc::ptr_eq(&live, &resumed));
+        assert!(Arc::ptr_eq(&live, &retry_peer_lock_from(locks, "peer")));
+    });
+}
+
 #[tokio::test]
 async fn push_transaction_conflicts_retry_to_success() {
     let attempts = AtomicUsize::new(0);

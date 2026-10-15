@@ -19,6 +19,8 @@ use serial_test::serial;
 
 use crate::support;
 
+mod strict_updates;
+
 const P2P_TIMEOUT: Duration = Duration::from_secs(15);
 
 const ACP_POLICY: &str = r#"name: test-dac-policy
@@ -68,6 +70,12 @@ fn extract_doc_id(data: &serde_json::Value, mutation_name: &str) -> String {
 /// Helper: set up a 2-node Vera cluster with ACP policy and schema.
 /// Returns (cluster, policy_id, owner identity key).
 async fn setup_vera_cluster() -> Option<(TestCluster, String, String)> {
+    setup_vera_cluster_with_relay(None).await
+}
+
+async fn setup_vera_cluster_with_relay(
+    relay_key: Option<&str>,
+) -> Option<(TestCluster, String, String)> {
     if !support::vera_binary_available() {
         eprintln!("skipping Vera-backed Iroh DAC test: verad is not available");
         return None;
@@ -77,15 +85,16 @@ async fn setup_vera_cluster() -> Option<(TestCluster, String, String)> {
     let owner = generate_identity(&binary).expect("generate owner identity");
     let owner_key = owner.private_key_hex.clone();
 
-    let cluster = TestCluster::builder()
+    let mut builder = TestCluster::builder()
         .rust_nodes(2)
         .with_vera()
         .with_iroh_transport()
         .with_rust_binary(BinarySource::Path(support::vera_iroh_binary()))
-        .with_identity(&owner_key)
-        .build()
-        .await
-        .expect("build Vera cluster");
+        .with_identity(&owner_key);
+    if let Some(relay_key) = relay_key {
+        builder = builder.with_node_identity(1, relay_key);
+    }
+    let cluster = builder.build().await.expect("build Vera cluster");
 
     for i in 0..2 {
         cluster

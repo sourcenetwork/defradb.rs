@@ -30,7 +30,10 @@
 
 use cid::Cid;
 use datastore::NamespaceView;
-use storage::corekv::{IterOptions, Iterator, Reader, Result};
+use storage::corekv::{Iterator, Reader, Result};
+
+mod scan;
+use scan::head_iterators;
 use storage::keys::headstore::{HeadstoreColKey, HeadstoreColSuperseded};
 
 /// What one pass over the head prefix found.
@@ -59,16 +62,7 @@ pub async fn live_collection_heads<R: Reader + ?Sized>(
     let marker_prefix = HeadstoreColSuperseded::collection_prefix(collection_short_id);
     let marker_prefix_len = marker_prefix.len();
 
-    let mut head_iter = reader
-        .iterator(IterOptions::new().with_prefix(head_prefix))
-        .await?;
-    let mut marker_iter = reader
-        .iterator(
-            IterOptions::new()
-                .with_prefix(marker_prefix)
-                .with_keys_only(true),
-        )
-        .await?;
+    let (mut head_iter, mut marker_iter) = head_iterators(reader, collection_short_id).await?;
 
     let mut found = CollectionHeads::default();
     // One buffer, refilled per marker, rather than a `Vec` per marker.
@@ -181,16 +175,7 @@ pub async fn prune_superseded_heads(
     let marker_prefix = HeadstoreColSuperseded::collection_prefix(collection_short_id);
     let marker_prefix_len = marker_prefix.len();
 
-    let mut head_iter = headstore
-        .iterator(IterOptions::new().with_prefix(head_prefix))
-        .await?;
-    let mut marker_iter = headstore
-        .iterator(
-            IterOptions::new()
-                .with_prefix(marker_prefix)
-                .with_keys_only(true),
-        )
-        .await?;
+    let (mut head_iter, mut marker_iter) = head_iterators(headstore, collection_short_id).await?;
 
     // Collected rather than deleted in place: deleting from under an iterator
     // that is rebuilt from its last key would skip entries. The budget is what
@@ -241,6 +226,10 @@ pub async fn prune_superseded_heads(
     marker_iter.close().await?;
 
     for key in doomed {
+        // A materialized head read does not add native scan observations.
+        // Prune writes shared keys, so anchor each deletion to this snapshot;
+        // a concurrent sweep remains the side allowed to lose the race.
+        headstore.has_for_update(&key).await?;
         headstore.delete(&key).await?;
     }
     Ok(outcome)

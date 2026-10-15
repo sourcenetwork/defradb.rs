@@ -268,10 +268,10 @@ impl Config {
             self.acp.vera_chain_id = id;
         }
 
-        // hub.rs
+        // vera.rs
         #[cfg(feature = "vera")]
-        if let Some(ref addr) = cli.hub_rs_address {
-            self.acp.hub_rs_address = addr.clone();
+        if let Some(ref addr) = cli.vera_rs_address {
+            self.acp.vera_rs_address = addr.clone();
         }
         #[cfg(feature = "vera")]
         if let Some(ref key) = cli.vera_consensus_key {

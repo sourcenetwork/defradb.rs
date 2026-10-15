@@ -3,9 +3,9 @@
 use db::index::vector::engine::ann::EngineKind;
 use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::flat::Flat;
-use db::index::vector::engine::ivfpq::IvfPq;
-use db::index::vector::engine::ivfpq::IvfPqParams;
-use db::index::vector::engine::ivfpq::TRAIN_PER_LIST;
+use db::index::vector::engine::ivf::pq::IvfPq;
+use db::index::vector::engine::ivf::pq::IvfPqParams;
+use db::index::vector::engine::ivf::pq::TRAIN_PER_LIST;
 use db::index::vector::store::MemoryNodeStore;
 use db::index::vector::store::NodeId;
 use defra_core::vector::Metric;
@@ -216,6 +216,29 @@ async fn a_document_written_after_the_build_is_searchable() {
         hits.iter().any(|n| n.id == NodeId(9_999)),
         "the late document was not found: {hits:?}"
     );
+}
+
+/// PQ only shortlists: the answer is re-scored against the stored vectors, so
+/// its distances are exact rather than code estimates.
+#[tokio::test]
+async fn results_carry_exact_distances() {
+    let mut corpus = crate::support::Corpus::new(SEED ^ 0x224);
+    let vectors = corpus.clustered(400, DIMENSIONS, 8, 0.1);
+    let mut index = filled(8, 8, &vectors).await;
+    index.build().await.unwrap();
+
+    let query = corpus.vectors(1, DIMENSIONS).remove(0);
+    let hits = index.search(query.as_slice(), 10, None).await.unwrap();
+    assert_eq!(hits.len(), 10);
+    for hit in hits {
+        let exact = Metric::Cosine.distance(query.as_slice(), &vectors[hit.id.0 as usize - 1]);
+        assert!(
+            (hit.distance - exact).abs() < 1e-5,
+            "{:?} ranked at {} but sits at {exact}",
+            hit.id,
+            hit.distance
+        );
+    }
 }
 
 #[tokio::test]

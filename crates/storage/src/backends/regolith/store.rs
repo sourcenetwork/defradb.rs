@@ -1,9 +1,9 @@
 //! The regolith-backed store.
 //!
 //! regolith validates its own transactions, so there is no conflict
-//! tracker, no commit gate and no read-set bookkeeping here. A
-//! transaction is begun, used, and committed; the engine decides whether
-//! it may land.
+//! tracker or read-set bookkeeping here: the engine decides whether a
+//! transaction may land. Snapshot capture and native commit share a short
+//! publication boundary with the collection-head cache (HeadSet.Cache).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -12,7 +12,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use regolith::{OptimisticTransactionDb, StreamOptions};
 
+use super::background_errors::BackgroundErrorListener;
 use super::config::RegolithStoreOptions;
+use super::head_cache::{self, SharedHeadCache};
 use super::transaction::RegolithTxn;
 use crate::backends::shared::TransactionStatsHandle;
 use crate::corekv::{Dropable, Error, Result, Store, Txn};
@@ -33,6 +35,7 @@ struct StoreInner {
     closed: AtomicBool,
     active_txns: Arc<AtomicUsize>,
     stats: TransactionStatsHandle,
+    head_cache: SharedHeadCache,
     path: PathBuf,
     /// The mounted OPFS environment, kept so `persist` can reach it.
     ///
@@ -65,7 +68,11 @@ impl RegolithStore {
                 })?;
             }
         }
-        let db = OptimisticTransactionDb::open(&path, options.engine.clone())
+        let mut engine = options.engine.clone();
+        engine
+            .listeners
+            .push(Arc::new(BackgroundErrorListener) as Arc<dyn regolith::EventListener>);
+        let db = OptimisticTransactionDb::open(&path, engine)
             .map_err(|error| Error::Backend(format!("failed to open regolith: {error}")))?
             .with_isolation(options.isolation);
         Ok(Self {
@@ -75,6 +82,7 @@ impl RegolithStore {
                 closed: AtomicBool::new(false),
                 active_txns: Arc::new(AtomicUsize::new(0)),
                 stats: TransactionStatsHandle::for_backend("regolith"),
+                head_cache: Arc::default(),
                 path,
                 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
                 opfs: None,
@@ -177,7 +185,16 @@ impl RegolithStore {
     /// Each flush is atomic; the stream as a whole is not. Work that must
     /// land all-or-nothing belongs in a transaction.
     pub fn streaming_writer(&self, opts: StreamOptions) -> regolith::StreamingWriter<'_> {
-        self.inner.db.db().streaming_writer(opts)
+        super::blocking(|| {
+            // A borrowed native writer can flush after this call returns, outside
+            // transaction publication. Disable caching for this store's lifetime.
+            self.inner
+                .head_cache
+                .lock()
+                .expect("head cache publication poisoned")
+                .disable();
+            self.inner.db.db().streaming_writer(opts)
+        })
     }
 
     /// Wait for in-flight transactions to finish, up to the configured
@@ -243,13 +260,21 @@ impl Store for RegolithStore {
             self.inner.active_txns.fetch_sub(1, Ordering::AcqRel);
             return Err(Error::DBClosed);
         }
-        Ok(Box::new(RegolithTxn::new(
+        let txn = RegolithTxn::new(
             &self.inner.db,
             readonly,
             self.inner.options.isolation,
             Arc::clone(&self.inner.active_txns),
             self.inner.stats.clone(),
-        )))
+            Arc::clone(&self.inner.head_cache),
+        );
+        match txn {
+            Ok(txn) => Ok(Box::new(txn)),
+            Err(error) => {
+                self.inner.active_txns.fetch_sub(1, Ordering::AcqRel);
+                Err(error)
+            }
+        }
     }
 
     async fn close(&self) -> Result<()> {
@@ -274,11 +299,15 @@ impl Store for RegolithStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Dropable for RegolithStore {
     async fn drop_all(&self) -> Result<()> {
-        self.ensure_open()?;
-        self.inner
-            .db
-            .db()
-            .drop_all()
-            .map_err(|error| Error::Backend(format!("drop_all failed: {error}")))
+        super::blocking(|| {
+            self.ensure_open()?;
+            let mut cache = head_cache::lock(&self.inner.head_cache)?;
+            cache.reset();
+            self.inner
+                .db
+                .db()
+                .drop_all()
+                .map_err(|error| Error::Backend(format!("drop_all failed: {error}")))
+        })
     }
 }

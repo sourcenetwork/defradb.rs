@@ -62,9 +62,16 @@ impl acp::DocumentACP for FakeDac {
 struct BranchableDac {
     doc_registered: bool,
     doc_granted: bool,
+    collection_registered: bool,
+    collection_granted: bool,
+    unregistered_public: bool,
 }
 #[async_trait::async_trait]
 impl acp::DocumentACP for BranchableDac {
+    fn unregistered_documents_are_public(&self) -> bool {
+        self.unregistered_public
+    }
+
     async fn register_doc_object(
         &self,
         _: &identity::Did,
@@ -75,7 +82,8 @@ impl acp::DocumentACP for BranchableDac {
         Ok(())
     }
     async fn is_doc_registered(&self, _: &str, _: &str, object_id: &str) -> acp::Result<bool> {
-        Ok(object_id == "col-1" || (object_id == "d1" && self.doc_registered))
+        Ok((object_id == "col-1" && self.collection_registered)
+            || (object_id == "d1" && self.doc_registered))
     }
     async fn check_doc_access(
         &self,
@@ -85,7 +93,8 @@ impl acp::DocumentACP for BranchableDac {
         _: &str,
         object_id: &str,
     ) -> acp::Result<bool> {
-        Ok(object_id == "d1" && self.doc_granted)
+        Ok((object_id == "col-1" && self.collection_granted)
+            || (object_id == "d1" && self.doc_granted))
     }
     async fn add_actor_relationship(
         &self,
@@ -318,6 +327,9 @@ async fn branchable_public_doc_denies_when_collection_denies() {
         Arc::new(BranchableDac {
             doc_registered: false,
             doc_granted: false,
+            collection_registered: true,
+            collection_granted: false,
+            unregistered_public: true,
         }),
         Arc::new(BranchableLookup),
     );
@@ -342,6 +354,9 @@ async fn branchable_explicit_doc_grant_allows_despite_collection_denial() {
         Arc::new(BranchableDac {
             doc_registered: true,
             doc_granted: true,
+            collection_registered: true,
+            collection_granted: false,
+            unregistered_public: true,
         }),
         Arc::new(BranchableLookup),
     );
@@ -358,4 +373,78 @@ async fn branchable_explicit_doc_grant_allows_despite_collection_denial() {
         .unwrap();
 
     assert_eq!(result, PolicyDecision::Allow);
+}
+
+#[tokio::test]
+async fn private_unregistered_doc_denies_owner_key_release() {
+    let policy = NacDacPolicy::new(
+        Arc::new(BranchableDac {
+            doc_registered: false,
+            doc_granted: true,
+            collection_registered: false,
+            collection_granted: false,
+            unregistered_public: false,
+        }),
+        Arc::new(FakeLookup),
+    );
+    policy.set_node_acp(Arc::new(FakeNac { allow: true }));
+    let owner = did("did:key:zalice");
+    let scope = KeyScope::Document {
+        doc_id: "d1".into(),
+        field: None,
+    };
+
+    // A prior owner grant cannot make missing registration public, and NAC
+    // permission alone does not authorize a document-scoped key.
+    for actor in [Some(&owner), None] {
+        assert_eq!(
+            policy.check_release(actor, &scope).await.unwrap(),
+            PolicyDecision::Deny
+        );
+    }
+    assert_eq!(
+        policy
+            .check_delegated_release(&owner, &scope, "col-1")
+            .await
+            .unwrap(),
+        PolicyDecision::Deny
+    );
+}
+
+#[tokio::test]
+async fn private_branchable_doc_inherits_only_live_collection_grant() {
+    let owner = did("did:key:zalice");
+    let scope = KeyScope::Document {
+        doc_id: "d1".into(),
+        field: Some("name".into()),
+    };
+
+    for collection_registered in [true, false] {
+        let policy = NacDacPolicy::new(
+            Arc::new(BranchableDac {
+                doc_registered: false,
+                doc_granted: false,
+                collection_registered,
+                collection_granted: true,
+                unregistered_public: false,
+            }),
+            Arc::new(BranchableLookup),
+        );
+        let expected = if collection_registered {
+            PolicyDecision::Allow
+        } else {
+            PolicyDecision::Deny
+        };
+        assert_eq!(
+            policy.check_release(Some(&owner), &scope).await.unwrap(),
+            expected
+        );
+        assert_eq!(
+            policy
+                .check_delegated_release(&owner, &scope, "col-1")
+                .await
+                .unwrap(),
+            expected
+        );
+    }
 }

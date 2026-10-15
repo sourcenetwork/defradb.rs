@@ -25,6 +25,7 @@ use super::mutations::{parse_bm25_field, parse_field_to_mutation, parse_similari
 use super::ordering::parse_order_value;
 use super::values::{
     parse_cid_value, parse_doc_ids_value, parse_optional_int_value, resolve_bool_value,
+    resolve_string_value,
 };
 use super::variables::{extract_variable_defaults, merge_variables, validate_required_variables};
 
@@ -414,7 +415,7 @@ pub fn parse_request_with_variables(
 }
 
 /// Parse a GraphQL request with variable substitution and custom limits.
-#[instrument(name = "query.parse", skip(query, variables, limits), fields(query_len = query.len()))]
+#[instrument(name = "query.parse", skip(query, variables, limits), fields(query_len = query.len() as i64))]
 pub fn parse_request_with_limits(
     query: &str,
     variables: Option<&RapidHashMap<String, JsonValue>>,
@@ -718,7 +719,28 @@ pub(super) fn parse_field_to_select(
 
     // Parse arguments (filter, limit, offset, order, docIDs, etc.)
     for (arg_name, arg_value) in &field.arguments {
+        if collection_name == "_documentArrivals"
+            && !matches!(
+                arg_name.as_str(),
+                "collection" | "after" | "limit" | "docID" | "docIDs"
+            )
+        {
+            return Err(QueryError::parse(
+                "_documentArrivals accepts collection, after, limit and docID only",
+            ));
+        }
         match arg_name.as_str() {
+            "collection" if collection_name == "_documentArrivals" => {
+                select.arrival_collection =
+                    Some(resolve_string_value(arg_value, variables, "collection")?);
+            }
+            "after" if collection_name == "_documentArrivals" => {
+                select.arrival_after = resolve_string_value(arg_value, variables, "after")?
+                    .parse()
+                    .map_err(|_| {
+                        QueryError::parse("arrival cursor must be a decimal u64 string")
+                    })?;
+            }
             "filter" => {
                 // Null filter is valid and means "no filter" (operate on all docs)
                 if !matches!(arg_value, Value::Null) {

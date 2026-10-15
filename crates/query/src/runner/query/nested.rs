@@ -11,6 +11,7 @@ use web_time::Instant;
 use crate::error::Result;
 use crate::executor::GqlWarning;
 use crate::mapper::{Requestable, Select};
+use crate::planner::index_selection::estimate_select;
 use crate::planner::Planner;
 use crate::txn::TransactionRegistry;
 
@@ -64,12 +65,15 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             .await?;
         profile.precompute_fulltext_elapsed = precompute_fulltext_start.elapsed();
 
+        let index_estimates = estimate_select(fetcher, &collection, select).await?;
+
         let plan_build_start = Instant::now();
         let mut planner = Planner::new(collections)
             .with_query_limits(self.query_limits)
             .with_fetcher(Arc::new(fetcher_arc))
             .with_acp(self.acp.clone(), identity)
-            .with_read_validator(self.read_validator.clone());
+            .with_read_validator(self.read_validator.clone())
+            .with_index_estimates(index_estimates);
         if !fts_scores.is_empty() {
             planner = planner.with_fts_scores(fts_scores);
         }

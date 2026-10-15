@@ -23,8 +23,8 @@ use db::index::vector::engine::ann::VectorIndexEngine;
 use db::index::vector::engine::flat::Flat;
 use db::index::vector::engine::hnsw::Hnsw;
 use db::index::vector::engine::hnsw::LevelSampler;
-use db::index::vector::engine::ivfflat::IvfFlat;
-use db::index::vector::engine::ivfflat::IvfFlatParams;
+use db::index::vector::engine::ivf::flat::IvfFlat;
+use db::index::vector::engine::ivf::flat::IvfFlatParams;
 use db::index::vector::params::Params;
 use db::index::vector::params::DEFAULT_EF_CONSTRUCTION;
 use db::index::vector::params::DEFAULT_EF_SEARCH;
@@ -100,6 +100,13 @@ impl<S: VectorNodeStore> VectorNodeStore for Counting<S> {
 
     async fn put_aux(&mut self, kind: u8, key: &[u8], value: &[u8]) -> Result<()> {
         self.inner.put_aux(kind, key, value).await
+    }
+
+    async fn write_aux_from_nodes<F>(&mut self, kind: u8, encode: F) -> Result<u64>
+    where
+        F: FnMut(Node) -> Result<(Vec<u8>, Vec<u8>)> + MaybeSend,
+    {
+        self.inner.write_aux_from_nodes(kind, encode).await
     }
 
     async fn delete_aux(&mut self, kind: u8, key: &[u8]) -> Result<()> {

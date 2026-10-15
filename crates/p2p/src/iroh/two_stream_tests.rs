@@ -121,6 +121,7 @@ async fn two_stream_request_receives_reply_on_request_stream() {
     assert_eq!(peer_id, *sender.transport.local_peer_id());
     assert_eq!(received.message_id, message_id);
     assert!(receiver.transport.prefers_same_stream_reply());
+    assert!(received.supports_retry_after);
 
     let mut reply = PushLogReply::success(&message_id);
     sign_with_transport(&receiver.transport, &mut reply).unwrap();
@@ -215,6 +216,7 @@ async fn two_stream_request_has_no_reverse_stream_reply_path() {
     let (_, received, token) = next_two_stream_request(&mut receiver.events).await;
     assert_eq!(received.message_id, message_id);
     assert!(receiver.transport.prefers_same_stream_reply());
+    assert!(received.supports_retry_after);
 
     let mut reply = PushLogReply::success(&message_id);
     sign_with_transport(&receiver.transport, &mut reply).unwrap();
@@ -317,6 +319,7 @@ async fn concurrent_two_stream_fan_in_replies_on_request_streams() {
     for _ in 0..SENDERS {
         let (peer_id, request, token) = next_two_stream_request(&mut receiver.events).await;
         peers.insert(peer_id);
+        assert!(request.supports_retry_after);
         let mut reply = PushLogReply::success(&request.message_id);
         sign_with_transport(&receiver.transport, &mut reply).unwrap();
         receiver

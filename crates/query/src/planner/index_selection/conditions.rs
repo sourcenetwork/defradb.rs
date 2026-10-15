@@ -7,6 +7,7 @@ use serde_json::Value as JsonValue;
 
 use crate::mapper::{Filter, FilterOp, OrderBy, OrderDirection};
 
+use super::estimate::IndexEstimates;
 use super::types::{ConditionValue, FieldCondition};
 
 /// Determines if a filter condition should force a fallback to full scan instead of using the index.
@@ -145,7 +146,7 @@ fn extract_conditions_recursive(
 /// - `_all` with `_eq` - CAN use index (but may need post-filtering)
 /// - `_none` - CANNOT use index efficiently (requires full scan)
 pub fn can_use_index(filter: &Filter, index: &IndexDescription) -> bool {
-    if filter.is_empty() || index.fields.is_empty() {
+    if index.is_vector() || filter.is_empty() || index.fields.is_empty() {
         return false;
     }
 
@@ -268,24 +269,51 @@ pub fn can_be_ordered_by_index(order_by: &OrderBy, index: &IndexDescription) -> 
 
 /// Select the best index for a filter from available indexes.
 ///
-/// Returns the index that can most efficiently evaluate the filter.
+/// Returns the index that can most efficiently evaluate the filter, judged by
+/// the filter's shape alone.
 pub fn select_best_index<'a>(
     filter: &Filter,
     indexes: &'a [IndexDescription],
 ) -> Option<&'a IndexDescription> {
-    let mut best_index: Option<&IndexDescription> = None;
-    let mut best_score = 0;
+    select_best_index_with_estimates(filter, indexes, &IndexEstimates::default())
+}
 
+/// Select the best index for a filter, preferring the fewest estimated entries.
+///
+/// When every usable index has an entry count in `estimates`, the index with
+/// the smallest count wins, so a condition on a selective field beats an
+/// equality on a field that most documents share. Ties, and any usable index
+/// without a count, fall back to the shape score.
+pub fn select_best_index_with_estimates<'a>(
+    filter: &Filter,
+    indexes: &'a [IndexDescription],
+    estimates: &IndexEstimates,
+) -> Option<&'a IndexDescription> {
+    let mut best_shape: Option<(&IndexDescription, u32)> = None;
+    let mut best_count: Option<(&IndexDescription, u32, u64)> = None;
+    let mut all_counted = true;
     for index in indexes {
-        if let Some(score) = score_index_for_filter(filter, index) {
-            if score > best_score {
-                best_score = score;
-                best_index = Some(index);
+        let Some(score) = score_index_for_filter(filter, index) else {
+            continue;
+        };
+        if best_shape.is_none_or(|(_, current_score)| score > current_score) {
+            best_shape = Some((index, score));
+        }
+        if let Some(&count) = estimates.get(&index.name) {
+            if best_count.is_none_or(|(_, current_score, current_count)| {
+                count < current_count || (count == current_count && score > current_score)
+            }) {
+                best_count = Some((index, score, count));
             }
+        } else {
+            all_counted = false;
         }
     }
-
-    best_index
+    if all_counted {
+        best_count.map(|(index, _, _)| index)
+    } else {
+        best_shape.map(|(index, _)| index)
+    }
 }
 
 /// Score an index for a filter (higher is better).

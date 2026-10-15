@@ -133,11 +133,8 @@ impl DocumentChangeSubscription {
         loop {
             self.wake.recv().await.ok()?;
             let batch = self.take_pending();
-            // The wake and the pending update are two separate lock-free
-            // writes (no single lock spans both), so a wake can occasionally
-            // arrive just ahead of the update it announced: this drain then
-            // races a concurrent one, takes nothing, and the announced data
-            // lands right after. Waiting for the next wake recovers it.
+            // A previous drain can include the update for a later wake.
+            // Skip that empty wake without consuming any subsequent notification.
             if batch.updates != 0 {
                 return Some(batch);
             }
@@ -159,9 +156,8 @@ impl DocumentChangeSubscription {
 
     fn take_pending(&self) -> DocumentChangeBatch {
         let taken = self.pending.swap(Pending::default());
-        // A publisher may have filled the wake slot between recv and this swap.
-        // Its changes are included below, so consume that redundant wake too.
-        let _ = self.wake.try_recv();
+        // Leave queued wakes intact: a publisher can enqueue one after the swap
+        // for changes that belong to the next batch.
         DocumentChangeBatch {
             changes: taken
                 .documents

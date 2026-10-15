@@ -154,9 +154,13 @@ impl RegolithIterator {
                         Ceiling::Last => cursor.seek_to_last(),
                     }
                 } else {
-                    match self.floor(&anchor) {
-                        Some(key) => cursor.seek(&key),
-                        None => cursor.seek_to_first(),
+                    // The cursor skips entries this snapshot cannot see
+                    // before it reports a key; only a bound it holds stops
+                    // that skip at the end of the range.
+                    match (self.floor(&anchor), self.end.as_deref()) {
+                        (floor, Some(end)) => cursor.seek_bounded(&floor.unwrap_or_default(), end),
+                        (Some(floor), None) => cursor.seek(&floor),
+                        (None, None) => cursor.seek_to_first(),
                     }
                 }
                 // A cursor seeked past the range is invalid, and `Entries`

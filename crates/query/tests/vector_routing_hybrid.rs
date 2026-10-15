@@ -32,6 +32,7 @@ fn vector_index() -> Vec<IndexDescription> {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     })]
 }
 

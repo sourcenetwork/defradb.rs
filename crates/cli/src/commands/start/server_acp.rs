@@ -97,15 +97,15 @@ impl Node {
 
         #[cfg(feature = "vera")]
         if config.acp.document_type == AcpDocumentType::VeraRs {
-            if config.acp.hub_rs_address.is_empty() {
+            if config.acp.vera_rs_address.is_empty() {
                 return Err(Error::InvalidConfig(
-                    "vera_rs_address required when document_type is hub-rs".into(),
+                    "vera_rs_address required when document_type is verars".into(),
                 ));
             }
 
             let signer_key_bytes = identity_key_bytes.ok_or_else(|| {
                 Error::InvalidConfig(
-                    "node identity required for hub.rs ACP (use --identity)".into(),
+                    "node identity required for vera.rs ACP (use --identity)".into(),
                 )
             })?;
 
@@ -124,7 +124,7 @@ impl Node {
                 circuit_breaker_threshold = config.acp.circuit_breaker_threshold,
                 circuit_breaker_reset_timeout_s = config.acp.circuit_breaker_reset_timeout,
                 receipt_timeout_s = config.acp.receipt_timeout,
-                "Resolved ACP tuning (hub.rs; access decision cache disabled)"
+                "Resolved ACP tuning (vera.rs; access decision cache disabled)"
             );
 
             let deployment = config.acp.vera_deployment_id.ok_or_else(|| {
@@ -135,7 +135,7 @@ impl Node {
             let worker_config = config.clone();
             let worker = tokio::task::spawn_blocking(move || {
                 let keyring = crate::commands::open_keyring(&worker_config)?;
-                vera::hub_rs::NativeWorker::open(
+                vera::vera_rs::NativeWorker::open(
                     &worker_config.rootdir.join("vera-worker"),
                     keyring.as_ref(),
                     deployment,
@@ -146,7 +146,7 @@ impl Node {
             .map_err(|e| Error::InvalidConfig(format!("Vera worker startup: {e}")))??;
             let provider = Arc::new(
                 vera::VeraRsProvider::new(
-                    config.acp.hub_rs_address.clone(),
+                    config.acp.vera_rs_address.clone(),
                     &config.acp.vera_consensus_key,
                     signer_key_bytes,
                     worker,
@@ -154,7 +154,7 @@ impl Node {
                     Some(event_bus),
                 )
                 .await
-                .map_err(|e| Error::InvalidConfig(format!("hub.rs provider: {}", e)))?,
+                .map_err(|e| Error::InvalidConfig(format!("vera.rs provider: {}", e)))?,
             );
 
             let document_acp = Arc::new(vera::VeraDocumentACP::without_access_cache(provider));
@@ -164,7 +164,7 @@ impl Node {
                 nac_checker,
             );
 
-            info!("Document ACP configured (hub.rs)");
+            info!("Document ACP configured (vera.rs)");
             return Ok(DocumentAcpSetup {
                 document_acp,
                 http_adapter: Some(http_adapter),

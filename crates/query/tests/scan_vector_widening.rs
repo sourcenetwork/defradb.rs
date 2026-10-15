@@ -43,6 +43,9 @@ struct WideningFetcher {
     closed: Arc<AtomicUsize>,
     /// How many of the corpus\'s documents the index actually holds.
     indexed: u64,
+    corpus: u64,
+    max_requested: AtomicUsize,
+    searches: AtomicUsize,
 }
 
 impl Default for WideningFetcher {
@@ -51,6 +54,9 @@ impl Default for WideningFetcher {
             opened: AtomicUsize::new(0),
             closed: Arc::new(AtomicUsize::new(0)),
             indexed: CORPUS,
+            corpus: CORPUS,
+            max_requested: AtomicUsize::new(0),
+            searches: AtomicUsize::new(0),
         }
     }
 }
@@ -102,8 +108,9 @@ impl DocFetcher for WideningFetcher {
         _show_deleted: bool,
     ) -> Result<Box<dyn DocStream>> {
         self.opened.fetch_add(1, Ordering::Relaxed);
-        let documents: Vec<(document::Document, bool)> =
-            (1..=CORPUS).map(|id| (Self::document(id), false)).collect();
+        let documents: Vec<(document::Document, bool)> = (1..=self.corpus)
+            .map(|id| (Self::document(id), false))
+            .collect();
         Ok(Box::new(ClosingStream {
             documents: documents.into_iter(),
             closes: self.closed.clone(),
@@ -140,6 +147,8 @@ impl DocFetcher for WideningFetcher {
         k: usize,
         _effort: Option<usize>,
     ) -> Result<Vec<u64>> {
+        self.max_requested.fetch_max(k, Ordering::Relaxed);
+        self.searches.fetch_add(1, Ordering::Relaxed);
         Ok((1..=self.indexed.min(k as u64)).collect())
     }
 }
@@ -192,6 +201,53 @@ async fn a_single_batch_closes_its_stream() {
     assert_eq!(drain(&mut node).await, 4);
     assert_eq!(fetcher.opened.load(Ordering::Relaxed), 1);
     assert_eq!(fetcher.closed.load(Ordering::Relaxed), 1);
+    assert_eq!(node.explain_execute_inner()["indexFetches"], 1);
+}
+
+#[tokio::test]
+async fn widening_has_a_fixed_budget_and_falls_back_without_losing_matches() {
+    let fetcher = Arc::new(WideningFetcher {
+        indexed: 8192,
+        corpus: 8192,
+        ..WideningFetcher::default()
+    });
+    let filter = query::mapper::Filter::from_conditions(
+        [("title".to_string(), serde_json::json!({"_eq": "doc-8192"}))]
+            .into_iter()
+            .collect(),
+    );
+    let mut node = ScanNode::new(collection(), mapping())
+        .with_fetcher(fetcher.clone())
+        .with_filter(filter)
+        .with_vector_route(VectorRoute {
+            index_id: 0,
+            query_vector: vec![1.0],
+            k: 4,
+        });
+    for _ in 0..2 {
+        assert_eq!(drain(&mut node).await, 1);
+        assert_eq!(fetcher.max_requested.load(Ordering::Relaxed), 4096);
+        assert_eq!(node.explain_execute_inner()["indexFetches"], 11);
+    }
+    assert_eq!(
+        fetcher.opened.load(Ordering::Relaxed),
+        fetcher.closed.load(Ordering::Relaxed)
+    );
+}
+
+#[tokio::test]
+async fn oversized_initial_page_skips_the_index() {
+    let fetcher = Arc::new(WideningFetcher::default());
+    let mut node = ScanNode::new(collection(), mapping())
+        .with_fetcher(fetcher.clone())
+        .with_vector_route(VectorRoute {
+            index_id: 0,
+            query_vector: vec![1.0],
+            k: 4097,
+        });
+    assert_eq!(drain(&mut node).await, CORPUS as usize);
+    assert_eq!(fetcher.searches.load(Ordering::Relaxed), 0);
+    assert_eq!(fetcher.opened.load(Ordering::Relaxed), 1);
 }
 
 /// Every stream a widening pass replaces must be closed, not dropped.

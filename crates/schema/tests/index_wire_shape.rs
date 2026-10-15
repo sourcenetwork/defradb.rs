@@ -45,6 +45,7 @@ fn vector() -> VectorIndexDescription {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     }
 }
 
@@ -344,8 +345,10 @@ fn ivfpq_is_an_algorithm_go_cannot_parse() {
                 nprobe: 16,
                 m: 32,
                 sample_bytes: 1 << 20,
+                rerank: 10,
             }),
             ssg: None,
+            diskann: None,
             ..vector()
         })
         .normalized();
@@ -354,7 +357,7 @@ fn ivfpq_is_an_algorithm_go_cannot_parse() {
     assert_eq!(json["KindDescription"]["Algorithm"], json!("IVF_PQ"));
     assert_eq!(
         json["KindDescription"]["IVFPQ"],
-        json!({"NList": 256, "NProbe": 16, "M": 32, "SampleBytes": 1_048_576})
+        json!({"NList": 256, "NProbe": 16, "M": 32, "SampleBytes": 1_048_576, "Rerank": 10})
     );
     assert!(!json["KindDescription"]
         .as_object()

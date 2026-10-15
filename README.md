@@ -19,7 +19,7 @@ Compatible with Go DefraDB v1.0.0-rc1. Full feature parity across CLI, HTTP API,
 
 - **GraphQL query engine** — queries, mutations, subscriptions, aggregates, explain - full coverage of the defradb test suite
 - **P2P replication** — `libp2p` (primary, go compatable) and [`iroh`](https://github.com/n0-computer/iroh) (optional) transports
-- **Access control** — local Zanzibar engine, on-chain via [Vera](https://github.com/sourcenetwork/vera) (Cosmos/EVM) and [`hub.rs`](https://github.com/sourcenetwork/hub.rs) (Commonware/EVM)
+- **Access control** — local Zanzibar engine, on-chain via [Vera](https://github.com/sourcenetwork/vera) (Cosmos/EVM) and [`vera.rs`](https://github.com/sourcenetwork/vera.rs) (Commonware/EVM)
 - **Full-text search** — (rust only) BM25 ranking with language-aware tokenization
 - **Schema migration** — non-destructive evolution via WASM transforms (Lens)
 - **Searchable encryption** — encrypted indexes with ACP integration
@@ -53,6 +53,12 @@ on Linux x86_64. Downloads are pinned by version and checked against a SHA-256
 before use. The host needs `bash`, `curl`, `tar`, `unzip` and `git`.
 
 `just doctor` reports what resolved and what is missing.
+
+`just setup` includes browser setup. On macOS, missing Firefox produces a
+warning rather than blocking setup; install it in `/Applications` or
+`~/Applications` before running `just test-wasm` or `just test-browser-p2p`.
+Browsers already on `PATH` are also recognized. Run `just setup-browser` to
+retry browser setup separately.
 
 ```bash
 just build             # Build all crates
@@ -187,7 +193,7 @@ cargo test -p integration-test --test basic                  # Specific area
 cargo test -p integration-test --test acp -- negative::      # Specific module
 ```
 
-Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`, `hubrs`
+Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`, `verars`
 
 Vera integration uses the `vera` crate, Cargo feature, and test suite. Select it
 with `--document-acp-type vera` and configure endpoints with `--vera-*` flags,
@@ -236,6 +242,34 @@ cargo bench -p benches --bench document_write
 
 ## P2P Replication
 
+### Protected writes with Vera ACP
+
+For a policy-protected document, inbound updates and deletes require the
+**verified signer of each composite block** to hold the corresponding Vera
+`update` or `delete` permission. This also applies to ancestors, batch merges,
+and explicit-replicator replay. An unsigned update is rejected. The receiving
+node's read access is a separate check, not permission for the sender to write.
+If document registration is not yet visible, strict-mode updates wait for a
+retry rather than treating the document as public.
+
+HTTP/JWT authentication and block signing are different identities: the JWT
+identifies the caller for the local mutation, but the serving node signs the
+replicated blocks. To edit an existing protected document through another node,
+the owner must **grant that node's DID** a relation whose policy expression
+permits `update` and/or `delete`, before issuing the mutation. For example, with
+a policy where `writer` grants both permissions, add a `writer` relationship
+for the serving node's DID on that document. `client node-identity` reports the
+DID; do not substitute its transport peer ID. Grant read access as needed for
+replication, but a `reader` relationship alone cannot authorize writes.
+
+Only grant write access to trusted nodes: it authorizes their signatures, not
+just requests made by a particular user. Without the grant, a local HTTP edit
+can succeed while its replication is rejected and quarantined. Granting access
+later does not automatically replay a quarantined update. This inbound write
+gate intentionally differs from Go's serve-side-read-only replication checks.
+Local ACP retains its existing node-owner shortcut and unregistered-replica
+semantics; genesis handling is unchanged.
+
 ### Filtered replication
 
 A replicator can carry an optional per-collection predicate so a source node only **pushes** documents whose field matches:
@@ -248,6 +282,24 @@ defradb client p2p replicator add -c MyCollection \
 The filter field must be a scalar, `@immutable` LWW field on the collection.
 
 **Filtered replication is a push-path selectivity optimization, not an access-control boundary.** A peer that also subscribes to the collection (`p2p collection add`) joins the collection's gossip topic and receives every document, bypassing the filter. Use ACP and encryption for confidentiality. The `--filter-value` is matched as a JSON string, so only string-valued fields can be filtered today.
+
+## Storage Diagnostics
+
+Stop the node before inspecting its on-disk store:
+
+```bash
+defradb --rootdir /path/to/node storage stats
+defradb --rootdir /path/to/node storage stats --versions
+```
+
+The command opens the store read-only and prints JSON aggregates by namespace,
+collection ID, field, and block kind. Counts describe logical key/value bytes,
+not compressed disk usage; document values are never printed. Unknown or
+ambiguous keys are reported separately. `--versions` counts document ownership of field blocks,
+using memory proportional to the number of document/field pairs.
+
+Embedded callers can use `DB::storage_stats` on a live read snapshot. Use this
+API rather than the offline command for an at-rest-encrypted store.
 
 ## Documentation
 

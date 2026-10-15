@@ -2,7 +2,7 @@
 
 ## Purpose
 Vera ACP client: implements `DocumentACP`/`VeraProvider` against two on-chain
-backends (Cosmos SDK x/acp via LCD+CometBFT RPC, and EVM "hub.rs" via Alloy). Builds and
+backends (Cosmos SDK x/acp via LCD+CometBFT RPC, and EVM "vera.rs" via Alloy). Builds and
 signs txs, queries policies/relationships, and gates document access. Adds local caches
 (access decisions, policy metadata), a circuit breaker, and a proof-validated light-client
 cache invalidated by chain height / module-state-root advance.
@@ -14,7 +14,7 @@ cache invalidated by chain height / module-state-root advance.
   maps Open/timeout → `ProviderError::Unavailable`, which all access decisions treat as fail-closed.
 - **Access-decision cache lifecycle** (`access_cache.rs` + `dac.rs::check_access`): TTL expiry +
   eager `invalidate_object` on every set/delete relationship; only *positive* decisions cached.
-- **Light-client cache invalidation** (`hub_rs/provider.rs::run_light_client_observer`): on
+- **Light-client cache invalidation** (`vera_rs/provider.rs::run_light_client_observer`): on
   `module_state_root` change at a new height, `invalidate_stale` + publish events. Core proof
   logic lives in the external `acp-light-client` git dep (assumed boundary).
 - EVM nonce reservation (`reserve_nonce_at_or_after`): CAS loop — plumbing.

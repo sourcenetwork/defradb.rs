@@ -152,12 +152,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 
     async fn reject_pushlog(
         &self,
-        message_id: &str,
+        request: &crate::message::PushLogRequest,
         token: T::ResponseToken,
         reply_message: &str,
         error: Error,
+        delay: Duration,
     ) -> Error {
-        let reply = PushLogReply::error(message_id, reply_message);
+        let reply = PushLogReply::error(&request.message_id, reply_message)
+            .with_retry_after(request.accepts_retry_after(), delay);
         // Best-effort: if the nack cannot be sent, the pusher times out and
         // lands in the same retry path; no state was discarded.
         if let Err(send_err) = self
@@ -174,12 +176,14 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     async fn reject_two_stream(
         &self,
         peer_id: &PeerId,
-        message_id: &str,
+        request: &crate::message::PushLogRequest,
         token: Option<T::ResponseToken>,
         reply_message: &str,
         error: Error,
+        delay: Duration,
     ) -> Error {
-        let mut reply = PushLogReply::error(message_id, reply_message);
+        let mut reply = PushLogReply::error(&request.message_id, reply_message)
+            .with_retry_after(request.accepts_retry_after(), delay);
         // Best-effort: send_two_stream_reply logs its own failures; an unsent
         // nack degrades to a pusher-side timeout on the same retry path.
         if let Err(sign_err) = sign_with_transport(&self.runtime.transport, &mut reply) {
@@ -295,7 +299,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             } => {
                 let error = Self::saturated_error(&peer_id);
                 Err(self
-                    .reject_pushlog(&request.message_id, token, AT_CAPACITY_MESSAGE, error)
+                    .reject_pushlog(
+                        &request,
+                        token,
+                        AT_CAPACITY_MESSAGE,
+                        error,
+                        Duration::from_secs(2),
+                    )
                     .await)
             }
             TransportEvent::TwoStreamRequest {
@@ -308,10 +318,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 Err(self
                     .reject_two_stream(
                         &peer_id,
-                        &request.message_id,
+                        &request,
                         token,
                         AT_CAPACITY_MESSAGE,
                         error,
+                        Duration::from_secs(2),
                     )
                     .await)
             }
@@ -472,13 +483,12 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 request,
                 token,
             } => {
-                if let Err(error) = self.check_rate_limit(
-                    &self.runtime.request_rate_limiter,
-                    &peer_id,
-                    "PushLogRequest",
-                ) {
+                if let RateLimitDecision::Limited { retry_after, .. } =
+                    self.runtime.request_rate_limiter.check(&peer_id)
+                {
+                    let error = Self::rate_limited_error(&peer_id);
                     return Err(self
-                        .reject_pushlog(&request.message_id, token, RATE_LIMITED_MESSAGE, error)
+                        .reject_pushlog(&request, token, RATE_LIMITED_MESSAGE, error, retry_after)
                         .await);
                 }
                 self.handle_pushlog_request(peer_id, request, token).await?;
@@ -490,18 +500,18 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 is_explicit_replicator,
                 explicit_replay_authorization,
             } => {
-                if let Err(error) = self.check_rate_limit(
-                    &self.runtime.request_rate_limiter,
-                    &peer_id,
-                    "TwoStreamRequest",
-                ) {
+                if let RateLimitDecision::Limited { retry_after, .. } =
+                    self.runtime.request_rate_limiter.check(&peer_id)
+                {
+                    let error = Self::rate_limited_error(&peer_id);
                     return Err(self
                         .reject_two_stream(
                             &peer_id,
-                            &request.message_id,
+                            &request,
                             token,
                             RATE_LIMITED_MESSAGE,
                             error,
+                            retry_after,
                         )
                         .await);
                 }

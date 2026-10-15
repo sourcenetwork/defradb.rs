@@ -7,7 +7,7 @@ use schema::{CollectionVersion, IndexDescription};
 use crate::mapper::{Filter, OrderBy, Select};
 use crate::planner::index_selection::{
     can_be_ordered_by_index, filter_to_index_scan, or_filter_to_index_scan, select_best_index,
-    IndexScanParams, IndexScanType,
+    select_best_index_with_estimates, IndexEstimates, IndexScanParams, IndexScanType,
 };
 
 impl super::Planner {
@@ -37,7 +37,15 @@ impl super::Planner {
         // naturally map to their field names (not index field names) and won't
         // match any index. This means `select_best_index` safely ignores them.
         if let Some(filter) = select.filter.as_ref() {
-            if let Some(best_index) = select_best_index(filter, &collection.indexes) {
+            let no_estimates = IndexEstimates::default();
+            let estimates = self
+                .index_estimates
+                .as_ref()
+                .and_then(|estimates| estimates.for_select(select))
+                .unwrap_or(&no_estimates);
+            if let Some(best_index) =
+                select_best_index_with_estimates(filter, &collection.indexes, estimates)
+            {
                 if let Some(params) = filter_to_index_scan(
                     filter,
                     best_index,

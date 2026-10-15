@@ -110,12 +110,13 @@ tokio = { workspace = true, features = ["sync"] }
 wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time", "test-util"] }
 axum.workspace = true
 proptest.workspace = true
 blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"
+regolith.workspace = true
 ed25519-dalek.workspace = true
 
 [lints]

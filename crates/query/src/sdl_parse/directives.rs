@@ -237,6 +237,8 @@ pub struct VectorIndexConfig {
     pub ivfflat: Option<IvfFlatConfig>,
     /// Present when the `ssg` argument was given.
     pub ssg: Option<SsgConfig>,
+    /// Present when the `diskann` argument was given.
+    pub diskann: Option<DiskAnnConfig>,
     /// Present when the `hnsw` argument was given. Its absence still means
     /// HNSW, with defaults.
     pub hnsw: Option<HnswConfig>,
@@ -284,6 +286,7 @@ pub struct IvfPqConfig {
     pub nprobe: Option<u32>,
     pub m: Option<u32>,
     pub sample_bytes: Option<u32>,
+    pub rerank: Option<u32>,
 }
 
 /// The `ivfflat` block. Every member is optional; an omitted one keeps its
@@ -304,4 +307,18 @@ pub struct SsgConfig {
     pub r: Option<u32>,
     pub angle: Option<u32>,
     pub pool: Option<u32>,
+}
+
+/// The `diskann` block. Every member is optional; an omitted one keeps its
+/// default, and a zero `m` is derived from the vector width.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiskAnnConfig {
+    pub metric: Option<String>,
+    pub r: Option<u32>,
+    pub l_build: Option<u32>,
+    pub l_search: Option<u32>,
+    pub alpha_percent: Option<u32>,
+    pub m: Option<u32>,
+    pub sample_bytes: Option<u32>,
+    pub resident_codes: Option<bool>,
 }

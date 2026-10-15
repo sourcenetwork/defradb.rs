@@ -85,6 +85,22 @@ impl<S: Store> LensedAutoCommitFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
+    async fn get_document_arrivals(
+        &self,
+        options: &query::fetcher::DocumentArrivalOptions,
+    ) -> query::error::Result<query::fetcher::DocumentArrivalPage> {
+        let mut txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        let result = crate::event::arrivals::read(&mut txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()));
+        let _ = txn.discard();
+        result
+    }
+
     async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {
         self.get_all_impl(collection_name).await
     }
@@ -152,6 +168,16 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
 
     fn supports_index_queries(&self) -> bool {
         true
+    }
+
+    async fn estimate_index_scan(
+        &self,
+        collection_name: &str,
+        params: &IndexScanParams,
+        cap: u64,
+    ) -> query::error::Result<Option<u64>> {
+        self.estimate_index_scan_inner(collection_name, params, cap)
+            .await
     }
 
     async fn vector_search(

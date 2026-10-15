@@ -8,6 +8,7 @@ mod keyring_cmd;
 mod sdl;
 mod server_dump;
 pub mod start;
+mod storage;
 mod version;
 
 pub use client::ClientArgs;
@@ -16,6 +17,7 @@ pub use keyring_cmd::KeyringArgs;
 pub use sdl::SdlArgs;
 pub use server_dump::ServerDumpArgs;
 pub use start::{Node, StartArgs};
+pub use storage::StorageArgs;
 pub use version::VersionArgs;
 
 use crate::config::Config;

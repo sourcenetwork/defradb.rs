@@ -143,6 +143,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             ),
             None => None,
         };
+        let _arrival_guard = match collection.as_ref() {
+            Some(collection) => Some(
+                self.merge_queue
+                    .acquire_arrival(collection.collection_id())
+                    .await,
+            ),
+            None => None,
+        };
         let _guard = self.merge_queue.acquire(&doc_id_str).await;
 
         self.process_composite_delta_locked(
@@ -227,10 +235,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             // carrier's collection id honoured, a sender would pick the validator.
             if metadata.collection_id.is_some()
                 && self.is_governed(collection.schema())
-                && !self
+                && self
                     .block_collection(&payload.schema_version_id, None)
                     .await?
-                    .is_some_and(|own| own.collection_id() == collection.collection_id())
+                    .is_none_or(|own| own.collection_id() != collection.collection_id())
             {
                 return Ok(CompositeMergePreparation::Complete(
                     MergeOutcome::retryable_skip(format!(
@@ -532,7 +540,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .persist_merged_document(&mut datastore, &systemstore, &context, &mut state)
                     .await
                 {
-                    Ok(()) => Ok(None),
+                    Ok(()) => self
+                        .update_heads(&headstore, &context, &state)
+                        .await
+                        .map(|()| None),
                     Err(MergeError::UniqueConstraintViolation(reason)) => {
                         Ok(Some(MergeOutcome::rejected(reason)))
                     }
@@ -566,9 +577,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(outcome)
             }
             Ok(None) => {
-                if let Ok(headstore) = txn.headstore() {
-                    self.update_heads(&headstore, &context, &state).await;
-                }
                 if let Ok(systemstore) = txn.systemstore() {
                     self.record_block_ownership(
                         &systemstore,
@@ -992,7 +1000,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(outcome)
             }
             Ok(None) => {
-                self.update_heads(headstore, &context, &state).await;
+                self.update_heads(headstore, &context, &state).await?;
                 self.record_block_ownership(
                     systemstore,
                     doc_id_str,

@@ -93,6 +93,16 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(|e| MergeError::Database(crate::error::Error::Storage(e)))?;
 
+        if old_doc.is_none() && !doc_is_tombstoned {
+            crate::event::arrivals::record(
+                systemstore,
+                collection.resolved_root_id(),
+                context.doc_id_str,
+            )
+            .await
+            .map_err(MergeError::Database)?;
+        }
+
         let short_id = collection.resolved_root_id();
         match IndexManager::from_collection(short_id, collection.schema()) {
             Ok(index_manager) if !doc_is_tombstoned => {

@@ -47,6 +47,8 @@ pub struct PendingMigrationWriteBacks {
     pub full_scans: RapidHashMap<String, bool>,
 }
 
+type VersionCache = RapidHashMap<String, (Arc<[schema::CollectionVersion]>, bool)>;
+
 /// Document fetcher that applies lens migrations to documents.
 ///
 /// When documents are fetched from older schema versions, they are
@@ -59,8 +61,9 @@ pub struct LensedDocFetcher<S: Store> {
     pending_write_backs: Arc<TokioMutex<PendingMigrationWriteBacks>>,
     #[allow(dead_code)]
     lens_store: Arc<dyn TransformStore>,
+    /// Read-only snapshot facts; writable transactions always reload their own schema writes.
+    version_cache: Arc<async_lock::RwLock<VersionCache>>,
     /// Cache of collection version histories keyed by collection name.
-    #[allow(dead_code)]
     pub history_cache:
         async_lock::RwLock<RapidHashMap<String, RapidHashMap<String, TargetedHistoryLink>>>,
 }
@@ -94,6 +97,7 @@ impl<S: Store> LensedDocFetcher<S> {
             defer_readonly_write_back,
             pending_write_backs: Arc::new(TokioMutex::new(PendingMigrationWriteBacks::default())),
             lens_store,
+            version_cache: Arc::new(async_lock::RwLock::new(RapidHashMap::new())),
             history_cache: async_lock::RwLock::new(RapidHashMap::new()),
         }
     }
@@ -109,6 +113,7 @@ impl<S: Store> LensedDocFetcher<S> {
             defer_readonly_write_back: self.defer_readonly_write_back,
             pending_write_backs: self.pending_write_backs.clone(),
             lens_store: self.lens_store.clone(),
+            version_cache: self.version_cache.clone(),
             history_cache: async_lock::RwLock::new(RapidHashMap::new()),
         }
     }
@@ -142,6 +147,7 @@ impl<S: Store> LensedDocFetcher<S> {
 
     pub(crate) async fn invalidate_migration_cache(&self) {
         self.history_cache.write().await.clear();
+        self.version_cache.write().await.clear();
     }
 
     pub(super) async fn defer_document_write_back(
@@ -236,6 +242,19 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .await
     }
 
+    async fn get_document_arrivals(
+        &self,
+        options: &query::fetcher::DocumentArrivalOptions,
+    ) -> query::error::Result<query::fetcher::DocumentArrivalPage> {
+        let mut guard = self.txn.lock().await;
+        let txn = guard
+            .as_mut()
+            .ok_or_else(|| query::error::QueryError::execution("transaction no longer active"))?;
+        crate::event::arrivals::read(txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+    }
+
     async fn get_commits(
         &self,
         options: &query::fetcher::CommitsQueryOptions,
@@ -317,6 +336,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         true
     }
 
+    async fn estimate_index_scan(
+        &self,
+        collection_name: &str,
+        params: &query::planner::index_selection::IndexScanParams,
+        cap: u64,
+    ) -> query::error::Result<Option<u64>> {
+        self.estimate_index_scan_inner(collection_name, params, cap)
+            .await
+    }
+
     async fn vector_search(
         &self,
         collection_name: &str,
@@ -328,10 +357,12 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         let (collection, datastore, _) =
             crate::collection::loader::get_collection_with_lazy_load(&self.txn, collection_name)
                 .await?;
+        let codes = crate::collection::loader::vector_codes(&self.txn).await?;
 
         crate::read::vector::search_vector_index(
             &collection,
             &datastore,
+            &codes,
             index_id,
             query_vector,
             k,

@@ -467,6 +467,8 @@ pub struct Select {
     pub doc_ids: Option<Vec<String>>,
     /// CID filter (for versioned queries)
     pub cid: Option<Vec<String>>,
+    pub arrival_collection: Option<String>,
+    pub arrival_after: u64,
     /// Depth for commits queries (how deep to traverse the DAG)
     pub depth: Option<u64>,
     /// Whether to include deleted documents
@@ -507,6 +509,8 @@ impl Select {
             doc_ids: None,
             cid: None,
             depth: None,
+            arrival_collection: None,
+            arrival_after: 0,
             show_deleted: false,
             is_encrypted: false,
             selection_type: SelectionType::Object,

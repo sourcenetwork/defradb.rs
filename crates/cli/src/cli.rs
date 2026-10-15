@@ -3,7 +3,8 @@
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    ClientArgs, IdentityArgs, KeyringArgs, SdlArgs, ServerDumpArgs, StartArgs, VersionArgs,
+    ClientArgs, IdentityArgs, KeyringArgs, SdlArgs, ServerDumpArgs, StartArgs, StorageArgs,
+    VersionArgs,
 };
 use crate::config::Config;
 use crate::error::Result;
@@ -128,10 +129,10 @@ pub struct Cli {
     )]
     pub vera_chain_id: Option<String>,
 
-    /// hub.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
+    /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
     #[cfg(feature = "vera")]
-    #[arg(long, global = true, env = "DEFRA_HUB_RS_ADDRESS")]
-    pub hub_rs_address: Option<String>,
+    #[arg(long, global = true, env = "DEFRA_VERA_RS_ADDRESS")]
+    pub vera_rs_address: Option<String>,
 
     /// Trusted Vera consensus public key from operator configuration (hex)
     #[cfg(feature = "vera")]
@@ -162,7 +163,7 @@ pub struct Cli {
     #[arg(long = "node-acp-enable", global = true, env = "DEFRA_ACP_NODE_ENABLE", num_args = 0..=1, require_equals = true, default_missing_value = "true", value_parser = bool_value_parser())]
     pub acp_node_enable: Option<bool>,
 
-    /// Document ACP type. Options are none, local, vera, or hub-rs
+    /// Document ACP type. Options are none, local, vera, or verars
     #[cfg(feature = "vera")]
     #[arg(
         long = "document-acp-type",
@@ -209,6 +210,9 @@ pub enum Command {
 
     /// Dump server-side data
     ServerDump(ServerDumpArgs),
+
+    /// Inspect local database storage.
+    Storage(StorageArgs),
 }
 
 impl Cli {
@@ -222,6 +226,7 @@ impl Cli {
             Command::Identity(args) => args.execute(config),
             Command::Sdl(args) => args.execute(),
             Command::ServerDump(args) => args.execute(&config).await,
+            Command::Storage(args) => args.execute(&config).await,
         }
     }
 }

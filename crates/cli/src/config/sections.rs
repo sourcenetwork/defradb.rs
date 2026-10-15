@@ -84,6 +84,10 @@ pub struct ApiConfig {
     /// Max recursive filter nesting depth (0 = unlimited). Default: 50.
     #[serde(default = "default_query_max_filter_depth")]
     pub query_max_filter_depth: usize,
+    /// Cache the built introspection schema for the committed collection
+    /// set, instead of rebuilding it per query. Default: true.
+    #[serde(default = "default_introspection_cache")]
+    pub introspection_cache: bool,
     /// Postgres wire protocol address (empty = disabled). Default: "" (disabled).
     #[cfg(feature = "postgres")]
     #[serde(default)]
@@ -122,6 +126,10 @@ fn default_query_max_filter_depth() -> usize {
     DEFAULT_MAX_FILTER_DEPTH
 }
 
+fn default_introspection_cache() -> bool {
+    true
+}
+
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
@@ -140,6 +148,7 @@ impl Default for ApiConfig {
             query_max_depth: default_query_max_depth(),
             query_max_width: default_query_max_width(),
             query_max_filter_depth: default_query_max_filter_depth(),
+            introspection_cache: default_introspection_cache(),
             #[cfg(feature = "postgres")]
             pg_address: String::new(),
         }
@@ -568,10 +577,10 @@ pub struct AcpConfig {
     #[serde(default, alias = "sourcehub_chain_id")]
     pub vera_chain_id: String,
 
-    /// hub.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
+    /// vera.rs JSON-RPC endpoint (e.g., "http://localhost:8545")
     #[cfg(feature = "vera")]
     #[serde(default)]
-    pub hub_rs_address: String,
+    pub vera_rs_address: String,
 
     /// Trusted Vera consensus public key from operator configuration (hex).
     #[cfg(feature = "vera")]
@@ -591,7 +600,7 @@ pub struct AcpConfig {
     #[serde(default = "default_acp_cb_reset_timeout")]
     pub circuit_breaker_reset_timeout: u64,
 
-    /// Request timeout in seconds for Vera/hub.rs network calls. Default: 5.
+    /// Request timeout in seconds for Vera/vera.rs network calls. Default: 5.
     #[serde(default = "default_acp_request_timeout")]
     pub request_timeout: u64,
 
@@ -599,7 +608,7 @@ pub struct AcpConfig {
     #[serde(default = "default_acp_cache_ttl")]
     pub cache_ttl: u64,
 
-    /// Receipt polling timeout in seconds for hub.rs transactions. Default: 30.
+    /// Receipt polling timeout in seconds for vera.rs transactions. Default: 30.
     #[serde(default = "default_acp_receipt_timeout")]
     pub receipt_timeout: u64,
 }
@@ -636,7 +645,7 @@ impl Default for AcpConfig {
             #[cfg(feature = "vera")]
             vera_chain_id: String::new(),
             #[cfg(feature = "vera")]
-            hub_rs_address: String::new(),
+            vera_rs_address: String::new(),
             #[cfg(feature = "vera")]
             vera_consensus_key: String::new(),
             #[cfg(feature = "vera")]
@@ -684,7 +693,7 @@ impl AcpConfig {
         if self.receipt_timeout == 0 {
             return Err(Error::InvalidConfig(
                 "acp_receipt_timeout must be > 0: \
-                 a zero timeout means hub.rs transaction receipts are never awaited"
+                 a zero timeout means vera.rs transaction receipts are never awaited"
                     .into(),
             ));
         }

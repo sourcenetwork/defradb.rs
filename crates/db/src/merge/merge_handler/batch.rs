@@ -132,6 +132,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             _collection_guards.push(self.db.collection_read_guard(collection_id).await?);
         }
 
+        let mut _arrival_guards = Vec::with_capacity(batch_collection_ids.len());
+        for collection_id in &batch_collection_ids {
+            _arrival_guards.push(self.merge_queue.acquire_arrival(collection_id).await);
+        }
+
         // Serialize this batch against concurrent same-doc writes/merges (#1021).
         // The per-block `_in_txn` handlers below do NOT take the per-doc guard
         // (they share one txn), so acquire it here for every DISTINCT doc in the

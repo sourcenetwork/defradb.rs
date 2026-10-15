@@ -138,6 +138,11 @@ RUNS=(
   "MC_PendingDagQuarantine_Green.cfg PendingDagQuarantine.tla GREEN" # #1128: deterministic rejection quarantines durably; sound docs merge, poison docs quarantine
   "MC_PendingDagQuarantine_Red_RetryForever.cfg PendingDagQuarantine.tla RED" # pre-#1128 wedge, still live for any unclassified Rejected producer: Rejected treated as retryable skip -> poison root swept forever (LIVE_PoisonQuiesces)
   "MC_PendingDagQuarantine_Red_OvereagerQuarantine.cfg PendingDagQuarantine.tla RED" # forbidden overcorrection: sound doc's transient failure also quarantines it (LIVE_SoundEventuallyMerged)
+  "MC_HeadSetCache_Green.cfg HeadSetCache.tla GREEN"
+  "MC_HeadSetCache_Red_StaleFill.cfg HeadSetCache.tla RED"
+  "MC_HeadSetCache_Red_WriterSnapshot.cfg HeadSetCache.tla RED"
+  "MC_HeadSetCache_Red_AbortPublish.cfg HeadSetCache.tla RED"
+  "MC_HeadSetCache_Red_HistoryScan.cfg HeadSetCache.tla RED"
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)
@@ -169,6 +174,11 @@ RUNS=(
   "MC_Transport_Red_ReorderOverwrite.cfg      MC_Transport_Common.tla                RED"   # a timed-out copy is overtaken by a retry; last-arrived registration rolls backwards
   "MC_Transport_Red_DuplicateObligation.cfg   MC_Transport_Common.tla                RED"   # multipath direct+relay copies of one head hint create two obligations
   "MC_Transport_Red_RelayNoRouteBack.cfg      MC_Transport_Common.tla                RED"   # two-stream reply needs a reverse route; over a relay-only path the sender never quiesces
+  "MC_Arrivals_Green.cfg             Arrivals.tla GREEN" # commit-sequence stamps: no skip, commit order, no disjoint conflict, one commit per write
+  "MC_Arrivals_Red_Counter.cfg       Arrivals.tla RED"   # head key in the document txn: disjoint creates conflict (INV_NoDisjointConflict)
+  "MC_Arrivals_Red_Detached.cfg      Arrivals.tla RED"   # #1897 post-commit numbering: second durable commit (INV_OneCommitPerWrite)
+  "MC_Arrivals_Red_DetachedOrder.cfg Arrivals.tla RED"   # #1897 short-ID numbering leaves commit order (INV_CommitOrder)
+  "MC_Arrivals_Red_StampLatest.cfg   Arrivals.tla RED"   # bound by latest allocated seq: unapplied commit skipped (INV_NoSkip)
 )
 
 fails=0; n=0

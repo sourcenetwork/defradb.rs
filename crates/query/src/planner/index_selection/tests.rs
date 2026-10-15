@@ -602,3 +602,66 @@ fn test_filter_to_scan_json_path_in() {
         _ => panic!("expected InScan scan type"),
     }
 }
+
+fn estimates(entries: &[(&str, u64)]) -> IndexEstimates {
+    entries
+        .iter()
+        .map(|(name, count)| (name.to_string(), *count))
+        .collect()
+}
+
+#[test]
+fn test_select_best_index_with_estimates_prefers_fewest_entries() {
+    // Both equality conditions score the same; declaration order alone would pick market.
+    let filter = make_filter(map([
+        ("market".to_string(), json!({"_eq": "zcat"})),
+        ("hour".to_string(), json!({"_eq": "2026-09-28T13"})),
+    ]));
+    let indexes = vec![single_field_index("market"), single_field_index("hour")];
+    let counts = estimates(&[("market_idx", 1024), ("hour_idx", 228)]);
+    let best = select_best_index_with_estimates(&filter, &indexes, &counts).unwrap();
+    assert_eq!(best.name, "hour_idx");
+    assert_eq!(
+        select_best_index(&filter, &indexes).unwrap().name,
+        "market_idx"
+    );
+}
+
+#[test]
+fn test_select_best_index_with_estimates_lets_a_selective_range_beat_equality() {
+    let filter = make_filter(map([
+        ("market".to_string(), json!({"_eq": "zcat"})),
+        (
+            "hour".to_string(),
+            json!({"_ge": "2026-09-28T10", "_le": "2026-09-28T13"}),
+        ),
+    ]));
+    let indexes = vec![single_field_index("market"), single_field_index("hour")];
+    let counts = estimates(&[("market_idx", 1024), ("hour_idx", 795)]);
+    let best = select_best_index_with_estimates(&filter, &indexes, &counts).unwrap();
+    assert_eq!(best.name, "hour_idx");
+}
+
+#[test]
+fn test_select_best_index_with_estimates_breaks_ties_by_shape() {
+    let filter = make_filter(map([
+        ("name".to_string(), json!({"_eq": "Alice"})),
+        ("age".to_string(), json!({"_gt": 30})),
+    ]));
+    let indexes = vec![single_field_index("age"), single_field_index("name")];
+    let counts = estimates(&[("age_idx", 1024), ("name_idx", 1024)]);
+    let best = select_best_index_with_estimates(&filter, &indexes, &counts).unwrap();
+    assert_eq!(best.name, "name_idx");
+}
+
+#[test]
+fn test_select_best_index_with_partial_estimates_uses_shape() {
+    let filter = make_filter(map([
+        ("market".to_string(), json!({"_eq": "zcat"})),
+        ("hour".to_string(), json!({"_eq": "2026-09-28T13"})),
+    ]));
+    let indexes = vec![single_field_index("market"), single_field_index("hour")];
+    let counts = estimates(&[("hour_idx", 3)]);
+    let best = select_best_index_with_estimates(&filter, &indexes, &counts).unwrap();
+    assert_eq!(best.name, "market_idx");
+}

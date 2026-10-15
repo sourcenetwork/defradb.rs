@@ -75,6 +75,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "Concurrent collection-head transitions",
+        name: "INV_CacheExact / INV_CacheReadExact / INV_CacheWarmWork",
+        axis: Tla,
+        anchor: "crates/db/src/block/heads.rs live_collection_heads; crates/storage/src/backends/regolith/transaction.rs",
+        model_ref: "HeadSetCache.tla / MC_HeadSetCache_Green.cfg and four RED cache configurations",
+        tiers: &[Behavioral],
+    },
+    Property {
+        family: "Concurrent collection-head transitions",
+        name: "cached_read_exact / publish_preserves_exact / same_epoch_same_store / warm_work_ignores_tombstones",
+        axis: Lean,
+        anchor: "crates/db/src/block/heads.rs live_collection_heads; crates/storage/src/backends/regolith/transaction.rs",
+        model_ref: "HeadSet.Cache (lake build)",
+        tiers: &[Contract],
+    },
+    Property {
         family: "B3 filtered replication",
         name: "INV_DagComplete — filtered push still converges per-document",
         axis: Tla,

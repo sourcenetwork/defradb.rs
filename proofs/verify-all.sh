@@ -16,7 +16,8 @@ echo; echo "== Lean proofs (proofs/lean: lake build) =="
 ( cd "$DIR/lean" && lake build && echo "lake build: OK" ); lean=$?
 
 echo; echo "== Conformance: Lean axis + registry (cargo test, no binary) =="
-( cd "$ROOT" && cargo test -p conformance --lib --test lean_conformance ); conf=$?
+( cd "$ROOT" && cargo test -p conformance --lib --test lean_conformance &&
+  cargo test -p db --test block head_cache_conformance:: ); conf=$?
 
 echo; echo "== Conformance: TLA axis behavioral (release binary) =="
 if [ -n "${DEFRA_CONFORMANCE_BINARY:-}" ]; then

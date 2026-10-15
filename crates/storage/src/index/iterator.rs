@@ -141,6 +141,18 @@ pub trait IndexIterator: MaybeSend {
         }
         Ok(count)
     }
+
+    /// Count the remaining entries, stopping once `cap` is reached.
+    ///
+    /// Calls `next` at most `cap` times. Implementations must use storage
+    /// bounds to avoid unbounded internal filtering during a single step.
+    async fn count_up_to(&mut self, cap: usize) -> Result<usize> {
+        let mut count = 0;
+        while count < cap && (self.next().await?).is_some() {
+            count += 1;
+        }
+        Ok(count)
+    }
 }
 
 /// Implement IndexIterator for Box<dyn IndexIterator>

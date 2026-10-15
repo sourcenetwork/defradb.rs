@@ -188,8 +188,18 @@ impl RangeIterator {
             .with_reverse(reverse);
 
         // Use the bound keys as iterator bounds (the iterator will do initial filtering)
+        let mut exhausted = false;
         if let Some(ref start) = lower_bound_key {
-            opts = opts.with_start(start.clone());
+            if lower_inclusive {
+                opts = opts.with_start(start.clone());
+            } else if let Some(start) = prefix_successor(start) {
+                // Exclude the entire equal-value prefix at the storage layer.
+                // Otherwise one next() call can walk arbitrarily many duplicate
+                // values before returning an entry, defeating capped estimates.
+                opts = opts.with_start(start);
+            } else {
+                exhausted = true;
+            }
         }
         if let Some(ref end) = upper_bound_key {
             // Add 0xFF for inclusive upper bound to include all keys with the prefix
@@ -211,7 +221,7 @@ impl RangeIterator {
             upper_bound_key,
             lower_inclusive,
             upper_inclusive,
-            exhausted: false,
+            exhausted,
             reverse,
         })
     }
@@ -393,6 +403,18 @@ impl RangeIterator {
 
         true
     }
+}
+
+/// First key after every key beginning with `prefix`.
+fn prefix_successor(prefix: &[u8]) -> Option<Vec<u8>> {
+    let mut successor = prefix.to_vec();
+    while let Some(last) = successor.pop() {
+        if last != 0xff {
+            successor.push(last + 1);
+            return Some(successor);
+        }
+    }
+    None
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

@@ -3667,3 +3667,41 @@ async fn resolve_composite_doc_id_explores_first_head_before_probing_later_sibli
         "the first head's subtree must resolve before any later sibling is probed"
     );
 }
+
+#[tokio::test]
+async fn first_materialization_arrivals_include_peer_batches_once() {
+    use query::fetcher::{DocFetcher, DocumentArrivalOptions};
+    let (handler, blockstore, _) = make_handler_with_schema_and_bus().await;
+    let first = build_merge_block(&blockstore, "arrival-first", 30).await;
+    let second = build_merge_block(&blockstore, "arrival-second", 31).await;
+    let first_id = first.doc_id.clone();
+    let second_id = second.doc_id.clone();
+    let blocks = [first, second];
+    let results = handler.handle_block_batch(&blocks).await;
+    assert!(
+        results
+            .iter()
+            .all(|v| matches!(v, Ok(MergeOutcome::Merged))),
+        "{results:?}"
+    );
+    let results = handler.handle_block_batch(&blocks).await;
+    assert!(results.iter().all(Result::is_ok), "{results:?}");
+    let fetcher = db::LensedAutoCommitFetcher::new(handler.db().clone());
+    let page = fetcher
+        .get_document_arrivals(&DocumentArrivalOptions {
+            collection: "Users".into(),
+            after: 0,
+            limit: 10,
+            doc_ids: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.head, 2);
+    assert_eq!(
+        page.entries
+            .iter()
+            .map(|v| v.doc_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![first_id.as_str(), second_id.as_str()]
+    );
+}

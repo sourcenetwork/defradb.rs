@@ -3,6 +3,14 @@ use crate::namespace::{Namespace, NamespacedStore};
 use async_trait::async_trait;
 use std::sync::Arc;
 
+/// A transaction's raw collection-head projection, in the reader's key coordinates.
+/// Both prefixes are required: orphan markers suppress parents received later.
+#[derive(Default)]
+pub struct CollectionHeadEntries {
+    pub heads: Vec<crate::corekv::KvPair>,
+    pub markers: Vec<crate::corekv::KvPair>,
+}
+
 /// Headstore provides storage for merkle tree heads and schema definitions
 pub struct Headstore<S: Store> {
     store: NamespacedStore<S>,

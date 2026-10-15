@@ -22,6 +22,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         caller_identity: Option<Did>,
         warnings: &mut Vec<GqlWarning>,
     ) -> Result<JsonValue> {
+        if select.collection_name == "_documentArrivals" {
+            return self
+                .execute_arrivals_query(select, fetcher, caller_identity)
+                .await;
+        }
         // Handle encrypted search queries (encrypted_<Collection>)
         if select.is_encrypted {
             return self

@@ -1,7 +1,9 @@
 use std::future::{pending, Future};
 use std::sync::Arc;
 
+use super::super::task_registry::REAP_FLOOR;
 use super::{shutdown_tracked_tasks, spawn_task, SpawnedTasks};
+use crate::tracked_task::TrackedAbort;
 
 fn registry() -> SpawnedTasks {
     Arc::new(super::TaskRegistry::default())
@@ -9,6 +11,16 @@ fn registry() -> SpawnedTasks {
 
 fn spawn(tasks: &SpawnedTasks, future: impl Future<Output = ()> + Send + 'static) {
     let _ = spawn_task(tasks, future);
+}
+
+async fn finished(task: &TrackedAbort) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("task did not finish");
 }
 
 #[tokio::test]
@@ -68,14 +80,10 @@ async fn shutdown_joins_tasks_and_rejects_work_spawned_during_cleanup() {
 #[tokio::test]
 async fn spawning_reaps_completed_tasks_and_preserves_individual_cancellation() {
     let tasks = registry();
-    let completed = spawn_task(&tasks, async {}).unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !completed.is_finished() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("completed task was not reaped");
+    for _ in 0..REAP_FLOOR {
+        let completed = spawn_task(&tasks, async {}).unwrap();
+        finished(&completed).await;
+    }
     let resource = Arc::new(());
     let retained = Arc::downgrade(&resource);
     let running = spawn_task(&tasks, async move {
@@ -148,4 +156,34 @@ async fn shutdown_bounds_non_cooperative_tasks_and_readers() {
         result.expect("shutdown exceeded its task drain budget");
         assert!(tasks.is_closed());
     }
+}
+
+/// Publishing spawns a short task per message beside the endpoint's
+/// long-lived ones. Reaping walks every tracked task, so it must not run on
+/// every spawn: the walks stay proportional to the spawns, and the queue to
+/// the live tasks.
+#[tokio::test]
+async fn spawning_beside_long_lived_tasks_reaps_amortized() {
+    const LIVE: usize = 200;
+    const SHORT: usize = 2_000;
+    let tasks = registry();
+    for _ in 0..LIVE {
+        spawn(&tasks, pending::<()>());
+    }
+    for _ in 0..SHORT {
+        let short = spawn_task(&tasks, async {}).unwrap();
+        finished(&short).await;
+        assert!(
+            tasks.len() <= 2 * LIVE + REAP_FLOOR,
+            "{} tracked",
+            tasks.len()
+        );
+    }
+    assert!(
+        tasks.reaps() <= SHORT / LIVE + 4,
+        "{} reaps for {} spawns",
+        tasks.reaps(),
+        LIVE + SHORT
+    );
+    shutdown_tracked_tasks(tasks, vec![]).await;
 }

@@ -131,7 +131,7 @@ inductive Key where
 structure Block where
   id : BlockId
   parents : List BlockId
-  deriving Repr
+  deriving Repr, DecidableEq
 
 /-- The store, as the two relations a head query needs. -/
 structure Store where
@@ -139,7 +139,7 @@ structure Store where
   headKeys : List BlockId
   /-- `(parent, child)` pairs: `child` superseded `parent`. -/
   supersedes : List (BlockId × BlockId)
-  deriving Repr
+  deriving Repr, DecidableEq
 
 /-- Is `b` superseded by anything in the store? -/
 def isSuperseded (s : Store) (b : BlockId) : Bool :=

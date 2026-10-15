@@ -372,8 +372,9 @@ impl P2PTransport for IrohTransport {
     ) -> Result<PushLogReply> {
         self.explicit_replay_capabilities
             .attach(peer_id.as_str(), &mut req);
-        // Re-sign because the attached replay capability is part of the wire
-        // message.
+        // Re-sign because the attached replay and retry capabilities are part
+        // of the wire message.
+        req.supports_retry_after = true;
         sign_with_transport(self, &mut req)?;
         self.send_command(|reply| IrohCommand::SendTwoStreamRequest {
             peer_id: peer_id.clone(),

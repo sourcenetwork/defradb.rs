@@ -73,7 +73,7 @@ kovan-queue.workspace = true
 # HTTP server
 axum = { workspace = true, optional = true }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"], optional = true }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+rustls = { workspace = true, features = ["ring", "std", "tls12"], optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }

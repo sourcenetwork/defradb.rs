@@ -160,14 +160,21 @@ Conflicts(w) ==
 \* EagerDelete maintains it directly: whatever head keys remain.
 \* Derived computes it: a stored head key is a head iff nothing supersedes it.
 
-DerivedHeads == {b \in headKeys : ~\E c \in Blocks : <<b, c>> \in supersedes}
+HeadState(h, m) == [heads |-> h, markers |-> m]
+HeadStateHeads(s) == {b \in s.heads : ~\E c \in Blocks : <<b, c>> \in s.markers}
+AppendHeadState(s, b, ps) ==
+  HeadState(s.heads \cup {b}, s.markers \cup {<<p, b>> : p \in ps})
+PruneHeadState(s, b) ==
+  HeadState(s.heads \ {b}, {m \in s.markers : m[1] # b})
+
+DerivedHeads == HeadStateHeads(HeadState(headKeys, supersedes))
 
 Heads == IF Strategy = "EagerDelete" THEN headKeys ELSE DerivedHeads
 
 \* The head set the DAG says it should be: every stored block that no other
 \* stored block names as a parent. This is the specification, independent of how
 \* either strategy chooses to maintain it.
-StoredBlocks == headKeys \cup {c \in Blocks : \E p \in Blocks : <<p, c>> \in supersedes}
+StoredBlocks == committed \cup {Seed}
 
 DagHeads == {b \in StoredBlocks : ~\E c \in StoredBlocks : b \in parents[c]}
 
@@ -212,10 +219,10 @@ Commit(w) ==
             /\ parents'   = [parents EXCEPT ![w] = observed[w]]
             /\ headKeys'  = IF Strategy = "EagerDelete"
                               THEN (headKeys \ observed[w]) \cup {w}
-                              ELSE headKeys \cup {w}
+                              ELSE AppendHeadState(HeadState(headKeys, supersedes), w, observed[w]).heads
             /\ supersedes' = IF Strategy = "EagerDelete"
                                THEN supersedes
-                               ELSE supersedes \cup {<<h, w>> : h \in observed[w]}
+                               ELSE AppendHeadState(HeadState(headKeys, supersedes), w, observed[w]).markers
             /\ writeLog'  = writeLog \cup {<<w, "block">>}
             /\ pruned'    = pruned
   /\ UNCHANGED <<observed, walked, snapshotted>>
@@ -234,7 +241,7 @@ Prune(b) ==
   /\ \E c \in Blocks : <<b, c>> \in supersedes
   /\ b \notin pruned
   /\ pruned' = pruned \cup {b}
-  /\ supersedes' = supersedes \ {<<p, c>> \in supersedes : p = b}
+  /\ supersedes' = PruneHeadState(HeadState(headKeys, supersedes), b).markers
   /\ headKeys' = IF Reclaim = "Together" THEN headKeys \ {b} ELSE headKeys
   /\ UNCHANGED <<committed, aborted, observed, walked, snapshotted, parents, writeLog>>
 
@@ -278,7 +285,7 @@ INV_DisjointWriteSets ==
 \* the DAG's actual tips: the stored blocks nothing else names as a parent.
 \* Holding this is what makes "Derived" a refactor rather than a redefinition.
 INV_HeadsExact ==
-  (committed = Writers) => (Heads = DagHeads)
+  Heads = DagHeads
 
 \* Siblings survive. Once every writer has committed, each writer's block is a
 \* head, and the seed they all superseded is not.

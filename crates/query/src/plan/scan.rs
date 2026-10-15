@@ -43,8 +43,8 @@ pub struct ScanNode {
     doc_ids: Option<Vec<String>>,
     /// Documents this scan is restricted to, by short id.
     ///
-    /// Unlike [`ScanNode::doc_ids`], which drops non-matching documents after
-    /// reading them, this narrows the read itself: the fetcher seeks each one.
+    /// The fetcher seeks each short id. Multiple [`ScanNode::doc_ids`] still
+    /// filter a collection stream; a single document id also uses a direct seek.
     /// A query that already knows which documents it wants, such as one
     /// narrowed by a vector index, costs what it asked for rather than the
     /// size of the collection.
@@ -58,6 +58,8 @@ pub struct ScanNode {
     /// that builds a plan gets it: a similarity query always goes through the
     /// planner, so a narrowing done anywhere else never runs.
     vector_route: Option<VectorRoute>,
+    parent_vector_route: Option<VectorRoute>,
+    vector_parent: Option<(usize, String)>,
     /// Candidate short ids already streamed, so widening never re-reads one.
     vector_seen: RapidHashSet<u64>,
     /// Set once the index returned fewer candidates than asked for.
@@ -113,6 +115,8 @@ impl ScanNode {
             doc_short_ids: None,
             vector_indexed: false,
             vector_route: None,
+            parent_vector_route: None,
+            vector_parent: None,
             vector_seen: RapidHashSet::new(),
             vector_exhausted: false,
             emitted: 0,
@@ -166,6 +170,12 @@ impl ScanNode {
         self
     }
 
+    /// Only activate this route when a join supplies its parent scope.
+    pub fn with_parent_vector_route(mut self, route: VectorRoute) -> Self {
+        self.parent_vector_route = Some(route);
+        self
+    }
+
     /// Ask the index for the next, larger batch of candidates and stream the
     /// ones not already seen.
     ///
@@ -173,9 +183,9 @@ impl ScanNode {
     /// `k` overall can contain fewer than `k` matches. Asking for a wider `k`
     /// and continuing is what makes a filtered similarity query return a full
     /// page instead of whatever survived filtering the first `k`. Widening
-    /// stops once the index reports fewer candidates than asked for, or offers
-    /// nothing it has not already offered, so an unsatisfiable filter costs one
-    /// pass over the collection rather than looping.
+    /// stops at a fixed candidate budget, or when the index has nothing new.
+    /// A short page then falls back to one exhaustive scan. This bounds graph
+    /// search effort and deduplication state independently of collection size.
     async fn open_vector_stream(&mut self) -> Result<bool> {
         let (Some(route), Some(fetcher)) = (self.vector_route.clone(), self.fetcher.clone()) else {
             return Ok(false);
@@ -189,6 +199,12 @@ impl ScanNode {
         } else {
             self.vector_k.saturating_mul(2)
         };
+
+        const MAX_VECTOR_CANDIDATES: usize = 4096;
+        if next_k > MAX_VECTOR_CANDIDATES {
+            self.vector_exhausted = true;
+            return Ok(false);
+        }
 
         let candidates = fetcher
             .vector_search(
@@ -349,6 +365,27 @@ impl ScanNode {
         self
     }
 
+    /// A root equality is conjunctive with the remaining filter. Keep that
+    /// filter on the fetched document; narrowing cannot satisfy its other terms.
+    fn point_id(&self) -> Option<&str> {
+        Self::point_id_for(self.doc_ids.as_deref(), self.filter.as_ref())
+    }
+
+    pub(crate) fn point_id_for<'a>(
+        doc_ids: Option<&'a [String]>,
+        filter: Option<&'a Filter>,
+    ) -> Option<&'a str> {
+        if let Some(ids) = doc_ids {
+            return (ids.len() == 1).then(|| ids[0].as_str());
+        }
+        filter?
+            .conditions()
+            .get("_docID")?
+            .as_object()?
+            .get("_eq")?
+            .as_str()
+    }
+
     /// Get the collection
     pub fn collection(&self) -> &CollectionVersion {
         &self.collection
@@ -368,6 +405,15 @@ impl ScanNode {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl PlanNode for ScanNode {
+    fn set_vector_parent(&mut self, field_index: usize, doc_id: &str) -> bool {
+        let Some(route) = &self.parent_vector_route else {
+            return false;
+        };
+        self.vector_route = Some(route.clone());
+        self.vector_parent = Some((field_index, doc_id.to_string()));
+        true
+    }
+
     async fn init(&mut self) -> Result<()> {
         self.position = 0;
         // Reset execution stats
@@ -377,6 +423,11 @@ impl PlanNode for ScanNode {
         // collection instead of materializing it - callers that stop pulling
         // (e.g. a satisfied LimitNode) stop the underlying fetch.
         self.vector_seen.clear();
+        self.vector_returned.clear();
+        self.vector_fell_back = false;
+        if self.vector_route.is_some() {
+            self.vector_indexed = false;
+        }
         self.vector_exhausted = false;
         self.vector_k = 0;
         self.emitted = 0;
@@ -387,6 +438,21 @@ impl PlanNode for ScanNode {
                 return Ok(());
             }
             if let Some(ref fetcher) = self.fetcher {
+                // get_by_ids excludes deleted documents; showDeleted retains
+                // the existing stream so tombstones keep their deletion status.
+                if !self.show_deleted && self.doc_short_ids.is_none() {
+                    if let Some(id) = self.point_id() {
+                        let docs = fetcher
+                            .get_by_ids(&self.collection.name, &[id.to_owned()])
+                            .await?
+                            .into_docs();
+                        self.stream = Some(Box::new(crate::doc_stream::VecStream::new(
+                            docs.into_iter().map(|doc| (doc, false)).collect(),
+                        )));
+                        self.initialized = true;
+                        return Ok(());
+                    }
+                }
                 self.stream = Some(match self.doc_short_ids.as_deref() {
                     Some(ids) => {
                         fetcher
@@ -399,6 +465,7 @@ impl PlanNode for ScanNode {
                             .await?
                     }
                 });
+                self.vector_fell_back = self.vector_route.is_some();
             } else {
                 // No docs provided and no fetcher - this is a programming error.
                 // Either pre-load docs with with_docs() or attach a fetcher with with_fetcher().
@@ -475,6 +542,12 @@ impl PlanNode for ScanNode {
                         continue;
                     };
                     if !doc_ids.iter().any(|id| id == doc_id) {
+                        continue;
+                    }
+                }
+
+                if let Some((field, parent)) = &self.vector_parent {
+                    if doc.get(*field).and_then(|value| value.as_str()) != Some(parent.as_str()) {
                         continue;
                     }
                 }
@@ -641,7 +714,8 @@ impl PlanNode for ScanNode {
         // A vector-index hit counts as one fetch. Unlike a scalar index, which
         // counts each entry read, this does not reflect the graph search's real
         // node reads; matching the reference, which tracks the same gap.
-        let index_fetches = self.exec_info.indexes_fetched + u64::from(self.vector_indexed);
+        let index_fetches = self.exec_info.indexes_fetched
+            + u64::from(self.vector_indexed && self.vector_route.is_none());
         obj.insert("indexFetches".to_string(), serde_json::json!(index_fetches));
         if let Some(name) = self.vector_index_name() {
             obj.insert("vectorIndex".to_string(), serde_json::json!(name));
@@ -837,9 +911,17 @@ mod stream_tests {
         async fn get_by_ids(
             &self,
             _collection_name: &str,
-            _doc_ids: &[String],
+            doc_ids: &[String],
         ) -> Result<FetchByIdsResult> {
-            Ok(FetchByIdsResult::all_found(Vec::new()))
+            Ok(FetchByIdsResult::all_found(
+                self.docs
+                    .iter()
+                    .filter(|(doc, deleted)| {
+                        !deleted && doc.id().is_some_and(|id| doc_ids.contains(&id.to_string()))
+                    })
+                    .map(|(doc, _)| doc.clone())
+                    .collect(),
+            ))
         }
 
         async fn get_by_field_value(
@@ -861,6 +943,45 @@ mod stream_tests {
                 pulled: self.pulled.clone(),
             }))
         }
+    }
+
+    #[tokio::test]
+    async fn exact_document_lookup_does_not_pull_collection_and_preserves_residual_filter() {
+        let id = document::DocID::new_v0_from_seed("point-read");
+        let doc = Document::with_id(id.clone());
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let mut docs = vec![(Document::new(), false); 1000];
+        docs.push((doc, false));
+        let fetcher = Arc::new(CountingFetcher {
+            docs,
+            pulled: pulled.clone(),
+        });
+        for (filter, expected) in [
+            (serde_json::json!({"_docID":{"_eq":id.to_string()}}), true),
+            (
+                serde_json::json!({"_docID":{"_eq":id.to_string()}, "name":{"_eq":"absent"}}),
+                false,
+            ),
+            (serde_json::json!({"_docID":{"_eq":"missing"}}), false),
+        ] {
+            let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
+                .with_fetcher(fetcher.clone())
+                .with_filter(Filter::from_conditions(filter.as_object().unwrap().clone()));
+            node.init().await.unwrap();
+            assert_eq!(node.next().await.unwrap(), expected);
+            if expected {
+                assert_eq!(node.value().doc_id(), Some(id.to_string().as_str()));
+                assert!(!node.next().await.unwrap());
+            }
+        }
+        assert_eq!(pulled.load(Ordering::SeqCst), 0);
+        let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
+            .with_fetcher(fetcher)
+            .with_doc_ids(vec![id.to_string()]);
+        node.init().await.unwrap();
+        assert!(node.next().await.unwrap());
+        assert!(!node.next().await.unwrap());
+        assert_eq!(pulled.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

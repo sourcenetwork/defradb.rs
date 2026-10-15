@@ -1,9 +1,10 @@
 use async_graphql::dynamic::*;
 use async_graphql::Value as GqlValue;
 use schema::CollectionVersion;
+use std::sync::Arc;
 
 /// Build the Mutation type.
-pub(super) fn build_mutation_type(collections: &[CollectionVersion]) -> Object {
+pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Object {
     let mut mutation = Object::new("Mutation").description("Root mutation type");
 
     for collection in collections {

@@ -116,10 +116,12 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
     ) -> query::error::Result<Vec<u64>> {
         let (collection, datastore, _) =
             get_collection_with_lazy_load(&self.txn, collection_name).await?;
+        let codes = crate::collection::loader::vector_codes(&self.txn).await?;
 
         crate::read::vector::search_vector_index(
             &collection,
             &datastore,
+            &codes,
             index_id,
             query_vector,
             k,
@@ -254,6 +256,19 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
             .collect();
 
         Ok(matching_docs)
+    }
+
+    async fn get_document_arrivals(
+        &self,
+        options: &query::fetcher::DocumentArrivalOptions,
+    ) -> query::error::Result<query::fetcher::DocumentArrivalPage> {
+        let mut guard = self.txn.lock().await;
+        let txn = guard
+            .as_mut()
+            .ok_or_else(|| query::error::QueryError::execution("transaction no longer active"))?;
+        crate::event::arrivals::read(txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
     async fn get_commits(
@@ -552,6 +567,28 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
 
     fn supports_index_queries(&self) -> bool {
         true
+    }
+
+    async fn estimate_index_scan(
+        &self,
+        collection_name: &str,
+        params: &IndexScanParams,
+        cap: u64,
+    ) -> query::error::Result<Option<u64>> {
+        let (_, datastore, _, index_manager) =
+            get_collection_with_index_manager(&self.txn, collection_name).await?;
+        let Some(index) = index_manager.get_index(&params.index_name) else {
+            return Ok(None);
+        };
+        let count = crate::read::index_count::count_index_scan(
+            index,
+            &datastore,
+            &params.scan_type,
+            usize::try_from(cap).unwrap_or(usize::MAX),
+        )
+        .await
+        .map_err(|e| query::error::QueryError::execution(format!("index count error: {}", e)))?;
+        Ok(Some(count as u64))
     }
 
     async fn get_document_at_cid(

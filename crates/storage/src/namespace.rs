@@ -153,6 +153,26 @@ impl crate::corekv::private::Sealed for NamespacedTxn {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Reader for NamespacedTxn {
+    async fn collection_head_entries(
+        &self,
+        head_prefix: &[u8],
+        marker_prefix: &[u8],
+    ) -> Result<Option<crate::stores::headstore::CollectionHeadEntries>> {
+        let mut entries = self
+            .txn
+            .collection_head_entries(
+                &self.namespace.prefix_key(head_prefix),
+                &self.namespace.prefix_key(marker_prefix),
+            )
+            .await?;
+        if let Some(entries) = &mut entries {
+            for row in entries.heads.iter_mut().chain(&mut entries.markers) {
+                row.key = self.namespace.unprefix_key(&row.key)?.to_vec();
+            }
+        }
+        Ok(entries)
+    }
+
     async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         let prefixed = self.namespace.prefix_key(key);
         self.txn.get(&prefixed).await

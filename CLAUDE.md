@@ -140,7 +140,7 @@ Each worktree is isolated, no branch switching overhead.
 
 ## Build Dependencies
 
-- **Rust** (1.91+): `rustup`
+- **Rust** (1.98+): `rustup`
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.7`
@@ -177,12 +177,13 @@ Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
 | NAC | `--test nac` | core_operations, cross_compartment_isolation, dac_access_matrix, document_acp, multi_doc_create, operations, p2p_management, policy_evolution, relation_admin |
 | P2P | `--test p2p` | connection_manager, document, feature_binaries, filtered_replication, idempotent_replay, manage_relay, management, quarantine, receiver_pull, replication, replication_advanced, resilience, sync, transports, trust_boundary, write_contention |
 | FTS | `--test fts` | basic, edge_cases, lifecycle, relation_paths, scoring |
+| Vector | `--test vector` | CLI/HTTP Flat, HNSW, IVF-PQ and SSG routing, updates, deletes, and restart persistence |
 | Encryption | `--test encryption` | acp, block_verify, cross_runtime_p2p, index, key_management, se_cross_runtime |
 | Identity | `--test identity` | keyring_dev_mode, keyring_lifecycle, lifecycle, negative, node_identity, types |
 | Backup | `--test backup` | dev_mode, dump, purge, restore |
 | Cursor | `--test cursor` | composite_index, error_paths, reindex_datetime_visibility, smoke |
 | Vera | `--test vera` | acp_tuning, compartments, encryption_acp, p2p_acp, policy_lifecycle, resilience, smoke |
-| Hub.rs | `--test hubrs` | compartments, p2p_acp, policy_lifecycle, smoke |
+| Vera.rs | `--test verars` | compartments, p2p_acp, policy_lifecycle, smoke |
 
 Single-purpose binaries, each its own `[[test]]` with no submodules:
 

@@ -336,14 +336,19 @@ fn parse_create_input(
 }
 
 /// Parse UPDATE mutation input (patch object).
-/// Non-object input (e.g., array "patch") is treated as empty/no-op (Go compatibility).
 fn parse_update_input(
     value: &Value<'_, String>,
     variables: Option<&RapidHashMap<String, JsonValue>>,
 ) -> Result<RapidHashMap<String, JsonValue>> {
     match value {
         Value::Object(obj) => parse_document_input(obj, variables),
-        _ => Ok(RapidHashMap::new()),
+        Value::Variable(_) => match graphql_value_to_json(value, variables)? {
+            JsonValue::Object(obj) => Ok(obj.into_iter().collect()),
+            _ => Err(QueryError::parse(
+                "mutation input variable must be an object",
+            )),
+        },
+        _ => Err(QueryError::parse("mutation input must be an object")),
     }
 }
 

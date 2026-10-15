@@ -1,0 +1,32 @@
+name: CI (macOS)
+
+# Separate from CI so a CI run finishes when its Linux jobs do. RunsOn retries
+# a Spot-interrupted job only once its whole run has finished, and hosted
+# macOS runners can queue for half an hour.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ['**']
+  merge_group:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'tip' }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' && github.ref != 'refs/heads/main' }}
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    # Mirrors CI's scope: within a stack, only the tip and the lowest pull
+    # request run the full suite.
+    if: >-
+      github.event_name != 'pull_request' || !github.event.pull_request.stack
+      || github.event.pull_request.stack.position == github.event.pull_request.stack.size
+      || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref
+    uses: ./.github/workflows/unit-tests.yml
+    with:
+      os: macos-latest

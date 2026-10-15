@@ -211,6 +211,16 @@ pub trait DocFetcher: MaybeSendSync {
         value: &str,
     ) -> Result<Vec<Document>>;
 
+    async fn get_document_arrivals(
+        &self,
+        options: &DocumentArrivalOptions,
+    ) -> Result<DocumentArrivalPage> {
+        let _ = options;
+        Err(crate::error::QueryError::execution(
+            "document arrival queries are unsupported",
+        ))
+    }
+
     /// Fetch commits from the _commits system collection.
     ///
     /// This method fetches commit history from the headstore and blockstore.
@@ -277,12 +287,29 @@ pub trait DocFetcher: MaybeSendSync {
         false
     }
 
+    /// Estimate the index entries `params` would visit, bounded by `cap`.
+    ///
+    /// Index selection uses this to prefer the most selective usable index.
+    /// The estimate ignores limit, offset, cursor, and value filters. Returning
+    /// `cap` also covers exhausting the probe budget before completing a count;
+    /// it must not make an unfinished scan look cheaper than a completed one.
+    /// `None` means this fetcher cannot estimate, so selection uses shape alone.
+    async fn estimate_index_scan(
+        &self,
+        collection_name: &str,
+        params: &IndexScanParams,
+        cap: u64,
+    ) -> Result<Option<u64>> {
+        let _ = (collection_name, params, cap);
+        Ok(None)
+    }
+
     /// Nearest documents to `query_vector` under a vector index, nearest first.
     ///
     /// Returns document short ids, which is what a scan can be narrowed by.
-    /// `admit` restricts what may be *returned* without restricting what may be
-    /// traversed, so a filtered query still gets a full `k` whenever `k`
-    /// matching documents exist.
+    /// Returns candidates without applying query filters or access checks.
+    /// The scan applies those checks, widens the candidate request as needed,
+    /// and falls back to a full scan if the index cannot fill the result page.
     ///
     /// Follows the same capability shape as
     /// [`get_by_index_scan`](Self::get_by_index_scan): defaulted to an error
@@ -494,4 +521,33 @@ mod tests {
 
         assert!(result.is_err(), "expected refusal, got {result:?}");
     }
+}
+
+/// Node-local first materialization order, never a cross-replica creation clock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentArrivalOptions {
+    /// Collection name; cursors belong to this collection on this receiving node.
+    pub collection: String,
+    /// Exclusive lower bound. Zero begins history retained since installation.
+    pub after: u64,
+    /// Maximum raw entries examined before document authorization filtering.
+    pub limit: u64,
+    /// Direct lookups, ordered by cursor, for request admission within a transaction.
+    pub doc_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentArrivalPage {
+    /// High-water mark in the same transaction snapshot as the entries, including own writes.
+    pub head: u64,
+    /// Last examined position, including entries omitted by authorization.
+    /// An empty filtered page reaches `head`; it does not imply missing history.
+    pub next: u64,
+    pub entries: Vec<DocumentArrival>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentArrival {
+    pub cursor: u64,
+    pub doc_id: String,
 }

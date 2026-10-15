@@ -4,6 +4,7 @@
 //! and translating filter conditions to index scan parameters.
 
 mod conditions;
+mod estimate;
 mod filter_to_scan;
 mod types;
 pub(crate) mod values;
@@ -13,6 +14,10 @@ mod tests;
 
 pub use conditions::{
     can_be_ordered_by_index, can_use_index, extract_field_conditions, select_best_index,
+    select_best_index_with_estimates,
+};
+pub use estimate::{
+    estimate_filter_indexes, estimate_select, IndexEstimates, SelectEstimates, ESTIMATE_CAP,
 };
 pub use filter_to_scan::{can_or_filter_use_index, filter_to_index_scan, or_filter_to_index_scan};
 pub use types::{

@@ -335,3 +335,62 @@ async fn reclamation_does_not_abort_a_concurrent_append() {
     let (heads, _) = live(&store).await;
     assert_eq!(heads, vec![appended]);
 }
+
+/// Appends through the database reclaim what they supersede: the stored head
+/// set stays bounded by the prune interval, not by the number of appends, and
+/// an explicit pass leaves only the live head.
+#[tokio::test]
+async fn appends_through_the_db_keep_the_stored_head_set_bounded() {
+    const APPENDS: usize = 64;
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let db = Arc::new(db::DB::from_arc(store.clone()).unwrap());
+    db.create_collection(
+        schema::CollectionVersion::new(
+            "Segment",
+            "v1",
+            "col-segment",
+            vec![
+                schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
+                schema::FieldDescription::new("2", "body", schema::FieldKind::string()),
+            ],
+        )
+        .as_branchable(),
+    )
+    .await
+    .unwrap();
+    let mutator = db::AutoCommitMutator::new(db.clone());
+    for index in 0..APPENDS {
+        let mut doc = document::Document::new();
+        doc.set("body", format!("segment {index}"));
+        query::mutator::DocMutator::create(&mutator, "Segment", doc)
+            .await
+            .unwrap();
+    }
+    let collection_id = {
+        let mut txn = db.new_txn(true).await.unwrap();
+        let id = txn
+            .get_collection("Segment")
+            .await
+            .unwrap()
+            .unwrap()
+            .resolved_root_id();
+        txn.discard().unwrap();
+        id
+    };
+    let head_keys = HeadstoreColKey::collection_prefix(collection_id);
+
+    let stored = stored_keys(&store, head_keys.clone()).await.len();
+    assert!(
+        stored < APPENDS / 2,
+        "{stored} head keys stored after {APPENDS} appends"
+    );
+
+    db.prune_collection_heads(collection_id).await.unwrap();
+    assert_eq!(stored_keys(&store, head_keys).await.len(), 1);
+    assert!(stored_keys(
+        &store,
+        HeadstoreColSuperseded::collection_prefix(collection_id)
+    )
+    .await
+    .is_empty());
+}

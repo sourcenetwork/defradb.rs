@@ -28,7 +28,7 @@ use crate::fetcher::DocFetcher;
 use crate::limits::QueryLimits;
 use crate::mapper::{Requestable, Select};
 use crate::plan::{IndexScanNode, PermissionFilterNode, SEFilterNode, ScanNode, SelectNode};
-use crate::planner::index_selection::IndexScanParams;
+use crate::planner::index_selection::{IndexScanParams, SelectEstimates};
 use crate::planner::vector_routing;
 use crate::planner::PlanNode;
 
@@ -88,6 +88,8 @@ pub struct Planner {
     pub(crate) fts_scores: RapidHashMap<String, RapidHashMap<String, f64>>,
     /// Query parsing and filter evaluation guardrails.
     pub(crate) query_limits: QueryLimits,
+    /// Pre-computed index entry counts for the root select's filter.
+    pub(crate) index_estimates: Option<SelectEstimates>,
 }
 
 impl Planner {
@@ -128,6 +130,7 @@ impl Planner {
             read_validator: None,
             fts_scores: RapidHashMap::new(),
             query_limits: QueryLimits::default(),
+            index_estimates: None,
         }
     }
 
@@ -152,6 +155,12 @@ impl Planner {
         scores: RapidHashMap<String, RapidHashMap<String, f64>>,
     ) -> Self {
         self.fts_scores = scores;
+        self
+    }
+
+    /// Set pre-computed index entry counts so index selection prefers selective indexes.
+    pub fn with_index_estimates(mut self, estimates: Option<SelectEstimates>) -> Self {
+        self.index_estimates = estimates;
         self
     }
 
@@ -351,7 +360,11 @@ impl Planner {
 
         // Check if an index can be used for the filter or ordering.
         // Index selection works for both pre-loaded docs and fetcher-based loading.
-        let (index_scan, index_provides_ordering) = if vector_route.is_some() {
+        // An exact ID bounds the source to one document. A scope-field index
+        // must not turn that read back into a scan of every document it owns.
+        let point_read = !select.show_deleted
+            && ScanNode::point_id_for(select.doc_ids.as_deref(), scalar_filter.as_ref()).is_some();
+        let (index_scan, index_provides_ordering) = if vector_route.is_some() || point_read {
             (None, false)
         } else if let Some(ref fetcher) = self.fetcher {
             // Only use index if fetcher supports index queries

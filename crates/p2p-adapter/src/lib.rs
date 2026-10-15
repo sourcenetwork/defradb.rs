@@ -23,6 +23,8 @@ mod replicator_status;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod retry;
 #[cfg(any(feature = "iroh", feature = "libp2p"))]
+mod schema_history;
+#[cfg(any(feature = "iroh", feature = "libp2p"))]
 mod transport_doc_pusher;
 #[cfg(feature = "iroh")]
 mod transport_version_syncer;

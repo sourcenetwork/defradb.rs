@@ -11,7 +11,6 @@ use cid::Cid;
 use datastore::BasicTxn;
 use events::Bus;
 use identity::{Identity, RawIdentity};
-use kovan::Atom;
 use kovan_map::HopscotchMap;
 use lens::TransformStore;
 #[cfg(not(feature = "wasmtime-runtime"))]
@@ -27,6 +26,7 @@ use storage::corekv::Store;
 pub mod action;
 pub(crate) mod dump;
 pub(crate) mod spawn;
+pub mod storage_stats;
 
 /// Default maximum number of lazy migrations written in one transaction.
 pub const DEFAULT_MIGRATION_WRITE_BACK_BATCH_SIZE: usize = 128;
@@ -196,7 +196,9 @@ pub struct DB<S: Store> {
     /// Whether the database has been closed.
     closed: AtomicBool,
     /// In-memory collection cache (name -> Collection).
-    pub(crate) collections: Atom<crate::collection::CollectionMap>,
+    pub(crate) collections: crate::collection::epoch::EpochedCollections,
+    /// PQ codes of resident-codes DiskANN indexes, shared by every search.
+    vector_codes: Arc<crate::index::vector::engine::diskann::CodeCaches>,
     /// Event bus for subscription notifications.
     event_bus: Option<Arc<dyn Bus>>,
     /// Lens transform store for schema migrations.
@@ -282,7 +284,10 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(crate::collection::CollectionMap::default()),
+            collections: crate::collection::epoch::EpochedCollections::new(
+                crate::collection::CollectionMap::default(),
+            ),
+            vector_codes: Arc::default(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -347,7 +352,10 @@ impl<S: Store> DB<S> {
             head_prune_tick: AtomicU64::new(0),
             migration_generation: AtomicU64::new(0),
             closed: AtomicBool::new(false),
-            collections: Atom::new(crate::collection::CollectionMap::default()),
+            collections: crate::collection::epoch::EpochedCollections::new(
+                crate::collection::CollectionMap::default(),
+            ),
+            vector_codes: Arc::default(),
             event_bus: None,
             lens_store,
             pending_migrations: HopscotchMap::with_hasher(RandomState::default()),
@@ -448,6 +456,14 @@ impl<S: Store> DB<S> {
         crate::docid::map::set_doc_id_mapping(systemstore, collection_short_id, short_id, doc_id)
             .await?;
         Ok(short_id)
+    }
+
+    /// The epoch of the committed collection set: advances on every swap of
+    /// the process-wide collection cache, so an unchanged value proves the
+    /// set of collections a query sees is unchanged. Introspection keys its
+    /// built-schema cache on it.
+    pub fn schema_epoch(&self) -> u64 {
+        self.collections.epoch()
     }
 
     /// Return the generation of the committed migration graph.
@@ -552,7 +568,11 @@ impl<S: Store> DB<S> {
         let basic_txn = BasicTxn::new(&*self.store, id, readonly)
             .await
             .map_err(Error::Storage)?;
-        Ok(DbTxn::new(basic_txn))
+        Ok(DbTxn::new(basic_txn).with_vector_codes(self.vector_codes.clone()))
+    }
+
+    pub(crate) fn vector_codes(&self) -> &crate::index::vector::engine::diskann::CodeCaches {
+        &self.vector_codes
     }
 
     /// Reclaim superseded collection head keys, if enough have built up.
@@ -568,15 +588,23 @@ impl<S: Store> DB<S> {
         {
             return;
         }
-        if let Err(error) = self.prune_collection_heads(collection_short_id).await {
+        match self.prune_collection_heads(collection_short_id).await {
+            Ok(_) => {}
             // Reclamation is the one path here that can lose a write race, and
             // losing costs nothing: the head set is a function of the markers,
             // so the next pass repeats the work.
-            tracing::debug!(
+            Err(error) if error.is_txn_conflict() => tracing::debug!(
                 collection_short_id,
                 %error,
-                "collection head reclamation did not complete"
-            );
+                "collection head reclamation lost a write race"
+            ),
+            // Any other failure repeats on every pass, and every branchable
+            // append then scans a head set that only grows.
+            Err(error) => tracing::warn!(
+                collection_short_id,
+                %error,
+                "collection head reclamation failed"
+            ),
         }
     }
 
@@ -591,14 +619,18 @@ impl<S: Store> DB<S> {
         collection_short_id: u32,
     ) -> Result<crate::block::heads::PruneOutcome> {
         let txn = self.new_txn(false).await?;
-        let headstore = txn.headstore()?;
-        let outcome = crate::block::heads::prune_superseded_heads(
-            &headstore,
-            collection_short_id,
-            HEAD_PRUNE_MAX_KEYS,
-        )
-        .await
-        .map_err(Error::Storage)?;
+        let outcome = {
+            // A live view keeps the transaction referenced, and commit refuses
+            // a referenced transaction.
+            let headstore = txn.headstore()?;
+            crate::block::heads::prune_superseded_heads(
+                &headstore,
+                collection_short_id,
+                HEAD_PRUNE_MAX_KEYS,
+            )
+            .await
+            .map_err(Error::Storage)?
+        };
         if outcome == crate::block::heads::PruneOutcome::default() {
             txn.discard()?;
             return Ok(outcome);

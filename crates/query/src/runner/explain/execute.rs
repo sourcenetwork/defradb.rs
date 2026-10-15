@@ -10,7 +10,7 @@ use crate::error::{QueryError, Result};
 use crate::mapper::{Requestable, Select};
 use crate::plan::PermissionFilterNode;
 use crate::planner::index_selection::{
-    can_be_ordered_by_index, can_or_filter_use_index, select_best_index,
+    can_be_ordered_by_index, can_or_filter_use_index, estimate_select, select_best_index,
 };
 use crate::planner::Planner;
 use crate::query_parse::{parse_query_with_limits, ExplainType};
@@ -256,8 +256,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         {
             // Use Planner path for index-based queries, relation aggregates,
             // relation filters/ordering, or similarity
-            let fetcher_arc = FetcherWrapper::new(fetcher);
             let collections_map = self.collections_map().await?;
+            let index_estimates = match collections_map.get(&select.collection_name) {
+                Some(collection) => estimate_select(fetcher, collection, select).await?,
+                None => None,
+            };
+            let fetcher_arc = FetcherWrapper::new(fetcher);
             let collections: Vec<CollectionVersion> =
                 collections_map.values().map(|c| (**c).clone()).collect();
 
@@ -265,7 +269,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .with_query_limits(self.query_limits)
                 .with_fetcher(Arc::new(fetcher_arc))
                 .with_acp(self.acp.clone(), caller_identity.clone())
-                .with_read_validator(self.read_validator.clone());
+                .with_read_validator(self.read_validator.clone())
+                .with_index_estimates(index_estimates);
             if let Some(ref lens_store) = self.lens_store {
                 planner = planner.with_lens_store(lens_store.clone());
             }

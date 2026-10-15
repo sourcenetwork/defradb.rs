@@ -39,6 +39,22 @@ impl<S: Store> AutoCommitFetcher<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocFetcher for AutoCommitFetcher<S> {
+    async fn get_document_arrivals(
+        &self,
+        options: &query::fetcher::DocumentArrivalOptions,
+    ) -> query::error::Result<query::fetcher::DocumentArrivalPage> {
+        let mut txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        let result = crate::event::arrivals::read(&mut txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()));
+        let _ = txn.discard();
+        result
+    }
+
     async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {
         // Get collection from DB cache
         let collection = self

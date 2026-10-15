@@ -56,7 +56,8 @@ impl Node {
             max_query_depth: config.api.query_max_depth,
             max_query_width: config.api.query_max_width,
             max_filter_depth: config.api.query_max_filter_depth,
-        });
+        })
+        .with_introspection_cache(config.api.introspection_cache);
 
         if !config.datastore.no_encryption {
             info!("CRDT delta encryption enabled");

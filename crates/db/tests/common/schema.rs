@@ -58,6 +58,7 @@ pub fn vector_kind() -> IndexKind {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     })
 }
 
