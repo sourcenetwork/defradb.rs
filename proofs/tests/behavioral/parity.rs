@@ -897,28 +897,6 @@ async fn poll_mixed_fields_dags_converged(
     }
 }
 
-async fn poll_mixed_fields_agreed_state(
-    cluster: &TestCluster,
-    nodes: usize,
-    timeout: Duration,
-) -> Option<(String, i64)> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let states: Vec<_> = (0..nodes)
-            .map(|n| mixed_fields_state(&cluster.client(n)))
-            .collect();
-        if states.first().is_some_and(|first| {
-            first.0 != "<missing>" && states.iter().all(|state| state == first)
-        }) {
-            return states.into_iter().next();
-        }
-        if Instant::now() >= deadline {
-            return None;
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-}
-
 /// THREE-node mixed-field probe (ASSERTING): the same document receives one LWW
 /// update and two counter increments.
 ///
@@ -1009,19 +987,19 @@ async fn run_mixed_fields_3node_probe(
         "[{label}] mixed-field DAGs did not converge, so final-state parity would be inert"
     );
 
-    let agreed = poll_mixed_fields_agreed_state(&cluster, 3, Duration::from_secs(45))
-        .await
-        .unwrap_or_else(|| {
-            panic!(
-                "[{label}] did not materialize one agreed mixed-field state after DAG convergence; states = [{:?}, {:?}, {:?}]",
-                mixed_fields_state(&cluster.client(0)),
-                mixed_fields_state(&cluster.client(1)),
-                mixed_fields_state(&cluster.client(2)),
-            )
-        });
     assert!(
-        agreed.0 == expected_name && agreed.1 == expected_views,
-        "[{label}] mixed-field state diverged from Go-compatible semantics; got {agreed:?}, expected name={expected_name} and views={expected_views}",
+        poll_all_mixed_fields_state(
+            &cluster,
+            3,
+            (expected_name, expected_views),
+            Duration::from_secs(45),
+        )
+        .await,
+        "[{label}] did not materialize the expected mixed-field state after DAG convergence; \
+         expected ({expected_name}, {expected_views}); states = [{:?}, {:?}, {:?}]",
+        mixed_fields_state(&cluster.client(0)),
+        mixed_fields_state(&cluster.client(1)),
+        mixed_fields_state(&cluster.client(2)),
     );
 }
 
