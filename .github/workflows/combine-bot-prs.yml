@@ -49,6 +49,11 @@ jobs:
               const branch = pull.head.ref;
               const sha = pull.head.sha;
               if (!branch.startsWith(BRANCH_PREFIX)) continue;
+              // A fork can name its branch dependabot/...; only this repo's branches are bots'.
+              if (pull.head.repo?.full_name !== `${owner}/${repo}`) {
+                console.log(`Skipping ${branch}: opened from ${pull.head.repo?.full_name ?? 'a deleted fork'}`);
+                continue;
+              }
               if (pull.labels.some(l => l.name === IGNORE_LABEL)) {
                 console.log(`Skipping ${branch}: labelled ${IGNORE_LABEL}`);
                 continue;
@@ -84,6 +89,7 @@ jobs:
                   await github.rest.repos.merge({ owner, repo, base: head, head: sha });
                   combined.push(line);
                 } catch (error) {
+                  if (error.status !== 409) throw error;
                   console.log(`Failed to merge ${branch}@${sha}: ${error}`);
                   conflicted.push(line);
                 }
