@@ -53,7 +53,7 @@ jobs:
       threshold: ${{ steps.decide.outputs.threshold }}
     steps:
       - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
       # thing that fails before it has checked anything.
@@ -167,7 +167,7 @@ jobs:
       - name: Fetch the SIFT corpus
         if: matrix.family == 'sift'
         continue-on-error: true
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
       - name: Fetch the SIFT corpus (run)
         if: matrix.family == 'sift'
         continue-on-error: true
