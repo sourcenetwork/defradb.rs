@@ -140,7 +140,88 @@ Each worktree is isolated, no branch switching overhead.
 
 ## 8. House Rules
 
-The bare minimum for every change. A change that breaks one of them does not merge.
+The bare minimum for every change. A change that breaks one of them does not merge. They describe the architecture
+defradb.rs is moving to: regolith owns every transaction mechanism, defradb.rs runs thread-per-core on top of it, and
+the network stays at the edge. Code that does not fit yet is moved toward it, never further away.
+
+### The boundary: regolith owns the transaction mechanics
+
+- regolith (at `IsolationLevel::DefraLevel`) owns everything transactional: validation, conflicts and their reasons,
+  retries (`transact`, `transact_async`), merges, commit-ordered append, ID allocation, the commit receipt, encryption
+  at rest. defradb.rs implements regolith's traits and calls its methods:
+  - `KeyClassifier`: one `match` on key prefixes;
+  - `MergeOperator`: counters, head sets, document part operands and their `touches`;
+  - `LogLayout`: the arrival journal's keys;
+  - `EventListener::on_conflict`: conflict telemetry;
+  - transaction callbacks and `TransactionHooks`: post-commit work;
+  - `KeyProvider`: the keys for encryption at rest. Document field encryption through the KMS stays in defradb.rs.
+- defradb.rs carries no transaction mechanics: no lock around storage, no retry loop, no read outside a transaction
+  feeding a decision inside it, no key-layout trick to dodge a conflict, no pending state, no second commit, no guard.
+  A conflict problem is solved by a regolith mechanism; any other fix is a plain correction to a write path. Changes
+  only ever remove coordination from defradb.rs, never add it.
+- Nothing valid is rejected. Fail loud only about a state the code cannot know, with an actionable message; a feature
+  that is not built yet is built, not refused.
+
+### regolith's traits: implemented fully, on the latest regolith
+
+- defradb.rs pins the latest regolith and implements every regolith trait its use of the engine calls for, fully and
+  correctly: every method whose default would lose behaviour is implemented, every contract in the trait's rustdoc is
+  honoured, and each implementation is tested against that contract (regolith's `testing` checks, such as
+  `check_merge_operator` and `check_touches`, where regolith ships one; a contract test of its own otherwise).
+- The set, and what each one covers:
+  - `KeyClassifier`: every key family classified as the reads-and-writes rules below require; unknown or malformed
+    keys stay Ordinary;
+  - `MergeOperator`: `full_merge`, an exact `partial_merge` where the operation allows one, and `touches` for every
+    operand that carries parts;
+  - `LogLayout`: the arrival journal's head, entry and doc keys;
+  - `EventListener`: every event the node reports or acts on: conflicts by reason, background errors, callback panics,
+    a discarded WAL tail, flush, compaction and table-file events for telemetry;
+  - `TransactionHooks` and the per-transaction callbacks (`before_commit`, `on_commit`, `on_abort`): post-commit work;
+  - `KeyProvider`: the current key and every older key a store still names, so a key rotation works;
+  - `CompactionFilter`: data compaction may drop (superseded head markers, expired data);
+  - `PrefixExtractor`: defradb.rs's prefix families, so prefix seeks use the prefix bloom filters.
+  Where regolith ships an implementation that fits (`Env`, `RateLimiter`), use it.
+- When the regolith pin moves, every implementation is rechecked against the new trait docs, and a trait regolith adds
+  is implemented in the same change.
+
+### Reads and writes: pick the mechanism by what the decision depends on
+
+Reads:
+- a query, a status read, an arrival page: a snapshot read or a write-free transaction, one snapshot, never validated,
+  never conflicting;
+- a decision on a whole value: `get` (an Ordinary key, validated at commit; an identical rewrite is not a change);
+- a decision on some parts of a document: `get_parts(key, parts)`, validated only against writes that touch those parts;
+- traversal hints that decide nothing (HNSW neighbours): `get_parts(key, &[])`, never validated;
+- content-addressed blocks: a ContentAddressed read; the arrival journal: a Log read;
+- a set that decides (ACP owners and tuples, a claim queue): `scan_validated` or a cursor with `ScanCheck`, so a
+  write inside the range aborts the decision; head sets: a scan inside their CommutativePrefix.
+
+Writes:
+- never conflict: blocks (`b` + CID, ContentAddressed puts), head sets (markers in a CommutativePrefix or a blind merge
+  of the set operator), document values (blind merges of part operands), secondary index entries (blind puts and
+  deletes), block ownership (blind puts), counters (blind merges with an exact `partial_merge`), the arrival journal
+  (`append` with the document as its once key), short IDs and policy IDs (`Db::allocate`);
+- one winner by design, surfaced as a `Conflict` with its reason: a unique index key, the DocID mapping, the deletion
+  marker, the definition key against its writers, ACP owners and tuples in the authorized transaction, the applied key
+  of a remote block, the same document parts written by two updates.
+Disjoint parts of one document never conflict. A read that validates more than its decision needs is a defect.
+
+### Transactions, retries and conflicts
+
+- Every write runs in `transact` or `transact_async`. Its closure may run more than once, so everything with an effect
+  outside the transaction is prepared before it: KMS keys, embeddings, signatures, short IDs. Nothing remote is
+  fetched inside a closure; an input that depends on the transaction's reads ends the attempt, and the attempt runs
+  again once the input is local, memoized by the exact request bytes.
+- A conflict is handled as business logic keyed on regolith's `Conflict` reason: an already-deleted document is a no-op
+  or not-found; a re-run after a changed part merges its writes again; a lost unique-key or compare-and-set race is
+  reported to the client; a revoked ACP tuple denies; a changed definition re-runs against the new one. One retry
+  policy for every attempt, from configuration, through one function.
+- Interactive (explicit) transactions return their conflicts to their caller; a failed or cancelled statement rolls
+  back to its savepoint.
+- Post-commit work runs as regolith transaction callbacks: exactly one outcome per attempt. Once a commit is durable
+  its outcome stands: a follow-up that fails is reported and retried durably, never turned into a failed write.
+- Events and in-memory state follow the commit order through `CommitReceipt.seq`. A `seq` is never persisted across
+  `drop_all` or a restore.
 
 ### Synchronization: regolith sync, lock-free first
 
@@ -156,8 +237,8 @@ The bare minimum for every change. A change that breaks one of them does not mer
 - Only where waiting is part of the meaning (one task must wait for another) use a `regolith::sync` future: `Mutex`,
   `RwLock`, `Semaphore`, `Notify`, `Event`, `Latch`, `Barrier`. They suspend the task and never block the thread.
 - Never add a lock to make a value `Sync`, to serialize writers, or to avoid a transaction conflict. Shared durable
-  state goes through regolith (transactions, merges, `append`, `allocate`); shared memory state goes into a lock-free
-  structure.
+  state goes through regolith; shared memory state goes into a lock-free structure; state one task owns is a plain
+  owned value.
 
 ### Hash maps: rapidhash, fast
 
@@ -171,33 +252,80 @@ The bare minimum for every change. A change that breaks one of them does not mer
 
 Every code path is written for a thread-per-core (TPC) architecture. Throughput and performance are the key: a design
 that is correct but slower is not done.
-- One pinned worker per core, each running its own local executor with no task stealing, and each polling its own
-  regolith `IoQueue`.
-- Data stays local to its thread. A worker's state, buffers, caches and transactions live on that worker and are
-  touched only by it; data moves to another thread only as a message, never as shared memory.
-- State has one owner. A transaction belongs to the worker that began it and is never shared between threads or
-  tasks; anything else that touches it is a message to that worker.
-- Read-mostly state is copied per core or published as an `Atom` snapshot. Nothing is shared through a lock.
-- Work crosses cores only through lock-free channels, in batches.
-- Nothing on the data path blocks a thread: no `block_on`, `block_in_place`, `thread::sleep`, spin-wait or polling
-  loop. Reads use `ReadMode::CacheOnly` on the worker's queue, commits use `commit_nowait` or `transact_async`, and a
-  `WouldBlock` suspends the task until its own queue completes it.
-- Network I/O (HTTP, P2P, gRPC, KMS, embeddings) runs at the network boundary. No data-path task awaits the network:
-  a remote input is fetched before the transaction that needs it.
-- The same code runs with a single worker (the wasm main thread, a single-core embedded target). Nothing requires a
-  second thread.
+- **Workers.** One pinned worker per core, each running its own local executor (not tokio) with no task stealing. Each
+  owns a run queue, a bounded inbox other threads push to, a deadline queue (timers, periodic jobs, the idle sweep,
+  read through the Env clock), its own regolith `IoQueue`, and the transactions it owns, held by value.
+- **Data stays local to its thread.** A worker's state, buffers, caches and transactions live on that worker and are
+  touched only by it; data moves to another thread only as a message, never as shared memory. Read-mostly state
+  (schema and collection definitions, the ACP policy snapshot, lens stores) is copied per worker or published as an
+  `Atom` snapshot; an update is a broadcast message.
+- **Tasks stay on their core.** Spawned with `spawn_local`, they run where they were placed until they finish; a waker
+  pushes onto its own core's run queue. Data-path futures need not be `Send`.
+- **Routing at the edge.** No request hops from worker to worker. An explicit transaction's requests go to its owner,
+  which the transaction ID names; a single-document write and a P2P merge go to the worker chosen by a hash of the
+  collection and the document ID, which runs one task per document at a time; read-only queries go to the
+  least-loaded worker. Correctness never depends on placement: regolith validates every commit wherever it runs.
+- **Nothing blocks a thread.** No `block_on`, `block_in_place`, `thread::sleep`, spin-wait or polling loop on the data
+  path. regolith calls run inline on the calling core; reads use `ReadMode::CacheOnly` on the worker's queue and a miss
+  awaits its `IoWait`; commits use `commit_nowait` or `transact_async` and await their `CommitTicket`. Every wait is an
+  `.await` on something the worker's own core completes.
+- **Long tasks yield** after a bounded slice (a page), so other tasks on the core run; cursors hold no borrow across
+  the yield.
+- **Admission and bounds.** Overload waits at the network edge on a `regolith::sync::Semaphore`; inboxes and every
+  queue and buffer are bounded, by bytes where items vary in size. Stream: hold a page, never the whole set.
+- **One worker.** The same code runs with a single worker (the wasm main thread, a single-core embedded target, the
+  application's event loop polling the worker's `IoQueue` when idle). Nothing requires a second thread.
+- **Idle.** A worker with nothing to run spins briefly, then parks on its `IoQueue` and inbox; a busy worker is never
+  woken.
+
+### The network edge
+
+- One tokio runtime, held in one place, serves all networking (HTTP, pg-compat, P2P, the Orbis, Vera and KMS clients,
+  embeddings, telemetry export). It is passed in as a narrow handle at construction; nothing finds a runtime ambiently
+  (`Handle::current`), and no other runtime is built.
+- The data-path crates (storage, datastore, blockstore, crdt, defra-core, query, db, acp, zanzibar, lens, kms, events)
+  do not depend on tokio: no `tokio::spawn`, `tokio::time`, `Handle::current`, `block_in_place` or `block_on`.
+- A network task that panics fails only its own request. Every completion a worker waits on carries a deadline.
+- Request context (identity, signing configuration, the DAC bypass) travels with the task or message, never in a
+  thread-local or task-local.
+- Shutdown in one order: stop accepting, drain in-flight requests with a deadline, stop the workers, close regolith,
+  drop the runtime outside any async context.
+
+### Remote inputs: KMS keys, signatures, Vera decisions, embeddings
+
+- Resolved at the network edge before the transaction that needs them, never inside it.
+- Each input kind has one service: single-flight (a lock-free map from the request key to a `regolith::sync::Event`),
+  batching of requests that arrive while one is in flight, a cache bounded by bytes where the input allows one, a
+  deadline, bounded jittered retries on the Env clock, an in-flight cap, and metrics (latency, round trips per
+  operation, cache hits, batch sizes).
+- A P2P merge is admitted only once its blocks and KMS keys are local. Creates sign their blocks in waves before the
+  transaction; a signed block is never redone.
+
+### ACP
+
+- Every ACP read and write runs in the transaction it authorizes. Deciding point reads are validated; deciding scans are
+  validated scans. A revocation, grant or registration that commits first aborts the decision, and the re-run decides
+  again.
+- Registration happens in the create transaction, only on the create branch (never for an existing document an upsert
+  found); unregistration in the delete transaction. No window where a new document is public.
+- Policy IDs come from `Db::allocate`. A policy is created if absent; a different body under an existing ID is a typed
+  error. The check path writes nothing. The policy snapshot is an `Atom`, swapped on load and reload.
+- Read-only queries decide ACP at the same snapshot as their rows. Remote ACP (Vera) stays at the network edge, with
+  its staleness documented.
 
 ### Proofs
 
 - Anything temporal or concurrent (an ordering, a protocol between tasks or cores, retries, recovery, a race,
   progress) has a TLA+ model. Every data structure (its invariants, encodings and round-trips, merge and operator
-  laws) has a Lean proof. This is the bare minimum.
+  laws) has a Lean proof. This is the bare minimum, and the model is written before its code: the spec is the
+  contract.
 - Each TLA+ model has GREEN configurations and, for every guard, a RED configuration that removes or breaks that
   guard and must fail on its named invariant.
 - Each TLC configuration finishes in under 60 seconds, and the whole suite in under 10 minutes. A slow model is
   shrunk, never given a longer timeout or more shards.
 - Lean proofs use no `sorry`, `admit` or new `axiom`.
-- A model names the Rust code it models (file and function). A model that no longer matches the code is a defect.
+- A model names the Rust code it models (file and function), and is wired into `proofs/tla/run-all.sh` and
+  `proofs/src/registry.rs`. A model that no longer matches the code is a defect.
 - Proofs read ELI5, line by line, for someone who knows nothing about proofs or model checkers:
   - each file opens with a plain-words story: who acts, what can happen, what must never happen;
   - every line of a spec has a plain-words comment (`\*` in TLA+, `--` in Lean), and every definition, action and
@@ -207,19 +335,27 @@ that is correct but slower is not done.
 
   Proof files are the exception to the comments policy (section 6).
 
-### Trait bounds in `where`
+### Performance
 
-Trait bounds go in a `where` clause, on functions, impls, types and traits alike, never inline in the generic
-parameter list:
+- Reads are zero-copy where regolith offers it; one boundary crossing per batch, never per row.
+- Every change that can move a number ships before-and-after numbers: commits per second, conflicts per commit,
+  retries per layer, p50 and p99 at 1, 4, 16 and 64 writers on creates, shared updates and counters with indexes,
+  plus allocations per operation. No change may raise the conflict rate or lower throughput.
 
-```rust
-fn apply<T, S>(value: T, store: &S) -> Result<()>
-where
-    T: Encode + Send,
-    S: Store,
-```
+### Code shape
 
-not `fn apply<T: Encode + Send, S: Store>(value: T, store: &S)`.
+- Trait bounds go in a `where` clause, on functions, impls, types and traits alike, never inline in the generic
+  parameter list:
+
+  ```rust
+  fn apply<T, S>(value: T, store: &S) -> Result<()>
+  where
+      T: Encode + Send,
+      S: Store,
+  ```
+
+  not `fn apply<T: Encode + Send, S: Store>(value: T, store: &S)`.
+- Callback shapes are named traits or `type` aliases, with lifetimes that have meaningful names.
 
 ## Build Dependencies
 
