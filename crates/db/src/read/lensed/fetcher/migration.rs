@@ -1,6 +1,7 @@
 //! Migration context loading and document migration logic.
 
 use rapidhash::{HashMapExt, RapidHashMap};
+use std::sync::Arc;
 
 use datastore::NamespaceView;
 use document::Document;
@@ -116,17 +117,28 @@ impl<S: Store> LensedDocFetcher<S> {
     pub(super) async fn load_versions_and_check_migrations(
         &self,
         collection: &Collection,
-    ) -> query::error::Result<(Vec<CollectionVersion>, bool)> {
+    ) -> query::error::Result<(Arc<[CollectionVersion]>, bool)> {
         let collection_id = &collection.schema().collection_id;
 
         // Load all versions from systemstore
         let txn_guard = self.txn.lock().await;
-        let txn = txn_guard.as_ref().ok_or_else(|| {
-            query::error::QueryError::execution("transaction not available for version lookup")
-        })?;
-        let systemstore = txn.systemstore().map_err(|e| {
-            query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
-        })?;
+        let (readonly, systemstore) = {
+            let txn = txn_guard.as_ref().ok_or_else(|| {
+                query::error::QueryError::execution("transaction not available for version lookup")
+            })?;
+            let readonly = txn
+                .is_readonly()
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+            let systemstore = txn.systemstore().map_err(|e| {
+                query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
+            })?;
+            (readonly, systemstore)
+        };
+        if readonly {
+            if let Some(facts) = self.version_cache.read().await.get(collection_id) {
+                return Ok(facts.clone());
+            }
+        }
 
         let versions = get_collections_by_collection_id(&systemstore, collection_id)
             .await
@@ -137,12 +149,16 @@ impl<S: Store> LensedDocFetcher<S> {
                 ))
             })?;
 
-        drop(txn_guard); // Release lock
-
-        // Check if any version has migrations (matching Go's behavior)
         let has_migrations = Self::versions_have_migrations(&versions);
-
-        Ok((versions, has_migrations))
+        let facts = (Arc::from(versions), has_migrations);
+        if readonly {
+            self.version_cache
+                .write()
+                .await
+                .insert(collection_id.clone(), facts.clone());
+        }
+        drop(txn_guard);
+        Ok(facts)
     }
 
     /// Load full collection history from systemstore.

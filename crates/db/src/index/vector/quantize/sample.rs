@@ -1,7 +1,5 @@
 //! A bounded training sample drawn from a stream.
 
-use crate::index::vector::engine::ann::Sampler;
-
 /// Reservoir sampling: every vector in the stream has the same chance of ending
 /// up in the sample, whatever the stream's length, and the stream is read once.
 pub struct Reservoir {
@@ -87,4 +85,24 @@ impl Sampler for Reservoir {
     fn resident_bytes(&self) -> usize {
         self.vectors.len() * size_of::<f32>()
     }
+}
+
+/// Bounded in **bytes**: the same 100,000 vectors are 6 MB at 16 dimensions and
+/// 300 MB at 768, so a count does not bound what actually fails.
+pub trait Sampler {
+    fn offer(&mut self, vector: &[f32]);
+
+    /// The sample as one flat `len() * dimensions` buffer.
+    fn as_flat(&self) -> &[f32];
+
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Vectors offered, which exceeds `len` once the budget is reached.
+    fn seen(&self) -> u64;
+
+    fn resident_bytes(&self) -> usize;
 }

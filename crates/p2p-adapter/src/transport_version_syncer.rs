@@ -182,8 +182,6 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
         version_ids: Vec<String>,
         connected_peers: Vec<PeerId>,
     ) -> P2PResult<()> {
-        use p2p::sync::MergeHandler;
-
         for version_id_str in &version_ids {
             let version_cid = cid::Cid::try_from(version_id_str.as_str())
                 .map_err(|error| P2PError::invalid_input(format!("invalid cid: {error}")))?;
@@ -324,14 +322,12 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
                 }
             }
 
-            let metadata = p2p::sync::BlockMetadata::schema_sync();
-            if let Err(error) = self
-                .merge_handler
-                .handle_block(&version_cid, &block_data, metadata)
-                .await
-            {
-                tracing::warn!(cid = %version_cid, error = %error, "merge handler error");
-            }
+            crate::schema_history::merge_schema_history(
+                version_cid,
+                self.blockstore.as_ref(),
+                self.merge_handler.as_ref(),
+            )
+            .await?;
 
             if let Ok(block) = defra_core::Block::from_dag_cbor(&block_data) {
                 if let defra_core::CrdtDelta::CollectionDefinition(ref payload) = block.delta {

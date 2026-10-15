@@ -32,9 +32,10 @@ mod search;
 
 pub use level::LevelSampler;
 
-use super::ann::{Admit, Candidate, EdgeSelector, EngineKind, Neighbor, VectorIndexEngine};
+use super::ann::{Admit, Candidate, EngineKind, Neighbor, VectorIndexEngine};
 use super::select::Heuristic;
 use crate::index::error::Result;
+use crate::index::vector::engine::select::EdgeSelector;
 use crate::index::vector::params::Params;
 use crate::index::vector::store::{Node, NodeId, VectorNodeStore};
 use defra_core::vector::{Element, Metric};
@@ -172,6 +173,12 @@ impl<S: VectorNodeStore> VectorIndexEngine for Hnsw<S> {
 
     async fn should_build(&self) -> Result<bool> {
         self.should_rebuild().await
+    }
+
+    /// A rebuild is a whole-graph reinsert, far too heavy to price into a
+    /// single write. The background task owns it, through `rebuild_if_due`.
+    async fn should_build_inline(&self) -> Result<bool> {
+        Ok(false)
     }
 
     async fn build(&mut self) -> Result<()> {

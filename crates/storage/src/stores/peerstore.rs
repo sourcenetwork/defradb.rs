@@ -274,6 +274,20 @@ impl<S: Store> Peerstore<S> {
         txn.get(b"/p2p/local-peer-key").await
     }
 
+    /// Public identity bound to an application-owned peer keyring.
+    pub async fn get_local_peer_keyring_identity(&self) -> Result<Option<Bytes>> {
+        let txn = self.store.new_txn(true).await?;
+        txn.get(b"/p2p/local-peer-keyring-identity").await
+    }
+
+    /// Record keyring mode without storing any private key material.
+    pub async fn set_local_peer_keyring_identity(&self, public_key: &[u8]) -> Result<()> {
+        let mut txn = self.store.new_txn(false).await?;
+        txn.set(b"/p2p/local-peer-keyring-identity", public_key)
+            .await?;
+        txn.commit().await
+    }
+
     /// Store P2P collection subscriptions (persists across restarts).
     pub async fn set_p2p_collections(&self, data: &[u8]) -> Result<()> {
         let mut txn = self.store.new_txn(false).await?;
@@ -358,10 +372,25 @@ impl<S: Store> Peerstore<S> {
     ) -> Result<()> {
         let mut txn = self.store.new_txn(false).await?;
         let id_key = ReplicatorRetryIDKey::new(peer_id);
-        if !txn.has(&id_key.bytes()).await? {
-            let mut info = super::RetryInfo::from_bytes(retry_info_bytes)
-                .unwrap_or_else(|_| super::RetryInfo::new_initial());
-            info.bump_with_schedule(peer_id, &self.retry_schedule);
+        let requested = super::RetryInfo::from_bytes(retry_info_bytes)
+            .unwrap_or_else(|_| super::RetryInfo::new_initial());
+        let existing = txn.get(&id_key.bytes()).await?;
+        if existing.is_none() || requested.not_before_unix > 0 {
+            let mut info = match existing {
+                Some(bytes) => {
+                    super::RetryInfo::from_bytes(&bytes).map_err(crate::corekv::Error::Other)?
+                }
+                None => requested.clone(),
+            };
+            if requested.not_before_unix > 0 {
+                if requested.not_before_unix > info.not_before_unix {
+                    info.not_before_unix = requested.not_before_unix;
+                    info.deferred_at_unix = requested.deferred_at_unix;
+                }
+                info.next_retry_unix = info.not_before_unix;
+            } else {
+                info.bump_with_schedule(peer_id, &self.retry_schedule);
+            }
             txn.set(
                 &id_key.bytes(),
                 &info.to_bytes().map_err(crate::corekv::Error::Other)?,
@@ -690,6 +719,35 @@ impl<S: Store> Peerstore<S> {
         .await
     }
 
+    /// Apply a receiver hint atomically, creating the schedule when necessary.
+    /// Returns false if the replicator was removed.
+    pub async fn record_retry_after(
+        &self,
+        peer_id: &str,
+        delay: std::time::Duration,
+    ) -> Result<bool> {
+        let _retry_guard = retry_peer_lock(peer_id).write_arc().await;
+        retry_push_txn_conflicts(|| async {
+            let mut txn = self.store.new_txn(false).await?;
+            if !txn.has(&ReplicatorKey::new(peer_id).bytes()).await? {
+                return Ok(false);
+            }
+            let key = ReplicatorRetryIDKey::new(peer_id).bytes();
+            let mut info = match txn.get(&key).await? {
+                Some(bytes) => {
+                    super::RetryInfo::from_bytes(&bytes).map_err(crate::corekv::Error::Other)?
+                }
+                None => super::RetryInfo::new_initial(),
+            };
+            info.defer_for_hint(delay);
+            txn.set(&key, &info.to_bytes().map_err(crate::corekv::Error::Other)?)
+                .await?;
+            txn.commit().await?;
+            Ok(true)
+        })
+        .await
+    }
+
     /// Make an existing peer retry schedule immediately due without changing
     /// its failure-ladder rung.  A connection-established event is new
     /// delivery evidence: retaining an old connection-failure deadline after
@@ -809,7 +867,7 @@ impl<S: Store> Peerstore<S> {
             .collect())
     }
 
-    /// Stop sweeping a peer once no document or collection marker remains.
+    /// Stop sweeping an empty peer after its receiver backpressure has expired.
     pub async fn clear_retry_peer(&self, peer_id: &str) -> Result<()> {
         retry_push_txn_conflicts(|| self.clear_retry_peer_once(peer_id)).await
     }
@@ -852,8 +910,17 @@ impl<S: Store> Peerstore<S> {
             for key in empty_legacy_keys {
                 txn.delete(&key).await?;
             }
-            txn.delete(&ReplicatorRetryIDKey::new(peer_id).bytes())
-                .await?;
+            let key = ReplicatorRetryIDKey::new(peer_id).bytes();
+            let keep_deadline = match txn.get(&key).await? {
+                Some(bytes) => !super::RetryInfo::from_bytes(&bytes)
+                    .map_err(crate::corekv::Error::Other)?
+                    .is_backpressure_elapsed(),
+                None => false,
+            };
+            // An in-flight ACK clears a scope, not the receiver's peer-wide hint.
+            if !keep_deadline {
+                txn.delete(&key).await?;
+            }
         }
         txn.commit().await
     }

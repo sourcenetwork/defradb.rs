@@ -105,6 +105,7 @@ impl P2PTransport for TestTransport {
         &self.pubkey
     }
 
+    #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
     fn sign(&self, _data: &[u8]) -> P2PResult<Vec<u8>> {
         self.signs.fetch_add(1, Ordering::Relaxed);
         if self

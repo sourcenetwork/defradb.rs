@@ -11,6 +11,7 @@ use schema::CollectionVersion;
 use crate::error::Result;
 use crate::fetcher::DocFetcher;
 use crate::mapper::{Filter, Select};
+use crate::plan::ScanNode;
 
 use super::conditions::select_best_index;
 use super::filter_to_scan::filter_to_index_scan;
@@ -99,7 +100,10 @@ pub async fn estimate_select(
     let Some(filter) = select.filter.as_ref() else {
         return Ok(None);
     };
-    if select.cursor_params.is_some() {
+    if select.cursor_params.is_some()
+        || (!select.show_deleted
+            && ScanNode::point_id_for(select.doc_ids.as_deref(), Some(filter)).is_some())
+    {
         return Ok(None);
     }
     let estimates = estimate_filter_indexes(fetcher, collection, filter).await?;

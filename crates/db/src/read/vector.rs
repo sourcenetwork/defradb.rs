@@ -1,5 +1,6 @@
 //! The one vector-index lookup every `DocFetcher` shares.
 
+use crate::index::vector::engine::diskann::CodeCaches;
 use crate::index::vector::index::VectorIndex;
 use datastore::NamespaceView;
 
@@ -16,6 +17,7 @@ use crate::collection::Collection;
 pub(crate) async fn search_vector_index(
     collection: &Collection,
     datastore: &NamespaceView,
+    codes: &CodeCaches,
     index_id: u32,
     query_vector: &[f64],
     k: usize,
@@ -31,7 +33,8 @@ pub(crate) async fn search_vector_index(
         .ok_or_else(|| execution(format!("no queryable vector index with id {index_id}")))?;
 
     let index = VectorIndex::try_new(collection.resolved_root_id(), desc)
-        .map_err(|e| execution(format!("vector index: {e}")))?;
+        .map_err(|e| execution(format!("vector index: {e}")))?
+        .with_code_caches(codes);
 
     let mut view = datastore.clone();
     index

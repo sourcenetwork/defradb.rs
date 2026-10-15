@@ -157,84 +157,86 @@ impl HeadSnapshot {
         changes: &HeadChanges,
         id: u32,
     ) -> Result<Option<CollectionHeadEntries>> {
-        {
-            let current = lock(cache)?;
-            // Native drop_all resets sequence numbers and invalidates old
-            // snapshots. Those readers must fall back to the native owner too.
-            if current.disabled || current.reset_epoch != self.reset_epoch {
+        super::blocking(|| {
+            {
+                let current = lock(cache)?;
+                // Native drop_all resets sequence numbers and invalidates old
+                // snapshots. Those readers must fall back to the native owner too.
+                if current.disabled || current.reset_epoch != self.reset_epoch {
+                    return Ok(None);
+                }
+            }
+            let Some(writes) = &changes.writes else {
                 return Ok(None);
-            }
-        }
-        let Some(writes) = &changes.writes else {
-            return Ok(None);
-        };
-        let cached = self
-            .rows
-            .lock()
-            .map_err(|_| Error::Backend("head snapshot poisoned".into()))?
-            .get(&id)
-            .cloned();
-        let base = match cached {
-            Some(rows) => rows,
-            None => {
-                let mut rows = Rows::new();
-                let mut size = 0;
-                #[cfg(test)]
-                {
-                    lock(cache)?.cold_scans += 1;
-                }
-                for prefix in [
-                    HeadstoreColKey::collection_prefix(id),
-                    HeadstoreColSuperseded::collection_prefix(id),
-                ] {
-                    let prefix = [b"h".as_slice(), &prefix].concat();
-                    let mut cursor = self.snapshot.owned_iter();
-                    cursor.seek_prefix(&prefix);
-                    while cursor.valid() {
-                        let key = cursor.key().expect("valid cursor key").to_vec();
-                        let value =
-                            Bytes::copy_from_slice(cursor.value().expect("valid cursor value"));
-                        size += row_bytes(&key, &value);
-                        if size > CACHE_BYTES {
-                            return Ok(None);
+            };
+            let cached = self
+                .rows
+                .lock()
+                .map_err(|_| Error::Backend("head snapshot poisoned".into()))?
+                .get(&id)
+                .cloned();
+            let base = match cached {
+                Some(rows) => rows,
+                None => {
+                    let mut rows = Rows::new();
+                    let mut size = 0;
+                    #[cfg(test)]
+                    {
+                        lock(cache)?.cold_scans += 1;
+                    }
+                    for prefix in [
+                        HeadstoreColKey::collection_prefix(id),
+                        HeadstoreColSuperseded::collection_prefix(id),
+                    ] {
+                        let prefix = [b"h".as_slice(), &prefix].concat();
+                        let mut cursor = self.snapshot.owned_iter();
+                        cursor.seek_prefix(&prefix);
+                        while cursor.valid() {
+                            let key = cursor.key().expect("valid cursor key").to_vec();
+                            let value =
+                                Bytes::copy_from_slice(cursor.value().expect("valid cursor value"));
+                            size += row_bytes(&key, &value);
+                            if size > CACHE_BYTES {
+                                return Ok(None);
+                            }
+                            rows.insert(key, value);
+                            cursor.next();
                         }
-                        rows.insert(key, value);
-                        cursor.next();
+                        cursor.status().map_err(|e| Error::Backend(e.to_string()))?;
                     }
-                    cursor.status().map_err(|e| Error::Backend(e.to_string()))?;
-                }
-                let rows = Arc::new(rows);
-                {
-                    let mut current = lock(cache)?;
-                    if !current.disabled && self.epoch == current.epoch {
-                        admit(&mut current.rows, id, Arc::clone(&rows));
+                    let rows = Arc::new(rows);
+                    {
+                        let mut current = lock(cache)?;
+                        if !current.disabled && self.epoch == current.epoch {
+                            admit(&mut current.rows, id, Arc::clone(&rows));
+                        }
                     }
+                    let mut local = self
+                        .rows
+                        .lock()
+                        .map_err(|_| Error::Backend("head snapshot poisoned".into()))?;
+                    admit(&mut local, id, Arc::clone(&rows));
+                    rows
                 }
-                let mut local = self
-                    .rows
-                    .lock()
-                    .map_err(|_| Error::Backend("head snapshot poisoned".into()))?;
-                admit(&mut local, id, Arc::clone(&rows));
-                rows
+            };
+            let mut rows = (*base).clone();
+            for (key, value) in writes {
+                if collection(key) == Some(id) {
+                    apply(&mut rows, key, value);
+                }
             }
-        };
-        let mut rows = (*base).clone();
-        for (key, value) in writes {
-            if collection(key) == Some(id) {
-                apply(&mut rows, key, value);
+            let mut entries = CollectionHeadEntries::default();
+            for (key, value) in rows {
+                let head = key.starts_with(b"h/c/");
+                let pair = KvPair { key, value };
+                if head {
+                    entries.heads.push(pair);
+                } else {
+                    entries.markers.push(pair);
+                }
             }
-        }
-        let mut entries = CollectionHeadEntries::default();
-        for (key, value) in rows {
-            let head = key.starts_with(b"h/c/");
-            let pair = KvPair { key, value };
-            if head {
-                entries.heads.push(pair);
-            } else {
-                entries.markers.push(pair);
-            }
-        }
-        Ok(Some(entries))
+            Ok(Some(entries))
+        })
     }
 }
 
@@ -310,6 +312,70 @@ mod tests {
 
     async fn rows(txn: &dyn Txn) -> CollectionHeadEntries {
         head_entries(txn, 1).await.unwrap().expect("cache enabled")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cache_publication_wait_does_not_starve_executor() {
+        let store = RegolithStore::in_memory().unwrap();
+        let first = store.new_txn(true).await.unwrap();
+        let shared = cache(first.as_ref());
+        first.discard();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard = lock(&shared).unwrap();
+            locked_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(std::time::Duration::from_secs(2));
+        });
+        locked_rx.recv().unwrap();
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::channel(2);
+        let mut readers = Vec::new();
+        for _ in 0..2 {
+            let store = store.clone();
+            let started = started_tx.clone();
+            readers.push(tokio::spawn(async move {
+                started.send(()).await.unwrap();
+                store.new_txn(true).await.unwrap().discard();
+            }));
+        }
+        started_rx.recv().await.unwrap();
+        started_rx.recv().await.unwrap();
+        let start = std::time::Instant::now();
+        tokio::spawn(async {}).await.unwrap();
+        let elapsed = start.elapsed();
+        let _ = release_tx.send(());
+        holder.join().unwrap();
+        for reader in readers {
+            reader.await.unwrap();
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "unrelated task blocked for {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn readonly_commit_does_not_wait_for_publication() {
+        let store = RegolithStore::in_memory().unwrap();
+        let txn = store.new_txn(true).await.unwrap();
+        let shared = cache(txn.as_ref());
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard = lock(&shared).unwrap();
+            locked_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(std::time::Duration::from_secs(2));
+        });
+        locked_rx.recv().unwrap();
+        let start = std::time::Instant::now();
+        txn.commit().await.unwrap();
+        let elapsed = start.elapsed();
+        let _ = release_tx.send(());
+        holder.join().unwrap();
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "read-only completion blocked for {elapsed:?}"
+        );
     }
 
     #[tokio::test]

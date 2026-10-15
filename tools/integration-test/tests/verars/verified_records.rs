@@ -242,6 +242,17 @@ resources:
         .await
         .unwrap();
     provider
+        .register_object(&bearer, &policy, "file", "suspensions")
+        .await
+        .unwrap();
+    assert_eq!(
+        provider
+            .query_object_owner(&policy, "file", "suspensions")
+            .await
+            .unwrap(),
+        (true, owner_did.clone()),
+    );
+    provider
         .set_relationship(&bearer, &policy, "file", "suspensions", "blocked", &subject)
         .await
         .unwrap();

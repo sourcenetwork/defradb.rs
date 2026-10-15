@@ -22,24 +22,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
-        // Generate embeddings if source fields were modified
         let mut doc = doc;
         let mut modified_fields = modified_fields;
-        let embedding_config = self.db.options().embedding_config();
-
-        let generated = crate::search::set_embedding(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            false,
-            Some(&modified_fields),
-            &embedding_config,
-        )
-        .await
-        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
-
-        for field in generated {
-            modified_fields.insert(field);
-        }
 
         let input_doc_id = doc
             .id()
@@ -96,13 +80,21 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let fresh_fetcher =
             crate::LensedAutoCommitFetcher::new_without_write_back(Arc::clone(&self.db));
         let canonical_id = canonical_lock_id.to_string();
-        let mut current_doc = fresh_fetcher
+        let Some(mut current_doc) = fresh_fetcher
             .get_by_ids(collection_name, std::slice::from_ref(&canonical_id))
             .await?
             .into_docs()
             .into_iter()
             .next()
-            .ok_or_else(|| query::error::QueryError::document_not_found(canonical_id))?;
+        else {
+            // A delete committed after the caller's snapshot is a stale
+            // snapshot like any other: the retry re-plans and skips the doc.
+            return Err(if expected.is_some() {
+                query::error::QueryError::transaction_conflict("transaction conflict. Please retry")
+            } else {
+                query::error::QueryError::document_not_found(canonical_id)
+            });
+        };
         if let Some(expected) = expected {
             let values_unchanged = expected.values().len() == current_doc.values().len()
                 && expected
@@ -132,6 +124,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             }
         }
         doc = current_doc;
+
+        let embedding_config = self.db.options().embedding_config();
 
         let txn = self.new_mutation_txn().await?;
 
@@ -199,6 +193,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &mut doc,
                 doc_short_id,
                 &index_manager,
+                &mut modified_fields,
+                Some(&embedding_config),
             )
             .await?;
 

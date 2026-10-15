@@ -37,6 +37,24 @@ pub struct RegolithTxn {
 }
 
 impl RegolithTxn {
+    /// Open a snapshot of an existing on-disk database without modifying files.
+    pub fn open_read_only(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let db = regolith::Db::open_read_only(path, super::RegolithStoreOptions::default().engine)
+            .map_err(|error| {
+                Error::Backend(format!("failed to open regolith read-only: {error}"))
+            })?;
+        Ok(Self {
+            handle: Some(Arc::new(Handle::ReadOnly(db.snapshot()))),
+            active_txns: Arc::new(AtomicUsize::new(1)),
+            stats: TransactionStatsHandle::for_backend("regolith"),
+            callbacks: CallbackManager::default(),
+            readonly: true,
+            head_cache: SharedHeadCache::default(),
+            head_snapshot: None,
+            head_changes: HeadChanges::default(),
+        })
+    }
+
     pub(crate) fn new(
         db: &Arc<OptimisticTransactionDb>,
         readonly: bool,
@@ -45,25 +63,27 @@ impl RegolithTxn {
         stats: TransactionStatsHandle,
         head_cache: SharedHeadCache,
     ) -> Result<Self> {
-        let cache = head_cache::lock(&head_cache)?;
-        let handle = if readonly {
-            Handle::ReadOnly(db.db().snapshot())
-        } else {
-            Handle::Writable(Box::new(db.begin_transaction_owned(isolation)))
-        };
-        let head_snapshot = (!cache.disabled
-            && (readonly || isolation == IsolationLevel::RepeatableRead))
-            .then(|| cache.capture(db.db().snapshot()));
-        drop(cache);
-        Ok(Self {
-            handle: Some(Arc::new(handle)),
-            active_txns,
-            stats,
-            callbacks: CallbackManager::default(),
-            readonly,
-            head_cache,
-            head_snapshot,
-            head_changes: HeadChanges::default(),
+        super::blocking(|| {
+            let cache = head_cache::lock(&head_cache)?;
+            let handle = if readonly {
+                Handle::ReadOnly(db.db().snapshot())
+            } else {
+                Handle::Writable(Box::new(db.begin_transaction_owned(isolation)))
+            };
+            let head_snapshot = (!cache.disabled
+                && (readonly || isolation == IsolationLevel::RepeatableRead))
+                .then(|| cache.capture(db.db().snapshot()));
+            drop(cache);
+            Ok(Self {
+                handle: Some(Arc::new(handle)),
+                active_txns,
+                stats,
+                callbacks: CallbackManager::default(),
+                readonly,
+                head_cache,
+                head_snapshot,
+                head_changes: HeadChanges::default(),
+            })
         })
     }
 
@@ -252,18 +272,19 @@ impl Txn for RegolithTxn {
         })?;
         // Native commit and cache publication are one boundary. Never run
         // user callbacks under it, and never publish a failed transaction.
-        let outcome = {
-            let mut cache = head_cache::lock(&self.head_cache)?;
-            let outcome = match handle {
-                // Nothing was written, so there is nothing to validate and
-                // nothing to apply.
-                Handle::ReadOnly(_) => Ok(()),
-                Handle::Writable(txn) => txn.commit().map_err(map_txn_error),
-            };
-            if outcome.is_ok() {
-                cache.publish(&self.head_changes);
+        let outcome = match handle {
+            Handle::ReadOnly(snapshot) => {
+                drop(snapshot);
+                Ok(())
             }
-            outcome
+            Handle::Writable(txn) => super::blocking(|| {
+                let mut cache = head_cache::lock(&self.head_cache)?;
+                let outcome = txn.commit().map_err(map_txn_error);
+                if outcome.is_ok() {
+                    cache.publish(&self.head_changes);
+                }
+                outcome
+            }),
         };
         match outcome {
             Ok(()) => {

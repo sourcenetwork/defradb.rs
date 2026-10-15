@@ -108,7 +108,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
     #[instrument(
         name = "query.execute_request",
         skip(self, request),
-        fields(query_len = request.query.len())
+        fields(query_len = request.query.len() as i64)
     )]
     async fn execute(&self, request: QueryRequest) -> QueryResponse {
         // Convert variables from JSON to RapidHashMap format for the parser
@@ -311,7 +311,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
     #[instrument(
         name = "query.execute_in_txn",
         skip(self, request),
-        fields(query_len = request.query.len(), txn_id = %handle)
+        fields(query_len = request.query.len() as i64, txn_id = %handle)
     )]
     async fn execute_in_txn(
         &self,

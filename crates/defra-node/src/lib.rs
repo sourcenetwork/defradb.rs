@@ -1296,6 +1296,7 @@ impl NodeBuilder {
 
             let addr = http_cfg.address;
             let extra_routes = http_cfg.extra_routes;
+            let bound = http_cfg.listener;
             tokio::spawn(async move {
                 let router_result = server.router();
                 let run_result = async {
@@ -1304,19 +1305,29 @@ impl NodeBuilder {
                         router = router.merge(extra);
                     }
 
-                    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-                        let hint = match e.kind() {
-                            std::io::ErrorKind::AddrInUse => "port is already in use",
-                            std::io::ErrorKind::PermissionDenied => {
-                                "permission denied (try port > 1024)"
-                            }
-                            std::io::ErrorKind::AddrNotAvailable => {
-                                "address not available on this host"
-                            }
-                            _ => "check network configuration",
-                        };
-                        anyhow::anyhow!("failed to bind to {}: {} ({})", addr, e, hint)
-                    })?;
+                    let listener = match bound {
+                        Some(listener) => {
+                            listener.set_nonblocking(true).map_err(|e| {
+                                anyhow::anyhow!("failed to prepare listener on {}: {}", addr, e)
+                            })?;
+                            tokio::net::TcpListener::from_std(listener).map_err(|e| {
+                                anyhow::anyhow!("failed to adopt listener on {}: {}", addr, e)
+                            })?
+                        }
+                        None => tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                            let hint = match e.kind() {
+                                std::io::ErrorKind::AddrInUse => "port is already in use",
+                                std::io::ErrorKind::PermissionDenied => {
+                                    "permission denied (try port > 1024)"
+                                }
+                                std::io::ErrorKind::AddrNotAvailable => {
+                                    "address not available on this host"
+                                }
+                                _ => "check network configuration",
+                            };
+                            anyhow::anyhow!("failed to bind to {}: {} ({})", addr, e, hint)
+                        })?,
+                    };
 
                     axum::serve(listener, router)
                         .await
@@ -1739,12 +1750,11 @@ mod tests {
     #[cfg(feature = "http")]
     #[tokio::test]
     async fn embedded_http_exposes_schema_add_and_only_read_collection_versions() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = probe.local_addr().unwrap();
-        drop(probe);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
 
         let node = EmbeddedNode::builder()
-            .with_http(HttpConfig::with_addr(address))
+            .with_http(HttpConfig::with_listener(listener).unwrap())
             .build()
             .await
             .unwrap();

@@ -5,9 +5,10 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use super::codec::{self, BuiltState};
 use super::Ssg;
 use crate::index::error::{Error, Result};
-use crate::index::vector::engine::ann::{Candidate, EdgeSelector};
-use crate::index::vector::engine::ivfpq::TRAIN_PER_LIST;
+use crate::index::vector::engine::ann::Candidate;
+use crate::index::vector::engine::ivf::pq::TRAIN_PER_LIST;
 use crate::index::vector::engine::select::Angular;
+use crate::index::vector::engine::select::EdgeSelector;
 use crate::index::vector::store::{NodeId, VectorNodeStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +38,7 @@ impl<S: VectorNodeStore> Ssg<S> {
     ///
     /// The count is bounded by what the question needs rather than by the
     /// corpus, so asking it on every write costs a constant rather than a scan.
-    /// See [`IvfPq::live_count_at_least`](super::super::ivfpq::IvfPq::live_count_at_least)
+    /// See [`IvfPq::live_count_at_least`](super::super::ivf::pq::IvfPq::live_count_at_least)
     /// for why returning an error from the visitor is what stops the walk early.
     pub async fn live_count_at_least(&self, wanted: u64) -> Result<bool> {
         if wanted == 0 {

@@ -45,7 +45,7 @@ members = [
 version = "0.5.0"
 authors = ["Source Network <contact@source.network>"]
 edition = "2021"
-rust-version = "1.91"
+rust-version = "1.98"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/sourcenetwork/defradb.rs"
 
@@ -81,9 +81,14 @@ kovan-map = "0.1.22"
 kovan-queue = "0.1.22"
 kovan-channel = "0.1.22"
 
+# One rustls version workspace-wide: a crypto provider is installed into the
+# process registry of a single rustls major, so a second major in the graph
+# would leave TLS built from an uninitialised registry.
+rustls = { version = "0.23", default-features = false }
+
 # Async runtime
 tokio = { version = "1.35" }
-async-trait = "0.1"
+async-trait = "0.1.92"
 async-lock = "3"
 futures = "0.3"
 
@@ -115,7 +120,7 @@ iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Storage
-regolith = "0.1.8"
+regolith = { git = "https://github.com/sourcenetwork/regolith.git", rev = "8f462e8370a670f923eefde562f83de1c42a55ef" }
 
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["serde", "zeroize"] }
@@ -132,7 +137,7 @@ sha2 = { version = "0.10", features = ["asm"] }
 rand = "0.8"
 aes-gcm = "0.10"
 hex = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 
 # EVM / Alloy (vera.rs ACP backend)
 alloy-sol-types = "1"
@@ -303,16 +308,16 @@ opt-level = "z"
 opt-level = "z"
 
 [patch.crates-io]
-commonware-p2p = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-utils = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-codec = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-runtime = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-consensus = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-cryptography = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-parallel = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-storage = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-broadcast = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-resolver = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-macros = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-glue = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
-commonware-stream = { git = "https://github.com/iverc/commonware.git", rev = "9f398751e6816d7321eb2c9327cfcc5ec011c7ff" }
+commonware-p2p = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-utils = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-codec = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-runtime = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-consensus = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-cryptography = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-parallel = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-storage = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-broadcast = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-resolver = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-macros = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-glue = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }
+commonware-stream = { git = "https://github.com/iverc/commonware-upstream", rev = "b04184d8fda928f7f8677e3f56a3de919dc643cc" }

@@ -13,6 +13,7 @@ mod jwe;
 mod key_name;
 mod keyring;
 mod signer;
+#[cfg(feature = "system")]
 mod system;
 #[cfg(target_os = "linux")]
 mod systemd_creds;
@@ -24,6 +25,7 @@ pub use keyring::Keyring;
 #[allow(deprecated)]
 pub use signer::KeyringSigner;
 pub use signer::{KeyHandle, KeyType};
+#[cfg(feature = "system")]
 pub use system::SystemKeyring;
 #[cfg(target_os = "linux")]
 pub use systemd_creds::{systemd_creds_available, SystemdCredsKeyring};

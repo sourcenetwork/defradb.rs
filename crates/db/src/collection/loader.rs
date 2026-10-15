@@ -125,6 +125,17 @@ pub(crate) async fn load_collection_from_systemstore(
 ///
 /// Returns the collection, datastore, and systemstore (for DocID <-> short-ID
 /// resolution) for document operations.
+/// The database's resident DiskANN codes, as the transaction carries them.
+pub async fn vector_codes<S: Store + 'static>(
+    txn: &Arc<TokioMutex<Option<DbTxn<S>>>>,
+) -> query::error::Result<Arc<crate::index::vector::engine::diskann::CodeCaches>> {
+    txn.lock()
+        .await
+        .as_ref()
+        .map(|txn| txn.vector_codes().clone())
+        .ok_or_else(|| query::error::QueryError::execution("transaction already consumed"))
+}
+
 pub async fn get_collection_with_lazy_load<S: Store + 'static>(
     txn: &Arc<TokioMutex<Option<DbTxn<S>>>>,
     collection_name: &str,

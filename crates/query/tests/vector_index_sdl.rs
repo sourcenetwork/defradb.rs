@@ -465,7 +465,7 @@ fn ivfpq_parameters_are_read() {
         r#"type Doc {
             e: [Float!] @index(vector: {
                 dimensions: 128,
-                ivfpq: {nlist: 256, nprobe: 16, m: 16, sampleBytes: 1048576}
+                ivfpq: {nlist: 256, nprobe: 16, m: 16, sampleBytes: 1048576, rerank: 4}
             })
         }"#,
     );
@@ -473,8 +473,14 @@ fn ivfpq_parameters_are_read() {
     assert!(vector.hnsw.is_none(), "IVF-PQ carries no HNSW block");
     let ivfpq = vector.ivfpq.expect("IVF-PQ params");
     assert_eq!(
-        (ivfpq.nlist, ivfpq.nprobe, ivfpq.m, ivfpq.sample_bytes),
-        (256, 16, 16, 1_048_576)
+        (
+            ivfpq.nlist,
+            ivfpq.nprobe,
+            ivfpq.m,
+            ivfpq.sample_bytes,
+            ivfpq.rerank
+        ),
+        (256, 16, 16, 1_048_576, 4)
     );
 }
 
@@ -483,7 +489,8 @@ fn ivfpq_defaults_are_kept() {
     let vector =
         only_vector(r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, alg: IVF_PQ}) }"#);
     let ivfpq = vector.ivfpq.expect("IVF-PQ params");
-    assert_eq!(ivfpq.nprobe, 8);
+    assert_eq!(ivfpq.nprobe, 0, "zero derives nprobe from nlist");
+    assert_eq!(ivfpq.rerank, 10);
     assert_eq!(ivfpq.nlist, 0, "zero derives nlist from the corpus");
     assert_eq!(ivfpq.m, 0, "zero derives m from the width");
 }
@@ -512,7 +519,7 @@ fn ivfflat_defaults_are_kept() {
     let vector =
         only_vector(r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, alg: IVF_FLAT}) }"#);
     let ivfflat = vector.ivfflat.expect("IVF_FLAT params");
-    assert_eq!(ivfflat.nprobe, 8);
+    assert_eq!(ivfflat.nprobe, 0, "zero derives nprobe from nlist");
     assert_eq!(ivfflat.nlist, 0, "zero derives nlist from the corpus");
 }
 
@@ -537,6 +544,49 @@ fn ssg_defaults_are_kept() {
 }
 
 #[test]
+fn diskann_parameters_are_read() {
+    let vector = only_vector(
+        r#"type Doc {
+            e: [Float!] @index(vector: {dimensions: 128, diskann: {
+                R: 32, lBuild: 80, lSearch: 60, alphaPercent: 130, m: 16, sampleBytes: 1048576,
+                residentCodes: true
+            }})
+        }"#,
+    );
+    assert_eq!(vector.algorithm, VectorAlgorithm::DiskAnn);
+    let diskann = vector.diskann.expect("DISKANN params");
+    assert_eq!(
+        (
+            diskann.r,
+            diskann.l_build,
+            diskann.l_search,
+            diskann.alpha_percent,
+            diskann.m,
+            diskann.sample_bytes,
+            diskann.resident_codes
+        ),
+        (32, 80, 60, 130, 16, 1_048_576, true)
+    );
+}
+
+#[test]
+fn diskann_resident_codes_must_be_a_boolean() {
+    let err = parse_sdl(
+        r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, diskann: {residentCodes: 1}}) }"#,
+    )
+    .expect_err("residentCodes is a boolean");
+    assert!(err.to_string().contains("residentCodes"), "got: {err}");
+}
+
+#[test]
+fn diskann_defaults_are_kept() {
+    let vector =
+        only_vector(r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, alg: DISKANN}) }"#);
+    assert_eq!(vector.diskann, Some(schema::DiskAnnParams::default()));
+    assert!(vector.hnsw.is_none());
+}
+
+#[test]
 fn flat_carries_no_build_parameters() {
     let vector =
         only_vector(r#"type Doc { e: [Float!] @index(vector: {dimensions: 4, alg: FLAT}) }"#);
@@ -545,6 +595,7 @@ fn flat_carries_no_build_parameters() {
     assert!(vector.ivfpq.is_none());
     assert!(vector.ivfflat.is_none());
     assert!(vector.ssg.is_none());
+    assert!(vector.diskann.is_none());
 }
 
 #[test]
@@ -565,6 +616,10 @@ fn an_unknown_block_argument_is_refused() {
         (
             r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, ivfflat: {m: 4}}) }"#,
             "m",
+        ),
+        (
+            r#"type Doc { e: [Float!] @index(vector: {dimensions: 8, diskann: {alpha: 1}}) }"#,
+            "alpha",
         ),
     ] {
         let err = parse_sdl(sdl).expect_err("a misspelled argument must not parse");

@@ -544,12 +544,11 @@ pub async fn write_document_blocks(
         "Built composite block with field links and wrote heads"
     );
 
-    if let Some(session_key) = defra_core::batch_signing::get_batch_session_key() {
-        for cid in initial_field_cids {
-            defra_core::batch_signing::batch_collect_cid(&session_key, cid);
-        }
-        defra_core::batch_signing::batch_collect_cid(&session_key, composite_cid);
-    }
+    collect_on_commit(
+        blockstore,
+        initial_field_cids.into_iter().chain([composite_cid]),
+    )
+    .await;
 
     Ok(BlockResult {
         cid: composite_cid,
@@ -636,9 +635,7 @@ pub async fn write_delete_block(
         "Built delete composite block (status=2)"
     );
 
-    if let Some(session_key) = defra_core::batch_signing::get_batch_session_key() {
-        defra_core::batch_signing::batch_collect_cid(&session_key, composite_cid);
-    }
+    collect_on_commit(blockstore, [composite_cid]).await;
 
     Ok(BlockResult {
         cid: composite_cid,

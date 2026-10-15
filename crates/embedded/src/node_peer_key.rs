@@ -1,12 +1,8 @@
 //! The node's peer key: one Ed25519 seed that libp2p and iroh both use, so a
 //! node keeps one identity whichever transport it runs.
 //!
-//! The seed is stored in the peerstore, unencrypted. An embedded node has no
-//! keyring to put it in — the CLI keeps its peer key in one and this key is
-//! that key's counterpart here — and both things this replaces, the libp2p
-//! replicator entry and the `.iroh.key` file, were unencrypted in the same
-//! way. Protecting it at rest belongs with giving embedded nodes a keyring,
-//! which is #1832.
+//! An application keyring keeps new peer keys outside the database. Without
+//! one, the existing peerstore-backed identity remains supported.
 
 use std::path::Path;
 
@@ -15,10 +11,76 @@ use storage::stores::Peerstore;
 use zeroize::Zeroizing;
 
 /// Replicator slot where libp2p kept its keypair before the shared peer key.
-#[cfg(feature = "libp2p")]
 pub(crate) const LEGACY_LIBP2P_KEY_ID: &str = "__local_p2p_identity__";
 
 pub(crate) type Seed = Zeroizing<[u8; 32]>;
+
+pub(crate) async fn load_with_keyring<S: storage::corekv::Store>(
+    peerstore: &Peerstore<S>,
+    legacy_iroh_key: Option<&Path>,
+    keyring: Option<&crate::PeerKeyring>,
+) -> Result<Seed> {
+    let Some(keyring) = keyring else {
+        return load_or_create(peerstore, legacy_iroh_key).await;
+    };
+    if peerstore.get_local_peer_key().await?.is_some() {
+        return Err(anyhow!(
+            "plaintext peerstore /p2p/local-peer-key requires explicit keyring migration"
+        ));
+    }
+    if legacy_iroh_seed(legacy_iroh_key).await?.is_some() {
+        return Err(anyhow!(
+            "plaintext iroh key file '{}' requires explicit keyring migration",
+            legacy_iroh_key.expect("existing key file").display()
+        ));
+    }
+    if peerstore
+        .get_replicator(LEGACY_LIBP2P_KEY_ID)
+        .await?
+        .is_some()
+    {
+        return Err(anyhow!(
+            "plaintext peerstore {LEGACY_LIBP2P_KEY_ID} requires explicit keyring migration"
+        ));
+    }
+
+    let expected = peerstore.get_local_peer_keyring_identity().await?;
+    use crypto::{Key, PrivateKey};
+    let key = match keyring.0.get(keyring::PEER_KEY) {
+        Ok(bytes) => {
+            crypto::Ed25519PrivateKey::from_bytes(&bytes).context("keyring peer key is corrupt")?
+        }
+        Err(keyring::Error::NotFound(_)) => {
+            if expected.is_some() {
+                return Err(anyhow!(
+                    "peer key is missing from the configured keyring; restore the original keyring"
+                ));
+            }
+            let key = crypto::generate_ed25519().context("failed to generate peer key")?;
+            keyring
+                .0
+                .set(keyring::PEER_KEY, key.raw())
+                .context("failed to persist peer key in keyring")?;
+            key
+        }
+        Err(error) => return Err(error).context("failed to read peer key from keyring"),
+    };
+    let public_key = key.public_key();
+    match expected {
+        Some(expected) if expected.as_ref() != public_key.raw() => {
+            return Err(anyhow!(
+                "keyring peer identity does not match this database"
+            ));
+        }
+        None => {
+            peerstore
+                .set_local_peer_keyring_identity(public_key.raw())
+                .await?
+        }
+        Some(_) => {}
+    }
+    seed_from_slice(&key.raw()[..32])
+}
 
 /// Load the node's peer key seed, creating it on first start.
 ///
@@ -34,6 +96,11 @@ pub(crate) async fn load_or_create<S: storage::corekv::Store>(
     peerstore: &Peerstore<S>,
     legacy_iroh_key: Option<&Path>,
 ) -> Result<Seed> {
+    if peerstore.get_local_peer_keyring_identity().await?.is_some() {
+        return Err(anyhow!(
+            "this database requires its application-owned peer keyring"
+        ));
+    }
     if let Some(bytes) = peerstore
         .get_local_peer_key()
         .await
@@ -131,6 +198,10 @@ fn seed_from_slice(bytes: &[u8]) -> Result<Seed> {
         .map_err(|_| anyhow!("expected a 32-byte Ed25519 seed, got {} bytes", bytes.len()))?;
     Ok(Zeroizing::new(seed))
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/peer_keyring.rs"]
+mod keyring_tests;
 
 #[cfg(test)]
 mod tests {
