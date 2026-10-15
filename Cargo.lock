@@ -2555,7 +2555,7 @@ dependencies = [
  "acp 0.5.0",
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blockstore",
  "bytes",
  "cid",
@@ -3680,7 +3680,7 @@ dependencies = [
 name = "cursor"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3913,7 +3913,7 @@ dependencies = [
  "async-lock",
  "async-trait",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blockstore",
  "blst",
  "bytes",
@@ -4060,7 +4060,7 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-server",
- "base64 0.22.1",
+ "base64 0.23.1",
  "cid",
  "crypto",
  "db",
@@ -4472,7 +4472,7 @@ dependencies = [
 name = "document"
 version = "0.5.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "ciborium",
  "cid",
@@ -4670,7 +4670,7 @@ dependencies = [
  "acp 0.5.0",
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blockstore",
  "bytes",
  "cid",
@@ -4989,7 +4989,7 @@ version = "0.5.0"
 dependencies = [
  "acp 0.5.0",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blockstore",
  "cbindgen",
  "cid",
@@ -6231,7 +6231,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 name = "identity"
 version = "0.5.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "crypto",
  "defra-core",
  "hex",
@@ -6472,7 +6472,7 @@ dependencies = [
  "acp 0.5.0",
  "alloy-sol-types",
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "ciborium",
  "cid",
@@ -7211,7 +7211,7 @@ dependencies = [
  "aes",
  "aes-gcm",
  "aes-kw",
- "base64 0.22.1",
+ "base64 0.23.1",
  "josekit",
  "keyring 3.6.3",
  "pbkdf2",
@@ -7248,7 +7248,7 @@ dependencies = [
  "acp 0.5.0",
  "async-channel 2.5.0",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "ciborium",
  "cid",
@@ -7373,7 +7373,7 @@ name = "lens"
 version = "0.5.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "futures",
  "hex",
  "kovan-map",
@@ -9329,7 +9329,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 name = "orbis"
 version = "0.5.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "blst",
  "crypto",
  "defra-core",
@@ -9401,7 +9401,7 @@ dependencies = [
  "acp 0.5.0",
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "blockstore",
  "bytes",
@@ -10528,7 +10528,7 @@ dependencies = [
  "async-graphql",
  "async-lock",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bm25",
  "bytes",
  "chrono",
@@ -14152,7 +14152,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "commonware-codec",
  "cosmrs",
