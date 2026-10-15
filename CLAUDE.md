@@ -138,6 +138,89 @@ cd ../defradb.rs-bar     # Work on feature bar
 
 Each worktree is isolated, no branch switching overhead.
 
+## 8. House Rules
+
+The bare minimum for every change. A change that breaks one of them does not merge.
+
+### Synchronization: regolith sync, lock-free first
+
+- Synchronization comes from `regolith::sync`. Never `std::sync::{Mutex, RwLock, Condvar, Barrier, OnceLock, LazyLock}`,
+  `parking_lot`, `tokio::sync` or `async_lock`.
+- Lock-free wherever it applies. Reach for these first:
+  - a shared value: `regolith::sync::Atom`, swapped as a whole immutable snapshot, so readers never wait;
+  - a shared map: `regolith::sync::HopscotchMap`, with the rapidhash fast hasher (below);
+  - a queue: `regolith::sync::ArrayQueue` (bounded) or `SegQueue`;
+  - work handed between tasks or cores: `regolith::sync::bounded` and `unbounded` channels;
+  - a counter or a flag: a plain atomic;
+  - one-time initialization: `regolith::sync::OnceCell` and `Lazy`.
+- Only where waiting is part of the meaning (one task must wait for another) use a `regolith::sync` future: `Mutex`,
+  `RwLock`, `Semaphore`, `Notify`, `Event`, `Latch`, `Barrier`. They suspend the task and never block the thread.
+- Never add a lock to make a value `Sync`, to serialize writers, or to avoid a transaction conflict. Shared durable
+  state goes through regolith (transactions, merges, `append`, `allocate`); shared memory state goes into a lock-free
+  structure.
+
+### Hash maps: rapidhash, fast
+
+- Every hash map and hash set is `rapidhash::fast::RapidHashMap` or `rapidhash::fast::RapidHashSet`, built with
+  `default()` or `with_capacity` (`rapidhash::HashMapExt`, `HashSetExt`). Never `std::collections::HashMap` or
+  `HashSet` with the standard hasher, and never the `rapidhash::quality` variant.
+- A map shared between threads is `regolith::sync::HopscotchMap` built with `rapidhash::fast::RandomState`
+  (`HopscotchMap::with_hasher`), not with its default hasher.
+
+### Thread-per-core
+
+Every code path is written for a thread-per-core (TPC) architecture. Throughput and performance are the key: a design
+that is correct but slower is not done.
+- One pinned worker per core, each running its own local executor with no task stealing, and each polling its own
+  regolith `IoQueue`.
+- Data stays local to its thread. A worker's state, buffers, caches and transactions live on that worker and are
+  touched only by it; data moves to another thread only as a message, never as shared memory.
+- State has one owner. A transaction belongs to the worker that began it and is never shared between threads or
+  tasks; anything else that touches it is a message to that worker.
+- Read-mostly state is copied per core or published as an `Atom` snapshot. Nothing is shared through a lock.
+- Work crosses cores only through lock-free channels, in batches.
+- Nothing on the data path blocks a thread: no `block_on`, `block_in_place`, `thread::sleep`, spin-wait or polling
+  loop. Reads use `ReadMode::CacheOnly` on the worker's queue, commits use `commit_nowait` or `transact_async`, and a
+  `WouldBlock` suspends the task until its own queue completes it.
+- Network I/O (HTTP, P2P, gRPC, KMS, embeddings) runs at the network boundary. No data-path task awaits the network:
+  a remote input is fetched before the transaction that needs it.
+- The same code runs with a single worker (the wasm main thread, a single-core embedded target). Nothing requires a
+  second thread.
+
+### Proofs
+
+- Anything temporal or concurrent (an ordering, a protocol between tasks or cores, retries, recovery, a race,
+  progress) has a TLA+ model. Every data structure (its invariants, encodings and round-trips, merge and operator
+  laws) has a Lean proof. This is the bare minimum.
+- Each TLA+ model has GREEN configurations and, for every guard, a RED configuration that removes or breaks that
+  guard and must fail on its named invariant.
+- Each TLC configuration finishes in under 60 seconds, and the whole suite in under 10 minutes. A slow model is
+  shrunk, never given a longer timeout or more shards.
+- Lean proofs use no `sorry`, `admit` or new `axiom`.
+- A model names the Rust code it models (file and function). A model that no longer matches the code is a defect.
+- Proofs read ELI5, line by line, for someone who knows nothing about proofs or model checkers:
+  - each file opens with a plain-words story: who acts, what can happen, what must never happen;
+  - every line of a spec has a plain-words comment (`\*` in TLA+, `--` in Lean), and every definition, action and
+    non-trivial expression is explained;
+  - each RED configuration says in plain sentences which bug it plants and what goes wrong;
+  - each theorem and invariant opens with a one-sentence plain statement of what it promises.
+
+  Proof files are the exception to the comments policy (section 6).
+
+### Trait bounds in `where`
+
+Trait bounds go in a `where` clause, on functions, impls, types and traits alike, never inline in the generic
+parameter list:
+
+```rust
+fn apply<T, S>(value: T, store: &S) -> Result<()>
+where
+    T: Encode + Send,
+    S: Store,
+```
+
+not `fn apply<T: Encode + Send, S: Store>(value: T, store: &S)`.
+
 ## Build Dependencies
 
 - **Rust** (1.98+): `rustup`
