@@ -175,6 +175,12 @@ impl<S: VectorNodeStore> VectorIndexEngine for Hnsw<S> {
         self.should_rebuild().await
     }
 
+    /// A rebuild is a whole-graph reinsert, far too heavy to price into a
+    /// single write. The background task owns it, through `rebuild_if_due`.
+    async fn should_build_inline(&self) -> Result<bool> {
+        Ok(false)
+    }
+
     async fn build(&mut self) -> Result<()> {
         self.rebuild().await
     }

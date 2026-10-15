@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use db::index::vector::engine::ann::VectorIndexEngine;
+use db::index::vector::engine::diskann::{DiskAnn, DiskAnnParams};
 use db::index::vector::engine::flat::Flat;
 use db::index::vector::engine::hnsw::Hnsw;
 use db::index::vector::engine::ivf::flat::{IvfFlat, IvfFlatParams};
@@ -81,6 +82,7 @@ pub enum Kind {
     IvfPq,
     IvfFlat,
     Ssg,
+    DiskAnn,
 }
 
 impl Kind {
@@ -91,22 +93,33 @@ impl Kind {
             Kind::IvfPq => "ivfpq",
             Kind::IvfFlat => "ivfflat",
             Kind::Ssg => "ssg",
+            Kind::DiskAnn => "diskann",
         }
     }
 
     /// The kinds that build a structure after the fact, and therefore have a
     /// second state to measure.
     pub fn is_batch_built(self) -> bool {
-        matches!(self, Kind::IvfPq | Kind::IvfFlat | Kind::Ssg)
+        matches!(
+            self,
+            Kind::IvfPq | Kind::IvfFlat | Kind::Ssg | Kind::DiskAnn
+        )
+    }
+
+    /// The kinds whose built state takes writes into a pending set that a
+    /// later merge folds in, and therefore have a merge to measure.
+    pub fn merges_pending(self) -> bool {
+        matches!(self, Kind::DiskAnn)
     }
 }
 
-pub const ALL_KINDS: [Kind; 5] = [
+pub const ALL_KINDS: [Kind; 6] = [
     Kind::Flat,
     Kind::Hnsw,
     Kind::IvfPq,
     Kind::IvfFlat,
     Kind::Ssg,
+    Kind::DiskAnn,
 ];
 
 #[derive(Clone)]
@@ -116,6 +129,7 @@ pub enum Index {
     IvfPq(IvfPq<MemoryNodeStore>),
     IvfFlat(IvfFlat<MemoryNodeStore>),
     Ssg(Ssg<MemoryNodeStore>),
+    DiskAnn(DiskAnn<MemoryNodeStore>),
 }
 
 macro_rules! on_index {
@@ -126,6 +140,7 @@ macro_rules! on_index {
             Index::IvfPq($index) => $call,
             Index::IvfFlat($index) => $call,
             Index::Ssg($index) => $call,
+            Index::DiskAnn($index) => $call,
         }
     };
 }
@@ -168,6 +183,10 @@ impl Index {
                 )
                 .expect("valid SSG parameters"),
             ),
+            Kind::DiskAnn => Index::DiskAnn(
+                DiskAnn::try_new(store, metric, DiskAnnParams::default(), SEED)
+                    .expect("cosine or euclidean is rankable by squared distance"),
+            ),
         }
     }
 
@@ -205,6 +224,11 @@ impl Index {
             }
             Index::Ssg(index) => {
                 index.build().await.expect("ssg build");
+            }
+            // Trains and builds the graph the first time; merges whatever is
+            // pending after that.
+            Index::DiskAnn(index) => {
+                index.build().await.expect("diskann build");
             }
             _ => {}
         }

@@ -68,6 +68,17 @@ pub trait VectorIndexEngine: MaybeSendSync {
         Ok(false)
     }
 
+    /// Whether the write that just landed should run [`build`](Self::build)
+    /// itself, before it commits.
+    ///
+    /// Defaulted to [`should_build`](Self::should_build). A kind whose build is
+    /// too heavy for one write, or whose writes must not read what other
+    /// writers append, answers false and leaves the build to the background
+    /// sweep.
+    async fn should_build_inline(&self) -> Result<bool> {
+        self.should_build().await
+    }
+
     /// Train and rebuild from what is stored.
     ///
     /// Called only when [`should_build`](Self::should_build) says so. Defaulted
@@ -130,6 +141,8 @@ pub enum EngineKind {
     IvfFlat,
     /// Satellite System Graph: one flat, angle-pruned layer.
     Ssg,
+    /// FreshVamana graph walked by product-quantized codes.
+    DiskAnn,
 }
 
 impl EngineKind {
@@ -140,6 +153,7 @@ impl EngineKind {
             EngineKind::IvfPq => "IVF_PQ",
             EngineKind::IvfFlat => "IVF_FLAT",
             EngineKind::Ssg => "SSG",
+            EngineKind::DiskAnn => "DISKANN",
         }
     }
 }

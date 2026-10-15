@@ -540,7 +540,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .persist_merged_document(&mut datastore, &systemstore, &context, &mut state)
                     .await
                 {
-                    Ok(()) => Ok(None),
+                    Ok(()) => self
+                        .update_heads(&headstore, &context, &state)
+                        .await
+                        .map(|()| None),
                     Err(MergeError::UniqueConstraintViolation(reason)) => {
                         Ok(Some(MergeOutcome::rejected(reason)))
                     }
@@ -574,9 +577,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(outcome)
             }
             Ok(None) => {
-                if let Ok(headstore) = txn.headstore() {
-                    self.update_heads(&headstore, &context, &state).await;
-                }
                 if let Ok(systemstore) = txn.systemstore() {
                     self.record_block_ownership(
                         &systemstore,
@@ -1000,7 +1000,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(outcome)
             }
             Ok(None) => {
-                self.update_heads(headstore, &context, &state).await;
+                self.update_heads(headstore, &context, &state).await?;
                 self.record_block_ownership(
                     systemstore,
                     doc_id_str,

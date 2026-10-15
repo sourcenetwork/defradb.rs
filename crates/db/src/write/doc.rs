@@ -199,6 +199,16 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
 
+        crate::search::set_embedding(
+            &collection.schema().vector_embeddings,
+            &mut doc,
+            true,
+            None,
+            &self.db.options().embedding_config(),
+        )
+        .await
+        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
+
         self.db
             .validate_downsample_write(&datastore, &systemstore, collection.schema(), &doc, None)
             .await
@@ -362,7 +372,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         &self,
         collection_name: &str,
         mut doc: Document,
-        modified_fields: rapidhash::RapidHashSet<String>,
+        mut modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)
@@ -388,6 +398,17 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 other => query::error::QueryError::execution(other.to_string()),
             })?;
         doc.set_id(canonical_doc_id.clone());
+
+        let generated = crate::search::set_embedding(
+            &collection.schema().vector_embeddings,
+            &mut doc,
+            false,
+            Some(&modified_fields),
+            &self.db.options().embedding_config(),
+        )
+        .await
+        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
+        modified_fields.extend(generated);
 
         self.db
             .validate_downsample_write(

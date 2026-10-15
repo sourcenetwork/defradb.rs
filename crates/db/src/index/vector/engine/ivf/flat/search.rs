@@ -26,12 +26,7 @@ impl<S: VectorNodeStore> IvfFlat<S> {
         let metric = self.metric();
 
         let centroids = self.trained_centroids(state).await?;
-        let lists = ivf::probe_lists(
-            query.as_slice(),
-            centroids,
-            self.params().nprobe as usize,
-            effort,
-        );
+        let lists = ivf::probe_lists(query.as_slice(), centroids, self.params().nprobe, effort);
 
         // A max-heap of size k: the worst of the current best is on top, so a
         // new candidate is one comparison and at most one pop, exactly as

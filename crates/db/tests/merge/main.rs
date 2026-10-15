@@ -11,6 +11,7 @@ mod collection_guard_race;
 mod collection_heads;
 mod collection_predecessor;
 mod governance;
+mod head_failures;
 mod head_provider;
 mod merge_handler_composite_persist;
 mod merge_handler_se_merge;

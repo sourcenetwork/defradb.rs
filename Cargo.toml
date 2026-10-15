@@ -136,7 +136,7 @@ sha2 = { version = "0.10", features = ["asm"] }
 rand = "0.8"
 aes-gcm = "0.10"
 hex = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 
 # EVM / Alloy (vera.rs ACP backend)
 alloy-sol-types = "1"

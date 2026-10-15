@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      vera_revision:
+        description: Vera runtime commit (full SHA; blank uses the release qualification pin)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -21,16 +27,17 @@ jobs:
     timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: '2'
+      VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || 'e48e1d8f9f701da94554a176d913131e2e6a5277' }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Check qualification driver
         run: python3 .github/scripts/test-native-consumer.py
-      - name: Read matching Vera revision
+      - name: Read pinned Vera runtime revision
         id: vera
         run: |
-          revision="$(python3 .github/scripts/native-consumer.py --vera-ref)"
+          revision="$(python3 .github/scripts/native-consumer.py --vera-ref --runtime-ref "$VERA_RUNTIME_REVISION")"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
@@ -48,12 +55,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: native-consumer-1.98
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-targets: false
           workspaces: |
             .
             .native/vera
       - name: Qualify native provider and replicated authorization
-        run: python3 .github/scripts/native-consumer.py --vera .native/vera
+        run: python3 .github/scripts/native-consumer.py --vera .native/vera --runtime-ref "$VERA_RUNTIME_REVISION"
       - name: Retain numeric qualification results
         if: always()
         uses: actions/upload-artifact@v4

@@ -1207,3 +1207,53 @@ async fn streaming_auto_commit_read_persists_after_partial_consumption() {
     );
     assert_eq!(persisted.schema_version_id(), Some(v2.as_str()));
 }
+
+#[tokio::test]
+async fn readonly_snapshot_history_reuse_preserves_migrated_values() {
+    let mut raw_db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+    raw_db.set_lens_store(Arc::new(SetVerifiedStore::default()));
+    let db = Arc::new(raw_db);
+    db.create_collection(users_schema()).await.unwrap();
+    let v1 = db
+        .get_collection("Users")
+        .unwrap()
+        .unwrap()
+        .version_id()
+        .to_owned();
+    let doc_id = seed_user(&db).await;
+    let v2 = add_verified_version(&db).await;
+    db.set_migration(
+        LensConfig::new(
+            &v1,
+            &v2,
+            LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+        ),
+        None,
+    )
+    .await
+    .unwrap();
+    let fetcher = db::read::lensed::fetcher::LensedDocFetcher::new(
+        db.clone(),
+        db.new_txn(true).await.unwrap(),
+        db.lens_store().clone(),
+        true,
+    );
+    for _ in 0..2 {
+        let docs = fetcher
+            .get_by_ids("Users", &[doc_id.to_string()])
+            .await
+            .unwrap()
+            .into_docs();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(
+            docs[0].get("verified"),
+            Some(&document::NormalValue::Bool(true))
+        );
+        assert_eq!(docs[0].schema_version_id(), Some(v2.as_str()));
+    }
+    let _ = fetcher.take_txn().await.unwrap().discard();
+    assert_eq!(
+        load_user(&db, &doc_id).await.schema_version_id(),
+        Some(v1.as_str())
+    );
+}

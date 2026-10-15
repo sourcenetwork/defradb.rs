@@ -2,9 +2,11 @@ use std::path::PathBuf;
 
 mod cross_runtime;
 mod feature_binaries;
+mod purge;
 
 pub use cross_runtime::{assert_query_equivalent, query_both};
 pub use feature_binaries::{build_cli_variant, vera_cli_binary};
+pub use purge::purge_node;
 
 // Re-export modules from defra-harness
 pub use defra_harness::client;

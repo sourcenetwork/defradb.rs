@@ -237,5 +237,15 @@ pub async fn insert_computed_blocks(
             .await
             .map_err(|e| format!("Failed to write head: {}", e))?;
     }
+    collect_on_commit(
+        blockstore,
+        blocks
+            .block_result
+            .field_cids
+            .iter()
+            .copied()
+            .chain([blocks.block_result.cid]),
+    )
+    .await;
     Ok(())
 }

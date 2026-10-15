@@ -7,11 +7,13 @@
 //! - `build_blocks_from_document`: For P2P broadcast (uses external blockstore)
 //! - `write_document_blocks`: For FFI/local storage (uses transaction stores)
 
+mod batch_signing;
 mod build;
 pub mod collection;
 mod compute;
 mod write;
 
+pub(crate) use batch_signing::collect_on_commit;
 pub use build::build_blocks_from_document;
 pub use collection::write_collection_block;
 pub use compute::{compute_document_blocks, insert_computed_blocks, ComputedBlocks};

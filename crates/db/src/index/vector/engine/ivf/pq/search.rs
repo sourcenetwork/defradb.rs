@@ -29,14 +29,13 @@ impl<S: VectorNodeStore> IvfPq<S> {
         let (coarse, quantizer) = self.trained_parts(state).await?;
 
         // `effort` overrides nprobe the way ef_search does for a graph.
-        let lists = ivf::probe_lists(
-            query.as_slice(),
-            coarse,
-            self.params().nprobe as usize,
-            effort,
-        );
+        let lists = ivf::probe_lists(query.as_slice(), coarse, self.params().nprobe, effort);
 
-        let mut best: BinaryHeap<Ranked> = BinaryHeap::with_capacity(k + 1);
+        // PQ only shortlists. Keeping `rerank` candidates per result and
+        // re-scoring them against the stored vectors is what lets the answer
+        // reach IVF_FLAT's recall rather than stall at the codec's.
+        let pool = k.saturating_mul(self.params().rerank.max(1) as usize);
+        let mut best: BinaryHeap<Ranked> = BinaryHeap::with_capacity(pool + 1);
         let mut residual = vec![0.0f32; state.dimensions as usize];
 
         for list in lists {
@@ -62,29 +61,34 @@ impl<S: VectorNodeStore> IvfPq<S> {
 
             for (id, distance) in hits {
                 best.push(Ranked { id, distance });
-                if best.len() > k {
+                if best.len() > pool {
                     best.pop();
                 }
             }
         }
 
-        // A tombstoned document keeps its code, so liveness is checked once on
-        // the survivors rather than on every candidate.
-        let mut ranked: Vec<Ranked> = best.into_sorted_vec();
-        let mut out = Vec::with_capacity(ranked.len());
-        for candidate in ranked.drain(..) {
-            let live = self
-                .store()
-                .get_node(candidate.id)
-                .await?
-                .is_some_and(|node| !node.deleted);
-            if live {
-                out.push(Neighbor {
-                    id: candidate.id,
-                    distance: candidate.distance,
-                });
+        // Each survivor's node is read for its full vector, and to drop a
+        // deleted document whose code is still in its list.
+        let metric = self.metric();
+        let mut out = Vec::with_capacity(best.len());
+        for candidate in best.into_vec() {
+            let Some(node) = self.store().get_node(candidate.id).await? else {
+                continue;
+            };
+            if node.deleted {
+                continue;
             }
+            out.push(Neighbor {
+                id: candidate.id,
+                distance: metric.distance_stored(query.as_slice(), &node.vector),
+            });
         }
+        out.sort_by(|a, b| {
+            a.distance
+                .total_cmp(&b.distance)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        out.truncate(k);
         Ok(out)
     }
 }
