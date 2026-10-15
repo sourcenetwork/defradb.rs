@@ -2,8 +2,8 @@
 //!
 //! The shape score alone cannot tell a condition that matches every document
 //! (a field all documents share) from one that matches a handful, so a filter
-//! naming both may scan the whole collection. Before planning, each usable
-//! index's scan is counted up to [`ESTIMATE_CAP`] entries.
+//! naming both may scan the whole collection. Before planning, bounded probes look
+//! for a selective candidate before exhausting the final count bound.
 
 use rapidhash::RapidHashMap;
 use schema::CollectionVersion;
@@ -16,14 +16,18 @@ use crate::plan::ScanNode;
 use super::conditions::select_best_index;
 use super::filter_to_scan::filter_to_index_scan;
 
-/// Maximum work budget per candidate; exhausted scans tie at this initial cap.
+/// Final probe bound; exhausted scans tie at this cap.
 pub const ESTIMATE_CAP: u64 = 1024;
+
+const INITIAL_PROBE_CAP: u64 = 32;
 
 /// Capped entry counts by index name, for one filter on one collection.
 pub type IndexEstimates = RapidHashMap<String, u64>;
 
-/// Estimate each usable index's scan with at most [`ESTIMATE_CAP`] work units.
-/// Later caps shrink to the best count plus one, preserving winners and ties.
+/// Probe each candidate cheaply before counting a potentially broad shape
+/// winner. If no count completes, use the final [`ESTIMATE_CAP`] probe. The
+/// preliminary probe adds at most 32 entries per candidate in that case.
+/// Caps shrink to the best count plus one, preserving winners and shape ties.
 ///
 /// Returns an empty map when fewer than two indexes are usable (there is no
 /// choice to inform) or when the fetcher cannot estimate.
@@ -32,7 +36,7 @@ pub async fn estimate_filter_indexes(
     collection: &CollectionVersion,
     filter: &Filter,
 ) -> Result<IndexEstimates> {
-    let mut estimates = IndexEstimates::default();
+    let estimates = IndexEstimates::default();
     if !fetcher.supports_index_queries() {
         return Ok(estimates);
     }
@@ -54,20 +58,39 @@ pub async fn estimate_filter_indexes(
             scans.swap(0, position);
         }
     }
-    let mut cap = ESTIMATE_CAP;
+    let (probes, has_exact_count) =
+        probe_indexes(fetcher, collection, &scans, INITIAL_PROBE_CAP).await?;
+    if has_exact_count || probes.is_empty() {
+        return Ok(probes);
+    }
+    probe_indexes(fetcher, collection, &scans, ESTIMATE_CAP)
+        .await
+        .map(|(counts, _)| counts)
+}
+
+async fn probe_indexes(
+    fetcher: &dyn DocFetcher,
+    collection: &CollectionVersion,
+    scans: &[super::IndexScanParams],
+    initial_cap: u64,
+) -> Result<(IndexEstimates, bool)> {
+    let mut estimates = IndexEstimates::default();
+    let mut cap = initial_cap;
+    let mut has_exact_count = false;
     for params in scans {
-        match fetcher
-            .estimate_index_scan(&collection.name, &params, cap)
-            .await?
-        {
+        let outcome = fetcher
+            .estimate_index_scan(&collection.name, params, cap)
+            .await?;
+        match outcome {
             Some(count) => {
+                has_exact_count |= count < cap;
                 cap = cap.min(count.saturating_add(1));
-                estimates.insert(params.index_name, count);
+                estimates.insert(params.index_name.clone(), count);
             }
-            None => return Ok(IndexEstimates::default()),
+            None => return Ok((IndexEstimates::default(), false)),
         }
     }
-    Ok(estimates)
+    Ok((estimates, has_exact_count))
 }
 
 /// Estimates for one select's filter, so the planner applies them to that select only.
@@ -113,3 +136,7 @@ pub async fn estimate_select(
         estimates,
     }))
 }
+
+#[cfg(test)]
+#[path = "estimate_tests.rs"]
+mod tests;
