@@ -221,6 +221,9 @@ fn assign(sample: &[f32], dimensions: usize, centroids: &Centroids, out: &mut [u
 /// Runs `work(index, slot)` over every slot, split across the machine's
 /// threads. Each slot depends only on its index, so the result is the same
 /// however the slots are split. A target without threads runs serially.
+///
+/// The calling thread drains the same chunk queue as the spawned ones, so a
+/// thread the OS refuses to create leaves fewer workers rather than a panic.
 fn for_each_parallel<T: Send>(slots: &mut [T], work: impl Fn(usize, &mut T) + Sync) {
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     if threads == 1 || slots.len() < PARALLEL_MIN {
@@ -230,15 +233,24 @@ fn for_each_parallel<T: Send>(slots: &mut [T], work: impl Fn(usize, &mut T) + Sy
         return;
     }
     let per = slots.len().div_ceil(threads);
-    let work = &work;
-    std::thread::scope(|scope| {
-        for (chunk, part) in slots.chunks_mut(per).enumerate() {
-            scope.spawn(move || {
-                for (i, slot) in part.iter_mut().enumerate() {
-                    work(chunk * per + i, slot);
-                }
-            });
+    let chunks = std::sync::Mutex::new(slots.chunks_mut(per).enumerate());
+    let drain = || loop {
+        let next = chunks.lock().unwrap_or_else(|e| e.into_inner()).next();
+        let Some((chunk, part)) = next else { return };
+        for (i, slot) in part.iter_mut().enumerate() {
+            work(chunk * per + i, slot);
         }
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..threads {
+            if std::thread::Builder::new()
+                .spawn_scoped(scope, drain)
+                .is_err()
+            {
+                break;
+            }
+        }
+        drain();
     });
 }
 
