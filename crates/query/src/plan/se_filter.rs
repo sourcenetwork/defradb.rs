@@ -111,12 +111,17 @@ impl PlanNode for SEFilterNode {
         &self.document_mapping
     }
 
+    // Rows this node drops would come out of a bounded scan's page, so the
+    // scan may seek but must read until the cursor has its page.
     fn set_cursor_seek(&mut self, seek: CursorSeek) -> bool {
-        self.source.set_cursor_seek(seek)
+        self.source.set_cursor_seek(CursorSeek {
+            fetch_limit: None,
+            ..seek
+        })
     }
 
-    fn set_cursor_fetch_limit(&mut self, limit: u64) -> bool {
-        self.source.set_cursor_fetch_limit(limit)
+    fn set_cursor_fetch_limit(&mut self, _limit: u64) -> bool {
+        false
     }
 
     fn page_info(&self) -> Option<crate::plan::CursorPageInfo> {

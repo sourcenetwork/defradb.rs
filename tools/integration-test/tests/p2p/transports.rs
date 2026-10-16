@@ -1,26 +1,15 @@
-use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use defra_harness::ports::allocate_transport_ports;
 use integration_test::node::{
     start_node, GoNode, KeyringBackend, NodeConfig, RunningNode, RustNode,
 };
-use integration_test::{poll_until, DefraClient, NodeKind};
+use integration_test::{poll_until, rust_binary, DefraClient, NodeKind};
 
 const NODE_COUNT: usize = 2;
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const P2P_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-static RUST_BUILD_DONE: OnceLock<()> = OnceLock::new();
-
-fn build_rust_binary() -> PathBuf {
-    RUST_BUILD_DONE.get_or_init(|| {
-        RustNode::build().expect("failed to build Rust defra binary");
-    });
-    RustNode::workspace_binary_path()
-}
 
 fn client(node: &RunningNode) -> DefraClient {
     client_with_kind(node, NodeKind::Rust)
@@ -110,7 +99,7 @@ async fn wait_for_quic_transport(client: &DefraClient) -> Vec<String> {
 }
 
 async fn start_configured_transport_cluster() -> (tempfile::TempDir, Vec<RunningNode>) {
-    let binary_path = build_rust_binary();
+    let binary_path = rust_binary();
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let mut ports = allocate_transport_ports(NODE_COUNT).expect("allocate node ports");
     let mut nodes = Vec::with_capacity(NODE_COUNT);
@@ -148,7 +137,7 @@ async fn start_configured_transport_cluster() -> (tempfile::TempDir, Vec<Running
 }
 
 async fn start_rust_go_quic_cluster() -> (tempfile::TempDir, RunningNode, RunningNode) {
-    let rust_binary_path = build_rust_binary();
+    let rust_binary_path = rust_binary();
     GoNode::check_available().expect("Go defradb binary not available");
 
     let temp_dir = tempfile::tempdir().expect("create temp dir");

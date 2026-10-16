@@ -92,7 +92,7 @@ pub fn is_lens_block(bytes: &[u8]) -> bool {
 }
 
 /// Maximum size for a single WASM block before chunking.
-/// Must be well below iroh-bitswap's MAX_BUF_SIZE (2 MB) to account for
+/// Must be well below the bitswap crate's 2 MiB frame limit to account for
 /// CBOR encoding overhead and Bitswap message framing.
 const MAX_BLOCK_SIZE: usize = 256 * 1024; // 256 KB
 

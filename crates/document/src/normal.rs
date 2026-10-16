@@ -278,6 +278,28 @@ impl NormalValue {
         self.classification().is_array
     }
 
+    /// Element count of a typed scalar array, the arrays Go's
+    /// `@constraints(size)` applies to. `None` for anything else, including a
+    /// null array.
+    pub fn scalar_array_len(&self) -> Option<usize> {
+        use NormalValue::*;
+        match self {
+            BoolArray(v) | NillableBoolArray(Some(v)) => Some(v.len()),
+            IntArray(v) | NillableIntArray(Some(v)) => Some(v.len()),
+            Float64Array(v) | NillableFloat64Array(Some(v)) => Some(v.len()),
+            Float32Array(v) | NillableFloat32Array(Some(v)) => Some(v.len()),
+            StringArray(v) | NillableStringArray(Some(v)) => Some(v.len()),
+            TimeArray(v) | NillableTimeArray(Some(v)) => Some(v.len()),
+            NillableBoolElementArray(v) => Some(v.len()),
+            NillableIntElementArray(v) => Some(v.len()),
+            NillableFloat64ElementArray(v) => Some(v.len()),
+            NillableFloat32ElementArray(v) => Some(v.len()),
+            NillableStringElementArray(v) => Some(v.len()),
+            NillableTimeElementArray(v) => Some(v.len()),
+            _ => None,
+        }
+    }
+
     // === Type-specific accessors ===
 
     /// Get as bool if this is a Bool variant.

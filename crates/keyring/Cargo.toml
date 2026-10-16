@@ -17,7 +17,7 @@ system = ["dep:keyring_crate"]
 
 [dependencies]
 thiserror.workspace = true
-base64 = "0.22"
+base64 = "0.23"
 zeroize = "1.8"
 tempfile = "3"
 

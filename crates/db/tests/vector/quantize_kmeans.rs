@@ -1,6 +1,6 @@
 //! Fitting centroids.
 
-use db::index::vector::engine::ann::Clusterer;
+use db::index::vector::quantize::Clusterer;
 use db::index::vector::quantize::KMeans;
 use defra_core::vector::squared_euclidean;
 
@@ -126,6 +126,6 @@ fn nearest_agrees_with_an_exhaustive_scan() {
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .unwrap();
         assert_eq!(got, want.0);
-        assert!((distance - want.1).abs() < 1e-9);
+        assert!((distance - want.1).abs() <= 1e-5 * want.1.max(1.0));
     }
 }

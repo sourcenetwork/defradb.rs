@@ -524,7 +524,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     continue;
                 }
                 peerstore
-                    .complete_retry_scope(peer_id.as_str(), &doc_id, &collection_id, false)
+                    .complete_retry_scope(
+                        peer_id.as_str(),
+                        &doc_id,
+                        &collection_id,
+                        false,
+                        &current_heads
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                    )
                     .await
                     .map_err(|error| format!("failed to clear replay marker: {error}"))?;
             }
@@ -765,7 +774,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
             .await?
         {
             peerstore
-                .complete_retry_scope(peer_id.as_str(), doc_id, collection_id, false)
+                .complete_retry_scope(peer_id.as_str(), doc_id, collection_id, false, &[])
                 .await
                 .map_err(|error| format!("failed to clear filtered retry marker: {error}"))?;
             return Ok(());

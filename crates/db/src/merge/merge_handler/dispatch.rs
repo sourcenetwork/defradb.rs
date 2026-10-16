@@ -346,6 +346,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 self.process_collection_definition_delta(cid, &block, payload, &metadata)
                     .await
             }
+            CrdtDelta::Immutable(_) => Ok(MergeOutcome::terminal_skip(
+                "immutable block merged via its composite",
+            )),
             CrdtDelta::CollectionSet(_) => {
                 tracing::debug!(cid = %cid, "CollectionSet delta - skipping");
                 Ok(MergeOutcome::terminal_skip("collection set delta"))

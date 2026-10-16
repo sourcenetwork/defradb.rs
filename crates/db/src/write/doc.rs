@@ -199,6 +199,16 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
 
+        crate::search::set_embedding(
+            &collection.schema().vector_embeddings,
+            &mut doc,
+            true,
+            None,
+            &self.db.options().embedding_config(),
+        )
+        .await
+        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
+
         self.db
             .validate_downsample_write(&datastore, &systemstore, collection.schema(), &doc, None)
             .await
@@ -226,7 +236,6 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 query::error::QueryError::execution(format!("failed to get headstore: {}", e))
             })?;
 
-            let schema_version_id = collection.version_id();
             let enc_config = get_encryption_config();
             let sign_config = get_signing_config();
             let kms = self.db.kms();
@@ -235,7 +244,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 &blockstore,
                 &headstore,
                 &doc,
-                schema_version_id,
+                collection.schema(),
                 identity,
                 None,
                 enc_config.as_ref(),
@@ -362,7 +371,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         &self,
         collection_name: &str,
         mut doc: Document,
-        modified_fields: rapidhash::RapidHashSet<String>,
+        mut modified_fields: rapidhash::RapidHashSet<String>,
     ) -> query::error::Result<UpdateResult> {
         self.db
             .check_node_access(None, acp::nac::NodePermission::DocumentUpdate)
@@ -389,6 +398,53 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             })?;
         doc.set_id(canonical_doc_id.clone());
 
+        // Read the PRE-WRITE committed doc ONCE (before the provisional blob
+        // write below). It decides which fields actually change, and each
+        // counter op records its value as the reconcile base, replicating the
+        // inline `apply_local_counter_deltas` semantics. Re-reading at finalize
+        // would observe the already-overwritten provisional blob and
+        // double-apply the delta for a PCounter (#1044).
+        let committed_pre_write = collection
+            .get_with_datastore(&datastore, doc_short_id, &canonical_doc_id)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+
+        // A field that already holds the written value needs no block: its
+        // LWW priority would only re-assert the current state. Counter inputs
+        // are deltas, an explicit encryption config re-keys every field, and a
+        // downsample source records every write as a sample. A document stored
+        // under an older version is compared only after lensing, which this
+        // raw read skips, so it is written in full.
+        let downsample_source = self
+            .db
+            .is_downsample_source(collection_name)
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        if get_encryption_config().is_none() && !downsample_source {
+            if let Some(committed) = committed_pre_write
+                .as_ref()
+                .filter(|d| d.schema_version_id() == Some(collection.version_id()))
+            {
+                modified_fields.retain(|field_name| {
+                    doc.get_counter_delta(field_name).is_some()
+                        || doc.get(field_name) != committed.get(field_name)
+                });
+                if modified_fields.is_empty() {
+                    return Ok(UpdateResult::new(committed.clone(), 0));
+                }
+            }
+        }
+
+        let generated = crate::search::set_embedding(
+            &collection.schema().vector_embeddings,
+            &mut doc,
+            false,
+            Some(&modified_fields),
+            &self.db.options().embedding_config(),
+        )
+        .await
+        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
+        modified_fields.extend(generated);
+
         self.db
             .validate_downsample_write(
                 &datastore,
@@ -408,24 +464,6 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         // interactive txn from holding the process-wide gate over its
         // user-controlled lifetime. See `InteractiveTxnCounter.tla`.
         let mut counter_ops = Vec::new();
-        // Read the PRE-WRITE committed doc ONCE (before the provisional blob write
-        // below) so each counter op records its pre-update committed value as the
-        // reconcile base — replicating the inline `apply_local_counter_deltas`
-        // semantics. Re-reading at finalize would observe the already-overwritten
-        // provisional blob and double-apply the delta for a PCounter (#1044).
-        let committed_pre_write = if collection
-            .schema()
-            .fields
-            .iter()
-            .any(|f| f.crdt_type.is_counter() && doc.get_counter_delta(&f.name).is_some())
-        {
-            collection
-                .get_with_datastore(&datastore, doc_short_id, &canonical_doc_id)
-                .await
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?
-        } else {
-            None
-        };
         for field in &collection.schema().fields {
             if !field.crdt_type.is_counter() {
                 continue;
@@ -482,7 +520,6 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 query::error::QueryError::execution(format!("failed to get headstore: {}", e))
             })?;
 
-            let schema_version_id = collection.version_id();
             let enc_config = get_encryption_config();
             let sign_config = get_signing_config();
             let kms = self.db.kms();
@@ -491,7 +528,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 &blockstore,
                 &headstore,
                 &doc,
-                schema_version_id,
+                collection.schema(),
                 DocStorageIdentity::new(collection.resolved_root_id(), doc_short_id),
                 Some(&modified_fields),
                 enc_config.as_ref(),

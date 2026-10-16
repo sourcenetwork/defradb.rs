@@ -151,6 +151,19 @@ where
             let value = match self.load(&link.link).await? {
                 None => FieldValue::NotHeld(link.link),
                 Some(field) if field.encryption.is_some() => FieldValue::Encrypted,
+                // An Immutable block stands for its fields, each reported by name.
+                Some(Block {
+                    delta: CrdtDelta::Immutable(payload),
+                    ..
+                }) => {
+                    fields.extend(
+                        payload
+                            .fields
+                            .iter()
+                            .map(|(name, data)| (name.clone(), decode(data))),
+                    );
+                    continue;
+                }
                 Some(field) => match &field.delta {
                     CrdtDelta::Lww(payload) => decode(&payload.data),
                     CrdtDelta::Counter(payload) => decode(&payload.data),

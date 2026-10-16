@@ -157,9 +157,23 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
         });
 
+        // A single filtered aggregate over an indexed collection goes through
+        // the planner, which can scan an index instead of the whole collection.
+        let aggregate_filter_can_use_index = fetcher.supports_index_queries()
+            && !collection.indexes.is_empty()
+            && matches!(
+                select.fields.as_slice(),
+                [Requestable::Aggregate(agg)] if matches!(
+                    agg.targets.as_slice(),
+                    [target] if target.filter.is_some()
+                        && target.limit.is_none()
+                        && target.order.is_none()
+                )
+            );
+
         // Handle top-level aggregates specially - return single value, not array
         if is_top_level_aggregate {
-            if aggregate_filter_has_relations {
+            if aggregate_filter_has_relations || aggregate_filter_can_use_index {
                 // Use planner path to join relation data before filtering
                 return self
                     .execute_top_level_aggregate_with_planner(

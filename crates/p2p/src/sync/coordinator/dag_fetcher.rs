@@ -237,16 +237,14 @@ pub async fn poll_fetch_dag<B: Blockstore + 'static, T: P2PTransport>(
 
 /// Hang up on a connection whose Bitswap is dead while the connection lives.
 ///
-/// A partition that never closes the socket leaves the libp2p per-peer
-/// message queue stopped on the outbound substream timeout
-/// (`iroh-bitswap/src/client/message_queue.rs`: a failed send ends the queue
-/// actor). Every later want is dropped before it is transmitted, and only a
-/// fresh connection rebuilds the queue, so the per-root clock would refetch
-/// over the same dead connection forever.
+/// A partition that never closes the socket can leave a peer's Bitswap
+/// queue dead on the outbound substream timeout, so every later want is
+/// dropped before it is transmitted and the per-root clock would refetch over
+/// the same dead connection forever. The bitswap crate keeps no long-lived
+/// per-peer queue (each send stands alone), but Go peers do.
 ///
-/// This is defence in depth for the half of the mesh the beetle fix cannot
-/// reach — Go peers, and send failures on transports that keep their own
-/// queues — so it is deliberately narrow. Every gate must hold:
+/// This is defence in depth for those Go peers, and for send failures on
+/// transports that keep their own queues, so it is deliberately narrow. Every gate must hold:
 ///
 /// - **libp2p only.** Iroh has no Bitswap message queue and retires its own
 ///   unresponsive connections (#1751).

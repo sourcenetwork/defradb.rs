@@ -441,38 +441,40 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .get_collection(collection_name)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
             .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
-        let version_id = collection.version_id().to_string();
         let collection_id = collection.collection_id().to_string();
 
         // Execute the create mutation
         let result = self.inner.create(collection_name, doc).await?;
 
         // Build the block result for broadcast
-        let (cid, block, doc_id_str) = if let (Some(cid), Some(block)) =
-            (result.commit_cid, result.commit_block.as_ref())
-        {
-            (cid, block.clone(), result.doc_id.to_string())
-        } else {
-            // Fallback: build blocks if commit data not available
-            match build_blocks_from_document(&result.document, &version_id, self.sync.blockstore())
+        let (cid, block, doc_id_str) =
+            if let (Some(cid), Some(block)) = (result.commit_cid, result.commit_block.as_ref()) {
+                (cid, block.clone(), result.doc_id.to_string())
+            } else {
+                // Fallback: build blocks if commit data not available
+                match build_blocks_from_document(
+                    &result.document,
+                    collection.schema(),
+                    self.sync.blockstore(),
+                )
                 .await
-            {
-                Ok(br) => (br.cid, br.block, br.doc_id),
-                Err(e) => {
-                    tracing::error!(
-                        doc_id = %result.doc_id,
-                        collection = %collection_name,
-                        error = %e,
-                        "Failed to build blocks for P2P broadcast"
-                    );
-                    return Ok(CreateResult::with_broadcast(
-                        result.doc_id,
-                        result.document,
-                        BroadcastStatus::Failed(format!("Block build failed: {}", e)),
-                    ));
+                {
+                    Ok(br) => (br.cid, br.block, br.doc_id),
+                    Err(e) => {
+                        tracing::error!(
+                            doc_id = %result.doc_id,
+                            collection = %collection_name,
+                            error = %e,
+                            "Failed to build blocks for P2P broadcast"
+                        );
+                        return Ok(CreateResult::with_broadcast(
+                            result.doc_id,
+                            result.document,
+                            BroadcastStatus::Failed(format!("Block build failed: {}", e)),
+                        ));
+                    }
                 }
-            }
-        };
+            };
 
         let block_result = BlockResult {
             cid,
@@ -610,7 +612,6 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             .get_collection(collection_name)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?
             .ok_or_else(|| query::error::QueryError::collection_not_found(collection_name))?;
-        let version_id = collection.version_id().to_string();
         let collection_id = collection.collection_id().to_string();
 
         // Delegate to inner (single transaction for all docs)
@@ -638,7 +639,7 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
             } else {
                 match build_blocks_from_document(
                     &result.document,
-                    &version_id,
+                    collection.schema(),
                     self.sync.blockstore(),
                 )
                 .await

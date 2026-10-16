@@ -2,6 +2,8 @@
 //!
 //! These match the Go `crdt.*Delta` structures for wire compatibility.
 
+use std::collections::BTreeMap;
+
 use cid::Cid;
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +30,43 @@ pub struct LwwDeltaPayload {
     /// The value data (empty = deletion/tombstone)
     #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
+}
+
+/// Composite link name of a document's Immutable block. Reserved: schema
+/// validation rejects a field with this name.
+pub const IMMUTABLE_LINK_NAME: &str = "_immutable";
+
+/// Immutable delta payload: every `@immutable` field of a document, written
+/// once at create in a single block.
+///
+/// An immutable field is set once, so its first value is final and there is
+/// nothing to merge. One block holding all of them replaces one LWW block per
+/// field. A Rust-only delta: Go peers cannot decode it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImmutableDeltaPayload {
+    /// Priority (always 1: written by the genesis composite)
+    pub priority: u64,
+
+    /// Collection version identifier
+    #[serde(rename = "collectionVersionID")]
+    pub schema_version_id: String,
+
+    /// Field name to CBOR-encoded value, as an LWW delta's `data`
+    pub fields: BTreeMap<String, serde_bytes::ByteBuf>,
+}
+
+impl ImmutableDeltaPayload {
+    /// The fields as the LWW deltas they replace, in field-name order.
+    pub fn lww_deltas(&self) -> impl Iterator<Item = LwwDeltaPayload> + '_ {
+        self.fields
+            .iter()
+            .map(|(field_name, data)| LwwDeltaPayload {
+                field_name: field_name.clone(),
+                priority: self.priority,
+                schema_version_id: self.schema_version_id.clone(),
+                data: data.to_vec(),
+            })
+    }
 }
 
 /// Counter delta payload for block embedding

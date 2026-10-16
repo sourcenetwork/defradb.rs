@@ -550,9 +550,12 @@ where
         hooks.install(&database);
     }
     let database = Arc::new(database);
-    let background_tasks = Arc::new(BackgroundTasks::new(Some(
+    // The vector sweep rebuilds HNSW graphs and merges DiskANN pending
+    // inserts; without it an embedded DiskANN index never merges.
+    let background_tasks = Arc::new(BackgroundTasks::new([
         database.clone().start_downsample_task(),
-    )));
+        database.clone().start_vector_rebuild_task(),
+    ]));
 
     #[cfg(any(feature = "libp2p", feature = "iroh"))]
     let sync_config = SyncConfig {

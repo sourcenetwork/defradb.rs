@@ -72,9 +72,13 @@ where
 
     let mut doc = Document::new();
     doc.set("body", "hello".to_string());
-    let built = db::block::builder::build_blocks_from_document(&doc, version_id, &blockstore)
-        .await
-        .unwrap();
+    let built = db::block::builder::build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version(version_id),
+        &blockstore,
+    )
+    .await
+    .unwrap();
 
     let baseline = total_key_count(&store).await;
 

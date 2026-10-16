@@ -13,6 +13,7 @@ pub mod push_docs_creator;
 pub mod push_docs_replay;
 pub mod redriven_sink;
 pub mod replication;
+pub mod replication_ack;
 pub mod se;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod se_key_handle;
@@ -40,6 +41,7 @@ pub use replication::{
     create_replication_stack_with_max_merge_depth, load_document_head_blocks,
     load_persisted_collections, ReplicationStack,
 };
+pub use replication_ack::replication_acknowledged;
 pub use se::{
     fetch_doc_ids, generate_doc_artifacts, generate_field_artifact, store_artifacts, FieldQuery,
 };

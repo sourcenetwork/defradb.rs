@@ -1,7 +1,7 @@
 //! PushLog, TwoStream, DocSync, BranchableSync, and SE messaging commands.
 
+use ::bitswap::Store;
 use cid::Cid;
-use iroh_bitswap::Store;
 use libp2p::PeerId;
 use tracing::debug;
 

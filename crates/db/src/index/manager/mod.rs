@@ -25,19 +25,6 @@ use storage::keys::IndexIDSequenceKey;
 pub mod doc_source;
 pub use doc_source::{DocumentSource, SliceSource};
 
-/// How a live unique conflict was resolved during merge or index rebuild (#1111/#1308).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MergeConflictOutcome {
-    /// No conflict, or the stale-entry heal handled it.
-    Clean,
-    /// The incoming document won the deterministic pick and now holds the
-    /// unique entry; the previous holder is no longer indexed.
-    IncomingIndexed,
-    /// The existing holder won; the incoming document is persisted but not
-    /// indexed for the conflicting values.
-    IncomingUnindexed,
-}
-
 /// Result of a bulk index operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BulkIndexResult {
@@ -697,12 +684,12 @@ impl IndexManager {
         doc_short_id: u64,
         doc_id: &str,
         values: &[document::NormalValue],
-    ) -> std::result::Result<MergeConflictOutcome, storage::corekv::Error> {
+    ) -> std::result::Result<Option<events::UniqueIndexConflictData>, storage::corekv::Error> {
         match self
             .save_healing_stale_unique(datastore, index, doc_short_id, values)
             .await
         {
-            Ok(()) => Ok(MergeConflictOutcome::Clean),
+            Ok(()) => Ok(None),
             Err(storage::corekv::Error::UniqueConstraintViolation) => {
                 let IndexType::Unique(unique) = index else {
                     return Err(storage::corekv::Error::UniqueConstraintViolation);
@@ -728,7 +715,12 @@ impl IndexManager {
                         "unique index conflict: incoming document wins the \
                          deterministic pick; the previous holder is no longer indexed"
                     );
-                    Ok(MergeConflictOutcome::IncomingIndexed)
+                    Ok(Some(events::UniqueIndexConflictData {
+                        collection_id: self.collection_id.to_string(),
+                        index: index.description().name.clone(),
+                        winner_doc_id: doc_id.to_string(),
+                        unindexed_doc_id: holder_doc_id.to_string(),
+                    }))
                 } else {
                     tracing::error!(
                         collection_id = %self.collection_id,
@@ -738,7 +730,12 @@ impl IndexManager {
                         "unique index conflict: existing holder wins the \
                          deterministic pick; the incoming document is persisted unindexed"
                     );
-                    Ok(MergeConflictOutcome::IncomingUnindexed)
+                    Ok(Some(events::UniqueIndexConflictData {
+                        collection_id: self.collection_id.to_string(),
+                        index: index.description().name.clone(),
+                        winner_doc_id: holder_doc_id.to_string(),
+                        unindexed_doc_id: doc_id.to_string(),
+                    }))
                 }
             }
             Err(other) => Err(other),
@@ -754,29 +751,32 @@ impl IndexManager {
         doc: &Document,
         doc_short_id: u64,
         schema: &CollectionVersion,
-    ) -> Result<()> {
+    ) -> Result<Vec<events::UniqueIndexConflictData>> {
         require_doc_short_id(doc_short_id)?;
         let doc_id = doc
             .id()
             .ok_or_else(|| Error::InvalidDocument("document must have an ID".to_string()))?
             .to_string();
         let mut mutable_datastore = datastore.clone();
+        let mut conflicts = Vec::new();
         for index in self.indexes.values() {
             let value_sets = self.extract_index_values(doc, index.description(), schema)?;
             for values in &value_sets {
-                self.save_resolving_unique_conflict(
-                    &mut mutable_datastore,
-                    systemstore,
-                    index,
-                    doc_short_id,
-                    &doc_id,
-                    values,
-                )
-                .await
-                .map_err(Error::Storage)?;
+                conflicts.extend(
+                    self.save_resolving_unique_conflict(
+                        &mut mutable_datastore,
+                        systemstore,
+                        index,
+                        doc_short_id,
+                        &doc_id,
+                        values,
+                    )
+                    .await
+                    .map_err(Error::Storage)?,
+                );
             }
         }
-        Ok(())
+        Ok(conflicts)
     }
 
     /// Merge-path variant of [`Self::on_document_update`]: resolves live
@@ -789,13 +789,14 @@ impl IndexManager {
         new_doc: &Document,
         doc_short_id: u64,
         schema: &CollectionVersion,
-    ) -> Result<()> {
+    ) -> Result<Vec<events::UniqueIndexConflictData>> {
         require_doc_short_id(doc_short_id)?;
         let doc_id = new_doc
             .id()
             .ok_or_else(|| Error::InvalidDocument("document must have an ID".to_string()))?
             .to_string();
         let mut mutable_datastore = datastore.clone();
+        let mut conflicts = Vec::new();
         for index in self.indexes.values() {
             let old_value_sets = self.extract_index_values(old_doc, index.description(), schema)?;
             let new_value_sets = self.extract_index_values(new_doc, index.description(), schema)?;
@@ -807,20 +808,22 @@ impl IndexManager {
                         .map_err(Error::Storage)?;
                 }
                 for new_values in &new_value_sets {
-                    self.save_resolving_unique_conflict(
-                        &mut mutable_datastore,
-                        systemstore,
-                        index,
-                        doc_short_id,
-                        &doc_id,
-                        new_values,
-                    )
-                    .await
-                    .map_err(Error::Storage)?;
+                    conflicts.extend(
+                        self.save_resolving_unique_conflict(
+                            &mut mutable_datastore,
+                            systemstore,
+                            index,
+                            doc_short_id,
+                            &doc_id,
+                            new_values,
+                        )
+                        .await
+                        .map_err(Error::Storage)?,
+                    );
                 }
             }
         }
-        Ok(())
+        Ok(conflicts)
     }
 
     /// Update indexes when a document is created.

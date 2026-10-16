@@ -169,3 +169,31 @@ fn subscription_registration_cannot_escape_close() {
         ));
     }
 }
+
+#[tokio::test]
+async fn collection_scope_ignores_other_collections() {
+    let bus = ChannelBus::new();
+    let mut changes = bus.subscribe_collection_changes(vec!["watched".into()]);
+    bus.publish(update("other", "noise", false));
+    assert!(changes.try_recv().is_err());
+    bus.publish(update("watched", "doc", false));
+    let batch = changes.recv().await.unwrap();
+    assert_eq!(batch.updates, 1);
+    assert_eq!(batch.changes.len(), 1);
+    assert_eq!(batch.changes[0].collection_id, "watched");
+    assert_eq!(batch.changes[0].doc_id, "doc");
+}
+
+#[tokio::test]
+async fn other_collections_do_not_exhaust_scoped_capacity() {
+    let bus = ChannelBus::with_config(ChannelBusConfig::new().with_event_buffer_size(2));
+    let mut changes = bus.subscribe_collection_changes(vec!["watched".into()]);
+    for id in 0..100 {
+        bus.publish(update("busy", &id.to_string(), true));
+    }
+    bus.publish(update("watched", "doc", true));
+    let batch = changes.recv().await.unwrap();
+    assert!(!batch.resync_required);
+    assert_eq!(batch.updates, 1);
+    assert_eq!(batch.changes[0].doc_id, "doc");
+}

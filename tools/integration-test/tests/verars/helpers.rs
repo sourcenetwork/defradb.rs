@@ -3,7 +3,7 @@ use std::time::Duration;
 use commonware_codec::Encode as _;
 
 use identity::{Identity, IdentityKeyType, RawIdentity};
-use integration_test::{BinarySource, TestCluster, TestIdentity};
+use integration_test::{BinarySource, TestCluster, TestClusterBuilder, TestIdentity};
 
 pub use integration_test::vera_cli_binary as defra_binary;
 
@@ -39,60 +39,53 @@ pub async fn start_hub_cluster() -> vera_harness::cluster::TestCluster {
     cluster
 }
 
-/// Build a DefraDB test cluster configured to use vera.rs for document ACP.
-///
-/// Sets `DEFRA_VERA_RS_ADDRESS` and `DEFRA_ACP_DOCUMENT_TYPE` env vars before
-/// spawning nodes (the CLI reads these at startup). Env vars are cleared after
-/// the cluster is built so they don't leak to other tests.
-pub async fn build_defra_with_vera_rs(
+/// Configure document ACP through arguments retained by the harness on restart.
+pub fn vera_rs_builder(
     hub_rpc_url: &str,
     identity: &str,
     n_nodes: usize,
     p2p: bool,
-) -> TestCluster {
-    let previous_address = std::env::var_os("DEFRA_VERA_RS_ADDRESS");
+) -> TestClusterBuilder {
     let keys = vera_harness::cluster::KeySet::builder()
         .nodes(1)
         .seed(0)
         .build()
         .expect("bootstrap keys");
     let trusted_key = hex::encode(keys.epoch_info().output.public().public().encode());
-    let previous_key = std::env::var_os("DEFRA_VERA_CONSENSUS_KEY");
-    let previous_deployment = std::env::var_os("DEFRA_VERA_DEPLOYMENT_ID");
-    let previous_type = std::env::var_os("DEFRA_ACP_DOCUMENT_TYPE");
-    unsafe {
-        std::env::set_var("DEFRA_VERA_RS_ADDRESS", hub_rpc_url);
-        std::env::set_var("DEFRA_VERA_CONSENSUS_KEY", trusted_key);
-        std::env::set_var("DEFRA_VERA_DEPLOYMENT_ID", "9001");
-        std::env::set_var("DEFRA_ACP_DOCUMENT_TYPE", "verars");
-    }
-
     let mut builder = TestCluster::builder()
         .rust_nodes(n_nodes)
         .with_keyring()
-        .with_rust_binary(BinarySource::Path(defra_binary()));
+        .with_rust_binary(BinarySource::Path(defra_binary()))
+        .with_extra_rust_args([
+            "--vera-rs-address".to_owned(),
+            hub_rpc_url.to_owned(),
+            "--vera-consensus-key".to_owned(),
+            trusted_key,
+            "--vera-deployment-id".to_owned(),
+            "9001".to_owned(),
+            "--document-acp-type".to_owned(),
+            "verars".to_owned(),
+        ]);
     for index in 0..n_nodes {
         builder = builder.with_node_identity(index, identity.to_string());
     }
     if p2p {
         builder = builder.with_p2p();
     }
-    let cluster = builder.build().await;
+    builder
+}
 
-    unsafe {
-        for (name, value) in [
-            ("DEFRA_VERA_RS_ADDRESS", previous_address),
-            ("DEFRA_VERA_CONSENSUS_KEY", previous_key),
-            ("DEFRA_VERA_DEPLOYMENT_ID", previous_deployment),
-            ("DEFRA_ACP_DOCUMENT_TYPE", previous_type),
-        ] {
-            match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
-            }
-        }
-    }
-    cluster.expect("build defra cluster")
+/// Build a DefraDB test cluster configured to use vera.rs for document ACP.
+pub async fn build_defra_with_vera_rs(
+    hub_rpc_url: &str,
+    identity: &str,
+    n_nodes: usize,
+    p2p: bool,
+) -> TestCluster {
+    vera_rs_builder(hub_rpc_url, identity, n_nodes, p2p)
+        .build()
+        .await
+        .expect("build defra cluster")
 }
 
 pub async fn policy_exists(hub_rpc_url: &str, policy_id: &str) -> bool {

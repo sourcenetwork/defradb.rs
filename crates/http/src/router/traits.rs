@@ -319,6 +319,20 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
         timeout: Option<std::time::Duration>,
     ) -> P2PResult<()>;
 
+    /// For each of `doc_ids`, whether replicator `peer_id` acknowledged the
+    /// heads this node currently holds for it, with no retry outstanding. A
+    /// newer local write reads `false` until the peer acknowledges again.
+    async fn replication_acknowledged(
+        &self,
+        _peer_id: &str,
+        _collection_name: &str,
+        _doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        Err(P2PError::unsupported(
+            "replication acknowledgement is unavailable",
+        ))
+    }
+
     /// Sync a branchable collection from connected peers.
     async fn sync_branchable_collection(&self, collection_id: &str) -> P2PResult<()>;
 

@@ -4,7 +4,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 
 use base64::Engine;
 use cid::Cid;
-use defra_core::block::{Block, Signature};
+use defra_core::block::{Block, CrdtDelta, Signature};
 use document::Document;
 use serde_json::{json, Value as JsonValue};
 use storage::corekv::Store;
@@ -58,16 +58,53 @@ impl<S: Store> CommitsFetcher<S> {
             .map_err(|e| Error::Serialization(format!("Failed to decode signature block: {}", e)))
     }
 
-    /// Convert a block to a commit document.
+    /// A block's commit documents, keeping only those for `field_filter` when
+    /// one is given.
     ///
-    /// Loads linked blocks and head blocks to populate the `height` field
-    /// in nested link/head objects, matching Go DefraDB behavior.
-    pub(super) async fn block_to_commit_doc(
+    /// An Immutable block is one commit per field it carries, each with that
+    /// field's value: readers of a field's commits see it as the LWW block it
+    /// replaces.
+    pub(super) async fn block_to_commit_docs(
         &self,
         txn: &mut DbTxn<S>,
         cid: &Cid,
         block: &Block,
         doc_id: Option<&str>,
+        field_filter: Option<&str>,
+    ) -> Result<Vec<Document>> {
+        let views = match &block.delta {
+            CrdtDelta::Immutable(payload) => payload
+                .fields
+                .iter()
+                .map(|(name, data)| (Some(name.clone()), Some(data.to_vec())))
+                .collect(),
+            delta => vec![(self.get_field_name(delta), self.get_delta_data(delta))],
+        };
+        let mut docs = Vec::new();
+        for (field_name, data) in views {
+            if field_filter.is_some_and(|filter| field_name.as_deref() != Some(filter)) {
+                continue;
+            }
+            docs.push(
+                self.block_to_commit_doc(txn, cid, block, doc_id, field_name, data)
+                    .await?,
+            );
+        }
+        Ok(docs)
+    }
+
+    /// Convert a block to a commit document.
+    ///
+    /// Loads linked blocks and head blocks to populate the `height` field
+    /// in nested link/head objects, matching Go DefraDB behavior.
+    async fn block_to_commit_doc(
+        &self,
+        txn: &mut DbTxn<S>,
+        cid: &Cid,
+        block: &Block,
+        doc_id: Option<&str>,
+        field_name: Option<String>,
+        delta_data: Option<Vec<u8>>,
     ) -> Result<Document> {
         tracing::debug!(
             cid = %cid,
@@ -80,7 +117,6 @@ impl<S: Store> CommitsFetcher<S> {
         map.insert("cid".to_string(), json!(cid.to_string()));
         map.insert("height".to_string(), json!(block.delta.priority() as i64));
 
-        let field_name = self.get_field_name(&block.delta);
         map.insert(
             "fieldName".to_string(),
             field_name.map(|s| json!(s)).unwrap_or(JsonValue::Null),
@@ -91,7 +127,6 @@ impl<S: Store> CommitsFetcher<S> {
             doc_id.map(|s| json!(s)).unwrap_or(JsonValue::Null),
         );
 
-        let delta_data = self.get_delta_data(&block.delta);
         if let Some(data) = delta_data {
             map.insert(
                 "delta".to_string(),

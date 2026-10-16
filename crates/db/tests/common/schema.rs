@@ -58,6 +58,7 @@ pub fn vector_kind() -> IndexKind {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     })
 }
 
@@ -71,4 +72,10 @@ pub fn test_collection() -> CollectionVersion {
             FieldDescription::new("2", "x", FieldKind::int()),
         ],
     )
+}
+
+/// A collection at `version_id` with no fields, for building blocks of a
+/// document whose fields are all mutable.
+pub fn version(version_id: &str) -> CollectionVersion {
+    CollectionVersion::new("Test", version_id, "col-test", vec![])
 }

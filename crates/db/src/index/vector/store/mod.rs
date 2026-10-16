@@ -4,8 +4,10 @@
 //! database at all. Any medium can back this: the in-memory store here, or a
 //! transactional KV adapter.
 
+pub mod kv;
 pub mod memory;
 
+pub use kv::KvNodeStore;
 pub use memory::MemoryNodeStore;
 
 use bytes::Bytes;

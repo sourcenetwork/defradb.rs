@@ -522,8 +522,16 @@ impl<S: Store> VersionedFetcher<S> {
         let mut is_deleted = false;
         let mut max_composite_priority: u64 = 0;
 
-        for (_cid, block) in blocks {
-            match &block.delta {
+        // An Immutable block replays as the LWW field deltas it replaces.
+        let deltas = blocks.iter().flat_map(|(_, block)| match &block.delta {
+            CrdtDelta::Immutable(payload) => payload
+                .lww_deltas()
+                .map(|delta| std::borrow::Cow::Owned(CrdtDelta::Lww(delta)))
+                .collect(),
+            other => vec![std::borrow::Cow::Borrowed(other)],
+        });
+        for delta in deltas {
+            match delta.as_ref() {
                 CrdtDelta::Lww(payload) => {
                     let field_name = &payload.field_name;
                     let priority = payload.priority;

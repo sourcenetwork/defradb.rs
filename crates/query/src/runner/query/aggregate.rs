@@ -127,16 +127,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
                 // Apply filter if present
                 let filtered_docs: Vec<&crate::planner::Doc> = if let Some(filter) = target_filter {
-                    plan_docs
-                        .iter()
-                        .filter(|doc| {
-                            // Convert Doc to fields Vec for filter evaluation
-                            let fields: Vec<Option<JsonValue>> = (0..mapping.next_index())
-                                .map(|i| doc.get(i).cloned())
-                                .collect();
-                            filter.matches(&fields, &mapping).unwrap_or(false)
-                        })
-                        .collect()
+                    let mut matching = Vec::new();
+                    for doc in &plan_docs {
+                        // Convert Doc to fields Vec for filter evaluation
+                        let fields: Vec<Option<JsonValue>> = (0..mapping.next_index())
+                            .map(|i| doc.get(i).cloned())
+                            .collect();
+                        if filter.matches(&fields, &mapping)? {
+                            matching.push(doc);
+                        }
+                    }
+                    matching
                 } else {
                     plan_docs.iter().collect()
                 };

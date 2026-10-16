@@ -62,7 +62,7 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["e
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "reqwest-blocking-client"], optional = true }
 # Provides the `SCHEMA_URL` constant for the resource's schema declaration,
 # matching Go's `resource.WithSchemaURL(semconv.SchemaURL)`.
-opentelemetry-semantic-conventions = { version = "0.32", optional = true }
+opentelemetry-semantic-conventions = { version = "0.33", optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 
 [lints]

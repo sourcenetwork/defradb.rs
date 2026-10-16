@@ -94,7 +94,6 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             let identity = DocStorageIdentity::new(short_id, doc_short_id);
 
             // Use version_id for collectionVersionID (matches Go's VersionID())
-            let schema_version_id = collection.version_id();
             let enc_config = get_encryption_config();
             let sign_config = get_signing_config();
             tracing::debug!(
@@ -109,7 +108,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &blockstore,
                 &headstore,
                 &doc,
-                schema_version_id,
+                collection.schema(),
                 identity,
                 None,
                 enc_config.as_ref(),
@@ -210,7 +209,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
         let short_id = collection.resolved_root_id();
-        let schema_version_id = collection.version_id().to_string();
+        let schema = std::sync::Arc::new(collection.schema().clone());
         let sign_config = get_signing_config();
         let enc_config = get_encryption_config();
 
@@ -271,7 +270,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 .zip(identities.iter())
                 .map(|(doc, identity)| {
                     let doc_clone = doc.clone();
-                    let schema = schema_version_id.clone();
+                    let schema = schema.clone();
                     let identity = *identity;
                     let enc = enc_config.clone();
                     let sign = sign_config.clone();
@@ -317,7 +316,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             for (doc, identity) in prepared_docs.iter().zip(identities.iter()) {
                 let blocks = compute_document_blocks(
                     doc,
-                    &schema_version_id,
+                    &schema,
                     *identity,
                     enc_config.as_ref(),
                     sign_config.as_ref(),

@@ -170,6 +170,7 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
                 Some(CrdtDelta::Lww(_)) => "lww",
                 Some(CrdtDelta::Counter(_)) => "counter",
                 Some(CrdtDelta::Composite(_)) => "composite",
+                Some(CrdtDelta::Immutable(_)) => "immutable",
                 Some(CrdtDelta::Collection(_)) => "collection",
                 Some(CrdtDelta::CollectionSet(_)) => "collection_set",
                 Some(CrdtDelta::FieldDefinition(_)) => "field_definition",
@@ -190,14 +191,15 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
                 let stats = report.collections.get_mut(id).expect("loaded collection");
                 stats.blocks.record(&pair.key, &pair.value);
                 let field = match &block.delta {
-                    CrdtDelta::Lww(delta) => Some(&delta.field_name),
-                    CrdtDelta::Counter(delta) => Some(&delta.field_name),
+                    CrdtDelta::Lww(delta) => Some(delta.field_name.as_str()),
+                    CrdtDelta::Counter(delta) => Some(delta.field_name.as_str()),
+                    CrdtDelta::Immutable(_) => Some(defra_core::block::IMMUTABLE_LINK_NAME),
                     _ => None,
                 };
                 if let Some(field) = field {
                     stats
                         .fields
-                        .entry(field.clone())
+                        .entry(field.to_string())
                         .or_default()
                         .blocks
                         .record(&pair.key, &pair.value);
@@ -215,7 +217,7 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
                             )
                             .await?;
                         let counts = document_versions
-                            .entry((id.clone(), field.clone()))
+                            .entry((id.clone(), field.to_string()))
                             .or_default();
                         while let Some(owner) = owners.next().await? {
                             if let Ok(doc) = std::str::from_utf8(&owner.key[prefix.len()..]) {

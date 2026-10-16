@@ -579,7 +579,7 @@ impl Blockstore for ConflictOnceBlockstore {
         self.put_attempts.fetch_add(1, Ordering::SeqCst);
         if self
             .remaining_put_conflicts
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 if remaining > 0 {
                     Some(remaining - 1)
                 } else {
@@ -601,7 +601,7 @@ impl Blockstore for ConflictOnceBlockstore {
         self.put_many_attempts.fetch_add(1, Ordering::SeqCst);
         if self
             .remaining_put_many_conflicts
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 if remaining > 0 {
                     Some(remaining - 1)
                 } else {

@@ -8,6 +8,8 @@ mod commits_aggregate;
 mod commits_collection_id;
 #[path = "query/commits_height_filter.rs"]
 mod commits_height_filter;
+#[path = "query/commits_immutable.rs"]
+mod commits_immutable;
 #[path = "query/continuous_rollup.rs"]
 mod continuous_rollup;
 #[path = "query/cross_runtime_indexes.rs"]

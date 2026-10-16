@@ -289,6 +289,14 @@ impl<S: Store> crate::database::DB<S> {
         })
     }
 
+    /// Whether a downsample view reads this collection's commit history.
+    /// Each of its commits is a sample, so a re-written value is data.
+    pub(crate) fn is_downsample_source(&self, collection_name: &str) -> Result<bool> {
+        Ok(!self
+            .downsample_plans(None, Some(collection_name))?
+            .is_empty())
+    }
+
     pub(super) fn downsample_plans(
         &self,
         names_filter: Option<&RapidHashSet<String>>,
@@ -297,19 +305,17 @@ impl<S: Store> crate::database::DB<S> {
         let collections: Vec<CollectionVersion> = self.collections.peek(|cache| {
             cache
                 .values()
+                .filter(|collection| {
+                    let schema = collection.schema();
+                    schema.downsample_interval.is_some()
+                        && names_filter.is_none_or(|names| names.contains(&schema.name))
+                })
                 .map(|collection| collection.schema().clone())
                 .collect()
         });
 
         let mut plans = Vec::new();
         for collection in collections {
-            if collection.downsample_interval.is_none() {
-                continue;
-            }
-            if names_filter.is_some_and(|names| !names.contains(&collection.name)) {
-                continue;
-            }
-
             let plan = self.build_downsample_plan(&collection)?;
             if source_name_filter.is_some_and(|name| name != plan.source.name) {
                 continue;
