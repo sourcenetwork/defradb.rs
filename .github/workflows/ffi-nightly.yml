@@ -1,0 +1,125 @@
+name: FFI Go suite (nightly)
+
+# Runs Go DefraDB's integration suite against the Rust FFI library through
+# tools/ffi-test and the rustffi client pinned by GO_FFI_CLIENT_COMMIT. This is
+# the oracle for "Go's tests pass on Rust"; without a schedule its pass rate
+# goes stale silently.
+#
+# Failing Go tests do not fail the job: the pass rate and the failure list land
+# in the run summary and the reports artifact. The job fails only when the
+# sweep itself breaks (build error, unresolvable pin, a package that cannot
+# compile) or when the pass rate drops below MIN_PASS_RATE.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Space-separated ffi-test packages (empty runs every top-level package)'
+        required: false
+        default: ''
+      mutation_type:
+        description: 'DEFRA_MUTATION_TYPE for the Go suite (empty uses the suite default)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffi-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  MIN_PASS_RATE: '95'
+
+jobs:
+  ffi-sweep:
+    name: Go suite on Rust FFI
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
+    timeout-minutes: 300
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: .github/scripts/install-linux-ci-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ffi-nightly
+      - name: Check out the pinned rustffi client
+        run: |
+          pin=$(sed -nE 's/^pub const GO_FFI_CLIENT_COMMIT: &str = "([0-9a-f]+)";/\1/p' crates/defra-version/src/lib.rs)
+          test -n "$pin"
+          git init -q "$RUNNER_TEMP/defradb"
+          git -C "$RUNNER_TEMP/defradb" fetch -q --depth 1 https://github.com/sourcenetwork/defradb "$pin"
+          git -C "$RUNNER_TEMP/defradb" checkout -q FETCH_HEAD
+          echo "DEFRADB_GO_REPO=$RUNNER_TEMP/defradb" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ runner.temp }}/defradb/go.mod
+          cache-dependency-path: ${{ runner.temp }}/defradb/go.sum
+      - name: Install cbindgen and ffi-test
+        run: |
+          cargo install cbindgen --version 0.28.0 --locked
+          cargo install --path tools/ffi-test --locked
+      - name: Run the Go suite
+        env:
+          # One shared Go build cache: packages run one after another, so the
+          # per-package isolation only multiplies compile time.
+          FFI_TEST_GOCACHE: ${{ runner.temp }}/gocache
+          DEFRA_MUTATION_TYPE: ${{ inputs.mutation_type }}
+        run: |
+          pkgs="${{ inputs.packages }}"
+          if [ -z "$pkgs" ]; then
+            pkgs=$(ffi-test packages | grep '/\|^[a-z_]*$' | cut -d/ -f1 | sort -u)
+          fi
+          build=""
+          for pkg in $pkgs; do
+            ffi-test run "$pkg" $build | tee -a sweep.log || true
+            test -f "$DEFRADB_GO_REPO/tests/clients/rustffi/defra.h"
+            build="--skip-build"
+          done
+      - name: Summarize
+        run: |
+          reports=~/.defra-ffi-reports/runs
+          jq -s '[.[] | {package, total: .summary.total, passed: .summary.passed, failed: .summary.failed, skipped: .summary.skipped}]' \
+            "$reports"/*.json > summary.json
+          read -r pass fail skip < <(jq -r '[map(.passed)|add, map(.failed)|add, map(.skipped)|add] | @tsv' summary.json)
+          rate=$(( pass * 100 / (pass + fail) ))
+          {
+            echo "## Go suite on Rust FFI"
+            echo
+            echo "Rust \`${GITHUB_SHA::9}\`, Go client \`$(git -C "$DEFRADB_GO_REPO" rev-parse --short=9 HEAD)\`"
+            echo
+            echo "**${pass} pass / ${fail} fail / ${skip} skip: ${rate}% of executed tests pass**"
+            echo
+            echo "| Package | Pass | Fail | Skip |"
+            echo "|---|---:|---:|---:|"
+            jq -r 'sort_by(.package)[] | select(.failed > 0) | "| \(.package) | \(.passed) | \(.failed) | \(.skipped) |"' summary.json
+            echo
+            echo "<details><summary>Failing tests</summary>"
+            echo
+            jq -r '.tests[] as $t | select($t.status == "fail") | "- \(.package): \($t.name)"' "$reports"/*.json | sort
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q ' ERR' sweep.log || jq -e '.tests[] | select(.name | endswith("(go test)"))' "$reports"/*.json > /dev/null; then
+            echo "::error::at least one package did not compile or crashed; see the reports artifact"
+            exit 1
+          fi
+          if [ "$rate" -lt "$MIN_PASS_RATE" ]; then
+            echo "::error::pass rate ${rate}% is below ${MIN_PASS_RATE}%"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ffi-test-reports
+          path: |
+            ~/.defra-ffi-reports/runs/*.json
+            summary.json
+            sweep.log
+          retention-days: 30
+          if-no-files-found: ignore
