@@ -20,13 +20,25 @@ use crate::ExplicitReplayAuthorization;
 /// replicator channel drives its retryInterval ladder off error replies
 /// (`replicator.go`), so these overload nacks are orthogonal to the trust/ACP
 /// bypasses fa4a84f7 aligned with Go when it removed the #592 nacks.
-fn build_pushlog_reply(message_id: &str, process_result: &Result<()>) -> PushLogReply {
-    match process_result {
+fn build_pushlog_reply(
+    message_id: &str,
+    process_result: &Result<()>,
+    accepts_retry_after: bool,
+) -> PushLogReply {
+    let reply = match process_result {
         Ok(()) => PushLogReply::success(message_id),
         Err(e) => match e.backpressure_reply_message() {
             Some(nack) => PushLogReply::error(message_id, nack),
             None => PushLogReply::error(message_id, &e.to_string()),
         },
+    };
+    // A duplicate CID needs a retry, not a pause for every document on the peer.
+    if process_result.as_ref().is_err_and(|error| {
+        error.is_rate_limited() || matches!(error, crate::error::Error::PendingDagCapacity { .. })
+    }) {
+        reply.with_retry_after(accepts_retry_after, std::time::Duration::from_secs(2))
+    } else {
+        reply
     }
 }
 
@@ -160,7 +172,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             );
         }
 
-        let reply = build_pushlog_reply(&request.message_id, &process_result);
+        let reply = build_pushlog_reply(
+            &request.message_id,
+            &process_result,
+            request.accepts_retry_after(),
+        );
 
         if let Err(e) = self
             .runtime
@@ -254,7 +270,11 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             )
             .await;
 
-        let mut reply = build_pushlog_reply(&request.message_id, &process_result);
+        let mut reply = build_pushlog_reply(
+            &request.message_id,
+            &process_result,
+            request.accepts_retry_after(),
+        );
 
         if let Err(e) = sign_with_transport(&self.runtime.transport, &mut reply) {
             tracing::error!(
@@ -318,52 +338,5 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use crypto::generate_ed25519;
-    use identity::{Identity, RawIdentity};
-
-    use super::*;
-
-    #[test]
-    fn in_flight_single_flight_suppression_replies_with_backpressure() {
-        let result = Err(crate::error::Error::PushLogInFlight {
-            cid: "bafy-head".to_string(),
-        });
-
-        let reply = build_pushlog_reply("message-1", &result);
-
-        assert_eq!(
-            reply.err_message.as_deref(),
-            Some(crate::error::RATE_LIMITED_MESSAGE)
-        );
-    }
-
-    #[test]
-    fn verifies_capability_embedded_by_transport_generic_sender() {
-        let authorizer = RawIdentity::from_private_key(generate_ed25519().unwrap()).unwrap();
-        let mut request = crate::message::PushLogRequest::new(
-            "doc".to_string(),
-            Vec::new().into(),
-            "collection".to_string(),
-            authorizer.did().unwrap().to_string(),
-            Vec::new().into(),
-        );
-        request.explicit_replay_capability = Some(
-            crate::generate_explicit_replay_capability(
-                &authorizer,
-                "source",
-                "target",
-                "collection",
-                Duration::from_secs(60),
-            )
-            .unwrap(),
-        );
-
-        let authorization =
-            verify_embedded_replay_capability(&request, "source", "target").unwrap();
-
-        assert_eq!(authorization.authorizer_did, request.creator);
-    }
-}
+#[path = "../../../../tests/unit/sync_pushlog.rs"]
+mod tests;

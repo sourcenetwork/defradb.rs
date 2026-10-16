@@ -576,3 +576,111 @@ async fn index_backfill_resumes_after_a_restart() {
         .iter()
         .any(|existing| existing.name == "by_name"));
 }
+
+#[tokio::test]
+async fn ensure_ordinary_index_is_idempotent_and_preserves_collection_identity() {
+    let (_store, db) = open_with_collection("Reconciled", "reconciled-v1", "col-reconciled").await;
+    let mutator = AutoCommitMutator::new(Arc::clone(&db));
+    let doc = create_user(&mutator, "Reconciled", "Ada").await;
+    let before = db
+        .require_collection("Reconciled")
+        .unwrap()
+        .schema()
+        .clone();
+    let (fields, _) = by_name();
+    let first = db
+        .ensure_ordinary_index("Reconciled", "by_name", fields.clone())
+        .await
+        .unwrap();
+    let second = db
+        .ensure_ordinary_index("Reconciled", "by_name", fields)
+        .await
+        .unwrap();
+    assert_eq!(first, second);
+    let after = db
+        .require_collection("Reconciled")
+        .unwrap()
+        .schema()
+        .clone();
+    assert_eq!(before.version_id, after.version_id);
+    assert_eq!(before.collection_id, after.collection_id);
+    assert_eq!(before.fields, after.fields);
+    assert_eq!(index_entries(&db, "Reconciled", first.id).await, 1);
+    assert_eq!(entries_for(&db, "Reconciled", "Ada").await, 1);
+    let stored = mutator
+        .get_for_update("Reconciled", &doc)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.get("name"), Some(&NormalValue::String("Ada".into())));
+    let mut wrong = first.fields;
+    wrong[0].descending = true;
+    assert!(db
+        .ensure_ordinary_index("Reconciled", "by_name", wrong)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn ensure_ordinary_index_reports_existing_backfill_and_failure() {
+    let (_store, db) = open_with_collection("Readiness", "readiness-v1", "col-readiness").await;
+    let (fields, _) = by_name();
+    let index = db
+        .ensure_ordinary_index("Readiness", "by_name", fields.clone())
+        .await
+        .unwrap();
+    let lease = db
+        .register_action_with_subject(
+            "col-readiness",
+            defra_core::Action::BACKFILL_INDEX,
+            &index.id.to_string(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        db.ensure_ordinary_index("Readiness", "by_name", fields.clone())
+            .await,
+        Err(db::Error::ActionInProgress { .. })
+    ));
+    db.fail_action(lease, "backfill failed").await.unwrap();
+    let error = db
+        .ensure_ordinary_index("Readiness", "by_name", fields)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("backfill failed"));
+}
+
+#[tokio::test]
+async fn concurrent_ordinary_index_ensure_creates_one_definition() {
+    let (_store, db) =
+        open_with_collection("ConcurrentEnsure", "concurrent-v1", "col-concurrent").await;
+    let (fields, _) = by_name();
+    let (left, right) = tokio::join!(
+        db.ensure_ordinary_index("ConcurrentEnsure", "by_name", fields.clone()),
+        db.ensure_ordinary_index("ConcurrentEnsure", "by_name", fields.clone()),
+    );
+    let mut ready = Vec::new();
+    for outcome in [left, right] {
+        match outcome {
+            Ok(index) => ready.push(index),
+            Err(db::Error::ActionInProgress { .. }) => {}
+            Err(other) => panic!("unexpected ensure failure: {other}"),
+        }
+    }
+    assert!(!ready.is_empty());
+    let final_index = db
+        .ensure_ordinary_index("ConcurrentEnsure", "by_name", fields)
+        .await
+        .unwrap();
+    assert!(ready.iter().all(|index| index == &final_index));
+    assert_eq!(
+        db.require_collection("ConcurrentEnsure")
+            .unwrap()
+            .schema()
+            .indexes
+            .iter()
+            .filter(|index| index.name == "by_name")
+            .count(),
+        1
+    );
+}

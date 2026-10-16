@@ -25,11 +25,12 @@ pub struct ComputedBlocks {
 /// Accumulates all (key, value) pairs instead of writing to storage.
 pub fn compute_document_blocks(
     doc: &Document,
-    schema_version_id: &str,
+    schema: &CollectionVersion,
     identity: DocStorageIdentity,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
 ) -> Result<ComputedBlocks, String> {
+    let schema_version_id = schema.version_id.as_str();
     let doc_ref_bytes = identity.doc_ref_bytes();
 
     let mut blockstore_entries: Vec<(Vec<u8>, Bytes)> = Vec::new();
@@ -40,8 +41,14 @@ pub fn compute_document_blocks(
 
     let priority: u64 = 1; // Always 1 for creates
 
+    let immutable = compute_immutable_block(doc, schema, encryption_config, signing_config)?;
+
     for (field_name, field_value) in doc.values() {
-        if field_name == "_docID" {
+        if field_name == "_docID"
+            || immutable
+                .as_ref()
+                .is_some_and(|block| block.fields.contains(field_name))
+        {
             continue;
         }
 
@@ -146,6 +153,16 @@ pub fn compute_document_blocks(
         field_cids.push(field_cid);
     }
 
+    if let Some(block) = immutable {
+        if let Some((sig_cid, sig_cbor)) = block.signature.clone() {
+            blockstore_entries.push((sig_cid.to_bytes(), sig_cbor));
+        }
+        blockstore_entries.push((block.cid.to_bytes(), block.bytes.clone()));
+        headstore_entries.extend(block.head_entries(identity.doc_short_id));
+        field_links.push(block.link());
+        field_cids.push(block.cid);
+    }
+
     // Composite encryption CID for doc-level encryption
     let composite_encryption_cid = if let Some(enc) = encryption_config {
         if enc.encrypt_doc {
@@ -237,5 +254,15 @@ pub async fn insert_computed_blocks(
             .await
             .map_err(|e| format!("Failed to write head: {}", e))?;
     }
+    collect_on_commit(
+        blockstore,
+        blocks
+            .block_result
+            .field_cids
+            .iter()
+            .copied()
+            .chain([blocks.block_result.cid]),
+    )
+    .await;
     Ok(())
 }

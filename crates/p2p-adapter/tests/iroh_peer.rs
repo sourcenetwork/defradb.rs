@@ -10,6 +10,14 @@ use p2p::iroh::{IrohDiscoveryConfig, IrohEndpointConfig, IrohRelayModeConfig};
 use storage::RegolithStore;
 
 async fn start_peer(store: Arc<RegolithStore>, strict: bool) -> IrohPeer<RegolithStore> {
+    start_peer_with_bus(store, strict, Arc::new(events::ChannelBus::new())).await
+}
+
+async fn start_peer_with_bus(
+    store: Arc<RegolithStore>,
+    strict: bool,
+    event_bus: Arc<dyn events::Bus>,
+) -> IrohPeer<RegolithStore> {
     let database = Arc::new(
         db::DB::open_from_arc(Arc::clone(&store))
             .await
@@ -29,7 +37,7 @@ async fn start_peer(store: Arc<RegolithStore>, strict: bool) -> IrohPeer<Regolit
     };
     let mut config = IrohPeerConfig::new(endpoint, document_acp);
     config.strict_replicated_doc_access = strict;
-    IrohPeer::start(store, database, Arc::new(events::ChannelBus::new()), config)
+    IrohPeer::start(store, database, event_bus, config)
         .await
         .expect("start peer")
 }
@@ -76,4 +84,51 @@ async fn shutdown_releases_every_store_reference() {
         "{} store references outlived the peer",
         Arc::strong_count(&store) - 1
     );
+}
+
+async fn next_peer_connection(
+    subscription: &mut events::Subscription,
+) -> events::PeerConnectionData {
+    tokio::time::timeout(Duration::from_secs(10), subscription.recv())
+        .await
+        .expect("peer connection event within timeout")
+        .expect("subscription open")
+        .as_peer_connection()
+        .expect("peer connection data")
+        .clone()
+}
+
+/// Connecting and disconnecting a peer reach the event bus, so embedders can
+/// track presence without polling `connected_peers` (#1989).
+#[tokio::test]
+async fn peer_connection_changes_are_published() {
+    let bus = Arc::new(events::ChannelBus::new());
+    let mut connections =
+        events::Bus::subscribe(bus.as_ref(), &[events::EventName::PeerConnection]);
+    let local = start_peer_with_bus(
+        Arc::new(RegolithStore::in_memory().unwrap()),
+        false,
+        bus.clone(),
+    )
+    .await;
+    let remote = start_peer(Arc::new(RegolithStore::in_memory().unwrap()), false).await;
+
+    let remote_addr = remote
+        .ops
+        .shareable_address()
+        .await
+        .expect("remote address")
+        .expect("remote has a shareable address");
+    local.ops.connect_peer(&remote_addr).await.expect("connect");
+
+    let opened = next_peer_connection(&mut connections).await;
+    assert_eq!(opened.peer_id, remote.local_peer_id);
+    assert!(opened.connected);
+
+    remote.shutdown.shutdown().await;
+    let closed = next_peer_connection(&mut connections).await;
+    assert_eq!(closed.peer_id, remote.local_peer_id);
+    assert!(!closed.connected);
+
+    local.shutdown.shutdown().await;
 }

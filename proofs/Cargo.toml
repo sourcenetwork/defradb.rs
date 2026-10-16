@@ -25,7 +25,7 @@ serde_json = "1.0"
 anyhow = "1.0"
 
 [dev-dependencies]
-defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "a5a005e64b23110c604ec8b86784bbdb825432de" }
+defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7d67ddbbb0d3d671b95dfe322b920e2e943c1daa" }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 serial_test = "3"
 

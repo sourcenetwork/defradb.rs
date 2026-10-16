@@ -150,10 +150,10 @@ pub use sync::{
 
 // Re-export bitswap types
 #[cfg(feature = "libp2p-transport")]
+pub use ::bitswap::Store as BitswapStore;
+#[cfg(feature = "libp2p-transport")]
 pub use bitswap::BitswapStoreAdapter;
 pub use bitswap::{AccessMode, ReplicatorRegistry};
-#[cfg(feature = "libp2p-transport")]
-pub use iroh_bitswap::Store as BitswapStore;
 
 /// Query ID for tracking Bitswap operations.
 /// This is a simple wrapper that allows correlating sync requests with completions.

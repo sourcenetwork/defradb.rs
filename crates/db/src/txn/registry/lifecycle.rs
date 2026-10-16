@@ -48,12 +48,10 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     ) -> std::result::Result<(), TransactionError> {
         let ops = txn.take_counter_ops();
         if ops.is_empty() {
-            return txn.force_commit().await.map_err(|e| {
-                TransactionError::execution(format!(
-                    "commit error for transaction '{}': {}",
-                    handle, e
-                ))
-            });
+            return txn
+                .force_commit()
+                .await
+                .map_err(|e| commit_error(handle, e));
         }
 
         // Distinct touched doc ids, sorted for a deterministic (defensive)
@@ -96,9 +94,9 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 
         // IExitCrit: force_commit commits durably, then release_doc_guards drops
         // the per-doc guards AFTER the durable commit.
-        txn.force_commit().await.map_err(|e| {
-            TransactionError::execution(format!("commit error for transaction '{}': {}", handle, e))
-        })
+        txn.force_commit()
+            .await
+            .map_err(|e| commit_error(handle, e))
     }
 
     /// Perform the recorded counter RMWs into the txn datastore and correct the
@@ -383,5 +381,14 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         }
 
         Ok(())
+    }
+}
+
+fn commit_error(handle: &TransactionHandle, error: crate::error::Error) -> TransactionError {
+    let message = format!("commit error for transaction '{handle}': {error}");
+    if error.is_txn_conflict() {
+        TransactionError::conflict(message)
+    } else {
+        TransactionError::execution(message)
     }
 }

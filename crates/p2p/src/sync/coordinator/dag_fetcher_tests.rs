@@ -1231,7 +1231,7 @@ async fn dead_bitswap_publisher_is_disconnected_after_exhaustion() {
 }
 
 /// The same fetch on a transport that owns its own connection retirement.
-/// The beetle message queue does not exist there, so the generic path must
+/// Iroh keeps no Bitswap message queue, so the generic path must
 /// not hang up on an Iroh peer.
 #[tokio::test(start_paused = true)]
 async fn rooted_sync_transports_keep_their_connection_after_exhaustion() {

@@ -109,8 +109,8 @@ impl<S: Store> CommitsFetcher<S> {
 
         let mut commits = Vec::new();
         for owner in selected_owners {
-            commits.push(
-                self.block_to_commit_doc(txn, &cid, &block, owner.as_deref())
+            commits.extend(
+                self.block_to_commit_docs(txn, &cid, &block, owner.as_deref(), None)
                     .await?,
             );
             if let Some(depth) = options.depth {
@@ -160,17 +160,17 @@ impl<S: Store> CommitsFetcher<S> {
                     Err(_) => continue,
                 };
 
-                if let Some(ref field_filter) = options.field_name {
-                    let field_name = self.get_field_name(&block.delta);
-                    if field_name.as_deref() != Some(field_filter.as_str()) {
-                        continue;
-                    }
-                }
-
-                let commit_doc = self
-                    .block_to_commit_doc(txn, &current_cid, &block, doc_id.as_deref())
+                let docs = self
+                    .block_to_commit_docs(
+                        txn,
+                        &current_cid,
+                        &block,
+                        doc_id.as_deref(),
+                        options.field_name.as_deref(),
+                    )
                     .await?;
-                commits.push(commit_doc);
+                // A block the field filter drops still leads to ones it keeps.
+                commits.extend(docs);
 
                 let should_traverse = match options.depth {
                     None => true,
@@ -246,17 +246,16 @@ impl<S: Store> CommitsFetcher<S> {
                 Err(_) => continue,
             };
 
-            if let Some(ref field_filter) = options.field_name {
-                let field_name = self.get_field_name(&block.delta);
-                if field_name.as_deref() != Some(field_filter.as_str()) {
-                    continue;
-                }
-            }
-
-            let commit_doc = self
-                .block_to_commit_doc(txn, &cid, &block, Some(&canonical_doc_id))
-                .await?;
-            commits.push(commit_doc);
+            commits.extend(
+                self.block_to_commit_docs(
+                    txn,
+                    &cid,
+                    &block,
+                    Some(&canonical_doc_id),
+                    options.field_name.as_deref(),
+                )
+                .await?,
+            );
         }
         iter.close().await.map_err(Error::Storage)?;
 
@@ -322,17 +321,16 @@ impl<S: Store> CommitsFetcher<S> {
                     Err(_) => continue,
                 };
 
-                if let Some(ref field_filter) = options.field_name {
-                    let field_name = self.get_field_name(&head_block.delta);
-                    if field_name.as_deref() != Some(field_filter.as_str()) {
-                        continue;
-                    }
-                }
-
-                let commit_doc = self
-                    .block_to_commit_doc(txn, head_cid, &head_block, doc_id)
+                let docs = self
+                    .block_to_commit_docs(
+                        txn,
+                        head_cid,
+                        &head_block,
+                        doc_id,
+                        options.field_name.as_deref(),
+                    )
                     .await?;
-                commits.push(commit_doc);
+                commits.extend(docs);
 
                 Box::pin(self.traverse_depth(
                     txn,

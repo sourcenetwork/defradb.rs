@@ -200,13 +200,15 @@ pub async fn write_document_blocks(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
     doc: &Document,
-    schema_version_id: &str,
+    schema: &CollectionVersion,
     identity: DocStorageIdentity,
     modified_fields: Option<&rapidhash::RapidHashSet<String>>,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
     kms: Option<&std::sync::Arc<dyn kms::KmsService>>,
 ) -> Result<BlockResult, String> {
+    let schema_version_id = schema.version_id.as_str();
+    let immutable_fields = immutable_field_names(schema);
     let doc_ref_bytes = identity.doc_ref_bytes();
 
     let mut field_links: Vec<DAGLink> = Vec::new();
@@ -253,14 +255,27 @@ pub async fn write_document_blocks(
         inherited_encryption_cid(blockstore, &composite_heads).await?
     };
 
+    let immutable = if is_create {
+        compute_immutable_block(doc, schema, encryption_config, signing_config)?
+    } else {
+        None
+    };
+
     for (field_name, field_value) in doc.values() {
         if field_name == "_docID" {
             continue;
         }
 
+        // On update an immutable field is unchanged (validated before blocks
+        // are written), so it needs no block; on create it is in the
+        // Immutable block.
         let should_create_block = match modified_fields {
-            None => true,
-            Some(fields) => fields.contains(field_name),
+            None => !immutable
+                .as_ref()
+                .is_some_and(|block| block.fields.contains(field_name)),
+            Some(fields) => {
+                fields.contains(field_name) && !immutable_fields.contains(field_name.as_str())
+            }
         };
 
         let field_head_entries = if is_create {
@@ -456,6 +471,28 @@ pub async fn write_document_blocks(
         }
     }
 
+    if let Some(block) = immutable {
+        if let Some((sig_cid, sig_cbor)) = &block.signature {
+            blockstore
+                .set(&sig_cid.to_bytes(), sig_cbor)
+                .await
+                .map_err(|e| format!("Failed to store signature block: {}", e))?;
+        }
+        blockstore
+            .set(&block.cid.to_bytes(), &block.bytes)
+            .await
+            .map_err(|e| format!("Failed to store immutable block: {}", e))?;
+        for (key, value) in block.head_entries(identity.doc_short_id) {
+            headstore
+                .set(&key, &value)
+                .await
+                .map_err(|e| format!("Failed to write immutable head: {}", e))?;
+        }
+        field_links.push(block.link());
+        field_cids.push(block.cid);
+        initial_field_cids.push(block.cid);
+    }
+
     let composite_payload = CompositeDeltaPayload {
         schema_version_id: schema_version_id.to_string(),
         priority: composite_priority,
@@ -544,12 +581,11 @@ pub async fn write_document_blocks(
         "Built composite block with field links and wrote heads"
     );
 
-    if let Some(session_key) = defra_core::batch_signing::get_batch_session_key() {
-        for cid in initial_field_cids {
-            defra_core::batch_signing::batch_collect_cid(&session_key, cid);
-        }
-        defra_core::batch_signing::batch_collect_cid(&session_key, composite_cid);
-    }
+    collect_on_commit(
+        blockstore,
+        initial_field_cids.into_iter().chain([composite_cid]),
+    )
+    .await;
 
     Ok(BlockResult {
         cid: composite_cid,
@@ -636,9 +672,7 @@ pub async fn write_delete_block(
         "Built delete composite block (status=2)"
     );
 
-    if let Some(session_key) = defra_core::batch_signing::get_batch_session_key() {
-        defra_core::batch_signing::batch_collect_cid(&session_key, composite_cid);
-    }
+    collect_on_commit(blockstore, [composite_cid]).await;
 
     Ok(BlockResult {
         cid: composite_cid,

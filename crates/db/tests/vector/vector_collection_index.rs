@@ -3,7 +3,7 @@
 
 use db::index::vector::engine::ivf;
 use db::index::vector::index::VectorIndex;
-use db::index::vector::kv_store::KvNodeStore;
+use db::index::vector::store::KvNodeStore;
 use db::index::vector::store::NodeId;
 use db::index::vector::store::VectorNodeStore;
 use document::NormalValue;
@@ -31,6 +31,7 @@ fn vector_config(dimensions: u32) -> VectorIndexDescription {
         ivfpq: None,
         ivfflat: None,
         ssg: None,
+        diskann: None,
     }
 }
 
@@ -110,7 +111,7 @@ fn parameter_validation_requires_pq_m_to_divide_dimensions() {
 async fn parameter_validation_rejects_inferred_pq_width_before_writing() {
     use db::index::vector::engine::{
         ann::VectorIndexEngine,
-        ivfpq::{IvfPq, IvfPqParams},
+        ivf::pq::{IvfPq, IvfPqParams},
     };
     use db::index::vector::store::MemoryNodeStore;
     use defra_core::vector::Metric;
@@ -434,6 +435,7 @@ async fn dropping_a_trained_ivfflat_index_removes_every_key() {
             ..IvfFlatParams::default()
         }),
         ssg: None,
+        diskann: None,
     });
     let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF_FLAT description");
 

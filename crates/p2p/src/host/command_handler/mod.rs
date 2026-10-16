@@ -5,7 +5,7 @@ mod messaging;
 mod network;
 mod pubsub;
 
-use iroh_bitswap::Store;
+use ::bitswap::Store;
 use tracing::{debug, info, warn};
 
 use super::command::HostCommand;

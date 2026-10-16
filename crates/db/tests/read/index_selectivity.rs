@@ -223,7 +223,8 @@ async fn estimation_work_shrinks_after_a_selective_candidate() {
         (r#"{hour: {_eq: "h007"}}"#, 0, None),
         (
             r#"{market: {_eq: "zcat"}, hour: {_ge: "h000"}}"#,
-            ESTIMATE_CAP as usize * 2,
+            // Each broad candidate pays the initial 32-entry probe and the fallback.
+            (ESTIMATE_CAP as usize + 32) * 2,
             Some("Events_market_ASC"),
         ),
     ] {

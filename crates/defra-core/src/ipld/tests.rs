@@ -9,7 +9,8 @@ use super::traversal::{collect_block_links, extract_links, walk_ipld, IpldVisito
 use crate::block::{
     Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CollectionSetDeltaPayload,
     CompositeDeltaPayload, CounterDeltaPayload, CrdtDelta, DAGLink, Encryption,
-    FieldDefinitionDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType,
+    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, LwwDeltaPayload, Signature,
+    SignatureHeader, SignatureType,
 };
 
 fn test_cid() -> cid::Cid {
@@ -109,6 +110,26 @@ fn test_composite_delta_ipld_roundtrip() {
     } else {
         panic!("Expected Composite delta");
     }
+}
+
+#[test]
+fn test_immutable_delta_roundtrips_through_ipld_and_dag_cbor() {
+    let delta = CrdtDelta::Immutable(ImmutableDeltaPayload {
+        priority: 1,
+        schema_version_id: "v1".to_string(),
+        fields: BTreeMap::from([
+            ("author".to_string(), serde_bytes::ByteBuf::from(vec![1, 2])),
+            ("kind".to_string(), serde_bytes::ByteBuf::from(vec![3])),
+        ]),
+    });
+    let block = Block::new(delta, vec![], vec![]);
+
+    let ipld = Ipld::try_from(&block).unwrap();
+    assert_eq!(Block::try_from(&ipld).unwrap().delta, block.delta);
+
+    let bytes = block.to_dag_cbor().unwrap();
+    assert_eq!(Block::from_dag_cbor(&bytes).unwrap().delta, block.delta);
+    assert_eq!(block.delta.schema_version_id(), Some("v1"));
 }
 
 #[test]

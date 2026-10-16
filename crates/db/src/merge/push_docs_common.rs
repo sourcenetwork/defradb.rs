@@ -221,7 +221,16 @@ pub async fn complete_document_retry_if_current<S: storage::corekv::Store>(
         return Err("document heads changed during retry; retaining dirty marker".to_string());
     }
     peerstore
-        .complete_retry_scope(peer_id, doc_id, collection_id, false)
+        .complete_retry_scope(
+            peer_id,
+            doc_id,
+            collection_id,
+            false,
+            &attempted_heads
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        )
         .await
         .map_err(|error| format!("failed to clear current document retry marker: {error}"))
 }
@@ -253,7 +262,7 @@ pub(crate) async fn complete_document_retry_if_absent<S: storage::corekv::Store>
         return Err("document appeared during retry; retaining dirty marker".to_string());
     }
     peerstore
-        .complete_retry_scope(peer_id, doc_id, collection_id, false)
+        .complete_retry_scope(peer_id, doc_id, collection_id, false, &[])
         .await
         .map_err(|error| format!("failed to clear absent document retry marker: {error}"))
 }
@@ -288,7 +297,16 @@ pub(crate) async fn complete_collection_retry_if_current<S: storage::corekv::Sto
         return Err("collection heads changed during retry; retaining dirty marker".to_string());
     }
     peerstore
-        .complete_retry_scope(peer_id, "", collection_id, true)
+        .complete_retry_scope(
+            peer_id,
+            "",
+            collection_id,
+            true,
+            &attempted_heads
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        )
         .await
         .map_err(|error| format!("failed to clear current collection retry marker: {error}"))
 }

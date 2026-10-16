@@ -12,8 +12,8 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::bitswap::Store;
 use futures::StreamExt;
-use iroh_bitswap::Store;
 use libp2p::{
     identity::Keypair,
     multiaddr::Protocol,
@@ -237,14 +237,11 @@ impl Default for P2PHostConfig {
     }
 }
 
-/// One in-flight Bitswap query: its abort handle, a join future the cancel
-/// path awaits so the session stops only once the aborted task is dropped,
-/// and the session id.
+/// One in-flight Bitswap query: its abort handle and the fetch id.
 #[derive(Clone)]
 pub(super) struct BitswapQuery {
     pub(super) abort: tokio::task::AbortHandle,
-    pub(super) joined: futures::future::Shared<futures::future::BoxFuture<'static, ()>>,
-    pub(super) session_id: u64,
+    pub(super) fetch_id: ::bitswap::FetchId,
 }
 
 /// In-flight Bitswap queries by id.
@@ -519,6 +516,9 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let response_streams = control
             .accept(TwoStreamHandler::response_protocol())
             .map_err(|_| Error::Behaviour("Failed to register response protocol".into()))?;
+        let retry_request_streams = control
+            .accept(TwoStreamHandler::retry_request_protocol())
+            .map_err(|_| Error::Behaviour("Failed to register retry request protocol".into()))?;
         let se_request_streams = control
             .accept(TwoStreamHandler::se_request_protocol())
             .map_err(|_| Error::Behaviour("Failed to register SE request protocol".into()))?;
@@ -572,6 +572,7 @@ impl<S: Store + Clone + Send + Sync + 'static> P2PHost<S> {
         let runner = TwoStreamRunner::new(
             pending,
             request_streams,
+            retry_request_streams,
             response_streams,
             se_request_streams,
             se_response_streams,

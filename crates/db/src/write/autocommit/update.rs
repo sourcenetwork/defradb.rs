@@ -22,24 +22,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
 
-        // Generate embeddings if source fields were modified
         let mut doc = doc;
         let mut modified_fields = modified_fields;
-        let embedding_config = self.db.options().embedding_config();
-
-        let generated = crate::search::set_embedding(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            false,
-            Some(&modified_fields),
-            &embedding_config,
-        )
-        .await
-        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {}", e)))?;
-
-        for field in generated {
-            modified_fields.insert(field);
-        }
 
         let input_doc_id = doc
             .id()
@@ -96,13 +80,21 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let fresh_fetcher =
             crate::LensedAutoCommitFetcher::new_without_write_back(Arc::clone(&self.db));
         let canonical_id = canonical_lock_id.to_string();
-        let mut current_doc = fresh_fetcher
+        let Some(mut current_doc) = fresh_fetcher
             .get_by_ids(collection_name, std::slice::from_ref(&canonical_id))
             .await?
             .into_docs()
             .into_iter()
             .next()
-            .ok_or_else(|| query::error::QueryError::document_not_found(canonical_id))?;
+        else {
+            // A delete committed after the caller's snapshot is a stale
+            // snapshot like any other: the retry re-plans and skips the doc.
+            return Err(if expected.is_some() {
+                query::error::QueryError::transaction_conflict("transaction conflict. Please retry")
+            } else {
+                query::error::QueryError::document_not_found(canonical_id)
+            });
+        };
         if let Some(expected) = expected {
             let values_unchanged = expected.values().len() == current_doc.values().len()
                 && expected
@@ -120,6 +112,28 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 ));
             }
         }
+        // Explicit config from the mutation only. A document created
+        // encrypted keeps its encryption because the block writer
+        // inherits it from the previous block, matching Go's
+        // determineBlockEncryption.
+        let enc_config = get_encryption_config();
+        // A field that already holds the written value needs no block: its
+        // LWW priority would only re-assert the current state. Counter inputs
+        // are deltas, an explicit encryption config re-keys every field, and a
+        // downsample source records every write as a sample.
+        let downsample_source = self
+            .db
+            .is_downsample_source(collection_name)
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        if enc_config.is_none() && !downsample_source {
+            modified_fields.retain(|field_name| {
+                doc.get_counter_delta(field_name).is_some()
+                    || doc.get(field_name) != current_doc.get(field_name)
+            });
+            if modified_fields.is_empty() {
+                return Ok(UpdateResult::new(current_doc, 0));
+            }
+        }
         for field_name in &modified_fields {
             if let Some(delta) = doc.get_counter_delta(field_name).cloned() {
                 // Counter inputs are deltas computed from the stale
@@ -132,6 +146,8 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             }
         }
         doc = current_doc;
+
+        let embedding_config = self.db.options().embedding_config();
 
         let txn = self.new_mutation_txn().await?;
 
@@ -199,16 +215,12 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &mut doc,
                 doc_short_id,
                 &index_manager,
+                &mut modified_fields,
+                Some(&embedding_config),
             )
             .await?;
 
             // Use version_id for collectionVersionID (matches Go's VersionID())
-            let schema_version_id = collection.version_id();
-            // Explicit config from the mutation only. A document created
-            // encrypted keeps its encryption because the block writer
-            // inherits it from the previous block, matching Go's
-            // determineBlockEncryption.
-            let enc_config = get_encryption_config();
             // Get signing config from thread-local (set by FFI exec_request)
             let sign_config = get_signing_config();
 
@@ -220,7 +232,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 &blockstore,
                 &headstore,
                 &doc,
-                schema_version_id,
+                collection.schema(),
                 identity,
                 Some(&modified_fields),
                 enc_config.as_ref(),

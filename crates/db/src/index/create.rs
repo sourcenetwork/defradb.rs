@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use futures::channel::oneshot;
-use schema::{IndexDescription, IndexKind, IndexedFieldDescription};
+use schema::{IndexDescription, IndexKind, IndexedFieldDescription, OrderedIndexDescription};
 use storage::corekv::{Key, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
 
@@ -15,6 +15,11 @@ use crate::error::{Error, Result};
 use crate::index::backfill::{encode_progress, BackfillPlan};
 use crate::index::IndexManager;
 use crate::DB;
+
+enum IndexDefinition {
+    Ready(IndexDescription),
+    Backfill(IndexDescription, ActionExecutionLease, BackfillPlan),
+}
 
 impl<S: Store> DB<S> {
     /// Create an index of `kind` over `fields` on `collection_name`, then
@@ -40,9 +45,53 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
-        let (index, lease, plan) = self
-            .define_index(collection_name, name, fields, kind)
+        let definition = self
+            .define_index(collection_name, name, fields, kind, false)
             .await?;
+        self.finish_index_definition(definition).await
+    }
+
+    /// Reconcile a named nonunique ordered index without changing collection
+    /// identity. Concurrent calls either observe the completed index or report
+    /// its existing backfill; they never start another backfill or claim that
+    /// an unfinished or failed index is ready.
+    pub async fn ensure_ordinary_index(
+        self: &Arc<Self>,
+        collection_name: &str,
+        name: &str,
+        fields: Vec<IndexedFieldDescription>,
+    ) -> Result<IndexDescription>
+    where
+        S: 'static,
+    {
+        if name.is_empty() {
+            return Err(Error::Other(
+                "index reconciliation requires a stable name".into(),
+            ));
+        }
+        let definition = self
+            .define_index(
+                collection_name,
+                Some(name),
+                fields,
+                IndexKind::Ordered(OrderedIndexDescription { unique: false }),
+                true,
+            )
+            .await?;
+        self.finish_index_definition(definition).await
+    }
+
+    async fn finish_index_definition(
+        self: &Arc<Self>,
+        definition: IndexDefinition,
+    ) -> Result<IndexDescription>
+    where
+        S: 'static,
+    {
+        let (index, lease, plan) = match definition {
+            IndexDefinition::Ready(index) => return Ok(index),
+            IndexDefinition::Backfill(index, lease, plan) => (index, lease, plan),
+        };
         let (done, outcome) = oneshot::channel();
         let db = Arc::clone(self);
         spawn_task(async move {
@@ -60,7 +109,8 @@ impl<S: Store> DB<S> {
         name: Option<&str>,
         fields: Vec<IndexedFieldDescription>,
         kind: IndexKind,
-    ) -> Result<(IndexDescription, ActionExecutionLease, BackfillPlan)> {
+        reconcile: bool,
+    ) -> Result<IndexDefinition> {
         let collection_id = self
             .require_collection(collection_name)?
             .collection_id()
@@ -69,6 +119,38 @@ impl<S: Store> DB<S> {
             .collection_write_guards(std::iter::once(collection_id.clone()))
             .await?;
         let collection = self.require_collection(collection_name)?;
+        if reconcile {
+            if let Some(index) = collection
+                .schema()
+                .indexes
+                .iter()
+                .find(|index| Some(index.name.as_str()) == name)
+            {
+                if index.fields != fields || index.clone().normalized().kind != Some(kind) {
+                    return Err(Error::Other(format!(
+                        "index '{}' on '{collection_name}' has a different definition",
+                        index.name
+                    )));
+                }
+                if let Some(action) = self
+                    .list_index_actions(&collection_id)
+                    .await?
+                    .get(&index.id)
+                {
+                    if action.status == defra_core::ActionStatus::IN_PROGRESS {
+                        return Err(Error::ActionInProgress {
+                            collection_id,
+                            action: defra_core::Action::BACKFILL_INDEX.value(),
+                        });
+                    }
+                    return Err(Error::Other(format!(
+                        "index '{}' on '{collection_name}' is not ready: {}",
+                        index.name, action.reason
+                    )));
+                }
+                return Ok(IndexDefinition::Ready(index.clone()));
+            }
+        }
         let fence = self.peek_doc_short_id().await?;
 
         let txn = self.new_txn(false).await?;
@@ -124,6 +206,6 @@ impl<S: Store> DB<S> {
         self.publish_started_action(&lease);
         self.reload_cache().await?;
         let plan = BackfillPlan::new(collection_name, &collection_id, &index, fence, 0);
-        Ok((index, lease, plan))
+        Ok(IndexDefinition::Backfill(index, lease, plan))
     }
 }

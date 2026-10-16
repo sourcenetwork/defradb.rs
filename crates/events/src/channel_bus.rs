@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_channel::{Sender, TrySendError};
 use kovan::Atom;
-use rapidhash::{HashMapExt, RapidHashMap};
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 
 use crate::bus::Bus;
 use crate::document_changes::{ChangePublisher, DocumentChangeSubscription};
@@ -185,12 +185,28 @@ impl Bus for ChannelBus {
     }
 
     fn subscribe_document_changes(&self) -> DocumentChangeSubscription {
+        self.observe_document_changes(None)
+    }
+
+    fn subscribe_collection_changes(
+        &self,
+        collection_ids: Vec<String>,
+    ) -> DocumentChangeSubscription {
+        self.observe_document_changes(Some(collection_ids.into_iter().collect()))
+    }
+}
+
+impl ChannelBus {
+    fn observe_document_changes(
+        &self,
+        collections: Option<RapidHashSet<String>>,
+    ) -> DocumentChangeSubscription {
         if self.closed.load(Ordering::Acquire) {
             return DocumentChangeSubscription::closed();
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (publisher, subscription) =
-            DocumentChangeSubscription::new(id, self.config.event_buffer_size);
+            DocumentChangeSubscription::new(id, self.config.event_buffer_size, collections);
 
         // Re-checked inside the closure: if `close()` clears the map between
         // our check above and this commit, the retry sees `closed` true and

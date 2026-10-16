@@ -282,6 +282,7 @@ impl From<TransactionError> for HttpError {
             TransactionError::NotFound(_) => HttpError::NotFound(message),
             TransactionError::AlreadyFinalized(_) => HttpError::Conflict(message),
             TransactionError::Execution(message) => http_error_from_backend_message(message),
+            TransactionError::Conflict(_) => HttpError::TransactionConflict,
             TransactionError::LockPoisoned(_) => HttpError::Internal(message),
             TransactionError::NotSupported(_) => HttpError::BadRequest(message),
         }

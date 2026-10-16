@@ -415,7 +415,7 @@ pub fn parse_request_with_variables(
 }
 
 /// Parse a GraphQL request with variable substitution and custom limits.
-#[instrument(name = "query.parse", skip(query, variables, limits), fields(query_len = query.len()))]
+#[instrument(name = "query.parse", skip(query, variables, limits), fields(query_len = query.len() as i64))]
 pub fn parse_request_with_limits(
     query: &str,
     variables: Option<&RapidHashMap<String, JsonValue>>,

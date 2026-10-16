@@ -9,18 +9,16 @@ use p2p::sync::{ReplicationConfig, ReplicationLoop};
 use crate::node::EmbeddedMergeHandler;
 
 pub struct BackgroundTasks {
-    downsample_task: SegQueue<tokio::task::JoinHandle<()>>,
+    tasks: SegQueue<tokio::task::JoinHandle<()>>,
 }
 
 impl BackgroundTasks {
-    pub(crate) fn new(downsample_task: Option<tokio::task::JoinHandle<()>>) -> Self {
-        let slot = SegQueue::new();
-        if let Some(task) = downsample_task {
-            slot.push(task);
+    pub(crate) fn new(tasks: impl IntoIterator<Item = tokio::task::JoinHandle<()>>) -> Self {
+        let queue = SegQueue::new();
+        for task in tasks {
+            queue.push(task);
         }
-        Self {
-            downsample_task: slot,
-        }
+        Self { tasks: queue }
     }
 
     /// Stop and await all node-owned background tasks.
@@ -29,7 +27,7 @@ impl BackgroundTasks {
     /// task can retain the final database handle until Tokio next polls it,
     /// which otherwise leaves the on-disk database lock held after close.
     pub async fn shutdown(&self) {
-        if let Some(task) = self.downsample_task.pop() {
+        while let Some(task) = self.tasks.pop() {
             task.abort();
             let _ = task.await;
         }
@@ -38,7 +36,7 @@ impl BackgroundTasks {
 
 impl Drop for BackgroundTasks {
     fn drop(&mut self) {
-        if let Some(task) = self.downsample_task.pop() {
+        while let Some(task) = self.tasks.pop() {
             task.abort();
         }
     }
@@ -72,6 +70,20 @@ pub(crate) fn spawn_libp2p_event_handler<B: blockstore::Blockstore + 'static>(
                         &p2p::transport::PeerId::from(*peer_id),
                     )
                     .await;
+                    event_bus.publish(events::Message::peer_connection(
+                        events::PeerConnectionData {
+                            peer_id: peer_id.to_string(),
+                            connected: true,
+                        },
+                    ));
+                }
+                p2p::HostEvent::PeerDisconnected(peer_id) => {
+                    event_bus.publish(events::Message::peer_connection(
+                        events::PeerConnectionData {
+                            peer_id: peer_id.to_string(),
+                            connected: false,
+                        },
+                    ));
                 }
                 p2p::HostEvent::PeerSubscribed { peer_id, topic } => {
                     event_bus.publish(events::Message::topic_peer_event(

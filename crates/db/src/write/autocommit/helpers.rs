@@ -60,14 +60,29 @@ pub(crate) async fn write_branchable_collection_block<S: storage::corekv::Store 
 /// are bundled so no mutator can write a document blob without first advancing the
 /// CRDT accumulation store — the single-store invariant is enforced by
 /// construction, not by each mutator remembering to call the counter helper.
+/// When requested, embeddings use the final field values before persistence.
 pub(crate) async fn write_local_update(
     datastore: &NamespaceView,
     collection: &Collection,
     doc: &mut Document,
     doc_short_id: u64,
     index_manager: &IndexManager,
+    modified_fields: &mut rapidhash::RapidHashSet<String>,
+    embedding_config: Option<&crate::search::EmbeddingClientConfig>,
 ) -> query::error::Result<()> {
     apply_local_counter_deltas(datastore, collection, doc, doc_short_id).await?;
+    if let Some(config) = embedding_config {
+        let generated = crate::search::set_embedding(
+            &collection.schema().vector_embeddings,
+            doc,
+            false,
+            Some(modified_fields),
+            config,
+        )
+        .await
+        .map_err(|e| query::error::QueryError::execution(format!("embedding error: {e}")))?;
+        modified_fields.extend(generated);
+    }
     collection
         .update_with_indexes(datastore, doc, doc_short_id, index_manager)
         .await

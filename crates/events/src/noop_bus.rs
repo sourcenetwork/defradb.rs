@@ -44,6 +44,14 @@ impl Bus for NoOpBus {
         crate::DocumentChangeSubscription::closed()
     }
 
+    #[cfg(feature = "channel")]
+    fn subscribe_collection_changes(
+        &self,
+        _collection_ids: Vec<String>,
+    ) -> crate::DocumentChangeSubscription {
+        crate::DocumentChangeSubscription::closed()
+    }
+
     fn close(&self) {}
 
     fn is_closed(&self) -> bool {

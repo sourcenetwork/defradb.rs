@@ -56,9 +56,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             })
             .unwrap_or_default();
         let immutable_baseline = if context.collection.as_ref().is_some_and(|_| {
-            links
-                .iter()
-                .any(|l| immutable_fields.contains(l.name.as_str()))
+            links.iter().any(|l| {
+                l.name == IMMUTABLE_LINK_NAME || immutable_fields.contains(l.name.as_str())
+            })
         }) {
             let doc_id = DocID::from_string(context.doc_id_str)
                 .map_err(|e| MergeError::MergeFailed(format!("invalid doc_id: {e}")))?;
@@ -76,7 +76,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // Phase 1: decode/decrypt every linked field ONCE and validate @immutable
         // BEFORE persisting anything, so a rejected composite leaves no partial write.
-        let mut pending: Vec<(Cid, CrdtDelta)> = Vec::with_capacity(links.len());
+        // One entry per link: an Immutable block carries several field deltas.
+        let mut pending: Vec<(Cid, Vec<CrdtDelta>)> = Vec::with_capacity(links.len());
         for dag_link in links {
             let link_name = &dag_link.name;
             let link_cid = &dag_link.link;
@@ -113,65 +114,97 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 EffectiveLinkedDelta::SkipField => continue,
             };
 
-            if immutable_fields.contains(link_name.as_str()) {
-                if let Some(baseline) = immutable_baseline.as_ref() {
-                    Self::check_immutable_delta(baseline, link_name, &effective)?;
+            // An Immutable block applies as the LWW field deltas it replaces.
+            let deltas = match effective {
+                // Accepted whatever the local schema says: an ungoverned
+                // collection's `@immutable` flags are not part of its synced
+                // definition, so a peer may hold the fields as mutable.
+                CrdtDelta::Immutable(payload) => {
+                    let is_genesis = context.block.heads.as_ref().is_none_or(Vec::is_empty)
+                        && context.payload.priority == 1;
+                    // Under doc-level encryption every field is encrypted, so
+                    // the builders write no Immutable block for that genesis.
+                    let encrypted =
+                        linked_block.encryption.is_some() || context.block.encryption.is_some();
+                    if !is_genesis || payload.priority != 1 || encrypted {
+                        return Err(MergeError::ImmutableFieldChanged(
+                            "an immutable block is valid only unencrypted on a genesis composite"
+                                .to_string(),
+                        ));
+                    }
+                    state
+                        .immutable_block_fields
+                        .insert(*link_cid, payload.fields.keys().cloned().collect());
+                    payload.lww_deltas().map(CrdtDelta::Lww).collect()
+                }
+                other => vec![other],
+            };
+            for effective in &deltas {
+                let field_name = match effective {
+                    CrdtDelta::Lww(payload) => payload.field_name.as_str(),
+                    _ => link_name.as_str(),
+                };
+                if immutable_fields.contains(field_name) {
+                    if let Some(baseline) = immutable_baseline.as_ref() {
+                        Self::check_immutable_delta(baseline, field_name, effective)?;
+                    }
                 }
             }
-
-            pending.push((*link_cid, effective));
+            pending.push((*link_cid, deltas));
         }
 
         // Phase 2: persist the decoded deltas.
-        for (link_cid, effective) in pending {
-            match effective {
-                CrdtDelta::Lww(lww_payload) => {
-                    let result = self
-                        .process_lww_delta_in_txn(
-                            datastore,
-                            headstore,
-                            &link_cid,
-                            &lww_payload,
-                            context.metadata.collection_id,
-                            context.doc_id_str,
-                            context.doc_short_id,
-                        )
-                        .await?;
-                    if result.applied {
-                        state.any_field_applied = true;
+        for (link_cid, deltas) in pending {
+            for effective in deltas {
+                match effective {
+                    CrdtDelta::Lww(lww_payload) => {
+                        let result = self
+                            .process_lww_delta_in_txn(
+                                datastore,
+                                headstore,
+                                &link_cid,
+                                &lww_payload,
+                                context.metadata.collection_id,
+                                context.doc_id_str,
+                                context.doc_short_id,
+                            )
+                            .await?;
+                        if result.applied {
+                            state.any_field_applied = true;
+                        }
+                        if let Some(value) = result.value {
+                            state
+                                .field_values
+                                .insert(lww_payload.field_name.clone(), value);
+                        }
                     }
-                    if let Some(value) = result.value {
-                        state
-                            .field_values
-                            .insert(lww_payload.field_name.clone(), value);
+                    CrdtDelta::Counter(counter_payload) => {
+                        let result = self
+                            .process_counter_delta_in_txn(
+                                datastore,
+                                headstore,
+                                &link_cid,
+                                &counter_payload,
+                                context.metadata.collection_id,
+                                context.doc_id_str,
+                                context.doc_short_id,
+                            )
+                            .await?;
+                        if result.applied {
+                            state.any_field_applied = true;
+                        }
+                        if let Some(value) = result.value {
+                            state
+                                .field_values
+                                .insert(counter_payload.field_name.clone(), value);
+                        }
                     }
-                }
-                CrdtDelta::Counter(counter_payload) => {
-                    let result = self
-                        .process_counter_delta_in_txn(
-                            datastore,
-                            headstore,
-                            &link_cid,
-                            &counter_payload,
-                            context.metadata.collection_id,
-                            context.doc_id_str,
-                            context.doc_short_id,
-                        )
-                        .await?;
-                    if result.applied {
-                        state.any_field_applied = true;
+                    other => {
+                        return Err(MergeError::UnsupportedDelta(format!(
+                            "Unexpected delta type in linked block: {:?}",
+                            std::mem::discriminant(&other)
+                        )));
                     }
-                    if let Some(value) = result.value {
-                        state
-                            .field_values
-                            .insert(counter_payload.field_name.clone(), value);
-                    }
-                }
-                other => {
-                    return Err(MergeError::UnsupportedDelta(format!(
-                        "Unexpected delta type in linked block: {:?}",
-                        std::mem::discriminant(&other)
-                    )));
                 }
             }
             state.linked_field_cids.push(link_cid);

@@ -11,7 +11,7 @@ use identity::Did;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
 
-use crate::error::Result;
+use crate::error::{QueryError, Result};
 use crate::mapper::{Requestable, Select};
 use crate::txn::TransactionRegistry;
 
@@ -115,7 +115,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         .get("docID")
                         .and_then(|value| value.as_str())
                         .unwrap_or_default();
-                    if seen_commit_cids.insert((commit_cid.to_string(), doc_id.to_string())) {
+                    // An Immutable block is one commit per field, all under its CID.
+                    let field_name = commit
+                        .get("fieldName")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default();
+                    if seen_commit_cids.insert((
+                        commit_cid.to_string(),
+                        doc_id.to_string(),
+                        field_name.to_string(),
+                    )) {
                         commits.push(commit);
                     }
                 }
@@ -164,7 +173,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                 let looked_up = provider
                                     .get_collection_by_version_id(vid)
                                     .await
-                                    .unwrap_or(None);
+                                    .map_err(QueryError::commit_access_check_failed)?;
                                 resolved_versions.insert(vid.to_string(), looked_up);
                             }
                             resolved_versions.get(vid).and_then(|c| c.clone())
@@ -193,17 +202,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                                 doc_id,
                             )
                             .await
-                            .unwrap_or_else(|e| {
-                                tracing::debug!(
-                                    target: "acp::audit",
-                                    event = "commits_acp_check_error",
-                                    doc_id = %doc_id,
-                                    collection_version_id = ?version_id,
-                                    error = %e,
-                                    "ACP check error during _commits query, denying access"
-                                );
-                                false
-                            })
+                            .map_err(|error| {
+                                QueryError::commit_access_check_failed(
+                                    QueryError::acp_check_failed("read", doc_id, error),
+                                )
+                            })?
                         }
                     },
                 };

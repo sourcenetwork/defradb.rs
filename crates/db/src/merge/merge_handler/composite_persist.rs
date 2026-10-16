@@ -138,6 +138,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             .await
                     }
                 };
+                let index_result = index_result.map(|conflicts| {
+                    state.unique_conflicts.extend(conflicts);
+                });
                 if let Err(e) = index_result {
                     // The merge variants above already resolve the common live
                     // unique-conflict case deterministically without erroring.

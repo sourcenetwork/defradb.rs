@@ -80,9 +80,13 @@ impl Fixture {
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));
-        let genesis = db::block::builder::build_blocks_from_document(&doc, "v1", &blockstore)
-            .await
-            .unwrap();
+        let genesis = db::block::builder::build_blocks_from_document(
+            &doc,
+            &crate::common::schema::version("v1"),
+            &blockstore,
+        )
+        .await
+        .unwrap();
         // Strict mode must see registration before accepting replicated history.
         acp.register_doc_object(
             &Did::new(owner.did.clone()).unwrap(),

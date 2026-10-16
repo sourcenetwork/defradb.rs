@@ -373,7 +373,15 @@ impl PlanNode for SelectNode {
         serde_json::Value::Object(obj)
     }
 
+    // A filter applied here drops rows from a bounded scan's page, so the
+    // scan may seek but must read until the cursor has its page.
     fn set_cursor_seek(&mut self, seek: CursorSeek) -> bool {
+        if self.filter.is_some() {
+            return self.source.set_cursor_seek(CursorSeek {
+                fetch_limit: None,
+                ..seek
+            });
+        }
         self.source.set_cursor_seek(seek)
     }
 
@@ -382,7 +390,7 @@ impl PlanNode for SelectNode {
     }
 
     fn set_cursor_fetch_limit(&mut self, limit: u64) -> bool {
-        self.source.set_cursor_fetch_limit(limit)
+        self.filter.is_none() && self.source.set_cursor_fetch_limit(limit)
     }
 
     fn page_info(&self) -> Option<crate::plan::CursorPageInfo> {

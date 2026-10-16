@@ -60,7 +60,11 @@ pub struct CompositeMergeState {
     pub(crate) owned_field_cids: Vec<Cid>,
     pub(crate) linked_field_cids: Vec<Cid>,
     pub(crate) linked_encryption_cids: Vec<Cid>,
+    /// Fields of each linked Immutable block: their heads are the block.
+    pub(crate) immutable_block_fields: RapidHashMap<Cid, Vec<String>>,
     pub(crate) is_branchable: bool,
+    /// Unique-index collisions this merge resolved, published after commit.
+    pub(crate) unique_conflicts: Vec<events::UniqueIndexConflictData>,
 }
 
 pub(super) enum CompositeMergePreparation {
@@ -590,7 +594,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .persist_merged_document(&mut datastore, &systemstore, &context, &mut state)
                     .await
                 {
-                    Ok(()) => Ok(None),
+                    Ok(()) => self
+                        .update_heads(&headstore, &context, &state)
+                        .await
+                        .map(|()| None),
                     Err(MergeError::UniqueConstraintViolation(reason)) => {
                         Ok(Some(MergeOutcome::rejected(reason)))
                     }
@@ -624,9 +631,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(outcome)
             }
             Ok(None) => {
-                if let Ok(headstore) = txn.headstore() {
-                    self.update_heads(&headstore, &context, &state).await;
-                }
                 if let Ok(systemstore) = txn.systemstore() {
                     self.record_block_ownership(
                         &systemstore,
@@ -700,6 +704,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 }
 
                 if let Some(bus) = self.db.event_bus() {
+                    for conflict in state.unique_conflicts.drain(..) {
+                        bus.publish(Message::unique_index_conflict(conflict));
+                    }
                     let update = Update::new(
                         doc_id_str.to_string(),
                         *cid,
@@ -1074,7 +1081,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(outcome)
             }
             Ok(None) => {
-                self.update_heads(headstore, &context, &state).await;
+                self.update_heads(headstore, &context, &state).await?;
                 self.record_block_ownership(
                     systemstore,
                     doc_id_str,
@@ -1135,6 +1142,11 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     pending_events.push(PendingMergeEvent {
                         message: Message::update(update),
                     });
+                    for conflict in state.unique_conflicts.drain(..) {
+                        pending_events.push(PendingMergeEvent {
+                            message: Message::unique_index_conflict(conflict),
+                        });
+                    }
 
                     if !from_collection {
                         let merge_complete = MergeCompleteData {

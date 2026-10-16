@@ -12,6 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use regolith::{OptimisticTransactionDb, StreamOptions};
 
+use super::background_errors::BackgroundErrorListener;
 use super::config::RegolithStoreOptions;
 use super::head_cache::{self, SharedHeadCache};
 use super::transaction::RegolithTxn;
@@ -67,7 +68,11 @@ impl RegolithStore {
                 })?;
             }
         }
-        let db = OptimisticTransactionDb::open(&path, options.engine.clone())
+        let mut engine = options.engine.clone();
+        engine
+            .listeners
+            .push(Arc::new(BackgroundErrorListener) as Arc<dyn regolith::EventListener>);
+        let db = OptimisticTransactionDb::open(&path, engine)
             .map_err(|error| Error::Backend(format!("failed to open regolith: {error}")))?
             .with_isolation(options.isolation);
         Ok(Self {
@@ -180,14 +185,16 @@ impl RegolithStore {
     /// Each flush is atomic; the stream as a whole is not. Work that must
     /// land all-or-nothing belongs in a transaction.
     pub fn streaming_writer(&self, opts: StreamOptions) -> regolith::StreamingWriter<'_> {
-        // A borrowed native writer can flush after this call returns, outside
-        // transaction publication. Disable caching for this store's lifetime.
-        self.inner
-            .head_cache
-            .lock()
-            .expect("head cache publication poisoned")
-            .disable();
-        self.inner.db.db().streaming_writer(opts)
+        super::blocking(|| {
+            // A borrowed native writer can flush after this call returns, outside
+            // transaction publication. Disable caching for this store's lifetime.
+            self.inner
+                .head_cache
+                .lock()
+                .expect("head cache publication poisoned")
+                .disable();
+            self.inner.db.db().streaming_writer(opts)
+        })
     }
 
     /// Wait for in-flight transactions to finish, up to the configured
@@ -292,13 +299,15 @@ impl Store for RegolithStore {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Dropable for RegolithStore {
     async fn drop_all(&self) -> Result<()> {
-        self.ensure_open()?;
-        let mut cache = head_cache::lock(&self.inner.head_cache)?;
-        cache.reset();
-        self.inner
-            .db
-            .db()
-            .drop_all()
-            .map_err(|error| Error::Backend(format!("drop_all failed: {error}")))
+        super::blocking(|| {
+            self.ensure_open()?;
+            let mut cache = head_cache::lock(&self.inner.head_cache)?;
+            cache.reset();
+            self.inner
+                .db
+                .db()
+                .drop_all()
+                .map_err(|error| Error::Backend(format!("drop_all failed: {error}")))
+        })
     }
 }

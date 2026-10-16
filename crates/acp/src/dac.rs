@@ -21,6 +21,12 @@ use crate::permission::DocumentPermission;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocumentACP: MaybeSendSync {
+    /// Whether missing registrations allow public access or require a collection grant.
+    /// Remote backends may deny absence, including retired policies and archived objects.
+    fn unregistered_documents_are_public(&self) -> bool {
+        true
+    }
+
     /// Register a document with creator as owner.
     ///
     /// This is called when a document is created with an identity.
@@ -56,7 +62,7 @@ pub trait DocumentACP: MaybeSendSync {
 
     /// Check if document/object is registered with ACP.
     ///
-    /// Documents created without identity are unregistered (public).
+    /// Documents created without identity may be unregistered; public access is backend-specific.
     /// Documents created with identity are registered.
     async fn is_doc_registered(
         &self,
@@ -82,7 +88,7 @@ pub trait DocumentACP: MaybeSendSync {
     /// Check if identity has permission on document.
     ///
     /// # Access Rules
-    /// 1. If document is unregistered (public) -> allow all
+    /// 1. If document is unregistered -> apply the backend's public-access rule
     /// 2. If identity is Anonymous -> deny (anonymous cannot access registered docs)
     /// 3. If identity is owner -> allow all
     /// 4. Check if identity has specific relation granting permission

@@ -578,7 +578,7 @@ mod tests {
     fn take_failure(remaining: &TopicCounters, topic: &str) -> bool {
         remaining.get(topic).is_some_and(|count| {
             count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
                     count.checked_sub(1)
                 })
                 .is_ok()

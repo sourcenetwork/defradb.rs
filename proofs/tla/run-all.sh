@@ -167,6 +167,11 @@ RUNS=(
   "MC_GovernanceMerge_Red_NoSweep.cfg         MC_GovernanceMerge_Orphan.tla          RED"   # the tree before sweep.rs: index-only re-drive, in-memory index -> orphan never merges
   "MC_GovernanceMerge_Red_SweepIndexed.cfg    MC_GovernanceMerge_Orphan.tla          RED"   # the refactor to refuse: a sweep over the index never sees an unindexed composite
   "MC_GovernanceMerge_Red_Mutant.cfg          MC_GovernanceMerge_Mutant.tla          RED"   # teeth check: a silent merge must break the refinement
+  "MC_Arrivals_Green.cfg             Arrivals.tla GREEN" # commit-sequence stamps: no skip, commit order, no disjoint conflict, one commit per write
+  "MC_Arrivals_Red_Counter.cfg       Arrivals.tla RED"   # head key in the document txn: disjoint creates conflict (INV_NoDisjointConflict)
+  "MC_Arrivals_Red_Detached.cfg      Arrivals.tla RED"   # #1897 post-commit numbering: second durable commit (INV_OneCommitPerWrite)
+  "MC_Arrivals_Red_DetachedOrder.cfg Arrivals.tla RED"   # #1897 short-ID numbering leaves commit order (INV_CommitOrder)
+  "MC_Arrivals_Red_StampLatest.cfg   Arrivals.tla RED"   # bound by latest allocated seq: unapplied commit skipped (INV_NoSkip)
 )
 
 fails=0; n=0

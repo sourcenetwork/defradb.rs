@@ -70,7 +70,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
       # thing that fails before it has checked anything.
@@ -184,7 +184,7 @@ jobs:
       # report still lands in the step summary and the artifact.
       - name: Comment on the pull request
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const body = require('fs').readFileSync('report.md', 'utf8');

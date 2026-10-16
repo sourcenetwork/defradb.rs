@@ -38,6 +38,9 @@ pub const MESSAGE_VERSION: &str = "/defradb/0.0.1";
 /// Go uses "rep" as the channel name: `/defradb/rep_req/0.0.1`
 pub const REP_REQUEST_PROTOCOL: &str = "/defradb/rep_req/0.0.1";
 
+/// PushLog with negotiated retry-after replies; request bytes remain Go-compatible.
+pub const REP_RETRY_REQUEST_PROTOCOL: &str = "/defradb/rep_retry_req/0.0.1";
+
 /// Replicator response protocol ID.
 /// Go uses "rep" as the channel name: `/defradb/rep_resp/0.0.1`
 pub const REP_RESPONSE_PROTOCOL: &str = "/defradb/rep_resp/0.0.1";

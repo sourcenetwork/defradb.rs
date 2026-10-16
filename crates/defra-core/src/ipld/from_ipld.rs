@@ -7,7 +7,7 @@ use ipld_core::ipld::Ipld;
 use crate::block::{
     Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
     CounterDeltaPayload, CrdtDelta, DAGLink, Encryption, FieldDefinitionDeltaPayload,
-    LwwDeltaPayload, Signature, SignatureHeader, SignatureType,
+    ImmutableDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType,
 };
 use crate::{Error, Result};
 
@@ -127,6 +127,11 @@ impl TryFrom<&Ipld> for CrdtDelta {
                 composite,
             )?));
         }
+        if let Some(immutable) = map.get("immutable") {
+            return Ok(CrdtDelta::Immutable(ImmutableDeltaPayload::try_from(
+                immutable,
+            )?));
+        }
         if let Some(collection) = map.get("collection") {
             return Ok(CrdtDelta::Collection(CollectionDeltaPayload::try_from(
                 collection,
@@ -186,6 +191,47 @@ impl TryFrom<&Ipld> for LwwDeltaPayload {
             priority: parse_u64(map, "priority")?,
             schema_version_id: parse_string(map, "schemaVersionID")?,
             data: parse_bytes(map, "data")?,
+        })
+    }
+}
+
+impl TryFrom<&Ipld> for ImmutableDeltaPayload {
+    type Error = Error;
+
+    fn try_from(ipld: &Ipld) -> Result<Self> {
+        let map = match ipld {
+            Ipld::Map(m) => m,
+            _ => {
+                return Err(Error::IpldError(format!(
+                    "Expected IPLD map for ImmutableDeltaPayload, got {}",
+                    ipld_type_name(ipld)
+                )))
+            }
+        };
+        let fields = match map.get("fields") {
+            Some(Ipld::Map(fields)) => fields
+                .iter()
+                .map(|(name, data)| match data {
+                    Ipld::Bytes(bytes) => {
+                        Ok((name.clone(), serde_bytes::ByteBuf::from(bytes.clone())))
+                    }
+                    other => Err(Error::IpldError(format!(
+                        "Expected IPLD Bytes for immutable field '{name}', got {}",
+                        ipld_type_name(other)
+                    ))),
+                })
+                .collect::<Result<_>>()?,
+            _ => {
+                return Err(Error::IpldError(
+                    "Expected IPLD map for ImmutableDeltaPayload.fields".to_string(),
+                ))
+            }
+        };
+
+        Ok(ImmutableDeltaPayload {
+            priority: parse_u64(map, "priority")?,
+            schema_version_id: parse_string(map, "schemaVersionID")?,
+            fields,
         })
     }
 }

@@ -579,7 +579,7 @@ impl Blockstore for ConflictOnceBlockstore {
         self.put_attempts.fetch_add(1, Ordering::SeqCst);
         if self
             .remaining_put_conflicts
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 if remaining > 0 {
                     Some(remaining - 1)
                 } else {
@@ -601,7 +601,7 @@ impl Blockstore for ConflictOnceBlockstore {
         self.put_many_attempts.fetch_add(1, Ordering::SeqCst);
         if self
             .remaining_put_many_conflicts
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 if remaining > 0 {
                     Some(remaining - 1)
                 } else {
@@ -1836,7 +1836,9 @@ async fn committed_head_admission_does_not_wait_for_a_batching_timer() {
     let markers = n0_future::task::spawn(async move {
         while let Some(mut observation) = failure_rx.recv().await {
             if let Some(ack) = observation.durable_tx.take() {
-                observer.fetch_add(1, Ordering::SeqCst);
+                if !observation.admission_only {
+                    observer.fetch_add(1, Ordering::SeqCst);
+                }
                 let _ = ack.send(true);
             }
         }
@@ -3808,6 +3810,43 @@ async fn pushlog_request_rate_limited_replies_backpressure_nack() {
         reply.err_message.as_deref(),
         Some(crate::error::RATE_LIMITED_MESSAGE)
     );
+    assert_eq!(reply.retry_after_ms, None);
+}
+
+#[tokio::test]
+async fn negotiated_pushlog_rate_limit_carries_retry_after() {
+    for iroh in [false, true] {
+        let (coordinator, _events) = create_test_coordinator_with_rate_limiter(
+            AccessMode::Open,
+            Arc::new(ReplicatorRegistry::new()),
+            Arc::new(PeerStateTracker::new()),
+            always_limited_rate_limiter(),
+        );
+        let mut request = pushlog_request("collection1");
+        request.supports_retry_after = iroh;
+        request.negotiated_retry_after = !iroh;
+        coordinator
+            .handle_transport_event(TransportEvent::TwoStreamRequest {
+                peer_id: random_peer_id(),
+                request,
+                token: None,
+                is_explicit_replicator: true,
+                explicit_replay_authorization: None,
+            })
+            .await
+            .expect_err("rate limited");
+        let reply = coordinator
+            .runtime
+            .transport
+            .two_stream_replies()
+            .pop()
+            .unwrap();
+        assert!(reply.retry_after().is_some());
+        assert_eq!(
+            reply.err_message.as_deref(),
+            Some(crate::error::RATE_LIMITED_MESSAGE)
+        );
+    }
 }
 
 #[tokio::test]

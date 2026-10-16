@@ -130,6 +130,10 @@ impl FieldDescription {
 
     /// Validate this field description
     pub fn validate(&self) -> Result<()> {
+        if self.name == defra_core::block::IMMUTABLE_LINK_NAME {
+            return Err(SchemaError::ReservedFieldName(self.name.clone()));
+        }
+
         if !self.crdt_type.is_compatible_with(&self.kind) {
             return Err(SchemaError::InvalidCrdtForKind {
                 crdt_type: self.crdt_type.to_string().to_lowercase(),
@@ -261,6 +265,15 @@ mod tests {
         let json = serde_json::to_string(&field).unwrap();
         let parsed: FieldDescription = serde_json::from_str(&json).unwrap();
         assert_eq!(field, parsed);
+    }
+
+    #[test]
+    fn test_immutable_link_name_is_a_reserved_field_name() {
+        let field = FieldDescription::new("1", "_immutable", FieldKind::string());
+        assert!(matches!(
+            field.validate(),
+            Err(SchemaError::ReservedFieldName(name)) if name == "_immutable"
+        ));
     }
 
     #[test]

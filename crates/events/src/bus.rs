@@ -35,6 +35,15 @@ pub trait Bus: Send + Sync {
     #[cfg(feature = "channel")]
     fn subscribe_document_changes(&self) -> crate::DocumentChangeSubscription;
 
+    /// Like [`Self::subscribe_document_changes`], limited to documents whose
+    /// `collection_id` is one of `collection_ids`. Updates to other collections
+    /// neither wake the subscription nor count toward its resync capacity.
+    #[cfg(feature = "channel")]
+    fn subscribe_collection_changes(
+        &self,
+        collection_ids: Vec<String>,
+    ) -> crate::DocumentChangeSubscription;
+
     /// Unsubscribe by subscription ID.
     ///
     /// After unsubscribing, the subscription will no longer receive events

@@ -20,6 +20,8 @@ pub enum EventName {
     ReplicatorCompleted,
     /// GossipSub peer joined/left a topic.
     TopicPeerEvent,
+    /// A transport connection to a peer opened or closed.
+    PeerConnection,
     /// SE artifact received after merge (encrypted index document).
     SEArtifactReceived,
     /// ACP light client advanced to a new finalized header.
@@ -31,6 +33,8 @@ pub enum EventName {
     PendingDagQuarantined,
     /// A long-running database action changed state.
     ActionExecution,
+    /// A merge resolved a unique-index collision between two documents.
+    UniqueIndexConflict,
 }
 
 impl EventName {
@@ -52,11 +56,13 @@ impl std::fmt::Display for EventName {
             EventName::MergeComplete => write!(f, "merge-complete"),
             EventName::ReplicatorCompleted => write!(f, "replicator-completed"),
             EventName::TopicPeerEvent => write!(f, "topic-peer-event"),
+            EventName::PeerConnection => write!(f, "peer-connection"),
             EventName::SEArtifactReceived => write!(f, "se-artifact-received"),
             EventName::AcpHeightAdvanced => write!(f, "acp-height-advanced"),
             EventName::AcpCacheInvalidated => write!(f, "acp-cache-invalidated"),
             EventName::PendingDagQuarantined => write!(f, "pending-dag-quarantined"),
             EventName::ActionExecution => write!(f, "action-execution"),
+            EventName::UniqueIndexConflict => write!(f, "unique-index-conflict"),
         }
     }
 }
@@ -87,6 +93,15 @@ pub struct TopicPeerEventData {
     pub event_type: String,
 }
 
+/// Peer connection event data.
+#[derive(Debug, Clone)]
+pub struct PeerConnectionData {
+    /// The peer ID whose connection changed.
+    pub peer_id: String,
+    /// True when the connection opened, false when it closed.
+    pub connected: bool,
+}
+
 /// SE artifact received event data.
 #[derive(Debug, Clone)]
 pub struct SEArtifactReceivedData {
@@ -111,6 +126,21 @@ pub struct PendingDagQuarantinedData {
     pub collection_id: String,
     /// Human-readable rejection reason (e.g. unique-index violation).
     pub reason: String,
+}
+
+/// A merge found two documents holding the same unique-index value. Both are
+/// kept; the smallest public DocID holds the entry on every replica, and the
+/// other stays readable by scans but is not indexed for that value.
+#[derive(Debug, Clone)]
+pub struct UniqueIndexConflictData {
+    /// Collection both documents belong to.
+    pub collection_id: String,
+    /// Name of the unique index.
+    pub index: String,
+    /// Document that holds the index entry.
+    pub winner_doc_id: String,
+    /// Document left out of the index for the conflicting value.
+    pub unindexed_doc_id: String,
 }
 
 /// ACP light client height advancement event data.
@@ -220,6 +250,8 @@ pub enum MessageData {
     ReplicatorCompleted,
     /// GossipSub topic peer event.
     TopicPeerEvent(TopicPeerEventData),
+    /// Peer connection opened or closed.
+    PeerConnection(PeerConnectionData),
     /// SE artifact received after merge.
     SEArtifactReceived(SEArtifactReceivedData),
     /// ACP light client finalized height advanced.
@@ -230,6 +262,8 @@ pub enum MessageData {
     PendingDagQuarantined(PendingDagQuarantinedData),
     /// Long-running database action changed state.
     ActionExecution(ActionExecution),
+    /// Unique-index collision resolved during a merge.
+    UniqueIndexConflict(UniqueIndexConflictData),
 }
 
 impl Message {
@@ -273,6 +307,14 @@ impl Message {
         }
     }
 
+    /// Create a new PeerConnection message.
+    pub fn peer_connection(data: PeerConnectionData) -> Self {
+        Self {
+            name: EventName::PeerConnection,
+            data: MessageData::PeerConnection(data),
+        }
+    }
+
     /// Create a new SEArtifactReceived message.
     pub fn se_artifact_received(data: SEArtifactReceivedData) -> Self {
         Self {
@@ -305,6 +347,14 @@ impl Message {
         }
     }
 
+    /// Create a new UniqueIndexConflict message.
+    pub fn unique_index_conflict(data: UniqueIndexConflictData) -> Self {
+        Self {
+            name: EventName::UniqueIndexConflict,
+            data: MessageData::UniqueIndexConflict(data),
+        }
+    }
+
     /// Create a new ActionExecution message.
     pub fn action_execution(data: ActionExecution) -> Self {
         Self {
@@ -325,6 +375,14 @@ impl Message {
     pub fn as_topic_peer_event(&self) -> Option<&TopicPeerEventData> {
         match &self.data {
             MessageData::TopicPeerEvent(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Get the PeerConnectionData if this is a PeerConnection message.
+    pub fn as_peer_connection(&self) -> Option<&PeerConnectionData> {
+        match &self.data {
+            MessageData::PeerConnection(d) => Some(d),
             _ => None,
         }
     }
@@ -357,6 +415,14 @@ impl Message {
     pub fn as_acp_cache_invalidated(&self) -> Option<&AcpCacheInvalidatedData> {
         match &self.data {
             MessageData::AcpCacheInvalidated(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Get the UniqueIndexConflictData if this is a UniqueIndexConflict message.
+    pub fn as_unique_index_conflict(&self) -> Option<&UniqueIndexConflictData> {
+        match &self.data {
+            MessageData::UniqueIndexConflict(d) => Some(d),
             _ => None,
         }
     }

@@ -17,7 +17,7 @@ impl EvaluationBudget {
     #[allow(deprecated, reason = "try_update requires Rust 1.95; MSRV is 1.91")]
     pub(crate) fn charge(&self) -> Result<()> {
         self.steps
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |steps| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |steps| {
                 (steps < MAX_EVALUATION_STEPS).then_some(steps + 1)
             })
             .map(|_| ())
