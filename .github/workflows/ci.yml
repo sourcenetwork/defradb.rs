@@ -385,7 +385,7 @@ jobs:
       - name: Restore Go DefraDB
         id: go-defradb
         if: matrix.suite == 'go-compat'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/defra-harness
           key: go-defradb-${{ runner.os }}-${{ hashFiles('crates/defra-version/src/lib.rs') }}
@@ -424,7 +424,7 @@ jobs:
           "$CACHE_DIR/defradb" version --format json
       - name: Save Go DefraDB
         if: matrix.suite == 'go-compat' && env.SAVE_CACHE == 'true' && steps.go-defradb.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/defra-harness
           key: ${{ steps.go-defradb.outputs.cache-primary-key }}
