@@ -29,7 +29,7 @@ jobs:
             platform: darwin_arm64
             runner: '["self-hosted", "macOS", "ARM64", "studio"]'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -92,7 +92,7 @@ jobs:
           tar czf "${ARCHIVE}" -C "target/${{ matrix.target }}/release" defra
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-${{ matrix.platform }}
           path: ${{ env.ARCHIVE }}
@@ -107,7 +107,7 @@ jobs:
     name: Build WASM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -140,7 +140,7 @@ jobs:
           tar czf "${ARCHIVE}" -C pkg/wasm defra_wasm_bg.wasm defra_wasm.js defra_wasm.d.ts
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-wasm
           path: ${{ env.ARCHIVE }}
@@ -207,7 +207,7 @@ jobs:
             artifact: defra-ffi-lean
             features: "native,libp2p"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -296,7 +296,7 @@ jobs:
             > "${MANIFEST}"
           echo "MANIFEST=${MANIFEST}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}-${{ matrix.platform }}
           path: |
@@ -323,7 +323,7 @@ jobs:
             artifact: defra-ffi-lean
             features: native,libp2p
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -372,7 +372,7 @@ jobs:
             > "${MANIFEST}"
           echo "MANIFEST=${MANIFEST}" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}-ios_xcframework
           path: |
@@ -390,7 +390,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v4
 
@@ -439,7 +439,7 @@ jobs:
       needs.docker.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false

@@ -70,7 +70,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -111,7 +111,7 @@ jobs:
               cargo check -p db --no-default-features --features native
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -128,7 +128,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -171,7 +171,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
@@ -185,7 +185,7 @@ jobs:
           cp target/super-dev/defra artifacts/ci/defra
           cargo build -p cli --profile super-dev --features iroh
           cp target/super-dev/defra artifacts/ci/defra-iroh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: defra-ci-binaries
           path: artifacts/ci
@@ -214,7 +214,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
@@ -232,7 +232,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}/spot=${{ github.event_name == 'merge_group' && 'false' || 'pco' }}/cpu=16+32/family=c6*+c7*/disk=large/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -282,7 +282,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-java@v5
         with:
@@ -318,7 +318,7 @@ jobs:
       RUST_LOG: info
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
@@ -334,7 +334,7 @@ jobs:
         run: cargo test --profile super-dev -p conformance --lib --test tla_conformance -- --test-threads=1
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-e2e-logs
           path: target/e2e/**/logs/*.log
@@ -358,7 +358,7 @@ jobs:
       RUST_LOG: info
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -377,7 +377,7 @@ jobs:
           target/ci/defra version --format json
       - name: Install Go toolchain
         if: matrix.suite == 'go-compat'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           # The pinned GO_COMPAT_COMMIT declares `go 1.26.7`, so an older
           # toolchain cannot build it.
@@ -503,7 +503,7 @@ jobs:
             peer::create::head_hint_fanout_above_car_worker_bound_quiesces -- --test-threads=1
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-${{ matrix.suite }}-e2e-logs
           path: target/e2e/**/logs/*.log
@@ -524,7 +524,7 @@ jobs:
       RUST_LOG: info
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
@@ -549,7 +549,7 @@ jobs:
           cargo test --profile super-dev -p integration-test --test issue1154_repro -- --test-threads=1
       - name: Upload harness node logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: p2p-linux-e2e-logs
           path: target/e2e/**/logs/*.log
