@@ -84,7 +84,7 @@ impl<S: Store> DbTransactionContext<S> {
     pub(crate) fn touch(&self) -> bool {
         let now = self.age_nanos(Instant::now());
         self.last_request_seen
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |seen| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |seen| {
                 (seen != CLAIMED_FOR_CLEANUP).then_some(now)
             })
             .is_ok()
@@ -96,7 +96,7 @@ impl<S: Store> DbTransactionContext<S> {
     pub(crate) fn try_claim_stale(&self, now: Instant, max_idle_age: Duration) -> bool {
         let now = self.age_nanos(now);
         self.last_request_seen
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |seen| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |seen| {
                 (seen != CLAIMED_FOR_CLEANUP
                     && Duration::from_nanos(now.saturating_sub(seen)) > max_idle_age)
                     .then_some(CLAIMED_FOR_CLEANUP)

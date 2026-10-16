@@ -13,6 +13,8 @@ use rapidhash::{HashSetExt, RapidHashSet};
 use schema::CollectionVersion;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+use crate::index::vector::engine::diskann::CodeCaches;
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::systemstore::{CollectionKey, CollectionNameKey};
 
@@ -144,6 +146,8 @@ pub struct DbTxn<S: Store> {
     /// storage commit, otherwise a protected collection could be persisted
     /// without its collection-level ACP object.
     pending_collection_acp_registrations: Vec<PendingCollectionAcpRegistration>,
+    /// The database's resident DiskANN codes, for searches in this transaction.
+    vector_codes: Arc<CodeCaches>,
     /// Phantom data for the store type.
     _marker: std::marker::PhantomData<S>,
 }
@@ -160,8 +164,18 @@ impl<S: Store> DbTxn<S> {
             collection_guards: BTreeMap::new(),
             pending_counter_ops: Vec::new(),
             pending_collection_acp_registrations: Vec::new(),
+            vector_codes: Arc::default(),
             _marker: std::marker::PhantomData,
         }
+    }
+
+    pub(crate) fn with_vector_codes(mut self, codes: Arc<CodeCaches>) -> Self {
+        self.vector_codes = codes;
+        self
+    }
+
+    pub(crate) fn vector_codes(&self) -> &Arc<CodeCaches> {
+        &self.vector_codes
     }
 
     /// Create a new explicit DbTxn.
@@ -175,6 +189,7 @@ impl<S: Store> DbTxn<S> {
             collection_guards: BTreeMap::new(),
             pending_counter_ops: Vec::new(),
             pending_collection_acp_registrations: Vec::new(),
+            vector_codes: Arc::default(),
             _marker: std::marker::PhantomData,
         }
     }

@@ -415,6 +415,9 @@ vector_algorithms! {
     IvfFlat => "IVF_FLAT" / "ivfflat",
     /// Satellite System Graph: one flat layer, edges pruned by angle.
     Ssg => "SSG" / "ssg",
+    /// FreshDiskANN: a Vamana graph walked by product-quantized codes stored
+    /// beside each node, so memory stays bounded whatever the corpus size.
+    DiskAnn => "DISKANN" / "diskann",
 }
 
 impl VectorAlgorithm {
@@ -445,11 +448,15 @@ impl VectorAlgorithm {
     /// cost recall in a way no cosine-corpus test would catch, so it stays
     /// refused for the same reason IVF-PQ's `EUCLIDEAN` does: unmeasured.
     ///
+    /// DISKANN walks and ranks by the same ADC as IVF-PQ, so it takes the same
+    /// line: cosine only, with `EUCLIDEAN` refused as unmeasured rather than
+    /// unsound.
+    ///
     /// Refused when the definition is written rather than when the first
     /// document is indexed.
     pub fn supports_metric(self, metric: DistanceMetric) -> bool {
         match self {
-            Self::IvfPq | Self::IvfFlat => metric == DistanceMetric::Cosine,
+            Self::IvfPq | Self::IvfFlat | Self::DiskAnn => metric == DistanceMetric::Cosine,
             Self::Hnsw | Self::Flat | Self::Ssg => true,
         }
     }
@@ -580,6 +587,75 @@ pub struct VectorIndexDescription {
     /// Present when `algorithm` is SSG.
     #[serde(rename = "SSG", default, skip_serializing_if = "Option::is_none")]
     pub ssg: Option<SsgParams>,
+    /// Present when `algorithm` is DISKANN.
+    #[serde(rename = "DISKANN", default, skip_serializing_if = "Option::is_none")]
+    pub diskann: Option<DiskAnnParams>,
+}
+
+/// DiskANN build and search parameters.
+///
+/// `alpha_percent` is the pruning slack in hundredths, so 120 is the paper's
+/// `alpha = 1.2`: an integer so the stored definition holds it exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiskAnnParams {
+    /// Maximum out-degree of a node.
+    #[serde(rename = "R", default = "default_diskann_r")]
+    pub r: u32,
+    /// Candidate-list size while inserting.
+    #[serde(rename = "LBuild", default = "default_diskann_l_build")]
+    pub l_build: u32,
+    /// Candidate-list size while searching.
+    #[serde(rename = "LSearch", default = "default_diskann_l_search")]
+    pub l_search: u32,
+    /// Pruning slack in hundredths; must be at least 100.
+    #[serde(rename = "AlphaPercent", default = "default_diskann_alpha_percent")]
+    pub alpha_percent: u32,
+    /// Subquantizers, and therefore bytes per code. `0` derives it from the
+    /// vector width.
+    #[serde(rename = "M", default)]
+    pub m: u32,
+    /// Cap on the resident training sample.
+    #[serde(rename = "SampleBytes", default = "default_diskann_sample_bytes")]
+    pub sample_bytes: u64,
+    /// Keep every PQ code in memory and store only neighbour ids in graph
+    /// records. Searches read far less from disk, for `m` bytes of memory per
+    /// vector.
+    #[serde(rename = "ResidentCodes", default)]
+    pub resident_codes: bool,
+}
+
+fn default_diskann_r() -> u32 {
+    64
+}
+
+fn default_diskann_l_build() -> u32 {
+    100
+}
+
+fn default_diskann_l_search() -> u32 {
+    100
+}
+
+fn default_diskann_alpha_percent() -> u32 {
+    120
+}
+
+fn default_diskann_sample_bytes() -> u64 {
+    128 << 20
+}
+
+impl Default for DiskAnnParams {
+    fn default() -> Self {
+        Self {
+            r: default_diskann_r(),
+            l_build: default_diskann_l_build(),
+            l_search: default_diskann_l_search(),
+            alpha_percent: default_diskann_alpha_percent(),
+            m: 0,
+            sample_bytes: default_diskann_sample_bytes(),
+            resident_codes: false,
+        }
+    }
 }
 
 /// SSG build and search parameters.
@@ -620,8 +696,8 @@ impl Default for SsgParams {
 
 /// IVF-PQ build and search parameters.
 ///
-/// `0` means derive from the corpus: `nlist` from its size, `m` from the
-/// vector width.
+/// `0` means derive: `nlist` from the corpus size, `m` from the vector width,
+/// `nprobe` from `nlist`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IvfPqParams {
     /// Coarse centroids, and therefore inverted lists.
@@ -636,10 +712,17 @@ pub struct IvfPqParams {
     /// Cap on the resident training sample.
     #[serde(rename = "SampleBytes", default = "default_ivfpq_sample_bytes")]
     pub sample_bytes: u64,
+    /// Candidates per result PQ shortlists for an exact re-score.
+    #[serde(rename = "Rerank", default = "default_ivfpq_rerank")]
+    pub rerank: u32,
 }
 
 fn default_ivfpq_nprobe() -> u32 {
-    8
+    0
+}
+
+fn default_ivfpq_rerank() -> u32 {
+    10
 }
 
 fn default_ivfpq_sample_bytes() -> u64 {
@@ -653,6 +736,7 @@ impl Default for IvfPqParams {
             nprobe: default_ivfpq_nprobe(),
             m: 0,
             sample_bytes: default_ivfpq_sample_bytes(),
+            rerank: default_ivfpq_rerank(),
         }
     }
 }
@@ -676,7 +760,7 @@ pub struct IvfFlatParams {
 }
 
 fn default_ivfflat_nprobe() -> u32 {
-    8
+    0
 }
 
 fn default_ivfflat_sample_bytes() -> u64 {
@@ -712,6 +796,7 @@ impl VectorIndexDescription {
             ivfpq: matches!(algorithm, VectorAlgorithm::IvfPq).then(IvfPqParams::default),
             ivfflat: matches!(algorithm, VectorAlgorithm::IvfFlat).then(IvfFlatParams::default),
             ssg: matches!(algorithm, VectorAlgorithm::Ssg).then(SsgParams::default),
+            diskann: matches!(algorithm, VectorAlgorithm::DiskAnn).then(DiskAnnParams::default),
         }
     }
 }

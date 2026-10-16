@@ -102,13 +102,14 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
     let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
     let identity = db::block::builder::DocStorageIdentity::new(1, 1);
     let modified: RapidHashSet<String> = field_names(field_count).into_iter().collect();
+    let collection = collection_version(field_count);
 
     let mut doc = make_document(field_count, 0);
     let mut result = db::block::builder::write_document_blocks(
         &blockstore,
         &headstore,
         &doc,
-        SCHEMA_VERSION_ID,
+        &collection,
         identity,
         None,
         None,
@@ -128,7 +129,7 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
             &blockstore,
             &headstore,
             &doc,
-            SCHEMA_VERSION_ID,
+            &collection,
             identity,
             Some(&modified),
             None,

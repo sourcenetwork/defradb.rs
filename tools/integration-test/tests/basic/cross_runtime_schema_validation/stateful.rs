@@ -89,7 +89,7 @@ async fn go_schema_stateful_validation_parity() {
     let rust_result = rust.collection_patch(&duplicate_id_patch);
     let go_result = go.collection_patch(&duplicate_id_patch);
     assert_outcome("validateIDUnique", false, &rust_result, &go_result);
-    purge_both(&rust, &go);
+    purge_both(&cluster).await;
 
     let sdl = "type VersionedCollection { name: String }";
     rust.schema_add(sdl).expect("add Rust versioned schema");
@@ -117,7 +117,7 @@ async fn go_schema_stateful_validation_parity() {
         &rust_result,
         &go_result,
     );
-    purge_both(&rust, &go);
+    purge_both(&cluster).await;
 
     let sdl = "type SelfReference { name: String }";
     rust.schema_add(sdl).expect("add Rust self schema");
@@ -137,7 +137,7 @@ async fn go_schema_stateful_validation_parity() {
     let rust_result = rust.collection_patch(&self_reference);
     let go_result = go.collection_patch(&self_reference);
     assert_outcome("validateSelfReferences", false, &rust_result, &go_result);
-    purge_both(&rust, &go);
+    purge_both(&cluster).await;
 
     rust.schema_add("type ViewSource { name: String }")
         .expect("add Rust view source");
@@ -181,7 +181,7 @@ async fn go_schema_stateful_validation_parity() {
         &rust_result,
         &go_result,
     );
-    purge_both(&rust, &go);
+    purge_both(&cluster).await;
 
     let owner = generate_identity(rust.binary_path()).expect("generate policy owner");
     let rust_policy = rust

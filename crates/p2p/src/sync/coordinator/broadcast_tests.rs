@@ -110,7 +110,7 @@ impl P2PTransport for TestTransport {
         self.signs.fetch_add(1, Ordering::Relaxed);
         if self
             .sign_failures_remaining
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()

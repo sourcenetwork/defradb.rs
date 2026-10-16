@@ -10,7 +10,7 @@
 //! order, and the shapes only one runtime can express are refused by the other
 //! rather than misread.
 
-use integration_test::{DefraClient, TestCluster};
+use integration_test::{purge_node, DefraClient, TestCluster};
 use serde_json::Value;
 
 /// Eight dimensions, which is enough to separate the corpus and short enough to
@@ -220,8 +220,8 @@ async fn go_refuses_our_divergent_algorithms() {
             go.schema_add(sdl).is_err(),
             "{label}: Go accepted an algorithm it does not implement, which means it read it as something else"
         );
-        rust.purge().expect("purge Rust between cases");
-        go.purge().expect("purge Go between cases");
+        purge_node(&cluster, 0).await;
+        purge_node(&cluster, 1).await;
     }
 }
 

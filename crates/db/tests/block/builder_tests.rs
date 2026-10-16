@@ -28,9 +28,13 @@ async fn test_build_blocks_creates_proper_structure() {
     let blockstore = make_test_blockstore();
     let schema_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
 
-    let result = build_blocks_from_document(&doc, schema_version_id, &blockstore)
-        .await
-        .unwrap();
+    let result = build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version(schema_version_id),
+        &blockstore,
+    )
+    .await
+    .unwrap();
 
     // Should have created 2 field blocks (name, age)
     assert_eq!(result.field_cids.len(), 2);
@@ -53,9 +57,13 @@ async fn test_build_blocks_derives_doc_id_from_genesis_cid() {
     doc.set("name", NormalValue::String("Dana".to_string()));
     let blockstore = make_test_blockstore();
 
-    let result = build_blocks_from_document(&doc, "schema-v1", &blockstore)
-        .await
-        .unwrap();
+    let result = build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version("schema-v1"),
+        &blockstore,
+    )
+    .await
+    .unwrap();
     assert_eq!(result.doc_id, derive_doc_id(&result.cid));
     assert!(result.doc_id.starts_with("bae-"));
 }
@@ -68,9 +76,13 @@ async fn test_field_block_contains_lww_delta() {
     let blockstore = make_test_blockstore();
     let schema_version_id = "schema-v1";
 
-    let result = build_blocks_from_document(&doc, schema_version_id, &blockstore)
-        .await
-        .unwrap();
+    let result = build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version(schema_version_id),
+        &blockstore,
+    )
+    .await
+    .unwrap();
 
     // Get the field block
     let field_cid = &result.field_cids[0];
@@ -96,9 +108,13 @@ async fn test_composite_block_has_field_links() {
 
     let blockstore = make_test_blockstore();
 
-    let result = build_blocks_from_document(&doc, "schema-v1", &blockstore)
-        .await
-        .unwrap();
+    let result = build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version("schema-v1"),
+        &blockstore,
+    )
+    .await
+    .unwrap();
 
     // Decode the composite block
     let composite_block = Block::from_dag_cbor(&result.block).unwrap();
@@ -135,7 +151,7 @@ fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries
 
     let computed = compute_document_blocks(
         &doc,
-        "schema-v1",
+        &crate::common::schema::version("schema-v1"),
         DocStorageIdentity::new(1, 1),
         Some(&enc),
         None,

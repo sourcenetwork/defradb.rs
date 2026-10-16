@@ -39,6 +39,7 @@ use crdt::{Counter, CounterDelta, Lww, LwwDelta, NumericKind};
 use datastore::NamespaceView;
 use defra_core::block::{
     Block, CollectionDefinitionDeltaPayload, CrdtDelta, FieldDefinitionDeltaPayload,
+    IMMUTABLE_LINK_NAME,
 };
 use defra_core::merge::{BlockMetadata, MergeErrorDisposition, MergeHandler, MergeOutcome};
 use defra_core::types::DocId;

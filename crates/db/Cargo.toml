@@ -116,6 +116,7 @@ proptest.workspace = true
 blst = "0.3"
 getrandom = "0.2"
 tempfile = "3"
+regolith.workspace = true
 ed25519-dalek.workspace = true
 
 [lints]

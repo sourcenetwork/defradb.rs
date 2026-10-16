@@ -113,6 +113,12 @@ impl Default for ExecuteRetryPolicy {
 #[async_trait::async_trait]
 trait SchemaOps: Send + Sync {
     async fn add_schema(&self, sdl: &str) -> anyhow::Result<Vec<CollectionVersion>>;
+    async fn ensure_ordinary_index(
+        &self,
+        collection: &str,
+        name: &str,
+        fields: Vec<schema::IndexedFieldDescription>,
+    ) -> anyhow::Result<schema::IndexDescription>;
     async fn add_view(&self, source_query: &str, target_sdl: &str) -> anyhow::Result<()>;
     async fn patch_collection(
         &self,
@@ -181,12 +187,40 @@ pub struct EmbeddedNode {
     transaction_stats: Option<storage::TransactionStatsHandle>,
     #[cfg(feature = "http")]
     txn_cleanup_task: kovan_queue::seg_queue::SegQueue<tokio::task::JoinHandle<()>>,
+    /// Vector index rebuild and downsample view refresh, as the CLI and the
+    /// `embedded` node run them. Each holds the database open until aborted.
+    #[cfg(not(target_arch = "wasm32"))]
+    background_tasks: BackgroundTasks,
     #[cfg(feature = "p2p")]
     p2p_ops: Option<Arc<dyn defra_http::P2POperations>>,
     #[cfg(feature = "p2p")]
     p2p_lifecycle: Option<p2p_runtime::P2PLifecycle>,
     #[cfg(feature = "otel")]
     telemetry: kovan_queue::seg_queue::SegQueue<TelemetryHandle>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct BackgroundTasks(std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BackgroundTasks {
+    fn take(&self) -> Vec<tokio::task::JoinHandle<()>> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for BackgroundTasks {
+    fn drop(&mut self) {
+        for task in self.take() {
+            task.abort();
+        }
+    }
 }
 
 #[cfg(feature = "http")]
@@ -385,6 +419,22 @@ impl EmbeddedNode {
             .await
     }
 
+    /// Ensure a named nonunique ordinary index, preserving the collection's
+    /// version and documents. Readiness is reported only after backfill; an
+    /// existing unfinished or failed backfill returns an error.
+    pub async fn ensure_ordinary_index(
+        &self,
+        collection: &str,
+        name: &str,
+        fields: Vec<schema::IndexedFieldDescription>,
+    ) -> anyhow::Result<schema::IndexDescription> {
+        self.as_node_identity(
+            self.schema_ops
+                .ensure_ordinary_index(collection, name, fields),
+        )
+        .await
+    }
+
     /// Create a materialized view from a source query and target SDL.
     ///
     /// `source_query` format: `"SourceType { field1 field2 ... }"`
@@ -487,6 +537,18 @@ impl EmbeddedNode {
     /// historical revision. Subscribe before the initial query to avoid gaps.
     pub fn subscribe_document_changes(&self) -> events::DocumentChangeSubscription {
         self.event_bus.subscribe_document_changes()
+    }
+
+    /// [`Self::subscribe_document_changes`] limited to the given collections,
+    /// identified by [`CollectionVersion::collection_id`], which is stable
+    /// across schema versions. Updates elsewhere neither wake the subscription
+    /// nor push it into `resync_required`.
+    pub fn subscribe_collection_changes(
+        &self,
+        collection_ids: impl IntoIterator<Item = String>,
+    ) -> events::DocumentChangeSubscription {
+        self.event_bus
+            .subscribe_collection_changes(collection_ids.into_iter().collect())
     }
 
     /// Begin a manually finalized transaction. Dropping its handle does not
@@ -707,6 +769,13 @@ impl EmbeddedNode {
         #[cfg(feature = "http")]
         if let Some(task) = self.txn_cleanup_task.pop() {
             task.abort();
+            let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        for task in self.background_tasks.take() {
+            task.abort();
+            // An aborted task keeps the database open until it is next polled.
             let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
         }
 
@@ -1296,6 +1365,7 @@ impl NodeBuilder {
 
             let addr = http_cfg.address;
             let extra_routes = http_cfg.extra_routes;
+            let bound = http_cfg.listener;
             tokio::spawn(async move {
                 let router_result = server.router();
                 let run_result = async {
@@ -1304,19 +1374,29 @@ impl NodeBuilder {
                         router = router.merge(extra);
                     }
 
-                    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-                        let hint = match e.kind() {
-                            std::io::ErrorKind::AddrInUse => "port is already in use",
-                            std::io::ErrorKind::PermissionDenied => {
-                                "permission denied (try port > 1024)"
-                            }
-                            std::io::ErrorKind::AddrNotAvailable => {
-                                "address not available on this host"
-                            }
-                            _ => "check network configuration",
-                        };
-                        anyhow::anyhow!("failed to bind to {}: {} ({})", addr, e, hint)
-                    })?;
+                    let listener = match bound {
+                        Some(listener) => {
+                            listener.set_nonblocking(true).map_err(|e| {
+                                anyhow::anyhow!("failed to prepare listener on {}: {}", addr, e)
+                            })?;
+                            tokio::net::TcpListener::from_std(listener).map_err(|e| {
+                                anyhow::anyhow!("failed to adopt listener on {}: {}", addr, e)
+                            })?
+                        }
+                        None => tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                            let hint = match e.kind() {
+                                std::io::ErrorKind::AddrInUse => "port is already in use",
+                                std::io::ErrorKind::PermissionDenied => {
+                                    "permission denied (try port > 1024)"
+                                }
+                                std::io::ErrorKind::AddrNotAvailable => {
+                                    "address not available on this host"
+                                }
+                                _ => "check network configuration",
+                            };
+                            anyhow::anyhow!("failed to bind to {}: {} ({})", addr, e, hint)
+                        })?,
+                    };
 
                     axum::serve(listener, router)
                         .await
@@ -1659,6 +1739,13 @@ impl NodeBuilder {
             policy_lookup,
             event_bus.clone(),
         ));
+        // Started last: nothing after this point fails, so a failed build
+        // never leaves a task holding the store open.
+        #[cfg(not(target_arch = "wasm32"))]
+        let background_tasks = BackgroundTasks(std::sync::Mutex::new(vec![
+            database.clone().start_vector_rebuild_task(),
+            database.clone().start_downsample_task(),
+        ]));
         let block_ops: Arc<dyn BlockOps> = Arc::new(db_impls::DbBlockOps::new(
             database,
             document_acp.clone(),
@@ -1690,6 +1777,8 @@ impl NodeBuilder {
             transaction_stats,
             #[cfg(feature = "http")]
             txn_cleanup_task: single_slot(txn_cleanup_task),
+            #[cfg(not(target_arch = "wasm32"))]
+            background_tasks,
             #[cfg(feature = "p2p")]
             p2p_ops,
             #[cfg(feature = "p2p")]
@@ -1739,12 +1828,11 @@ mod tests {
     #[cfg(feature = "http")]
     #[tokio::test]
     async fn embedded_http_exposes_schema_add_and_only_read_collection_versions() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = probe.local_addr().unwrap();
-        drop(probe);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
 
         let node = EmbeddedNode::builder()
-            .with_http(HttpConfig::with_addr(address))
+            .with_http(HttpConfig::with_listener(listener).unwrap())
             .build()
             .await
             .unwrap();

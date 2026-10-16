@@ -212,7 +212,7 @@ async fn last_scope_ack_preserves_peer_hint_until_expiry_or_forget() {
         .unwrap();
     let deadline = info(&peerstore).await.not_before_unix;
     peerstore
-        .complete_retry_scope("peer", "doc", "collection", false)
+        .complete_retry_scope("peer", "doc", "collection", false, &[])
         .await
         .unwrap();
     peerstore.clear_retry_peer("peer").await.unwrap();
@@ -228,7 +228,7 @@ async fn last_scope_ack_preserves_peer_hint_until_expiry_or_forget() {
         .unwrap();
     assert!(!info(&peerstore).await.is_backpressure_elapsed());
     peerstore
-        .complete_retry_scope("peer", "new", "collection", false)
+        .complete_retry_scope("peer", "new", "collection", false, &[])
         .await
         .unwrap();
 
@@ -317,4 +317,81 @@ async fn configured_schedule_survives_scope_updates_and_reopen() {
     assert_eq!(third.num_retries, 3);
     drop(peerstore);
     reopened.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn acknowledged_heads_follow_markers_and_replicator_lifetime() {
+    let peerstore = Peerstore::new(Arc::new(RegolithStore::in_memory().unwrap()));
+    peerstore
+        .create_replicator("peer", b"replicator")
+        .await
+        .unwrap();
+    assert_eq!(
+        peerstore
+            .acknowledged_heads("peer", "doc", false)
+            .await
+            .unwrap(),
+        None
+    );
+
+    peerstore
+        .observe_push_head("peer", "doc", "collection")
+        .await
+        .unwrap();
+    peerstore
+        .complete_retry_scope(
+            "peer",
+            "doc",
+            "collection",
+            false,
+            &["b".into(), "a".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        peerstore
+            .acknowledged_heads("peer", "doc", false)
+            .await
+            .unwrap(),
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+
+    // A newer push hides the old acknowledgement until it completes.
+    peerstore
+        .observe_push_head("peer", "doc", "collection")
+        .await
+        .unwrap();
+    assert_eq!(
+        peerstore
+            .acknowledged_heads("peer", "doc", false)
+            .await
+            .unwrap(),
+        None
+    );
+
+    // A scope completed without delivery (filtered out or deleted) clears it.
+    peerstore
+        .complete_retry_scope("peer", "doc", "collection", false, &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        peerstore
+            .acknowledged_heads("peer", "doc", false)
+            .await
+            .unwrap(),
+        None
+    );
+
+    peerstore
+        .complete_retry_scope("peer", "", "collection", true, &["c".into()])
+        .await
+        .unwrap();
+    peerstore.delete_replicator("peer").await.unwrap();
+    assert_eq!(
+        peerstore
+            .acknowledged_heads("peer", "collection", true)
+            .await
+            .unwrap(),
+        None
+    );
 }

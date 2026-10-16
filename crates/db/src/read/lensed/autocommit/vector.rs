@@ -30,6 +30,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         let hits = crate::read::vector::search_vector_index(
             &collection,
             &datastore,
+            self.db.vector_codes(),
             index_id,
             query_vector,
             k,

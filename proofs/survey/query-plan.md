@@ -23,7 +23,13 @@ the planner (builder, index selection, mapping), and the read/write boundary tra
 ## Candidates
 | name | kind | property | already-modeled | priority |
 |------|------|----------|-----------------|----------|
-| Deferred-ACP overlay consistency | TLA+ | Within a txn, a projected `Registered{owner}` gates reads to that owner and `Unregistered` opens reads, exactly as the post-commit ACP state would; on commit all hooks apply (a registered doc becomes ACP-registered); on rollback no hook runs and no ACP state changes; a concurrent txn never observes another's uncommitted projection. No reader gains access the committed state would deny (fail-closed across the projected→committed boundary). | no (Commits/Acp slices reference `check_doc_access_with_overlay` only as the gate call-site; neither models the buffered overlay/commit-hook transition) | medium |
+| Deferred-ACP overlay consistency | TLA+ | Within a txn, a projected `Registered{owner}` gates reads to that owner and `Unregistered` applies the backend's public-access rule, exactly as the post-commit ACP state would; on commit all hooks apply (a registered doc becomes ACP-registered); on rollback no hook runs and no ACP state changes; a concurrent txn never observes another's uncommitted projection. No reader gains access the committed state would deny (fail-closed across the projected→committed boundary). | no (Commits/Acp slices reference `check_doc_access_with_overlay` only as the gate call-site; neither models the buffered overlay/commit-hook transition) | medium |
+
+The existing `DeferredAcp` model assumes a backend where unregistered objects are
+public, as in the local and Cosmos implementations. Native Vera denies missing
+registrations; the model does not establish that behavior. The Rust overlay reads
+`DocumentACP::unregistered_documents_are_public()` and has separate regression
+coverage for native denial and branchable collection grants.
 
 ## Verdict
 **Model-worthy: yes — one medium candidate.** The deferred-ACP overlay is a genuine

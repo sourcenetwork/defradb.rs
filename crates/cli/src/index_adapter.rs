@@ -165,12 +165,13 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
             .await
             .map_err(|e| format!("{}", e))?;
 
-        // Scope the systemstore so its Arc<SharedTxn> is dropped before commit
+        // Scope the stores so their Arc<SharedTxn> is dropped before commit
         let updated_schema = {
             let systemstore = txn.systemstore().map_err(|e| format!("{}", e))?;
+            let datastore = txn.datastore().map_err(|e| format!("{}", e))?;
 
             let existed = index_manager
-                .delete_index(&systemstore, name)
+                .delete_index(&datastore, name)
                 .await
                 .map_err(|e| format!("{}", e))?;
 
@@ -215,3 +216,7 @@ impl<S: Store + 'static> IndexOperations for IndexAdapter<S> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/index_adapter.rs"]
+mod tests;

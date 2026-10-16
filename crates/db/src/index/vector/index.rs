@@ -11,18 +11,20 @@ use storage::corekv::{MaybeSend, Reader, Writer};
 use storage::index::CollectionIndex;
 
 use super::engine::ann::{Admit, EngineKind, Neighbor, VectorIndexEngine};
+use super::engine::diskann::{CodeCache, CodeCaches, DiskAnn, DiskAnnParams, MergePlan};
 use super::engine::dispatch::Engine;
 use super::engine::flat::Flat;
 use super::engine::hnsw::Hnsw;
-use super::engine::ivfflat::{IvfFlat, IvfFlatParams};
-use super::engine::ivfpq::{IvfPq, IvfPqParams};
+use super::engine::ivf::flat::{IvfFlat, IvfFlatParams};
+use super::engine::ivf::pq::{IvfPq, IvfPqParams};
 use super::engine::ssg::{Ssg, SsgParams};
-use super::kv_store::KvNodeStore;
 use super::params::Params;
+use super::store::KvNodeStore;
 use super::store::{NodeId, VectorNodeStore};
 use crate::index::error::{Error, Result};
 use defra_core::vector::Element;
 use defra_core::vector::Metric;
+use std::sync::Arc;
 
 /// The only epoch until something triggers a rebuild. The key layout carries
 /// the component so that day does not require migrating every entry.
@@ -38,8 +40,10 @@ pub struct VectorIndex {
     ivfpq: IvfPqParams,
     ivfflat: IvfFlatParams,
     ssg: SsgParams,
+    diskann: DiskAnnParams,
     metric: Metric,
     seed: u64,
+    codes: Option<Arc<CodeCache>>,
 }
 
 impl VectorIndex {
@@ -68,6 +72,7 @@ impl VectorIndex {
             nprobe: configured.nprobe,
             m: configured.m,
             sample_bytes: configured.sample_bytes,
+            rerank: configured.rerank,
         };
 
         let configured = vector.ivfflat.unwrap_or_default();
@@ -100,6 +105,13 @@ impl VectorIndex {
         if vector.algorithm == VectorAlgorithm::IvfFlat {
             IvfFlat::try_new(super::store::MemoryNodeStore::new(), metric, ivfflat, 0)?;
         }
+        let diskann = DiskAnnParams::from(vector.diskann.unwrap_or_default());
+        if vector.algorithm == VectorAlgorithm::DiskAnn {
+            if vector.dimensions != 0 {
+                diskann.validate_dimensions(vector.dimensions as usize)?;
+            }
+            DiskAnn::try_new(super::store::MemoryNodeStore::new(), metric, diskann, 0)?;
+        }
 
         Ok(Self {
             collection_short_id,
@@ -112,8 +124,19 @@ impl VectorIndex {
             ivfpq,
             ivfflat,
             ssg,
+            diskann,
             metric,
+            codes: None,
         })
+    }
+
+    /// Lets a resident-codes DiskANN index search with this node's shared code
+    /// cache; any other index is unchanged.
+    pub fn with_code_caches(mut self, caches: &CodeCaches) -> Self {
+        if self.vector.algorithm == VectorAlgorithm::DiskAnn && self.diskann.resident_codes {
+            self.codes = Some(caches.get(self.collection_short_id, self.desc.id));
+        }
+        self
     }
 
     pub fn vector_description(&self) -> &VectorIndexDescription {
@@ -174,6 +197,13 @@ impl VectorIndex {
                 self.ssg,
                 self.seed,
             )?),
+            VectorAlgorithm::DiskAnn => {
+                let engine = DiskAnn::try_new(store, self.metric, self.diskann, self.seed)?;
+                Engine::DiskAnn(match &self.codes {
+                    Some(codes) => engine.with_codes(codes.clone()),
+                    None => engine,
+                })
+            }
         })
     }
 
@@ -206,6 +236,40 @@ impl VectorIndex {
         }
         engine.build().await.map_err(into_storage)?;
         Ok(true)
+    }
+
+    /// The DiskANN merge this index is due, read on `txn`, or `None` when it
+    /// is not a DiskANN index or nothing is due.
+    ///
+    /// Meant for a read-only snapshot: the plan is applied with
+    /// [`merge`](Self::merge) on another transaction, which then reads only
+    /// the keys it names.
+    pub async fn merge_plan<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+    ) -> Result<Option<MergePlan>> {
+        if self.vector.algorithm != VectorAlgorithm::DiskAnn {
+            return Ok(None);
+        }
+        let plan = self.diskann(txn)?.merge_plan().await?;
+        Ok((!plan.is_empty()).then_some(plan))
+    }
+
+    /// Applies a plan from [`merge_plan`](Self::merge_plan) on `txn`.
+    pub async fn merge<T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &mut T,
+        plan: MergePlan,
+    ) -> Result<()> {
+        self.diskann(txn)?.merge(plan).await
+    }
+
+    fn diskann<'txn, T: Reader + Writer + MaybeSend>(
+        &self,
+        txn: &'txn mut T,
+    ) -> Result<DiskAnn<KvNodeStore<'txn, T>>> {
+        let store = KvNodeStore::new(txn, self.collection_short_id, self.desc.id, LIVE_EPOCH);
+        DiskAnn::try_new(store, self.metric, self.diskann, self.seed)
     }
 
     /// The vector a document contributes, if any.
@@ -320,12 +384,10 @@ impl CollectionIndex for VectorIndex {
         }
         .map_err(into_storage)?;
 
-        // Once built, `should_build`'s trained/built check is an O(1) aux
-        // lookup, so this costs one extra read per write and nothing else.
-        // HNSW is excluded: its build is a whole-graph reinsert, far too heavy
-        // to price into a single write. The background task owns that
-        // rebuild, through `rebuild_if_due`.
-        if engine.kind() != EngineKind::Hnsw && engine.should_build().await.map_err(into_storage)? {
+        // Once built, the trained/built check is an O(1) aux lookup, so this
+        // costs one extra read per write and nothing else. A kind that leaves
+        // its build to the background sweep answers false.
+        if engine.should_build_inline().await.map_err(into_storage)? {
             engine.build().await.map_err(into_storage)?;
         }
         Ok(())

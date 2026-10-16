@@ -1,6 +1,7 @@
 //! Migration context loading and document migration logic.
 
 use rapidhash::{HashMapExt, RapidHashMap};
+use std::sync::Arc;
 
 use datastore::NamespaceView;
 use document::Document;
@@ -116,17 +117,28 @@ impl<S: Store> LensedDocFetcher<S> {
     pub(super) async fn load_versions_and_check_migrations(
         &self,
         collection: &Collection,
-    ) -> query::error::Result<(Vec<CollectionVersion>, bool)> {
+    ) -> query::error::Result<(Arc<[CollectionVersion]>, bool)> {
         let collection_id = &collection.schema().collection_id;
 
         // Load all versions from systemstore
         let txn_guard = self.txn.lock().await;
-        let txn = txn_guard.as_ref().ok_or_else(|| {
-            query::error::QueryError::execution("transaction not available for version lookup")
-        })?;
-        let systemstore = txn.systemstore().map_err(|e| {
-            query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
-        })?;
+        let (readonly, systemstore) = {
+            let txn = txn_guard.as_ref().ok_or_else(|| {
+                query::error::QueryError::execution("transaction not available for version lookup")
+            })?;
+            let readonly = txn
+                .is_readonly()
+                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+            let systemstore = txn.systemstore().map_err(|e| {
+                query::error::QueryError::execution(format!("failed to get systemstore: {}", e))
+            })?;
+            (readonly, systemstore)
+        };
+        if readonly {
+            if let Some(facts) = self.version_cache.read().await.get(collection_id) {
+                return Ok(facts.clone());
+            }
+        }
 
         let versions = get_collections_by_collection_id(&systemstore, collection_id)
             .await
@@ -137,12 +149,16 @@ impl<S: Store> LensedDocFetcher<S> {
                 ))
             })?;
 
-        drop(txn_guard); // Release lock
-
-        // Check if any version has migrations (matching Go's behavior)
         let has_migrations = Self::versions_have_migrations(&versions);
-
-        Ok((versions, has_migrations))
+        let facts = (Arc::from(versions), has_migrations);
+        if readonly {
+            self.version_cache
+                .write()
+                .await
+                .insert(collection_id.clone(), facts.clone());
+        }
+        drop(txn_guard);
+        Ok(facts)
     }
 
     /// Load full collection history from systemstore.
@@ -371,5 +387,119 @@ impl<S: Store> LensedDocFetcher<S> {
             })?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod snapshot_history_tests {
+    use super::*;
+    use crate::database::DB;
+    use storage::RegolithStore;
+
+    #[tokio::test]
+    async fn readonly_history_stays_in_its_snapshot_and_new_snapshot_observes_schema_change() {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collections_atomic(
+            query::parse_sdl("type SnapshotHistory { value: String }").unwrap(),
+        )
+        .await
+        .unwrap();
+        let collection = db.get_collection("SnapshotHistory").unwrap().unwrap();
+        let old = LensedDocFetcher::new(
+            db.clone(),
+            db.new_txn(true).await.unwrap(),
+            db.lens_store().clone(),
+            true,
+        );
+        let first = old
+            .load_versions_and_check_migrations(&collection)
+            .await
+            .unwrap();
+        assert_eq!(first.0.len(), 1);
+        db.patch_collection("SnapshotHistory", r#"[{"op":"add","path":"/SnapshotHistory/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#, None).await.unwrap();
+        let cached = old
+            .load_versions_and_check_migrations(&collection)
+            .await
+            .unwrap();
+        assert_eq!(cached.0.len(), 1);
+        let fresh = LensedDocFetcher::new(
+            db.clone(),
+            db.new_txn(true).await.unwrap(),
+            db.lens_store().clone(),
+            true,
+        );
+        let latest = db.get_collection("SnapshotHistory").unwrap().unwrap();
+        assert_eq!(
+            fresh
+                .load_versions_and_check_migrations(&latest)
+                .await
+                .unwrap()
+                .0
+                .len(),
+            2
+        );
+        assert_eq!(
+            old.stream_clone()
+                .load_versions_and_check_migrations(&collection)
+                .await
+                .unwrap()
+                .0
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn writable_history_observes_its_own_migration_registration() {
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.create_collections_atomic(
+            query::parse_sdl("type WritableHistory { value: String }").unwrap(),
+        )
+        .await
+        .unwrap();
+        let v1 = db
+            .get_collection("WritableHistory")
+            .unwrap()
+            .unwrap()
+            .version_id()
+            .to_owned();
+        let v2 = db.patch_collection("WritableHistory", r#"[{"op":"add","path":"/WritableHistory/Fields/-","value":{"Name":"extra","Kind":"String"}}]"#, None).await.unwrap().version_id;
+        let collection = db.get_collection("WritableHistory").unwrap().unwrap();
+        let fetcher = LensedDocFetcher::new(
+            db.clone(),
+            db.new_txn(false).await.unwrap(),
+            db.lens_store().clone(),
+            false,
+        );
+        assert!(
+            !fetcher
+                .load_versions_and_check_migrations(&collection)
+                .await
+                .unwrap()
+                .1
+        );
+        {
+            let mut guard = fetcher.txn.lock().await;
+            db.set_migration_in_txn_with_store(
+                guard.as_mut().unwrap(),
+                fetcher.lens_store.clone(),
+                lens::LensConfig::new(
+                    &v1,
+                    &v2,
+                    lens::LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+                ),
+            )
+            .await
+            .unwrap();
+        }
+        assert!(
+            fetcher
+                .load_versions_and_check_migrations(&collection)
+                .await
+                .unwrap()
+                .1
+        );
+        assert!(fetcher.version_cache.read().await.is_empty());
+        let _ = fetcher.take_txn().await.unwrap().discard();
     }
 }

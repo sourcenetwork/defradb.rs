@@ -231,7 +231,7 @@ impl PeerStateTracker {
         if let Some(info) = self.peers.remove(peer_id) {
             let released = info.known_cids.len();
             self.total_cids
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
                     Some(total.saturating_sub(released))
                 })
                 .ok();

@@ -261,6 +261,24 @@ impl<B: Blockstore + 'static> IrohP2PAdapter<B> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
+    async fn replication_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        self.check_nac(acp::nac::NodePermission::P2pReplicatorList)
+            .await?;
+        let Some(pusher) = self.doc_pusher.as_ref() else {
+            return Err(P2PError::unsupported(
+                "replication acknowledgement needs a document pusher",
+            ));
+        };
+        pusher
+            .replication_acknowledged(peer_id, collection_name, doc_ids)
+            .await
+    }
+
     async fn sync_status(&self) -> P2PResult<serde_json::Value> {
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);

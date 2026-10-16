@@ -1,6 +1,7 @@
 use crate::corekv::{IterOptions, Key, Reader, Result, Store, Txn, Writer};
 use crate::keys::peerstore::{
-    ReplicatorKey, ReplicatorRetryCollectionKey, ReplicatorRetryDocIDKey, ReplicatorRetryIDKey,
+    ReplicatorAckedHeadsKey, ReplicatorKey, ReplicatorRetryCollectionKey, ReplicatorRetryDocIDKey,
+    ReplicatorRetryIDKey,
 };
 use crate::namespace::{Namespace, NamespacedStore};
 use async_lock::{RwLock, RwLockWriteGuardArc};
@@ -212,6 +213,8 @@ impl<S: Store> Peerstore<S> {
         for prefix in [
             ReplicatorRetryDocIDKey::peer_prefix(peer_id),
             ReplicatorRetryCollectionKey::peer_prefix(peer_id),
+            ReplicatorAckedHeadsKey::peer_prefix(peer_id, false),
+            ReplicatorAckedHeadsKey::peer_prefix(peer_id, true),
             legacy_retry_commit_prefix(Some(peer_id)),
         ] {
             let mut iter = txn.iterator(IterOptions::new().with_prefix(prefix)).await?;
@@ -789,30 +792,74 @@ impl<S: Store> Peerstore<S> {
             &retry.doc_id,
             &retry.collection_id,
             retry.is_collection_commit(),
+            &[],
         )
         .await
     }
 
     /// Remove one presence-only retry marker after its current scope state has
     /// been checked while holding the peer's retry-transition guard.
+    ///
+    /// `acked_heads` are the verified-current heads the peer acknowledged; they
+    /// replace the scope's acknowledged record. Empty means nothing was
+    /// delivered (the document is gone or filtered out) and clears it.
     pub async fn complete_retry_scope(
         &self,
         peer_id: &str,
         doc_id: &str,
         collection_id: &str,
         is_collection: bool,
+        acked_heads: &[String],
     ) -> Result<()> {
+        let scope_id = if is_collection { collection_id } else { doc_id };
         let key = if is_collection {
             ReplicatorRetryCollectionKey::new(peer_id, collection_id).bytes()
         } else {
             ReplicatorRetryDocIDKey::new(peer_id, doc_id).bytes()
         };
+        let acked_key = ReplicatorAckedHeadsKey::new(peer_id, scope_id, is_collection).bytes();
+        let mut acked = acked_heads.to_vec();
+        acked.sort_unstable();
+        let acked = acked.join("\n");
         retry_push_txn_conflicts(|| async {
             let mut txn = self.store.new_txn(false).await?;
             txn.delete(&key).await?;
+            if acked.is_empty() {
+                txn.delete(&acked_key).await?;
+            } else {
+                txn.set(&acked_key, acked.as_bytes()).await?;
+            }
             txn.commit().await
         })
         .await
+    }
+
+    /// The sorted heads `peer_id` last acknowledged for a scope, or `None`
+    /// while a marker for that scope is outstanding or nothing was recorded.
+    pub async fn acknowledged_heads(
+        &self,
+        peer_id: &str,
+        scope_id: &str,
+        is_collection: bool,
+    ) -> Result<Option<Vec<String>>> {
+        let marker = if is_collection {
+            ReplicatorRetryCollectionKey::new(peer_id, scope_id).bytes()
+        } else {
+            ReplicatorRetryDocIDKey::new(peer_id, scope_id).bytes()
+        };
+        let txn = self.store.new_txn(true).await?;
+        if txn.get(&marker).await?.is_some() {
+            return Ok(None);
+        }
+        let acked = txn
+            .get(&ReplicatorAckedHeadsKey::new(peer_id, scope_id, is_collection).bytes())
+            .await?;
+        Ok(acked.map(|bytes| {
+            String::from_utf8_lossy(&bytes)
+                .split('\n')
+                .map(str::to_string)
+                .collect()
+        }))
     }
 
     /// Get retry info bytes for a peer.

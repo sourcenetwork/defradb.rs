@@ -132,3 +132,50 @@ async fn stale_conditional_update_returns_conflict() {
     assert_eq!(final_doc.get("left"), Some(&NormalValue::Int(1)));
     assert_eq!(final_doc.get("right"), Some(&NormalValue::Int(0)));
 }
+
+/// A delete, local or merged from a peer, can commit after the query plan
+/// materialized the document but before the update reloads it under the
+/// per-document guard. That is the same stale snapshot as a concurrent
+/// field change, so it must conflict and let the retry observe the deletion.
+#[tokio::test]
+async fn conditional_update_of_concurrently_deleted_document_returns_conflict() {
+    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).expect("create db"));
+    db.create_collection(test_collection())
+        .await
+        .expect("schema");
+    let mutator = AutoCommitMutator::new(Arc::clone(&db));
+
+    let initial = Document::from_json_str(r#"{"left": 0, "right": 0}"#).expect("initial document");
+    let created = mutator.create("Patch", initial).await.expect("create");
+
+    let expected = mutator
+        .get_for_update("Patch", &created.doc_id)
+        .await
+        .expect("fetch snapshot")
+        .expect("snapshot");
+    let mut patched = expected.clone();
+    patched.set("right", NormalValue::Int(1));
+
+    mutator
+        .delete("Patch", &created.doc_id)
+        .await
+        .expect("concurrent delete");
+
+    let error = mutator
+        .update_if_unchanged(
+            "Patch",
+            expected,
+            patched,
+            RapidHashSet::from_iter(["right".to_string()]),
+        )
+        .await
+        .expect_err("update of a document deleted after its snapshot must conflict");
+    assert!(
+        matches!(
+            error,
+            query::error::QueryError::TransactionConflict(ref message)
+                if message == "transaction conflict. Please retry"
+        ),
+        "unexpected error: {error:?}"
+    );
+}

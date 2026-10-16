@@ -155,7 +155,6 @@ pub(super) async fn create_doc_locally(
     handler: &DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
     collection: &Collection,
     doc: &mut Document,
-    schema_version_id: &str,
 ) -> (DocID, u64, db::block::builder::BlockResult) {
     let txn = handler.db().new_txn(false).await.unwrap();
     let output = {
@@ -170,7 +169,7 @@ pub(super) async fn create_doc_locally(
             &raw_blockstore,
             &headstore,
             doc,
-            schema_version_id,
+            collection.schema(),
             identity,
             None,
             None,
@@ -337,9 +336,13 @@ pub(super) async fn build_merge_block(
     doc.set("name", NormalValue::String(name.to_string()));
     doc.set("age", NormalValue::Int(age));
 
-    let result = db::block::builder::build_blocks_from_document(&doc, "v1", blockstore)
-        .await
-        .unwrap();
+    let result = db::block::builder::build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version("v1"),
+        blockstore,
+    )
+    .await
+    .unwrap();
 
     MergeBlock {
         cid: result.cid,
@@ -1428,7 +1431,7 @@ async fn composite_merge_skips_locally_merged_counter_parent() {
         .unwrap();
     doc.set_schema_version_id("v1");
     let (doc_id, _doc_short_id, local_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
     assert!(
         blockstore.is_merged(&local_blocks.cid).await.unwrap(),
@@ -1563,7 +1566,7 @@ async fn remote_composite_merge_rejects_immutable_field_change() {
 
     // Persist the initial document locally (agent_did = alice).
     let (doc_id, _doc_short_id, create_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
 
     // Craft a higher-priority remote update that flips the immutable field.
@@ -1680,7 +1683,7 @@ async fn remote_composite_merge_rejects_immutable_field_clear() {
     doc.set_schema_version_id("v1");
 
     let (doc_id, _doc_short_id, create_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
 
     // Tombstone: an LWW delta with empty data clears the field.
@@ -1760,7 +1763,7 @@ async fn remote_merge_rejects_immutable_change_after_delete() {
     doc.set_schema_version_id("v1");
 
     let (doc_id, _doc_short_id, create_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
 
     // Remote deletion (status = 2): sets the deleted marker, retains bytes.
@@ -1886,7 +1889,7 @@ async fn remote_merge_allows_partial_update_to_deleted_doc() {
     doc.set_schema_version_id("v1");
 
     let (doc_id, _doc_short_id, create_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
 
     // Delete (status 2).
@@ -1995,7 +1998,7 @@ async fn batch_merge_rejects_immutable_change_without_partial_write() {
     doc.set_schema_version_id("v1");
 
     let (doc_id, _doc_short_id, create_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
 
     // Violating composite: changes the immutable agent_did AND a benign body.
@@ -2071,10 +2074,13 @@ async fn batch_merge_rejects_immutable_change_without_partial_write() {
         NormalValue::String("did:key:carol".to_string()),
     );
     sibling.set("body", NormalValue::String("sibling".to_string()));
-    let sibling_result =
-        db::block::builder::build_blocks_from_document(&sibling, "v1", &blockstore)
-            .await
-            .unwrap();
+    let sibling_result = db::block::builder::build_blocks_from_document(
+        &sibling,
+        &crate::common::schema::version("v1"),
+        &blockstore,
+    )
+    .await
+    .unwrap();
     let sibling_id = sibling_result.doc_id.clone();
     let sibling_merge = MergeBlock {
         cid: sibling_result.cid,
@@ -2153,7 +2159,7 @@ async fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
     doc.set_schema_version_id("v1");
 
     let (doc_id, _doc_short_id, create_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
 
     doc.set("age", NormalValue::Int(60));
@@ -2173,7 +2179,7 @@ async fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
                 &raw_blockstore,
                 &headstore,
                 &doc,
-                "v1",
+                &crate::common::schema::version("v1"),
                 db::block::builder::DocStorageIdentity::new(
                     collection.resolved_root_id(),
                     _doc_short_id,
@@ -2305,7 +2311,7 @@ async fn composite_parent_replay_updates_headstore_for_merged_parent() {
     doc.set_schema_version_id("v1");
 
     let (doc_id, _doc_short_id, local_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
 
     let build_update =
@@ -2439,7 +2445,7 @@ async fn deep_composite_parent_chain_merges_on_worker_stack() {
     doc.set_schema_version_id("v1");
 
     let (doc_id, _doc_short_id, local_blocks) =
-        create_doc_locally(&handler, &collection, &mut doc, "v1").await;
+        create_doc_locally(&handler, &collection, &mut doc).await;
     let doc_id_str = doc_id.to_string();
     let mut field_heads = local_blocks.field_cids;
     let mut composite_heads = vec![local_blocks.cid];
@@ -2967,8 +2973,20 @@ async fn make_handler_with_unique_index_schema() -> (
     DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
     Arc<DefraBlockstore<RegolithStore>>,
 ) {
+    let (handler, blockstore, _) = make_handler_with_unique_index_schema_and_bus().await;
+    (handler, blockstore)
+}
+
+async fn make_handler_with_unique_index_schema_and_bus() -> (
+    DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
+    Arc<DefraBlockstore<RegolithStore>>,
+    Arc<dyn events::Bus>,
+) {
     let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+    let mut db = DB::from_arc(store.clone()).unwrap();
+    let bus: Arc<dyn events::Bus> = Arc::new(events::ChannelBus::new());
+    db.set_event_bus(bus.clone());
+    let db = Arc::new(db);
 
     db.create_collection(
         CollectionVersion::new(
@@ -2998,7 +3016,50 @@ async fn make_handler_with_unique_index_schema() -> (
 
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db, blockstore.clone());
-    (handler, blockstore)
+    (handler, blockstore, bus)
+}
+
+/// The deterministic pick is reported as an event naming both documents, so
+/// an application can reconcile the unindexed one (#1996).
+#[tokio::test]
+async fn unique_index_twin_conflict_publishes_the_pick() {
+    let (handler, blockstore, bus) = make_handler_with_unique_index_schema_and_bus().await;
+    let mut conflicts = bus.subscribe(&[events::EventName::UniqueIndexConflict]);
+
+    let mut doc_ids = Vec::new();
+    for (name, peer) in [
+        ("Alice", "did:key:z6MkrSessionA"),
+        ("Bob", "did:key:z6MkrSessionB"),
+    ] {
+        let mut doc = Document::new();
+        doc.set("name", NormalValue::String(name.to_string()));
+        doc.set("session_id", NormalValue::String("dup-session".to_string()));
+        let built = db::block::builder::build_blocks_from_document(
+            &doc,
+            &crate::common::schema::version("v1"),
+            &blockstore,
+        )
+        .await
+        .unwrap();
+        let metadata = BlockMetadata::normal(&built.doc_id, "col-sessions", peer, None, false);
+        let outcome = handler
+            .handle_block(&built.cid, &built.block, metadata)
+            .await
+            .unwrap();
+        assert_eq!(outcome, MergeOutcome::Merged);
+        doc_ids.push(built.doc_id);
+    }
+    doc_ids.sort();
+
+    let message = tokio::time::timeout(std::time::Duration::from_secs(5), conflicts.recv())
+        .await
+        .expect("conflict event")
+        .expect("subscription open");
+    let conflict = message.as_unique_index_conflict().expect("conflict data");
+    assert_eq!(conflict.index, "idx_session_id_unique");
+    assert_eq!(conflict.winner_doc_id, doc_ids[0]);
+    assert_eq!(conflict.unindexed_doc_id, doc_ids[1]);
+    assert!(conflicts.try_recv().is_err(), "one conflict, one event");
 }
 
 /// #1128 composed with #1126: a replicated composite merge that trips a
@@ -3028,9 +3089,13 @@ async fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canon
     let mut doc_a = Document::new();
     doc_a.set("name", NormalValue::String("Alice".to_string()));
     doc_a.set("session_id", NormalValue::String("dup-session".to_string()));
-    let result_a = db::block::builder::build_blocks_from_document(&doc_a, "v1", &blockstore)
-        .await
-        .unwrap();
+    let result_a = db::block::builder::build_blocks_from_document(
+        &doc_a,
+        &crate::common::schema::version("v1"),
+        &blockstore,
+    )
+    .await
+    .unwrap();
     let doc_a_id = DocID::from_string(&result_a.doc_id).unwrap();
     let metadata_a = BlockMetadata::normal(
         &result_a.doc_id,
@@ -3052,9 +3117,13 @@ async fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canon
     let mut doc_b = Document::new();
     doc_b.set("name", NormalValue::String("Bob".to_string()));
     doc_b.set("session_id", NormalValue::String("dup-session".to_string()));
-    let result_b = db::block::builder::build_blocks_from_document(&doc_b, "v1", &blockstore)
-        .await
-        .unwrap();
+    let result_b = db::block::builder::build_blocks_from_document(
+        &doc_b,
+        &crate::common::schema::version("v1"),
+        &blockstore,
+    )
+    .await
+    .unwrap();
     let doc_b_id = DocID::from_string(&result_b.doc_id).unwrap();
     let metadata_b = BlockMetadata::normal(
         &result_b.doc_id,
@@ -3146,9 +3215,13 @@ async fn remote_composite_merge_with_corrupted_unique_index_entry_is_rejected() 
     let mut doc = Document::new();
     doc.set("name", NormalValue::String("Alice".to_string()));
     doc.set("session_id", NormalValue::String("dup-session".to_string()));
-    let result = db::block::builder::build_blocks_from_document(&doc, "v1", &blockstore)
-        .await
-        .unwrap();
+    let result = db::block::builder::build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version("v1"),
+        &blockstore,
+    )
+    .await
+    .unwrap();
     let metadata = BlockMetadata::normal(
         &result.doc_id,
         "col-sessions",
@@ -3191,9 +3264,13 @@ async fn build_session_merge_block(
     let mut doc = Document::new();
     doc.set("name", NormalValue::String(name.to_string()));
     doc.set("session_id", NormalValue::String(session_id.to_string()));
-    let result = db::block::builder::build_blocks_from_document(&doc, "v1", blockstore)
-        .await
-        .unwrap();
+    let result = db::block::builder::build_blocks_from_document(
+        &doc,
+        &crate::common::schema::version("v1"),
+        blockstore,
+    )
+    .await
+    .unwrap();
     let doc_id = DocID::from_string(&result.doc_id).unwrap();
     let merge_block = MergeBlock {
         cid: result.cid,

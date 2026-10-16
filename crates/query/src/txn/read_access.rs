@@ -31,7 +31,7 @@ impl ObjectAccessChecker for OverlayChecker<'_> {
 
         if !is_doc_registered_with_overlay(self.acp, policy_id, resource_name, object_id).await? {
             return Ok(DocAccess {
-                has_access: true,
+                has_access: self.acp.unregistered_documents_are_public(),
                 explicit: false,
             });
         }

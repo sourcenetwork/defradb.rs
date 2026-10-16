@@ -110,6 +110,7 @@ pub fn spawn_failure_recorder<S: storage::corekv::Store + 'static>(
                         &failure.doc_id,
                         &failure.collection_id,
                         failure.doc_id.is_empty(),
+                        std::slice::from_ref(&failure.cid),
                     )
                     .await
             } else if failure.create_retry {

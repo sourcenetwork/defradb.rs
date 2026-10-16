@@ -11,6 +11,7 @@ mod index_string_timestamp;
 mod lensed_autocommit_stream_suite;
 mod lensed_autocommit_suite;
 mod lensed_fetcher_suite;
+mod lensed_snapshot_history;
 mod limit_pushdown;
 mod lookup;
 mod plan_close;

@@ -150,9 +150,11 @@ async fn publish_peer_lifecycle<T, S: Store>(
         TransportEvent::PeerConnected(peer_id) => {
             tracing::info!("Peer connected (iroh): {peer_id}");
             crate::activate_retry_peer(Arc::clone(store), peer_id).await;
+            publish_peer_connection(event_bus, peer_id, true);
         }
         TransportEvent::PeerDisconnected(peer_id) => {
             tracing::info!("Peer disconnected (iroh): {peer_id}");
+            publish_peer_connection(event_bus, peer_id, false);
         }
         TransportEvent::PeerSubscribed { peer_id, topic } => {
             publish_topic_peer(event_bus, peer_id, topic, "JOINED");
@@ -162,6 +164,19 @@ async fn publish_peer_lifecycle<T, S: Store>(
         }
         _ => {}
     }
+}
+
+fn publish_peer_connection(
+    event_bus: &dyn events::Bus,
+    peer_id: &p2p::transport::PeerId,
+    connected: bool,
+) {
+    event_bus.publish(events::Message::peer_connection(
+        events::PeerConnectionData {
+            peer_id: peer_id.to_string(),
+            connected,
+        },
+    ));
 }
 
 fn publish_topic_peer(

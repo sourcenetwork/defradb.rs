@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
 use kovan::Atom;
-use rapidhash::RapidHashMap;
+use rapidhash::{RapidHashMap, RapidHashSet};
 
 use crate::{TryRecvError, Update};
 
@@ -40,6 +40,7 @@ pub(crate) struct ChangePublisher {
     pending: Arc<Atom<Pending>>,
     wake: Sender<()>,
     capacity: usize,
+    collections: Option<Arc<RapidHashSet<String>>>,
 }
 
 impl ChangePublisher {
@@ -52,7 +53,13 @@ impl ChangePublisher {
     /// atomically, so it lives in the `rcu` closure rather than split across
     /// independent primitives.
     pub(crate) fn publish_batch<'a>(&self, updates: impl Iterator<Item = &'a Update>) {
-        let updates: Vec<&Update> = updates.collect();
+        let updates: Vec<&Update> = updates
+            .filter(|update| {
+                self.collections
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&update.collection_id))
+            })
+            .collect();
         if updates.is_empty() {
             return;
         }
@@ -103,7 +110,13 @@ pub struct DocumentChangeSubscription {
 }
 
 impl DocumentChangeSubscription {
-    pub(crate) fn new(id: u64, capacity: usize) -> (ChangePublisher, Self) {
+    /// `collections` limits the subscription to updates whose `collection_id`
+    /// it contains; other updates neither wake it nor use its capacity.
+    pub(crate) fn new(
+        id: u64,
+        capacity: usize,
+        collections: Option<RapidHashSet<String>>,
+    ) -> (ChangePublisher, Self) {
         let pending = Arc::new(Atom::new(Pending::default()));
         let (tx, rx) = async_channel::bounded(1);
         (
@@ -111,6 +124,7 @@ impl DocumentChangeSubscription {
                 pending: pending.clone(),
                 wake: tx,
                 capacity,
+                collections: collections.map(Arc::new),
             },
             Self {
                 id,
@@ -121,7 +135,7 @@ impl DocumentChangeSubscription {
     }
 
     pub(crate) fn closed() -> Self {
-        let (_, subscription) = Self::new(0, 0);
+        let (_, subscription) = Self::new(0, 0, None);
         subscription
     }
 

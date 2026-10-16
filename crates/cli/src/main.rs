@@ -24,7 +24,24 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Install the process-wide rustls crypto provider.
+///
+/// We cannot control which crypto providers our upstream deps enable, and
+/// rustls panics rather than choosing when the graph offers more than one, so
+/// install one unconditionally instead of relying on feature unification.
+///
+/// We intentionally do this in the CLI wrapper instead of the library
+/// so that embedded applications can choose their own provider.
+///
+/// Must run before anything builds a TLS client or server. An `Err` means a
+/// provider is already installed, which is equally fine.
+fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 async fn run() -> Result<()> {
+    install_crypto_provider();
+
     let cli = Cli::parse();
 
     // Load configuration (flags → env → config file → defaults)

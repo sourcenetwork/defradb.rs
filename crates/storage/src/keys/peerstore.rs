@@ -189,6 +189,62 @@ impl Key for ReplicatorRetryCollectionKey {
     }
 }
 
+/// The heads a replicator peer last acknowledged for one retry scope, written
+/// when that scope's marker is cleared against verified-current heads.
+/// Structure: `/rep/acked/doc/{peer}/{doc}` or `/rep/acked/col/{peer}/{collection}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicatorAckedHeadsKey {
+    pub peer_id: String,
+    pub scope_id: String,
+    pub is_collection: bool,
+}
+
+impl ReplicatorAckedHeadsKey {
+    pub fn new(
+        peer_id: impl Into<String>,
+        scope_id: impl Into<String>,
+        is_collection: bool,
+    ) -> Self {
+        Self {
+            peer_id: peer_id.into(),
+            scope_id: scope_id.into(),
+            is_collection,
+        }
+    }
+
+    fn scope(is_collection: bool) -> &'static str {
+        if is_collection {
+            "col"
+        } else {
+            "doc"
+        }
+    }
+
+    pub fn peer_prefix(peer_id: impl Into<String>, is_collection: bool) -> Vec<u8> {
+        format!(
+            "/rep/acked/{}/{}/",
+            Self::scope(is_collection),
+            peer_id.into()
+        )
+        .into_bytes()
+    }
+}
+
+impl Key for ReplicatorAckedHeadsKey {
+    fn bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
+
+    fn to_string(&self) -> String {
+        format!(
+            "/rep/acked/{}/{}/{}",
+            Self::scope(self.is_collection),
+            self.peer_id,
+            self.scope_id
+        )
+    }
+}
+
 /// PeerstoreSERetry: Tracks search engine indexing failures on peer
 ///
 /// Structure: /se-retry/[PeerID]/[CollectionID]/[DocID]

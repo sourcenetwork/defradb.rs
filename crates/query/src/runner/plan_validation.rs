@@ -3,7 +3,7 @@
 use schema::CollectionVersion;
 
 use crate::error::{QueryError, Result};
-use crate::mapper::{Requestable, Select};
+use crate::mapper::{Filter, Requestable, Select};
 
 use super::plan_formatting::format_graphql_conditions;
 
@@ -222,23 +222,40 @@ pub(crate) fn validate_select(select: &Select, collection: &CollectionVersion) -
         }
     }
 
-    // Validate top-level filter field names exist in schema
+    // Validate top-level filter field names exist in schema, including the
+    // filters of aggregates over this collection itself.
     if let Some(ref filter) = select.filter {
-        for key in filter.conditions().keys() {
-            // Skip logical operators and special filter directives
-            if key == "_and" || key == "_or" || key == "_not" || key == "_alias" {
-                continue;
-            }
-            if !field_exists(key) {
-                let filter_repr = format_graphql_conditions(filter.conditions());
-                return Err(QueryError::parse(format!(
-                    "Argument \"filter\" has invalid value {}.\nIn field \"{}\": Unknown field.",
-                    filter_repr, key
-                )));
+        validate_filter_fields(filter, &field_exists)?;
+    }
+    for requestable in &select.fields {
+        if let Requestable::Aggregate(agg) = requestable {
+            for target in &agg.targets {
+                if target.host_name == select.collection_name {
+                    if let Some(ref filter) = target.filter {
+                        validate_filter_fields(filter, &field_exists)?;
+                    }
+                }
             }
         }
     }
 
+    Ok(())
+}
+
+fn validate_filter_fields(filter: &Filter, field_exists: &dyn Fn(&str) -> bool) -> Result<()> {
+    for key in filter.conditions().keys() {
+        // Skip logical operators and special filter directives
+        if key == "_and" || key == "_or" || key == "_not" || key == "_alias" {
+            continue;
+        }
+        if !field_exists(key) {
+            let filter_repr = format_graphql_conditions(filter.conditions());
+            return Err(QueryError::parse(format!(
+                "Argument \"filter\" has invalid value {}.\nIn field \"{}\": Unknown field.",
+                filter_repr, key
+            )));
+        }
+    }
     Ok(())
 }
 

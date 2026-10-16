@@ -79,7 +79,7 @@ impl TransportDocPusher for ScriptedPusher {
         {
             Outcome::Delivered => {
                 self.peerstore
-                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false)
+                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false, &[])
                     .await
                     .unwrap();
                 Ok(())
@@ -97,7 +97,7 @@ impl TransportDocPusher for ScriptedPusher {
                 started.notify_one();
                 finish.notified().await;
                 self.peerstore
-                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false)
+                    .complete_retry_scope(peer_id.as_str(), doc_id, "", false, &[])
                     .await
                     .unwrap();
                 Ok(())

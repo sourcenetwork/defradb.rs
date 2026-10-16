@@ -1,5 +1,5 @@
 use cid::Cid;
-use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta};
+use defra_core::block::{Block, CompositeDeltaPayload, CrdtDelta, IMMUTABLE_LINK_NAME};
 use defra_core::merge::{BlockMetadata, MergeBlock, MergeOutcome};
 use document::NormalValue;
 use schema::CollectionVersion;
@@ -178,7 +178,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let schema = collection.schema();
         let mut keys = Vec::new();
         for link in block.links.iter().flatten() {
-            if !is_immutable_scalar_field(schema, &link.name) {
+            let is_immutable_block = link.name == IMMUTABLE_LINK_NAME;
+            if !is_immutable_block && !is_immutable_scalar_field(schema, &link.name) {
                 continue;
             }
             let Some(data) = self
@@ -191,19 +192,31 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             };
             let field = Block::from_dag_cbor(&data)
                 .map_err(|error| MergeError::BlockDecode(error.to_string()))?;
-            let CrdtDelta::Lww(lww) = &field.delta else {
-                continue;
-            };
-            if field.encryption.is_some() || lww.data.is_empty() {
+            if field.encryption.is_some() {
                 continue;
             }
-            let Ok(value) = ciborium::from_reader::<NormalValue, _>(lww.data.as_slice()) else {
-                continue;
+            let values: Vec<(String, Vec<u8>)> = match &field.delta {
+                CrdtDelta::Lww(lww) => vec![(link.name.clone(), lww.data.clone())],
+                CrdtDelta::Immutable(payload) if is_immutable_block => payload
+                    .fields
+                    .iter()
+                    .filter(|(name, _)| is_immutable_scalar_field(schema, name))
+                    .map(|(name, data)| (name.clone(), data.to_vec()))
+                    .collect(),
+                _ => continue,
             };
-            keys.push(
-                WaitKey::immutable_field(&schema.name, &link.name, &value)
-                    .map_err(MergeError::MergeFailed)?,
-            );
+            for (name, data) in values {
+                if data.is_empty() {
+                    continue;
+                }
+                let Ok(value) = ciborium::from_reader::<NormalValue, _>(data.as_slice()) else {
+                    continue;
+                };
+                keys.push(
+                    WaitKey::immutable_field(&schema.name, &name, &value)
+                        .map_err(MergeError::MergeFailed)?,
+                );
+            }
         }
         Ok(keys)
     }

@@ -518,6 +518,9 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 self.process_collection_definition_delta(cid, &block, payload, &metadata)
                     .await
             }
+            CrdtDelta::Immutable(_) => Ok(MergeOutcome::terminal_skip(
+                "immutable block merged via its composite",
+            )),
             CrdtDelta::CollectionSet(_) => Ok(MergeOutcome::terminal_skip("collection set delta")),
             // Only the variant discriminant is reported — `CrdtDelta` carries
             // field-value bytes from user documents and must not be formatted

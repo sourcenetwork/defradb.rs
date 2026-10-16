@@ -15,6 +15,17 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         Ok(storage::stores::PushRetryMarkerStats::default())
     }
 
+    async fn replication_acknowledged(
+        &self,
+        _peer_id: &str,
+        _collection_name: &str,
+        _doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        Err(P2PError::unsupported(
+            "replication acknowledgement is unavailable",
+        ))
+    }
+
     async fn push_existing_docs(
         &self,
         peer_id: &PeerId,
@@ -144,6 +155,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
             .push_retry_marker_stats()
             .await
             .map_err(|error| P2PError::internal(error.to_string()))
+    }
+
+    async fn replication_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        db::merge::replication_acknowledged(&self.db, peer_id, collection_name, doc_ids)
+            .await
+            .map_err(P2PError::internal)
     }
 
     async fn push_existing_docs(
