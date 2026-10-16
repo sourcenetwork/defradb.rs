@@ -48,9 +48,15 @@ async fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
     let mut initial = Document::new();
     initial.set("name", NormalValue::String("Alice".into()));
     initial.set("age", NormalValue::Int(20));
-    let genesis = db::block::builder::build_blocks_from_document(&initial, "v1", &blockstore)
-        .await
+    let collection = handler
+        .db()
+        .find_collection_by_id("col-users")
+        .unwrap()
         .unwrap();
+    let genesis =
+        db::block::builder::build_blocks_from_document(&initial, collection.schema(), &blockstore)
+            .await
+            .unwrap();
     let metadata = BlockMetadata::normal(&genesis.doc_id, "col-users", "peer", None, false);
     assert_eq!(
         handler

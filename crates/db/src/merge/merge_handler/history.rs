@@ -250,9 +250,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         ));
                     }
                 }
-                // Carrier identity is only an admission precheck. The walk still
-                // derives and verifies the document identity before applying frames.
-                if let Some(doc) = metadata.doc_id {
+                // A collection carrier's DocID does not identify its linked composites.
+                // The walk derives and verifies their identity before applying frames.
+                if let Some(doc) = metadata
+                    .doc_id
+                    .filter(|doc| !from_collection && !doc.is_empty())
+                {
                     match self
                         .prepare_composite_merge(
                             root,
@@ -560,6 +563,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         drop(headstore);
         drop(store);
         txn.force_commit().await?;
+        let merged_cids: Vec<Cid> = merged.keys().collect();
+        self.merged_composites
+            .extend(merged_cids.iter().map(|cid| (*cid, ())));
+        for cid in &merged_cids {
+            self.release_merged_composite(cid, None).await;
+        }
         while let Some(action) = actions.pop() {
             if let Err(error) = action.action.run().await {
                 tracing::warn!(%error, "History post-commit action failed");
