@@ -6,12 +6,17 @@
 
 use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 
 use blockstore::Blockstore;
 use cid::Cid;
 
 use crate::error::{Error, Result};
+
+#[path = "car_authorization_budget.rs"]
+mod budget;
+use budget::{CidBudget, CidReservation};
 
 // Bound server work below the transport request deadline. Exhausting this
 // budget is a retryable request failure, never a truncated authorization set.
@@ -22,6 +27,10 @@ const AUTHORIZATION_MAX_NODES: usize = 200_000;
 
 /// Incomplete root/want-list walks retained for continuation.
 const RETAINED_INCOMPLETE_WALKS: usize = 64;
+
+/// Shared by every cursor, including those held by active requests.
+const RETAINED_MAX_CIDS: usize = 262_144;
+const CURSOR_IDLE_TTL: Duration = Duration::from_secs(300);
 
 /// A single traversal pass: what is still looked for, what has been reached,
 /// and the not-yet-expanded frontier. Nodes are remembered at push time, so a
@@ -39,27 +48,41 @@ struct WalkState {
     /// so nobody would enqueue it again.
     in_flight: Option<Cid>,
     missing: VecDeque<Cid>,
+    reservation: CidReservation,
+    retention_exhausted: bool,
 }
 
 impl WalkState {
-    fn fresh(root: Cid, requested: RapidHashSet<Cid>) -> Self {
+    fn fresh(root: Cid, requested: RapidHashSet<Cid>, reservation: CidReservation) -> Self {
         let mut walk = Self {
-            remaining: requested,
+            // Do not retain spare capacity supplied by the caller.
+            remaining: requested.into_iter().collect(),
             authorized: RapidHashSet::new(),
             seen: RapidHashSet::new(),
             queue: VecDeque::new(),
             expanded: 0,
             in_flight: None,
             missing: VecDeque::new(),
+            reservation,
+            retention_exhausted: false,
         };
-        walk.push(root);
+        // The initial reservation includes the root.
+        walk.seen.insert(root);
+        walk.queue.push_back(root);
         walk
     }
 
-    fn push(&mut self, cid: Cid) {
-        if self.seen.insert(cid) {
-            self.queue.push_back(cid);
+    fn push(&mut self, cid: Cid) -> Result<()> {
+        if self.seen.contains(&cid) {
+            return Ok(());
         }
+        if !self.reservation.add(1) {
+            self.retention_exhausted = true;
+            return Err(Error::ResponseTimeout);
+        }
+        self.seen.insert(cid);
+        self.queue.push_back(cid);
+        Ok(())
     }
 
     async fn run<B: Blockstore>(
@@ -68,6 +91,9 @@ impl WalkState {
         budget: Duration,
         max_nodes: usize,
     ) -> Result<()> {
+        if self.retention_exhausted {
+            return Err(Error::ResponseTimeout);
+        }
         // Cancellation drops the future, not the cursor. Retry the interrupted read.
         if let Some(cid) = self.in_flight.take() {
             self.queue.push_front(cid);
@@ -89,7 +115,6 @@ impl WalkState {
                     self.in_flight = None;
                     if !self.missing.is_empty() {
                         self.queue.append(&mut self.missing);
-                        return Err(Error::ResponseTimeout);
                     }
                     return Ok(());
                 };
@@ -135,12 +160,16 @@ impl WalkState {
                     self.missing.push_back(cid);
                     continue;
                 };
+                if self.remaining.is_empty() {
+                    self.in_flight = None;
+                    return Ok(());
+                }
                 // Preserve the existing KMS boundary: encryption links never
                 // confer CAR authority, even under an authorized document
                 // root.
                 let links = super::manager::links::extract_ipld_links(&data).unwrap_or_default();
                 for child in links {
-                    self.push(child);
+                    self.push(child)?;
                 }
                 self.in_flight = None;
             }
@@ -171,15 +200,60 @@ fn authorization_exhausted(timed_out: bool, expanded: usize) -> Error {
 }
 
 /// Independent cursors for a root and an exact requested CID set.
-#[derive(Default)]
 pub(crate) struct RootedAuthorizationProgress {
     cursors: std::sync::Mutex<CursorRegistry>,
+    cid_budget: Arc<CidBudget>,
+}
+
+impl Default for RootedAuthorizationProgress {
+    fn default() -> Self {
+        Self {
+            cursors: std::sync::Mutex::default(),
+            cid_budget: CidBudget::new(RETAINED_MAX_CIDS),
+        }
+    }
 }
 
 #[derive(Default)]
 struct CursorRegistry {
-    entries: RapidHashMap<WalkKey, std::sync::Arc<tokio::sync::Mutex<WalkState>>>,
+    entries: RapidHashMap<WalkKey, CursorEntry>,
     order: VecDeque<WalkKey>,
+}
+
+struct CursorEntry {
+    cursor: Arc<tokio::sync::Mutex<WalkState>>,
+    last_used: n0_future::time::Instant,
+}
+
+impl CursorRegistry {
+    fn expire_idle(&mut self) {
+        self.entries.retain(|_, entry| {
+            entry.last_used.elapsed() < CURSOR_IDLE_TTL || Arc::strong_count(&entry.cursor) > 1
+        });
+        self.order.retain(|key| self.entries.contains_key(key));
+    }
+
+    fn evict_idle(&mut self) -> bool {
+        let Some(key) = self
+            .order
+            .iter()
+            .find(|key| {
+                self.entries
+                    .get(*key)
+                    .is_some_and(|entry| Arc::strong_count(&entry.cursor) == 1)
+            })
+            .cloned()
+        else {
+            return false;
+        };
+        self.remove(&key);
+        true
+    }
+
+    fn remove(&mut self, key: &WalkKey) {
+        self.entries.remove(key);
+        self.order.retain(|queued| queued != key);
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -220,6 +294,9 @@ impl RootedAuthorizationProgress {
         if requested.is_empty() {
             return Ok(RapidHashSet::new());
         }
+        if requested.len() >= self.cid_budget.limit {
+            return Err(Error::ResponseTimeout);
+        }
         let mut wanted: Vec<_> = requested.iter().copied().collect();
         wanted.sort_unstable();
         let key = WalkKey {
@@ -231,29 +308,37 @@ impl RootedAuthorizationProgress {
                 .cursors
                 .lock()
                 .map_err(|_| std::io::Error::other("rooted cursor registry poisoned"))?;
-            if let Some(cursor) = cursors.entries.get(&key).cloned() {
+            cursors.expire_idle();
+            if let Some(entry) = cursors.entries.get_mut(&key) {
+                entry.last_used = n0_future::time::Instant::now();
+                let cursor = entry.cursor.clone();
                 cursors.order.retain(|queued| queued != &key);
                 cursors.order.push_back(key.clone());
                 cursor
             } else {
-                if cursors.entries.len() >= RETAINED_INCOMPLETE_WALKS {
-                    let evict = cursors
-                        .order
-                        .iter()
-                        .find(|queued| {
-                            cursors
-                                .entries
-                                .get(*queued)
-                                .is_some_and(|cursor| std::sync::Arc::strong_count(cursor) == 1)
-                        })
-                        .cloned()
-                        .ok_or(Error::ResponseTimeout)?;
-                    cursors.entries.remove(&evict);
-                    cursors.order.retain(|queued| queued != &evict);
+                if cursors.entries.len() >= RETAINED_INCOMPLETE_WALKS && !cursors.evict_idle() {
+                    return Err(Error::ResponseTimeout);
                 }
-                let cursor =
-                    std::sync::Arc::new(tokio::sync::Mutex::new(WalkState::fresh(root, requested)));
-                cursors.entries.insert(key.clone(), cursor.clone());
+                let reservation = loop {
+                    if let Some(reservation) = self.cid_budget.reserve(requested.len() + 1) {
+                        break reservation;
+                    }
+                    if !cursors.evict_idle() {
+                        return Err(Error::ResponseTimeout);
+                    }
+                };
+                let cursor = Arc::new(tokio::sync::Mutex::new(WalkState::fresh(
+                    root,
+                    requested,
+                    reservation,
+                )));
+                cursors.entries.insert(
+                    key.clone(),
+                    CursorEntry {
+                        cursor: cursor.clone(),
+                        last_used: n0_future::time::Instant::now(),
+                    },
+                );
                 cursors.order.push_back(key.clone());
                 cursor
             }
@@ -262,28 +347,36 @@ impl RootedAuthorizationProgress {
         let mut state = n0_future::time::timeout(budget, cursor.lock())
             .await
             .map_err(|_| Error::ResponseTimeout)?;
-        state
+        let outcome = state
             .run(
                 blockstore,
                 budget.saturating_sub(started.elapsed()),
                 max_nodes,
             )
-            .await?;
-        let authorized = state.authorized.clone();
+            .await;
+        let retain = !state.retention_exhausted
+            && (outcome.is_err()
+                || (!state.remaining.is_empty()
+                    && (!state.queue.is_empty()
+                        || !state.missing.is_empty()
+                        || state.in_flight.is_some())));
         // A waiter may still hold this completed cursor after a new one is installed.
         let mut cursors = self
             .cursors
             .lock()
             .map_err(|_| std::io::Error::other("rooted cursor registry poisoned"))?;
-        if cursors
+        if let Some(entry) = cursors
             .entries
-            .get(&key)
-            .is_some_and(|current| std::sync::Arc::ptr_eq(current, &cursor))
+            .get_mut(&key)
+            .filter(|entry| Arc::ptr_eq(&entry.cursor, &cursor))
         {
-            cursors.entries.remove(&key);
-            cursors.order.retain(|queued| queued != &key);
+            if retain {
+                entry.last_used = n0_future::time::Instant::now();
+            } else {
+                cursors.remove(&key);
+            }
         }
-        Ok(authorized)
+        outcome.map(|()| state.authorized.clone())
     }
 }
 

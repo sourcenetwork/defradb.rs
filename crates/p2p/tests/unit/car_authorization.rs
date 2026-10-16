@@ -98,6 +98,9 @@ use serde_ipld_dagcbor::codec::DagCborCodec;
 use std::sync::Arc;
 use storage::RegolithStore;
 
+#[path = "car_authorization_limits.rs"]
+mod limits;
+
 async fn walk_once<B: Blockstore>(
     store: &B,
     root: Cid,
@@ -226,6 +229,7 @@ async fn duplicate_frontier_links_expand_each_block_once() {
         .values()
         .next()
         .unwrap()
+        .cursor
         .clone();
     assert_eq!(cursor.lock().await.queue.len(), count);
     let authorized = progress.walk(&store, root, requested).await.unwrap();
@@ -450,7 +454,8 @@ async fn a_missing_intermediate_is_revisited_after_delivery() {
     assert!(progress
         .walk(&store, root, RapidHashSet::from_iter([leaf]))
         .await
-        .is_err());
+        .unwrap()
+        .is_empty());
     store.put(&middle, &middle_data).await.unwrap();
     assert_eq!(
         progress
@@ -500,13 +505,20 @@ async fn cancellation_during_a_payload_read_keeps_the_cursor() {
     let data = DagCborCodec::encode_to_vec(&ipld!({"child": leaf})).unwrap();
     let root = Cid::new_v1(0x71, Code::Sha2_256.digest(&data));
     store.put(&root, &data).await.unwrap();
-    let progress = RootedAuthorizationProgress::new();
+    let progress = limits::progress_with_budget(3);
     let mut request = Box::pin(progress.walk(&store, root, RapidHashSet::from_iter([leaf])));
     tokio::select! {
         _ = store.reading.notified() => {},
         result = &mut request => panic!("read must be gated: {result:?}"),
     }
+    assert_eq!(progress.cid_budget.used(), 2);
+    assert!(progress
+        .walk(&store, root, RapidHashSet::from_iter([root]))
+        .await
+        .is_err());
+    assert_eq!(progress.cid_budget.used(), 2);
     drop(request);
+    assert_eq!(progress.cid_budget.used(), 2);
     store.block_read.add_permits(2);
     assert_eq!(
         progress
@@ -516,6 +528,7 @@ async fn cancellation_during_a_payload_read_keeps_the_cursor() {
         RapidHashSet::from_iter([leaf])
     );
     assert_eq!(store.reads.load(std::sync::atomic::Ordering::SeqCst), 3);
+    assert_eq!(progress.cid_budget.used(), 0);
 }
 
 #[tokio::test]
@@ -544,18 +557,20 @@ async fn concurrent_requests_share_the_same_cursor() {
     let data = DagCborCodec::encode_to_vec(&ipld!({"child": leaf})).unwrap();
     let root = Cid::new_v1(0x71, Code::Sha2_256.digest(&data));
     store.put(&root, &data).await.unwrap();
-    let progress = RootedAuthorizationProgress::new();
+    let progress = limits::progress_with_budget(3);
     let mut requests = Vec::new();
     for _ in 0..8 {
         let mut request = Box::pin(progress.walk(&store, root, RapidHashSet::from_iter([leaf])));
         assert!(futures::poll!(request.as_mut()).is_pending());
         requests.push(request);
     }
+    assert_eq!(progress.cid_budget.used(), 2);
     store.block_read.add_permits(2);
     for result in futures::future::join_all(requests).await {
         assert_eq!(result.unwrap(), RapidHashSet::from_iter([leaf]));
     }
     assert_eq!(store.reads.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(progress.cid_budget.used(), 0);
 }
 
 /// Unreachable requested CIDs end the walk deterministically on the node
