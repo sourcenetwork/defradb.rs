@@ -87,6 +87,12 @@ fn arb_valid_field_name() -> impl Strategy<Value = String> {
     "[_a-zA-Z][_a-zA-Z0-9]{0,30}"
 }
 
+/// A relation field name. `doc` is excluded: its `_docID` would collide with the
+/// document ID field.
+fn relation_field_name() -> impl Strategy<Value = String> {
+    "[a-z]{1,15}".prop_filter("avoid _docID collision", |n| n != "doc")
+}
+
 fn arb_valid_collection_name() -> impl Strategy<Value = String> {
     "[A-Z][a-zA-Z0-9]{1,30}"
 }
@@ -431,7 +437,7 @@ proptest! {
     #[test]
     fn non_array_relations_get_id_fields(
         collection_name in arb_valid_collection_name(),
-        field_name in "[a-z]{1,15}".prop_filter("avoid _docID collision", |n| n != "doc"),
+        field_name in relation_field_name(),
         target_collection in "[a-z]{1,15}",
     ) {
         let fields = vec![
@@ -457,7 +463,7 @@ proptest! {
     #[test]
     fn array_relations_no_id_fields(
         collection_name in arb_valid_collection_name(),
-        field_name in "[a-z]{1,15}".prop_filter("avoid _docID collision", |n| n != "doc"),
+        field_name in relation_field_name(),
         target_collection in "[a-z]{1,15}",
     ) {
         let fields = vec![
@@ -477,7 +483,7 @@ proptest! {
     /// Property: _id fields inherit is_primary from relation field
     #[test]
     fn id_fields_inherit_primary_status(
-        field_name in "[a-z]{1,15}".prop_filter("avoid _docID collision", |n| n != "doc"),
+        field_name in relation_field_name(),
         is_primary in any::<bool>(),
     ) {
         let mut rel_field = FieldDescription::new("1", &field_name, FieldKind::relation("target", false))
@@ -500,7 +506,7 @@ proptest! {
 
     /// Property: _id fields always have LwwRegister CRDT type
     #[test]
-    fn id_fields_have_lww_crdt(field_name in "[a-z]{1,15}") {
+    fn id_fields_have_lww_crdt(field_name in relation_field_name()) {
         let fields = vec![
             FieldDescription::new("0", "_docID", FieldKind::doc_id()),
             FieldDescription::new("1", &field_name, FieldKind::relation("target", false))
@@ -516,7 +522,7 @@ proptest! {
 
     /// Property: add_relation_id_fields is idempotent
     #[test]
-    fn id_field_generation_idempotent(field_name in "[a-z]{1,15}") {
+    fn id_field_generation_idempotent(field_name in relation_field_name()) {
         let fields = vec![
             FieldDescription::new("0", "_docID", FieldKind::doc_id()),
             FieldDescription::new("1", &field_name, FieldKind::relation("target", false))
@@ -548,7 +554,7 @@ proptest! {
     /// Property: _id fields inherit relation_name from relation field
     #[test]
     fn id_fields_inherit_relation_name(
-        field_name in "[a-z]{1,15}".prop_filter("avoid _docID collision", |n| n != "doc"),
+        field_name in relation_field_name(),
         relation_name in "[a-z_]{3,20}",
     ) {
         let fields = vec![
