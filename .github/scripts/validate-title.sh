@@ -18,8 +18,10 @@ fi
 
 readonly TITLE="$1"
 
+IS_BOT=false
 if [[ "$TITLE" =~ ^"$BOT_LABEL"(\([^()]+\))?: ]]; then
-    echo "Info: Title is from a bot, skipping length-related title validation."
+    IS_BOT=true
+    echo "Info: Title is from a bot, skipping length and capitalization checks."
 elif [ "${#TITLE}" -gt 60 ]; then
     echo "Error: The length of the title is too long (should be 60 or less)."
     exit 3
@@ -46,7 +48,8 @@ if [ "${DESCRIPTION:0:1}" != " " ]; then
     exit 6
 fi
 
-if [[ "${DESCRIPTION:1:1}" != [A-Z] ]]; then
+# Dependabot writes "bump" in lowercase and has no option to change it.
+if [ "$IS_BOT" = false ] && [[ "${DESCRIPTION:1:1}" != [A-Z] ]]; then
     echo "Error: First character after the label is not an uppercase alphabet."
     exit 7
 fi

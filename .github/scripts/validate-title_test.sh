@@ -57,5 +57,8 @@ expect 0 'fix(db-merge): Hyphenated scope'
 expect 0 'fix(db): Path db::merge in the title'
 expect 0 'bot: Bump the cargo group across 1 directory with 12 updates in total'
 expect 0 'bot(deps): Bump the cargo group across 1 directory with 12 updates'
+expect 0 'bot: bump actions/checkout from 4 to 7'
+expect 0 'bot(deps): bump toml from 0.9.12+spec-1.1.0 to 1.1.6+spec-1.1.0'
+expect 7 'botany: lowercase is only allowed for the bot label'
 
 echo "PASS"
