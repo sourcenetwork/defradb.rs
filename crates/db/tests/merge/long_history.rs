@@ -1,4 +1,5 @@
 mod admission;
+mod deferred;
 mod fixture;
 
 use blockstore::{Blockstore as _, DefraBlockstore};

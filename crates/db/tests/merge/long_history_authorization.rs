@@ -10,7 +10,8 @@ use db::merge::acp_merge_handler::AcpCompositeMergeHook;
 use db::merge::merge_handler::hook::{CompositeFrame, CompositeMergeHook};
 use db::merge::merge_handler::{DbMergeHandler, MergeError};
 use defra_core::block::{
-    Block, CompositeDeltaPayload, CrdtDelta, Signature, SignatureHeader, SignatureType,
+    Block, CollectionDeltaPayload, CompositeDeltaPayload, CrdtDelta, DAGLink, Signature,
+    SignatureHeader, SignatureType,
 };
 use defra_core::merge::{
     BlockMetadata, ExplicitReplayAuthorization, MergeBlock, MergeHandler, MergeOutcome,
@@ -65,9 +66,15 @@ impl Fixture {
         let handler = DbMergeHandler::new_with_max_merge_depth(db, blockstore.clone(), 8);
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".into()));
-        let genesis = db::block::builder::build_blocks_from_document(&doc, "v1", &blockstore)
-            .await
+        let collection = handler
+            .db()
+            .find_collection_by_id("col-users")
+            .unwrap()
             .unwrap();
+        let genesis =
+            db::block::builder::build_blocks_from_document(&doc, collection.schema(), &blockstore)
+                .await
+                .unwrap();
         assert_eq!(
             handler
                 .handle_block(
@@ -212,6 +219,86 @@ async fn authorized_history(batch: bool) {
     assert!(retries > 0, "small depth budget must yield");
     assert_eq!(outcome, MergeOutcome::Merged);
     assert!(fixture.attempt(&root, batch).await.is_terminal_skip());
+}
+
+#[tokio::test]
+async fn strict_collection_history_uses_the_composites_document_identity() {
+    for carrier_doc in ["", "unrelated-carrier-document"] {
+        let owner = signer();
+        let fixture = Fixture::new(&owner, None).await;
+        let hook = Arc::new(AcpCompositeMergeHook::new(None));
+        hook.set_document_acp(fixture.acp.as_ref().unwrap().clone());
+        hook.set_strict_replicated_doc_access(true);
+        fixture.handler.set_composite_merge_hook(hook);
+        let root = fixture.history(&owner, None, 64).await;
+        let payload = CollectionDeltaPayload {
+            schema_version_id: "v1".into(),
+            priority: 1,
+        };
+        let block = Block::new(
+            CrdtDelta::Collection(payload.clone()),
+            vec![],
+            vec![DAGLink::new("_head", root.cid)],
+        );
+        let cid = block.generate_cid().unwrap();
+        let metadata =
+            BlockMetadata::normal(carrier_doc, "col-users", &owner.did, Some("peer"), false);
+        let mut yielded = false;
+        let mut completed = false;
+        for _ in 0..128 {
+            let outcome = fixture
+                .handler
+                .process_collection_delta(&cid, &block, &payload, &metadata, 0)
+                .await
+                .unwrap();
+            if outcome == MergeOutcome::Yielded {
+                yielded = true;
+            } else {
+                assert!(
+                    outcome.is_merged() || outcome.is_terminal_skip(),
+                    "{outcome:?}"
+                );
+                completed = true;
+                break;
+            }
+        }
+        assert!(yielded, "the history must exceed the fast-path budget");
+        assert!(completed, "collection history did not converge");
+        assert!(fixture.attempt(&root, false).await.is_terminal_skip());
+    }
+}
+
+#[tokio::test]
+async fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
+    let owner = signer();
+    let attacker = signer();
+    let fixture = Fixture::new(&owner, None).await;
+    let hook = Arc::new(AcpCompositeMergeHook::new(None));
+    hook.set_document_acp(fixture.acp.as_ref().unwrap().clone());
+    hook.set_strict_replicated_doc_access(true);
+    fixture.handler.set_composite_merge_hook(hook);
+    let root = fixture.history(&attacker, None, 64).await;
+    let block = Block::from_dag_cbor(&root.block_data).unwrap();
+    let CrdtDelta::Composite(payload) = &block.delta else {
+        panic!("expected a composite root");
+    };
+    let metadata = BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false);
+    let expected = MergeOutcome::rejected(format!(
+        "signer {} lacks update permission on protected document {}",
+        attacker.did, fixture.doc_id
+    ));
+    for _ in 0..128 {
+        let outcome = fixture
+            .handler
+            .process_composite_delta(&root.cid, &block, payload, &metadata, true, 0)
+            .await
+            .unwrap();
+        if outcome != MergeOutcome::Yielded {
+            assert_eq!(outcome, expected);
+            return;
+        }
+    }
+    panic!("unauthorized history was not rejected");
 }
 
 async fn unauthorized_ancestor(batch: bool, explicit: bool) {
