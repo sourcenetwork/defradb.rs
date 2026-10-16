@@ -156,6 +156,34 @@ fn test_truncate_rejects_null_filter_and_selection() {
 }
 
 #[test]
+fn test_parse_truncate_with_doc_id() {
+    let list =
+        parse_mutations(r#"mutation { truncate_Users(docID: ["bae-1", "bae-2"]) }"#).unwrap();
+    assert_eq!(
+        list[0].doc_ids,
+        Some(vec!["bae-1".to_string(), "bae-2".to_string()])
+    );
+
+    let scalar = parse_mutations(r#"mutation { truncate_Users(docID: "bae-1") }"#).unwrap();
+    assert_eq!(scalar[0].doc_ids, Some(vec!["bae-1".to_string()]));
+}
+
+#[test]
+fn test_truncate_rejects_null_doc_id() {
+    let error = parse_mutations(r#"mutation { truncate_Users(docID: null) }"#).unwrap_err();
+    assert!(error.to_string().contains("truncate docID cannot be null"));
+
+    let mut variables = RapidHashMap::new();
+    variables.insert("ids".to_string(), JsonValue::Null);
+    let error = parse_mutations_with_variables(
+        r#"mutation ($ids: [ID!]) { truncate_Users(docID: $ids) }"#,
+        Some(&variables),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("truncate docID cannot be null"));
+}
+
+#[test]
 fn test_parse_multiple_mutations() {
     let query = r#"
         mutation {

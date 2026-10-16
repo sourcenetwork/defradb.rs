@@ -67,6 +67,7 @@ pub(super) fn build_mutation_type(collections: &[Arc<CollectionVersion>]) -> Obj
                 TypeRef::named_nn(TypeRef::BOOLEAN),
                 |_| FieldFuture::new(async { Ok(Some(GqlValue::Null)) }),
             )
+            .argument(InputValue::new("docID", TypeRef::named_nn_list("ID")))
             .argument(InputValue::new(
                 "filter",
                 TypeRef::named(format!("{}FilterArg", truncate_coll_name)),

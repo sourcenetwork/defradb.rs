@@ -167,7 +167,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             truncator
                 .truncate(
                     &mutation.collection_name,
-                    mutation.filter.clone(),
+                    truncate_filter(mutation),
                     caller_identity.as_ref(),
                 )
                 .await?;
@@ -973,6 +973,21 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         Ok(JsonValue::Array(results))
     }
+}
+
+/// The filter a truncate removes by: `docID` becomes `_docID _in`, ANDed with
+/// any `filter`, as Go's mapper builds it. An empty `docID` list matches nothing.
+fn truncate_filter(mutation: &Mutation) -> Option<crate::mapper::Filter> {
+    let Some(doc_ids) = &mutation.doc_ids else {
+        return mutation.filter.clone();
+    };
+    let mut conditions = Map::new();
+    conditions.insert("_docID".to_string(), serde_json::json!({ "_in": doc_ids }));
+    let doc_id_filter = crate::mapper::Filter::from_conditions(conditions);
+    Some(match &mutation.filter {
+        Some(filter) => doc_id_filter.and(filter.clone()),
+        None => doc_id_filter,
+    })
 }
 
 /// Render a Select sub-select back to GQL selection syntax.

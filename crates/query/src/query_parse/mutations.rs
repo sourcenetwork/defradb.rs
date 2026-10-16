@@ -127,17 +127,17 @@ pub(super) fn parse_field_to_mutation(
             }
 
             (MutationType::Truncate, "filter") => {
-                let is_null = match arg_value {
-                    Value::Null => true,
-                    Value::Variable(name) => variables
-                        .and_then(|variables| variables.get(name.as_str()))
-                        .is_some_and(JsonValue::is_null),
-                    _ => false,
-                };
-                if is_null {
+                if is_null_argument(arg_value, variables) {
                     return Err(QueryError::parse("truncate filter cannot be null"));
                 }
                 mutation.filter = Some(parse_filter_value(arg_value, variables)?);
+            }
+
+            (MutationType::Truncate, "docID") => {
+                if is_null_argument(arg_value, variables) {
+                    return Err(QueryError::parse("truncate docID cannot be null"));
+                }
+                mutation.doc_ids = Some(parse_doc_ids_value(arg_value, variables)?);
             }
 
             // Encryption: encrypt entire document
@@ -255,6 +255,19 @@ pub(super) fn parse_field_to_mutation(
     mutation.document_mapping = mapping;
 
     Ok(mutation)
+}
+
+fn is_null_argument(
+    value: &Value<'_, String>,
+    variables: Option<&RapidHashMap<String, JsonValue>>,
+) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Variable(name) => variables
+            .and_then(|variables| variables.get(name.as_str()))
+            .is_some_and(JsonValue::is_null),
+        _ => false,
+    }
 }
 
 /// Parse CREATE mutation input (array of documents).
