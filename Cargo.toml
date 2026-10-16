@@ -120,7 +120,7 @@ iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Storage
-regolith = { git = "https://github.com/sourcenetwork/regolith.git", rev = "8f462e8370a670f923eefde562f83de1c42a55ef" }
+regolith = { git = "https://github.com/sourcenetwork/regolith.git", rev = "72a7b8b8ce802832d777b8156cd0dd1a136c4c0b" }
 
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["serde", "zeroize"] }
