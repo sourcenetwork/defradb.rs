@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
-use crate::config::FFI_CRATE_PATH;
+use crate::config::{release_dir, FFI_CRATE_PATH, GOCACHE_OVERRIDE_ENV};
 use crate::error::{FfiTestError, Result};
 use crate::worktree::WorktreeContext;
 
@@ -312,7 +312,7 @@ fn build_env(ctx: &WorktreeContext, package: &str) -> RapidHashMap<String, Strin
 
     // CGO flags
     let ffi_include = ctx.rust_path.join(FFI_CRATE_PATH);
-    let lib_dir = ctx.rust_path.join("target").join("release");
+    let lib_dir = release_dir(&ctx.rust_path);
 
     env.insert(
         "CGO_CFLAGS".to_string(),
@@ -342,12 +342,13 @@ fn build_env(ctx: &WorktreeContext, package: &str) -> RapidHashMap<String, Strin
     env.insert("DEFRA_BADGER_FILE".to_string(), "true".to_string());
 
     // Isolate the cgo build cache per worktree and package
-    env.insert(
-        "GOCACHE".to_string(),
-        gocache_dir(&ctx.rust_path, package)
+    let gocache = match std::env::var(GOCACHE_OVERRIDE_ENV) {
+        Ok(dir) if !dir.is_empty() => dir,
+        _ => gocache_dir(&ctx.rust_path, package)
             .to_string_lossy()
             .into_owned(),
-    );
+    };
+    env.insert("GOCACHE".to_string(), gocache);
 
     // Pass through Go test framework configuration from the environment.
     // These control the test matrix: which ACP type, mutation type, etc.

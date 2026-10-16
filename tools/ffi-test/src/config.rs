@@ -20,6 +20,25 @@ pub fn reports_dir() -> PathBuf {
         .join("runs")
 }
 
+/// Cargo's release output directory for a worktree.
+///
+/// Honors `CARGO_TARGET_DIR` the same way cargo does (a relative value is
+/// resolved against the worktree), so the library is found wherever cargo
+/// actually put it.
+pub fn release_dir(rust_path: &std::path::Path) -> PathBuf {
+    let target = match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) if !dir.is_empty() => rust_path.join(dir),
+        _ => rust_path.join("target"),
+    };
+    target.join("release")
+}
+
+/// Overrides the per-package Go build cache with one shared directory.
+///
+/// Sequential runs (CI, full sweeps) don't need the per-package isolation and
+/// would otherwise compile the whole Go dependency graph once per package.
+pub const GOCACHE_OVERRIDE_ENV: &str = "FFI_TEST_GOCACHE";
+
 /// FFI crate path relative to Rust worktree root
 pub const FFI_CRATE_PATH: &str = "crates/ffi";
 

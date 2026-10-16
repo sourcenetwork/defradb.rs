@@ -2,7 +2,8 @@ use std::path::Path;
 use tokio::process::Command;
 
 use crate::config::{
-    CBINDGEN_CONFIG, FFI_LIB_NAME, GO_FFI_LIB_NAME, HEADER_DESTINATION, LIBRARY_DESTINATION,
+    release_dir, CBINDGEN_CONFIG, FFI_LIB_NAME, GO_FFI_LIB_NAME, HEADER_DESTINATION,
+    LIBRARY_DESTINATION,
 };
 use crate::error::{FfiTestError, Result};
 use crate::worktree::WorktreeContext;
@@ -125,7 +126,7 @@ async fn copy_library(ctx: &WorktreeContext, verbose: bool) -> Result<()> {
         format!("{}.dll", GO_FFI_LIB_NAME),
     );
 
-    let src_path = ctx.rust_path.join("target").join("release").join(&src_name);
+    let src_path = release_dir(&ctx.rust_path).join(&src_name);
     let dst_path = lib_dir.join(&dst_name);
 
     if verbose {
