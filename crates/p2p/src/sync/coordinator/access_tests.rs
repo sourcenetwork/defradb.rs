@@ -399,6 +399,7 @@ fn create_test_coordinator_with_blockstore_and_head_provider<B: Blockstore + 'st
         authorizer,
         classifier: Arc::new(crate::bitswap::DefaultBlockClassifier),
         serve_acp: Arc::new(crate::bitswap::LateBoundServeAcp::new()),
+        rooted_authorization: crate::sync::car_authorization::RootedAuthorizationProgress::new(),
         document_acp: std::sync::OnceLock::new(),
         #[cfg(feature = "kms")]
         kms_transport: std::sync::OnceLock::new(),
