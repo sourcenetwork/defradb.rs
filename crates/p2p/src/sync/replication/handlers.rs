@@ -252,6 +252,10 @@ where
     H: MergeHandler + ?Sized + 'static,
 {
     // Load block from blockstore
+    let _pending_owner = coordinator.pending_dag_merge_guard(cid);
+    coordinator
+        .manager()
+        .consume_pending_merge_continuation(&cid);
     let block_data = match coordinator.blockstore().get(&cid).await {
         Ok(Some(data)) => data,
         Ok(None) => {
@@ -333,7 +337,10 @@ where
     }
 
     // Delegate merge to handler
-    match handler.handle_block(&cid, &block_data, metadata).await {
+    match handler
+        .handle_block(&cid, &block_data, metadata.clone())
+        .await
+    {
         Ok(MergeOutcome::Merged) => {
             // Merge successful - mark as merged
             if let Err(e) = coordinator.mark_as_merged(&cid).await {
@@ -424,6 +431,21 @@ where
                 cid,
                 doc_id: doc_id_for_result,
                 collection_id: collection_id_for_result,
+            }
+        }
+        Ok(MergeOutcome::Yielded) => {
+            if !coordinator.manager().continue_merge(&cid, Some(&metadata)) {
+                return ReplicationResult::Failed {
+                    cid,
+                    error: "merge continuation capacity reached".into(),
+                };
+            }
+            ReplicationResult::Skipped {
+                cid,
+                doc_id: doc_id_for_result,
+                collection_id: collection_id_for_result,
+                reason: "merge work budget yielded".to_string(),
+                terminal: false,
             }
         }
         Ok(MergeOutcome::Skipped { reason, terminal }) => {
@@ -590,6 +612,17 @@ where
 {
     let mut merge_blocks = Vec::with_capacity(events.len());
     let mut results = Vec::new();
+    let _pending_owners: Vec<_> = events
+        .iter()
+        .filter_map(event_merge_cid)
+        .map(|cid| {
+            let owner = coordinator.pending_dag_merge_guard(cid);
+            coordinator
+                .manager()
+                .consume_pending_merge_continuation(&cid);
+            owner
+        })
+        .collect();
 
     // Load block data for each event from blockstore
     for event in &events {
@@ -670,6 +703,34 @@ where
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
                     collection_id: block.collection_id.clone(),
+                });
+            }
+            Ok(MergeOutcome::Yielded) => {
+                let mut metadata = BlockMetadata::normal(
+                    &block.doc_id,
+                    &block.collection_id,
+                    &block.creator,
+                    block.sender_peer.as_deref(),
+                    block.is_explicit_replicator,
+                );
+                metadata.explicit_replay_authorization =
+                    block.explicit_replay_authorization.clone();
+                if !coordinator
+                    .manager()
+                    .continue_merge(&block.cid, Some(&metadata))
+                {
+                    results.push(ReplicationResult::Failed {
+                        cid: block.cid,
+                        error: "merge continuation capacity reached".into(),
+                    });
+                    continue;
+                }
+                results.push(ReplicationResult::Skipped {
+                    cid: block.cid,
+                    doc_id: block.doc_id.clone(),
+                    collection_id: block.collection_id.clone(),
+                    reason: "merge work budget yielded".to_string(),
+                    terminal: false,
                 });
             }
             Ok(MergeOutcome::Skipped { reason, terminal }) => {
@@ -950,6 +1011,7 @@ where
     let Some(cid) = event_merge_cid(&event) else {
         return process_event(coordinator, event, handler, config).await;
     };
+    let _pending_owner = coordinator.pending_dag_merge_guard(cid);
 
     loop {
         match coordinator

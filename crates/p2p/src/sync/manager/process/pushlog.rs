@@ -629,6 +629,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                         last_fetch_error: None,
                         next_retry_at: n0_future::time::Instant::now(),
                         dispatches: 0,
+                        merge_continuation: false,
                         storage_blocker: None,
                     },
                 );

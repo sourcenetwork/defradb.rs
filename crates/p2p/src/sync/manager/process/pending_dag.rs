@@ -455,8 +455,13 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 {
                     return false;
                 }
-                dag.dispatches = dag.dispatches.saturating_add(1);
-                dag.next_retry_at = now + super::super::pending::retry_backoff(dag.dispatches);
+                if dag.merge_continuation {
+                    dag.next_retry_at =
+                        now + super::super::pending::PENDING_MERGE_CONTINUATION_DELAY;
+                } else {
+                    dag.dispatches = dag.dispatches.saturating_add(1);
+                    dag.next_retry_at = now + super::super::pending::retry_backoff(dag.dispatches);
+                }
                 true
             });
         if claimed {
@@ -465,6 +470,90 @@ impl<B: Blockstore + 'static> SyncManager<B> {
             self.diagnostics.record_pending_dag_retry_suppressed();
         }
         claimed
+    }
+
+    /// Only a committed work-budget yield opts into local continuation.
+    /// ACP skips and errors leave the normal fetch retry policy intact.
+    #[cfg(test)]
+    pub(crate) fn schedule_pending_merge_continuation(&self, root_cid: &Cid) {
+        self.continue_merge(root_cid, None);
+    }
+
+    pub(crate) fn continue_merge(
+        &self,
+        root_cid: &Cid,
+        metadata: Option<&crate::sync::merge::BlockMetadata<'_>>,
+    ) -> bool {
+        let next = n0_future::time::Instant::now()
+            + super::super::pending::PENDING_MERGE_CONTINUATION_DELAY;
+        let scheduled = self.pending_dags.update(|pending| {
+            if !pending.contains_key(root_cid) {
+                let Some(metadata) = metadata else {
+                    return false;
+                };
+                if pending.len() >= self.max_pending_dags
+                    || metadata.sender_peer.is_some_and(|peer| {
+                        pending.source_count(peer) >= self.max_pending_dags_per_peer()
+                    })
+                {
+                    return false;
+                }
+                // Pull sync has no PushLog registration. Its first committed yield
+                // joins the same bounded local scheduler without changing push metadata.
+                pending.insert(
+                    *root_cid,
+                    PendingDag {
+                        doc_id: metadata.doc_id.unwrap_or_default().to_string(),
+                        collection_id: metadata.collection_id.unwrap_or_default().to_string(),
+                        head_priority: None,
+                        creator: metadata.creator.unwrap_or_default().to_string(),
+                        missing: RapidHashSet::new(),
+                        source_peer: metadata.sender_peer.map(str::to_string),
+                        alternate_providers: Vec::new(),
+                        is_explicit_replicator: metadata.is_explicit_replicator,
+                        explicit_replay_authorization: metadata
+                            .explicit_replay_authorization
+                            .clone(),
+                        is_recovery_registered: true,
+                        inserted_at: Instant::now(),
+                        attempts: 0,
+                        fetch_failures: 0,
+                        last_fetch_error: None,
+                        next_retry_at: next,
+                        dispatches: 0,
+                        merge_continuation: true,
+                        storage_blocker: None,
+                    },
+                );
+            }
+            let Some(dag) = pending.get_mut(root_cid) else {
+                return false;
+            };
+            dag.merge_continuation = true;
+            dag.next_retry_at = next;
+            dag.inserted_at = Instant::now();
+            pending.replace_missing(root_cid, RapidHashSet::new());
+            true
+        });
+        if scheduled {
+            self.pending_dag_ready.notify_one();
+        }
+        scheduled
+    }
+
+    pub(crate) fn consume_pending_merge_continuation(&self, root_cid: &Cid) {
+        if !self.pending_dags.read(|pending| {
+            pending
+                .get(root_cid)
+                .is_some_and(|dag| dag.merge_continuation)
+        }) {
+            return;
+        }
+        self.pending_dags.update(|pending| {
+            if let Some(dag) = pending.get_mut(root_cid) {
+                dag.merge_continuation = false;
+            }
+        });
     }
 
     /// Make a root promptly due (e.g. a provider just connected) without
@@ -490,6 +579,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         &self,
         now: n0_future::time::Instant,
     ) -> Vec<(Cid, PendingDag)> {
+        self.evict_expired();
         let released: Vec<Cid> = self.pending_dags.read(|pending| {
             pending
                 .iter()
@@ -917,6 +1007,7 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                 last_fetch_error: None,
                 next_retry_at: n0_future::time::Instant::now(),
                 dispatches: 0,
+                merge_continuation: false,
                 storage_blocker: None,
             };
 

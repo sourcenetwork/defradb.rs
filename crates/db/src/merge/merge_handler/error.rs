@@ -63,6 +63,10 @@ pub enum MergeError {
     #[error("batch gate contended")]
     GateContended,
 
+    /// The caller must discard its shared transaction and resume per root.
+    #[error("history requires a resumable merge turn")]
+    HistoryRequired,
+
     /// DAG traversal depth limit exceeded.
     ///
     /// A maliciously crafted deeply-nested DAG could otherwise consume unbounded resources.
@@ -110,7 +114,8 @@ impl MergeError {
             | Self::Database(_)
             | Self::Storage(_)
             | Self::Kms(_)
-            | Self::GateContended => MergeErrorDisposition::Retryable,
+            | Self::GateContended
+            | Self::HistoryRequired => MergeErrorDisposition::Retryable,
         }
     }
 }
