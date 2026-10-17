@@ -7057,6 +7057,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "uuid",
  "vera",
