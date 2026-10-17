@@ -463,57 +463,60 @@ mod tests {
     use super::*;
     use regolith::sync::{Mutex, MutexGuard};
 
-    #[tokio::test]
-    async fn request_bearer_scope_isolated_across_same_did_and_restores_global_fallback() {
-        let did = "did:key:bearer-scope-test";
-        let other_did = "did:key:bearer-scope-other";
-        set_request_bearer_token(did, "legacy-global");
-        set_request_bearer_token(other_did, "other-global");
+    #[test]
+    fn request_bearer_scope_isolated_across_same_did_and_restores_global_fallback() {
+        workers::block_on(async {
+            let did = "did:key:bearer-scope-test";
+            let other_did = "did:key:bearer-scope-other";
+            set_request_bearer_token(did, "legacy-global");
+            set_request_bearer_token(other_did, "other-global");
 
-        let first = scope_request_bearer_token(
-            Some(did.to_string()),
-            Some("request-one".to_string()),
-            async {
-                assert_eq!(
-                    get_request_bearer_token(did).as_deref(),
-                    Some("request-one")
-                );
-                tokio::task::yield_now().await;
-                assert_eq!(
-                    get_request_bearer_token(did).as_deref(),
-                    Some("request-one")
-                );
-            },
-        );
-        let second = scope_request_bearer_token(
-            Some(did.to_string()),
-            Some("request-two".to_string()),
-            async {
-                assert_eq!(
-                    get_request_bearer_token(did).as_deref(),
-                    Some("request-two")
-                );
-                tokio::task::yield_now().await;
-                assert_eq!(
-                    get_request_bearer_token(did).as_deref(),
-                    Some("request-two")
-                );
-            },
-        );
-        tokio::join!(first, second);
+            let first = scope_request_bearer_token(
+                Some(did.to_string()),
+                Some("request-one".to_string()),
+                async {
+                    assert_eq!(
+                        get_request_bearer_token(did).as_deref(),
+                        Some("request-one")
+                    );
+                    workers::yield_now().await;
+                    assert_eq!(
+                        get_request_bearer_token(did).as_deref(),
+                        Some("request-one")
+                    );
+                },
+            );
+            let second = scope_request_bearer_token(
+                Some(did.to_string()),
+                Some("request-two".to_string()),
+                async {
+                    assert_eq!(
+                        get_request_bearer_token(did).as_deref(),
+                        Some("request-two")
+                    );
+                    workers::yield_now().await;
+                    assert_eq!(
+                        get_request_bearer_token(did).as_deref(),
+                        Some("request-two")
+                    );
+                },
+            );
+            futures::join!(first, second);
 
-        scope_request_bearer_token(Some(did.to_string()), None, async {
-            assert_eq!(get_request_bearer_token(did), None);
-            assert_eq!(get_request_bearer_token(other_did), None);
+            scope_request_bearer_token(Some(did.to_string()), None, async {
+                assert_eq!(get_request_bearer_token(did), None);
+                assert_eq!(get_request_bearer_token(other_did), None);
+            })
+            .await;
+
+            assert_eq!(
+                get_request_bearer_token(did).as_deref(),
+                Some("legacy-global")
+            );
+            clear_request_bearer_token(did);
+            clear_request_bearer_token(other_did);
         })
-        .await;
-
-        assert_eq!(
-            get_request_bearer_token(did).as_deref(),
-            Some("legacy-global")
-        );
-        clear_request_bearer_token(did);
-        clear_request_bearer_token(other_did);
+        .unwrap()
     }
 
     fn make_config(label: &str) -> SigningConfig {
@@ -536,70 +539,82 @@ mod tests {
         IDENTITY_STORE_GUARD.lock().await
     }
 
-    #[tokio::test]
-    async fn resolve_signing_config_uses_request_identity_when_registered() {
-        let _guard = lock_identity_store().await;
-        clear_identity_store();
-        store_identity("did:key:request", make_config("request"));
-        store_identity("did:key:node", make_config("node"));
+    #[test]
+    fn resolve_signing_config_uses_request_identity_when_registered() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            store_identity("did:key:request", make_config("request"));
+            store_identity("did:key:node", make_config("node"));
 
-        let disabled =
-            resolve_signing_config_with_flag(Some("did:key:request"), Some("did:key:node"), false);
-        assert!(disabled.is_none());
+            let disabled = resolve_signing_config_with_flag(
+                Some("did:key:request"),
+                Some("did:key:node"),
+                false,
+            );
+            assert!(disabled.is_none());
 
-        let resolved = resolve_signing_config(Some("did:key:request"), Some("did:key:node"))
-            .expect("request identity should resolve");
-        assert_eq!(resolved.public_key_hex, "request");
+            let resolved = resolve_signing_config(Some("did:key:request"), Some("did:key:node"))
+                .expect("request identity should resolve");
+            assert_eq!(resolved.public_key_hex, "request");
 
-        clear_identity_store();
+            clear_identity_store();
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn resolve_signing_config_falls_back_to_node_identity_when_request_identity_missing() {
-        let _guard = lock_identity_store().await;
-        clear_identity_store();
-        store_identity("did:key:node", make_config("node"));
+    #[test]
+    fn resolve_signing_config_falls_back_to_node_identity_when_request_identity_missing() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            clear_identity_store();
+            store_identity("did:key:node", make_config("node"));
 
-        let resolved = resolve_signing_config(Some("did:key:request"), Some("did:key:node"))
-            .expect("node fallback should resolve");
-        assert_eq!(resolved.public_key_hex, "node");
+            let resolved = resolve_signing_config(Some("did:key:request"), Some("did:key:node"))
+                .expect("node fallback should resolve");
+            assert_eq!(resolved.public_key_hex, "node");
 
-        clear_identity_store();
+            clear_identity_store();
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn find_remote_signer_did_returns_registered_remote_signer() {
-        let _guard = lock_identity_store().await;
-        struct NoopRemoteSigner;
+    #[test]
+    fn find_remote_signer_did_returns_registered_remote_signer() {
+        workers::block_on(async {
+            let _guard = lock_identity_store().await;
+            struct NoopRemoteSigner;
 
-        impl RemoteSigner for NoopRemoteSigner {
-            fn sign_sync(
-                &self,
-                _data: &[u8],
-                _authorization: Option<&SigningAuthorization>,
-            ) -> Result<Vec<u8>, String> {
-                Ok(vec![])
+            impl RemoteSigner for NoopRemoteSigner {
+                fn sign_sync(
+                    &self,
+                    _data: &[u8],
+                    _authorization: Option<&SigningAuthorization>,
+                ) -> Result<Vec<u8>, String> {
+                    Ok(vec![])
+                }
             }
-        }
 
-        clear_identity_store();
-        store_identity("did:key:local", make_config("local"));
-        store_identity(
-            "did:key:remote",
-            SigningConfig {
-                key_type: SigningKeyType::BlsAugV1,
-                private_key_bytes: vec![],
-                public_key_bytes: vec![],
-                public_key_hex: "remote".to_string(),
-                remote_signer: Some(Arc::new(NoopRemoteSigner)),
-                signing_authorization: None,
-            },
-        );
+            clear_identity_store();
+            store_identity("did:key:local", make_config("local"));
+            store_identity(
+                "did:key:remote",
+                SigningConfig {
+                    key_type: SigningKeyType::BlsAugV1,
+                    private_key_bytes: vec![],
+                    public_key_bytes: vec![],
+                    public_key_hex: "remote".to_string(),
+                    remote_signer: Some(Arc::new(NoopRemoteSigner)),
+                    signing_authorization: None,
+                },
+            );
 
-        let resolved = find_remote_signer_did().expect("remote signer DID should resolve");
-        assert_eq!(resolved, "did:key:remote");
+            let resolved = find_remote_signer_did().expect("remote signer DID should resolve");
+            assert_eq!(resolved, "did:key:remote");
 
-        clear_identity_store();
+            clear_identity_store();
+        })
+        .unwrap()
     }
 
     #[test]
@@ -644,36 +659,42 @@ mod tests {
 mod broadcast_creator_tests {
     use super::*;
 
-    #[tokio::test]
-    async fn async_creator_scopes_are_isolated_from_each_other_and_thread_state() {
-        set_broadcast_creator_did(Some("did:key:stale-thread".to_string()));
+    #[test]
+    fn async_creator_scopes_are_isolated_from_each_other_and_thread_state() {
+        workers::block_on(async {
+            set_broadcast_creator_did(Some("did:key:stale-thread".to_string()));
 
-        let alice = scope_broadcast_creator_did(Some("did:key:alice".to_string()), async {
-            tokio::task::yield_now().await;
-            get_broadcast_creator_did()
-        });
-        let anonymous = scope_broadcast_creator_did(None, async {
-            tokio::task::yield_now().await;
-            get_broadcast_creator_did()
-        });
+            let alice = scope_broadcast_creator_did(Some("did:key:alice".to_string()), async {
+                workers::yield_now().await;
+                get_broadcast_creator_did()
+            });
+            let anonymous = scope_broadcast_creator_did(None, async {
+                workers::yield_now().await;
+                get_broadcast_creator_did()
+            });
 
-        let (alice_creator, anonymous_creator) = tokio::join!(alice, anonymous);
-        assert_eq!(alice_creator.as_deref(), Some("did:key:alice"));
-        assert_eq!(anonymous_creator, None);
+            let (alice_creator, anonymous_creator) = futures::join!(alice, anonymous);
+            assert_eq!(alice_creator.as_deref(), Some("did:key:alice"));
+            assert_eq!(anonymous_creator, None);
 
-        set_broadcast_creator_did(None);
+            set_broadcast_creator_did(None);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn completed_creator_scope_cannot_contaminate_next_anonymous_mutation() {
-        let owner = scope_broadcast_creator_did(Some("did:key:owner".to_string()), async {
-            get_broadcast_creator_did()
-        })
-        .await;
-        assert_eq!(owner.as_deref(), Some("did:key:owner"));
+    #[test]
+    fn completed_creator_scope_cannot_contaminate_next_anonymous_mutation() {
+        workers::block_on(async {
+            let owner = scope_broadcast_creator_did(Some("did:key:owner".to_string()), async {
+                get_broadcast_creator_did()
+            })
+            .await;
+            assert_eq!(owner.as_deref(), Some("did:key:owner"));
 
-        let anonymous =
-            scope_broadcast_creator_did(None, async { get_broadcast_creator_did() }).await;
-        assert_eq!(anonymous, None);
+            let anonymous =
+                scope_broadcast_creator_did(None, async { get_broadcast_creator_did() }).await;
+            assert_eq!(anonymous, None);
+        })
+        .unwrap()
     }
 }

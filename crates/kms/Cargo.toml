@@ -66,7 +66,7 @@ x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 async-channel = "2"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "test-util"] }
+workers = { path = "../workers" }
 kovan-queue.workspace = true
 
 [lints]

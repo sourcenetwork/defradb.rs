@@ -22,418 +22,451 @@ fn counter_part(bytes: &[u8]) -> Vec<u8> {
         .clone()
 }
 
-#[tokio::test]
-async fn test_composite_multiple_fields() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+#[test]
+fn test_composite_multiple_fields() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
 
-    // Register fields
-    composite.register_lww_field("name".to_string());
-    composite.register_counter_field("count".to_string(), true, NumericKind::Int64);
+        // Register fields
+        composite.register_lww_field("name".to_string());
+        composite.register_counter_field("count".to_string(), true, NumericKind::Int64);
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    // Create composite delta with multiple fields
-    let mut field_deltas = RapidHashMap::new();
-    field_deltas.insert(
-        "name".to_string(),
-        FieldDelta::Lww {
-            priority: 10,
-            data: b"Alice".to_vec(),
-        },
-    );
-    field_deltas.insert(
-        "count".to_string(),
-        FieldDelta::Counter {
-            priority: 10,
-            nonce: 12345,
-            data: 5i64.to_be_bytes().to_vec(),
-        },
-    );
-
-    let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    for (name, fd) in field_deltas {
-        delta.add_field_delta(name, fd).unwrap();
-    }
-
-    let mut txn = store.new_txn(false).await.unwrap();
-    composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
-    txn.commit().await.unwrap();
-
-    // Verify name field
-    let txn = store.new_txn(true).await.unwrap();
-    let name_key = b"/data/v1/doc1/name".to_vec();
-    let name = txn.get(&name_key).await.unwrap().unwrap();
-    assert_eq!(name, &b"Alice"[..]);
-
-    // Verify count field
-    let count_key = b"/data/v1/doc1/count".to_vec();
-    let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
-    let count = i64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
-    assert_eq!(count, 5);
-}
-
-#[tokio::test]
-async fn test_composite_empty_delta_is_applied() {
-    let store = RegolithStore::in_memory().unwrap();
-    let composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
-    let delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-
-    let mut txn = store.new_txn(false).await.unwrap();
-    let result = composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
-
-    assert_eq!(result, MergeResult::Applied);
-}
-
-#[tokio::test]
-async fn test_composite_field_type_mismatch_lww_to_counter() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
-
-    // Register field as LWW
-    composite.register_lww_field("value".to_string());
-
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
-
-    // Try to apply Counter delta to LWW field
-    let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    delta
-        .add_field_delta(
-            "value".to_string(),
+        // Create composite delta with multiple fields
+        let mut field_deltas = RapidHashMap::new();
+        field_deltas.insert(
+            "name".to_string(),
+            FieldDelta::Lww {
+                priority: 10,
+                data: b"Alice".to_vec(),
+            },
+        );
+        field_deltas.insert(
+            "count".to_string(),
             FieldDelta::Counter {
                 priority: 10,
                 nonce: 12345,
                 data: 5i64.to_be_bytes().to_vec(),
             },
-        )
-        .unwrap();
+        );
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    let result = composite.merge(&mut *txn, &ctx, &delta).await;
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("field type mismatch"));
+        let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        for (name, fd) in field_deltas {
+            delta.add_field_delta(name, fd).unwrap();
+        }
+
+        let mut txn = store.new_txn(false).await.unwrap();
+        composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
+        txn.commit().await.unwrap();
+
+        // Verify name field
+        let txn = store.new_txn(true).await.unwrap();
+        let name_key = b"/data/v1/doc1/name".to_vec();
+        let name = txn.get(&name_key).await.unwrap().unwrap();
+        assert_eq!(name, &b"Alice"[..]);
+
+        // Verify count field
+        let count_key = b"/data/v1/doc1/count".to_vec();
+        let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
+        let count = i64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
+        assert_eq!(count, 5);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_field_type_mismatch_counter_to_lww() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+#[test]
+fn test_composite_empty_delta_is_applied() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
+        let delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
 
-    // Register field as Counter
-    composite.register_counter_field("count".to_string(), true, NumericKind::Int64);
+        let mut txn = store.new_txn(false).await.unwrap();
+        let result = composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
-
-    // Try to apply LWW delta to Counter field
-    let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    delta
-        .add_field_delta(
-            "count".to_string(),
-            FieldDelta::Lww {
-                priority: 10,
-                data: b"not_a_number".to_vec(),
-            },
-        )
-        .unwrap();
-
-    let mut txn = store.new_txn(false).await.unwrap();
-    let result = composite.merge(&mut *txn, &ctx, &delta).await;
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("field type mismatch"));
+        assert_eq!(result, MergeResult::Applied);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_unknown_field() {
-    let store = RegolithStore::in_memory().unwrap();
-    let composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+#[test]
+fn test_composite_field_type_mismatch_lww_to_counter() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
 
-    // Don't register any fields
+        // Register field as LWW
+        composite.register_lww_field("value".to_string());
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    // Try to apply delta to unknown field
-    let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    delta
-        .add_field_delta(
-            "unknown_field".to_string(),
-            FieldDelta::Lww {
-                priority: 10,
-                data: b"value".to_vec(),
-            },
-        )
-        .unwrap();
+        // Try to apply Counter delta to LWW field
+        let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        delta
+            .add_field_delta(
+                "value".to_string(),
+                FieldDelta::Counter {
+                    priority: 10,
+                    nonce: 12345,
+                    data: 5i64.to_be_bytes().to_vec(),
+                },
+            )
+            .unwrap();
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    let result = composite.merge(&mut *txn, &ctx, &delta).await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("unknown field"));
+        let mut txn = store.new_txn(false).await.unwrap();
+        let result = composite.merge(&mut *txn, &ctx, &delta).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("field type mismatch"));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_schema_evolution_type_change() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+#[test]
+fn test_composite_field_type_mismatch_counter_to_lww() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
 
-    // Register field as LWW in schema v1
-    composite.register_lww_field("score".to_string());
+        // Register field as Counter
+        composite.register_counter_field("count".to_string(), true, NumericKind::Int64);
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    // Apply LWW delta successfully
-    let mut delta1 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    delta1
-        .add_field_delta(
-            "score".to_string(),
-            FieldDelta::Lww {
-                priority: 10,
-                data: b"100".to_vec(),
-            },
-        )
-        .unwrap();
+        // Try to apply LWW delta to Counter field
+        let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        delta
+            .add_field_delta(
+                "count".to_string(),
+                FieldDelta::Lww {
+                    priority: 10,
+                    data: b"not_a_number".to_vec(),
+                },
+            )
+            .unwrap();
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    composite.merge(&mut *txn, &ctx, &delta1).await.unwrap();
-    txn.commit().await.unwrap();
-
-    // Now simulate schema evolution where "score" becomes a Counter
-    // This should fail since the field is registered as LWW
-    let mut delta2 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 20).unwrap();
-    delta2
-        .add_field_delta(
-            "score".to_string(),
-            FieldDelta::Counter {
-                priority: 20,
-                nonce: 12345,
-                data: 50i64.to_be_bytes().to_vec(),
-            },
-        )
-        .unwrap();
-
-    let mut txn = store.new_txn(false).await.unwrap();
-    let result = composite.merge(&mut *txn, &ctx, &delta2).await;
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("field type mismatch"));
+        let mut txn = store.new_txn(false).await.unwrap();
+        let result = composite.merge(&mut *txn, &ctx, &delta).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("field type mismatch"));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_doc_id_mismatch() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+#[test]
+fn test_composite_unknown_field() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
 
-    composite.register_lww_field("name".to_string());
+        // Don't register any fields
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    // Delta with wrong doc ID
-    let mut delta = CompositeDelta::new(b"wrong_doc".to_vec(), "v1".to_string(), 10).unwrap();
-    delta
-        .add_field_delta(
-            "name".to_string(),
-            FieldDelta::Lww {
-                priority: 10,
-                data: b"Alice".to_vec(),
-            },
-        )
-        .unwrap();
+        // Try to apply delta to unknown field
+        let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        delta
+            .add_field_delta(
+                "unknown_field".to_string(),
+                FieldDelta::Lww {
+                    priority: 10,
+                    data: b"value".to_vec(),
+                },
+            )
+            .unwrap();
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    let result = composite.merge(&mut *txn, &ctx, &delta).await;
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("document ID mismatch"));
+        let mut txn = store.new_txn(false).await.unwrap();
+        let result = composite.merge(&mut *txn, &ctx, &delta).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unknown field"));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_float64_counter_overflow_becomes_positive_infinity() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
-    composite.register_counter_field("count".to_string(), true, NumericKind::Float64);
+#[test]
+fn test_composite_schema_evolution_type_change() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        // Register field as LWW in schema v1
+        composite.register_lww_field("score".to_string());
 
-    let mut delta1 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    delta1
-        .add_field_delta(
-            "count".to_string(),
-            FieldDelta::Counter {
-                priority: 10,
-                nonce: 1,
-                data: f64::MAX.to_be_bytes().to_vec(),
-            },
-        )
-        .unwrap();
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    let mut delta2 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 20).unwrap();
-    delta2
-        .add_field_delta(
-            "count".to_string(),
-            FieldDelta::Counter {
-                priority: 20,
-                nonce: 2,
-                data: f64::MAX.to_be_bytes().to_vec(),
-            },
-        )
-        .unwrap();
+        // Apply LWW delta successfully
+        let mut delta1 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        delta1
+            .add_field_delta(
+                "score".to_string(),
+                FieldDelta::Lww {
+                    priority: 10,
+                    data: b"100".to_vec(),
+                },
+            )
+            .unwrap();
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    composite.merge(&mut *txn, &ctx, &delta1).await.unwrap();
-    composite.merge(&mut *txn, &ctx, &delta2).await.unwrap();
-    txn.commit().await.unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        composite.merge(&mut *txn, &ctx, &delta1).await.unwrap();
+        txn.commit().await.unwrap();
 
-    let txn = store.new_txn(true).await.unwrap();
-    let count_key = b"/data/v1/doc1/count".to_vec();
-    let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
-    let count = f64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
-    assert!(count.is_infinite());
-    assert!(count.is_sign_positive());
+        // Now simulate schema evolution where "score" becomes a Counter
+        // This should fail since the field is registered as LWW
+        let mut delta2 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 20).unwrap();
+        delta2
+            .add_field_delta(
+                "score".to_string(),
+                FieldDelta::Counter {
+                    priority: 20,
+                    nonce: 12345,
+                    data: 50i64.to_be_bytes().to_vec(),
+                },
+            )
+            .unwrap();
+
+        let mut txn = store.new_txn(false).await.unwrap();
+        let result = composite.merge(&mut *txn, &ctx, &delta2).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("field type mismatch"));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_float64_counter_nan_increment_propagates_nan() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
-    composite.register_counter_field("count".to_string(), true, NumericKind::Float64);
+#[test]
+fn test_composite_doc_id_mismatch() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        composite.register_lww_field("name".to_string());
 
-    let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    delta
-        .add_field_delta(
-            "count".to_string(),
-            FieldDelta::Counter {
-                priority: 10,
-                nonce: 1,
-                data: f64::NAN.to_be_bytes().to_vec(),
-            },
-        )
-        .unwrap();
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
-    txn.commit().await.unwrap();
+        // Delta with wrong doc ID
+        let mut delta = CompositeDelta::new(b"wrong_doc".to_vec(), "v1".to_string(), 10).unwrap();
+        delta
+            .add_field_delta(
+                "name".to_string(),
+                FieldDelta::Lww {
+                    priority: 10,
+                    data: b"Alice".to_vec(),
+                },
+            )
+            .unwrap();
 
-    let txn = store.new_txn(true).await.unwrap();
-    let count_key = b"/data/v1/doc1/count".to_vec();
-    let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
-    let count = f64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
-    assert!(count.is_nan());
+        let mut txn = store.new_txn(false).await.unwrap();
+        let result = composite.merge(&mut *txn, &ctx, &delta).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("document ID mismatch"));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_float64_counter_negative_zero_normalizes_to_positive_zero() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
-    composite.register_counter_field("count".to_string(), true, NumericKind::Float64);
+#[test]
+fn test_composite_float64_counter_overflow_becomes_positive_infinity() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+        composite.register_counter_field("count".to_string(), true, NumericKind::Float64);
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
-    delta
-        .add_field_delta(
-            "count".to_string(),
-            FieldDelta::Counter {
-                priority: 10,
-                nonce: 1,
-                data: (-0.0f64).to_be_bytes().to_vec(),
-            },
-        )
-        .unwrap();
+        let mut delta1 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        delta1
+            .add_field_delta(
+                "count".to_string(),
+                FieldDelta::Counter {
+                    priority: 10,
+                    nonce: 1,
+                    data: f64::MAX.to_be_bytes().to_vec(),
+                },
+            )
+            .unwrap();
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
-    txn.commit().await.unwrap();
+        let mut delta2 = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 20).unwrap();
+        delta2
+            .add_field_delta(
+                "count".to_string(),
+                FieldDelta::Counter {
+                    priority: 20,
+                    nonce: 2,
+                    data: f64::MAX.to_be_bytes().to_vec(),
+                },
+            )
+            .unwrap();
 
-    let txn = store.new_txn(true).await.unwrap();
-    let count_key = b"/data/v1/doc1/count".to_vec();
-    let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
-    let count = f64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
-    assert_eq!(count.to_bits(), 0.0f64.to_bits());
+        let mut txn = store.new_txn(false).await.unwrap();
+        composite.merge(&mut *txn, &ctx, &delta1).await.unwrap();
+        composite.merge(&mut *txn, &ctx, &delta2).await.unwrap();
+        txn.commit().await.unwrap();
+
+        let txn = store.new_txn(true).await.unwrap();
+        let count_key = b"/data/v1/doc1/count".to_vec();
+        let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
+        let count = f64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
+        assert!(count.is_infinite());
+        assert!(count.is_sign_positive());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_schema_version_mismatch() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+#[test]
+fn test_composite_float64_counter_nan_increment_propagates_nan() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+        composite.register_counter_field("count".to_string(), true, NumericKind::Float64);
 
-    composite.register_lww_field("name".to_string());
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
 
-    let ctx = Context {
-        doc_id: DocId::new_unchecked("doc1"),
-        schema_version: "v1".to_string(),
-        is_create: false,
-    };
+        let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        delta
+            .add_field_delta(
+                "count".to_string(),
+                FieldDelta::Counter {
+                    priority: 10,
+                    nonce: 1,
+                    data: f64::NAN.to_be_bytes().to_vec(),
+                },
+            )
+            .unwrap();
 
-    // Delta with wrong schema version
-    let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v2".to_string(), 10).unwrap();
-    delta
-        .add_field_delta(
-            "name".to_string(),
-            FieldDelta::Lww {
-                priority: 10,
-                data: b"Alice".to_vec(),
-            },
-        )
-        .unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
+        txn.commit().await.unwrap();
 
-    let mut txn = store.new_txn(false).await.unwrap();
-    let result = composite.merge(&mut *txn, &ctx, &delta).await;
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("schema version mismatch"));
+        let txn = store.new_txn(true).await.unwrap();
+        let count_key = b"/data/v1/doc1/count".to_vec();
+        let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
+        let count = f64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
+        assert!(count.is_nan());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_composite_float64_counter_negative_zero_normalizes_to_positive_zero() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+        composite.register_counter_field("count".to_string(), true, NumericKind::Float64);
+
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
+
+        let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v1".to_string(), 10).unwrap();
+        delta
+            .add_field_delta(
+                "count".to_string(),
+                FieldDelta::Counter {
+                    priority: 10,
+                    nonce: 1,
+                    data: (-0.0f64).to_be_bytes().to_vec(),
+                },
+            )
+            .unwrap();
+
+        let mut txn = store.new_txn(false).await.unwrap();
+        composite.merge(&mut *txn, &ctx, &delta).await.unwrap();
+        txn.commit().await.unwrap();
+
+        let txn = store.new_txn(true).await.unwrap();
+        let count_key = b"/data/v1/doc1/count".to_vec();
+        let count_bytes = txn.get(&count_key).await.unwrap().unwrap();
+        let count = f64::from_be_bytes(counter_part(&count_bytes).try_into().unwrap());
+        assert_eq!(count.to_bits(), 0.0f64.to_bits());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_composite_schema_version_mismatch() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut composite = CompositeDAG::new(DocId::new_unchecked("doc1"), "v1".to_string());
+
+        composite.register_lww_field("name".to_string());
+
+        let ctx = Context {
+            doc_id: DocId::new_unchecked("doc1"),
+            schema_version: "v1".to_string(),
+            is_create: false,
+        };
+
+        // Delta with wrong schema version
+        let mut delta = CompositeDelta::new(b"doc1".to_vec(), "v2".to_string(), 10).unwrap();
+        delta
+            .add_field_delta(
+                "name".to_string(),
+                FieldDelta::Lww {
+                    priority: 10,
+                    data: b"Alice".to_vec(),
+                },
+            )
+            .unwrap();
+
+        let mut txn = store.new_txn(false).await.unwrap();
+        let result = composite.merge(&mut *txn, &ctx, &delta).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("schema version mismatch"));
+    })
+    .unwrap()
 }
 
 #[test]
