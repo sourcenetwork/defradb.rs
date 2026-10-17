@@ -76,7 +76,7 @@ impl KeyTransport for PeerTransport {
         let request: FetchEncryptionKeyRequest = defra_core::cbor::from_slice(&request.payload)
             .map_err(|error| crate::Error::WireDecode(error.to_string()))?;
         self.links.fetch_add(request.links.len(), Ordering::SeqCst);
-        workers::delay(LATENCY).unwrap().await.unwrap();
+        tokio::time::sleep(LATENCY).await;
         let from = PeerIdentity {
             peer_id: "peer".into(),
             authenticated_did: Some(node()),
@@ -135,71 +135,57 @@ async fn peer_and_node(
     (transport, node_kms, cids)
 }
 
-#[test]
-fn every_missing_key_of_a_call_goes_out_in_one_wire_request() {
-    workers::block_on(async {
-        let (transport, kms, cids) = peer_and_node(5, true).await;
-        let started = std::time::Instant::now();
-        let keys = kms
-            .get_keys_each(&RequestContext::anonymous(), &cids)
-            .await
-            .unwrap();
-        assert!(keys.iter().all(Result::is_ok));
-        assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
-        assert_eq!(transport.links.load(Ordering::SeqCst), 5);
-        let elapsed = started.elapsed();
-        assert!(
-            elapsed >= LATENCY && elapsed < LATENCY * 5,
-            "one round trip, not five: {elapsed:?}"
-        );
+#[tokio::test(start_paused = true)]
+async fn every_missing_key_of_a_call_goes_out_in_one_wire_request() {
+    let (transport, kms, cids) = peer_and_node(5, true).await;
+    let started = tokio::time::Instant::now();
+    let keys = kms
+        .get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    assert!(keys.iter().all(Result::is_ok));
+    assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.links.load(Ordering::SeqCst), 5);
+    assert_eq!(started.elapsed(), LATENCY, "one round trip, not five");
 
-        // Now held locally: no further request.
-        kms.get_keys_each(&RequestContext::anonymous(), &cids)
-            .await
-            .unwrap();
-        assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
-    })
-    .unwrap()
+    // Now held locally: no further request.
+    kms.get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn concurrent_requests_for_one_key_make_one_wire_request() {
-    workers::block_on(async {
-        let (transport, kms, cids) = peer_and_node(1, true).await;
-        let kms = Arc::new(kms);
-        let calls: Vec<_> = (0..16)
-            .map(|_| {
-                let kms = Arc::clone(&kms);
-                let cids = cids.clone();
-                workers::spawn(None, "test", move || async move {
-                    kms.get_keys_each(&RequestContext::anonymous(), &cids)
-                        .await
-                        .unwrap()
-                })
-                .unwrap()
+#[tokio::test(start_paused = true)]
+async fn concurrent_requests_for_one_key_make_one_wire_request() {
+    let (transport, kms, cids) = peer_and_node(1, true).await;
+    let kms = Arc::new(kms);
+    let calls: Vec<_> = (0..16)
+        .map(|_| {
+            let kms = Arc::clone(&kms);
+            let cids = cids.clone();
+            tokio::spawn(async move {
+                kms.get_keys_each(&RequestContext::anonymous(), &cids)
+                    .await
+                    .unwrap()
             })
-            .collect();
-        for call in calls {
-            assert!(call.await.unwrap()[0].is_ok());
-        }
-        assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
-    })
-    .unwrap()
+        })
+        .collect();
+    for call in calls {
+        assert!(call.await.unwrap()[0].is_ok());
+    }
+    assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn a_merge_after_a_prefetch_joins_it_instead_of_asking_again() {
-    workers::block_on(async {
-        // Ownership unknown: a held key still defers to the owner, as a block
-        // fetched during DAG sync does before its merge records ownership.
-        let (transport, kms, cids) = peer_and_node(3, false).await;
-        kms.prefetch_keys(&RequestContext::anonymous(), &cids).await;
-        let keys = kms
-            .get_keys_each(&RequestContext::anonymous(), &cids)
-            .await
-            .unwrap();
-        assert!(keys.iter().all(Result::is_ok));
-        assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
-    })
-    .unwrap()
+#[tokio::test(start_paused = true)]
+async fn a_merge_after_a_prefetch_joins_it_instead_of_asking_again() {
+    // Ownership unknown: a held key still defers to the owner, as a block
+    // fetched during DAG sync does before its merge records ownership.
+    let (transport, kms, cids) = peer_and_node(3, false).await;
+    kms.prefetch_keys(&RequestContext::anonymous(), &cids).await;
+    let keys = kms
+        .get_keys_each(&RequestContext::anonymous(), &cids)
+        .await
+        .unwrap();
+    assert!(keys.iter().all(Result::is_ok));
+    assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
 }
