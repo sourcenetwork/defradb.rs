@@ -12,7 +12,9 @@ use crate::DB;
 /// A `@branchable` collection replicates at collection scope, so its
 /// documents are acknowledged together with the collection heads. A newer
 /// local write makes a document unacknowledged until the peer acknowledges
-/// again; a missing document is never acknowledged.
+/// again; a missing document is never acknowledged. A filtered replicator is
+/// pushed documents one at a time even for a `@branchable` collection, so its
+/// acknowledgements are read per document.
 pub async fn replication_acknowledged<S: Store + 'static>(
     db: &DB<S>,
     peer_id: &str,
@@ -30,7 +32,17 @@ pub async fn replication_acknowledged<S: Store + 'static>(
     let headstore = txn.headstore().map_err(|error| error.to_string())?;
     let blockstore = txn.blockstore().map_err(|error| error.to_string())?;
 
-    let collection_acknowledged = if collection.schema().is_branchable {
+    let filtered = match peerstore
+        .get_replicator(peer_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        Some(bytes) => p2p::ReplicatorInfo::from_bytes(&bytes)
+            .map_err(|error| error.to_string())?
+            .is_filtered_for_collection(&collection_id),
+        None => false,
+    };
+    let collection_acknowledged = if collection.schema().is_branchable && !filtered {
         let short_id =
             crate::collection::require_persisted_collection_short_id(&systemstore, &collection_id)
                 .await
