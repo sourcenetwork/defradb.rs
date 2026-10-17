@@ -354,49 +354,40 @@ fn test_unified_store_atomic_registration() {
     .unwrap()
 }
 
-#[test]
-fn test_unified_store_atomic_registration_concurrent() {
-    workers::block_on(async {
-        let tmp_dir = TempDir::new().unwrap();
-        let db_path = tmp_dir.path().join("data");
+#[tokio::test]
+async fn test_unified_store_atomic_registration_concurrent() {
+    let tmp_dir = TempDir::new().unwrap();
+    let db_path = tmp_dir.path().join("data");
 
-        let redb_store = Arc::new(storage::RegolithStore::open(&db_path).unwrap());
-        let acp_store = Arc::new(PersistentAcpStore::from_store(redb_store.clone()));
+    let redb_store = Arc::new(storage::RegolithStore::open(&db_path).unwrap());
+    let acp_store = Arc::new(PersistentAcpStore::from_store(redb_store.clone()));
 
-        let owner1 = test_did();
-        let owner2 = test_did2();
+    let owner1 = test_did();
+    let owner2 = test_did2();
 
-        // Spawn concurrent registration attempts
-        let store1 = acp_store.clone();
-        let o1 = owner1.clone();
-        let h1 = workers::spawn(None, "test", move || async move {
-            store1.register_doc_atomic(&o1, "users", "doc1").await
-        })
-        .unwrap();
+    // Spawn concurrent registration attempts
+    let store1 = acp_store.clone();
+    let o1 = owner1.clone();
+    let h1 = tokio::spawn(async move { store1.register_doc_atomic(&o1, "users", "doc1").await });
 
-        let store2 = acp_store.clone();
-        let o2 = owner2.clone();
-        let h2 = workers::spawn(None, "test", move || async move {
-            store2.register_doc_atomic(&o2, "users", "doc1").await
-        })
-        .unwrap();
+    let store2 = acp_store.clone();
+    let o2 = owner2.clone();
+    let h2 = tokio::spawn(async move { store2.register_doc_atomic(&o2, "users", "doc1").await });
 
-        let (r1, r2) = futures::join!(h1, h2);
-        let success1 = r1.unwrap().unwrap();
-        let success2 = r2.unwrap().unwrap();
+    let (r1, r2) = tokio::join!(h1, h2);
+    let success1 = r1.unwrap().unwrap();
+    let success2 = r2.unwrap().unwrap();
 
-        // Exactly one should succeed
-        assert!(
-            (success1 && !success2) || (!success1 && success2),
-            "Exactly one concurrent registration must succeed, got: r1={}, r2={}",
-            success1,
-            success2
-        );
+    // Exactly one should succeed
+    assert!(
+        (success1 && !success2) || (!success1 && success2),
+        "Exactly one concurrent registration must succeed, got: r1={}, r2={}",
+        success1,
+        success2
+    );
 
-        // Document should be registered
-        assert!(acp_store.is_doc_registered("users", "doc1").await.unwrap());
-    })
-    .unwrap()
+    // Document should be registered
+    assert!(acp_store.is_doc_registered("users", "doc1").await.unwrap());
 }
 
 #[test]
