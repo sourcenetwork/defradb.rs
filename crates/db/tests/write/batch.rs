@@ -48,7 +48,7 @@ fn batch_create_publishes_event_on_commit() {
         mutator.commit().await.expect("commit");
 
         // After commit: one Update event arrives
-        let msg = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+        let msg = workers::timeout(std::time::Duration::from_secs(1), sub.recv())
             .await
             .expect("event arrived within timeout")
             .expect("subscription not closed");
@@ -95,7 +95,7 @@ fn batch_create_registers_external_acp_before_ordered_event() {
 
         let commit =
             workers::spawn(None, "test", move || async move { mutator.commit().await }).unwrap();
-        let message = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+        let message = workers::timeout(std::time::Duration::from_secs(1), sub.recv())
             .await
             .expect("event arrived within timeout")
             .expect("subscription not closed");
@@ -135,7 +135,10 @@ fn batch_delete_missing_doc_publishes_no_event_and_writes_no_block() {
 
         mutator.commit().await.expect("commit");
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        workers::delay(std::time::Duration::from_millis(50))
+            .unwrap()
+            .await
+            .unwrap();
         assert!(
             sub.try_recv().is_err(),
             "deleting a non-existent doc should not publish an Update event"

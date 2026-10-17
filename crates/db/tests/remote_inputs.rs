@@ -25,6 +25,10 @@ use query::mutator::DocMutator;
 use schema::{CollectionVersion, FieldDescription, FieldKind};
 use storage::RegolithStore;
 
+#[path = "common/http.rs"]
+mod http;
+use http::HttpServer;
+
 const FIELDS: [&str; 4] = ["a", "b", "c", "d"];
 
 async fn database() -> Arc<DB<RegolithStore>> {
@@ -241,7 +245,7 @@ impl RemoteSigner for WaveSigner {
             .collect();
         let latency = self.latency;
         Box::pin(async move {
-            tokio::time::sleep(latency).await;
+            workers::delay(latency).unwrap().await.unwrap();
             signatures
         })
     }
@@ -289,7 +293,7 @@ fn a_create_of_n_documents_signs_in_two_waves_and_takes_two_round_trips() {
         let signer = signer(latency);
         sign_with(&signer);
 
-        let started = tokio::time::Instant::now();
+        let started = std::time::Instant::now();
         let created = AutoCommitMutator::new(Arc::clone(&db))
             .create_many("Things", documents(DOCUMENTS))
             .await;
@@ -319,59 +323,36 @@ fn a_create_of_n_documents_signs_in_two_waves_and_takes_two_round_trips() {
 /// texts in them, and answers in reverse order with each entry's index, so a
 /// caller that placed vectors by position would mix them up. A text's vector
 /// is `[its length, its first byte]`.
-async fn embedding_server() -> (
-    String,
-    Arc<AtomicUsize>,
-    Arc<AtomicUsize>,
-    tokio::task::JoinHandle<()>,
-) {
-    use axum::{routing::post, Json, Router};
+fn embedding_server() -> (HttpServer, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     use serde_json::{json, Value};
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
     let requests = Arc::new(AtomicUsize::new(0));
     let texts = Arc::new(AtomicUsize::new(0));
     let (counted_requests, counted_texts) = (Arc::clone(&requests), Arc::clone(&texts));
-    let server = workers::spawn(None, "test", move || async move {
-        axum::serve(
-            listener,
-            Router::new().route(
-                "/embeddings",
-                post(move |Json(request): Json<Value>| {
-                    let (requests, texts) =
-                        (Arc::clone(&counted_requests), Arc::clone(&counted_texts));
-                    async move {
-                        requests.fetch_add(1, Ordering::SeqCst);
-                        let inputs: Vec<String> = match &request["input"] {
-                            Value::Array(inputs) => inputs
-                                .iter()
-                                .map(|input| input.as_str().unwrap().to_string())
-                                .collect(),
-                            input => vec![input.as_str().unwrap().to_string()],
-                        };
-                        texts.fetch_add(inputs.len(), Ordering::SeqCst);
-                        let data: Vec<Value> = inputs
-                            .iter()
-                            .enumerate()
-                            .rev()
-                            .map(|(index, text)| {
-                                json!({
-                                    "index": index,
-                                    "embedding": [text.len() as f64, f64::from(text.as_bytes()[0])],
-                                })
-                            })
-                            .collect();
-                        Json(json!({ "data": data }))
-                    }
-                }),
-            ),
-        )
-        .await
-        .unwrap();
-    })
-    .unwrap();
-    (format!("http://{address}"), requests, texts, server)
+    let server = HttpServer::start(move |request| {
+        counted_requests.fetch_add(1, Ordering::SeqCst);
+        let inputs: Vec<String> = match &request.body["input"] {
+            Value::Array(inputs) => inputs
+                .iter()
+                .map(|input| input.as_str().unwrap().to_string())
+                .collect(),
+            input => vec![input.as_str().unwrap().to_string()],
+        };
+        counted_texts.fetch_add(inputs.len(), Ordering::SeqCst);
+        let data: Vec<Value> = inputs
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, text)| {
+                json!({
+                    "index": index,
+                    "embedding": [text.len() as f64, f64::from(text.as_bytes()[0])],
+                })
+            })
+            .collect();
+        json!({ "data": data })
+    });
+    (server, requests, texts)
 }
 
 async fn embedded_database(url: &str) -> Arc<DB<RegolithStore>> {
@@ -417,8 +398,8 @@ fn tagged_document(text: &str, tag: &str) -> Document {
 #[test]
 fn a_create_of_n_documents_embeds_them_in_one_request() {
     workers::block_on(async {
-        let (url, requests, texts, server) = embedding_server().await;
-        let db = embedded_database(&url).await;
+        let (server, requests, texts) = embedding_server();
+        let db = embedded_database(&server.url()).await;
         let words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
 
         let created = AutoCommitMutator::new(Arc::clone(&db))
@@ -428,7 +409,6 @@ fn a_create_of_n_documents_embeds_them_in_one_request() {
             )
             .await
             .unwrap();
-        server.abort();
 
         assert_eq!(
             requests.load(Ordering::SeqCst),
@@ -455,8 +435,8 @@ fn a_create_of_n_documents_embeds_them_in_one_request() {
 #[test]
 fn identical_texts_are_embedded_once() {
     workers::block_on(async {
-        let (url, requests, texts, server) = embedding_server().await;
-        let db = embedded_database(&url).await;
+        let (server, requests, texts) = embedding_server();
+        let db = embedded_database(&server.url()).await;
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
 
         let first = mutator
@@ -470,7 +450,6 @@ fn identical_texts_are_embedded_once() {
             .create("Texts", tagged_document("same", "3"))
             .await
             .unwrap();
-        server.abort();
 
         assert_eq!(texts.load(Ordering::SeqCst), 1, "one text, embedded once");
         assert_eq!(
@@ -655,47 +634,21 @@ fn a_retry_after_a_conflict_builds_on_the_winner() {
     .unwrap()
 }
 
-/// [`embedding_server`] on a thread of its own, with a runtime of its own, so
-/// the test's thread runs none. Dropped, the server stops and its thread
-/// ends.
+/// [`embedding_server`], whose threads are its own, so the test's thread
+/// runs none of the server.
 struct ServerApart {
     url: String,
     requests: Arc<AtomicUsize>,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    _server: HttpServer,
 }
 
 impl ServerApart {
     fn start() -> Self {
-        let (started, ready) = std::sync::mpsc::channel();
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let thread = std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async move {
-                    let (url, requests, _, server) = embedding_server().await;
-                    started.send((url, requests)).unwrap();
-                    let _ = stopped.await;
-                    server.abort();
-                });
-        });
-        let (url, requests) = ready.recv().unwrap();
+        let (server, requests, _) = embedding_server();
         Self {
-            url,
+            url: server.url(),
             requests,
-            stop: Some(stop),
-            thread: Some(thread),
-        }
-    }
-}
-
-impl Drop for ServerApart {
-    fn drop(&mut self) {
-        drop(self.stop.take());
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            _server: server,
         }
     }
 }

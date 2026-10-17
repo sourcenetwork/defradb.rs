@@ -132,7 +132,8 @@ impl Fixture {
         WF: std::future::Future<Output = WT>,
     {
         self.gate.armed.store(true, Ordering::SeqCst);
-        let paused = workers::spawn(None, "test", move || paused(self.mutator())).unwrap();
+        let paused = paused(self.mutator());
+        let paused = workers::spawn(None, "test", move || paused).unwrap();
         self.gate.paused.wait().await;
         let won = winner(self.mutator()).await;
         self.gate.release.set();

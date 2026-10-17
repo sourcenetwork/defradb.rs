@@ -48,12 +48,12 @@ use schema::FieldKind;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use storage::corekv::Key;
 use storage::index::IndexIterator;
 use storage::keys::systemstore::CollectionID;
 use storage::RegolithStore;
-use tokio::time::timeout;
-use tokio::time::Duration;
+use workers::timeout;
 
 struct CountingBlockstore<B> {
     inner: Arc<B>,
@@ -3382,7 +3382,7 @@ fn unique_index_twin_conflict_publishes_the_pick() {
         }
         doc_ids.sort();
 
-        let message = tokio::time::timeout(std::time::Duration::from_secs(5), conflicts.recv())
+        let message = workers::timeout(std::time::Duration::from_secs(5), conflicts.recv())
             .await
             .expect("conflict event")
             .expect("subscription open");
@@ -3977,11 +3977,7 @@ fn resolve_composite_doc_id_walks_deep_ancestry_on_a_small_stack() {
         .name("small-stack-resolver".to_string())
         .stack_size(512 * 1024)
         .spawn(|| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on(async {
+            workers::block_on(async {
                 let (handler, blockstore) = make_handler();
 
                 const DEPTH: usize = 4096;
@@ -4028,7 +4024,8 @@ fn resolve_composite_doc_id_walks_deep_ancestry_on_a_small_stack() {
                     .await
                     .expect("deep ancestry must resolve without overflowing the stack");
                 assert_eq!(resolved, db::block::builder::derive_doc_id(&genesis_cid));
-            });
+            })
+            .unwrap();
         })
         .unwrap()
         .join()

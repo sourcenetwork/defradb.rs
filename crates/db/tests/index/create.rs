@@ -499,8 +499,8 @@ fn create_index_fence_covers_other_handles_reserved_id_range() {
 #[derive(Default)]
 struct DefinitionCommitGate {
     armed: AtomicBool,
-    entered: tokio::sync::Notify,
-    release: tokio::sync::Notify,
+    entered: regolith::sync::Notify,
+    release: regolith::sync::Notify,
 }
 
 struct PauseDefinitionCommitStore {
@@ -926,7 +926,7 @@ fn concurrent_ordinary_index_ensure_creates_one_definition() {
         let (_store, db) =
             open_with_collection("ConcurrentEnsure", "concurrent-v1", "col-concurrent").await;
         let (fields, _) = by_name();
-        let (left, right) = tokio::join!(
+        let (left, right) = futures::join!(
             db.ensure_ordinary_index("ConcurrentEnsure", "by_name", fields.clone()),
             db.ensure_ordinary_index("ConcurrentEnsure", "by_name", fields.clone()),
         );

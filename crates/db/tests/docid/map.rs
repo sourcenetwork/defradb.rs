@@ -113,7 +113,7 @@ fn allocator_reserves_ranges_across_instances_and_restarts() {
         let allocator_a = DocShortIdAllocator::with_reservation_size(store.clone(), 4);
         let allocator_b = DocShortIdAllocator::with_reservation_size(store.clone(), 4);
 
-        let (a, b) = tokio::join!(allocator_a.next(), allocator_b.next());
+        let (a, b) = futures::join!(allocator_a.next(), allocator_b.next());
         let mut first_ids = vec![a.unwrap(), b.unwrap()];
         first_ids.sort_unstable();
         assert_eq!(first_ids, vec![1, 5]);

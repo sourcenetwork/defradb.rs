@@ -46,8 +46,7 @@ proptest! {
     fn prop_bulk_index_count_matches_documents(
         doc_count in 1usize..20,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -89,7 +88,8 @@ proptest! {
             // Property: indexed count should match document count
             assert_eq!(result.indexed, doc_count);
             assert_eq!(result.skipped, 0);
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -104,8 +104,7 @@ proptest! {
     fn prop_create_then_delete_removes_from_index(
         name in "[a-zA-Z]{3,10}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -161,7 +160,8 @@ proptest! {
                 .unwrap();
             let after = iter.collect_all().await.unwrap();
             assert!(after.is_empty(), "Index should be empty after delete");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -180,8 +180,7 @@ proptest! {
         // Skip if names are the same (no update needed)
         prop_assume!(old_name != new_name);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -240,7 +239,8 @@ proptest! {
                 .unwrap();
             let new_results = iter.collect_all().await.unwrap();
             assert_eq!(new_results.len(), 1, "New value should be in index");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -256,8 +256,7 @@ proptest! {
         name in "[a-zA-Z]{3,10}",
         count in 2usize..10,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -304,7 +303,8 @@ proptest! {
                 .unwrap();
             let results = iter.collect_all().await.unwrap();
             assert_eq!(results.len(), count, "All documents should be in index");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -319,8 +319,7 @@ proptest! {
     fn prop_unique_index_rejects_duplicates(
         name in "[a-zA-Z]{3,10}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -366,7 +365,8 @@ proptest! {
                 .on_document_create(&datastore, &doc2, doc2_short_id, &schema)
                 .await;
             assert!(result2.is_err(), "Duplicate should be rejected");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -382,8 +382,7 @@ proptest! {
         creates in proptest::collection::vec("[a-z]{3,8}", 1..10),
         deletes in 0usize..5,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -443,7 +442,8 @@ proptest! {
                 expected_count,
                 "Index entry count should match creates - deletes"
             );
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -458,8 +458,7 @@ proptest! {
     fn prop_empty_fields_rejected(
         name in "[a-zA-Z_]{3,15}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -474,7 +473,8 @@ proptest! {
 
             // Property: Empty fields should always be rejected
             assert!(result.is_err(), "Empty fields should be rejected");
-        });
+        })
+        .unwrap();
     }
 }
 
@@ -489,8 +489,7 @@ proptest! {
     fn prop_duplicate_index_names_rejected(
         name in "[a-zA-Z_]{3,15}",
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let db = DB::new(store).unwrap();
             let txn = db.new_txn(false).await.unwrap();
@@ -514,6 +513,7 @@ proptest! {
                 .create_index(&datastore, "users", name, fields, false, &[])
                 .await;
             assert!(result2.is_err(), "Duplicate name should be rejected");
-        });
+        })
+        .unwrap();
     }
 }

@@ -36,7 +36,7 @@ impl Fixture {
         let response = self.runner.execute(read()).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         assert_eq!(response.data.unwrap()["Users"], serde_json::json!([]));
-        tokio::time::timeout(
+        workers::timeout(
             std::time::Duration::from_secs(2),
             self.registry.db().store().close(),
         )
@@ -80,8 +80,8 @@ fn aborting_owner_removes_transaction() {
     workers::block_on(async {
         let fixture = Fixture::new().await;
         let executor = fixture.runner.clone();
-        let (ready, handle) = tokio::sync::oneshot::channel();
-        let task = workers::spawn(None, "test", move || async move {
+        let (ready, handle) = futures::channel::oneshot::channel();
+        let (owner, abort) = futures::future::abortable(async move {
             let guard = TransactionGuard::begin(executor.as_ref(), false)
                 .await
                 .unwrap();
@@ -89,11 +89,11 @@ fn aborting_owner_removes_transaction() {
             ready.send(guard.handle().unwrap().clone()).unwrap();
             std::future::pending::<()>().await;
             drop(guard);
-        })
-        .unwrap();
+        });
+        let task = workers::spawn(None, "test", move || owner).unwrap();
         let handle = handle.await.unwrap();
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
+        abort.abort();
+        assert!(task.await.unwrap().is_err());
         fixture.assert_discarded(&handle).await;
     })
     .unwrap()
@@ -101,19 +101,15 @@ fn aborting_owner_removes_transaction() {
 
 #[test]
 fn guard_cleanup_does_not_require_a_running_runtime() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let fixture = runtime.block_on(Fixture::new());
-    let guard = runtime
-        .block_on(TransactionGuard::begin(fixture.runner.as_ref(), false))
+    let fixture = workers::block_on(Fixture::new()).unwrap();
+    let guard = workers::block_on(TransactionGuard::begin(fixture.runner.as_ref(), false))
+        .unwrap()
         .unwrap();
-    runtime.block_on(create(&guard));
+    workers::block_on(create(&guard)).unwrap();
     let handle = guard.handle().unwrap().clone();
-    drop(runtime);
     drop(guard);
     assert_eq!(fixture.registry.active_transaction_count().unwrap(), 0);
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(fixture.assert_discarded(&handle));
+    workers::block_on(fixture.assert_discarded(&handle)).unwrap();
 }
 
 #[derive(Clone, Copy, PartialEq)]

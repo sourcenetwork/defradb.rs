@@ -62,7 +62,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
     let mut raw = bus.subscribe(&[EventName::Update]);
     let mut changes = bus.subscribe_document_changes();
     let observation = workers::spawn(None, "test", move || async move {
-        tokio::time::timeout(std::time::Duration::from_secs(5), changes.recv())
+        workers::timeout(std::time::Duration::from_secs(5), changes.recv())
             .await
             .unwrap()
             .unwrap()

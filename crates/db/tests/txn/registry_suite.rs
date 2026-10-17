@@ -742,7 +742,10 @@ fn test_concurrent_parallel_transaction_operations() {
                 let reg = registry.clone();
                 workers::spawn(None, "test", move || async move {
                     let txn_id = reg.begin(true).await.unwrap();
-                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    workers::delay(std::time::Duration::from_millis(1))
+                        .unwrap()
+                        .await
+                        .unwrap();
 
                     assert!(
                         found(&reg, &txn_id).await,
@@ -750,7 +753,10 @@ fn test_concurrent_parallel_transaction_operations() {
                         i
                     );
 
-                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    workers::delay(std::time::Duration::from_millis(1))
+                        .unwrap()
+                        .await
+                        .unwrap();
                     reg.rollback(&txn_id).await.unwrap();
 
                     assert!(
@@ -872,7 +878,7 @@ fn test_concurrent_commit_same_transaction() {
         )
         .unwrap();
 
-        let (r1, r2) = tokio::join!(handle1, handle2);
+        let (r1, r2) = futures::join!(handle1, handle2);
         let results = [r1.unwrap(), r2.unwrap()];
 
         // Exactly one should succeed, one should fail
@@ -911,7 +917,7 @@ fn test_concurrent_rollback_same_transaction() {
         )
         .unwrap();
 
-        let (r1, r2) = tokio::join!(handle1, handle2);
+        let (r1, r2) = futures::join!(handle1, handle2);
         let results = [r1.unwrap(), r2.unwrap()];
 
         // Exactly one should succeed, one should fail
@@ -950,7 +956,7 @@ fn test_concurrent_commit_and_rollback_same_transaction() {
         )
         .unwrap();
 
-        let (r1, r2) = tokio::join!(handle1, handle2);
+        let (r1, r2) = futures::join!(handle1, handle2);
         let results = [r1.unwrap(), r2.unwrap()];
 
         // Exactly one should succeed, one should fail
@@ -975,7 +981,10 @@ fn test_cleanup_stale_transactions() {
         assert_eq!(registry.active_transaction_count().unwrap(), 2);
 
         // Wait a bit so transactions become "stale"
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        workers::delay(std::time::Duration::from_millis(50))
+            .unwrap()
+            .await
+            .unwrap();
 
         // Cleanup with a very short max_age (0 means everything is stale)
         let result = registry
@@ -1004,7 +1013,10 @@ fn test_cleanup_only_old_transactions() {
         let _old_txn = registry.begin(true).await.unwrap();
 
         // Wait a bit
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        workers::delay(std::time::Duration::from_millis(50))
+            .unwrap()
+            .await
+            .unwrap();
 
         // Begin a "new" transaction
         let new_txn = registry.begin(true).await.unwrap();
@@ -1042,10 +1054,16 @@ fn test_cleanup_uses_idle_age_not_creation_age() {
         let registry = DbTransactionRegistry::new(db);
 
         let txn = registry.begin(true).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        workers::delay(std::time::Duration::from_millis(30))
+            .unwrap()
+            .await
+            .unwrap();
 
         assert!(found(&registry, &txn).await);
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        workers::delay(std::time::Duration::from_millis(20))
+            .unwrap()
+            .await
+            .unwrap();
 
         let result = registry
             .cleanup_stale_transactions(std::time::Duration::from_millis(40))
@@ -1058,7 +1076,10 @@ fn test_cleanup_uses_idle_age_not_creation_age() {
         );
         assert!(found(&registry, &txn).await);
 
-        tokio::time::sleep(std::time::Duration::from_millis(45)).await;
+        workers::delay(std::time::Duration::from_millis(45))
+            .unwrap()
+            .await
+            .unwrap();
 
         let result = registry
             .cleanup_stale_transactions(std::time::Duration::from_millis(40))
@@ -1088,7 +1109,10 @@ fn test_periodic_cleanup_task_removes_idle_transactions() {
             std::time::Duration::from_millis(25),
         );
 
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        workers::delay(std::time::Duration::from_millis(250))
+            .unwrap()
+            .await
+            .unwrap();
         cleanup_task.abort();
 
         assert_eq!(registry.active_transaction_count().unwrap(), 0);

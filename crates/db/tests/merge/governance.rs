@@ -286,7 +286,10 @@ impl Node {
             if self.doc_ids(collection).await.iter().any(|id| id == doc_id) {
                 return;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            workers::delay(std::time::Duration::from_millis(25))
+                .unwrap()
+                .await
+                .unwrap();
         }
         panic!("{collection} never merged {doc_id}");
     }

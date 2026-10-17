@@ -34,7 +34,10 @@ fn replay_push_gate_caps_concurrent_sends() {
                     gate.send_pushlog(&peer, async move {
                         let active = current.fetch_add(1, Ordering::SeqCst) + 1;
                         record_max(&max_seen, active);
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        workers::delay(Duration::from_millis(50))
+                            .unwrap()
+                            .await
+                            .unwrap();
                         current.fetch_sub(1, Ordering::SeqCst);
                         Ok(PushLogReply::success("message"))
                     })
@@ -129,8 +132,8 @@ fn replay_hint_is_durable_while_another_send_is_still_pending() {
                 .unwrap();
         }
         let gate = Arc::new(ReplayPushGate::new(ReplayPushConfig::default()));
-        let (started, ready) = tokio::sync::oneshot::channel();
-        let (release, wait) = tokio::sync::oneshot::channel();
+        let (started, ready) = futures::channel::oneshot::channel();
+        let (release, wait) = futures::channel::oneshot::channel();
         let slow_gate = gate.clone();
         let slow_peer = peer.clone();
         let slow = workers::spawn(None, "test", move || async move {
@@ -191,8 +194,8 @@ fn durable_hint_arriving_while_waiting_for_send_permit_prevents_dispatch() {
             max_concurrent_outbound_pushes: 1,
             ..Default::default()
         }));
-        let (started, ready) = tokio::sync::oneshot::channel();
-        let (release, wait) = tokio::sync::oneshot::channel();
+        let (started, ready) = futures::channel::oneshot::channel();
+        let (release, wait) = futures::channel::oneshot::channel();
         let first_gate = gate.clone();
         let first_peer = peer.clone();
         let first = workers::spawn(None, "test", move || async move {
@@ -210,14 +213,14 @@ fn durable_hint_arriving_while_waiting_for_send_permit_prevents_dispatch() {
         let waiting_gate = gate.clone();
         let waiting_store = peerstore.clone();
         let waiting_peer = peer.clone();
-        let (entered, entered_rx) = tokio::sync::oneshot::channel();
+        let (entered, entered_rx) = futures::channel::oneshot::channel();
         let waiting = workers::spawn(None, "test", move || async move {
             let attempt = waiting_gate.send_pushlog_with_admission(
                 &waiting_peer,
                 check_retry_admission(&waiting_store, &waiting_peer),
                 async { panic!("hint installed while queued must prevent transport dispatch") },
             );
-            tokio::pin!(attempt);
+            let mut attempt = std::pin::pin!(attempt);
             assert!(futures::poll!(&mut attempt).is_pending());
             entered.send(()).unwrap();
             attempt.await
@@ -320,7 +323,7 @@ fn forgotten_peer_cannot_be_resurrected_by_unfinished_replay() {
             doc_id: "doc-1".to_string(),
             collection_id: "collection".to_string(),
         }];
-        let (persisted, deleted) = tokio::join!(
+        let (persisted, deleted) = futures::join!(
             persist_replay_failures(&persistence_store, &persistence_peer, &failures),
             peerstore.delete_replicator(peer.as_str()),
         );

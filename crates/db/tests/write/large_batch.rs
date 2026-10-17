@@ -2,8 +2,8 @@
 //! embedding and KMS-keyed encryption, commits in one request: every input it
 //! prepares is kept for every attempt, however many inputs the request has.
 
+use crate::common::http::HttpServer;
 use async_trait::async_trait;
-use axum::{routing::post, Json, Router};
 use db::{AutoCommitMutator, DbCollectionProvider, LensedAutoCommitFetcher, DB};
 use kovan_map::HopscotchMap;
 use query::{QueryExecutor, QueryRequest};
@@ -69,41 +69,22 @@ fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
     workers::block_on(async {
         let embedding_calls = Arc::new(AtomicUsize::new(0));
         let embedded_texts = Arc::new(AtomicUsize::new(0));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
         let calls = Arc::clone(&embedding_calls);
         let texts = Arc::clone(&embedded_texts);
-        let server = workers::spawn(None, "test", move || async move {
-            axum::serve(
-                listener,
-                Router::new().route(
-                    "/embeddings",
-                    // An OpenAI-compatible endpoint: `input` is one text or an
-                    // array of them, answered in order with their indices.
-                    post(move |Json(request): Json<Value>| {
-                        let calls = Arc::clone(&calls);
-                        let texts = Arc::clone(&texts);
-                        async move {
-                            calls.fetch_add(1, Ordering::SeqCst);
-                            let count = match &request["input"] {
-                                Value::Array(inputs) => inputs.len(),
-                                _ => 1,
-                            };
-                            texts.fetch_add(count, Ordering::SeqCst);
-                            let data: Vec<Value> = (0..count)
-                            .map(|index| {
-                                json!({"index": index, "embedding": vec![0.25_f64; DIMENSIONS]})
-                            })
-                            .collect();
-                            Json(json!({ "data": data }))
-                        }
-                    }),
-                ),
-            )
-            .await
-            .unwrap();
-        })
-        .unwrap();
+        // An OpenAI-compatible endpoint: `input` is one text or an array of
+        // them, answered in order with their indices.
+        let server = HttpServer::start(move |request| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            let count = match &request.body["input"] {
+                Value::Array(inputs) => inputs.len(),
+                _ => 1,
+            };
+            texts.fetch_add(count, Ordering::SeqCst);
+            let data: Vec<Value> = (0..count)
+                .map(|index| json!({"index": index, "embedding": vec![0.25_f64; DIMENSIONS]}))
+                .collect();
+            json!({ "data": data })
+        });
 
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         let kms = Arc::new(KeyingKms {
@@ -129,7 +110,7 @@ fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
                 model: "test-model".to_string(),
                 provider: "openai".to_string(),
                 template: String::new(),
-                url: format!("http://{address}"),
+                url: server.url(),
             });
         db.create_collection(collection).await.unwrap();
 
@@ -177,7 +158,6 @@ fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
             .as_array()
             .is_some_and(|vector| vector.len() == DIMENSIONS
                 && vector.iter().all(|value| value.as_f64() == Some(0.25)))));
-        server.abort();
     })
     .unwrap()
 }

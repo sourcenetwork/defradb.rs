@@ -3821,7 +3821,6 @@ version = "0.5.0"
 dependencies = [
  "acp 0.5.0",
  "async-trait",
- "axum",
  "base64 0.23.1",
  "blockstore",
  "blst",
@@ -3865,7 +3864,6 @@ dependencies = [
  "storage",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "web-time",
  "workers",
