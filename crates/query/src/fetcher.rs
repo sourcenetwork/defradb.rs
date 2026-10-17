@@ -565,13 +565,16 @@ mod tests {
     /// The defaulted collection-scoped fetch cannot honour `collection_short_id`,
     /// so it must refuse rather than hand back a document the query runner would
     /// then ACP-check against the wrong collection.
-    #[tokio::test]
-    async fn defaulted_documents_at_cid_does_not_return_unscoped_documents() {
-        let result = SingleDocOnlyFetcher
-            .get_documents_at_cid(1, "bafy", None, None)
-            .await;
+    #[test]
+    fn defaulted_documents_at_cid_does_not_return_unscoped_documents() {
+        workers::block_on(async {
+            let result = SingleDocOnlyFetcher
+                .get_documents_at_cid(1, "bafy", None, None)
+                .await;
 
-        assert!(result.is_err(), "expected refusal, got {result:?}");
+            assert!(result.is_err(), "expected refusal, got {result:?}");
+        })
+        .unwrap()
     }
 }
 

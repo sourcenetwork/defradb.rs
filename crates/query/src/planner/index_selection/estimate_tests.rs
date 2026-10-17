@@ -114,89 +114,101 @@ fn fixture() -> (CollectionVersion, Filter) {
     (collection, filter)
 }
 
-#[tokio::test]
-async fn small_candidate_avoids_a_full_probe_of_the_shape_winner() {
-    let (collection, filter) = fixture();
-    let fetcher = Counts::new(5_000, 1);
-    let estimates = estimate_filter_indexes(&fetcher, &collection, &filter)
-        .await
-        .unwrap();
-    assert_eq!(
-        select_best_index_with_estimates(&filter, &collection.indexes, &estimates)
-            .unwrap()
-            .name,
-        "key"
-    );
-    let calls = fetcher.calls.load();
-    assert_eq!(
-        calls.iter().filter_map(|(_, _, count)| *count).sum::<u64>(),
-        33
-    );
-    assert!(calls.iter().all(|(_, cap, _)| *cap <= 32));
+#[test]
+fn small_candidate_avoids_a_full_probe_of_the_shape_winner() {
+    workers::block_on(async {
+        let (collection, filter) = fixture();
+        let fetcher = Counts::new(5_000, 1);
+        let estimates = estimate_filter_indexes(&fetcher, &collection, &filter)
+            .await
+            .unwrap();
+        assert_eq!(
+            select_best_index_with_estimates(&filter, &collection.indexes, &estimates)
+                .unwrap()
+                .name,
+            "key"
+        );
+        let calls = fetcher.calls.load();
+        assert_eq!(
+            calls.iter().filter_map(|(_, _, count)| *count).sum::<u64>(),
+            33
+        );
+        assert!(calls.iter().all(|(_, cap, _)| *cap <= 32));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn probes_preserve_capped_selection_and_shape_ties() {
-    let (collection, filter) = fixture();
-    for scope in [
-        0, 1, 2, 31, 32, 33, 63, 64, 65, 255, 256, 257, 1023, 1024, 1025, 5_000,
-    ] {
-        for key in [
+#[test]
+fn probes_preserve_capped_selection_and_shape_ties() {
+    workers::block_on(async {
+        let (collection, filter) = fixture();
+        for scope in [
             0, 1, 2, 31, 32, 33, 63, 64, 65, 255, 256, 257, 1023, 1024, 1025, 5_000,
         ] {
-            let fetcher = Counts::new(scope, key);
-            let observed = estimate_filter_indexes(&fetcher, &collection, &filter)
-                .await
-                .unwrap();
-            let reference = [
-                ("scope".to_owned(), scope.min(ESTIMATE_CAP)),
-                ("key".to_owned(), key.min(ESTIMATE_CAP)),
-            ]
-            .into_iter()
-            .collect();
-            assert_eq!(
-                select_best_index_with_estimates(&filter, &collection.indexes, &observed)
-                    .unwrap()
-                    .name,
-                select_best_index_with_estimates(&filter, &collection.indexes, &reference)
-                    .unwrap()
-                    .name,
-                "scope={scope}, key={key}"
-            );
-            assert!(
-                fetcher
-                    .calls
-                    .load()
-                    .iter()
-                    .filter_map(|(_, _, count)| *count)
-                    .sum::<u64>()
-                    <= 2 * (ESTIMATE_CAP + 32)
-            );
+            for key in [
+                0, 1, 2, 31, 32, 33, 63, 64, 65, 255, 256, 257, 1023, 1024, 1025, 5_000,
+            ] {
+                let fetcher = Counts::new(scope, key);
+                let observed = estimate_filter_indexes(&fetcher, &collection, &filter)
+                    .await
+                    .unwrap();
+                let reference = [
+                    ("scope".to_owned(), scope.min(ESTIMATE_CAP)),
+                    ("key".to_owned(), key.min(ESTIMATE_CAP)),
+                ]
+                .into_iter()
+                .collect();
+                assert_eq!(
+                    select_best_index_with_estimates(&filter, &collection.indexes, &observed)
+                        .unwrap()
+                        .name,
+                    select_best_index_with_estimates(&filter, &collection.indexes, &reference)
+                        .unwrap()
+                        .name,
+                    "scope={scope}, key={key}"
+                );
+                assert!(
+                    fetcher
+                        .calls
+                        .load()
+                        .iter()
+                        .filter_map(|(_, _, count)| *count)
+                        .sum::<u64>()
+                        <= 2 * (ESTIMATE_CAP + 32)
+                );
+            }
         }
-    }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn unknown_counts_discard_partial_probes_in_either_phase() {
-    let (collection, filter) = fixture();
-    for unknown_at in 0..4 {
-        let mut fetcher = Counts::new(5_000, 5_000);
-        fetcher.unknown_at = Some(unknown_at);
+#[test]
+fn unknown_counts_discard_partial_probes_in_either_phase() {
+    workers::block_on(async {
+        let (collection, filter) = fixture();
+        for unknown_at in 0..4 {
+            let mut fetcher = Counts::new(5_000, 5_000);
+            fetcher.unknown_at = Some(unknown_at);
+            assert!(estimate_filter_indexes(&fetcher, &collection, &filter)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_single_usable_index_needs_no_estimates() {
+    workers::block_on(async {
+        let (mut collection, filter) = fixture();
+        collection.indexes.pop();
+        let fetcher = Counts::new(5_000, 1);
         assert!(estimate_filter_indexes(&fetcher, &collection, &filter)
             .await
             .unwrap()
             .is_empty());
-    }
-}
-
-#[tokio::test]
-async fn a_single_usable_index_needs_no_estimates() {
-    let (mut collection, filter) = fixture();
-    collection.indexes.pop();
-    let fetcher = Counts::new(5_000, 1);
-    assert!(estimate_filter_indexes(&fetcher, &collection, &filter)
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(fetcher.calls.load().is_empty());
+        assert!(fetcher.calls.load().is_empty());
+    })
+    .unwrap()
 }
