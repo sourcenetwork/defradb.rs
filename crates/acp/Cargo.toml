@@ -36,7 +36,8 @@ regolith.workspace = true
 [dev-dependencies]
 bytes = { workspace = true }
 tempfile = "3"
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+futures.workspace = true
+workers = { path = "../workers" }
 
 [lints]
 workspace = true

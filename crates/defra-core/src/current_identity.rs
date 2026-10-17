@@ -199,27 +199,33 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn scoped_identity_visible_inside_scope_only() {
-        assert_eq!(try_get_scoped_identity(), None);
-        let inside = with_scoped_identity(Some("did:key:carol".to_string()), async {
-            try_get_scoped_identity()
+    #[test]
+    fn scoped_identity_visible_inside_scope_only() {
+        workers::block_on(async {
+            assert_eq!(try_get_scoped_identity(), None);
+            let inside = with_scoped_identity(Some("did:key:carol".to_string()), async {
+                try_get_scoped_identity()
+            })
+            .await;
+            assert_eq!(inside, Some("did:key:carol".to_string()));
+            assert_eq!(try_get_scoped_identity(), None);
         })
-        .await;
-        assert_eq!(inside, Some("did:key:carol".to_string()));
-        assert_eq!(try_get_scoped_identity(), None);
+        .unwrap()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn anonymous_task_scope_masks_stale_thread_identity() {
-        set_current_identity(Some("did:key:stale-thread".to_string()));
-        let inside = with_scoped_identity(None, async { get_effective_identity() }).await;
-        assert_eq!(inside, None);
-        assert_eq!(
-            get_effective_identity().as_deref(),
-            Some("did:key:stale-thread")
-        );
-        set_current_identity(None);
+    #[test]
+    fn anonymous_task_scope_masks_stale_thread_identity() {
+        workers::block_on(async {
+            set_current_identity(Some("did:key:stale-thread".to_string()));
+            let inside = with_scoped_identity(None, async { get_effective_identity() }).await;
+            assert_eq!(inside, None);
+            assert_eq!(
+                get_effective_identity().as_deref(),
+                Some("did:key:stale-thread")
+            );
+            set_current_identity(None);
+        })
+        .unwrap()
     }
 }

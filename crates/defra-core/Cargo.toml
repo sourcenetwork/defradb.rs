@@ -63,10 +63,11 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["rt"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 futures.workspace = true
+workers = { path = "../workers" }
 multihash-codetable.workspace = true
 proptest.workspace = true
 

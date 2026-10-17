@@ -41,7 +41,7 @@ tracing = { workspace = true }
 bytes = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+futures.workspace = true
 multihash = { workspace = true }
 sha2 = { workspace = true }
 
