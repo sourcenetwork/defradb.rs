@@ -267,8 +267,9 @@ mod tests {
         (QueryRunner::new(fetcher, vec![collection]), reads)
     }
 
-    #[tokio::test]
-    async fn ordinary_scoped_id_queries_seek_without_index_prefetch() {
+    #[test]
+    fn ordinary_scoped_id_queries_seek_without_index_prefetch() {
+        workers::block_on(async {
         let id = NOTE_ID;
         let (runner, reads) = point_only_runner(&["owner"]);
         let data = runner.execute_query(&format!(r#"{{
@@ -280,12 +281,15 @@ mod tests {
         assert_eq!(data["rejected"], serde_json::json!([]));
         assert_eq!(data["missing"], serde_json::json!([]));
         assert_eq!(reads.load(Ordering::Relaxed), 3);
+    })
+    .unwrap()
     }
 
     /// Ordering by an indexed field routes through the planner, and two
     /// eligible indexes are the case where estimation would otherwise run.
-    #[tokio::test]
-    async fn planner_scoped_id_queries_seek_without_index_estimates() {
+    #[test]
+    fn planner_scoped_id_queries_seek_without_index_estimates() {
+        workers::block_on(async {
         let id = NOTE_ID;
         let (runner, reads) = point_only_runner(&["owner", "status"]);
         let data = runner.execute_query(&format!(r#"{{
@@ -295,5 +299,7 @@ mod tests {
         assert_eq!(data["matching"][0]["_docID"], id);
         assert_eq!(data["rejected"], serde_json::json!([]));
         assert_eq!(reads.load(Ordering::Relaxed), 2);
+    })
+    .unwrap()
     }
 }

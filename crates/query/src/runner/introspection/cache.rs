@@ -148,27 +148,33 @@ mod tests {
         assert_eq!(served(&cache, 6), Some("Older"));
     }
 
-    #[tokio::test]
-    async fn builds_once_for_an_unchanged_view() {
-        let provider = Arc::new(StaticCollectionProvider::new(vec![users_collection("v1")]));
-        let runner = runner_with(true, provider);
+    #[test]
+    fn builds_once_for_an_unchanged_view() {
+        workers::block_on(async {
+            let provider = Arc::new(StaticCollectionProvider::new(vec![users_collection("v1")]));
+            let runner = runner_with(true, provider);
 
-        let first = runner.execute_introspection(QUERY).await.unwrap();
-        let second = runner.execute_introspection(QUERY).await.unwrap();
+            let first = runner.execute_introspection(QUERY).await.unwrap();
+            let second = runner.execute_introspection(QUERY).await.unwrap();
 
-        assert_eq!(first, second);
-        assert_eq!(runner.introspection_build_count(), 1);
+            assert_eq!(first, second);
+            assert_eq!(runner.introspection_build_count(), 1);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn disabled_builds_every_time() {
-        let provider = Arc::new(StaticCollectionProvider::new(vec![users_collection("v1")]));
-        let runner = runner_with(false, provider);
+    #[test]
+    fn disabled_builds_every_time() {
+        workers::block_on(async {
+            let provider = Arc::new(StaticCollectionProvider::new(vec![users_collection("v1")]));
+            let runner = runner_with(false, provider);
 
-        runner.execute_introspection(QUERY).await.unwrap();
-        runner.execute_introspection(QUERY).await.unwrap();
+            runner.execute_introspection(QUERY).await.unwrap();
+            runner.execute_introspection(QUERY).await.unwrap();
 
-        assert_eq!(runner.introspection_build_count(), 2);
+            assert_eq!(runner.introspection_build_count(), 2);
+        })
+        .unwrap()
     }
 
     /// A provider that cannot prove an epoch, like a transaction's. Content
@@ -214,17 +220,20 @@ mod tests {
 
     /// The uncached-by-design case: no epoch, so every introspection builds,
     /// and a schema change mid-stream is always visible.
-    #[tokio::test]
-    async fn epochless_provider_rebuilds_and_sees_changes() {
-        let provider = Arc::new(EpochlessProvider::new(vec![users_collection("v1")]));
-        let runner = runner_with(true, provider.clone());
+    #[test]
+    fn epochless_provider_rebuilds_and_sees_changes() {
+        workers::block_on(async {
+            let provider = Arc::new(EpochlessProvider::new(vec![users_collection("v1")]));
+            let runner = runner_with(true, provider.clone());
 
-        runner.execute_introspection(QUERY).await.unwrap();
-        runner.execute_introspection(QUERY).await.unwrap();
-        assert_eq!(runner.introspection_build_count(), 2);
+            runner.execute_introspection(QUERY).await.unwrap();
+            runner.execute_introspection(QUERY).await.unwrap();
+            assert_eq!(runner.introspection_build_count(), 2);
 
-        provider.set(vec![users_collection("v2")]);
-        runner.execute_introspection(QUERY).await.unwrap();
-        assert_eq!(runner.introspection_build_count(), 3);
+            provider.set(vec![users_collection("v2")]);
+            runner.execute_introspection(QUERY).await.unwrap();
+            assert_eq!(runner.introspection_build_count(), 3);
+        })
+        .unwrap()
     }
 }
