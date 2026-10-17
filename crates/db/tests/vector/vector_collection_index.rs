@@ -107,27 +107,30 @@ fn parameter_validation_requires_pq_m_to_divide_dimensions() {
     }
 }
 
-#[tokio::test]
-async fn parameter_validation_rejects_inferred_pq_width_before_writing() {
-    use db::index::vector::engine::{
-        ann::VectorIndexEngine,
-        ivf::pq::{IvfPq, IvfPqParams},
-    };
-    use db::index::vector::store::MemoryNodeStore;
-    use defra_core::vector::Metric;
-    let mut index = IvfPq::try_new(
-        MemoryNodeStore::new(),
-        Metric::Cosine,
-        IvfPqParams {
-            m: 3,
-            ..IvfPqParams::default()
-        },
-        1,
-    )
-    .unwrap();
-    assert!(index.insert(NodeId(1), &[1.0; 4]).await.is_err());
-    assert!(index.store().get_node(NodeId(1)).await.unwrap().is_none());
-    index.insert(NodeId(1), &[1.0; 6]).await.unwrap();
+#[test]
+fn parameter_validation_rejects_inferred_pq_width_before_writing() {
+    workers::block_on(async {
+        use db::index::vector::engine::{
+            ann::VectorIndexEngine,
+            ivf::pq::{IvfPq, IvfPqParams},
+        };
+        use db::index::vector::store::MemoryNodeStore;
+        use defra_core::vector::Metric;
+        let mut index = IvfPq::try_new(
+            MemoryNodeStore::new(),
+            Metric::Cosine,
+            IvfPqParams {
+                m: 3,
+                ..IvfPqParams::default()
+            },
+            1,
+        )
+        .unwrap();
+        assert!(index.insert(NodeId(1), &[1.0; 4]).await.is_err());
+        assert!(index.store().get_node(NodeId(1)).await.unwrap().is_none());
+        index.insert(NodeId(1), &[1.0; 6]).await.unwrap();
+    })
+    .unwrap()
 }
 
 async fn txn(store: &RegolithStore) -> Box<dyn Txn> {
@@ -157,251 +160,278 @@ async fn live_ids(store: &RegolithStore, index: &VectorIndex) -> Vec<NodeId> {
     ids
 }
 
-#[tokio::test]
-async fn a_saved_document_becomes_a_searchable_node() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
+#[test]
+fn a_saved_document_becomes_a_searchable_node() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
 
-    let mut write = txn(&store).await;
-    for (id, values) in [
-        (1u64, wide(&[1.0, 0.0, 0.0, 0.0])),
-        (2, wide(&[0.0, 1.0, 0.0, 0.0])),
-        (3, wide(&[0.9, 0.1, 0.0, 0.0])),
-    ] {
-        index.save(&mut write, id, &values).await.unwrap();
-    }
-    write.commit().await.unwrap();
+        let mut write = txn(&store).await;
+        for (id, values) in [
+            (1u64, wide(&[1.0, 0.0, 0.0, 0.0])),
+            (2, wide(&[0.0, 1.0, 0.0, 0.0])),
+            (3, wide(&[0.9, 0.1, 0.0, 0.0])),
+        ] {
+            index.save(&mut write, id, &values).await.unwrap();
+        }
+        write.commit().await.unwrap();
 
-    assert_eq!(
-        live_ids(&store, &index).await,
-        vec![NodeId(1), NodeId(2), NodeId(3)]
-    );
+        assert_eq!(
+            live_ids(&store, &index).await,
+            vec![NodeId(1), NodeId(2), NodeId(3)]
+        );
+    })
+    .unwrap()
 }
 
 /// Every width a document field can carry must be accepted, and all of them
 /// must store the same direction. `f32`/`f64` carry the value exactly;
 /// `IntArray` carries the same whole numbers.
-#[tokio::test]
-async fn every_element_width_indexes_identically() {
-    let components = [3.0f32, -2.0, 6.0, 1.0];
-    let as_wide: Vec<f64> = components.iter().map(|x| *x as f64).collect();
-    let as_int: Vec<i64> = components.iter().map(|x| *x as i64).collect();
+#[test]
+fn every_element_width_indexes_identically() {
+    workers::block_on(async {
+        let components = [3.0f32, -2.0, 6.0, 1.0];
+        let as_wide: Vec<f64> = components.iter().map(|x| *x as f64).collect();
+        let as_int: Vec<i64> = components.iter().map(|x| *x as i64).collect();
 
-    let mut stored = Vec::new();
-    for values in [
-        narrow(&components),
-        wide(&as_wide),
-        vec![NormalValue::IntArray(as_int)],
-    ] {
-        let store = RegolithStore::in_memory().unwrap();
-        let index = index();
-        let mut write = txn(&store).await;
-        index.save(&mut write, 1, &values).await.unwrap();
-        write.commit().await.unwrap();
+        let mut stored = Vec::new();
+        for values in [
+            narrow(&components),
+            wide(&as_wide),
+            vec![NormalValue::IntArray(as_int)],
+        ] {
+            let store = RegolithStore::in_memory().unwrap();
+            let index = index();
+            let mut write = txn(&store).await;
+            index.save(&mut write, 1, &values).await.unwrap();
+            write.commit().await.unwrap();
 
-        let mut read = txn(&store).await;
-        let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
-        stored.push(kv.get_node(NodeId(1)).await.unwrap().unwrap().vector);
-    }
-    assert!(
-        stored.windows(2).all(|pair| pair[0] == pair[1]),
-        "the widths stored different data: {stored:?}"
-    );
+            let mut read = txn(&store).await;
+            let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
+            stored.push(kv.get_node(NodeId(1)).await.unwrap().unwrap().vector);
+        }
+        assert!(
+            stored.windows(2).all(|pair| pair[0] == pair[1]),
+            "the widths stored different data: {stored:?}"
+        );
+    })
+    .unwrap()
 }
 
 /// Go's `Similarity` accepts a vector "of type Int, Float32 or Float64", so a
 /// peer can send an integer vector and this must index it, not refuse it.
-#[tokio::test]
-async fn an_integer_vector_is_accepted() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
-    let mut write = txn(&store).await;
-    index
-        .save(&mut write, 1, &[NormalValue::IntArray(vec![3, 0, 4, 0])])
-        .await
-        .unwrap();
-    index
-        .save(
-            &mut write,
-            2,
-            &[NormalValue::NillableIntArray(Some(vec![0, 1, 0, 0]))],
-        )
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
+#[test]
+fn an_integer_vector_is_accepted() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
+        let mut write = txn(&store).await;
+        index
+            .save(&mut write, 1, &[NormalValue::IntArray(vec![3, 0, 4, 0])])
+            .await
+            .unwrap();
+        index
+            .save(
+                &mut write,
+                2,
+                &[NormalValue::NillableIntArray(Some(vec![0, 1, 0, 0]))],
+            )
+            .await
+            .unwrap();
+        write.commit().await.unwrap();
 
-    assert_eq!(live_ids(&store, &index).await, vec![NodeId(1), NodeId(2)]);
+        assert_eq!(live_ids(&store, &index).await, vec![NodeId(1), NodeId(2)]);
 
-    // Stored normalized, and 3-0-4-0 has norm 5, so the direction is preserved.
-    let mut read = txn(&store).await;
-    let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
-    let node = kv.get_node(NodeId(1)).await.unwrap().unwrap();
-    assert!((node.vector[0] - 0.6).abs() < 1e-6);
-    assert!((node.vector[2] - 0.8).abs() < 1e-6);
+        // Stored normalized, and 3-0-4-0 has norm 5, so the direction is preserved.
+        let mut read = txn(&store).await;
+        let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
+        let node = kv.get_node(NodeId(1)).await.unwrap().unwrap();
+        assert!((node.vector[0] - 0.6).abs() < 1e-6);
+        assert!((node.vector[2] - 0.8).abs() < 1e-6);
+    })
+    .unwrap()
 }
 
 /// A vector is one value. Indexing it component-by-component would be both
 /// wrong and enormous, so the whole array must reach the index intact.
-#[tokio::test]
-async fn a_vector_is_indexed_whole_not_per_component() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
-    let mut write = txn(&store).await;
-    index
-        .save(&mut write, 1, &wide(&[1.0, 2.0, 3.0, 4.0]))
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
+#[test]
+fn a_vector_is_indexed_whole_not_per_component() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
+        let mut write = txn(&store).await;
+        index
+            .save(&mut write, 1, &wide(&[1.0, 2.0, 3.0, 4.0]))
+            .await
+            .unwrap();
+        write.commit().await.unwrap();
 
-    let mut read = txn(&store).await;
-    let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
-    let node = kv.get_node(NodeId(1)).await.unwrap().unwrap();
-    assert_eq!(
-        node.vector.len(),
-        DIMENSIONS as usize,
-        "the stored node must hold the whole vector"
-    );
-    assert_eq!(live_ids(&store, &index).await, vec![NodeId(1)]);
+        let mut read = txn(&store).await;
+        let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
+        let node = kv.get_node(NodeId(1)).await.unwrap().unwrap();
+        assert_eq!(
+            node.vector.len(),
+            DIMENSIONS as usize,
+            "the stored node must hold the whole vector"
+        );
+        assert_eq!(live_ids(&store, &index).await, vec![NodeId(1)]);
+    })
+    .unwrap()
 }
 
 /// A document with no vector is simply not in the index, which is the same
 /// answer a null field gives.
-#[tokio::test]
-async fn documents_without_a_usable_vector_are_not_indexed() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
-    let mut write = txn(&store).await;
+#[test]
+fn documents_without_a_usable_vector_are_not_indexed() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
+        let mut write = txn(&store).await;
 
-    for (id, values) in [
-        (1u64, vec![NormalValue::Null]),
-        (2, vec![NormalValue::NillableFloat64Array(None)]),
-        // No direction: cosine cannot rank it against anything.
-        (3, wide(&[0.0, 0.0, 0.0, 0.0])),
-        (4, Vec::new()),
-    ] {
-        index.save(&mut write, id, &values).await.unwrap();
-    }
-    index
-        .save(&mut write, 5, &wide(&[1.0, 0.0, 0.0, 0.0]))
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
+        for (id, values) in [
+            (1u64, vec![NormalValue::Null]),
+            (2, vec![NormalValue::NillableFloat64Array(None)]),
+            // No direction: cosine cannot rank it against anything.
+            (3, wide(&[0.0, 0.0, 0.0, 0.0])),
+            (4, Vec::new()),
+        ] {
+            index.save(&mut write, id, &values).await.unwrap();
+        }
+        index
+            .save(&mut write, 5, &wide(&[1.0, 0.0, 0.0, 0.0]))
+            .await
+            .unwrap();
+        write.commit().await.unwrap();
 
-    assert_eq!(live_ids(&store, &index).await, vec![NodeId(5)]);
+        assert_eq!(live_ids(&store, &index).await, vec![NodeId(5)]);
+    })
+    .unwrap()
 }
 
 /// A dimension mismatch is a user error worth naming, unlike a missing vector.
-#[tokio::test]
-async fn a_dimension_mismatch_is_rejected() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
-    let mut write = txn(&store).await;
+#[test]
+fn a_dimension_mismatch_is_rejected() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
+        let mut write = txn(&store).await;
 
-    let err = index
-        .save(&mut write, 1, &wide(&[1.0, 0.0]))
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("expects 4 dimensions"),
-        "the error must name what was expected, got: {err}"
-    );
+        let err = index
+            .save(&mut write, 1, &wide(&[1.0, 0.0]))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("expects 4 dimensions"),
+            "the error must name what was expected, got: {err}"
+        );
 
-    // Declaring zero dimensions means an embedding model fixes the length, so
-    // the description has nothing to check against and the first vector
-    // indexed fixes it instead. Everything after must still agree: a mixed
-    // index would rank on the shared leading elements.
-    let free = VectorIndex::try_new(COLLECTION, description(0)).unwrap();
-    free.save(&mut write, 2, &wide(&[1.0, 0.0])).await.unwrap();
-    let err = free
-        .save(&mut write, 3, &wide(&[1.0, 0.0, 0.0]))
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("2-dimension"),
-        "the error must name the width the index holds, got: {err}"
-    );
+        // Declaring zero dimensions means an embedding model fixes the length, so
+        // the description has nothing to check against and the first vector
+        // indexed fixes it instead. Everything after must still agree: a mixed
+        // index would rank on the shared leading elements.
+        let free = VectorIndex::try_new(COLLECTION, description(0)).unwrap();
+        free.save(&mut write, 2, &wide(&[1.0, 0.0])).await.unwrap();
+        let err = free
+            .save(&mut write, 3, &wide(&[1.0, 0.0, 0.0]))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("2-dimension"),
+            "the error must name the width the index holds, got: {err}"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn deleting_a_document_removes_it_from_results() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
+#[test]
+fn deleting_a_document_removes_it_from_results() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
 
-    let mut write = txn(&store).await;
-    index
-        .save(&mut write, 1, &wide(&[1.0, 0.0, 0.0, 0.0]))
-        .await
-        .unwrap();
-    index
-        .save(&mut write, 2, &wide(&[0.0, 1.0, 0.0, 0.0]))
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
-    assert_eq!(live_ids(&store, &index).await.len(), 2);
+        let mut write = txn(&store).await;
+        index
+            .save(&mut write, 1, &wide(&[1.0, 0.0, 0.0, 0.0]))
+            .await
+            .unwrap();
+        index
+            .save(&mut write, 2, &wide(&[0.0, 1.0, 0.0, 0.0]))
+            .await
+            .unwrap();
+        write.commit().await.unwrap();
+        assert_eq!(live_ids(&store, &index).await.len(), 2);
 
-    let mut write = txn(&store).await;
-    index.delete(&mut write, 1, &[]).await.unwrap();
-    write.commit().await.unwrap();
-    assert_eq!(live_ids(&store, &index).await, vec![NodeId(2)]);
+        let mut write = txn(&store).await;
+        index.delete(&mut write, 1, &[]).await.unwrap();
+        write.commit().await.unwrap();
+        assert_eq!(live_ids(&store, &index).await, vec![NodeId(2)]);
+    })
+    .unwrap()
 }
 
 /// A field that became null must not leave the old vector ranking.
-#[tokio::test]
-async fn clearing_a_vector_on_update_removes_the_node() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
+#[test]
+fn clearing_a_vector_on_update_removes_the_node() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
 
-    let mut write = txn(&store).await;
-    let original = wide(&[1.0, 0.0, 0.0, 0.0]);
-    index.save(&mut write, 1, &original).await.unwrap();
-    index
-        .save(&mut write, 2, &wide(&[0.0, 1.0, 0.0, 0.0]))
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
-
-    let mut write = txn(&store).await;
-    index
-        .update(&mut write, 1, &original, &[NormalValue::Null])
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
-
-    assert_eq!(live_ids(&store, &index).await, vec![NodeId(2)]);
-}
-
-#[tokio::test]
-async fn dropping_the_index_removes_every_key() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index();
-
-    let mut write = txn(&store).await;
-    for id in 1..=20u64 {
-        let angle = id as f64 * 0.3;
+        let mut write = txn(&store).await;
+        let original = wide(&[1.0, 0.0, 0.0, 0.0]);
+        index.save(&mut write, 1, &original).await.unwrap();
         index
-            .save(
-                &mut write,
-                id,
-                &wide(&[angle.sin(), angle.cos(), 0.5, 0.25]),
-            )
+            .save(&mut write, 2, &wide(&[0.0, 1.0, 0.0, 0.0]))
             .await
             .unwrap();
-    }
-    write.commit().await.unwrap();
-    assert_eq!(live_ids(&store, &index).await.len(), 20);
+        write.commit().await.unwrap();
 
-    let mut write = txn(&store).await;
-    index.remove_all(&mut write).await.unwrap();
-    write.commit().await.unwrap();
+        let mut write = txn(&store).await;
+        index
+            .update(&mut write, 1, &original, &[NormalValue::Null])
+            .await
+            .unwrap();
+        write.commit().await.unwrap();
 
-    assert!(live_ids(&store, &index).await.is_empty());
-    let mut read = txn(&store).await;
-    let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
-    assert_eq!(
-        kv.get_meta().await.unwrap(),
-        None,
-        "the meta key must go too"
-    );
+        assert_eq!(live_ids(&store, &index).await, vec![NodeId(2)]);
+    })
+    .unwrap()
+}
+
+#[test]
+fn dropping_the_index_removes_every_key() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index();
+
+        let mut write = txn(&store).await;
+        for id in 1..=20u64 {
+            let angle = id as f64 * 0.3;
+            index
+                .save(
+                    &mut write,
+                    id,
+                    &wide(&[angle.sin(), angle.cos(), 0.5, 0.25]),
+                )
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
+        assert_eq!(live_ids(&store, &index).await.len(), 20);
+
+        let mut write = txn(&store).await;
+        index.remove_all(&mut write).await.unwrap();
+        write.commit().await.unwrap();
+
+        assert!(live_ids(&store, &index).await.is_empty());
+        let mut read = txn(&store).await;
+        let kv = KvNodeStore::new(&mut read, COLLECTION, 3, 0);
+        assert_eq!(
+            kv.get_meta().await.unwrap(),
+            None,
+            "the meta key must go too"
+        );
+    })
+    .unwrap()
 }
 
 /// IVF_FLAT's aux keyspace is a second full copy of the corpus, since a list
@@ -409,89 +439,92 @@ async fn dropping_the_index_removes_every_key() {
 /// would leak the whole corpus again rather than a handful of centroids.
 /// `remove_all` must clear it completely once trained, not only while the
 /// index is still a staging `Flat`.
-#[tokio::test]
-async fn dropping_a_trained_ivfflat_index_removes_every_key() {
-    let store = RegolithStore::in_memory().unwrap();
-    let desc = IndexDescription {
-        name: "by_embedding".to_string(),
-        id: 9,
-        fields: vec![IndexedFieldDescription {
-            name: "embedding".to_string(),
-            descending: false,
-        }],
-        unique: false,
-        kind: None,
-        auto_generated: false,
-    }
-    .as_vector(VectorIndexDescription {
-        algorithm: VectorAlgorithm::IvfFlat,
-        metric: DistanceMetric::Cosine,
-        dimensions: DIMENSIONS,
-        hnsw: None,
-        ivfpq: None,
-        ivfflat: Some(IvfFlatParams {
-            nlist: 4,
-            nprobe: 4,
-            ..IvfFlatParams::default()
-        }),
-        ssg: None,
-        diskann: None,
-    });
-    let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF_FLAT description");
+#[test]
+fn dropping_a_trained_ivfflat_index_removes_every_key() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let desc = IndexDescription {
+            name: "by_embedding".to_string(),
+            id: 9,
+            fields: vec![IndexedFieldDescription {
+                name: "embedding".to_string(),
+                descending: false,
+            }],
+            unique: false,
+            kind: None,
+            auto_generated: false,
+        }
+        .as_vector(VectorIndexDescription {
+            algorithm: VectorAlgorithm::IvfFlat,
+            metric: DistanceMetric::Cosine,
+            dimensions: DIMENSIONS,
+            hnsw: None,
+            ivfpq: None,
+            ivfflat: Some(IvfFlatParams {
+                nlist: 4,
+                nprobe: 4,
+                ..IvfFlatParams::default()
+            }),
+            ssg: None,
+            diskann: None,
+        });
+        let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF_FLAT description");
 
-    let mut corpus = crate::support::Corpus::new(0x1F_1A7);
-    let vectors = corpus.vectors(200, DIMENSIONS as usize);
+        let mut corpus = crate::support::Corpus::new(0x1F_1A7);
+        let vectors = corpus.vectors(200, DIMENSIONS as usize);
 
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors.iter().enumerate() {
-        let widened: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
-        index
-            .save(&mut write, i as u64 + 1, &wide(&widened))
-            .await
-            .unwrap();
-    }
-    write.commit().await.unwrap();
-    assert_eq!(live_ids(&store, &index).await.len(), 200);
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors.iter().enumerate() {
+            let widened: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
+            index
+                .save(&mut write, i as u64 + 1, &wide(&widened))
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
+        assert_eq!(live_ids(&store, &index).await.len(), 200);
 
-    // The index must actually have trained, or this test proves nothing about
-    // the trained aux keyspace at all.
-    let mut read = txn(&store).await;
-    let kv = KvNodeStore::new(&mut read, COLLECTION, 9, 0);
-    assert!(
-        kv.get_aux(ivf::STATE, b"").await.unwrap().is_some(),
-        "test setup: 200 documents must be enough to cross the training threshold"
-    );
+        // The index must actually have trained, or this test proves nothing about
+        // the trained aux keyspace at all.
+        let mut read = txn(&store).await;
+        let kv = KvNodeStore::new(&mut read, COLLECTION, 9, 0);
+        assert!(
+            kv.get_aux(ivf::STATE, b"").await.unwrap().is_some(),
+            "test setup: 200 documents must be enough to cross the training threshold"
+        );
 
-    let mut write = txn(&store).await;
-    index.remove_all(&mut write).await.unwrap();
-    write.commit().await.unwrap();
+        let mut write = txn(&store).await;
+        index.remove_all(&mut write).await.unwrap();
+        write.commit().await.unwrap();
 
-    assert!(live_ids(&store, &index).await.is_empty());
-    let mut read = txn(&store).await;
-    let kv = KvNodeStore::new(&mut read, COLLECTION, 9, 0);
-    assert_eq!(kv.get_meta().await.unwrap(), None);
-    assert!(
-        kv.get_aux(ivf::STATE, b"").await.unwrap().is_none(),
-        "the trained-state marker must go"
-    );
-    assert!(
-        kv.get_aux(ivf::CENTROID, &0u32.to_be_bytes())
-            .await
-            .unwrap()
-            .is_none(),
-        "a centroid must go"
-    );
-    let mut list_entries = 0;
-    kv.iterate_aux(ivf::LIST, b"", |_, _| {
-        list_entries += 1;
-        Ok(())
+        assert!(live_ids(&store, &index).await.is_empty());
+        let mut read = txn(&store).await;
+        let kv = KvNodeStore::new(&mut read, COLLECTION, 9, 0);
+        assert_eq!(kv.get_meta().await.unwrap(), None);
+        assert!(
+            kv.get_aux(ivf::STATE, b"").await.unwrap().is_none(),
+            "the trained-state marker must go"
+        );
+        assert!(
+            kv.get_aux(ivf::CENTROID, &0u32.to_be_bytes())
+                .await
+                .unwrap()
+                .is_none(),
+            "a centroid must go"
+        );
+        let mut list_entries = 0;
+        kv.iterate_aux(ivf::LIST, b"", |_, _| {
+            list_entries += 1;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            list_entries, 0,
+            "the inverted lists, the full-vector copy, must go"
+        );
     })
-    .await
-    .unwrap();
-    assert_eq!(
-        list_entries, 0,
-        "the inverted lists, the full-vector copy, must go"
-    );
+    .unwrap()
 }
 
 /// Out-of-range parameters are refused where the index is built, not silently

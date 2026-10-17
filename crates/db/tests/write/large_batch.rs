@@ -64,116 +64,120 @@ impl kms::KmsService for KeyingKms {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
-    let embedding_calls = Arc::new(AtomicUsize::new(0));
-    let embedded_texts = Arc::new(AtomicUsize::new(0));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let calls = Arc::clone(&embedding_calls);
-    let texts = Arc::clone(&embedded_texts);
-    let server = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            Router::new().route(
-                "/embeddings",
-                // An OpenAI-compatible endpoint: `input` is one text or an
-                // array of them, answered in order with their indices.
-                post(move |Json(request): Json<Value>| {
-                    let calls = Arc::clone(&calls);
-                    let texts = Arc::clone(&texts);
-                    async move {
-                        calls.fetch_add(1, Ordering::SeqCst);
-                        let count = match &request["input"] {
-                            Value::Array(inputs) => inputs.len(),
-                            _ => 1,
-                        };
-                        texts.fetch_add(count, Ordering::SeqCst);
-                        let data: Vec<Value> = (0..count)
+#[test]
+fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
+    workers::block_on(async {
+        let embedding_calls = Arc::new(AtomicUsize::new(0));
+        let embedded_texts = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let calls = Arc::clone(&embedding_calls);
+        let texts = Arc::clone(&embedded_texts);
+        let server = workers::spawn(None, "test", move || async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/embeddings",
+                    // An OpenAI-compatible endpoint: `input` is one text or an
+                    // array of them, answered in order with their indices.
+                    post(move |Json(request): Json<Value>| {
+                        let calls = Arc::clone(&calls);
+                        let texts = Arc::clone(&texts);
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            let count = match &request["input"] {
+                                Value::Array(inputs) => inputs.len(),
+                                _ => 1,
+                            };
+                            texts.fetch_add(count, Ordering::SeqCst);
+                            let data: Vec<Value> = (0..count)
                             .map(|index| {
                                 json!({"index": index, "embedding": vec![0.25_f64; DIMENSIONS]})
                             })
                             .collect();
-                        Json(json!({ "data": data }))
-                    }
-                }),
-            ),
-        )
-        .await
+                            Json(json!({ "data": data }))
+                        }
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        })
         .unwrap();
-    });
 
-    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    let kms = Arc::new(KeyingKms {
-        issued: AtomicU64::new(1),
-        keys: HopscotchMap::with_hasher(RandomState::default()),
-    });
-    db.set_kms(kms.clone());
-    let mut collection = CollectionVersion::new(
-        "Texts",
-        "texts-v1",
-        "col-texts",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "text", FieldKind::string()),
-            FieldDescription::new("3", "vector", FieldKind::float64_array()),
-        ],
-    );
-    collection
-        .vector_embeddings
-        .push(VectorEmbeddingDescription {
-            field_name: "vector".to_string(),
-            fields: vec!["text".to_string()],
-            model: "test-model".to_string(),
-            provider: "openai".to_string(),
-            template: String::new(),
-            url: format!("http://{address}"),
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        let kms = Arc::new(KeyingKms {
+            issued: AtomicU64::new(1),
+            keys: HopscotchMap::with_hasher(RandomState::default()),
         });
-    db.create_collection(collection).await.unwrap();
+        db.set_kms(kms.clone());
+        let mut collection = CollectionVersion::new(
+            "Texts",
+            "texts-v1",
+            "col-texts",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new("2", "text", FieldKind::string()),
+                FieldDescription::new("3", "vector", FieldKind::float64_array()),
+            ],
+        );
+        collection
+            .vector_embeddings
+            .push(VectorEmbeddingDescription {
+                field_name: "vector".to_string(),
+                fields: vec!["text".to_string()],
+                model: "test-model".to_string(),
+                provider: "openai".to_string(),
+                template: String::new(),
+                url: format!("http://{address}"),
+            });
+        db.create_collection(collection).await.unwrap();
 
-    let runner = query::QueryRunner::with_provider(
-        LensedAutoCommitFetcher::new(Arc::clone(&db)),
-        DbCollectionProvider::new_arc(Arc::clone(&db)),
-    )
-    .with_mutator(Arc::new(AutoCommitMutator::new(Arc::clone(&db))));
-    let inputs = (0..DOCUMENTS)
-        .map(|index| format!(r#"{{text: "document number {index}"}}"#))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let response = runner
-        .execute(QueryRequest::new(format!(
-            "mutation {{ add_Texts(input: [{inputs}], encrypt: true) {{ _docID }} }}"
-        )))
-        .await;
-    assert!(!response.has_errors(), "{:?}", response.errors);
-    let created = response.data.unwrap()["add_Texts"]
-        .as_array()
-        .unwrap()
-        .len();
-    assert_eq!(created, DOCUMENTS);
-    // Each embedding is fetched once, before the transaction, whatever the
-    // number of attempts, and the request's embeddings go out together: one
-    // request per batch of texts, not one per document.
-    assert_eq!(embedded_texts.load(Ordering::SeqCst), DOCUMENTS);
-    assert_eq!(
-        embedding_calls.load(Ordering::SeqCst),
-        DOCUMENTS.div_ceil(EMBEDDING_BATCH)
-    );
+        let runner = query::QueryRunner::with_provider(
+            LensedAutoCommitFetcher::new(Arc::clone(&db)),
+            DbCollectionProvider::new_arc(Arc::clone(&db)),
+        )
+        .with_mutator(Arc::new(AutoCommitMutator::new(Arc::clone(&db))));
+        let inputs = (0..DOCUMENTS)
+            .map(|index| format!(r#"{{text: "document number {index}"}}"#))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let response = runner
+            .execute(QueryRequest::new(format!(
+                "mutation {{ add_Texts(input: [{inputs}], encrypt: true) {{ _docID }} }}"
+            )))
+            .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let created = response.data.unwrap()["add_Texts"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert_eq!(created, DOCUMENTS);
+        // Each embedding is fetched once, before the transaction, whatever the
+        // number of attempts, and the request's embeddings go out together: one
+        // request per batch of texts, not one per document.
+        assert_eq!(embedded_texts.load(Ordering::SeqCst), DOCUMENTS);
+        assert_eq!(
+            embedding_calls.load(Ordering::SeqCst),
+            DOCUMENTS.div_ceil(EMBEDDING_BATCH)
+        );
 
-    let response = runner
-        .execute(QueryRequest::new("{ Texts { _docID text vector } }"))
-        .await;
-    assert!(!response.has_errors(), "{:?}", response.errors);
-    let stored = response.data.unwrap()["Texts"].as_array().unwrap().clone();
-    assert_eq!(stored.len(), DOCUMENTS);
-    assert!(stored.iter().all(|doc| doc["text"]
-        .as_str()
-        .unwrap()
-        .starts_with("document number ")));
-    // Every document has its own vector, whole.
-    assert!(stored.iter().all(|doc| doc["vector"]
-        .as_array()
-        .is_some_and(|vector| vector.len() == DIMENSIONS
-            && vector.iter().all(|value| value.as_f64() == Some(0.25)))));
-    server.abort();
+        let response = runner
+            .execute(QueryRequest::new("{ Texts { _docID text vector } }"))
+            .await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let stored = response.data.unwrap()["Texts"].as_array().unwrap().clone();
+        assert_eq!(stored.len(), DOCUMENTS);
+        assert!(stored.iter().all(|doc| doc["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("document number ")));
+        // Every document has its own vector, whole.
+        assert!(stored.iter().all(|doc| doc["vector"]
+            .as_array()
+            .is_some_and(|vector| vector.len() == DIMENSIONS
+                && vector.iter().all(|value| value.as_f64() == Some(0.25)))));
+        server.abort();
+    })
+    .unwrap()
 }

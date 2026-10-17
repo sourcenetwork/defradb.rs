@@ -156,53 +156,59 @@ async fn encrypted_composite(
     (cid, data, keys)
 }
 
-#[tokio::test]
-async fn a_merged_composite_with_four_encrypted_fields_makes_one_kms_request() {
-    let (handler, blockstore) = handler().await;
-    let (cid, data, keys) = encrypted_composite(&blockstore).await;
-    let kms = Arc::new(CountingKms {
-        keys,
-        requests: AtomicUsize::new(0),
-    });
-    handler.set_kms(kms.clone());
-    let doc_id = db::block::builder::derive_doc_id(&cid);
-    let metadata =
-        BlockMetadata::normal(&doc_id, "col-things", "did:key:z6MkMergeKeys", None, false);
+#[test]
+fn a_merged_composite_with_four_encrypted_fields_makes_one_kms_request() {
+    workers::block_on(async {
+        let (handler, blockstore) = handler().await;
+        let (cid, data, keys) = encrypted_composite(&blockstore).await;
+        let kms = Arc::new(CountingKms {
+            keys,
+            requests: AtomicUsize::new(0),
+        });
+        handler.set_kms(kms.clone());
+        let doc_id = db::block::builder::derive_doc_id(&cid);
+        let metadata =
+            BlockMetadata::normal(&doc_id, "col-things", "did:key:z6MkMergeKeys", None, false);
 
-    let outcome = handler.handle_block(&cid, &data, metadata).await.unwrap();
+        let outcome = handler.handle_block(&cid, &data, metadata).await.unwrap();
 
-    assert_eq!(outcome, MergeOutcome::Merged);
-    assert_eq!(
-        kms.requests.load(Ordering::SeqCst),
-        1,
-        "every field's key in one request, before the merge transaction"
-    );
+        assert_eq!(outcome, MergeOutcome::Merged);
+        assert_eq!(
+            kms.requests.load(Ordering::SeqCst),
+            1,
+            "every field's key in one request, before the merge transaction"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_composite_merged_in_its_own_transaction_makes_one_kms_request() {
-    let (handler, blockstore) = handler().await;
-    let (cid, data, keys) = encrypted_composite(&blockstore).await;
-    let kms = Arc::new(CountingKms {
-        keys,
-        requests: AtomicUsize::new(0),
-    });
-    handler.set_kms(kms.clone());
-    let doc_id = db::block::builder::derive_doc_id(&cid);
-    let metadata =
-        BlockMetadata::normal(&doc_id, "col-things", "did:key:z6MkMergeKeys", None, false);
-    let block = Block::from_dag_cbor(&data).unwrap();
-    let CrdtDelta::Composite(payload) = &block.delta else {
-        unreachable!("built as a composite")
-    };
+#[test]
+fn a_composite_merged_in_its_own_transaction_makes_one_kms_request() {
+    workers::block_on(async {
+        let (handler, blockstore) = handler().await;
+        let (cid, data, keys) = encrypted_composite(&blockstore).await;
+        let kms = Arc::new(CountingKms {
+            keys,
+            requests: AtomicUsize::new(0),
+        });
+        handler.set_kms(kms.clone());
+        let doc_id = db::block::builder::derive_doc_id(&cid);
+        let metadata =
+            BlockMetadata::normal(&doc_id, "col-things", "did:key:z6MkMergeKeys", None, false);
+        let block = Block::from_dag_cbor(&data).unwrap();
+        let CrdtDelta::Composite(payload) = &block.delta else {
+            unreachable!("built as a composite")
+        };
 
-    let outcome = handler
-        .process_composite_delta(&cid, &block, payload, &metadata, false, 0)
-        .await
-        .unwrap();
+        let outcome = handler
+            .process_composite_delta(&cid, &block, payload, &metadata, false, 0)
+            .await
+            .unwrap();
 
-    assert_eq!(outcome, MergeOutcome::Merged);
-    assert_eq!(kms.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(outcome, MergeOutcome::Merged);
+        assert_eq!(kms.requests.load(Ordering::SeqCst), 1);
+    })
+    .unwrap()
 }
 
 /// A remote signer that counts its waves and the signatures in them, and
@@ -274,36 +280,39 @@ fn documents(count: usize) -> Vec<Document> {
         .collect()
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_create_of_n_documents_signs_in_two_waves_and_takes_two_round_trips() {
-    const DOCUMENTS: usize = 8;
-    let latency = Duration::from_millis(200);
-    let db = database().await;
-    let signer = signer(latency);
-    sign_with(&signer);
+#[test]
+fn a_create_of_n_documents_signs_in_two_waves_and_takes_two_round_trips() {
+    workers::block_on(async {
+        const DOCUMENTS: usize = 8;
+        let latency = Duration::from_millis(200);
+        let db = database().await;
+        let signer = signer(latency);
+        sign_with(&signer);
 
-    let started = tokio::time::Instant::now();
-    let created = AutoCommitMutator::new(Arc::clone(&db))
-        .create_many("Things", documents(DOCUMENTS))
-        .await;
-    let elapsed = started.elapsed();
-    defra_core::signing::set_signing_config(None);
+        let started = tokio::time::Instant::now();
+        let created = AutoCommitMutator::new(Arc::clone(&db))
+            .create_many("Things", documents(DOCUMENTS))
+            .await;
+        let elapsed = started.elapsed();
+        defra_core::signing::set_signing_config(None);
 
-    assert_eq!(created.unwrap().len(), DOCUMENTS);
-    assert_eq!(
-        signer.waves.load(Ordering::SeqCst),
-        2,
-        "every field block in the first wave, every composite in the second"
-    );
-    assert_eq!(
-        signer.signatures.load(Ordering::SeqCst),
-        DOCUMENTS * (FIELDS.len() + 1),
-        "each block signed once"
-    );
-    assert!(
-        elapsed >= latency * 2 && elapsed < latency * 3,
-        "two waves of {latency:?}, not one per block: {elapsed:?}"
-    );
+        assert_eq!(created.unwrap().len(), DOCUMENTS);
+        assert_eq!(
+            signer.waves.load(Ordering::SeqCst),
+            2,
+            "every field block in the first wave, every composite in the second"
+        );
+        assert_eq!(
+            signer.signatures.load(Ordering::SeqCst),
+            DOCUMENTS * (FIELDS.len() + 1),
+            "each block signed once"
+        );
+        assert!(
+            elapsed >= latency * 2 && elapsed < latency * 3,
+            "two waves of {latency:?}, not one per block: {elapsed:?}"
+        );
+    })
+    .unwrap()
 }
 
 /// An OpenAI-compatible embedding endpoint that counts its requests and the
@@ -324,7 +333,7 @@ async fn embedding_server() -> (
     let requests = Arc::new(AtomicUsize::new(0));
     let texts = Arc::new(AtomicUsize::new(0));
     let (counted_requests, counted_texts) = (Arc::clone(&requests), Arc::clone(&texts));
-    let server = tokio::spawn(async move {
+    let server = workers::spawn(None, "test", move || async move {
         axum::serve(
             listener,
             Router::new().route(
@@ -360,7 +369,8 @@ async fn embedding_server() -> (
         )
         .await
         .unwrap();
-    });
+    })
+    .unwrap();
     (format!("http://{address}"), requests, texts, server)
 }
 
@@ -404,106 +414,115 @@ fn tagged_document(text: &str, tag: &str) -> Document {
     doc
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_create_of_n_documents_embeds_them_in_one_request() {
-    let (url, requests, texts, server) = embedding_server().await;
-    let db = embedded_database(&url).await;
-    let words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+#[test]
+fn a_create_of_n_documents_embeds_them_in_one_request() {
+    workers::block_on(async {
+        let (url, requests, texts, server) = embedding_server().await;
+        let db = embedded_database(&url).await;
+        let words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
 
-    let created = AutoCommitMutator::new(Arc::clone(&db))
-        .create_many(
-            "Texts",
-            words.iter().map(|word| text_document(word)).collect(),
-        )
-        .await
-        .unwrap();
-    server.abort();
+        let created = AutoCommitMutator::new(Arc::clone(&db))
+            .create_many(
+                "Texts",
+                words.iter().map(|word| text_document(word)).collect(),
+            )
+            .await
+            .unwrap();
+        server.abort();
 
-    assert_eq!(
-        requests.load(Ordering::SeqCst),
-        1,
-        "one request for the wave"
-    );
-    assert_eq!(texts.load(Ordering::SeqCst), words.len());
-    for (word, created) in words.iter().zip(&created) {
-        // The text's own vector, the source text plus a newline.
-        let text = format!("{word}\n");
         assert_eq!(
-            created.document.get("vector"),
-            Some(&NormalValue::Float64Array(vec![
-                text.len() as f64,
-                f64::from(text.as_bytes()[0])
-            ])),
-            "{word}"
+            requests.load(Ordering::SeqCst),
+            1,
+            "one request for the wave"
         );
-    }
+        assert_eq!(texts.load(Ordering::SeqCst), words.len());
+        for (word, created) in words.iter().zip(&created) {
+            // The text's own vector, the source text plus a newline.
+            let text = format!("{word}\n");
+            assert_eq!(
+                created.document.get("vector"),
+                Some(&NormalValue::Float64Array(vec![
+                    text.len() as f64,
+                    f64::from(text.as_bytes()[0])
+                ])),
+                "{word}"
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn identical_texts_are_embedded_once() {
-    let (url, requests, texts, server) = embedding_server().await;
-    let db = embedded_database(&url).await;
-    let mutator = AutoCommitMutator::new(Arc::clone(&db));
+#[test]
+fn identical_texts_are_embedded_once() {
+    workers::block_on(async {
+        let (url, requests, texts, server) = embedding_server().await;
+        let db = embedded_database(&url).await;
+        let mutator = AutoCommitMutator::new(Arc::clone(&db));
 
-    let first = mutator
-        .create_many(
-            "Texts",
-            vec![tagged_document("same", "1"), tagged_document("same", "2")],
-        )
-        .await
-        .unwrap();
-    let later = mutator
-        .create("Texts", tagged_document("same", "3"))
-        .await
-        .unwrap();
-    server.abort();
+        let first = mutator
+            .create_many(
+                "Texts",
+                vec![tagged_document("same", "1"), tagged_document("same", "2")],
+            )
+            .await
+            .unwrap();
+        let later = mutator
+            .create("Texts", tagged_document("same", "3"))
+            .await
+            .unwrap();
+        server.abort();
 
-    assert_eq!(texts.load(Ordering::SeqCst), 1, "one text, embedded once");
-    assert_eq!(
-        requests.load(Ordering::SeqCst),
-        1,
-        "the later create hits the cache"
-    );
-    let expected = NormalValue::Float64Array(vec![5.0, f64::from(b's')]);
-    for created in first.iter().chain(std::iter::once(&later)) {
-        assert_eq!(created.document.get("vector"), Some(&expected));
-    }
+        assert_eq!(texts.load(Ordering::SeqCst), 1, "one text, embedded once");
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "the later create hits the cache"
+        );
+        let expected = NormalValue::Float64Array(vec![5.0, f64::from(b's')]);
+        for created in first.iter().chain(std::iter::once(&later)) {
+            assert_eq!(created.document.get("vector"), Some(&expected));
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_update_and_a_delete_each_sign_in_one_wave() {
-    let db = database().await;
-    let mutator = AutoCommitMutator::new(Arc::clone(&db));
-    let created = mutator
-        .create("Things", documents(1).remove(0))
-        .await
-        .unwrap();
-    let signer = signer(Duration::from_millis(50));
-    sign_with(&signer);
+#[test]
+fn an_update_and_a_delete_each_sign_in_one_wave() {
+    workers::block_on(async {
+        let db = database().await;
+        let mutator = AutoCommitMutator::new(Arc::clone(&db));
+        let created = mutator
+            .create("Things", documents(1).remove(0))
+            .await
+            .unwrap();
+        let signer = signer(Duration::from_millis(50));
+        sign_with(&signer);
 
-    let mut changed = created.document.clone();
-    changed.set("a", "changed");
-    let updated = mutator
-        .update("Things", changed, ["a".to_string()].into_iter().collect())
-        .await;
-    let waves_after_update = signer.waves.load(Ordering::SeqCst);
-    let signatures_after_update = signer.signatures.load(Ordering::SeqCst);
-    let deleted = mutator.delete("Things", &created.doc_id).await;
-    defra_core::signing::set_signing_config(None);
+        let mut changed = created.document.clone();
+        changed.set("a", "changed");
+        let updated = mutator
+            .update("Things", changed, ["a".to_string()].into_iter().collect())
+            .await;
+        let waves_after_update = signer.waves.load(Ordering::SeqCst);
+        let signatures_after_update = signer.signatures.load(Ordering::SeqCst);
+        let deleted = mutator.delete("Things", &created.doc_id).await;
+        defra_core::signing::set_signing_config(None);
 
-    updated.unwrap();
-    assert!(deleted.unwrap().existed);
-    // An update's field blocks are past priority 1 and go unsigned: its
-    // composite is the one signature, built from heads read before the
-    // transaction and signed once.
-    assert_eq!(waves_after_update, 1);
-    assert_eq!(signatures_after_update, 1);
-    assert_eq!(
-        signer.waves.load(Ordering::SeqCst),
-        2,
-        "the delete's one wave"
-    );
-    assert_eq!(signer.signatures.load(Ordering::SeqCst), 2);
+        updated.unwrap();
+        assert!(deleted.unwrap().existed);
+        // An update's field blocks are past priority 1 and go unsigned: its
+        // composite is the one signature, built from heads read before the
+        // transaction and signed once.
+        assert_eq!(waves_after_update, 1);
+        assert_eq!(signatures_after_update, 1);
+        assert_eq!(
+            signer.waves.load(Ordering::SeqCst),
+            2,
+            "the delete's one wave"
+        );
+        assert_eq!(signer.signatures.load(Ordering::SeqCst), 2);
+    })
+    .unwrap()
 }
 
 /// A store that lets one other write commit inside the next retried
@@ -568,69 +587,72 @@ impl storage::corekv::RetryAttemptFn for WinnerAfterReads {
     }
 }
 
-#[tokio::test]
-async fn a_retry_after_a_conflict_builds_on_the_winner() {
-    let store = Arc::new(WinnerDuringFirstAttempt {
-        inner: RegolithStore::in_memory().unwrap(),
-        winner: regolith::sync::SegQueue::new(),
-    });
-    let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
-    let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
-    for (index, name) in FIELDS.iter().enumerate() {
-        fields.push(FieldDescription::new(
-            (index + 2).to_string(),
-            *name,
-            FieldKind::string(),
-        ));
-    }
-    db.create_collection(CollectionVersion::new("Things", "v1", "col-things", fields))
-        .await
-        .unwrap();
-    let mutator = AutoCommitMutator::new(Arc::clone(&db));
-    let created = mutator
-        .create("Things", documents(1).remove(0))
-        .await
-        .unwrap();
-    let field: rapidhash::RapidHashSet<String> = ["a".to_string()].into_iter().collect();
+#[test]
+fn a_retry_after_a_conflict_builds_on_the_winner() {
+    workers::block_on(async {
+        let store = Arc::new(WinnerDuringFirstAttempt {
+            inner: RegolithStore::in_memory().unwrap(),
+            winner: regolith::sync::SegQueue::new(),
+        });
+        let db = Arc::new(DB::open_from_arc(store.clone()).await.unwrap());
+        let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+        for (index, name) in FIELDS.iter().enumerate() {
+            fields.push(FieldDescription::new(
+                (index + 2).to_string(),
+                *name,
+                FieldKind::string(),
+            ));
+        }
+        db.create_collection(CollectionVersion::new("Things", "v1", "col-things", fields))
+            .await
+            .unwrap();
+        let mutator = AutoCommitMutator::new(Arc::clone(&db));
+        let created = mutator
+            .create("Things", documents(1).remove(0))
+            .await
+            .unwrap();
+        let field: rapidhash::RapidHashSet<String> = ["a".to_string()].into_iter().collect();
 
-    // The winner writes field `a` while the loser's first attempt is open.
-    let winner = Arc::new(regolith::sync::OnceCell::new());
-    {
-        let (winner, mutator, field) = (
-            Arc::clone(&winner),
-            AutoCommitMutator::new(Arc::clone(&db)),
-            field.clone(),
-        );
+        // The winner writes field `a` while the loser's first attempt is open.
+        let winner = Arc::new(regolith::sync::OnceCell::new());
+        {
+            let (winner, mutator, field) = (
+                Arc::clone(&winner),
+                AutoCommitMutator::new(Arc::clone(&db)),
+                field.clone(),
+            );
+            let mut doc = created.document.clone();
+            doc.set("a", "winner");
+            store.winner.push(Box::pin(async move {
+                let result = mutator.update("Things", doc, field).await.unwrap();
+                let _ = winner.set(result);
+            }));
+        }
         let mut doc = created.document.clone();
-        doc.set("a", "winner");
-        store.winner.push(Box::pin(async move {
-            let result = mutator.update("Things", doc, field).await.unwrap();
-            let _ = winner.set(result);
-        }));
-    }
-    let mut doc = created.document.clone();
-    doc.set("a", "loser");
-    let loser = mutator.update("Things", doc, field).await.unwrap();
-    let winner = winner
-        .get()
-        .expect("the winner committed during the first attempt");
+        doc.set("a", "loser");
+        let loser = mutator.update("Things", doc, field).await.unwrap();
+        let winner = winner
+            .get()
+            .expect("the winner committed during the first attempt");
 
-    // The loser retried on fresh heads: its composite is the winner's child,
-    // one priority above it, not a sibling at the same priority.
-    let winner_block = Block::from_dag_cbor(winner.commit_block.as_ref().unwrap()).unwrap();
-    let loser_block = Block::from_dag_cbor(loser.commit_block.as_ref().unwrap()).unwrap();
-    assert_eq!(loser_block.heads, Some(vec![winner.commit_cid.unwrap()]));
-    assert_eq!(
-        loser_block.delta.priority(),
-        winner_block.delta.priority() + 1
-    );
-    // The last write's value wins.
-    let stored = mutator
-        .get_for_update("Things", &created.doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.get("a"), Some(&NormalValue::String("loser".into())));
+        // The loser retried on fresh heads: its composite is the winner's child,
+        // one priority above it, not a sibling at the same priority.
+        let winner_block = Block::from_dag_cbor(winner.commit_block.as_ref().unwrap()).unwrap();
+        let loser_block = Block::from_dag_cbor(loser.commit_block.as_ref().unwrap()).unwrap();
+        assert_eq!(loser_block.heads, Some(vec![winner.commit_cid.unwrap()]));
+        assert_eq!(
+            loser_block.delta.priority(),
+            winner_block.delta.priority() + 1
+        );
+        // The last write's value wins.
+        let stored = mutator
+            .get_for_update("Things", &created.doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.get("a"), Some(&NormalValue::String("loser".into())));
+    })
+    .unwrap()
 }
 
 /// [`embedding_server`] on a thread of its own, with a runtime of its own, so

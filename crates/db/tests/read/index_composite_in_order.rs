@@ -99,45 +99,48 @@ fn index_order(seeded: &[(i64, String)]) -> Vec<String> {
     ordered.into_iter().map(|(_, id)| id).collect()
 }
 
-#[tokio::test]
-async fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
-    let (db, seeded) = populated().await;
+#[test]
+fn partial_in_over_a_composite_index_keeps_secondary_field_order() {
+    workers::block_on(async {
+        let (db, seeded) = populated().await;
 
-    let expected = index_order(&seeded);
-    let doc_id_only: Vec<String> = {
-        let mut ids: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
-        ids.sort();
-        ids
-    };
-    assert_ne!(
-        expected, doc_id_only,
-        "the seed must distinguish index order from a flat DocID sort, \
+        let expected = index_order(&seeded);
+        let doc_id_only: Vec<String> = {
+            let mut ids: Vec<String> = seeded.iter().map(|(_, id)| id.clone()).collect();
+            ids.sort();
+            ids
+        };
+        assert_ne!(
+            expected, doc_id_only,
+            "the seed must distinguish index order from a flat DocID sort, \
          otherwise this test cannot fail"
-    );
+        );
 
-    let txn = db.new_txn(true).await.unwrap();
-    let got = DbDocFetcher::new(txn)
-        .get_by_index_scan(
-            COLLECTION,
-            &IndexScanParams {
-                index_name: INDEX.to_string(),
-                scan_type: IndexScanType::InScan {
-                    values: vec![NormalValue::String(CATEGORY.to_string())],
-                    suffix_values: vec![],
+        let txn = db.new_txn(true).await.unwrap();
+        let got = DbDocFetcher::new(txn)
+            .get_by_index_scan(
+                COLLECTION,
+                &IndexScanParams {
+                    index_name: INDEX.to_string(),
+                    scan_type: IndexScanType::InScan {
+                        values: vec![NormalValue::String(CATEGORY.to_string())],
+                        suffix_values: vec![],
+                    },
+                    limit: None,
+                    offset: 0,
+                    value_filter: None,
+                    cursor_seek: None,
                 },
-                limit: None,
-                offset: 0,
-                value_filter: None,
-                cursor_seek: None,
-            },
-        )
-        .await
-        .expect("the prefix scan must run")
-        .into_doc_ids();
+            )
+            .await
+            .expect("the prefix scan must run")
+            .into_doc_ids();
 
-    assert_eq!(
-        got, expected,
-        "a partial `_in` must return index order (rank, then DocID), not a \
+        assert_eq!(
+            got, expected,
+            "a partial `_in` must return index order (rank, then DocID), not a \
          DocID sort spanning distinct ranks"
-    );
+        );
+    })
+    .unwrap()
 }

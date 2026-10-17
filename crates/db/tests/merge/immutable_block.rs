@@ -137,206 +137,64 @@ async fn put_genesis(
     (cid, bytes.into())
 }
 
-#[tokio::test]
-async fn create_writes_immutable_fields_in_one_block() {
-    let (handler, blockstore, collection) = make_handler().await;
-    let mut doc = record();
+#[test]
+fn create_writes_immutable_fields_in_one_block() {
+    workers::block_on(async {
+        let (handler, blockstore, collection) = make_handler().await;
+        let mut doc = record();
 
-    let (_, _, result) =
-        super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
+        let (_, _, result) =
+            super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
 
-    let composite = load(&blockstore, &result.cid).await;
-    let mut links: Vec<&str> = composite
-        .links
-        .iter()
-        .flatten()
-        .map(|link| link.name.as_str())
-        .collect();
-    links.sort();
-    assert_eq!(links, [IMMUTABLE_LINK_NAME, "body"]);
-    assert_eq!(result.field_cids.len(), 2);
+        let composite = load(&blockstore, &result.cid).await;
+        let mut links: Vec<&str> = composite
+            .links
+            .iter()
+            .flatten()
+            .map(|link| link.name.as_str())
+            .collect();
+        links.sort();
+        assert_eq!(links, [IMMUTABLE_LINK_NAME, "body"]);
+        assert_eq!(result.field_cids.len(), 2);
 
-    let immutable_cid = composite
-        .links
-        .iter()
-        .flatten()
-        .find(|link| link.name == IMMUTABLE_LINK_NAME)
-        .unwrap()
-        .link;
-    let CrdtDelta::Immutable(payload) = load(&blockstore, &immutable_cid).await.delta else {
-        panic!("expected an Immutable block");
-    };
-    assert_eq!(
-        payload
-            .fields
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["author", "kind"]
-    );
-}
-
-#[tokio::test]
-async fn update_writes_no_block_for_unchanged_immutable_field() {
-    let (handler, blockstore, collection) = make_handler().await;
-    let mut doc = record();
-    let (_, short_id, created) =
-        super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
-
-    doc.set("body", NormalValue::String("edited".into()));
-    let modified: rapidhash::RapidHashSet<String> =
-        ["author", "body"].into_iter().map(String::from).collect();
-    let txn = handler.db().new_txn(false).await.unwrap();
-    let result = db::block::builder::write_document_blocks(
-        &txn.blockstore().unwrap(),
-        &txn.headstore().unwrap(),
-        &doc,
-        collection.schema(),
-        db::block::builder::DocStorageIdentity::new(collection.resolved_root_id(), short_id),
-        Some(&modified),
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    txn.force_commit().await.unwrap();
-
-    let composite = load(&blockstore, &result.cid).await;
-    let links: Vec<&str> = composite
-        .links
-        .iter()
-        .flatten()
-        .map(|link| link.name.as_str())
-        .collect();
-    assert_eq!(links, ["body"]);
-    assert_eq!(composite.heads, Some(vec![created.cid]));
-}
-
-#[tokio::test]
-async fn remote_genesis_applies_immutable_block_fields() {
-    let (local, local_blocks, local_collection) = make_handler().await;
-    let doc = record();
-    let built = db::block::builder::build_blocks_from_document(
-        &doc,
-        local_collection.schema(),
-        &local_blocks,
-    )
-    .await
-    .unwrap();
-
-    for batch in [false, true] {
-        let (remote, remote_blocks, remote_collection) = make_handler().await;
-        let composite = load(&local_blocks, &built.cid).await;
-        for link in composite.links.iter().flatten() {
-            let data = local_blocks.get(&link.link).await.unwrap().unwrap();
-            remote_blocks.put(&link.link, &data).await.unwrap();
-        }
-        remote_blocks.put(&built.cid, &built.block).await.unwrap();
-
-        let outcome = if batch {
-            remote
-                .handle_block_batch(&[merge_block(built.cid, built.block.clone(), &built.doc_id)])
-                .await
-                .remove(0)
-        } else {
-            remote
-                .handle_block(
-                    &built.cid,
-                    &built.block,
-                    BlockMetadata::normal(
-                        &built.doc_id,
-                        COLLECTION_ID,
-                        "did:key:z6MkrImmutableBlock",
-                        Some("peer1"),
-                        false,
-                    ),
-                )
-                .await
-        };
-        assert!(outcome.unwrap().is_merged(), "batch={batch}");
-
-        let merged = read_doc(
-            &remote,
-            &remote_collection,
-            &DocID::from_string(&built.doc_id).unwrap(),
-        )
-        .await
-        .expect("merged document exists");
-        for (field, value) in [
-            ("author", "did:key:alice"),
-            ("body", "hello"),
-            ("kind", "note"),
-        ] {
-            assert_eq!(
-                merged.get(field),
-                Some(&NormalValue::String(value.into())),
-                "batch={batch} field={field}"
-            );
-        }
-    }
-    drop(local);
-}
-
-#[tokio::test]
-async fn peer_without_immutable_flags_merges_and_chains_its_updates() {
-    let (handler, blockstore, collection) = make_handler_with_flags(false).await;
-    let (cid, bytes) = put_genesis(
-        &blockstore,
-        ImmutableDeltaPayload {
-            priority: 1,
-            schema_version_id: "v1".into(),
-            fields: BTreeMap::from([
-                ("author".to_string(), cbor("did:key:alice")),
-                ("kind".to_string(), cbor("note")),
-            ]),
-        },
-        None,
-    )
-    .await;
-    let doc_id = DocID::new_v0(cid);
-    let doc_id_str = doc_id.to_string();
-    let outcome = handler
-        .handle_block(
-            &cid,
-            &bytes,
-            BlockMetadata::normal(
-                &doc_id_str,
-                COLLECTION_ID,
-                "did:key:z6MkrImmutableBlock",
-                None,
-                false,
-            ),
-        )
-        .await
-        .unwrap();
-    assert!(outcome.is_merged(), "got {outcome:?}");
-    let merged = read_doc(&handler, &collection, &doc_id).await.unwrap();
-    assert_eq!(
-        merged.get("author"),
-        Some(&NormalValue::String("did:key:alice".into()))
-    );
-
-    // Here `author` is mutable: its update must chain to the Immutable block
-    // at priority 2, not start a second root that ties with it at priority 1.
-    let immutable_cid = load(&blockstore, &cid).await.links.unwrap()[0].link;
-    let mut author_cids = Vec::new();
-    for author in ["did:key:bob", "did:key:carol"] {
-        let txn = handler.db().new_txn(false).await.unwrap();
-        let short_id = db::docid::map::get_doc_ref(&txn.systemstore().unwrap(), &doc_id_str)
-            .await
+        let immutable_cid = composite
+            .links
+            .iter()
+            .flatten()
+            .find(|link| link.name == IMMUTABLE_LINK_NAME)
             .unwrap()
-            .expect("merged document has a short id")
-            .doc_short_id;
-        let mut update = Document::new();
-        update.set_id(doc_id.clone());
-        update.set("author", NormalValue::String(author.into()));
+            .link;
+        let CrdtDelta::Immutable(payload) = load(&blockstore, &immutable_cid).await.delta else {
+            panic!("expected an Immutable block");
+        };
+        assert_eq!(
+            payload
+                .fields
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["author", "kind"]
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn update_writes_no_block_for_unchanged_immutable_field() {
+    workers::block_on(async {
+        let (handler, blockstore, collection) = make_handler().await;
+        let mut doc = record();
+        let (_, short_id, created) =
+            super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
+
+        doc.set("body", NormalValue::String("edited".into()));
         let modified: rapidhash::RapidHashSet<String> =
-            ["author".to_string()].into_iter().collect();
+            ["author", "body"].into_iter().map(String::from).collect();
+        let txn = handler.db().new_txn(false).await.unwrap();
         let result = db::block::builder::write_document_blocks(
             &txn.blockstore().unwrap(),
             &txn.headstore().unwrap(),
-            &update,
+            &doc,
             collection.schema(),
             db::block::builder::DocStorageIdentity::new(collection.resolved_root_id(), short_id),
             Some(&modified),
@@ -346,158 +204,329 @@ async fn peer_without_immutable_flags_merges_and_chains_its_updates() {
         )
         .await
         .unwrap();
-        db::docid::map::set_block_doc_id_mapping(
-            &txn.systemstore().unwrap(),
-            &result.field_cids[0].to_string(),
-            &doc_id_str,
-        )
-        .await
-        .unwrap();
         txn.force_commit().await.unwrap();
-        author_cids.push(result.field_cids[0]);
-    }
 
-    let author_block = load(&blockstore, &author_cids[0]).await;
-    assert_eq!(author_block.heads, Some(vec![immutable_cid]));
-    assert_eq!(author_block.delta.priority(), 2);
-
-    // A walk filtered to `kind` passes through the `author` updates to reach
-    // the Immutable block that carries `kind`. The starting block is always
-    // reported, whatever the filter.
-    let rows = commits(
-        &handler,
-        db::read::commits::CommitsQueryOptions {
-            doc_id: Some(doc_id_str.clone()),
-            cid: Some(author_cids[1].to_string()),
-            depth: Some(3),
-            field_name: Some("kind".into()),
-            ..Default::default()
-        },
-    )
-    .await;
-    let kind_rows: Vec<_> = rows
-        .iter()
-        .map(commit_row)
-        .filter(|(_, field, _)| field == "kind")
-        .collect();
-    assert_eq!(
-        kind_rows,
-        [(
-            immutable_cid.to_string(),
-            "kind".to_string(),
-            Some(base64_cbor("note"))
-        )]
-    );
+        let composite = load(&blockstore, &result.cid).await;
+        let links: Vec<&str> = composite
+            .links
+            .iter()
+            .flatten()
+            .map(|link| link.name.as_str())
+            .collect();
+        assert_eq!(links, ["body"]);
+        assert_eq!(composite.heads, Some(vec![created.cid]));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn later_immutable_block_cannot_change_a_value() {
-    let (handler, blockstore, collection) = make_handler().await;
-    let mut doc = record();
-    let (doc_id, _, created) =
-        super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
-
-    let forged = Block::new(
-        CrdtDelta::Immutable(ImmutableDeltaPayload {
-            priority: 2,
-            schema_version_id: "v1".into(),
-            fields: BTreeMap::from([("author".to_string(), cbor("did:key:mallory"))]),
-        }),
-        vec![],
-        vec![],
-    );
-    let forged_cid = forged.generate_cid().unwrap();
-    blockstore
-        .put(&forged_cid, &forged.to_dag_cbor().unwrap())
-        .await
-        .unwrap();
-    let update = Block::new(
-        CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "v1".into(),
-            priority: 2,
-            status: 1,
-        }),
-        vec![created.cid],
-        vec![DAGLink::new(IMMUTABLE_LINK_NAME, forged_cid)],
-    );
-    let update_cid = update.generate_cid().unwrap();
-    let update_bytes = update.to_dag_cbor().unwrap();
-    blockstore.put(&update_cid, &update_bytes).await.unwrap();
-
-    let doc_id_str = doc_id.to_string();
-    let outcome = handler
-        .handle_block(
-            &update_cid,
-            &update_bytes,
-            BlockMetadata::normal(
-                &doc_id_str,
-                COLLECTION_ID,
-                "did:key:z6MkrImmutableBlock",
-                None,
-                false,
-            ),
+#[test]
+fn remote_genesis_applies_immutable_block_fields() {
+    workers::block_on(async {
+        let (local, local_blocks, local_collection) = make_handler().await;
+        let doc = record();
+        let built = db::block::builder::build_blocks_from_document(
+            &doc,
+            local_collection.schema(),
+            &local_blocks,
         )
         .await
         .unwrap();
 
-    assert!(outcome.is_terminal_skip(), "got {outcome:?}");
-    let stored = read_doc(&handler, &collection, &doc_id).await.unwrap();
-    assert_eq!(
-        stored.get("author"),
-        Some(&NormalValue::String("did:key:alice".into()))
-    );
+        for batch in [false, true] {
+            let (remote, remote_blocks, remote_collection) = make_handler().await;
+            let composite = load(&local_blocks, &built.cid).await;
+            for link in composite.links.iter().flatten() {
+                let data = local_blocks.get(&link.link).await.unwrap().unwrap();
+                remote_blocks.put(&link.link, &data).await.unwrap();
+            }
+            remote_blocks.put(&built.cid, &built.block).await.unwrap();
+
+            let outcome = if batch {
+                remote
+                    .handle_block_batch(&[merge_block(
+                        built.cid,
+                        built.block.clone(),
+                        &built.doc_id,
+                    )])
+                    .await
+                    .remove(0)
+            } else {
+                remote
+                    .handle_block(
+                        &built.cid,
+                        &built.block,
+                        BlockMetadata::normal(
+                            &built.doc_id,
+                            COLLECTION_ID,
+                            "did:key:z6MkrImmutableBlock",
+                            Some("peer1"),
+                            false,
+                        ),
+                    )
+                    .await
+            };
+            assert!(outcome.unwrap().is_merged(), "batch={batch}");
+
+            let merged = read_doc(
+                &remote,
+                &remote_collection,
+                &DocID::from_string(&built.doc_id).unwrap(),
+            )
+            .await
+            .expect("merged document exists");
+            for (field, value) in [
+                ("author", "did:key:alice"),
+                ("body", "hello"),
+                ("kind", "note"),
+            ] {
+                assert_eq!(
+                    merged.get(field),
+                    Some(&NormalValue::String(value.into())),
+                    "batch={batch} field={field}"
+                );
+            }
+        }
+        drop(local);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_and_single_create_build_the_same_genesis() {
-    let (handler, _, collection) = make_handler().await;
-    let doc = record();
-    let identity = db::block::builder::DocStorageIdentity::new(collection.resolved_root_id(), 7);
-
-    let computed = db::block::builder::compute_document_blocks(
-        &doc,
-        collection.schema(),
-        identity,
-        None,
-        None,
-    )
-    .unwrap();
-    let txn = handler.db().new_txn(false).await.unwrap();
-    let written = db::block::builder::write_document_blocks(
-        &txn.blockstore().unwrap(),
-        &txn.headstore().unwrap(),
-        &doc,
-        collection.schema(),
-        identity,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    txn.force_discard().unwrap();
-
-    assert_eq!(computed.block_result.cid, written.cid);
-    assert_eq!(computed.block_result.field_cids.len(), 2);
-}
-
-#[tokio::test]
-async fn a_field_named_like_the_immutable_link_is_rejected() {
-    let db = DB::from_arc(Arc::new(RegolithStore::in_memory().unwrap())).unwrap();
-    let created = db
-        .create_collection(CollectionVersion::new(
-            "Clash",
-            "v1",
-            "col-clash",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", IMMUTABLE_LINK_NAME, FieldKind::string()),
-            ],
-        ))
+#[test]
+fn peer_without_immutable_flags_merges_and_chains_its_updates() {
+    workers::block_on(async {
+        let (handler, blockstore, collection) = make_handler_with_flags(false).await;
+        let (cid, bytes) = put_genesis(
+            &blockstore,
+            ImmutableDeltaPayload {
+                priority: 1,
+                schema_version_id: "v1".into(),
+                fields: BTreeMap::from([
+                    ("author".to_string(), cbor("did:key:alice")),
+                    ("kind".to_string(), cbor("note")),
+                ]),
+            },
+            None,
+        )
         .await;
-    let error = created.expect_err("a field cannot take the immutable link name");
-    assert!(error.to_string().contains("reserved"), "{error}");
+        let doc_id = DocID::new_v0(cid);
+        let doc_id_str = doc_id.to_string();
+        let outcome = handler
+            .handle_block(
+                &cid,
+                &bytes,
+                BlockMetadata::normal(
+                    &doc_id_str,
+                    COLLECTION_ID,
+                    "did:key:z6MkrImmutableBlock",
+                    None,
+                    false,
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(outcome.is_merged(), "got {outcome:?}");
+        let merged = read_doc(&handler, &collection, &doc_id).await.unwrap();
+        assert_eq!(
+            merged.get("author"),
+            Some(&NormalValue::String("did:key:alice".into()))
+        );
+
+        // Here `author` is mutable: its update must chain to the Immutable block
+        // at priority 2, not start a second root that ties with it at priority 1.
+        let immutable_cid = load(&blockstore, &cid).await.links.unwrap()[0].link;
+        let mut author_cids = Vec::new();
+        for author in ["did:key:bob", "did:key:carol"] {
+            let txn = handler.db().new_txn(false).await.unwrap();
+            let short_id = db::docid::map::get_doc_ref(&txn.systemstore().unwrap(), &doc_id_str)
+                .await
+                .unwrap()
+                .expect("merged document has a short id")
+                .doc_short_id;
+            let mut update = Document::new();
+            update.set_id(doc_id.clone());
+            update.set("author", NormalValue::String(author.into()));
+            let modified: rapidhash::RapidHashSet<String> =
+                ["author".to_string()].into_iter().collect();
+            let result = db::block::builder::write_document_blocks(
+                &txn.blockstore().unwrap(),
+                &txn.headstore().unwrap(),
+                &update,
+                collection.schema(),
+                db::block::builder::DocStorageIdentity::new(
+                    collection.resolved_root_id(),
+                    short_id,
+                ),
+                Some(&modified),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            db::docid::map::set_block_doc_id_mapping(
+                &txn.systemstore().unwrap(),
+                &result.field_cids[0].to_string(),
+                &doc_id_str,
+            )
+            .await
+            .unwrap();
+            txn.force_commit().await.unwrap();
+            author_cids.push(result.field_cids[0]);
+        }
+
+        let author_block = load(&blockstore, &author_cids[0]).await;
+        assert_eq!(author_block.heads, Some(vec![immutable_cid]));
+        assert_eq!(author_block.delta.priority(), 2);
+
+        // A walk filtered to `kind` passes through the `author` updates to reach
+        // the Immutable block that carries `kind`. The starting block is always
+        // reported, whatever the filter.
+        let rows = commits(
+            &handler,
+            db::read::commits::CommitsQueryOptions {
+                doc_id: Some(doc_id_str.clone()),
+                cid: Some(author_cids[1].to_string()),
+                depth: Some(3),
+                field_name: Some("kind".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        let kind_rows: Vec<_> = rows
+            .iter()
+            .map(commit_row)
+            .filter(|(_, field, _)| field == "kind")
+            .collect();
+        assert_eq!(
+            kind_rows,
+            [(
+                immutable_cid.to_string(),
+                "kind".to_string(),
+                Some(base64_cbor("note"))
+            )]
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn later_immutable_block_cannot_change_a_value() {
+    workers::block_on(async {
+        let (handler, blockstore, collection) = make_handler().await;
+        let mut doc = record();
+        let (doc_id, _, created) =
+            super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
+
+        let forged = Block::new(
+            CrdtDelta::Immutable(ImmutableDeltaPayload {
+                priority: 2,
+                schema_version_id: "v1".into(),
+                fields: BTreeMap::from([("author".to_string(), cbor("did:key:mallory"))]),
+            }),
+            vec![],
+            vec![],
+        );
+        let forged_cid = forged.generate_cid().unwrap();
+        blockstore
+            .put(&forged_cid, &forged.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        let update = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                schema_version_id: "v1".into(),
+                priority: 2,
+                status: 1,
+            }),
+            vec![created.cid],
+            vec![DAGLink::new(IMMUTABLE_LINK_NAME, forged_cid)],
+        );
+        let update_cid = update.generate_cid().unwrap();
+        let update_bytes = update.to_dag_cbor().unwrap();
+        blockstore.put(&update_cid, &update_bytes).await.unwrap();
+
+        let doc_id_str = doc_id.to_string();
+        let outcome = handler
+            .handle_block(
+                &update_cid,
+                &update_bytes,
+                BlockMetadata::normal(
+                    &doc_id_str,
+                    COLLECTION_ID,
+                    "did:key:z6MkrImmutableBlock",
+                    None,
+                    false,
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(outcome.is_terminal_skip(), "got {outcome:?}");
+        let stored = read_doc(&handler, &collection, &doc_id).await.unwrap();
+        assert_eq!(
+            stored.get("author"),
+            Some(&NormalValue::String("did:key:alice".into()))
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn batch_and_single_create_build_the_same_genesis() {
+    workers::block_on(async {
+        let (handler, _, collection) = make_handler().await;
+        let doc = record();
+        let identity =
+            db::block::builder::DocStorageIdentity::new(collection.resolved_root_id(), 7);
+
+        let computed = db::block::builder::compute_document_blocks(
+            &doc,
+            collection.schema(),
+            identity,
+            None,
+            None,
+        )
+        .unwrap();
+        let txn = handler.db().new_txn(false).await.unwrap();
+        let written = db::block::builder::write_document_blocks(
+            &txn.blockstore().unwrap(),
+            &txn.headstore().unwrap(),
+            &doc,
+            collection.schema(),
+            identity,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        txn.force_discard().unwrap();
+
+        assert_eq!(computed.block_result.cid, written.cid);
+        assert_eq!(computed.block_result.field_cids.len(), 2);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_field_named_like_the_immutable_link_is_rejected() {
+    workers::block_on(async {
+        let db = DB::from_arc(Arc::new(RegolithStore::in_memory().unwrap())).unwrap();
+        let created = db
+            .create_collection(CollectionVersion::new(
+                "Clash",
+                "v1",
+                "col-clash",
+                vec![
+                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                    FieldDescription::new("2", IMMUTABLE_LINK_NAME, FieldKind::string()),
+                ],
+            ))
+            .await;
+        let error = created.expect_err("a field cannot take the immutable link name");
+        assert!(error.to_string().contains("reserved"), "{error}");
+    })
+    .unwrap()
 }
 
 async fn commits(
@@ -523,129 +552,138 @@ fn base64_cbor(value: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(cbor(value))
 }
 
-#[tokio::test]
-async fn commits_for_an_immutable_field_return_the_immutable_block() {
-    let (handler, blockstore, collection) = make_handler().await;
-    let mut doc = record();
-    let (doc_id, _, created) =
-        super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
-    let immutable_cid = load(&blockstore, &created.cid)
-        .await
-        .links
-        .unwrap()
-        .into_iter()
-        .find(|link| link.name == IMMUTABLE_LINK_NAME)
-        .unwrap()
-        .link;
+#[test]
+fn commits_for_an_immutable_field_return_the_immutable_block() {
+    workers::block_on(async {
+        let (handler, blockstore, collection) = make_handler().await;
+        let mut doc = record();
+        let (doc_id, _, created) =
+            super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
+        let immutable_cid = load(&blockstore, &created.cid)
+            .await
+            .links
+            .unwrap()
+            .into_iter()
+            .find(|link| link.name == IMMUTABLE_LINK_NAME)
+            .unwrap()
+            .link;
 
-    let rows = commits(
-        &handler,
-        db::read::commits::CommitsQueryOptions {
-            doc_id: Some(doc_id.to_string()),
-            field_name: Some("author".into()),
-            ..Default::default()
-        },
-    )
-    .await;
+        let rows = commits(
+            &handler,
+            db::read::commits::CommitsQueryOptions {
+                doc_id: Some(doc_id.to_string()),
+                field_name: Some("author".into()),
+                ..Default::default()
+            },
+        )
+        .await;
 
-    assert_eq!(
-        rows.iter().map(commit_row).collect::<Vec<_>>(),
-        [(
-            immutable_cid.to_string(),
-            "author".to_string(),
-            Some(base64_cbor("did:key:alice"))
-        )]
-    );
+        assert_eq!(
+            rows.iter().map(commit_row).collect::<Vec<_>>(),
+            [(
+                immutable_cid.to_string(),
+                "author".to_string(),
+                Some(base64_cbor("did:key:alice"))
+            )]
+        );
+    })
+    .unwrap()
 }
 
 /// Downsampling reads a document's values from its commits by height.
-#[tokio::test]
-async fn height_one_commits_carry_every_immutable_field_value() {
-    let (handler, _, collection) = make_handler().await;
-    let mut doc = record();
-    let (doc_id, _, _) =
-        super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
+#[test]
+fn height_one_commits_carry_every_immutable_field_value() {
+    workers::block_on(async {
+        let (handler, _, collection) = make_handler().await;
+        let mut doc = record();
+        let (doc_id, _, _) =
+            super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
 
-    let rows = commits(
-        &handler,
-        db::read::commits::CommitsQueryOptions {
-            doc_id: Some(doc_id.to_string()),
-            height_start: Some(1),
-            height_end: Some(2),
-            ..Default::default()
-        },
-    )
-    .await;
+        let rows = commits(
+            &handler,
+            db::read::commits::CommitsQueryOptions {
+                doc_id: Some(doc_id.to_string()),
+                height_start: Some(1),
+                height_end: Some(2),
+                ..Default::default()
+            },
+        )
+        .await;
 
-    let mut values: Vec<_> = rows
-        .iter()
-        .map(commit_row)
-        .filter_map(|(_, field, delta)| Some((field, delta?)))
-        .collect();
-    values.sort();
-    assert_eq!(
-        values,
-        [
-            ("author".to_string(), base64_cbor("did:key:alice")),
-            ("body".to_string(), base64_cbor("hello")),
-            ("kind".to_string(), base64_cbor("note")),
-        ]
-    );
+        let mut values: Vec<_> = rows
+            .iter()
+            .map(commit_row)
+            .filter_map(|(_, field, delta)| Some((field, delta?)))
+            .collect();
+        values.sort();
+        assert_eq!(
+            values,
+            [
+                ("author".to_string(), base64_cbor("did:key:alice")),
+                ("body".to_string(), base64_cbor("hello")),
+                ("kind".to_string(), base64_cbor("note")),
+            ]
+        );
+    })
+    .unwrap()
 }
 
 /// A doc-level encrypted document encrypts every field, so its builders never
 /// write an Immutable block. One arriving under an encrypted genesis would put
 /// plaintext values beside the encrypted ones.
-#[tokio::test]
-async fn an_encrypted_genesis_cannot_carry_an_immutable_block() {
-    let (handler, blockstore, collection) = make_handler().await;
-    let encryption = Block::new(
-        CrdtDelta::Immutable(ImmutableDeltaPayload {
-            priority: 1,
-            schema_version_id: "v1".into(),
-            fields: BTreeMap::new(),
-        }),
-        vec![],
-        vec![],
-    )
-    .generate_cid()
-    .unwrap();
-    let (cid, bytes) = put_genesis(
-        &blockstore,
-        ImmutableDeltaPayload {
-            priority: 1,
-            schema_version_id: "v1".into(),
-            fields: BTreeMap::from([("author".to_string(), cbor("did:key:alice"))]),
-        },
-        Some(encryption),
-    )
-    .await;
-    let doc_id = DocID::new_v0(cid);
-    let doc_id_str = doc_id.to_string();
-
-    let single = handler
-        .handle_block(
-            &cid,
-            &bytes,
-            BlockMetadata::normal(
-                &doc_id_str,
-                COLLECTION_ID,
-                "did:key:z6MkrImmutableBlock",
-                None,
-                false,
-            ),
+#[test]
+fn an_encrypted_genesis_cannot_carry_an_immutable_block() {
+    workers::block_on(async {
+        let (handler, blockstore, collection) = make_handler().await;
+        let encryption = Block::new(
+            CrdtDelta::Immutable(ImmutableDeltaPayload {
+                priority: 1,
+                schema_version_id: "v1".into(),
+                fields: BTreeMap::new(),
+            }),
+            vec![],
+            vec![],
+        )
+        .generate_cid()
+        .unwrap();
+        let (cid, bytes) = put_genesis(
+            &blockstore,
+            ImmutableDeltaPayload {
+                priority: 1,
+                schema_version_id: "v1".into(),
+                fields: BTreeMap::from([("author".to_string(), cbor("did:key:alice"))]),
+            },
+            Some(encryption),
         )
         .await;
-    let batch = handler
-        .handle_block_batch(&[merge_block(cid, bytes.clone(), &doc_id_str)])
-        .await
-        .remove(0);
+        let doc_id = DocID::new_v0(cid);
+        let doc_id_str = doc_id.to_string();
 
-    for outcome in [single, batch] {
-        assert!(
-            !outcome.as_ref().is_ok_and(|outcome| outcome.is_merged()),
-            "got {outcome:?}"
-        );
-    }
-    assert!(read_doc(&handler, &collection, &doc_id).await.is_none());
+        let single = handler
+            .handle_block(
+                &cid,
+                &bytes,
+                BlockMetadata::normal(
+                    &doc_id_str,
+                    COLLECTION_ID,
+                    "did:key:z6MkrImmutableBlock",
+                    None,
+                    false,
+                ),
+            )
+            .await;
+        let batch = handler
+            .handle_block_batch(&[merge_block(cid, bytes.clone(), &doc_id_str)])
+            .await
+            .remove(0);
+
+        for outcome in [single, batch] {
+            assert!(
+                !outcome.as_ref().is_ok_and(|outcome| outcome.is_merged()),
+                "got {outcome:?}"
+            );
+        }
+        assert!(read_doc(&handler, &collection, &doc_id).await.is_none());
+    })
+    .unwrap()
 }

@@ -71,83 +71,95 @@ async fn corrupt_nth_document(db: &Arc<DB<RegolithStore>>, collection_name: &str
 }
 
 /// The stream must be observationally identical to the eager path.
-#[tokio::test]
-async fn stream_matches_get_all_with_deleted_ordering_and_content() {
-    let (db, collection_name) = fixture_with_docs(5).await;
-    let fetcher = fetcher(&db).await;
+#[test]
+fn stream_matches_get_all_with_deleted_ordering_and_content() {
+    workers::block_on(async {
+        let (db, collection_name) = fixture_with_docs(5).await;
+        let fetcher = fetcher(&db).await;
 
-    let eager = fetcher
-        .get_all_with_deleted(&collection_name, false)
-        .await
-        .unwrap();
+        let eager = fetcher
+            .get_all_with_deleted(&collection_name, false)
+            .await
+            .unwrap();
 
-    let mut streamed = Vec::new();
-    let mut stream = fetcher
-        .stream_all_with_deleted(&collection_name, false)
-        .await
-        .unwrap();
-    while let Some(pair) = stream.next().await.unwrap() {
-        streamed.push(pair);
-    }
+        let mut streamed = Vec::new();
+        let mut stream = fetcher
+            .stream_all_with_deleted(&collection_name, false)
+            .await
+            .unwrap();
+        while let Some(pair) = stream.next().await.unwrap() {
+            streamed.push(pair);
+        }
 
-    assert_eq!(streamed.len(), eager.len());
-    for (s, e) in streamed.iter().zip(eager.iter()) {
-        assert_eq!(s.0.id(), e.0.id());
-        assert_eq!(s.1, e.1);
-    }
+        assert_eq!(streamed.len(), eager.len());
+        for (s, e) in streamed.iter().zip(eager.iter()) {
+            assert_eq!(s.0.id(), e.0.id());
+            assert_eq!(s.1, e.1);
+        }
+    })
+    .unwrap()
 }
 
 /// Deleted documents interleaved must be skipped identically.
-#[tokio::test]
-async fn stream_skips_deleted_when_not_showing_deleted() {
-    let (db, collection_name) = fixture_with_docs(5).await;
-    delete_nth_document(&db, &collection_name, 1).await;
-    delete_nth_document(&db, &collection_name, 3).await;
-    let fetcher = fetcher(&db).await;
+#[test]
+fn stream_skips_deleted_when_not_showing_deleted() {
+    workers::block_on(async {
+        let (db, collection_name) = fixture_with_docs(5).await;
+        delete_nth_document(&db, &collection_name, 1).await;
+        delete_nth_document(&db, &collection_name, 3).await;
+        let fetcher = fetcher(&db).await;
 
-    let mut streamed = Vec::new();
-    let mut stream = fetcher
-        .stream_all_with_deleted(&collection_name, false)
-        .await
-        .unwrap();
-    while let Some(pair) = stream.next().await.unwrap() {
-        streamed.push(pair);
-    }
+        let mut streamed = Vec::new();
+        let mut stream = fetcher
+            .stream_all_with_deleted(&collection_name, false)
+            .await
+            .unwrap();
+        while let Some(pair) = stream.next().await.unwrap() {
+            streamed.push(pair);
+        }
 
-    assert_eq!(streamed.len(), 3);
-    assert!(streamed.iter().all(|(_, deleted)| !deleted));
+        assert_eq!(streamed.len(), 3);
+        assert!(streamed.iter().all(|(_, deleted)| !deleted));
+    })
+    .unwrap()
 }
 
 /// Partial consumption must not error and must not require draining.
-#[tokio::test]
-async fn stream_may_be_dropped_after_partial_consumption() {
-    let (db, collection_name) = fixture_with_docs(100).await;
-    let fetcher = fetcher(&db).await;
+#[test]
+fn stream_may_be_dropped_after_partial_consumption() {
+    workers::block_on(async {
+        let (db, collection_name) = fixture_with_docs(100).await;
+        let fetcher = fetcher(&db).await;
 
-    let mut stream = fetcher
-        .stream_all_with_deleted(&collection_name, false)
-        .await
-        .unwrap();
-    for _ in 0..3 {
-        assert!(stream.next().await.unwrap().is_some());
-    }
-    drop(stream);
+        let mut stream = fetcher
+            .stream_all_with_deleted(&collection_name, false)
+            .await
+            .unwrap();
+        for _ in 0..3 {
+            assert!(stream.next().await.unwrap().is_some());
+        }
+        drop(stream);
+    })
+    .unwrap()
 }
 
 /// A resolution error (not just a raw iterator error) must fuse the
 /// stream: polling again after the error must not silently resume from
 /// the next entry.
-#[tokio::test]
-async fn stream_fuses_after_resolution_error() {
-    let (db, collection_name) = fixture_with_docs(3).await;
-    corrupt_nth_document(&db, &collection_name, 0).await;
-    let fetcher = fetcher(&db).await;
+#[test]
+fn stream_fuses_after_resolution_error() {
+    workers::block_on(async {
+        let (db, collection_name) = fixture_with_docs(3).await;
+        corrupt_nth_document(&db, &collection_name, 0).await;
+        let fetcher = fetcher(&db).await;
 
-    let mut stream = fetcher
-        .stream_all_with_deleted(&collection_name, false)
-        .await
-        .unwrap();
+        let mut stream = fetcher
+            .stream_all_with_deleted(&collection_name, false)
+            .await
+            .unwrap();
 
-    assert!(stream.next().await.is_err());
-    assert!(stream.next().await.unwrap().is_none());
+        assert!(stream.next().await.is_err());
+        assert!(stream.next().await.unwrap().is_none());
+    })
+    .unwrap()
 }
