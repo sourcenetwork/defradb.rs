@@ -69,6 +69,9 @@ hkdf = "0.12"
 # IPLD
 cid.workspace = true
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 # The relay end-to-end test drives a native node's HTTP API with fetch and

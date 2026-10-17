@@ -42,6 +42,9 @@ bytes = { workspace = true }
 lru = { workspace = true }
 parking_lot = { workspace = true }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 multihash = { workspace = true }

@@ -109,6 +109,9 @@ p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"]
 tokio = { workspace = true, features = ["sync"] }
 wasm-bindgen-futures = "0.4"
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time", "test-util"] }
 axum.workspace = true

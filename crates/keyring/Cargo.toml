@@ -47,6 +47,9 @@ keyring_crate = { package = "keyring", version = "3", optional = true, features 
 [target.'cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))'.dependencies]
 keyring_crate = { package = "keyring", version = "3", optional = true }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 # Asserts our tokens are readable by the josekit/Go-jwx format. Dev-only, so
 # OpenSSL stays out of every shipped cli graph.

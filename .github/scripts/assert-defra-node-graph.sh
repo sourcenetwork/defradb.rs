@@ -152,3 +152,22 @@ assert_present ffi wasmtime
 echo "defra-node default unique crate names: $(unique_crate_names)"
 echo "defra-node --no-default-features --features native unique crate names: $(unique_crate_names --no-default-features --features native)"
 echo "defra-node --no-default-features --features native,p2p unique crate names: $(unique_crate_names --no-default-features --features native,p2p)"
+
+assert_sha2_backend() {
+  local target=$1 expected=$2 actual=portable graph
+  graph="$(cargo tree -p defra-node -e normal --locked --target "$target" --prefix none)"
+  if [[ "$graph" == *$'\nsha2-asm v'* ]]; then
+    actual=assembly
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'error: %s selects %s SHA-2, expected %s\n' "$target" "$actual" "$expected" >&2
+    exit 1
+  fi
+  printf 'ok: %s selects %s SHA-2\n' "$target" "$actual"
+}
+
+assert_sha2_backend x86_64-pc-windows-msvc portable
+assert_sha2_backend aarch64-pc-windows-msvc portable
+assert_sha2_backend x86_64-pc-windows-gnu assembly
+assert_sha2_backend x86_64-unknown-linux-gnu assembly
+assert_sha2_backend aarch64-apple-darwin assembly

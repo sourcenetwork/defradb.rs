@@ -82,6 +82,9 @@ tonic.workspace = true
 tonic-prost.workspace = true
 tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "net"] }
 kovan-queue.workspace = true

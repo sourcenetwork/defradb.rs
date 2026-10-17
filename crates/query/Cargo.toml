@@ -74,6 +74,9 @@ chrono = { version = "0.4", features = ["serde"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.35", default-features = false, features = ["rt", "time"] }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
