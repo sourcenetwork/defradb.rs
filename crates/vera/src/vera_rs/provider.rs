@@ -28,6 +28,9 @@ use super::provider_commands::{
 use super::worker::NativeWorker;
 
 mod submission;
+mod verified;
+
+use verified::verified;
 
 pub struct VeraRsProvider {
     light_client: Arc<AcpLightClient>,
@@ -299,9 +302,7 @@ impl VeraProvider for VeraRsProvider {
             ));
         }
         let id = hex::encode(event.policyId);
-        let record = self
-            .light_client
-            .read_policy(&id)
+        let record = verified(|| self.light_client.read_policy(&id))
             .await
             .map_err(|e| ProviderError::Query(format!("created policy proof: {e}")))?;
         let record: PolicyRecord = serde_json::from_slice(
@@ -472,9 +473,7 @@ impl VeraProvider for VeraRsProvider {
         policy_id: &str,
     ) -> Result<Option<ProviderPolicyInfo>, ProviderError> {
         let id = hex::encode(Self::policy_id_to_bytes32(policy_id)?);
-        let proof = self
-            .light_client
-            .read_policy(&id)
+        let proof = verified(|| self.light_client.read_policy(&id))
             .await
             .map_err(|e| ProviderError::Query(format!("policy proof: {e}")))?;
         let Some(bytes) = proof.value.as_deref() else {
@@ -505,9 +504,7 @@ impl VeraProvider for VeraRsProvider {
             resource: resource.into(),
             id: object_id.into(),
         };
-        let owner = self
-            .light_client
-            .read_object_owner(&policy, &object)
+        let owner = verified(|| self.light_client.read_object_owner(&policy, &object))
             .await
             .map_err(|e| ProviderError::Query(format!("owner proof: {e}")))?;
         Ok(match owner {
@@ -525,8 +522,7 @@ impl VeraProvider for VeraRsProvider {
         actor_did: &str,
     ) -> Result<bool, ProviderError> {
         let request = access_request(resource, object_id, permission, actor_did)?;
-        self.light_client
-            .verify_access(policy_id, &request)
+        verified(|| self.light_client.verify_access(policy_id, &request))
             .await
             .map_err(|e| ProviderError::Query(format!("verified permission: {e}")))
     }
@@ -557,9 +553,7 @@ impl VeraProvider for VeraRsProvider {
             creator_sequence: confirmed.sequence,
             request,
         };
-        let decision = self
-            .light_client
-            .verify_access_decision(&expected)
+        let decision = verified(|| self.light_client.verify_access_decision(&expected))
             .await
             .map_err(|e| ProviderError::Query(format!("verified access decision: {e}")))?;
         Ok(Some(decision.id))
