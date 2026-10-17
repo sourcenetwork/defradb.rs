@@ -11,201 +11,222 @@ use storage::keys::utils::InstanceType;
 use storage::stores::datastore::{Datastore, DatastoreTxn, CHUNK_SIZE};
 use storage::RegolithStore;
 
-#[tokio::test]
-async fn test_datastore_basic() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let datastore = Datastore::new(store);
+#[test]
+fn test_datastore_basic() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let datastore = Datastore::new(store);
 
-    let key = DataStoreKey::new(1, InstanceType::Value, 1, "field1");
+        let key = DataStoreKey::new(1, InstanceType::Value, 1, "field1");
 
-    // Write
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.put(&key, b"value1").await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        // Write
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.put(&key, b"value1").await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Read
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let value = txn.get_value(&key).await.unwrap();
-    assert_eq!(value, Some(Bytes::from_static(b"value1")));
+        // Read
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let value = txn.get_value(&key).await.unwrap();
+        assert_eq!(value, Some(Bytes::from_static(b"value1")));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_datastore_chunking() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let datastore = Datastore::new(store);
+#[test]
+fn test_datastore_chunking() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let datastore = Datastore::new(store);
 
-    let key = DataStoreKey::new(1, InstanceType::Value, 1, "large_field");
+        let key = DataStoreKey::new(1, InstanceType::Value, 1, "large_field");
 
-    // Create a 2.5MB value
-    let large_value = vec![0xAB; CHUNK_SIZE * 2 + CHUNK_SIZE / 2];
+        // Create a 2.5MB value
+        let large_value = vec![0xAB; CHUNK_SIZE * 2 + CHUNK_SIZE / 2];
 
-    // Write
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.put(&key, &large_value).await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        // Write
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.put(&key, &large_value).await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Read back
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let value = txn.get_value(&key).await.unwrap();
-    assert_eq!(value, Some(Bytes::from(large_value)));
+        // Read back
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let value = txn.get_value(&key).await.unwrap();
+        assert_eq!(value, Some(Bytes::from(large_value)));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_datastore_delete_chunked() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let datastore = Datastore::new(store);
+#[test]
+fn test_datastore_delete_chunked() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let datastore = Datastore::new(store);
 
-    let key = DataStoreKey::new(1, InstanceType::Value, 1, "large_field");
+        let key = DataStoreKey::new(1, InstanceType::Value, 1, "large_field");
 
-    // Create a 2MB value
-    let large_value = vec![0xCD; CHUNK_SIZE * 2];
+        // Create a 2MB value
+        let large_value = vec![0xCD; CHUNK_SIZE * 2];
 
-    // Write
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.put(&key, &large_value).await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        // Write
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.put(&key, &large_value).await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Verify it exists
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let value = txn.get_value(&key).await.unwrap();
-    assert!(value.is_some());
-    let _ = txn;
+        // Verify it exists
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let value = txn.get_value(&key).await.unwrap();
+        assert!(value.is_some());
+        let _ = txn;
 
-    // Delete
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.delete_value(&key).await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        // Delete
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.delete_value(&key).await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Verify it's gone
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let value = txn.get_value(&key).await.unwrap();
-    assert_eq!(value, None);
+        // Verify it's gone
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let value = txn.get_value(&key).await.unwrap();
+        assert_eq!(value, None);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_datastore_isolation() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let datastore = Datastore::new(store);
+#[test]
+fn test_datastore_isolation() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let datastore = Datastore::new(store);
 
-    // Write to datastore
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    txn.set(b"test_key", b"datastore_value").await.unwrap();
-    txn.commit().await.unwrap();
+        // Write to datastore
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        txn.set(b"test_key", b"datastore_value").await.unwrap();
+        txn.commit().await.unwrap();
 
-    // Read back
-    let txn = datastore.new_txn(true).await.unwrap();
-    let value = txn.get(b"test_key").await.unwrap();
-    assert_eq!(value, Some(Bytes::from_static(b"datastore_value")));
+        // Read back
+        let txn = datastore.new_txn(true).await.unwrap();
+        let value = txn.get(b"test_key").await.unwrap();
+        assert_eq!(value, Some(Bytes::from_static(b"datastore_value")));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_datastore_exact_chunk_size() {
-    // Test value exactly equal to CHUNK_SIZE (boundary condition)
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let datastore = Datastore::new(store);
+#[test]
+fn test_datastore_exact_chunk_size() {
+    workers::block_on(async {
+        // Test value exactly equal to CHUNK_SIZE (boundary condition)
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let datastore = Datastore::new(store);
 
-    let key = DataStoreKey::new(1, InstanceType::Value, 1, "exact_field");
+        let key = DataStoreKey::new(1, InstanceType::Value, 1, "exact_field");
 
-    // Exactly CHUNK_SIZE bytes (should NOT be chunked, since > not >=)
-    let exact_value = vec![0xAB; CHUNK_SIZE];
+        // Exactly CHUNK_SIZE bytes (should NOT be chunked, since > not >=)
+        let exact_value = vec![0xAB; CHUNK_SIZE];
 
-    // Write
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.put(&key, &exact_value).await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        // Write
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.put(&key, &exact_value).await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Read back - verify round-trip works
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let value = txn_ds.get_value(&key).await.unwrap();
-    assert_eq!(value, Some(Bytes::from(exact_value.clone())));
+        // Read back - verify round-trip works
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let value = txn_ds.get_value(&key).await.unwrap();
+        assert_eq!(value, Some(Bytes::from(exact_value.clone())));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_datastore_chunk_size_plus_one() {
-    // Test value exactly CHUNK_SIZE + 1 (should be chunked)
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let datastore = Datastore::new(store);
+#[test]
+fn test_datastore_chunk_size_plus_one() {
+    workers::block_on(async {
+        // Test value exactly CHUNK_SIZE + 1 (should be chunked)
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let datastore = Datastore::new(store);
 
-    let key = DataStoreKey::new(1, InstanceType::Value, 1, "plus_one_field");
+        let key = DataStoreKey::new(1, InstanceType::Value, 1, "plus_one_field");
 
-    // CHUNK_SIZE + 1 bytes (should be chunked into 2 chunks)
-    let value = vec![0xCD; CHUNK_SIZE + 1];
+        // CHUNK_SIZE + 1 bytes (should be chunked into 2 chunks)
+        let value = vec![0xCD; CHUNK_SIZE + 1];
 
-    // Write
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.put(&key, &value).await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        // Write
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.put(&key, &value).await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Read back - verify round-trip works for chunked values
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let retrieved = txn_ds.get_value(&key).await.unwrap();
-    assert_eq!(retrieved, Some(Bytes::from(value)));
+        // Read back - verify round-trip works for chunked values
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let retrieved = txn_ds.get_value(&key).await.unwrap();
+        assert_eq!(retrieved, Some(Bytes::from(value)));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_datastore_chunk_update_cleanup() {
-    // Test that updating a chunked value with fewer chunks cleans up old chunks
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let datastore = Datastore::new(store);
+#[test]
+fn test_datastore_chunk_update_cleanup() {
+    workers::block_on(async {
+        // Test that updating a chunked value with fewer chunks cleans up old chunks
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let datastore = Datastore::new(store);
 
-    let key = DataStoreKey::new(1, InstanceType::Value, 1, "shrink_field");
+        let key = DataStoreKey::new(1, InstanceType::Value, 1, "shrink_field");
 
-    // First, write a 3-chunk value (2.5 MB)
-    let large_value = vec![0xEF; CHUNK_SIZE * 2 + CHUNK_SIZE / 2];
+        // First, write a 3-chunk value (2.5 MB)
+        let large_value = vec![0xEF; CHUNK_SIZE * 2 + CHUNK_SIZE / 2];
 
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.put(&key, &large_value).await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.put(&key, &large_value).await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Verify large value can be read back
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let retrieved = txn_ds.get_value(&key).await.unwrap();
-    assert_eq!(retrieved, Some(Bytes::from(large_value.clone())));
-    drop(txn);
+        // Verify large value can be read back
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let retrieved = txn_ds.get_value(&key).await.unwrap();
+        assert_eq!(retrieved, Some(Bytes::from(large_value.clone())));
+        drop(txn);
 
-    // Now update with a smaller 2-chunk value (1.5 MB - just over CHUNK_SIZE)
-    let smaller_value = vec![0x12; CHUNK_SIZE + CHUNK_SIZE / 2];
+        // Now update with a smaller 2-chunk value (1.5 MB - just over CHUNK_SIZE)
+        let smaller_value = vec![0x12; CHUNK_SIZE + CHUNK_SIZE / 2];
 
-    let mut txn = datastore.new_txn(false).await.unwrap();
-    {
-        let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
-        txn_ds.put(&key, &smaller_value).await.unwrap();
-    }
-    txn.commit().await.unwrap();
+        let mut txn = datastore.new_txn(false).await.unwrap();
+        {
+            let txn_ds = txn.as_any_mut().downcast_mut::<DatastoreTxn>().unwrap();
+            txn_ds.put(&key, &smaller_value).await.unwrap();
+        }
+        txn.commit().await.unwrap();
 
-    // Verify the value was updated correctly to the smaller size
-    // This implicitly verifies old chunks were cleaned up - if they weren't,
-    // get_value would return more data than expected
-    let txn = datastore.new_txn(true).await.unwrap();
-    let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
-    let retrieved = txn_ds.get_value(&key).await.unwrap();
-    assert_eq!(retrieved, Some(Bytes::from(smaller_value)));
+        // Verify the value was updated correctly to the smaller size
+        // This implicitly verifies old chunks were cleaned up - if they weren't,
+        // get_value would return more data than expected
+        let txn = datastore.new_txn(true).await.unwrap();
+        let txn_ds = txn.as_any().downcast_ref::<DatastoreTxn>().unwrap();
+        let retrieved = txn_ds.get_value(&key).await.unwrap();
+        assert_eq!(retrieved, Some(Bytes::from(smaller_value)));
+    })
+    .unwrap()
 }

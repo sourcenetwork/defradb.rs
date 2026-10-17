@@ -101,35 +101,38 @@ fn every_other_family_has_its_declared_class() {
 
 /// Two writers of one head set each read it without naming parts and merge
 /// into it: both commit, and neither read is validated.
-#[tokio::test]
-async fn one_head_set_commutes() {
-    for key in [
-        HeadstoreDocSetKey::new(1).bytes(),
-        HeadstoreColSetKey::new(1).bytes(),
-    ] {
-        let key = headstore(&key);
-        let store = RegolithStore::in_memory().unwrap();
-        let operand = |name: &[u8]| {
-            let mut write = crate::merge::head_set::Write::default();
-            write.add(name, 1);
-            write.operand()
-        };
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.merge(&key, &operand(b"a")).await.unwrap();
-        seed.commit().await.unwrap();
-        let mut first = store.new_txn(false).await.unwrap();
-        let mut second = store.new_txn(false).await.unwrap();
-        for (txn, name) in [(&mut first, b"b"), (&mut second, b"c")] {
-            assert!(txn.get_parts(&key, &[]).await.unwrap().is_some());
-            txn.merge(&key, &operand(name)).await.unwrap();
+#[test]
+fn one_head_set_commutes() {
+    workers::block_on(async {
+        for key in [
+            HeadstoreDocSetKey::new(1).bytes(),
+            HeadstoreColSetKey::new(1).bytes(),
+        ] {
+            let key = headstore(&key);
+            let store = RegolithStore::in_memory().unwrap();
+            let operand = |name: &[u8]| {
+                let mut write = crate::merge::head_set::Write::default();
+                write.add(name, 1);
+                write.operand()
+            };
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.merge(&key, &operand(b"a")).await.unwrap();
+            seed.commit().await.unwrap();
+            let mut first = store.new_txn(false).await.unwrap();
+            let mut second = store.new_txn(false).await.unwrap();
+            for (txn, name) in [(&mut first, b"b"), (&mut second, b"c")] {
+                assert!(txn.get_parts(&key, &[]).await.unwrap().is_some());
+                txn.merge(&key, &operand(name)).await.unwrap();
+            }
+            first.commit().await.unwrap();
+            second.commit().await.unwrap();
+            let read = store.new_txn(true).await.unwrap();
+            let set =
+                crate::merge::head_set::Set::read(&read.get(&key).await.unwrap().unwrap()).unwrap();
+            assert_eq!(set.live().count(), 3, "{key:?}");
         }
-        first.commit().await.unwrap();
-        second.commit().await.unwrap();
-        let read = store.new_txn(true).await.unwrap();
-        let set =
-            crate::merge::head_set::Set::read(&read.get(&key).await.unwrap().unwrap()).unwrap();
-        assert_eq!(set.live().count(), 3, "{key:?}");
-    }
+    })
+    .unwrap()
 }
 
 async fn same_block_writes(options: RegolithStoreOptions) {
@@ -148,75 +151,87 @@ async fn same_block_writes(options: RegolithStoreOptions) {
 }
 
 /// Two creates of one block both commit, sealed at rest or not.
-#[tokio::test]
-async fn identical_blocks_commit_with_engine_encryption() {
-    same_block_writes(RegolithStoreOptions::default().with_encryption_key([42; 32])).await;
-    same_block_writes(RegolithStoreOptions::memory()).await;
+#[test]
+fn identical_blocks_commit_with_engine_encryption() {
+    workers::block_on(async {
+        same_block_writes(RegolithStoreOptions::default().with_encryption_key([42; 32])).await;
+        same_block_writes(RegolithStoreOptions::memory()).await;
+    })
+    .unwrap()
 }
 
 /// Decision keys have one winner.
-#[tokio::test]
-async fn ordinary_decision_keys_have_one_winner() {
-    let store = RegolithStore::in_memory().unwrap();
-    for key in [
-        b"bm\x01\x55\x00\x03abc".as_slice(),
-        b"h/p/applied",
-        b"h/r/\x01/field/cid",
-        b"h/rc/1/cid",
-        b"s/d/p/doc",
-        b"a/zanzibar/owner",
-        b"d/del/doc",
-    ] {
-        let mut first = store.new_txn(false).await.unwrap();
-        let mut second = store.new_txn(false).await.unwrap();
-        for txn in [&mut first, &mut second] {
-            assert!(txn.get(key).await.unwrap().is_none());
-            txn.set(key, b"present").await.unwrap();
+#[test]
+fn ordinary_decision_keys_have_one_winner() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        for key in [
+            b"bm\x01\x55\x00\x03abc".as_slice(),
+            b"h/p/applied",
+            b"h/r/\x01/field/cid",
+            b"h/rc/1/cid",
+            b"s/d/p/doc",
+            b"a/zanzibar/owner",
+            b"d/del/doc",
+        ] {
+            let mut first = store.new_txn(false).await.unwrap();
+            let mut second = store.new_txn(false).await.unwrap();
+            for txn in [&mut first, &mut second] {
+                assert!(txn.get(key).await.unwrap().is_none());
+                txn.set(key, b"present").await.unwrap();
+            }
+            first.commit().await.unwrap();
+            assert!(
+                matches!(second.commit().await, Err(Error::TxnConflictDetails(_))),
+                "{key:?}"
+            );
         }
-        first.commit().await.unwrap();
-        assert!(
-            matches!(second.commit().await, Err(Error::TxnConflictDetails(_))),
-            "{key:?}"
-        );
-    }
+    })
+    .unwrap()
 }
 
 /// A block's key names its bytes: two different values under one key are
 /// refused, not merged.
-#[tokio::test]
-async fn concurrent_different_block_bytes_are_rejected() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut first = store.new_txn(false).await.unwrap();
-    let mut second = store.new_txn(false).await.unwrap();
-    first.set(b"b\x01\x55\x00\x03abc", b"first").await.unwrap();
-    second
-        .set(b"b\x01\x55\x00\x03abc", b"second")
-        .await
-        .unwrap();
-    first.commit().await.unwrap();
-    assert!(matches!(second.commit().await, Err(Error::Backend(_))));
-    let read = store.new_txn(true).await.unwrap();
-    assert_eq!(
-        read.get(b"b\x01\x55\x00\x03abc").await.unwrap().as_deref(),
-        Some(b"first".as_slice())
-    );
+#[test]
+fn concurrent_different_block_bytes_are_rejected() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut first = store.new_txn(false).await.unwrap();
+        let mut second = store.new_txn(false).await.unwrap();
+        first.set(b"b\x01\x55\x00\x03abc", b"first").await.unwrap();
+        second
+            .set(b"b\x01\x55\x00\x03abc", b"second")
+            .await
+            .unwrap();
+        first.commit().await.unwrap();
+        assert!(matches!(second.commit().await, Err(Error::Backend(_))));
+        let read = store.new_txn(true).await.unwrap();
+        assert_eq!(
+            read.get(b"b\x01\x55\x00\x03abc").await.unwrap().as_deref(),
+            Some(b"first".as_slice())
+        );
+    })
+    .unwrap()
 }
 
 /// A decision taken on a block being present conflicts with its deletion.
-#[tokio::test]
-async fn deleting_a_block_invalidates_a_presence_decision() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut seed = store.new_txn(false).await.unwrap();
-    seed.set(b"b\x01\x55\x00\x03abc", b"block").await.unwrap();
-    seed.commit().await.unwrap();
-    let mut reader = store.new_txn(false).await.unwrap();
-    assert!(reader.get(b"b\x01\x55\x00\x03abc").await.unwrap().is_some());
-    reader.set(b"decision", b"block exists").await.unwrap();
-    let mut delete = store.new_txn(false).await.unwrap();
-    delete.delete(b"b\x01\x55\x00\x03abc").await.unwrap();
-    delete.commit().await.unwrap();
-    assert!(matches!(
-        reader.commit().await,
-        Err(Error::TxnConflictDetails(_))
-    ));
+#[test]
+fn deleting_a_block_invalidates_a_presence_decision() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut seed = store.new_txn(false).await.unwrap();
+        seed.set(b"b\x01\x55\x00\x03abc", b"block").await.unwrap();
+        seed.commit().await.unwrap();
+        let mut reader = store.new_txn(false).await.unwrap();
+        assert!(reader.get(b"b\x01\x55\x00\x03abc").await.unwrap().is_some());
+        reader.set(b"decision", b"block exists").await.unwrap();
+        let mut delete = store.new_txn(false).await.unwrap();
+        delete.delete(b"b\x01\x55\x00\x03abc").await.unwrap();
+        delete.commit().await.unwrap();
+        assert!(matches!(
+            reader.commit().await,
+            Err(Error::TxnConflictDetails(_))
+        ));
+    })
+    .unwrap()
 }
