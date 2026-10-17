@@ -57,7 +57,6 @@ wasmtime = { version = "49.0.2", optional = true, default-features = false, feat
 ] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true
