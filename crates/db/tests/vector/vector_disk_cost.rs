@@ -18,6 +18,7 @@
 //! Pass 0 of a query process is cold, and for resident codes it includes
 //! loading them; later passes are warm. `EFFORT` is the engine's own knob: `L`
 //! for DiskANN, `ef` for HNSW, probes for IVF-PQ; unset takes its default.
+//! `THREADS=8` then measures warm queries per second with 8 searches in flight.
 //!
 //! The corpus is synthetic and clustered unless `CORPUS_DIR` holds `base.f32`
 //! and `queries.f32` (little-endian, `DIMS` floats per vector, as
@@ -57,9 +58,6 @@ type Aux = Vec<(u8, Vec<u8>, Vec<u8>)>;
 
 fn params(resident_codes: bool) -> DiskAnnParams {
     DiskAnnParams {
-        r: 64,
-        l_build: 64,
-        l_search: 100,
         resident_codes,
         ..Default::default()
     }
@@ -338,6 +336,38 @@ fn rss() -> String {
     format!("current={}MiB", kib >> 10)
 }
 
+/// Builds `engine`'s index over `txn` as `$e` and evaluates `$body` with it;
+/// `codes` is the resident-codes cache every search on the store shares.
+macro_rules! with_engine {
+    ($engine:expr, $txn:expr, $codes:expr, $e:ident => $body:expr) => {
+        match $engine {
+            "diskann" => {
+                let kv = KvNodeStore::new($txn, COLLECTION, RECORDS, 0);
+                let $e = DiskAnn::try_new(kv, Metric::Cosine, params(false), 7).unwrap();
+                $body
+            }
+            "resident" => {
+                let kv = KvNodeStore::new($txn, COLLECTION, RESIDENT, 0);
+                let $e = DiskAnn::try_new(kv, Metric::Cosine, params(true), 7)
+                    .unwrap()
+                    .with_codes($codes.clone());
+                $body
+            }
+            "hnsw" => {
+                let kv = KvNodeStore::new($txn, COLLECTION, HNSW, 0);
+                let $e = Hnsw::new(kv, Metric::Cosine, Params::new(DEFAULT_M), 7);
+                $body
+            }
+            "ivfpq" => {
+                let kv = KvNodeStore::new($txn, COLLECTION, IVFPQ, 0);
+                let $e = IvfPq::try_new(kv, Metric::Cosine, IvfPqParams::default(), 7).unwrap();
+                $body
+            }
+            other => panic!("unknown engine {other}"),
+        }
+    };
+}
+
 struct Run {
     label: String,
     effort: Option<usize>,
@@ -385,6 +415,43 @@ impl Run {
         }
         eprintln!("RSS {} {}", self.label, rss());
     }
+
+    /// Queries per second with `threads` searches in flight, each thread on
+    /// its own read transaction and runtime, after the latency passes.
+    fn throughput(
+        &self,
+        store: &RegolithStore,
+        engine: &str,
+        codes: &Arc<CodeCache>,
+        threads: usize,
+    ) {
+        let start = Instant::now();
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .unwrap();
+                    runtime.block_on(async {
+                        let mut txn = store.new_txn(true).await.unwrap();
+                        with_engine!(engine, &mut txn, codes, e => {
+                            for query in &self.queries {
+                                e.search(query.as_slice(), K, self.effort).await.unwrap();
+                            }
+                        });
+                        txn.discard();
+                    });
+                });
+            }
+        });
+        let qps = (threads * self.queries.len()) as f64 / start.elapsed().as_secs_f64();
+        eprintln!(
+            "QPS {} effort={} threads={threads}: {qps:.0}",
+            self.label,
+            self.effort
+                .map_or_else(|| "default".to_string(), |e| e.to_string()),
+        );
+    }
 }
 
 async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, passes: usize) {
@@ -415,33 +482,14 @@ async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, p
     };
     options.engine = options.engine.statistics(Some(stats));
     let store = RegolithStore::open_with_options(dir.join("db"), options).unwrap();
+    let codes = Arc::new(CodeCache::default());
     let mut txn = store.new_txn(true).await.unwrap();
-    match engine {
-        "diskann" => {
-            let kv = KvNodeStore::new(&mut txn, COLLECTION, RECORDS, 0);
-            let e = DiskAnn::try_new(kv, Metric::Cosine, params(false), 7).unwrap();
-            run.measure(&e).await;
-        }
-        "resident" => {
-            let kv = KvNodeStore::new(&mut txn, COLLECTION, RESIDENT, 0);
-            let e = DiskAnn::try_new(kv, Metric::Cosine, params(true), 7)
-                .unwrap()
-                .with_codes(Arc::new(CodeCache::default()));
-            run.measure(&e).await;
-        }
-        "hnsw" => {
-            let kv = KvNodeStore::new(&mut txn, COLLECTION, HNSW, 0);
-            let e = Hnsw::new(kv, Metric::Cosine, Params::new(DEFAULT_M), 7);
-            run.measure(&e).await;
-        }
-        "ivfpq" => {
-            let kv = KvNodeStore::new(&mut txn, COLLECTION, IVFPQ, 0);
-            let e = IvfPq::try_new(kv, Metric::Cosine, IvfPqParams::default(), 7).unwrap();
-            run.measure(&e).await;
-        }
-        other => panic!("unknown engine {other}"),
-    }
+    with_engine!(engine, &mut txn, codes, e => run.measure(&e).await);
     txn.discard();
+    let threads: usize = env("THREADS", "0").parse().unwrap();
+    if threads > 0 {
+        run.throughput(&store, engine, &codes, threads);
+    }
     store.close().await.ok();
 }
 
