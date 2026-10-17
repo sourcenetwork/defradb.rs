@@ -327,6 +327,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral, Contract],
     },
     Property {
+        // The light client checks an answer at the newest root it has
+        // authenticated, and refuses one that a block finalized during the
+        // round trip overtook. The vera provider asks such a read again, at
+        // most ATTEMPTS times: the refusal reaches a caller only after a block
+        // overtook every ask, and a stale answer is never accepted.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook is asked again, bounded, never accepted stale",
+        axis: Tla,
+        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, ATTEMPTS; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; acp-light-client HeaderChain::accept_response",
+        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,
