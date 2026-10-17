@@ -54,8 +54,9 @@ async fn create_get_id(node: &EmbeddedNode, coll: &str) -> Result<String> {
 
 /// Set a DateTime field, then update a *different* field. The second update is
 /// where obs-mcp fails. EXPECTED TO FAIL on unfixed defradb.rs.
-#[tokio::test(flavor = "current_thread")]
-async fn datetime_update_revalidation_noindex() -> Result<()> {
+#[test]
+fn datetime_update_revalidation_noindex() -> Result<()> {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await?;
     node.add_schema(SDL_NOINDEX).await?;
     let id = create_get_id(&node, "Probe").await?;
@@ -82,12 +83,15 @@ async fn datetime_update_revalidation_noindex() -> Result<()> {
         r2.errors
     );
     Ok(())
+})
+    .unwrap()
 }
 
 /// Same scenario but the DateTime field is indexed (coding-store's
 /// CodingSession.created_at pattern). Confirms whether @index is the difference.
-#[tokio::test(flavor = "current_thread")]
-async fn datetime_update_revalidation_indexed() -> Result<()> {
+#[test]
+fn datetime_update_revalidation_indexed() -> Result<()> {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await?;
     node.add_schema(SDL_INDEXED).await?;
     let id = create_get_id(&node, "ProbeIdx").await?;
@@ -112,4 +116,6 @@ async fn datetime_update_revalidation_indexed() -> Result<()> {
         r2.errors
     );
     Ok(())
+})
+    .unwrap()
 }

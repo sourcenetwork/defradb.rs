@@ -8,7 +8,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use crate::outcome::Result;
 use embedded::{EmbeddedNode, EmbeddedStore, IrohConfig};
 use serde_json::Value as JsonValue;
-use tokio::time::{sleep, Duration, Instant};
+use std::time::{Duration, Instant};
 
 pub type Node = EmbeddedNode<EmbeddedStore>;
 
@@ -159,4 +159,8 @@ pub async fn wait_for_docs(node: &Node, collection: &str, expected: &[&str]) -> 
         }
         sleep(Duration::from_millis(200)).await;
     }
+}
+
+async fn sleep(duration: Duration) {
+    edge::testing::edge().sleep(duration).await;
 }

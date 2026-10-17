@@ -20,7 +20,7 @@ use embedded::{AccessHooks, EmbeddedNode, EmbeddedStore, IrohConfig, NodeBuilder
 use outcome::Result;
 use query::access_hooks::{ReadRequest, ReadValidator, WriteRequest, WriteValidator};
 use serde_json::Value as JsonValue;
-use tokio::time::{sleep, Duration, Instant};
+use std::time::{Duration, Instant};
 
 const SDL: &str =
     "type Grant { writer: String label: String } type Note { grant: String body: String }";
@@ -95,140 +95,156 @@ impl WriteValidator for RefuseEmptyBodies {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result<()> {
-    let author = NodeBuilder::default()
-        .with_iroh(iroh_config())
-        .enable_signing()
-        .build()
-        .await?;
-    let receiver = NodeBuilder::default()
-        .with_iroh(iroh_config())
-        .with_access_hooks(
-            AccessHooks::new(["Note"]).with_merge_validator(Arc::new(GrantValidator)),
-        )
-        .build()
-        .await?;
-    author.add_schema(SDL).await?;
-    receiver.add_schema(SDL).await?;
-    let writer = author
-        .node_identity_did
-        .clone()
-        .expect("author has a signing identity");
-    defra_core::signing::set_signing_config(defra_core::signing::get_identity(&writer));
+#[test]
+fn merge_validator_accepts_rejects_and_defers_replicated_notes() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let author = NodeBuilder::default()
+                .with_iroh(iroh_config())
+                .enable_signing()
+                .build()
+                .await?;
+            let receiver = NodeBuilder::default()
+                .with_iroh(iroh_config())
+                .with_access_hooks(
+                    AccessHooks::new(["Note"]).with_merge_validator(Arc::new(GrantValidator)),
+                )
+                .build()
+                .await?;
+            author.add_schema(SDL).await?;
+            receiver.add_schema(SDL).await?;
+            let writer = author
+                .node_identity_did
+                .clone()
+                .expect("author has a signing identity");
+            defra_core::signing::set_signing_config(defra_core::signing::get_identity(&writer));
 
-    let (held_grant, held_grant_cid) = create(
-        &author,
-        "Grant",
-        &format!(r#"writer: "{writer}", label: "held""#),
-    )
-    .await?;
-    let (late_grant, late_grant_cid) = create(
-        &author,
-        "Grant",
-        &format!(r#"writer: "{writer}", label: "late""#),
-    )
-    .await?;
-    let (accepted, _) = create(
-        &author,
-        "Note",
-        &format!(r#"grant: "{held_grant_cid}", body: "ok""#),
-    )
-    .await?;
-    let (rejected, _) = create(&author, "Note", r#"grant: "nothing", body: "no grant""#).await?;
-    let (deferred, _) = create(
-        &author,
-        "Note",
-        &format!(r#"grant: "{late_grant_cid}", body: "later""#),
-    )
-    .await?;
+            let (held_grant, held_grant_cid) = create(
+                &author,
+                "Grant",
+                &format!(r#"writer: "{writer}", label: "held""#),
+            )
+            .await?;
+            let (late_grant, late_grant_cid) = create(
+                &author,
+                "Grant",
+                &format!(r#"writer: "{writer}", label: "late""#),
+            )
+            .await?;
+            let (accepted, _) = create(
+                &author,
+                "Note",
+                &format!(r#"grant: "{held_grant_cid}", body: "ok""#),
+            )
+            .await?;
+            let (rejected, _) =
+                create(&author, "Note", r#"grant: "nothing", body: "no grant""#).await?;
+            let (deferred, _) = create(
+                &author,
+                "Note",
+                &format!(r#"grant: "{late_grant_cid}", body: "later""#),
+            )
+            .await?;
 
-    connect(&receiver, &author).await?;
-    sync(&receiver, "Grant", vec![held_grant]).await?;
-    sync(
-        &receiver,
-        "Note",
-        vec![accepted.clone(), rejected.clone(), deferred.clone()],
-    )
-    .await?;
+            connect(&receiver, &author).await?;
+            sync(&receiver, "Grant", vec![held_grant]).await?;
+            sync(
+                &receiver,
+                "Note",
+                vec![accepted.clone(), rejected.clone(), deferred.clone()],
+            )
+            .await?;
 
-    wait_for_notes(&receiver, &[accepted.as_str()]).await?;
-    sleep(Duration::from_secs(1)).await;
-    assert_eq!(note_ids(&receiver).await?, vec![accepted.clone()]);
+            wait_for_notes(&receiver, &[accepted.as_str()]).await?;
+            sleep(Duration::from_secs(1)).await;
+            assert_eq!(note_ids(&receiver).await?, vec![accepted.clone()]);
 
-    sync(&receiver, "Grant", vec![late_grant]).await?;
-    wait_for_notes(&receiver, &[accepted.as_str(), deferred.as_str()]).await?;
-    assert!(!note_ids(&receiver).await?.contains(&rejected));
+            sync(&receiver, "Grant", vec![late_grant]).await?;
+            wait_for_notes(&receiver, &[accepted.as_str(), deferred.as_str()]).await?;
+            assert!(!note_ids(&receiver).await?.contains(&rejected));
 
-    author.shutdown().await;
-    receiver.shutdown().await;
-    Ok(())
+            author.shutdown().await;
+            receiver.shutdown().await;
+            Ok(())
+        })
+        .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn read_and_write_validators_narrow_local_clients() -> Result<()> {
-    let node = NodeBuilder::default()
-        .with_iroh(iroh_config())
-        .with_access_hooks(
-            AccessHooks::new(Vec::<String>::new())
-                .with_read_validator(Arc::new(HideDrafts))
-                .with_write_validator(Arc::new(RefuseEmptyBodies)),
-        )
-        .build()
-        .await?;
-    node.add_schema(SDL).await?;
+#[test]
+fn read_and_write_validators_narrow_local_clients() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let node = NodeBuilder::default()
+                .with_iroh(iroh_config())
+                .with_access_hooks(
+                    AccessHooks::new(Vec::<String>::new())
+                        .with_read_validator(Arc::new(HideDrafts))
+                        .with_write_validator(Arc::new(RefuseEmptyBodies)),
+                )
+                .build()
+                .await?;
+            node.add_schema(SDL).await?;
 
-    let refused = node
-        .execute(r#"mutation { add_Note(input: {body: ""}) { _docID } }"#)
-        .await;
-    assert!(
-        format!("{:?}", refused.errors).contains("a note needs a body"),
-        "{:?}",
-        refused.errors
-    );
+            let refused = node
+                .execute(r#"mutation { add_Note(input: {body: ""}) { _docID } }"#)
+                .await;
+            assert!(
+                format!("{:?}", refused.errors).contains("a note needs a body"),
+                "{:?}",
+                refused.errors
+            );
 
-    create(&node, "Note", r#"body: "kept""#).await?;
-    let anonymous = node.execute("query { Note { _docID } }").await;
-    assert_eq!(
-        anonymous.data.as_ref().and_then(|data| data.get("Note")),
-        Some(&serde_json::json!([]))
-    );
-    let reader = identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")?;
-    let identified = node
-        .query_runner
-        .execute(query::QueryRequest::new("query { Note { body } }").with_identity(Some(reader)))
-        .await;
-    assert_eq!(
-        identified.data.as_ref().and_then(|data| data.get("Note")),
-        Some(&serde_json::json!([{ "body": "kept" }]))
-    );
-    let commits = node.execute("query { _commits { cid docID } }").await;
-    let visible = commits
-        .data
-        .as_ref()
-        .and_then(|data| data.get("_commits"))
-        .and_then(JsonValue::as_array)
-        .expect("commits result");
-    assert!(visible
-        .iter()
-        .all(
-            |commit| commit.get("docID").and_then(JsonValue::as_str) == Some("")
-                || commit.get("docID").is_none()
-        ));
+            create(&node, "Note", r#"body: "kept""#).await?;
+            let anonymous = node.execute("query { Note { _docID } }").await;
+            assert_eq!(
+                anonymous.data.as_ref().and_then(|data| data.get("Note")),
+                Some(&serde_json::json!([]))
+            );
+            let reader =
+                identity::Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")?;
+            let identified = node
+                .query_runner
+                .execute(
+                    query::QueryRequest::new("query { Note { body } }").with_identity(Some(reader)),
+                )
+                .await;
+            assert_eq!(
+                identified.data.as_ref().and_then(|data| data.get("Note")),
+                Some(&serde_json::json!([{ "body": "kept" }]))
+            );
+            let commits = node.execute("query { _commits { cid docID } }").await;
+            let visible = commits
+                .data
+                .as_ref()
+                .and_then(|data| data.get("_commits"))
+                .and_then(JsonValue::as_array)
+                .expect("commits result");
+            assert!(visible
+                .iter()
+                .all(
+                    |commit| commit.get("docID").and_then(JsonValue::as_str) == Some("")
+                        || commit.get("docID").is_none()
+                ));
 
-    node.shutdown().await;
-    Ok(())
+            node.shutdown().await;
+            Ok(())
+        })
+        .unwrap()
 }
 
-#[tokio::test]
-async fn access_hooks_require_iroh() {
-    let error = NodeBuilder::default()
-        .with_access_hooks(AccessHooks::new(["Note"]))
-        .build()
-        .await
-        .err()
-        .expect("a node without iroh refuses access hooks");
-    assert!(error.to_string().contains("iroh"), "{error}");
+#[test]
+fn access_hooks_require_iroh() {
+    edge::testing::edge()
+        .block_on(async {
+            let error = NodeBuilder::default()
+                .with_access_hooks(AccessHooks::new(["Note"]))
+                .build()
+                .await
+                .err()
+                .expect("a node without iroh refuses access hooks");
+            assert!(error.to_string().contains("iroh"), "{error}");
+        })
+        .unwrap()
 }
 
 fn iroh_config() -> IrohConfig {
@@ -345,4 +361,8 @@ async fn wait_for_notes(node: &Node, expected: &[&str]) -> Result<()> {
         }
         sleep(Duration::from_millis(200)).await;
     }
+}
+
+async fn sleep(duration: Duration) {
+    edge::testing::edge().sleep(duration).await;
 }

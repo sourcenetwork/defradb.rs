@@ -29,7 +29,7 @@ const DOC_COUNTS: &[usize] = &[1, 50, 500];
 /// History depths [`bench_catch_up_by_history_depth`] is run against.
 ///
 /// A depth of one thousand cannot currently be measured: catching up on a DAG that deep
-/// overflows the stack of a tokio worker thread and aborts the process, which points at an
+/// overflows the stack of a runtime thread and aborts the process, which points at an
 /// unbounded recursive walk somewhere in the fetch-and-merge path. This should be extended
 /// once that walk is bounded or made iterative.
 const CATCH_UP_DEPTHS: &[usize] = &[10, 100, 500];
@@ -133,7 +133,7 @@ async fn listen_addr(node: &EmbeddedNode) -> String {
             Instant::now() < deadline,
             "node never exposed a P2P listen address"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -153,7 +153,7 @@ async fn await_connected_peer(node: &EmbeddedNode) {
             Instant::now() < deadline,
             "node never reported a connected peer"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -268,7 +268,7 @@ async fn await_user_count(node: &EmbeddedNode, expected: usize) {
             Instant::now() < deadline,
             "receiving node reached only {count} of {expected} documents within {CONVERGENCE_TIMEOUT:?}"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -347,14 +347,18 @@ fn report(doc_count: usize, spans: &ReplicationSpans) {
 
 /// Measures write-to-remote-visible latency and replication throughput for the live push
 /// path, across [`DOC_COUNTS`].
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "benchmark: spins up two networked nodes per document count"]
-async fn bench_two_node_push_replication() {
-    println!("two-node push replication (poll resolution {POLL_INTERVAL:?})");
-    for &doc_count in DOC_COUNTS {
-        let spans = measure_replication(doc_count).await;
-        report(doc_count, &spans);
-    }
+fn bench_two_node_push_replication() {
+    edge::testing::edge()
+        .block_on(async {
+            println!("two-node push replication (poll resolution {POLL_INTERVAL:?})");
+            for &doc_count in DOC_COUNTS {
+                let spans = measure_replication(doc_count).await;
+                report(doc_count, &spans);
+            }
+        })
+        .unwrap()
 }
 
 /// Measures how long a receiving node takes to catch up on a document whose history was
@@ -365,15 +369,21 @@ async fn bench_two_node_push_replication() {
 /// receiving node starting to connect through to it reading the final value, and so
 /// includes connection establishment - unlike the push benchmark, that setup is part of
 /// what a late-joining node has to pay.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "benchmark: spins up two networked nodes per history depth"]
-async fn bench_catch_up_by_history_depth() {
-    println!("catch-up by history depth (poll resolution {POLL_INTERVAL:?})");
-    for &depth in CATCH_UP_DEPTHS {
-        let latency = measure_catch_up(depth).await;
-        let updates_per_sec = depth as f64 / latency.as_secs_f64();
-        println!("updates={depth:<5} catch_up={latency:>9.2?}  {updates_per_sec:>9.1} updates/s");
-    }
+fn bench_catch_up_by_history_depth() {
+    edge::testing::edge()
+        .block_on(async {
+            println!("catch-up by history depth (poll resolution {POLL_INTERVAL:?})");
+            for &depth in CATCH_UP_DEPTHS {
+                let latency = measure_catch_up(depth).await;
+                let updates_per_sec = depth as f64 / latency.as_secs_f64();
+                println!(
+                    "updates={depth:<5} catch_up={latency:>9.2?}  {updates_per_sec:>9.1} updates/s"
+                );
+            }
+        })
+        .unwrap()
 }
 
 /// Returns the time taken for a receiving node to converge on a document that already has
@@ -448,7 +458,7 @@ async fn await_user_age(node: &EmbeddedNode, expected: i64) {
             Instant::now() < deadline,
             "receiving node reached age {age:?} rather than {expected} within {CONVERGENCE_TIMEOUT:?}"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -522,7 +532,7 @@ async fn measure_pull(doc_count: usize) -> PullOutcome {
     let settle_deadline = Instant::now() + PULL_SETTLE_WINDOW;
     let mut settled = arrived;
     while settled < doc_count && Instant::now() < settle_deadline {
-        tokio::time::sleep(POLL_INTERVAL).await;
+        edge::testing::edge().sleep(POLL_INTERVAL).await;
         settled = user_count(&receiver).await;
     }
 
@@ -543,9 +553,10 @@ async fn measure_pull(doc_count: usize) -> PullOutcome {
 /// Iroh implementation ends in an unconditional `Ok(())` once its timeouts expire, so the
 /// document count on the receiving node - not the return value - is what says whether the
 /// pull worked.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "benchmark: spins up two networked nodes per document count"]
-async fn bench_pull_by_document_count() {
+fn bench_pull_by_document_count() {
+    edge::testing::edge().block_on(async {
     println!("document pull via sync_documents (poll resolution {POLL_INTERVAL:?})");
     for &doc_count in PULL_DOC_COUNTS {
         let outcome = measure_pull(doc_count).await;
@@ -561,4 +572,6 @@ async fn bench_pull_by_document_count() {
             outcome.call, outcome.arrived, outcome.settled
         );
     }
+})
+    .unwrap()
 }

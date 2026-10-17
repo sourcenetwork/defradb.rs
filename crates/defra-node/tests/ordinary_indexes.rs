@@ -1,8 +1,9 @@
 use defra_node::EmbeddedNode;
 use schema::IndexedFieldDescription;
 
-#[tokio::test]
-async fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
+#[test]
+fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema("type IndexedNote { node: String @index session: String @index text: String }")
         .await
@@ -22,7 +23,7 @@ async fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
         .ensure_ordinary_index("IndexedNote", "node_session", fields.clone())
         .await
         .unwrap();
-    let (left, right) = tokio::join!(
+    let (left, right) = futures::join!(
         node.ensure_ordinary_index("IndexedNote", "node_session", fields.clone()),
         node.ensure_ordinary_index("IndexedNote", "node_session", fields),
     );
@@ -60,4 +61,6 @@ async fn reconcile_indexes_preserves_documents_and_uses_completed_composite() {
     assert!(!explain.has_errors(), "{:?}", explain.errors);
     assert!(explain.data.unwrap().to_string().contains("node_session"));
     node.shutdown().await;
+})
+    .unwrap()
 }

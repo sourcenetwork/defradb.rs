@@ -59,29 +59,30 @@ fn warning_capture_subscriber(
         .finish()
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn embedded_upsert_does_not_warn_when_discarding_get_for_update_txn() -> Result<()> {
-    let log_buffer = SharedLogBuffer::default();
-    let subscriber = warning_capture_subscriber(&log_buffer);
-    let _guard = tracing::subscriber::set_default(subscriber);
+#[test]
+fn embedded_upsert_does_not_warn_when_discarding_get_for_update_txn() -> Result<()> {
+    workers::block_on(async {
+        let log_buffer = SharedLogBuffer::default();
+        let subscriber = warning_capture_subscriber(&log_buffer);
+        let _guard = tracing::subscriber::set_default(subscriber);
 
-    let node = EmbeddedNode::builder().build().await?;
-    node.add_schema(USER_SDL).await?;
+        let node = EmbeddedNode::builder().build().await?;
+        node.add_schema(USER_SDL).await?;
 
-    let inserted = node
-        .execute(
-            r#"mutation {
+        let inserted = node
+            .execute(
+                r#"mutation {
                 add_User(input: {name: "Alice", age: 30}) {
                     _docID
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&inserted, "insert user")?;
+            )
+            .await;
+        ensure_success(&inserted, "insert user")?;
 
-    let upserted = node
-        .execute(
-            r#"mutation {
+        let upserted = node
+            .execute(
+                r#"mutation {
                 upsert_User(
                     filter: {name: {_eq: "Alice"}}
                     add: {name: "Alice", age: 31}
@@ -91,28 +92,30 @@ async fn embedded_upsert_does_not_warn_when_discarding_get_for_update_txn() -> R
                     age
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&upserted, "upsert existing user")?;
+            )
+            .await;
+        ensure_success(&upserted, "upsert existing user")?;
 
-    let age = upserted
-        .data
-        .as_ref()
-        .and_then(|data| data.get("upsert_User"))
-        .and_then(|rows| rows.as_array())
-        .and_then(|rows| rows.first())
-        .and_then(|row| row.get("age"))
-        .and_then(|age| age.as_i64())
-        .expect("upsert result missing age");
-    assert_eq!(age, 31);
+        let age = upserted
+            .data
+            .as_ref()
+            .and_then(|data| data.get("upsert_User"))
+            .and_then(|rows| rows.as_array())
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("age"))
+            .and_then(|age| age.as_i64())
+            .expect("upsert result missing age");
+        assert_eq!(age, 31);
 
-    let logs = log_buffer.contents();
-    assert!(
-        !logs.contains("Failed to discard read-only transaction after get_for_update"),
-        "unexpected get_for_update discard warning: {logs}"
-    );
+        let logs = log_buffer.contents();
+        assert!(
+            !logs.contains("Failed to discard read-only transaction after get_for_update"),
+            "unexpected get_for_update discard warning: {logs}"
+        );
 
-    Ok(())
+        Ok(())
+    })
+    .unwrap()
 }
 
 fn ensure_success(response: &query::QueryResponse, context: &str) -> Result<()> {
