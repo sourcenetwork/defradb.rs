@@ -11,14 +11,46 @@ use std::sync::Arc;
 use kovan::Atom;
 use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
+use rapidhash::RapidHashMap;
 
 use crate::index::vector::store::NodeId;
 
-pub type Codes = HopscotchMap<NodeId, Vec<u8>, RandomState>;
+/// Codes loaded in one pass, back to back in one array with an index of where
+/// each starts. A concurrent map holding each code as its own allocation cost
+/// about six times the codes themselves at 1M vectors.
+#[derive(Debug, Default)]
+pub struct Codes {
+    index: RapidHashMap<NodeId, u32>,
+    bytes: Vec<u8>,
+    len: usize,
+}
 
-/// A reload swaps the whole [`Loaded`] in one step, and misses fill the
-/// current map in place. A fill that races a reload can land in the map the
-/// reload just replaced; that code is read again on its next miss.
+impl Codes {
+    /// Every code of one index has the same length, set by the first.
+    pub fn insert(&mut self, id: NodeId, code: &[u8]) {
+        if self.index.is_empty() {
+            self.len = code.len();
+        }
+        debug_assert_eq!(code.len(), self.len);
+        self.index
+            .insert(id, (self.bytes.len() / self.len.max(1)) as u32);
+        self.bytes.extend_from_slice(code);
+    }
+
+    fn get(&self, id: NodeId) -> Option<&[u8]> {
+        let slot = *self.index.get(&id)? as usize;
+        Some(&self.bytes[slot * self.len..][..self.len])
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.index.shrink_to_fit();
+        self.bytes.shrink_to_fit();
+    }
+}
+
+/// A reload swaps the whole [`Loaded`] in one step, and misses fill a small
+/// map beside the loaded codes. A fill that races a reload can land in the
+/// map the reload just replaced; that code is read again on its next miss.
 #[derive(Debug, Default)]
 pub struct CodeCache {
     loaded: Atom<Arc<Loaded>>,
@@ -29,15 +61,20 @@ struct Loaded {
     /// The graph generation the codes were loaded at; `None` until loaded.
     generation: Option<u64>,
     codes: Codes,
+    misses: HopscotchMap<NodeId, Vec<u8>, RandomState>,
 }
 
 impl CodeCache {
     pub fn get(&self, id: NodeId) -> Option<Vec<u8>> {
-        self.loaded.load().codes.get(&id)
+        let loaded = self.loaded.load();
+        match loaded.codes.get(id) {
+            Some(code) => Some(code.to_vec()),
+            None => loaded.misses.get(&id),
+        }
     }
 
     pub fn insert(&self, id: NodeId, code: Vec<u8>) {
-        self.loaded.load().codes.insert(id, code);
+        self.loaded.load().misses.insert(id, code);
     }
 
     /// Whether the codes are at least as new as `generation`.
@@ -49,10 +86,12 @@ impl CodeCache {
     }
 
     /// Replaces every code, unless a concurrent reload already got further.
-    pub fn replace(&self, generation: u64, codes: Codes) {
+    pub fn replace(&self, generation: u64, mut codes: Codes) {
+        codes.shrink_to_fit();
         let fresh = Arc::new(Loaded {
             generation: Some(generation),
             codes,
+            misses: HopscotchMap::default(),
         });
         self.loaded.rcu(|current| {
             if current.generation.is_none_or(|loaded| loaded < generation) {
@@ -61,6 +100,9 @@ impl CodeCache {
                 current.clone()
             }
         });
+        // The replaced codes are retired to this thread; reclaim them now
+        // rather than holding two copies until the thread retires more.
+        kovan::flush();
     }
 }
 

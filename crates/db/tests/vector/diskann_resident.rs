@@ -87,8 +87,8 @@ async fn the_cache_reloads_after_a_merge() {
 #[test]
 fn an_older_reload_does_not_replace_a_newer_one() {
     let codes = |code: u8| {
-        let codes = Codes::default();
-        codes.insert(NodeId(1), vec![code]);
+        let mut codes = Codes::default();
+        codes.insert(NodeId(1), &[code]);
         codes
     };
     let cache = CodeCache::default();
