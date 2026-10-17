@@ -1363,69 +1363,75 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn truncate_mutation_forwards_filter_and_returns_true() {
-        let collection = CollectionVersion::new(
-            "User",
-            "v1",
-            "coll-user",
-            vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
-        );
-        let truncator = Arc::new(CapturingTruncator::default());
-        let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
-            .with_mutator(Arc::new(CapturingMutator::new()))
-            .with_collection_truncator(truncator.clone());
+    #[test]
+    fn truncate_mutation_forwards_filter_and_returns_true() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new(
+                "User",
+                "v1",
+                "coll-user",
+                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            );
+            let truncator = Arc::new(CapturingTruncator::default());
+            let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
+                .with_mutator(Arc::new(CapturingMutator::new()))
+                .with_collection_truncator(truncator.clone());
 
-        let result = runner
-            .execute_mutation(r#"mutation { truncate_User(filter: {_docID: {_eq: "bae-1"}}) }"#)
-            .await
-            .unwrap();
+            let result = runner
+                .execute_mutation(r#"mutation { truncate_User(filter: {_docID: {_eq: "bae-1"}}) }"#)
+                .await
+                .unwrap();
 
-        assert_eq!(result, serde_json::json!({"truncate_User": true}));
-        let calls = drain(&truncator.calls);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "User");
-        assert!(calls[0].1);
+            assert_eq!(result, serde_json::json!({"truncate_User": true}));
+            let calls = drain(&truncator.calls);
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].0, "User");
+            assert!(calls[0].1);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn filtered_truncate_rejects_transactions_and_sibling_mutations() {
-        let collection = CollectionVersion::new(
-            "User",
-            "v1",
-            "coll-user",
-            vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
-        );
-        let mutator = Arc::new(CapturingMutator::new());
-        let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
-            .with_mutator(mutator.clone())
-            .with_collection_truncator(Arc::new(CapturingTruncator::default()));
+    #[test]
+    fn filtered_truncate_rejects_transactions_and_sibling_mutations() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new(
+                "User",
+                "v1",
+                "coll-user",
+                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            );
+            let mutator = Arc::new(CapturingMutator::new());
+            let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
+                .with_mutator(mutator.clone())
+                .with_collection_truncator(Arc::new(CapturingTruncator::default()));
 
-        let mixed = runner
-            .execute_mutation(
-                r#"mutation {
+            let mixed = runner
+                .execute_mutation(
+                    r#"mutation {
                     truncate_User
                     delete_User { _docID }
                 }"#,
-            )
-            .await
-            .unwrap_err();
-        assert!(mixed.to_string().contains("only field in an operation"));
+                )
+                .await
+                .unwrap_err();
+            assert!(mixed.to_string().contains("only field in an operation"));
 
-        let mutations = crate::parse_mutations(r#"mutation { truncate_User }"#).unwrap();
-        let transaction = runner
-            .execute_parsed_mutations(
-                mutations,
-                mutator,
-                None,
-                Some(Arc::new(MockFetcher::new())),
-                None,
-            )
-            .await
-            .unwrap_err();
-        assert!(transaction
-            .to_string()
-            .contains("cannot run in a transaction"));
+            let mutations = crate::parse_mutations(r#"mutation { truncate_User }"#).unwrap();
+            let transaction = runner
+                .execute_parsed_mutations(
+                    mutations,
+                    mutator,
+                    None,
+                    Some(Arc::new(MockFetcher::new())),
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert!(transaction
+                .to_string()
+                .contains("cannot run in a transaction"));
+        })
+        .unwrap()
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -1483,8 +1489,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn update_preparation_keeps_custom_hook_and_only_records_found_targets() {
+    #[test]
+    fn update_preparation_keeps_custom_hook_and_only_records_found_targets() {
+        workers::block_on(async {
         let collection = CollectionVersion::new(
             "User",
             "v1",
@@ -1516,41 +1523,47 @@ mod tests {
         assert!(entry.update_targets.contains(&existing_id));
         assert!(!entry.update_targets.contains(missing_id));
         assert_eq!(mutator.prepared_writes.load(Ordering::SeqCst), 1);
+    })
+    .unwrap()
     }
 
-    #[tokio::test]
-    async fn query_executor_mutation_scopes_broadcast_creator_did() {
-        let collection = CollectionVersion::new(
-            "User",
-            "v1",
-            "coll-user",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
-            ],
-        );
-        let mutator = Arc::new(CapturingMutator::new());
-        let runner =
-            QueryRunner::new(MockFetcher::new(), vec![collection]).with_mutator(mutator.clone());
-        let did =
-            identity::Did::new("did:key:z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw").unwrap();
+    #[test]
+    fn query_executor_mutation_scopes_broadcast_creator_did() {
+        workers::block_on(async {
+            let collection = CollectionVersion::new(
+                "User",
+                "v1",
+                "coll-user",
+                vec![
+                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                    FieldDescription::new("2", "name", FieldKind::string()),
+                ],
+            );
+            let mutator = Arc::new(CapturingMutator::new());
+            let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
+                .with_mutator(mutator.clone());
+            let did =
+                identity::Did::new("did:key:z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw")
+                    .unwrap();
 
-        let response = runner
-            .execute(
-                QueryRequest::new(
-                    r#"mutation { add_User(input: [{ name: "Alice" }]) { _docID } }"#,
+            let response = runner
+                .execute(
+                    QueryRequest::new(
+                        r#"mutation { add_User(input: [{ name: "Alice" }]) { _docID } }"#,
+                    )
+                    .with_identity(Some(did.clone())),
                 )
-                .with_identity(Some(did.clone())),
-            )
-            .await;
+                .await;
 
-        assert!(
-            !response.has_errors(),
-            "unexpected errors: {:?}",
-            response.errors
-        );
-        assert_eq!(mutator.broadcast_creators(), vec![Some(did.to_string())]);
-        assert_eq!(defra_core::signing::get_broadcast_creator_did(), None);
+            assert!(
+                !response.has_errors(),
+                "unexpected errors: {:?}",
+                response.errors
+            );
+            assert_eq!(mutator.broadcast_creators(), vec![Some(did.to_string())]);
+            assert_eq!(defra_core::signing::get_broadcast_creator_did(), None);
+        })
+        .unwrap()
     }
 
     // =========================================================================
@@ -1559,7 +1572,7 @@ mod tests {
     // These tests verify that the EncryptionConfigGuard and
     // BroadcastCreatorDidGuard always clear their respective thread-locals
     // on Drop, regardless of how the owning function exits. They are NOT
-    // #[tokio::test] because the entire point is to exercise thread-local
+    // async tests because the entire point is to exercise thread-local
     // semantics on a single thread synchronously.
     // =========================================================================
 
@@ -1621,43 +1634,44 @@ mod tests {
         assert!(defra_core::encryption::get_encryption_config().is_none());
     }
 
-    #[tokio::test]
-    async fn create_mutation_maps_relation_doc_ids_to_fk_fields() {
-        let company_collection = CollectionVersion::new(
-            "Company",
-            "v1",
-            "coll-company",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
-                FieldDescription::new("3", "employees", FieldKind::relation("Employee", true))
-                    .with_relation_name("employee_company"),
-            ],
-        );
+    #[test]
+    fn create_mutation_maps_relation_doc_ids_to_fk_fields() {
+        workers::block_on(async {
+            let company_collection = CollectionVersion::new(
+                "Company",
+                "v1",
+                "coll-company",
+                vec![
+                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                    FieldDescription::new("2", "name", FieldKind::string()),
+                    FieldDescription::new("3", "employees", FieldKind::relation("Employee", true))
+                        .with_relation_name("employee_company"),
+                ],
+            );
 
-        let employee_collection = CollectionVersion::new(
-            "Employee",
-            "v1",
-            "coll-employee",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
-                FieldDescription::new("3", "company", FieldKind::relation("Company", false))
-                    .with_relation_name("employee_company")
-                    .as_primary(),
-                FieldDescription::new("4", "_companyID", FieldKind::doc_id())
-                    .with_relation_name("employee_company")
-                    .as_primary(),
-            ],
-        );
+            let employee_collection = CollectionVersion::new(
+                "Employee",
+                "v1",
+                "coll-employee",
+                vec![
+                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                    FieldDescription::new("2", "name", FieldKind::string()),
+                    FieldDescription::new("3", "company", FieldKind::relation("Company", false))
+                        .with_relation_name("employee_company")
+                        .as_primary(),
+                    FieldDescription::new("4", "_companyID", FieldKind::doc_id())
+                        .with_relation_name("employee_company")
+                        .as_primary(),
+                ],
+            );
 
-        let fetcher = MockFetcher::new();
-        let mutator = Arc::new(CapturingMutator::new());
-        let runner = QueryRunner::new(fetcher, vec![company_collection, employee_collection])
-            .with_mutator(mutator.clone());
+            let fetcher = MockFetcher::new();
+            let mutator = Arc::new(CapturingMutator::new());
+            let runner = QueryRunner::new(fetcher, vec![company_collection, employee_collection])
+                .with_mutator(mutator.clone());
 
-        let request = QueryRequest::new(
-            r#"
+            let request = QueryRequest::new(
+                r#"
             mutation {
                 add_Employee(input: [{
                     name: "PubEmp in PubCompany"
@@ -1667,20 +1681,20 @@ mod tests {
                 }
             }
             "#,
-        );
+            );
 
-        let response = runner.execute(request).await;
-        assert!(
-            response.errors.is_empty(),
-            "unexpected executor errors: {:?}",
-            response.errors
-        );
-        assert!(response.data.is_some());
+            let response = runner.execute(request).await;
+            assert!(
+                response.errors.is_empty(),
+                "unexpected executor errors: {:?}",
+                response.errors
+            );
+            assert!(response.data.is_some());
 
-        // Also exercise the direct mutation path used by internal callers.
-        runner
-            .execute_mutation(
-                r#"
+            // Also exercise the direct mutation path used by internal callers.
+            runner
+                .execute_mutation(
+                    r#"
                 mutation {
                     add_Employee(input: [{
                         name: "PubEmp in PubCompany 2"
@@ -1690,28 +1704,30 @@ mod tests {
                     }
                 }
                 "#,
-            )
-            .await
-            .unwrap();
+                )
+                .await
+                .unwrap();
 
-        let created = mutator.created_docs();
-        assert_eq!(created.len(), 2);
-        let created_doc = &created[0];
-        assert_eq!(
-            created_doc
-                .get("_companyID")
-                .and_then(|value| value.as_str()),
-            Some("bae-7b649bba-3168-5c05-827c-514c0f8d56fd")
-        );
-        assert!(created_doc.get("company").is_none());
+            let created = mutator.created_docs();
+            assert_eq!(created.len(), 2);
+            let created_doc = &created[0];
+            assert_eq!(
+                created_doc
+                    .get("_companyID")
+                    .and_then(|value| value.as_str()),
+                Some("bae-7b649bba-3168-5c05-827c-514c0f8d56fd")
+            );
+            assert!(created_doc.get("company").is_none());
 
-        let created_doc = &created[1];
-        assert_eq!(
-            created_doc
-                .get("_companyID")
-                .and_then(|value| value.as_str()),
-            Some("bae-7b649bba-3168-5c05-827c-514c0f8d56fd")
-        );
-        assert!(created_doc.get("company").is_none());
+            let created_doc = &created[1];
+            assert_eq!(
+                created_doc
+                    .get("_companyID")
+                    .and_then(|value| value.as_str()),
+                Some("bae-7b649bba-3168-5c05-827c-514c0f8d56fd")
+            );
+            assert!(created_doc.get("company").is_none());
+        })
+        .unwrap()
     }
 }

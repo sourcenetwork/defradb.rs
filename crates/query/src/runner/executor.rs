@@ -757,36 +757,39 @@ mod tests {
         doc
     }
 
-    #[tokio::test]
-    async fn execute_uses_implicit_read_txn_when_registry_is_available() {
-        let collections = crate::parse_sdl("type Users { name: String }").expect("schema");
+    #[test]
+    fn execute_uses_implicit_read_txn_when_registry_is_available() {
+        workers::block_on(async {
+            let collections = crate::parse_sdl("type Users { name: String }").expect("schema");
 
-        let txn_fetcher = MockFetcher::new();
-        txn_fetcher.add_doc("Users", make_users_doc("txn-snapshot"));
+            let txn_fetcher = MockFetcher::new();
+            txn_fetcher.add_doc("Users", make_users_doc("txn-snapshot"));
 
-        let runner = QueryRunner::with_registry(
-            ChangingFetcher::new(),
-            collections,
-            MockTxnRegistry::new(txn_fetcher),
-        );
+            let runner = QueryRunner::with_registry(
+                ChangingFetcher::new(),
+                collections,
+                MockTxnRegistry::new(txn_fetcher),
+            );
 
-        let response = runner
-            .execute(QueryRequest::new(
-                "{ first: Users { name } second: Users { name } }",
-            ))
-            .await;
+            let response = runner
+                .execute(QueryRequest::new(
+                    "{ first: Users { name } second: Users { name } }",
+                ))
+                .await;
 
-        assert!(
-            !response.has_errors(),
-            "unexpected errors: {:?}",
-            response.errors
-        );
-        assert_eq!(
-            response.data,
-            Some(json!({
-                "first": [{"name": "txn-snapshot"}],
-                "second": [{"name": "txn-snapshot"}],
-            }))
-        );
+            assert!(
+                !response.has_errors(),
+                "unexpected errors: {:?}",
+                response.errors
+            );
+            assert_eq!(
+                response.data,
+                Some(json!({
+                    "first": [{"name": "txn-snapshot"}],
+                    "second": [{"name": "txn-snapshot"}],
+                }))
+            );
+        })
+        .unwrap()
     }
 }

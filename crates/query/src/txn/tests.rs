@@ -137,151 +137,190 @@ impl crate::QueryExecutor for FailingCommitExecutor {
     }
 }
 
-#[tokio::test]
-async fn test_guard_begin_creates_transaction() {
-    let executor = MockExecutor::new();
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-    assert!(guard.handle().is_some());
-    assert!(guard.handle().unwrap().as_str().starts_with("mock-txn-"));
-    guard.rollback().await.unwrap();
+#[test]
+fn test_guard_begin_creates_transaction() {
+    workers::block_on(async {
+        let executor = MockExecutor::new();
+        let guard = TransactionGuard::begin(&executor, false).await.unwrap();
+        assert!(guard.handle().is_some());
+        assert!(guard.handle().unwrap().as_str().starts_with("mock-txn-"));
+        guard.rollback().await.unwrap();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_guard_execute_runs_in_transaction() {
-    let executor = MockExecutor::new();
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
+#[test]
+fn test_guard_execute_runs_in_transaction() {
+    workers::block_on(async {
+        let executor = MockExecutor::new();
+        let guard = TransactionGuard::begin(&executor, false).await.unwrap();
 
-    let request = crate::QueryRequest::new("{ test }");
-    let response = guard.execute(request).await;
-    assert!(!response.has_errors());
-    let data = response.data.unwrap();
-    assert_eq!(data.get("in_txn").unwrap(), true);
-
-    guard.commit().await.unwrap();
-}
-
-#[tokio::test]
-async fn test_guard_commit_consumes_guard() {
-    let executor = MockExecutor::new();
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-    assert!(!executor.was_committed());
-    guard.commit().await.unwrap();
-    assert!(executor.was_committed());
-    assert!(!executor.was_rolled_back());
-}
-
-#[tokio::test]
-async fn test_guard_rollback_consumes_guard() {
-    let executor = MockExecutor::new();
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-    assert!(!executor.was_rolled_back());
-    guard.rollback().await.unwrap();
-    assert!(executor.was_rolled_back());
-}
-
-#[tokio::test]
-async fn test_guard_multiple_executes_before_commit() {
-    let executor = MockExecutor::new();
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-
-    for _ in 0..3 {
         let request = crate::QueryRequest::new("{ test }");
         let response = guard.execute(request).await;
         assert!(!response.has_errors());
-    }
+        let data = response.data.unwrap();
+        assert_eq!(data.get("in_txn").unwrap(), true);
 
-    guard.commit().await.unwrap();
-    assert!(executor.was_committed());
+        guard.commit().await.unwrap();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_guard_drop_without_finalization_abandons_transaction() {
-    let executor = MockExecutor::new();
-    {
-        let _guard = TransactionGuard::begin(&executor, false).await.unwrap();
-    }
-    assert!(
-        !executor.was_committed(),
-        "Dropping guard should not commit the transaction"
-    );
-    assert!(
-        executor.was_rolled_back(),
-        "Dropping guard must abandon the transaction"
-    );
+#[test]
+fn test_guard_commit_consumes_guard() {
+    workers::block_on(async {
+        let executor = MockExecutor::new();
+        let guard = TransactionGuard::begin(&executor, false).await.unwrap();
+        assert!(!executor.was_committed());
+        guard.commit().await.unwrap();
+        assert!(executor.was_committed());
+        assert!(!executor.was_rolled_back());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_guard_execute_after_commit_returns_error() {
-    let executor = MockExecutor::new();
-    let mut guard = TransactionGuard::begin(&executor, false).await.unwrap();
-    let handle = guard.handle.take();
-    assert!(handle.is_some());
-
-    let request = crate::QueryRequest::new("{ test }");
-    let response = guard.execute(request).await;
-    assert!(response.has_errors());
+#[test]
+fn test_guard_rollback_consumes_guard() {
+    workers::block_on(async {
+        let executor = MockExecutor::new();
+        let guard = TransactionGuard::begin(&executor, false).await.unwrap();
+        assert!(!executor.was_rolled_back());
+        guard.rollback().await.unwrap();
+        assert!(executor.was_rolled_back());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_guard_commit_failure_returns_error_and_consumes_handle() {
-    let executor = FailingCommitExecutor::new();
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-    assert!(guard.handle().is_some());
+#[test]
+fn test_guard_multiple_executes_before_commit() {
+    workers::block_on(async {
+        let executor = MockExecutor::new();
+        let guard = TransactionGuard::begin(&executor, false).await.unwrap();
 
-    let result = guard.commit().await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("simulated storage failure"));
+        for _ in 0..3 {
+            let request = crate::QueryRequest::new("{ test }");
+            let response = guard.execute(request).await;
+            assert!(!response.has_errors());
+        }
+
+        guard.commit().await.unwrap();
+        assert!(executor.was_committed());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_guard_commit_failure_is_retryable() {
-    let executor = FailingCommitExecutor::new();
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-
-    let result = guard.commit().await;
-    assert!(result.is_err());
-
-    let err = result.unwrap_err();
-    assert!(
-        err.is_retryable(),
-        "Storage execution errors should be retryable with a new transaction"
-    );
+#[test]
+fn test_guard_drop_without_finalization_abandons_transaction() {
+    workers::block_on(async {
+        let executor = MockExecutor::new();
+        {
+            let _guard = TransactionGuard::begin(&executor, false).await.unwrap();
+        }
+        assert!(
+            !executor.was_committed(),
+            "Dropping guard should not commit the transaction"
+        );
+        assert!(
+            executor.was_rolled_back(),
+            "Dropping guard must abandon the transaction"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_noop_registry_begin_returns_error() {
-    let registry = NoOpTransactionRegistry;
-    let result = registry.begin(false).await;
-    assert!(result.is_err());
+#[test]
+fn test_guard_execute_after_commit_returns_error() {
+    workers::block_on(async {
+        let executor = MockExecutor::new();
+        let mut guard = TransactionGuard::begin(&executor, false).await.unwrap();
+        let handle = guard.handle.take();
+        assert!(handle.is_some());
+
+        let request = crate::QueryRequest::new("{ test }");
+        let response = guard.execute(request).await;
+        assert!(response.has_errors());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_noop_registry_runs_nothing() {
-    let registry = NoOpTransactionRegistry;
-    let handle: TransactionHandle = "any-id".parse().unwrap();
-    let ran = registry
-        .run(&handle, None, txn_job(|_| Box::pin(async {})))
-        .await;
-    assert!(matches!(ran, Err(TransactionError::NotSupported(_))));
-    let read = registry.read(None, txn_job(|_| Box::pin(async {}))).await;
-    assert!(matches!(read, Err(TransactionError::NotSupported(_))));
+#[test]
+fn test_guard_commit_failure_returns_error_and_consumes_handle() {
+    workers::block_on(async {
+        let executor = FailingCommitExecutor::new();
+        let guard = TransactionGuard::begin(&executor, false).await.unwrap();
+        assert!(guard.handle().is_some());
+
+        let result = guard.commit().await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("simulated storage failure"));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_noop_registry_commit_returns_error() {
-    let registry = NoOpTransactionRegistry;
-    let handle: TransactionHandle = "any-id".parse().unwrap();
-    let result = registry.commit(&handle).await;
-    assert!(result.is_err());
+#[test]
+fn test_guard_commit_failure_is_retryable() {
+    workers::block_on(async {
+        let executor = FailingCommitExecutor::new();
+        let guard = TransactionGuard::begin(&executor, false).await.unwrap();
+
+        let result = guard.commit().await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(
+            err.is_retryable(),
+            "Storage execution errors should be retryable with a new transaction"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_noop_registry_rollback_returns_error() {
-    let registry = NoOpTransactionRegistry;
-    let handle: TransactionHandle = "any-id".parse().unwrap();
-    let result = registry.rollback(&handle).await;
-    assert!(result.is_err());
+#[test]
+fn test_noop_registry_begin_returns_error() {
+    workers::block_on(async {
+        let registry = NoOpTransactionRegistry;
+        let result = registry.begin(false).await;
+        assert!(result.is_err());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_noop_registry_runs_nothing() {
+    workers::block_on(async {
+        let registry = NoOpTransactionRegistry;
+        let handle: TransactionHandle = "any-id".parse().unwrap();
+        let ran = registry
+            .run(&handle, None, txn_job(|_| Box::pin(async {})))
+            .await;
+        assert!(matches!(ran, Err(TransactionError::NotSupported(_))));
+        let read = registry.read(None, txn_job(|_| Box::pin(async {}))).await;
+        assert!(matches!(read, Err(TransactionError::NotSupported(_))));
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_noop_registry_commit_returns_error() {
+    workers::block_on(async {
+        let registry = NoOpTransactionRegistry;
+        let handle: TransactionHandle = "any-id".parse().unwrap();
+        let result = registry.commit(&handle).await;
+        assert!(result.is_err());
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_noop_registry_rollback_returns_error() {
+    workers::block_on(async {
+        let registry = NoOpTransactionRegistry;
+        let handle: TransactionHandle = "any-id".parse().unwrap();
+        let result = registry.rollback(&handle).await;
+        assert!(result.is_err());
+    })
+    .unwrap()
 }
 
 #[test]
@@ -311,27 +350,30 @@ fn test_transaction_handle_from_str_empty_returns_error() {
     assert!(err.to_string().contains("cannot be empty"));
 }
 
-#[tokio::test]
-async fn test_shared_turn_lends_its_context_and_keeps_no_statements() {
-    use std::sync::Arc;
-    struct MockCtx;
-    impl TransactionContext for MockCtx {
-        fn id(&self) -> &str {
-            "test"
+#[test]
+fn test_shared_turn_lends_its_context_and_keeps_no_statements() {
+    workers::block_on(async {
+        use std::sync::Arc;
+        struct MockCtx;
+        impl TransactionContext for MockCtx {
+            fn id(&self) -> &str {
+                "test"
+            }
+            fn is_readonly(&self) -> bool {
+                true
+            }
+            fn doc_fetcher(&self) -> Arc<dyn crate::fetcher::DocFetcher> {
+                Arc::new(crate::test_utils::MockFetcher::new())
+            }
         }
-        fn is_readonly(&self) -> bool {
-            true
-        }
-        fn doc_fetcher(&self) -> Arc<dyn crate::fetcher::DocFetcher> {
-            Arc::new(crate::test_utils::MockFetcher::new())
-        }
-    }
 
-    let mut turn = SharedTurn(Arc::new(MockCtx));
-    assert!(turn.is_readonly());
-    turn.begin_statement().unwrap();
-    assert_eq!(turn.context().unwrap().id(), "test");
-    turn.end_statement(false).unwrap();
+        let mut turn = SharedTurn(Arc::new(MockCtx));
+        assert!(turn.is_readonly());
+        turn.begin_statement().unwrap();
+        assert_eq!(turn.context().unwrap().id(), "test");
+        turn.end_statement(false).unwrap();
+    })
+    .unwrap()
 }
 
 #[test]
