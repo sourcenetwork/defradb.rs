@@ -10,57 +10,73 @@ use schema::CollectionVersion;
 use schema::PolicyDescription;
 use std::sync::Arc;
 
-#[tokio::test]
-async fn resolve_push_creator_uses_owner_for_protected_document() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let owner = Did::new("did:key:z6Mkowner").unwrap();
-    acp.register_doc_object(&owner, "policy-1", "Users", "doc1")
-        .await
-        .unwrap();
+#[test]
+fn resolve_push_creator_uses_owner_for_protected_document() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let owner = Did::new("did:key:z6Mkowner").unwrap();
+        acp.register_doc_object(&owner, "policy-1", "Users", "doc1")
+            .await
+            .unwrap();
 
-    let creator =
-        resolve_push_creator(Some(&acp), &protected_collection(), "doc1", "local-peer").await;
+        let creator =
+            resolve_push_creator(Some(&acp), &protected_collection(), "doc1", "local-peer").await;
 
-    assert_eq!(creator, owner.to_string());
+        assert_eq!(creator, owner.to_string());
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn resolve_push_creator_falls_back_without_collection_policy() {
-    let collection = Collection::new(CollectionVersion::new("Users", "v1", "col1", vec![]));
+#[test]
+fn resolve_push_creator_falls_back_without_collection_policy() {
+    workers::block_on(async {
+        let collection = Collection::new(CollectionVersion::new("Users", "v1", "col1", vec![]));
 
-    let creator = resolve_push_creator(None, &collection, "doc1", "local-peer").await;
+        let creator = resolve_push_creator(None, &collection, "doc1", "local-peer").await;
 
-    assert_eq!(creator, "local-peer");
+        assert_eq!(creator, "local-peer");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn resolve_push_creator_falls_back_for_unregistered_public_document() {
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+#[test]
+fn resolve_push_creator_falls_back_for_unregistered_public_document() {
+    workers::block_on(async {
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
 
-    let creator =
-        resolve_push_creator(Some(&acp), &protected_collection(), "doc1", "local-peer").await;
+        let creator =
+            resolve_push_creator(Some(&acp), &protected_collection(), "doc1", "local-peer").await;
 
-    assert_eq!(creator, "local-peer");
+        assert_eq!(creator, "local-peer");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn resolve_push_creator_falls_back_when_acp_lookup_fails() {
-    let creator = resolve_push_creator(
-        Some(&FailingAcp),
-        &protected_collection(),
-        "doc1",
-        "local-peer",
-    )
-    .await;
+#[test]
+fn resolve_push_creator_falls_back_when_acp_lookup_fails() {
+    workers::block_on(async {
+        let creator = resolve_push_creator(
+            Some(&FailingAcp),
+            &protected_collection(),
+            "doc1",
+            "local-peer",
+        )
+        .await;
 
-    assert_eq!(creator, "local-peer");
+        assert_eq!(creator, "local-peer");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn resolve_push_creator_falls_back_without_document_acp() {
-    let creator = resolve_push_creator(None, &protected_collection(), "doc1", "local-peer").await;
+#[test]
+fn resolve_push_creator_falls_back_without_document_acp() {
+    workers::block_on(async {
+        let creator =
+            resolve_push_creator(None, &protected_collection(), "doc1", "local-peer").await;
 
-    assert_eq!(creator, "local-peer");
+        assert_eq!(creator, "local-peer");
+    })
+    .unwrap()
 }
 
 fn protected_collection() -> Collection {

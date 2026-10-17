@@ -205,22 +205,25 @@ async fn query(dir: &Path, layout: &str, profile: &str, passes: usize) {
     store.close().await.ok();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore]
-async fn diskann_disk_cost() {
-    let dir = std::path::PathBuf::from(env("DIR", "target/diskann-disk-cost"));
-    std::fs::create_dir_all(&dir).unwrap();
-    match env("PHASE", "query").as_str() {
-        "build" => build(env("N", "100000").parse().unwrap(), &dir).await,
-        _ => {
-            let passes = env("PASSES", "2").parse().unwrap();
-            query(
-                &dir,
-                &env("LAYOUT", "records"),
-                &env("PROFILE", "server"),
-                passes,
-            )
-            .await
+fn diskann_disk_cost() {
+    workers::block_on(async {
+        let dir = std::path::PathBuf::from(env("DIR", "target/diskann-disk-cost"));
+        std::fs::create_dir_all(&dir).unwrap();
+        match env("PHASE", "query").as_str() {
+            "build" => build(env("N", "100000").parse().unwrap(), &dir).await,
+            _ => {
+                let passes = env("PASSES", "2").parse().unwrap();
+                query(
+                    &dir,
+                    &env("LAYOUT", "records"),
+                    &env("PROFILE", "server"),
+                    passes,
+                )
+                .await
+            }
         }
-    }
+    })
+    .unwrap()
 }

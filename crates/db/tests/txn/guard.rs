@@ -59,37 +59,44 @@ async fn create(guard: &TransactionGuard<'_, dyn QueryExecutor>) {
     assert!(!response.has_errors(), "{:?}", response.errors);
 }
 
-#[tokio::test]
-async fn dropping_guard_discards_writes_despite_saved_handle() {
-    let fixture = Fixture::new().await;
-    let guard = TransactionGuard::begin(fixture.runner.as_ref(), false)
-        .await
-        .unwrap();
-    create(&guard).await;
-    let handle = guard.handle().unwrap().clone();
-    assert!(!guard.execute(read()).await.has_errors());
-    drop(guard);
-    fixture.assert_discarded(&handle).await;
-}
-
-#[tokio::test]
-async fn aborting_owner_removes_transaction() {
-    let fixture = Fixture::new().await;
-    let executor = fixture.runner.clone();
-    let (ready, handle) = tokio::sync::oneshot::channel();
-    let task = tokio::spawn(async move {
-        let guard = TransactionGuard::begin(executor.as_ref(), false)
+#[test]
+fn dropping_guard_discards_writes_despite_saved_handle() {
+    workers::block_on(async {
+        let fixture = Fixture::new().await;
+        let guard = TransactionGuard::begin(fixture.runner.as_ref(), false)
             .await
             .unwrap();
         create(&guard).await;
-        ready.send(guard.handle().unwrap().clone()).unwrap();
-        std::future::pending::<()>().await;
+        let handle = guard.handle().unwrap().clone();
+        assert!(!guard.execute(read()).await.has_errors());
         drop(guard);
-    });
-    let handle = handle.await.unwrap();
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    fixture.assert_discarded(&handle).await;
+        fixture.assert_discarded(&handle).await;
+    })
+    .unwrap()
+}
+
+#[test]
+fn aborting_owner_removes_transaction() {
+    workers::block_on(async {
+        let fixture = Fixture::new().await;
+        let executor = fixture.runner.clone();
+        let (ready, handle) = tokio::sync::oneshot::channel();
+        let task = workers::spawn(None, "test", move || async move {
+            let guard = TransactionGuard::begin(executor.as_ref(), false)
+                .await
+                .unwrap();
+            create(&guard).await;
+            ready.send(guard.handle().unwrap().clone()).unwrap();
+            std::future::pending::<()>().await;
+            drop(guard);
+        })
+        .unwrap();
+        let handle = handle.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        fixture.assert_discarded(&handle).await;
+    })
+    .unwrap()
 }
 
 #[test]
@@ -118,47 +125,51 @@ enum PauseAt {
     AfterCommit,
 }
 
-#[tokio::test]
-async fn cancellation_while_finalization_waits_for_an_active_request_releases_the_transaction() {
-    use query::TransactionRegistry;
+#[test]
+fn cancellation_while_finalization_waits_for_an_active_request_releases_the_transaction() {
+    workers::block_on(async {
+        use query::TransactionRegistry;
 
-    for commit in [false, true] {
-        let fixture = Fixture::new().await;
-        let guard = TransactionGuard::begin(fixture.runner.as_ref(), false)
-            .await
-            .unwrap();
-        create(&guard).await;
-        let handle = guard.handle().unwrap().clone();
-        // A request holds the transaction on its owner until the gate opens.
-        let gate = Arc::new(regolith::sync::Event::new());
-        let entered = Arc::new(regolith::sync::Event::new());
-        let active = {
-            let (registry, handle) = (fixture.registry.clone(), handle.clone());
-            let (gate, entered) = (gate.clone(), entered.clone());
-            tokio::spawn(async move {
-                let job = query::txn::txn_job(move |_| {
-                    Box::pin(async move {
-                        entered.set();
-                        gate.wait().await;
-                    })
-                });
-                registry.run(&handle, None, job).await
-            })
-        };
-        entered.wait().await;
-        let mut finalize = Box::pin(async move {
-            if commit {
-                guard.commit().await
-            } else {
-                guard.rollback().await
-            }
-        });
-        assert!(futures::poll!(&mut finalize).is_pending());
-        drop(finalize);
-        gate.set();
-        active.await.unwrap().unwrap();
-        fixture.assert_discarded(&handle).await;
-    }
+        for commit in [false, true] {
+            let fixture = Fixture::new().await;
+            let guard = TransactionGuard::begin(fixture.runner.as_ref(), false)
+                .await
+                .unwrap();
+            create(&guard).await;
+            let handle = guard.handle().unwrap().clone();
+            // A request holds the transaction on its owner until the gate opens.
+            let gate = Arc::new(regolith::sync::Event::new());
+            let entered = Arc::new(regolith::sync::Event::new());
+            let active = {
+                let (registry, handle) = (fixture.registry.clone(), handle.clone());
+                let (gate, entered) = (gate.clone(), entered.clone());
+                workers::spawn(None, "test", move || async move {
+                    let job = query::txn::txn_job(move |_| {
+                        Box::pin(async move {
+                            entered.set();
+                            gate.wait().await;
+                        })
+                    });
+                    registry.run(&handle, None, job).await
+                })
+                .unwrap()
+            };
+            entered.wait().await;
+            let mut finalize = Box::pin(async move {
+                if commit {
+                    guard.commit().await
+                } else {
+                    guard.rollback().await
+                }
+            });
+            assert!(futures::poll!(&mut finalize).is_pending());
+            drop(finalize);
+            gate.set();
+            active.await.unwrap().unwrap();
+            fixture.assert_discarded(&handle).await;
+        }
+    })
+    .unwrap()
 }
 
 struct PausedExecutor {
@@ -215,81 +226,89 @@ impl QueryExecutor for PausedExecutor {
     }
 }
 
-#[tokio::test]
-async fn cancellation_at_each_guard_boundary_discards_uncommitted_state() {
-    for at in [
-        PauseAt::Begin,
-        PauseAt::Execute,
-        PauseAt::Commit,
-        PauseAt::Rollback,
-    ] {
+#[test]
+fn cancellation_at_each_guard_boundary_discards_uncommitted_state() {
+    workers::block_on(async {
+        for at in [
+            PauseAt::Begin,
+            PauseAt::Execute,
+            PauseAt::Commit,
+            PauseAt::Rollback,
+        ] {
+            let fixture = Fixture::new().await;
+            let executor = PausedExecutor {
+                inner: fixture.runner.clone(),
+                at,
+            };
+            if at == PauseAt::Begin {
+                let mut begin = Box::pin(TransactionGuard::begin(&executor, false));
+                assert!(futures::poll!(&mut begin).is_pending());
+                drop(begin);
+                assert_eq!(fixture.registry.active_transaction_count().unwrap(), 0);
+                continue;
+            }
+            let guard = TransactionGuard::begin(&executor, false).await.unwrap();
+            let handle = guard.handle().unwrap().clone();
+            let response = fixture
+                .runner
+                .execute_in_txn(
+                    QueryRequest::new(
+                        r#"mutation { add_Users(input: {name: "pending"}) { _docID } }"#,
+                    ),
+                    &handle,
+                )
+                .await;
+            assert!(!response.has_errors(), "{:?}", response.errors);
+            let mut operation = Box::pin(async move {
+                match at {
+                    PauseAt::Execute => {
+                        guard.execute(read()).await;
+                    }
+                    PauseAt::Commit => {
+                        guard.commit().await.unwrap();
+                    }
+                    PauseAt::Rollback => {
+                        guard.rollback().await.unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+            });
+            assert!(futures::poll!(&mut operation).is_pending());
+            drop(operation);
+            fixture.assert_discarded(&handle).await;
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn cancellation_after_durable_commit_cannot_undo_it_or_discard_another_transaction() {
+    workers::block_on(async {
         let fixture = Fixture::new().await;
         let executor = PausedExecutor {
             inner: fixture.runner.clone(),
-            at,
+            at: PauseAt::AfterCommit,
         };
-        if at == PauseAt::Begin {
-            let mut begin = Box::pin(TransactionGuard::begin(&executor, false));
-            assert!(futures::poll!(&mut begin).is_pending());
-            drop(begin);
-            assert_eq!(fixture.registry.active_transaction_count().unwrap(), 0);
-            continue;
-        }
         let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-        let handle = guard.handle().unwrap().clone();
-        let response = fixture
-            .runner
-            .execute_in_txn(
-                QueryRequest::new(r#"mutation { add_Users(input: {name: "pending"}) { _docID } }"#),
-                &handle,
-            )
+        let response = guard
+            .execute(QueryRequest::new(
+                r#"mutation { add_Users(input: {name: "committed"}) { _docID } }"#,
+            ))
             .await;
         assert!(!response.has_errors(), "{:?}", response.errors);
-        let mut operation = Box::pin(async move {
-            match at {
-                PauseAt::Execute => {
-                    guard.execute(read()).await;
-                }
-                PauseAt::Commit => {
-                    guard.commit().await.unwrap();
-                }
-                PauseAt::Rollback => {
-                    guard.rollback().await.unwrap();
-                }
-                _ => unreachable!(),
-            }
-        });
-        assert!(futures::poll!(&mut operation).is_pending());
-        drop(operation);
-        fixture.assert_discarded(&handle).await;
-    }
-}
-
-#[tokio::test]
-async fn cancellation_after_durable_commit_cannot_undo_it_or_discard_another_transaction() {
-    let fixture = Fixture::new().await;
-    let executor = PausedExecutor {
-        inner: fixture.runner.clone(),
-        at: PauseAt::AfterCommit,
-    };
-    let guard = TransactionGuard::begin(&executor, false).await.unwrap();
-    let response = guard
-        .execute(QueryRequest::new(
-            r#"mutation { add_Users(input: {name: "committed"}) { _docID } }"#,
-        ))
-        .await;
-    assert!(!response.has_errors(), "{:?}", response.errors);
-    let mut commit = Box::pin(guard.commit());
-    assert!(futures::poll!(&mut commit).is_pending());
-    assert_eq!(fixture.registry.active_transaction_count().unwrap(), 0);
-    let other = fixture.runner.begin_txn(false).await.unwrap();
-    drop(commit);
-    assert_eq!(fixture.registry.active_transaction_count().unwrap(), 1);
-    fixture.runner.rollback_txn(&other).await.unwrap();
-    let response = fixture.runner.execute(read()).await;
-    assert!(!response.has_errors(), "{:?}", response.errors);
-    assert_eq!(
-        response.data.unwrap()["Users"],
-        serde_json::json!([{"name": "committed"}])
-    );
+        let mut commit = Box::pin(guard.commit());
+        assert!(futures::poll!(&mut commit).is_pending());
+        assert_eq!(fixture.registry.active_transaction_count().unwrap(), 0);
+        let other = fixture.runner.begin_txn(false).await.unwrap();
+        drop(commit);
+        assert_eq!(fixture.registry.active_transaction_count().unwrap(), 1);
+        fixture.runner.rollback_txn(&other).await.unwrap();
+        let response = fixture.runner.execute(read()).await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        assert_eq!(
+            response.data.unwrap()["Users"],
+            serde_json::json!([{"name": "committed"}])
+        );
+    })
+    .unwrap()
 }

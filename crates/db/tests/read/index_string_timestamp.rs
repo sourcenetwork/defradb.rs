@@ -101,17 +101,21 @@ async fn stamps_matching(db: &Arc<DB<RegolithStore>>, filter: &str) -> Vec<Strin
         .collect()
 }
 
-#[tokio::test]
-async fn equality_on_rfc3339_text_uses_the_string_index() {
-    let db = seeded_db().await;
-    assert_eq!(
-        stamps_matching(&db, r#"{created_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
-        vec![STAMPS[1]]
-    );
+#[test]
+fn equality_on_rfc3339_text_uses_the_string_index() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        assert_eq!(
+            stamps_matching(&db, r#"{created_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
+            vec![STAMPS[1]]
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_range_of_rfc3339_text_uses_the_string_index() {
+#[test]
+fn a_range_of_rfc3339_text_uses_the_string_index() {
+    workers::block_on(async {
     let db = seeded_db().await;
     assert_eq!(
         stamps_matching(&db, r#"{created_at: {_ge: "2026-09-28T00:00:00Z"}}"#).await,
@@ -125,26 +129,34 @@ async fn a_range_of_rfc3339_text_uses_the_string_index() {
         .await,
         vec![STAMPS[1]]
     );
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_range_of_rfc3339_text_uses_the_datetime_index() {
-    let db = seeded_db().await;
-    assert_eq!(
-        stamps_matching(&db, r#"{observed_at: {_ge: "2026-09-28T00:00:00Z"}}"#).await,
-        vec![STAMPS[1], STAMPS[2]]
-    );
-    assert_eq!(
-        stamps_matching(&db, r#"{observed_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
-        vec![STAMPS[1]]
-    );
+#[test]
+fn a_range_of_rfc3339_text_uses_the_datetime_index() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        assert_eq!(
+            stamps_matching(&db, r#"{observed_at: {_ge: "2026-09-28T00:00:00Z"}}"#).await,
+            vec![STAMPS[1], STAMPS[2]]
+        );
+        assert_eq!(
+            stamps_matching(&db, r#"{observed_at: {_eq: "2026-09-29T04:20:21Z"}}"#).await,
+            vec![STAMPS[1]]
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_element_of_rfc3339_text_uses_the_datetime_array_index() {
-    let db = seeded_db().await;
-    assert_eq!(
-        stamps_matching(&db, r#"{seen_at: {_any: {_eq: "2026-09-29T04:20:21Z"}}}"#).await,
-        vec![STAMPS[1]]
-    );
+#[test]
+fn an_element_of_rfc3339_text_uses_the_datetime_array_index() {
+    workers::block_on(async {
+        let db = seeded_db().await;
+        assert_eq!(
+            stamps_matching(&db, r#"{seen_at: {_any: {_eq: "2026-09-29T04:20:21Z"}}}"#).await,
+            vec![STAMPS[1]]
+        );
+    })
+    .unwrap()
 }

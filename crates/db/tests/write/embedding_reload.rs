@@ -21,7 +21,7 @@ impl Drop for Fixture {
 async fn fixture_with_counter(counter: bool) -> Fixture {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
+    let server = workers::spawn(None, "test", move || async move {
         axum::serve(
             listener,
             Router::new().route(
@@ -43,7 +43,8 @@ async fn fixture_with_counter(counter: bool) -> Fixture {
         )
         .await
         .unwrap();
-    });
+    })
+    .unwrap();
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     let mut collection = CollectionVersion::new(
         "Texts",
@@ -86,73 +87,79 @@ fn assert_vector(doc: &Document, values: Vec<f64>) {
     assert_eq!(doc.get("vector"), Some(&NormalValue::Float64Array(values)));
 }
 
-#[tokio::test]
-async fn update_regenerates_embedding_from_reloaded_document() {
-    let fixture = fixture_with_counter(false).await;
-    let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db));
-    let created = mutator.create("Texts", document("first")).await.unwrap();
-    let mut stale = created.document.clone();
-    stale.set("text", "second");
-    let mut concurrent = created.document;
-    concurrent.set("suffix", "new");
-    mutator
-        .update(
-            "Texts",
-            concurrent,
-            ["suffix".to_string()].into_iter().collect(),
-        )
-        .await
-        .unwrap();
-    let updated = mutator
-        .update("Texts", stale, ["text".to_string()].into_iter().collect())
-        .await
-        .unwrap();
-    assert_eq!(
-        updated.document.get("suffix").unwrap().as_str(),
-        Some("new")
-    );
-    assert_vector(&updated.document, vec![7.0, 8.0]);
-    let stored = mutator
-        .get_for_update("Texts", &created.doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_vector(&stored, vec![7.0, 8.0]);
+#[test]
+fn update_regenerates_embedding_from_reloaded_document() {
+    workers::block_on(async {
+        let fixture = fixture_with_counter(false).await;
+        let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db));
+        let created = mutator.create("Texts", document("first")).await.unwrap();
+        let mut stale = created.document.clone();
+        stale.set("text", "second");
+        let mut concurrent = created.document;
+        concurrent.set("suffix", "new");
+        mutator
+            .update(
+                "Texts",
+                concurrent,
+                ["suffix".to_string()].into_iter().collect(),
+            )
+            .await
+            .unwrap();
+        let updated = mutator
+            .update("Texts", stale, ["text".to_string()].into_iter().collect())
+            .await
+            .unwrap();
+        assert_eq!(
+            updated.document.get("suffix").unwrap().as_str(),
+            Some("new")
+        );
+        assert_vector(&updated.document, vec![7.0, 8.0]);
+        let stored = mutator
+            .get_for_update("Texts", &created.doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_vector(&stored, vec![7.0, 8.0]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn update_embeds_the_applied_counter_value() {
-    let fixture = fixture_with_counter(true).await;
-    let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db));
-    let mut doc = Document::new();
-    doc.set("text", 5_i64);
-    doc.set("suffix", "old");
-    let created = mutator.create("Texts", doc).await.unwrap();
-    let mut concurrent = created.document.clone();
-    concurrent.set("text", 6_i64);
-    concurrent.set_counter_delta("text".to_string(), NormalValue::Int(1));
-    mutator
-        .update(
-            "Texts",
-            concurrent,
-            ["text".to_string()].into_iter().collect(),
-        )
-        .await
-        .unwrap();
-    let mut stale = created.document;
-    stale.set("text", 7_i64);
-    stale.set_counter_delta("text".to_string(), NormalValue::Int(2));
-    let updated = mutator
-        .update("Texts", stale, ["text".to_string()].into_iter().collect())
-        .await
-        .unwrap();
-    assert_eq!(updated.document.get("text"), Some(&NormalValue::Int(8)));
-    assert_vector(&updated.document, vec![11.0, 12.0]);
-    let stored = mutator
-        .get_for_update("Texts", &created.doc_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.get("text"), Some(&NormalValue::Int(8)));
-    assert_vector(&stored, vec![11.0, 12.0]);
+#[test]
+fn update_embeds_the_applied_counter_value() {
+    workers::block_on(async {
+        let fixture = fixture_with_counter(true).await;
+        let mutator = AutoCommitMutator::new(Arc::clone(&fixture.db));
+        let mut doc = Document::new();
+        doc.set("text", 5_i64);
+        doc.set("suffix", "old");
+        let created = mutator.create("Texts", doc).await.unwrap();
+        let mut concurrent = created.document.clone();
+        concurrent.set("text", 6_i64);
+        concurrent.set_counter_delta("text".to_string(), NormalValue::Int(1));
+        mutator
+            .update(
+                "Texts",
+                concurrent,
+                ["text".to_string()].into_iter().collect(),
+            )
+            .await
+            .unwrap();
+        let mut stale = created.document;
+        stale.set("text", 7_i64);
+        stale.set_counter_delta("text".to_string(), NormalValue::Int(2));
+        let updated = mutator
+            .update("Texts", stale, ["text".to_string()].into_iter().collect())
+            .await
+            .unwrap();
+        assert_eq!(updated.document.get("text"), Some(&NormalValue::Int(8)));
+        assert_vector(&updated.document, vec![11.0, 12.0]);
+        let stored = mutator
+            .get_for_update("Texts", &created.doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.get("text"), Some(&NormalValue::Int(8)));
+        assert_vector(&stored, vec![11.0, 12.0]);
+    })
+    .unwrap()
 }

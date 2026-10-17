@@ -607,29 +607,33 @@ impl<S: Store> crate::database::DB<S> {
 
 #[cfg(test)]
 mod tests {
-    #[tokio::test]
-    async fn validated_collection_version_scan_detects_phantom_create() {
-        let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let mut initial = query::parse_sdl("type ExistingSchemaProbe { value: String }").unwrap();
-        db.create_collection(initial.remove(0)).await.unwrap();
+    #[test]
+    fn validated_collection_version_scan_detects_phantom_create() {
+        workers::block_on(async {
+            let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let mut initial =
+                query::parse_sdl("type ExistingSchemaProbe { value: String }").unwrap();
+            db.create_collection(initial.remove(0)).await.unwrap();
 
-        let mut schema_txn = db.new_txn(false).await.unwrap();
-        db.get_all_collection_versions_with_txn(&mut schema_txn)
-            .await
-            .unwrap();
-        let mut staged = query::parse_sdl("type StagedSchemaProbe { value: String }").unwrap();
-        db.create_collection_with_txn(&mut schema_txn, staged.remove(0))
-            .await
-            .unwrap();
+            let mut schema_txn = db.new_txn(false).await.unwrap();
+            db.get_all_collection_versions_with_txn(&mut schema_txn)
+                .await
+                .unwrap();
+            let mut staged = query::parse_sdl("type StagedSchemaProbe { value: String }").unwrap();
+            db.create_collection_with_txn(&mut schema_txn, staged.remove(0))
+                .await
+                .unwrap();
 
-        let mut concurrent =
-            query::parse_sdl("type ConcurrentSchemaProbe { value: String }").unwrap();
-        db.create_collection(concurrent.remove(0)).await.unwrap();
+            let mut concurrent =
+                query::parse_sdl("type ConcurrentSchemaProbe { value: String }").unwrap();
+            db.create_collection(concurrent.remove(0)).await.unwrap();
 
-        let result = schema_txn.commit().await;
-        assert!(
-            result.as_ref().is_err_and(|error| error.is_txn_conflict()),
-            "expected stale collection scan to conflict, got {result:?}"
-        );
+            let result = schema_txn.commit().await;
+            assert!(
+                result.as_ref().is_err_and(|error| error.is_txn_conflict()),
+                "expected stale collection scan to conflict, got {result:?}"
+            );
+        })
+        .unwrap()
     }
 }

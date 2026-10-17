@@ -9,38 +9,41 @@ use schema::FieldKind;
 use std::sync::Arc;
 use storage::RegolithStore;
 
-#[tokio::test]
-async fn load_document_head_blocks_returns_current_composite_block() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store).unwrap());
-    db.create_collection(CollectionVersion::new(
-        "Transcript",
-        "v1",
-        "col-transcript",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
-            FieldDescription::new("3", "idx", FieldKind::int()),
-        ],
-    ))
-    .await
-    .unwrap();
-
-    let mutator = AutoCommitMutator::new(db.clone());
-    let result = mutator
-        .create_many("Transcript", vec![make_transcript("first", 1)])
+#[test]
+fn load_document_head_blocks_returns_current_composite_block() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        db.create_collection(CollectionVersion::new(
+            "Transcript",
+            "v1",
+            "col-transcript",
+            vec![
+                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new("2", "body", FieldKind::string()),
+                FieldDescription::new("3", "idx", FieldKind::int()),
+            ],
+        ))
         .await
-        .unwrap()
-        .pop()
         .unwrap();
 
-    let doc_id = result.doc_id.to_string();
-    let commit_cid = result.commit_cid.expect("commit cid");
-    let commit_block = result.commit_block.expect("commit block");
+        let mutator = AutoCommitMutator::new(db.clone());
+        let result = mutator
+            .create_many("Transcript", vec![make_transcript("first", 1)])
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
 
-    let blocks = load_document_head_blocks(&db, &doc_id).await.unwrap();
+        let doc_id = result.doc_id.to_string();
+        let commit_cid = result.commit_cid.expect("commit cid");
+        let commit_block = result.commit_block.expect("commit block");
 
-    assert_eq!(blocks, vec![(commit_cid, commit_block)]);
+        let blocks = load_document_head_blocks(&db, &doc_id).await.unwrap();
+
+        assert_eq!(blocks, vec![(commit_cid, commit_block)]);
+    })
+    .unwrap()
 }
 
 fn make_transcript(body: &str, idx: i64) -> Document {

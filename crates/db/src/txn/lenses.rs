@@ -99,27 +99,30 @@ impl TransformStore for TxnLensStore {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn transaction_local_store_is_created_only_for_registration() {
-        let base: Arc<dyn TransformStore> = Arc::new(lens::MemoryTransformStore::new());
-        let store = TxnLensStore::new(base.clone());
+    #[test]
+    fn transaction_local_store_is_created_only_for_registration() {
+        workers::block_on(async {
+            let base: Arc<dyn TransformStore> = Arc::new(lens::MemoryTransformStore::new());
+            let store = TxnLensStore::new(base.clone());
 
-        assert!(store.local.get().is_none());
-        assert!(store.list().await.unwrap().is_empty());
-        assert!(!store.has_transform(&TransformId::new("missing")));
-        assert!(store.local.get().is_none());
+            assert!(store.local.get().is_none());
+            assert!(store.list().await.unwrap().is_empty());
+            assert!(!store.has_transform(&TransformId::new("missing")));
+            assert!(store.local.get().is_none());
 
-        // The registration lands in an empty store of the base's own kind. A
-        // memory store accepts a module no WASM runtime would compile, so no
-        // private engine was built for the transaction.
-        let id = store
-            .add(LensConfig::new("v1", "v2", lens::LensModule::default()))
-            .await
-            .unwrap();
-        assert!(store.local.get().is_some());
-        assert!(store.has_transform(&id));
-        assert!(!base.has_transform(&id));
-        assert_eq!(store.list().await.unwrap().len(), 1);
+            // The registration lands in an empty store of the base's own kind. A
+            // memory store accepts a module no WASM runtime would compile, so no
+            // private engine was built for the transaction.
+            let id = store
+                .add(LensConfig::new("v1", "v2", lens::LensModule::default()))
+                .await
+                .unwrap();
+            assert!(store.local.get().is_some());
+            assert!(store.has_transform(&id));
+            assert!(!base.has_transform(&id));
+            assert_eq!(store.list().await.unwrap().len(), 1);
+        })
+        .unwrap()
     }
 
     fn no_docs() -> LensDocStream {
@@ -130,57 +133,60 @@ mod tests {
         LensConfig::new("v1", "v2", lens::LensModule::default())
     }
 
-    #[tokio::test]
-    async fn calls_reach_the_store_that_holds_the_transform() {
-        let base = Arc::new(lens::MemoryTransformStore::new());
-        let committed = TransformId::new("committed");
-        base.add_with_id(committed.clone(), config()).await.unwrap();
-        let store = TxnLensStore::new(base.clone());
-        let missing = TransformId::new("missing");
+    #[test]
+    fn calls_reach_the_store_that_holds_the_transform() {
+        workers::block_on(async {
+            let base = Arc::new(lens::MemoryTransformStore::new());
+            let committed = TransformId::new("committed");
+            base.add_with_id(committed.clone(), config()).await.unwrap();
+            let store = TxnLensStore::new(base.clone());
+            let missing = TransformId::new("missing");
 
-        // Before any registration every call reaches the committed store.
-        assert!(store.transform(&committed, no_docs()).is_ok());
-        assert!(matches!(
-            store.transform(&missing, no_docs()),
-            Err(lens::Error::TransformNotFound(_))
-        ));
+            // Before any registration every call reaches the committed store.
+            assert!(store.transform(&committed, no_docs()).is_ok());
+            assert!(matches!(
+                store.transform(&missing, no_docs()),
+                Err(lens::Error::TransformNotFound(_))
+            ));
 
-        let local = TransformId::new("local");
-        store.add_with_id(local.clone(), config()).await.unwrap();
-        assert!(store.transform(&local, no_docs()).is_ok());
-        assert!(store.inverse(&local, no_docs()).is_ok());
-        assert!(store.inverse(&committed, no_docs()).is_ok());
-        assert!(!base.has_transform(&local));
+            let local = TransformId::new("local");
+            store.add_with_id(local.clone(), config()).await.unwrap();
+            assert!(store.transform(&local, no_docs()).is_ok());
+            assert!(store.inverse(&local, no_docs()).is_ok());
+            assert!(store.inverse(&committed, no_docs()).is_ok());
+            assert!(!base.has_transform(&local));
 
-        let mut doc = LensDoc::new();
-        doc.insert("name".to_string(), serde_json::json!("Ada"));
-        assert_eq!(
-            store
-                .transform_doc(&local, doc.clone(), false)
-                .await
-                .unwrap(),
-            doc
-        );
-        assert_eq!(
-            store
-                .transform_doc(&committed, doc.clone(), true)
-                .await
-                .unwrap(),
-            doc
-        );
-        assert!(matches!(
-            store.transform_doc(&missing, doc, false).await,
-            Err(lens::Error::TransformNotFound(_))
-        ));
+            let mut doc = LensDoc::new();
+            doc.insert("name".to_string(), serde_json::json!("Ada"));
+            assert_eq!(
+                store
+                    .transform_doc(&local, doc.clone(), false)
+                    .await
+                    .unwrap(),
+                doc
+            );
+            assert_eq!(
+                store
+                    .transform_doc(&committed, doc.clone(), true)
+                    .await
+                    .unwrap(),
+                doc
+            );
+            assert!(matches!(
+                store.transform_doc(&missing, doc, false).await,
+                Err(lens::Error::TransformNotFound(_))
+            ));
 
-        store.remove(&local).await.unwrap();
-        assert!(!store.has_transform(&local));
-        assert!(base.has_transform(&committed));
-        store.remove(&committed).await.unwrap();
-        assert!(!base.has_transform(&committed));
-        assert!(matches!(
-            store.remove(&missing).await,
-            Err(lens::Error::TransformNotFound(_))
-        ));
+            store.remove(&local).await.unwrap();
+            assert!(!store.has_transform(&local));
+            assert!(base.has_transform(&committed));
+            store.remove(&committed).await.unwrap();
+            assert!(!base.has_transform(&committed));
+            assert!(matches!(
+                store.remove(&missing).await,
+                Err(lens::Error::TransformNotFound(_))
+            ));
+        })
+        .unwrap()
     }
 }
