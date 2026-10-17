@@ -99,23 +99,25 @@ fn record_max(max_seen: &AtomicUsize, value: usize) {
 #[test]
 fn replay_hint_defers_following_sends_without_polling_transport() {
     workers::block_on(async {
-    let gate = ReplayPushGate::new(ReplayPushConfig::default()).on(p2p::network::Network::on(edge::testing::edge()));
-    let peer = PeerId::new("limited".into());
-    let mut reply = PushLogReply::error("message", p2p::error::RATE_LIMITED_MESSAGE);
-    reply.retry_after_ms = Some(45_000);
-    gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
-    let result = gate
-        .send_pushlog(&peer, async { panic!("must defer to durable owner") })
-        .await;
-    assert!(
-        matches!(result, Err(ReplayPushSendError::Backpressure { retry_after }) if retry_after > Duration::from_secs(44))
-    );
-    gate.send_pushlog(&PeerId::new("healthy".into()), async {
-        Ok(PushLogReply::success("ok"))
+        let gate = ReplayPushGate::new(ReplayPushConfig::default())
+            .on(p2p::network::Network::on(edge::testing::edge()));
+        let peer = PeerId::new("limited".into());
+        let mut reply = PushLogReply::error("message", p2p::error::RATE_LIMITED_MESSAGE);
+        reply.retry_after_ms = Some(45_000);
+        gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
+        let result = gate
+            .send_pushlog(&peer, async { panic!("must defer to durable owner") })
+            .await;
+        let Err(ReplayPushSendError::Backpressure { retry_after }) = result else {
+            panic!("expected backpressure, got {result:?}");
+        };
+        assert!(retry_after > Duration::from_secs(44));
+        gate.send_pushlog(&PeerId::new("healthy".into()), async {
+            Ok(PushLogReply::success("ok"))
+        })
+        .await
+        .unwrap();
     })
-    .await
-    .unwrap();
-})
     .unwrap()
 }
 
