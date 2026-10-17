@@ -19,6 +19,8 @@
 //! loading them; later passes are warm. `EFFORT` is the engine's own knob: `L`
 //! for DiskANN, `ef` for HNSW, probes for IVF-PQ; unset takes its default.
 //! `THREADS=8` then measures warm queries per second with 8 searches in flight.
+//! `WARMUP=<file>` first runs the vectors in that file (same format as
+//! `queries.f32`) unmeasured, so pass 0 is warm on queries it has not seen.
 //!
 //! The corpus is synthetic and clustered unless `CORPUS_DIR` holds `base.f32`
 //! and `queries.f32` (little-endian, `DIMS` floats per vector, as
@@ -374,6 +376,7 @@ struct Run {
     passes: usize,
     queries: Vec<Vec<f32>>,
     truth: Vec<Vec<u64>>,
+    warmup: Vec<Vec<f32>>,
     stats: Arc<Statistics>,
 }
 
@@ -386,6 +389,12 @@ impl Run {
         let effort = self
             .effort
             .map_or_else(|| "default".to_string(), |e| e.to_string());
+        for query in &self.warmup {
+            engine
+                .search(query.as_slice(), K, self.effort)
+                .await
+                .unwrap();
+        }
         for pass in 0..self.passes {
             self.stats.reset();
             let mut latencies = Vec::with_capacity(q);
@@ -473,6 +482,8 @@ async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, p
         passes,
         queries: read_f32(&dir.join("queries.f32"), dims),
         truth: ids.as_chunks::<K>().0.iter().map(|t| t.to_vec()).collect(),
+        warmup: std::env::var("WARMUP")
+            .map_or_else(|_| Vec::new(), |p| read_f32(Path::new(&p), dims)),
         stats: stats.clone(),
     };
 
