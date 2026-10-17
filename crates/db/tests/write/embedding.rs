@@ -1,4 +1,4 @@
-use axum::{routing::post, Json, Router};
+use crate::common::http::HttpServer;
 use db::{
     AutoCommitMutator, DbCollectionProvider, DbDocMutator, DbTransactionRegistry,
     LensedAutoCommitFetcher, DB,
@@ -7,7 +7,7 @@ use document::{Document, NormalValue};
 use query::mutator::DocMutator;
 use query::{QueryExecutor, QueryRequest};
 use schema::{CollectionVersion, FieldDescription, FieldKind, VectorEmbeddingDescription};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use storage::RegolithStore;
@@ -16,7 +16,7 @@ struct Fixture {
     db: Arc<DB<RegolithStore>>,
     /// Embedding requests the server has answered.
     calls: Arc<AtomicUsize>,
-    server: tokio::task::JoinHandle<()>,
+    _server: HttpServer,
 }
 
 impl Fixture {
@@ -25,38 +25,20 @@ impl Fixture {
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.server.abort();
-    }
-}
-
 async fn fixture() -> Fixture {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&calls);
-    let server = workers::spawn(None, "test", move || async move {
-        axum::serve(
-            listener,
-            Router::new().route(
-                "/embeddings",
-                post(move |Json(request): Json<Value>| async move {
-                    counted.fetch_add(1, Ordering::SeqCst);
-                    assert_eq!(request["model"], "test-model");
-                    let vector = match request["input"].as_str().unwrap() {
-                        "first\n" => vec![1.0, 2.0],
-                        "second\n" => vec![3.0, 4.0],
-                        text => panic!("unexpected embedding input: {text}"),
-                    };
-                    Json(json!({"data": [{"embedding": vector}]}))
-                }),
-            ),
-        )
-        .await
-        .unwrap();
-    })
-    .unwrap();
+    let server = HttpServer::start(move |request| {
+        let request = request.body;
+        counted.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(request["model"], "test-model");
+        let vector = match request["input"].as_str().unwrap() {
+            "first\n" => vec![1.0, 2.0],
+            "second\n" => vec![3.0, 4.0],
+            text => panic!("unexpected embedding input: {text}"),
+        };
+        json!({"data": [{"embedding": vector}]})
+    });
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     let mut collection = CollectionVersion::new(
         "Texts",
@@ -76,10 +58,14 @@ async fn fixture() -> Fixture {
             model: "test-model".to_string(),
             provider: "openai".to_string(),
             template: String::new(),
-            url: format!("http://{address}"),
+            url: server.url(),
         });
     db.create_collection(collection).await.unwrap();
-    Fixture { db, calls, server }
+    Fixture {
+        db,
+        calls,
+        _server: server,
+    }
 }
 
 fn document(text: &str) -> Document {

@@ -16,7 +16,7 @@ use storage::RegolithStore;
 #[derive(Default)]
 struct WriteGate {
     armed: AtomicBool,
-    entered: tokio::sync::Notify,
+    entered: regolith::sync::Notify,
     block_keys: Atom<Vec<Vec<u8>>>,
 }
 
@@ -207,7 +207,7 @@ fn cancelling_a_statement_rolls_back_only_that_statement_before_commit() {
         gate.armed.store(true, Ordering::SeqCst);
         let runner_for_task = Arc::clone(&runner);
         let handle_for_task = handle.clone();
-        let mutation = workers::spawn(None, "test", move || async move {
+        let (mutation, abort) = futures::future::abortable(async move {
             runner_for_task
                 .execute_in_txn(
                     QueryRequest::new(
@@ -216,11 +216,11 @@ fn cancelling_a_statement_rolls_back_only_that_statement_before_commit() {
                     &handle_for_task,
                 )
                 .await
-        })
-        .unwrap();
+        });
+        let mutation = workers::spawn(None, "test", move || mutation).unwrap();
         gate.entered.notified().await;
-        mutation.abort();
-        assert!(mutation.await.unwrap_err().is_cancelled());
+        abort.abort();
+        assert!(mutation.await.unwrap().is_err());
 
         runner.commit_txn(&handle).await.unwrap();
         let response = runner
@@ -299,12 +299,12 @@ fn timing_out_a_statement_rolls_back_only_that_statement_before_commit() {
             response.data.unwrap()["Users"],
             serde_json::json!([{ "name": "kept" }])
         );
-        tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+        workers::timeout(std::time::Duration::from_secs(1), events.recv())
             .await
             .expect("prior statement event remains queued")
             .expect("event bus stays open");
         assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(20), events.recv())
+            workers::timeout(std::time::Duration::from_millis(20), events.recv())
                 .await
                 .is_err(),
             "timed-out statement must not publish a buffered document event"
@@ -404,12 +404,12 @@ fn failed_partial_batch_keeps_prior_statements_and_discards_its_own_writes() {
         response.data.unwrap()["Users"],
         serde_json::json!([{ "email": "prior" }])
     );
-    tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+    workers::timeout(std::time::Duration::from_secs(1), events.recv())
         .await
         .expect("prior statement event remains queued")
         .expect("event bus stays open");
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(20), events.recv())
+        workers::timeout(std::time::Duration::from_millis(20), events.recv())
             .await
             .is_err(),
         "failed statement must not publish a buffered document event"

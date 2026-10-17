@@ -20,6 +20,7 @@ use query::QueryRequest;
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashSet;
 use rapidhash::{HashMapExt, RapidHashMap};
+use regolith::sync::Notify;
 use schema::CollectionVersion;
 use schema::FieldDescription;
 use schema::FieldKind;
@@ -29,7 +30,6 @@ use std::sync::Arc;
 use storage::corekv::IterOptions;
 use storage::index::IndexIterator;
 use storage::RegolithStore;
-use tokio::sync::Notify;
 
 mod paged_reindex;
 mod unique_conflicts;
@@ -702,7 +702,7 @@ fn lazy_full_scan_is_write_free_even_when_paused() {
         })
         .unwrap();
 
-        tokio::time::timeout(
+        workers::timeout(
             std::time::Duration::from_secs(2),
             transform_store.entered.notified(),
         )
@@ -952,14 +952,14 @@ fn concurrent_lazy_reads_of_same_document_are_idempotent() {
         })
         .unwrap();
 
-        tokio::time::timeout(
+        workers::timeout(
             std::time::Duration::from_secs(2),
             transform_store.entered.notified(),
         )
         .await
         .expect("first lensed read reached the transform");
 
-        let second_docs = tokio::time::timeout(
+        let second_docs = workers::timeout(
             std::time::Duration::from_secs(2),
             db::LensedAutoCommitFetcher::new(db.clone()).get_by_ids("Users", &[doc_id.to_string()]),
         )
@@ -1028,7 +1028,7 @@ fn concurrent_update_wins_over_stale_lazy_write_back() {
         })
         .unwrap();
 
-        tokio::time::timeout(
+        workers::timeout(
             std::time::Duration::from_secs(2),
             transform_store.entered.notified(),
         )

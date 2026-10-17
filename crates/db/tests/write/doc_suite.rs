@@ -1021,7 +1021,7 @@ fn create_in_tx_publishes_event_on_commit() {
         txn.commit().await.expect("commit");
 
         // After commit: one Update event arrives
-        let msg = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+        let msg = workers::timeout(std::time::Duration::from_secs(1), sub.recv())
             .await
             .expect("event arrived within timeout")
             .expect("subscription not closed");
@@ -1066,7 +1066,7 @@ fn auto_commit_create_registers_acp_before_publishing_update() {
         })
         .unwrap();
 
-        let message = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+        let message = workers::timeout(std::time::Duration::from_secs(1), sub.recv())
             .await
             .expect("event arrived within timeout")
             .expect("subscription not closed");
@@ -1105,7 +1105,10 @@ fn create_in_tx_publishes_no_event_on_discard() {
         txn.discard().expect("discard");
 
         // Allow a brief window for any (unexpected) async delivery
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        workers::delay(std::time::Duration::from_millis(50))
+            .unwrap()
+            .await
+            .unwrap();
         assert!(sub.try_recv().is_err(), "discard should not publish events");
     })
     .unwrap()
@@ -1137,7 +1140,10 @@ fn delete_missing_doc_publishes_no_event_and_writes_no_block() {
         let txn = mutator.take_txn().await.expect("take txn");
         txn.commit().await.expect("commit");
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        workers::delay(std::time::Duration::from_millis(50))
+            .unwrap()
+            .await
+            .unwrap();
         assert!(
             sub.try_recv().is_err(),
             "deleting a non-existent doc should not publish an Update event"
@@ -1226,7 +1232,7 @@ fn transactional_broadcasts_and_releases_follow_commit_receipts() {
             move || async move { first_txn.commit().await },
         )
         .unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(5), entered.wait())
+        workers::timeout(std::time::Duration::from_secs(5), entered.wait())
             .await
             .expect("the first commit reached its success work");
 
@@ -1311,7 +1317,10 @@ fn create_in_tx_forwards_to_broadcaster_on_commit() {
         txn.commit().await.expect("commit");
 
         // Wait briefly for the on_success_async callback to fire
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        workers::delay(std::time::Duration::from_millis(20))
+            .unwrap()
+            .await
+            .unwrap();
 
         let events = drain(&captured);
         assert_eq!(events.len(), 1, "exactly one broadcast after commit");
@@ -1358,7 +1367,10 @@ fn create_in_tx_does_not_broadcast_on_discard() {
         let txn = mutator.take_txn().await.expect("take txn");
         txn.discard().expect("discard");
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        workers::delay(std::time::Duration::from_millis(50))
+            .unwrap()
+            .await
+            .unwrap();
         assert!(captured.is_empty(), "discard should not trigger broadcast");
     })
     .unwrap()

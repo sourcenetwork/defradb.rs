@@ -424,7 +424,7 @@ fn scan_completes_after_multiple_cooperative_yields() {
         }
         txn.commit().await.unwrap();
         let txn = store.new_txn(true).await.unwrap();
-        let stats = tokio::time::timeout(
+        let stats = workers::timeout(
             std::time::Duration::from_secs(10),
             storage_stats::collect(txn.as_ref(), false),
         )

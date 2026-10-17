@@ -135,17 +135,19 @@ fn concurrent_autocommit_arrivals_are_contiguous() {
         use query::fetcher::{DocFetcher, DocumentArrivalOptions};
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         db.create_collection(users_schema()).await.unwrap();
-        let mut creates = tokio::task::JoinSet::new();
-        for index in 0..64 {
-            let db = db.clone();
-            creates.spawn(async move {
-                let mut doc = Document::new();
-                doc.set("name", format!("arrival-{index}"));
-                AutoCommitMutator::new(db).create("Users", doc).await
-            });
-        }
+        let mut creates: futures::stream::FuturesUnordered<_> = (0..64)
+            .map(|index| {
+                let db = db.clone();
+                workers::spawn(None, "test", move || async move {
+                    let mut doc = Document::new();
+                    doc.set("name", format!("arrival-{index}"));
+                    AutoCommitMutator::new(db).create("Users", doc).await
+                })
+                .unwrap()
+            })
+            .collect();
         let mut ids = rapidhash::RapidHashSet::default();
-        while let Some(created) = creates.join_next().await {
+        while let Some(created) = futures::StreamExt::next(&mut creates).await {
             ids.insert(created.unwrap().unwrap().doc_id.to_string());
         }
         let page = LensedAutoCommitFetcher::new(db)

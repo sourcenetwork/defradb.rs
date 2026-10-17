@@ -719,7 +719,7 @@ mod tests {
             let high = window(10);
             let middle = window(9);
             let low = window(8);
-            let (a, b, c) = tokio::join!(
+            let (a, b, c) = futures::join!(
                 db.persist_window_update(&plan, &source, "series", Some(&id), &high),
                 db.persist_window_update(&plan, &source, "series", Some(&id), &middle),
                 db.persist_window_update(&plan, &source, "series", Some(&id), &low),

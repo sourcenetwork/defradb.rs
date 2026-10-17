@@ -419,7 +419,7 @@ fn implicit_batch_replays_atomically_inside_engine_attempt() {
         assert_eq!(returned.len(), 2);
         let mut doc_events = Vec::new();
         for _ in 0..2 {
-            let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            let event = workers::timeout(std::time::Duration::from_secs(1), events.recv())
                 .await
                 .expect("winner event arrives")
                 .expect("subscription remains open");
@@ -583,7 +583,7 @@ fn direct_mutation_api_replays_atomically_inside_engine_attempt() {
         assert_eq!(returned.len(), 2);
         let mut doc_events = Vec::new();
         for _ in 0..2 {
-            let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            let event = workers::timeout(std::time::Duration::from_secs(1), events.recv())
                 .await
                 .expect("winner event arrives")
                 .expect("subscription remains open");

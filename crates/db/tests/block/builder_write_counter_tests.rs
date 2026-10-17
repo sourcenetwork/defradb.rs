@@ -59,7 +59,7 @@ async fn first_counter_update() -> Cid {
 #[test]
 fn first_counter_updates_on_existing_document_have_distinct_cids() {
     workers::block_on(async {
-        let (left, right) = tokio::join!(first_counter_update(), first_counter_update());
+        let (left, right) = futures::join!(first_counter_update(), first_counter_update());
 
         assert_ne!(left, right);
     })
