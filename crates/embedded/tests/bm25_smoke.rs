@@ -28,15 +28,16 @@ type Function {
 }
 "#;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn embedded_node_executes_bm25_queries() -> Result<()> {
-    let node = NodeBuilder::default().build().await?;
+#[test]
+fn embedded_node_executes_bm25_queries() -> Result<()> {
+    workers::block_on(async {
+        let node = NodeBuilder::default().build().await?;
 
-    node.add_schema(ARTICLE_SDL).await?;
+        node.add_schema(ARTICLE_SDL).await?;
 
-    let auth_insert = node
-        .execute(
-            r#"mutation {
+        let auth_insert = node
+            .execute(
+                r#"mutation {
                 add_Article(input: {
                     title: "Auth middleware"
                     body: "Authenticate requests through shared middleware"
@@ -45,13 +46,13 @@ async fn embedded_node_executes_bm25_queries() -> Result<()> {
                     title
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&auth_insert, "add_Article auth")?;
+            )
+            .await;
+        ensure_success(&auth_insert, "add_Article auth")?;
 
-    let util_insert = node
-        .execute(
-            r#"mutation {
+        let util_insert = node
+            .execute(
+                r#"mutation {
                 add_Article(input: {
                     title: "Utility formatters"
                     body: "Pretty print shared output for the CLI"
@@ -60,56 +61,59 @@ async fn embedded_node_executes_bm25_queries() -> Result<()> {
                     title
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&util_insert, "add_Article utility")?;
+            )
+            .await;
+        ensure_success(&util_insert, "add_Article utility")?;
 
-    let response = node
-        .execute(
-            r#"query {
+        let response = node
+            .execute(
+                r#"query {
                 Article(order: {_alias: {score: DESC}}) {
                     title
                     score: BM25(query: "auth middleware", fields: ["title", "body"])
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&response, "Article BM25 query")?;
+            )
+            .await;
+        ensure_success(&response, "Article BM25 query")?;
 
-    let articles = response
-        .data
-        .as_ref()
-        .and_then(|data| data.get("Article"))
-        .and_then(|articles| articles.as_array())
-        .expect("Article query response missing data");
+        let articles = response
+            .data
+            .as_ref()
+            .and_then(|data| data.get("Article"))
+            .and_then(|articles| articles.as_array())
+            .expect("Article query response missing data");
 
-    assert_eq!(articles.len(), 2);
-    assert_eq!(articles[0]["title"].as_str(), Some("Auth middleware"));
+        assert_eq!(articles.len(), 2);
+        assert_eq!(articles[0]["title"].as_str(), Some("Auth middleware"));
 
-    let top_score = articles[0]["score"].as_f64().unwrap_or(0.0);
-    let second_score = articles[1]["score"].as_f64().unwrap_or(0.0);
-    assert!(
-        top_score > 0.0,
-        "matching article should receive a positive BM25 score"
-    );
-    assert!(
-        top_score > second_score,
-        "BM25 ordering should rank the matching article ahead of unrelated content"
-    );
+        let top_score = articles[0]["score"].as_f64().unwrap_or(0.0);
+        let second_score = articles[1]["score"].as_f64().unwrap_or(0.0);
+        assert!(
+            top_score > 0.0,
+            "matching article should receive a positive BM25 score"
+        );
+        assert!(
+            top_score > second_score,
+            "BM25 ordering should rank the matching article ahead of unrelated content"
+        );
 
-    node.database.close().await?;
-    Ok(())
+        node.database.close().await?;
+        Ok(())
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
-    let node = NodeBuilder::default().build().await?;
+#[test]
+fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
+    workers::block_on(async {
+        let node = NodeBuilder::default().build().await?;
 
-    node.add_schema(RELATION_SDL).await?;
+        node.add_schema(RELATION_SDL).await?;
 
-    let auth_file = node
-        .execute(
-            r#"mutation {
+        let auth_file = node
+            .execute(
+                r#"mutation {
                 add_File(input: {
                     name: "auth.rs"
                     path: "src/auth.rs"
@@ -118,13 +122,13 @@ async fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
                     _docID
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&auth_file, "add_File auth")?;
+            )
+            .await;
+        ensure_success(&auth_file, "add_File auth")?;
 
-    let utils_file = node
-        .execute(
-            r#"mutation {
+        let utils_file = node
+            .execute(
+                r#"mutation {
                 add_File(input: {
                     name: "utils.rs"
                     path: "src/utils.rs"
@@ -133,44 +137,44 @@ async fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
                     _docID
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&utils_file, "add_File utils")?;
+            )
+            .await;
+        ensure_success(&utils_file, "add_File utils")?;
 
-    let files = node
-        .execute(
-            r#"query {
+        let files = node
+            .execute(
+                r#"query {
                 File(order: {name: ASC}) {
                     _docID
                     name
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&files, "File lookup")?;
+            )
+            .await;
+        ensure_success(&files, "File lookup")?;
 
-    let file_rows = files
-        .data
-        .as_ref()
-        .and_then(|data| data.get("File"))
-        .and_then(|rows| rows.as_array())
-        .expect("File lookup response missing data");
-    let auth_file_id = file_rows
-        .iter()
-        .find(|row| row["name"].as_str() == Some("auth.rs"))
-        .and_then(|row| row.get("_docID"))
-        .and_then(|id| id.as_str())
-        .expect("auth file doc id missing");
-    let utils_file_id = file_rows
-        .iter()
-        .find(|row| row["name"].as_str() == Some("utils.rs"))
-        .and_then(|row| row.get("_docID"))
-        .and_then(|id| id.as_str())
-        .expect("utils file doc id missing");
+        let file_rows = files
+            .data
+            .as_ref()
+            .and_then(|data| data.get("File"))
+            .and_then(|rows| rows.as_array())
+            .expect("File lookup response missing data");
+        let auth_file_id = file_rows
+            .iter()
+            .find(|row| row["name"].as_str() == Some("auth.rs"))
+            .and_then(|row| row.get("_docID"))
+            .and_then(|id| id.as_str())
+            .expect("auth file doc id missing");
+        let utils_file_id = file_rows
+            .iter()
+            .find(|row| row["name"].as_str() == Some("utils.rs"))
+            .and_then(|row| row.get("_docID"))
+            .and_then(|id| id.as_str())
+            .expect("utils file doc id missing");
 
-    let auth_fn = node
-        .execute(&format!(
-            r#"mutation {{
+        let auth_fn = node
+            .execute(&format!(
+                r#"mutation {{
                 add_Function(input: {{
                     name: "handle_request"
                     qualifiedName: "auth::handle_request"
@@ -181,13 +185,13 @@ async fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
                     _docID
                 }}
             }}"#,
-        ))
-        .await;
-    ensure_success(&auth_fn, "add_Function auth")?;
+            ))
+            .await;
+        ensure_success(&auth_fn, "add_Function auth")?;
 
-    let utils_fn = node
-        .execute(&format!(
-            r#"mutation {{
+        let utils_fn = node
+            .execute(&format!(
+                r#"mutation {{
                 add_Function(input: {{
                     name: "handle_request"
                     qualifiedName: "utils::handle_request"
@@ -198,13 +202,13 @@ async fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
                     _docID
                 }}
             }}"#,
-        ))
-        .await;
-    ensure_success(&utils_fn, "add_Function utils")?;
+            ))
+            .await;
+        ensure_success(&utils_fn, "add_Function utils")?;
 
-    let response = node
-        .execute(
-            r#"query {
+        let response = node
+            .execute(
+                r#"query {
                 File(order: {name: ASC}) {
                     name
                     functions(order: {qualifiedName: ASC}) {
@@ -213,49 +217,52 @@ async fn embedded_node_executes_nested_bm25_queries() -> Result<()> {
                     }
                 }
             }"#,
-        )
-        .await;
-    ensure_success(&response, "nested BM25 query")?;
+            )
+            .await;
+        ensure_success(&response, "nested BM25 query")?;
 
-    let files = response
-        .data
-        .as_ref()
-        .and_then(|data| data.get("File"))
-        .and_then(|files| files.as_array())
-        .expect("File query response missing data");
+        let files = response
+            .data
+            .as_ref()
+            .and_then(|data| data.get("File"))
+            .and_then(|files| files.as_array())
+            .expect("File query response missing data");
 
-    assert_eq!(files.len(), 2);
-    assert_eq!(files[0]["name"].as_str(), Some("auth.rs"));
-    assert_eq!(files[1]["name"].as_str(), Some("utils.rs"));
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0]["name"].as_str(), Some("auth.rs"));
+        assert_eq!(files[1]["name"].as_str(), Some("utils.rs"));
 
-    let auth_score = files[0]["functions"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("score"))
-        .and_then(|score| score.as_f64())
-        .unwrap_or(0.0);
-    let utils_score = files[1]["functions"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("score"))
-        .and_then(|score| score.as_f64())
-        .unwrap_or(0.0);
+        let auth_score = files[0]["functions"]
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("score"))
+            .and_then(|score| score.as_f64())
+            .unwrap_or(0.0);
+        let utils_score = files[1]["functions"]
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("score"))
+            .and_then(|score| score.as_f64())
+            .unwrap_or(0.0);
 
-    assert!(
-        auth_score > 0.0,
-        "matching nested function should receive a positive BM25 score"
-    );
-    assert_eq!(
-        utils_score, 0.0,
-        "non-matching nested function should not receive a BM25 score"
-    );
+        assert!(
+            auth_score > 0.0,
+            "matching nested function should receive a positive BM25 score"
+        );
+        assert_eq!(
+            utils_score, 0.0,
+            "non-matching nested function should not receive a BM25 score"
+        );
 
-    node.database.close().await?;
-    Ok(())
+        node.database.close().await?;
+        Ok(())
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn embedded_node_executes_nested_bm25_alias_filter_and_order_queries() -> Result<()> {
+#[test]
+fn embedded_node_executes_nested_bm25_alias_filter_and_order_queries() -> Result<()> {
+    workers::block_on(async {
     let node = NodeBuilder::default().build().await?;
 
     node.add_schema(RELATION_SDL).await?;
@@ -426,6 +433,8 @@ async fn embedded_node_executes_nested_bm25_alias_filter_and_order_queries() -> 
 
     node.database.close().await?;
     Ok(())
+})
+    .unwrap()
 }
 
 fn ensure_success(response: &query::QueryResponse, operation: &str) -> Result<()> {

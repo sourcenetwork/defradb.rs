@@ -542,7 +542,6 @@ mod runner {
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
-    runner::run().await
+fn main() -> std::process::ExitCode {
+    workers::block_on(runner::run()).unwrap_or(std::process::ExitCode::FAILURE)
 }

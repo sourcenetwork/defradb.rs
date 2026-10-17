@@ -24,8 +24,9 @@ fn fetches(value: &Value) -> u64 {
     }
 }
 
-#[tokio::test]
-async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
+#[test]
+fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema("type Note { title: String owner: String @index }")
         .await
@@ -90,4 +91,6 @@ async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
             .len(),
         1
     );
+})
+    .unwrap()
 }

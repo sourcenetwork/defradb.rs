@@ -8,7 +8,7 @@ use defra_core::current_identity::with_scoped_identity;
 use embedded::EmbeddedNode;
 use identity::{Did, Identity};
 use query::{QueryRequest, QueryResponse};
-use tokio::time::{sleep, Instant};
+use std::time::Instant;
 
 const POLICY: &str = r#"name: test-user-policy
 description: A test policy for user document access control
@@ -134,4 +134,8 @@ pub async fn wait_for_fred(node: &Node, reader: &Did) -> Result<()> {
         }
         sleep(Duration::from_millis(250)).await;
     }
+}
+
+async fn sleep(duration: Duration) {
+    edge::testing::edge().sleep(duration).await;
 }

@@ -36,7 +36,7 @@ where
             );
             let sh_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
             Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(sh_acp.clone(), store),
+                document_acp: gate_external_acp(sh_acp.clone(), store, network)?,
                 local_zanzibar_store: None,
                 vera_acp: Some(sh_acp),
             })
@@ -60,7 +60,7 @@ where
             );
             let vera_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
             Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(vera_acp.clone(), store),
+                document_acp: gate_external_acp(vera_acp.clone(), store, network)?,
                 local_zanzibar_store: None,
                 vera_acp: Some(vera_acp),
             })
@@ -82,13 +82,19 @@ where
 fn gate_external_acp<S>(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<S>,
-) -> Arc<dyn acp::DocumentACP>
+    network: Option<&edge::Edge>,
+) -> Result<Arc<dyn acp::DocumentACP>>
 where
     S: storage::corekv::Store + 'static,
 {
     let gate = Arc::new(acp::ExternalDocumentAcp::new(provider, store));
     let redrive = Arc::clone(&gate);
-    tokio::spawn(async move {
+    // The redrive's provider calls are network work, on the node's runtime.
+    let network = match network {
+        Some(edge) => edge,
+        None => edge::on_demand().map_err(Error::NetworkStart)?,
+    };
+    drop(network.spawn(async move {
         match redrive.redrive_owed().await {
             Ok(report) if report.settled > 0 => tracing::info!(
                 settled = report.settled,
@@ -101,8 +107,8 @@ where
                 "Could not read owed ACP registrations; their documents stay readable only by their creators"
             ),
         }
-    });
-    gate
+    }));
+    Ok(gate)
 }
 
 fn local_document_acp_setup(
@@ -145,23 +151,24 @@ mod tests {
         Did::new(value).unwrap()
     }
 
-    #[tokio::test]
-    async fn local_document_acp_enforces_stored_custom_policy() {
-        let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
-        let acp_setup =
-            create_document_acp(store, Persistence::Memory, &DocumentAcpConfig::Local, None)
-                .await
-                .unwrap();
+    #[test]
+    fn local_document_acp_enforces_stored_custom_policy() {
+        workers::block_on(async {
+            let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
+            let acp_setup =
+                create_document_acp(store, Persistence::Memory, &DocumentAcpConfig::Local, None)
+                    .await
+                    .unwrap();
 
-        #[cfg(feature = "vera")]
-        assert!(acp_setup.vera_acp.is_none());
-        let document_acp = acp_setup.document_acp;
-        let local_store = acp_setup
-            .local_zanzibar_store
-            .expect("local ACP should expose a Zanzibar store");
+            #[cfg(feature = "vera")]
+            assert!(acp_setup.vera_acp.is_none());
+            let document_acp = acp_setup.document_acp;
+            let local_store = acp_setup
+                .local_zanzibar_store
+                .expect("local ACP should expose a Zanzibar store");
 
-        let parsed = acp::policy_yaml::parse_policy_yaml(
-            r#"
+            let parsed = acp::policy_yaml::parse_policy_yaml(
+                r#"
 name: Viewer Policy
 resources:
   - name: users
@@ -177,48 +184,50 @@ resources:
       - name: delete
         expr: remover
 "#,
-        )
-        .unwrap();
-        let policy = acp::policy_yaml::build_policy(&parsed, 1).unwrap();
-        let options = StorePolicyOptions::new()
-            .with_validation()
-            .with_dpi_enforcement();
-        local_store
-            .store_policy_with_options(&policy, &options)
-            .await
-            .unwrap();
-
-        let owner = did("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK");
-        let viewer = did("did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR");
-
-        document_acp
-            .register_doc_object(&owner, &policy.id, "users", "doc1")
-            .await
-            .unwrap();
-        document_acp
-            .add_actor_relationship(&owner, &viewer, &policy.id, "users", "doc1", "viewer", &[])
-            .await
-            .unwrap();
-
-        assert!(document_acp
-            .check_doc_access(
-                &Identity::Authenticated(viewer.clone()),
-                DocumentPermission::Read,
-                &policy.id,
-                "users",
-                "doc1",
             )
-            .await
-            .unwrap());
-        assert!(!document_acp
-            .check_doc_access(
-                &Identity::Authenticated(viewer),
-                DocumentPermission::Update,
-                &policy.id,
-                "users",
-                "doc1",
-            )
-            .await
-            .unwrap());
+            .unwrap();
+            let policy = acp::policy_yaml::build_policy(&parsed, 1).unwrap();
+            let options = StorePolicyOptions::new()
+                .with_validation()
+                .with_dpi_enforcement();
+            local_store
+                .store_policy_with_options(&policy, &options)
+                .await
+                .unwrap();
+
+            let owner = did("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK");
+            let viewer = did("did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR");
+
+            document_acp
+                .register_doc_object(&owner, &policy.id, "users", "doc1")
+                .await
+                .unwrap();
+            document_acp
+                .add_actor_relationship(&owner, &viewer, &policy.id, "users", "doc1", "viewer", &[])
+                .await
+                .unwrap();
+
+            assert!(document_acp
+                .check_doc_access(
+                    &Identity::Authenticated(viewer.clone()),
+                    DocumentPermission::Read,
+                    &policy.id,
+                    "users",
+                    "doc1",
+                )
+                .await
+                .unwrap());
+            assert!(!document_acp
+                .check_doc_access(
+                    &Identity::Authenticated(viewer),
+                    DocumentPermission::Update,
+                    &policy.id,
+                    "users",
+                    "doc1",
+                )
+                .await
+                .unwrap());
+        })
+        .unwrap()
     }
 }

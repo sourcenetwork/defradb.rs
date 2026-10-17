@@ -26,8 +26,9 @@ fn register_local_node_identity() -> (String, String) {
     (did, public_key_hex)
 }
 
-#[tokio::test]
-async fn embedded_transaction_mutation_uses_node_signer() {
+#[test]
+fn embedded_transaction_mutation_uses_node_signer() {
+    workers::block_on(async {
     defra_core::signing::clear_identity_store();
     let (did, expected_identity) = register_local_node_identity();
 
@@ -245,4 +246,6 @@ async fn embedded_transaction_mutation_uses_node_signer() {
     );
 
     node.shutdown().await;
+})
+    .unwrap()
 }

@@ -24,29 +24,37 @@ fn libp2p() -> TransportConfig {
     })
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_transport_without_a_network_runtime_runs_on_the_process_runtime() -> Result<()> {
-    let config = EmbeddedNodeConfig {
-        transport: libp2p(),
-        ..Default::default()
-    };
+#[test]
+fn a_transport_without_a_network_runtime_runs_on_the_process_runtime() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let config = EmbeddedNodeConfig {
+                transport: libp2p(),
+                ..Default::default()
+            };
 
-    // The build fails when the transport does not start.
-    let node = embedded::build_with_store(Arc::new(memory_store()?), config).await?;
-    node.shutdown().await;
-    Ok(())
+            // The build fails when the transport does not start.
+            let node = embedded::build_with_store(Arc::new(memory_store()?), config).await?;
+            node.shutdown().await;
+            Ok(())
+        })
+        .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_transport_runs_on_the_network_runtime_it_is_given() -> Result<()> {
-    let config = EmbeddedNodeConfig {
-        transport: libp2p(),
-        edge: Some(edge::testing::edge()),
-        ..Default::default()
-    };
+#[test]
+fn a_transport_runs_on_the_network_runtime_it_is_given() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let config = EmbeddedNodeConfig {
+                transport: libp2p(),
+                edge: Some(edge::testing::edge()),
+                ..Default::default()
+            };
 
-    let node = embedded::build_with_store(Arc::new(memory_store()?), config).await?;
+            let node = embedded::build_with_store(Arc::new(memory_store()?), config).await?;
 
-    node.shutdown().await;
-    Ok(())
+            node.shutdown().await;
+            Ok(())
+        })
+        .unwrap()
 }

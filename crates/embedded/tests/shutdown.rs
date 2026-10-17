@@ -19,155 +19,182 @@ use embedded::{EmbeddedNodeConfig, NodeBuilder};
 #[cfg(any(feature = "libp2p", feature = "iroh"))]
 use embedded::{Persistence, TransportConfig};
 use outcome::Result;
+use regolith::sync::Notify;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Notify;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_reports_closed_database() -> Result<()> {
-    let node = NodeBuilder::default().build().await?;
-    assert!(!node.is_shutdown(), "fresh node should not report shutdown");
-    assert!(
-        !node.database.is_closed(),
-        "fresh database should not report closed"
-    );
+#[test]
+fn shutdown_reports_closed_database() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let node = NodeBuilder::default().build().await?;
+            assert!(!node.is_shutdown(), "fresh node should not report shutdown");
+            assert!(
+                !node.database.is_closed(),
+                "fresh database should not report closed"
+            );
 
-    node.shutdown().await;
+            node.shutdown().await;
 
-    assert!(
-        node.is_shutdown(),
-        "after shutdown(), is_shutdown() should return true"
-    );
-    assert!(
-        node.database.is_closed(),
-        "after shutdown(), database should report closed"
-    );
+            assert!(
+                node.is_shutdown(),
+                "after shutdown(), is_shutdown() should return true"
+            );
+            assert!(
+                node.database.is_closed(),
+                "after shutdown(), database should report closed"
+            );
 
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_is_idempotent() -> Result<()> {
-    let node = NodeBuilder::default().build().await?;
-
-    // First call does real work.
-    node.shutdown().await;
-    assert!(node.is_shutdown());
-    assert!(node.database.is_closed());
-
-    // Second and third calls must be safe no-ops.
-    node.shutdown().await;
-    node.shutdown().await;
-    assert!(node.is_shutdown());
-    assert!(node.database.is_closed());
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_concurrent_calls_are_safe() -> Result<()> {
-    let node = Arc::new(NodeBuilder::default().build().await?);
-
-    // Fire several concurrent shutdown() calls. They should all return
-    // without panicking, and the node should end up fully shut down.
-    let handles: Vec<_> = (0..8)
-        .map(|_| {
-            let n = node.clone();
-            tokio::spawn(async move { n.shutdown().await })
+            Ok(())
         })
-        .collect();
+        .unwrap()
+}
 
-    for h in handles {
-        h.await.expect("shutdown task should not panic");
-    }
+#[test]
+fn shutdown_is_idempotent() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let node = NodeBuilder::default().build().await?;
 
-    assert!(node.is_shutdown());
-    assert!(node.database.is_closed());
+            // First call does real work.
+            node.shutdown().await;
+            assert!(node.is_shutdown());
+            assert!(node.database.is_closed());
 
-    Ok(())
+            // Second and third calls must be safe no-ops.
+            node.shutdown().await;
+            node.shutdown().await;
+            assert!(node.is_shutdown());
+            assert!(node.database.is_closed());
+
+            Ok(())
+        })
+        .unwrap()
+}
+
+#[test]
+fn shutdown_concurrent_calls_are_safe() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let node = Arc::new(NodeBuilder::default().build().await?);
+
+            // Fire several concurrent shutdown() calls. They should all return
+            // without panicking, and the node should end up fully shut down.
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let n = node.clone();
+                    edge::testing::edge().spawn(async move { n.shutdown().await })
+                })
+                .collect();
+
+            for h in handles {
+                h.await.expect("shutdown task should not panic");
+            }
+
+            assert!(node.is_shutdown());
+            assert!(node.database.is_closed());
+
+            Ok(())
+        })
+        .unwrap()
 }
 #[cfg(feature = "libp2p")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p2p_shutdown_releases_persistent_store() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("data.regolith");
-    let config = EmbeddedNodeConfig {
-        edge: Some(edge::testing::edge()),
-        persistence: Persistence::Persistent,
-        transport: TransportConfig::Libp2p(Libp2pConfig {
-            listen_addr: "/ip4/127.0.0.1/tcp/0".to_string(),
-        }),
-        ..Default::default()
-    };
-    let node =
-        embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config).await?;
+#[test]
+fn p2p_shutdown_releases_persistent_store() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("data.regolith");
+            let config = EmbeddedNodeConfig {
+                edge: Some(edge::testing::edge()),
+                persistence: Persistence::Persistent,
+                transport: TransportConfig::Libp2p(Libp2pConfig {
+                    listen_addr: "/ip4/127.0.0.1/tcp/0".to_string(),
+                }),
+                ..Default::default()
+            };
+            let node =
+                embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config)
+                    .await?;
 
-    node.shutdown().await;
-    drop(node);
+            node.shutdown().await;
+            drop(node);
 
-    let reopened = storage::RegolithStore::open(&path)?;
-    storage::Store::close(&reopened).await?;
+            let reopened = storage::RegolithStore::open(&path)?;
+            storage::Store::close(&reopened).await?;
 
-    Ok(())
+            Ok(())
+        })
+        .unwrap()
 }
 
 #[cfg(feature = "iroh")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn iroh_shutdown_releases_persistent_store() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("data.regolith");
-    let config = EmbeddedNodeConfig {
-        edge: Some(edge::testing::edge()),
-        persistence: Persistence::Persistent,
-        transport: TransportConfig::Iroh(IrohConfig {
-            bind_addr: Some(std::net::Ipv4Addr::LOCALHOST.into()),
-            bind_port: Some(0),
-            relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
-            discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let node =
-        embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config).await?;
+#[test]
+fn iroh_shutdown_releases_persistent_store() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("data.regolith");
+            let config = EmbeddedNodeConfig {
+                edge: Some(edge::testing::edge()),
+                persistence: Persistence::Persistent,
+                transport: TransportConfig::Iroh(IrohConfig {
+                    bind_addr: Some(std::net::Ipv4Addr::LOCALHOST.into()),
+                    bind_port: Some(0),
+                    relay_mode: p2p::iroh::IrohRelayModeConfig::Disabled,
+                    discovery: p2p::iroh::IrohDiscoveryConfig::Disabled,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let node =
+                embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config)
+                    .await?;
 
-    node.shutdown().await;
-    drop(node);
+            node.shutdown().await;
+            drop(node);
 
-    let reopened = storage::RegolithStore::open(&path)?;
-    storage::Store::close(&reopened).await?;
+            let reopened = storage::RegolithStore::open(&path)?;
+            storage::Store::close(&reopened).await?;
 
-    Ok(())
+            Ok(())
+        })
+        .unwrap()
 }
 
 #[cfg(feature = "libp2p")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("data.regolith");
-    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
-    let port = listener.local_addr()?.port();
-    let config = EmbeddedNodeConfig {
-        edge: Some(edge::testing::edge()),
-        persistence: Persistence::Persistent,
-        transport: TransportConfig::Libp2p(Libp2pConfig {
-            listen_addr: format!("/ip4/127.0.0.1/tcp/{port}"),
-        }),
-        ..Default::default()
-    };
+#[test]
+fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("data.regolith");
+            let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+            let port = listener.local_addr()?.port();
+            let config = EmbeddedNodeConfig {
+                edge: Some(edge::testing::edge()),
+                persistence: Persistence::Persistent,
+                transport: TransportConfig::Libp2p(Libp2pConfig {
+                    listen_addr: format!("/ip4/127.0.0.1/tcp/{port}"),
+                }),
+                ..Default::default()
+            };
 
-    let result =
-        embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config).await;
-    assert!(
-        result.is_err(),
-        "P2P setup should fail when the port is busy"
-    );
+            let result =
+                embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config)
+                    .await;
+            assert!(
+                result.is_err(),
+                "P2P setup should fail when the port is busy"
+            );
 
-    let reopened = storage::RegolithStore::open(&path)?;
-    storage::Store::close(&reopened).await?;
+            let reopened = storage::RegolithStore::open(&path)?;
+            storage::Store::close(&reopened).await?;
 
-    Ok(())
+            Ok(())
+        })
+        .unwrap()
 }
 
 #[derive(Clone)]
@@ -234,56 +261,63 @@ impl storage::Store for SlowCloseStore {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn concurrent_shutdown_callers_wait_for_teardown_completion() -> Result<()> {
-    let store = Arc::new(SlowCloseStore::new());
-    let node =
-        Arc::new(embedded::build_with_store(store.clone(), EmbeddedNodeConfig::default()).await?);
-
-    let first = {
-        let node = node.clone();
-        tokio::spawn(async move {
-            node.shutdown().await;
-        })
-    };
-
-    tokio::time::timeout(Duration::from_secs(5), store.wait_until_close_started())
-        .await
-        .expect("database close did not start");
-
-    let second = {
-        let node = node.clone();
-        let store = store.clone();
-        tokio::spawn(async move {
-            node.shutdown().await;
-            assert!(
-                store.close_finished.load(Ordering::SeqCst),
-                "shutdown() returned before store close completed"
+#[test]
+fn concurrent_shutdown_callers_wait_for_teardown_completion() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let store = Arc::new(SlowCloseStore::new());
+            let node = Arc::new(
+                embedded::build_with_store(store.clone(), EmbeddedNodeConfig::default()).await?,
             );
+
+            let first = {
+                let node = node.clone();
+                edge::testing::edge().spawn(async move {
+                    node.shutdown().await;
+                })
+            };
+
+            edge::testing::edge()
+                .timeout(Duration::from_secs(5), store.wait_until_close_started())
+                .await
+                .expect("database close did not start");
+
+            let second = {
+                let node = node.clone();
+                let store = store.clone();
+                edge::testing::edge().spawn(async move {
+                    node.shutdown().await;
+                    assert!(
+                        store.close_finished.load(Ordering::SeqCst),
+                        "shutdown() returned before store close completed"
+                    );
+                })
+            };
+
+            workers::yield_now().await;
+            assert!(
+                !second.is_finished(),
+                "concurrent shutdown caller returned before teardown completed"
+            );
+
+            store.allow_close.notify_one();
+
+            edge::testing::edge()
+                .timeout(Duration::from_secs(5), async {
+                    first.await.expect("first shutdown task should not panic");
+                    second.await.expect("second shutdown task should not panic");
+                })
+                .await
+                .expect("shutdown tasks did not finish");
+
+            assert_eq!(
+                store.close_calls.load(Ordering::SeqCst),
+                1,
+                "shutdown should only close the store once"
+            );
+            assert!(store.close_finished.load(Ordering::SeqCst));
+
+            Ok(())
         })
-    };
-
-    tokio::task::yield_now().await;
-    assert!(
-        !second.is_finished(),
-        "concurrent shutdown caller returned before teardown completed"
-    );
-
-    store.allow_close.notify_one();
-
-    tokio::time::timeout(Duration::from_secs(5), async {
-        first.await.expect("first shutdown task should not panic");
-        second.await.expect("second shutdown task should not panic");
-    })
-    .await
-    .expect("shutdown tasks did not finish");
-
-    assert_eq!(
-        store.close_calls.load(Ordering::SeqCst),
-        1,
-        "shutdown should only close the store once"
-    );
-    assert!(store.close_finished.load(Ordering::SeqCst));
-
-    Ok(())
+        .unwrap()
 }

@@ -119,6 +119,18 @@ pub struct Server {
     dev_mode: bool,
 }
 
+/// Binds a listener on `addr` for [`axum::serve`]. Call it on the network
+/// runtime.
+pub async fn bind_listener(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    TcpListener::bind(addr).await
+}
+
+/// Adopts a bound, non-blocking standard listener for [`axum::serve`]. Call
+/// it on the network runtime.
+pub fn adopt_listener(listener: std::net::TcpListener) -> std::io::Result<TcpListener> {
+    TcpListener::from_std(listener)
+}
+
 impl Server {
     /// Create a new server with the given executor, running on `edge`.
     pub fn new<E>(executor: E, edge: Edge) -> Self

@@ -22,7 +22,7 @@ use crate::{
 use kovan_queue::seg_queue::SegQueue;
 #[cfg(any(feature = "libp2p", feature = "iroh"))]
 use p2p::sync::SyncConfig;
-use tokio::sync::Notify;
+use regolith::sync::Notify;
 
 #[cfg(feature = "libp2p")]
 pub(crate) type EmbeddedBlockstore<S> = blockstore::DefraBlockstore<S>;
@@ -431,12 +431,10 @@ impl NodeBuilder {
         let pool = start_node_pool(self.workers.take(), self.config.edge.as_ref())?;
         let (store, persistence) = if let Some(path) = self.data_path.take() {
             if let Some(parent) = path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|source| Error::DataDirCreate {
-                        path: path.clone(),
-                        source,
-                    })?;
+                std::fs::create_dir_all(parent).map_err(|source| Error::DataDirCreate {
+                    path: path.clone(),
+                    source,
+                })?;
             }
 
             #[cfg(feature = "iroh")]
@@ -508,7 +506,7 @@ enum ShutdownKind {
     Libp2p {
         handle: Box<p2p::P2PHostHandle>,
         coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: Box<SegQueue<tokio::task::JoinHandle<()>>>,
+        tasks: Box<SegQueue<edge::Task<()>>>,
         /// The retry sweep, on the network edge.
         retry_loop: Box<SegQueue<edge::Task<()>>>,
         /// The push failure recorder, on the worker pool.
@@ -523,7 +521,7 @@ impl ShutdownHandle {
     pub(crate) fn libp2p(
         handle: p2p::P2PHostHandle,
         coordinator: p2p::sync::SyncShutdownHandle,
-        tasks: Vec<tokio::task::JoinHandle<()>>,
+        tasks: Vec<edge::Task<()>>,
         retry_loop: edge::Task<()>,
         recorder: workers::Background,
     ) -> Self {
@@ -559,7 +557,7 @@ impl ShutdownHandle {
                 coordinator.shutdown().await;
                 abort_and_join(retry_loop, edge::Task::abort).await;
                 abort_and_join(recorder, workers::Background::abort).await;
-                abort_and_join(tasks, tokio::task::JoinHandle::abort).await;
+                abort_and_join(tasks, edge::Task::abort).await;
                 let _ = handle.shutdown().await;
             }
             #[cfg(feature = "iroh")]
