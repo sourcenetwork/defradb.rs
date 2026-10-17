@@ -492,58 +492,23 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
             })?;
         doc.set_id(canonical_doc_id.clone());
 
-        // A field that already holds the written value needs no block: its
-        // LWW priority would only re-assert the current state. Counter inputs
-        // are deltas, an explicit encryption config re-keys every field, and a
-        // downsample source records every write as a sample. A document stored
-        // under an older version is compared only after lensing, which this
-        // raw read skips, so it is written in full. The compared fields are
-        // read as parts the write decides on anyway, so a concurrent change of
-        // one conflicts.
-        let downsample_source = self
-            .db
-            .is_downsample_source(collection_name)
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        let skips = context.encryption().is_none() && !downsample_source;
-        let compared: rapidhash::RapidHashSet<String> = if skips {
-            modified_fields
-                .iter()
-                .filter(|field_name| doc.get_counter_delta(field_name).is_none())
-                .cloned()
-                .collect()
-        } else {
-            rapidhash::RapidHashSet::default()
-        };
-        // Counter increments alone compare nothing; an update of no field is
-        // still a no-op on a document that exists.
-        if skips && (!compared.is_empty() || modified_fields.is_empty()) {
-            let version = collection
-                .load_version(&datastore, doc_short_id)
+        if context.encryption().is_none()
+            && !self
+                .db
+                .is_downsample_source(collection_name)
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+            && collection
+                .retain_changed_fields(
+                    &datastore,
+                    doc_short_id,
+                    &doc,
+                    &mut modified_fields,
+                    query::update_parts::Run::First,
+                )
                 .await
-                .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-            let committed = if version.as_deref() == Some(collection.version_id()) {
-                collection
-                    .get_with_datastore_fields_at(
-                        &datastore,
-                        doc_short_id,
-                        &canonical_doc_id,
-                        &compared,
-                        version,
-                    )
-                    .await
-                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?
-            } else {
-                None
-            };
-            if let Some(committed) = committed {
-                modified_fields.retain(|field_name| {
-                    !compared.contains(field_name)
-                        || doc.get(field_name) != committed.get(field_name)
-                });
-                if modified_fields.is_empty() {
-                    return Ok(UpdateResult::new(doc, 0));
-                }
-            }
+                .map_err(crate::error::commit_query_error)?
+        {
+            return Ok(UpdateResult::new(doc, 0));
         }
 
         self.db

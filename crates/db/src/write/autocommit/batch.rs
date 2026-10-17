@@ -545,6 +545,26 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             })?;
         doc.set_id(canonical_doc_id.clone());
 
+        if context.encryption().is_none()
+            && !self
+                .db
+                .is_downsample_source(collection_name)
+                .map_err(|error| query::error::QueryError::execution(error.to_string()))?
+            && collection
+                .retain_changed_fields(
+                    &datastore,
+                    doc_short_id,
+                    &doc,
+                    &mut modified_fields,
+                    self.update_run,
+                )
+                .await
+                .map_err(crate::error::commit_query_error)?
+        {
+            doc.clear_write_preparation();
+            return Ok(UpdateResult::new(doc, 0));
+        }
+
         self.db
             .validate_downsample_write(
                 &datastore,
@@ -648,7 +668,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .await?;
         }
 
-        let fields_modified = doc.values().len();
+        let fields_modified = modified_fields.len();
         doc.clear_write_preparation();
         let mut result = UpdateResult::with_commit(doc, fields_modified, doc_cid, doc_block);
         if let Some((col_cid, col_bytes)) = col_block_data {
