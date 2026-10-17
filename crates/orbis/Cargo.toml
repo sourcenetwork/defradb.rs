@@ -36,6 +36,9 @@ hex.workspace = true
 # Error handling
 thiserror.workspace = true
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 edge = { path = "../edge", features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync"] }

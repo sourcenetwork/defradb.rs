@@ -93,6 +93,9 @@ cid.workspace = true
 [build-dependencies]
 cbindgen = "0.28"
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 defra-core = { path = "../defra-core", features = ["ambient"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
