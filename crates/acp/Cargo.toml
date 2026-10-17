@@ -39,7 +39,8 @@ sha2 = { workspace = true, features = ["asm"] }
 [dev-dependencies]
 bytes = { workspace = true }
 tempfile = "3"
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
+workers = { path = "../workers" }
 
 [lints]
 workspace = true
