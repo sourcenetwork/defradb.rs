@@ -38,56 +38,59 @@ impl storage::corekv::RetryAttemptFn for Attempt {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn engine_retry_counter_counts_only_actual_replay_executions() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut seed = store.new_txn(false).await.unwrap();
-    seed.set(b"counter", b"initial").await.unwrap();
-    seed.commit().await.unwrap();
+#[test]
+fn engine_retry_counter_counts_only_actual_replay_executions() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut seed = store.new_txn(false).await.unwrap();
+        seed.set(b"counter", b"initial").await.unwrap();
+        seed.commit().await.unwrap();
 
-    let before = telemetry::conflict_metrics_snapshot().engine.attempts;
-    let no_conflict_runs = Arc::new(AtomicUsize::new(0));
-    let no_conflict = Attempt {
-        store: store.clone(),
-        runs: no_conflict_runs.clone(),
-        conflicts_to_create: 0,
-        conflict_prefix: "unused",
-    };
-    store
-        .transact_retry(RetryOptions::new(3), Box::new(no_conflict))
-        .await
-        .unwrap();
-    assert_eq!(no_conflict_runs.load(Ordering::Relaxed), 1);
-    let after_no_conflict = telemetry::conflict_metrics_snapshot().engine.attempts;
-    assert_eq!(after_no_conflict - before, 0);
+        let before = telemetry::conflict_metrics_snapshot().engine.attempts;
+        let no_conflict_runs = Arc::new(AtomicUsize::new(0));
+        let no_conflict = Attempt {
+            store: store.clone(),
+            runs: no_conflict_runs.clone(),
+            conflicts_to_create: 0,
+            conflict_prefix: "unused",
+        };
+        store
+            .transact_retry(RetryOptions::new(3), Box::new(no_conflict))
+            .await
+            .unwrap();
+        assert_eq!(no_conflict_runs.load(Ordering::Relaxed), 1);
+        let after_no_conflict = telemetry::conflict_metrics_snapshot().engine.attempts;
+        assert_eq!(after_no_conflict - before, 0);
 
-    let one_conflict_runs = Arc::new(AtomicUsize::new(0));
-    let one_conflict = Attempt {
-        store: store.clone(),
-        runs: one_conflict_runs.clone(),
-        conflicts_to_create: 1,
-        conflict_prefix: "single-conflict",
-    };
-    store
-        .transact_retry(RetryOptions::new(3), Box::new(one_conflict))
-        .await
-        .unwrap();
-    assert_eq!(one_conflict_runs.load(Ordering::Relaxed), 2);
-    let after_successful_replay = telemetry::conflict_metrics_snapshot().engine.attempts;
-    assert_eq!(after_successful_replay - after_no_conflict, 1);
+        let one_conflict_runs = Arc::new(AtomicUsize::new(0));
+        let one_conflict = Attempt {
+            store: store.clone(),
+            runs: one_conflict_runs.clone(),
+            conflicts_to_create: 1,
+            conflict_prefix: "single-conflict",
+        };
+        store
+            .transact_retry(RetryOptions::new(3), Box::new(one_conflict))
+            .await
+            .unwrap();
+        assert_eq!(one_conflict_runs.load(Ordering::Relaxed), 2);
+        let after_successful_replay = telemetry::conflict_metrics_snapshot().engine.attempts;
+        assert_eq!(after_successful_replay - after_no_conflict, 1);
 
-    let exhausted_runs = Arc::new(AtomicUsize::new(0));
-    let every_attempt_conflicts = Attempt {
-        store: store.clone(),
-        runs: exhausted_runs.clone(),
-        conflicts_to_create: usize::MAX,
-        conflict_prefix: "exhaustion",
-    };
-    let result = store
-        .transact_retry(RetryOptions::new(3), Box::new(every_attempt_conflicts))
-        .await;
-    assert!(matches!(result, Err(RetryAttemptError::Exhausted(_))));
-    assert_eq!(exhausted_runs.load(Ordering::Relaxed), 3);
-    let after_exhaustion = telemetry::conflict_metrics_snapshot().engine.attempts;
-    assert_eq!(after_exhaustion - after_successful_replay, 2);
+        let exhausted_runs = Arc::new(AtomicUsize::new(0));
+        let every_attempt_conflicts = Attempt {
+            store: store.clone(),
+            runs: exhausted_runs.clone(),
+            conflicts_to_create: usize::MAX,
+            conflict_prefix: "exhaustion",
+        };
+        let result = store
+            .transact_retry(RetryOptions::new(3), Box::new(every_attempt_conflicts))
+            .await;
+        assert!(matches!(result, Err(RetryAttemptError::Exhausted(_))));
+        assert_eq!(exhausted_runs.load(Ordering::Relaxed), 3);
+        let after_exhaustion = telemetry::conflict_metrics_snapshot().engine.attempts;
+        assert_eq!(after_exhaustion - after_successful_replay, 2);
+    })
+    .unwrap()
 }

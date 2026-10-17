@@ -323,34 +323,37 @@ mod statistics_tests {
     /// histogram: the store reports only tickers, a timer reads the clock
     /// twice per iterator step, read and log write, and a sample costs
     /// atomics on every read and commit.
-    #[tokio::test]
-    async fn the_stores_own_statistics_count_tickers_only() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
-        txn.set(b"key", b"value").await.unwrap();
-        txn.commit().await.unwrap();
-        let reader = store.new_txn(true).await.unwrap();
-        assert!(reader.get(b"key").await.unwrap().is_some());
-        let mut iter = reader.iterator(IterOptions::new()).await.unwrap();
-        while iter.next().await.unwrap().is_some() {}
-        iter.close().await.unwrap();
-        reader.discard();
+    #[test]
+    fn the_stores_own_statistics_count_tickers_only() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
+            txn.set(b"key", b"value").await.unwrap();
+            txn.commit().await.unwrap();
+            let reader = store.new_txn(true).await.unwrap();
+            assert!(reader.get(b"key").await.unwrap().is_some());
+            let mut iter = reader.iterator(IterOptions::new()).await.unwrap();
+            while iter.next().await.unwrap().is_some() {}
+            iter.close().await.unwrap();
+            reader.discard();
 
-        let stats = store.engine().db().statistics().unwrap();
-        assert_eq!(stats.level(), StatsLevel::ExceptHistogramOrTimers);
-        assert!(stats.get_ticker(Ticker::CommitCount) > 0);
-        assert!(stats.get_ticker(Ticker::IterSeekCount) > 0);
-        for histogram in [
-            Histogram::DbIterSeek,
-            Histogram::DbIterNext,
-            Histogram::WalWriteTime,
-            Histogram::BytesPerWrite,
-        ] {
-            assert_eq!(
-                stats.get_histogram_snapshot(histogram).count,
-                0,
-                "{histogram:?}"
-            );
-        }
+            let stats = store.engine().db().statistics().unwrap();
+            assert_eq!(stats.level(), StatsLevel::ExceptHistogramOrTimers);
+            assert!(stats.get_ticker(Ticker::CommitCount) > 0);
+            assert!(stats.get_ticker(Ticker::IterSeekCount) > 0);
+            for histogram in [
+                Histogram::DbIterSeek,
+                Histogram::DbIterNext,
+                Histogram::WalWriteTime,
+                Histogram::BytesPerWrite,
+            ] {
+                assert_eq!(
+                    stats.get_histogram_snapshot(histogram).count,
+                    0,
+                    "{histogram:?}"
+                );
+            }
+        })
+        .unwrap()
     }
 }

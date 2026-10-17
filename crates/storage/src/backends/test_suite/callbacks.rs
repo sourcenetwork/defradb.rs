@@ -68,7 +68,10 @@ pub async fn test_async_success_callback<S: Store>(store: &S) {
     txn.on_commit(OnCommit::Async(Box::new(move || {
         let flag = called_clone.clone();
         Box::pin(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            workers::delay(std::time::Duration::from_millis(10))
+                .unwrap()
+                .await
+                .unwrap();
             flag.store(true, Ordering::SeqCst);
         })
     })))
