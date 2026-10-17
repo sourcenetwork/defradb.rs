@@ -107,29 +107,38 @@ async fn routed_and_exact(documents: usize, query: &[f64], k: usize) -> (Vec<u64
 
 /// The gate: routing must return the same documents, in the same order, as an
 /// exhaustive scan on a corpus where the index is exact enough.
-#[tokio::test]
-async fn a_routed_query_matches_an_exhaustive_scan() {
-    for query in [
-        vec![1.0, 0.0, 0.0, 0.25],
-        vec![0.0, 1.0, 0.0, 0.25],
-        vec![-0.5, 0.5, 0.5, 0.25],
-    ] {
-        let (routed, exact) = routed_and_exact(200, &query, 10).await;
-        assert_eq!(routed, exact, "query {query:?} routed differently");
-    }
+#[test]
+fn a_routed_query_matches_an_exhaustive_scan() {
+    workers::block_on(async {
+        for query in [
+            vec![1.0, 0.0, 0.0, 0.25],
+            vec![0.0, 1.0, 0.0, 0.25],
+            vec![-0.5, 0.5, 0.5, 0.25],
+        ] {
+            let (routed, exact) = routed_and_exact(200, &query, 10).await;
+            assert_eq!(routed, exact, "query {query:?} routed differently");
+        }
+    })
+    .unwrap()
 }
 
 /// Asking for more than the corpus holds returns the corpus, not an error.
-#[tokio::test]
-async fn asking_for_more_than_exists_returns_what_exists() {
-    let (routed, exact) = routed_and_exact(15, &[1.0, 0.0, 0.0, 0.25], 50).await;
-    assert_eq!(routed.len(), 15);
-    assert_eq!(routed, exact);
+#[test]
+fn asking_for_more_than_exists_returns_what_exists() {
+    workers::block_on(async {
+        let (routed, exact) = routed_and_exact(15, &[1.0, 0.0, 0.0, 0.25], 50).await;
+        assert_eq!(routed.len(), 15);
+        assert_eq!(routed, exact);
+    })
+    .unwrap()
 }
 
 /// An index that was never populated answers empty rather than failing.
-#[tokio::test]
-async fn an_empty_index_answers_empty() {
-    let (routed, _) = routed_and_exact(0, &[1.0, 0.0, 0.0, 0.25], 10).await;
-    assert!(routed.is_empty());
+#[test]
+fn an_empty_index_answers_empty() {
+    workers::block_on(async {
+        let (routed, _) = routed_and_exact(0, &[1.0, 0.0, 0.0, 0.25], 10).await;
+        assert!(routed.is_empty());
+    })
+    .unwrap()
 }

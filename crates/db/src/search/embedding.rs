@@ -674,38 +674,37 @@ pub fn parse_embedding_vector(embedding: &[serde_json::Value]) -> Result<Vec<f64
 }
 
 #[cfg(test)]
+#[path = "../../tests/common/http.rs"]
+mod test_http;
+
+#[cfg(test)]
 mod prepared_input_tests {
     use super::*;
-    use axum::{routing::post, Json, Router};
-    use serde_json::{json, Value};
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[tokio::test]
-    async fn retries_reuse_exact_embedding_response_and_changed_source_fetches_again() {
-        let provider_calls = std::sync::Arc::new(AtomicUsize::new(0));
-        let call_count = std::sync::Arc::clone(&provider_calls);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        // Served in this task beside the test, which ends first.
-        let server = async move {
-            axum::serve(
-                listener,
-                Router::new().route(
-                    "/embeddings",
-                    post(move |Json(_request): Json<Value>| {
-                        let calls = std::sync::Arc::clone(&call_count);
-                        async move {
-                            calls.fetch_add(1, Ordering::SeqCst);
-                            Json(json!({"data": [{"embedding": [1.0, 2.0]}]}))
-                        }
-                    }),
-                ),
-            )
-            .await
-            .unwrap();
-        };
+    use super::test_http::HttpServer;
 
-        let test = async {
+    /// The request goes out on the network runtime, as it does from a node.
+    async fn on_edge(request: &[u8]) -> Vec<u8> {
+        let request = request.to_vec();
+        edge::testing::edge()
+            .spawn(async move { resolve_prepared_embedding_request(&request).await })
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn retries_reuse_exact_embedding_response_and_changed_source_fetches_again() {
+        workers::block_on(async {
+            let provider_calls = std::sync::Arc::new(AtomicUsize::new(0));
+            let call_count = std::sync::Arc::clone(&provider_calls);
+            let server = HttpServer::start(move |_| {
+                call_count.fetch_add(1, Ordering::SeqCst);
+                json!({"data": [{"embedding": [1.0, 2.0]}]})
+            });
+
             let description = VectorEmbeddingDescription {
                 field_name: "vector".to_string(),
                 fields: vec!["text".to_string()],
@@ -715,7 +714,7 @@ mod prepared_input_tests {
                 url: String::new(),
             };
             let config = EmbeddingClientConfig::new()
-                .with_url(format!("http://{address}"))
+                .with_url(server.url())
                 .with_model("test-model");
             let memo = query::prepared::PreparedInputMemo::default();
             let mut doc = Document::new();
@@ -724,9 +723,7 @@ mod prepared_input_tests {
 
             for _ in 0..2 {
                 if memo.get(&first).is_none() {
-                    let bytes = resolve_prepared_embedding_request(first.exact_request())
-                        .await
-                        .unwrap();
+                    let bytes = on_edge(first.exact_request()).await;
                     memo.insert(first.clone(), bytes);
                 }
             }
@@ -735,16 +732,11 @@ mod prepared_input_tests {
             doc.set("text", "source B");
             let changed = prepared_embedding_request(&description, &doc, &config).unwrap();
             assert!(memo.get(&changed).is_none());
-            let bytes = resolve_prepared_embedding_request(changed.exact_request())
-                .await
-                .unwrap();
+            let bytes = on_edge(changed.exact_request()).await;
             memo.insert(changed, bytes);
             assert_eq!(provider_calls.load(Ordering::SeqCst), 2);
-        };
-        tokio::select! {
-            () = server => unreachable!("the embedding server stopped"),
-            () = test => {}
-        }
+        })
+        .unwrap()
     }
 }
 

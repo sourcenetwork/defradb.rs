@@ -8,8 +8,9 @@ use document::{Document, NormalValue};
 use events::{Bus, EventName};
 use storage::corekv::Store;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
+#[test]
+fn single_root_history_uses_bounded_commits_not_one_per_revision() {
+    workers::block_on(async {
     let (handler, blockstore, bus) = make_handler_with_schema_and_bus().await;
     let collection = handler
         .db()
@@ -60,12 +61,12 @@ async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
     let (cid, data) = latest.unwrap();
     let mut raw = bus.subscribe(&[EventName::Update]);
     let mut changes = bus.subscribe_document_changes();
-    let observation = tokio::spawn(async move {
-        tokio::time::timeout(std::time::Duration::from_secs(5), changes.recv())
+    let observation = workers::spawn(None, "test", move || async move {
+        workers::timeout(std::time::Duration::from_secs(5), changes.recv())
             .await
             .unwrap()
             .unwrap()
-    });
+    }).unwrap();
     let stats = handler.db().store().transaction_stats_handle().unwrap();
     let before = stats.snapshot().commits;
     let results = handler
@@ -122,4 +123,6 @@ async fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         Some(&NormalValue::String("name-257".into()))
     );
     txn.force_discard().unwrap();
+})
+    .unwrap()
 }

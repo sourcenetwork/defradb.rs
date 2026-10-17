@@ -28,59 +28,68 @@ async fn stored_code(index: &DiskAnn<MemoryNodeStore>, id: u64) -> Vec<u8> {
     code.unwrap().to_vec()
 }
 
-#[tokio::test]
-async fn records_hold_ids_and_recall_holds() {
-    let (vectors, queries) = corpus();
-    let index = built(&vectors).await;
+#[test]
+fn records_hold_ids_and_recall_holds() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let index = built(&vectors).await;
 
-    assert_eq!(count(&index, codec::CODE).await, CORPUS);
-    index
-        .store()
-        .iterate_aux(codec::GRAPH, b"", |_, record| {
-            codec::decode_ids(record)?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    let recall = recall(&index, &vectors, &all(CORPUS), &queries).await;
-    assert!(recall >= 0.9, "recall@{K} is {recall}");
+        assert_eq!(count(&index, codec::CODE).await, CORPUS);
+        index
+            .store()
+            .iterate_aux(codec::GRAPH, b"", |_, record| {
+                codec::decode_ids(record)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let recall = recall(&index, &vectors, &all(CORPUS), &queries).await;
+        assert!(recall >= 0.9, "recall@{K} is {recall}");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn consolidation_drops_codes_with_records() {
-    let (vectors, queries) = corpus();
-    let mut index = built(&vectors).await;
-    let deleted: Vec<u64> = (1..=130).collect();
-    for id in &deleted {
-        index.delete(NodeId(*id)).await.unwrap();
-    }
-    index.build().await.unwrap();
+#[test]
+fn consolidation_drops_codes_with_records() {
+    workers::block_on(async {
+        let (vectors, queries) = corpus();
+        let mut index = built(&vectors).await;
+        let deleted: Vec<u64> = (1..=130).collect();
+        for id in &deleted {
+            index.delete(NodeId(*id)).await.unwrap();
+        }
+        index.build().await.unwrap();
 
-    let live = CORPUS - deleted.len();
-    assert_eq!(count(&index, codec::GRAPH).await, live);
-    assert_eq!(count(&index, codec::CODE).await, live);
-    let survivors = (131..=CORPUS as u64).collect();
-    let recall = recall(&index, &vectors, &survivors, &queries).await;
-    assert!(recall >= 0.9, "recall@{K} after consolidation is {recall}");
+        let live = CORPUS - deleted.len();
+        assert_eq!(count(&index, codec::GRAPH).await, live);
+        assert_eq!(count(&index, codec::CODE).await, live);
+        let survivors = (131..=CORPUS as u64).collect();
+        let recall = recall(&index, &vectors, &survivors, &queries).await;
+        assert!(recall >= 0.9, "recall@{K} after consolidation is {recall}");
+    })
+    .unwrap()
 }
 
 /// An update rewrites the node's code in the merge; the next search sees the
 /// merge's new generation and reloads, rather than walking by the old code.
-#[tokio::test]
-async fn the_cache_reloads_after_a_merge() {
-    let (vectors, _) = corpus();
-    let cache = Arc::new(CodeCache::default());
-    let mut index = built(&vectors).await.with_codes(cache.clone());
-    index.search(vectors[6].as_slice(), K, None).await.unwrap();
-    assert_eq!(cache.get(NodeId(7)), Some(stored_code(&index, 7).await));
+#[test]
+fn the_cache_reloads_after_a_merge() {
+    workers::block_on(async {
+        let (vectors, _) = corpus();
+        let cache = Arc::new(CodeCache::default());
+        let mut index = built(&vectors).await.with_codes(cache.clone());
+        index.search(vectors[6].as_slice(), K, None).await.unwrap();
+        assert_eq!(cache.get(NodeId(7)), Some(stored_code(&index, 7).await));
 
-    let moved = crate::diskann_streaming::fresh(0x40FE);
-    index.insert(NodeId(7), &moved).await.unwrap();
-    index.build().await.unwrap();
-    let hits = index.search(moved.as_slice(), K, None).await.unwrap();
+        let moved = crate::diskann_streaming::fresh(0x40FE);
+        index.insert(NodeId(7), &moved).await.unwrap();
+        index.build().await.unwrap();
+        let hits = index.search(moved.as_slice(), K, None).await.unwrap();
 
-    assert_eq!(hits[0].id, NodeId(7));
-    assert_eq!(cache.get(NodeId(7)), Some(stored_code(&index, 7).await));
+        assert_eq!(hits[0].id, NodeId(7));
+        assert_eq!(cache.get(NodeId(7)), Some(stored_code(&index, 7).await));
+    })
+    .unwrap()
 }
 
 /// A reload that finishes after a newer one must not overwrite it.

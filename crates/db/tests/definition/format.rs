@@ -37,37 +37,43 @@ fn the_old_and_new_encodings_differ() {
 
 /// Opening a store with no format stamp rebuilds and then stamps it, so the
 /// second open finds the store current instead of rebuilding again.
-#[tokio::test]
-async fn an_unstamped_store_is_stamped_on_open() {
-    let store = RegolithStore::in_memory().unwrap();
+#[test]
+fn an_unstamped_store_is_stamped_on_open() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
 
-    let db = db::DB::open(store.clone()).await.expect("first open");
-    assert_eq!(
-        db.stored_index_format().await.expect("read the stamp"),
-        Some(CURRENT_INDEX_FORMAT),
-        "opening must stamp the format it wrote"
-    );
-    drop(db);
+        let db = db::DB::open(store.clone()).await.expect("first open");
+        assert_eq!(
+            db.stored_index_format().await.expect("read the stamp"),
+            Some(CURRENT_INDEX_FORMAT),
+            "opening must stamp the format it wrote"
+        );
+        drop(db);
 
-    let db = db::DB::open(store).await.expect("second open");
-    assert_eq!(
-        db.stored_index_format().await.expect("read the stamp"),
-        Some(CURRENT_INDEX_FORMAT),
-        "the stamp must survive a reopen"
-    );
+        let db = db::DB::open(store).await.expect("second open");
+        assert_eq!(
+            db.stored_index_format().await.expect("read the stamp"),
+            Some(CURRENT_INDEX_FORMAT),
+            "the stamp must survive a reopen"
+        );
+    })
+    .unwrap()
 }
 
 /// A fresh store carries no documents, so the rebuild costs nothing and the
 /// stamp still lands.
-#[tokio::test]
-async fn a_fresh_store_opens_clean() {
-    let db = db::DB::open(RegolithStore::in_memory().unwrap())
-        .await
-        .expect("open");
-    assert_eq!(
-        db.stored_index_format().await.unwrap(),
-        Some(CURRENT_INDEX_FORMAT)
-    );
+#[test]
+fn a_fresh_store_opens_clean() {
+    workers::block_on(async {
+        let db = db::DB::open(RegolithStore::in_memory().unwrap())
+            .await
+            .expect("open");
+        assert_eq!(
+            db.stored_index_format().await.unwrap(),
+            Some(CURRENT_INDEX_FORMAT)
+        );
+    })
+    .unwrap()
 }
 
 /// The concrete failure a rebuild prevents: an entry written with the old

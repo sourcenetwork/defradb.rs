@@ -185,19 +185,25 @@ mod tests {
     /// Four workers and this task: five lanes.
     const LANES: usize = 5;
 
-    #[tokio::test]
-    async fn a_batch_short_of_a_full_run_for_every_lane_is_computed_here() {
-        let pool = workers::Pool::start(workers::Config::unplaced(LANES - 1)).unwrap();
-        let ran = computed_with(&pool, LANES * MIN_RUN - 1).await;
-        assert!(ran.iter().all(|tasks| *tasks == 0), "{ran:?}");
-        pool.shutdown_blocking().unwrap();
+    #[test]
+    fn a_batch_short_of_a_full_run_for_every_lane_is_computed_here() {
+        workers::block_on(async {
+            let pool = workers::Pool::start(workers::Config::unplaced(LANES - 1)).unwrap();
+            let ran = computed_with(&pool, LANES * MIN_RUN - 1).await;
+            assert!(ran.iter().all(|tasks| *tasks == 0), "{ran:?}");
+            pool.shutdown_blocking().unwrap();
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn a_batch_with_a_full_run_for_every_lane_reaches_every_worker() {
-        let pool = workers::Pool::start(workers::Config::unplaced(LANES - 1)).unwrap();
-        let ran = computed_with(&pool, LANES * MIN_RUN).await;
-        assert!(ran.iter().all(|tasks| *tasks > 0), "{ran:?}");
-        pool.shutdown_blocking().unwrap();
+    #[test]
+    fn a_batch_with_a_full_run_for_every_lane_reaches_every_worker() {
+        workers::block_on(async {
+            let pool = workers::Pool::start(workers::Config::unplaced(LANES - 1)).unwrap();
+            let ran = computed_with(&pool, LANES * MIN_RUN).await;
+            assert!(ran.iter().all(|tasks| *tasks > 0), "{ran:?}");
+            pool.shutdown_blocking().unwrap();
+        })
+        .unwrap()
     }
 }

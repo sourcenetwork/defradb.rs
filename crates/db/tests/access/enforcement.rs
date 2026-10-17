@@ -45,71 +45,87 @@ async fn enabled_manager() -> Arc<NacManager<MemoryZanzibarStore>> {
     manager
 }
 
-#[tokio::test]
-async fn unset_manager_allows_everything() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    // No nac_manager installed: every node operation is permitted.
-    db.check_node_access(None, NodePermission::DocumentUpdate)
-        .await
-        .expect("unset NAC manager must allow all operations");
+#[test]
+fn unset_manager_allows_everything() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        // No nac_manager installed: every node operation is permitted.
+        db.check_node_access(None, NodePermission::DocumentUpdate)
+            .await
+            .expect("unset NAC manager must allow all operations");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn owner_allowed_via_explicit_param() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
+#[test]
+fn owner_allowed_via_explicit_param() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
 
-    db.check_node_access(Some(&owner()), NodePermission::DocumentUpdate)
-        .await
-        .expect("owner must be allowed when passed explicitly");
+        db.check_node_access(Some(&owner()), NodePermission::DocumentUpdate)
+            .await
+            .expect("owner must be allowed when passed explicitly");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn owner_allowed_via_ambient_identity() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
+#[test]
+fn owner_allowed_via_ambient_identity() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
 
-    let guard = defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
-    db.check_node_access(None, NodePermission::DocumentUpdate)
-        .await
-        .expect("owner must be allowed via ambient thread-local identity");
-    drop(guard);
+        let guard =
+            defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
+        db.check_node_access(None, NodePermission::DocumentUpdate)
+            .await
+            .expect("owner must be allowed via ambient thread-local identity");
+        drop(guard);
 
-    // After the guard drops, the ambient identity is cleared again.
-    assert_eq!(defra_core::current_identity::get_current_identity(), None);
+        // After the guard drops, the ambient identity is cleared again.
+        assert_eq!(defra_core::current_identity::get_current_identity(), None);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn anonymous_is_denied() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
+#[test]
+fn anonymous_is_denied() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
 
-    // No explicit identity and no ambient identity => wildcard, which is
-    // not the owner and holds no grants.
-    assert_eq!(defra_core::current_identity::get_current_identity(), None);
-    let err = db
-        .check_node_access(None, NodePermission::DocumentUpdate)
-        .await
-        .expect_err("anonymous caller must be denied");
-    assert!(
-        matches!(err, db::error::Error::NotAuthorized { .. }),
-        "expected NotAuthorized, got: {err:?}"
-    );
+        // No explicit identity and no ambient identity => wildcard, which is
+        // not the owner and holds no grants.
+        assert_eq!(defra_core::current_identity::get_current_identity(), None);
+        let err = db
+            .check_node_access(None, NodePermission::DocumentUpdate)
+            .await
+            .expect_err("anonymous caller must be denied");
+        assert!(
+            matches!(err, db::error::Error::NotAuthorized { .. }),
+            "expected NotAuthorized, got: {err:?}"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn non_owner_is_denied() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
+#[test]
+fn non_owner_is_denied() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
 
-    let err = db
-        .check_node_access(Some(&stranger()), NodePermission::DocumentUpdate)
-        .await
-        .expect_err("non-owner caller must be denied");
-    assert!(
-        matches!(err, db::error::Error::NotAuthorized { .. }),
-        "expected NotAuthorized, got: {err:?}"
-    );
+        let err = db
+            .check_node_access(Some(&stranger()), NodePermission::DocumentUpdate)
+            .await
+            .expect_err("non-owner caller must be denied");
+        assert!(
+            matches!(err, db::error::Error::NotAuthorized { .. }),
+            "expected NotAuthorized, got: {err:?}"
+        );
+    })
+    .unwrap()
 }
 
 /// Minimal valid collection schema for raw `create_collection` gating tests.
@@ -134,128 +150,142 @@ fn widget_schema() -> CollectionVersion {
 // only thing that authorizes is the ambient (or owner) identity.
 // =============================================================================
 
-#[tokio::test]
-async fn create_collection_denied_for_non_owner() {
-    let _serial = AMBIENT_GUARD.lock().await;
+#[test]
+fn create_collection_denied_for_non_owner() {
+    workers::block_on(async {
+        let _serial = AMBIENT_GUARD.lock().await;
 
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
 
-    let guard =
-        defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
-    let err = db
-        .create_collection(widget_schema())
-        .await
-        .expect_err("non-owner must be denied raw create_collection");
-    drop(guard);
+        let guard =
+            defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
+        let err = db
+            .create_collection(widget_schema())
+            .await
+            .expect_err("non-owner must be denied raw create_collection");
+        drop(guard);
 
-    assert!(
-        matches!(err, db::error::Error::NotAuthorized { .. }),
-        "expected NotAuthorized from create_collection, got: {err:?}"
-    );
-    assert!(
-        db.get_collection("Widget").unwrap().is_none(),
-        "denied create_collection must not persist the collection"
-    );
+        assert!(
+            matches!(err, db::error::Error::NotAuthorized { .. }),
+            "expected NotAuthorized from create_collection, got: {err:?}"
+        );
+        assert!(
+            db.get_collection("Widget").unwrap().is_none(),
+            "denied create_collection must not persist the collection"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn create_collection_allowed_for_owner() {
-    let _serial = AMBIENT_GUARD.lock().await;
+#[test]
+fn create_collection_allowed_for_owner() {
+    workers::block_on(async {
+        let _serial = AMBIENT_GUARD.lock().await;
 
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
 
-    let guard = defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
-    db.create_collection(widget_schema())
-        .await
-        .expect("owner must be allowed to create_collection");
-    drop(guard);
-
-    assert!(
-        db.get_collection("Widget").unwrap().is_some(),
-        "owner create_collection must persist the collection"
-    );
-}
-
-#[tokio::test]
-async fn create_collection_allowed_when_nac_unset() {
-    // Guards against over-gating: with no NAC manager installed,
-    // `check_node_access` is a no-op and raw schema mutation must succeed
-    // regardless of ambient identity.
-    let _serial = AMBIENT_GUARD.lock().await;
-
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-
-    let guard =
-        defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
-    db.create_collection(widget_schema())
-        .await
-        .expect("create_collection must succeed when NAC is unset (no-op gate)");
-    drop(guard);
-
-    assert!(
-        db.get_collection("Widget").unwrap().is_some(),
-        "create_collection with NAC unset must persist the collection"
-    );
-}
-
-#[tokio::test]
-async fn delete_collection_gated_by_nac() {
-    // Proves the raw `delete_collection` honors `check_node_access`:
-    // a non-owner is denied (and the collection survives), the owner succeeds.
-    let _serial = AMBIENT_GUARD.lock().await;
-
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
-
-    // Seed: owner creates the collection so there is something to delete.
-    {
         let guard =
             defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
         db.create_collection(widget_schema())
             .await
             .expect("owner must be allowed to create_collection");
         drop(guard);
-    }
-    assert!(
-        db.get_collection("Widget").unwrap().is_some(),
-        "collection must exist before delete test"
-    );
 
-    // Non-owner: denied, collection survives.
-    {
+        assert!(
+            db.get_collection("Widget").unwrap().is_some(),
+            "owner create_collection must persist the collection"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn create_collection_allowed_when_nac_unset() {
+    workers::block_on(async {
+        // Guards against over-gating: with no NAC manager installed,
+        // `check_node_access` is a no-op and raw schema mutation must succeed
+        // regardless of ambient identity.
+        let _serial = AMBIENT_GUARD.lock().await;
+
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+
         let guard =
             defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
-        let err = db
-            .delete_collection("Widget")
+        db.create_collection(widget_schema())
             .await
-            .expect_err("non-owner must be denied raw delete_collection");
+            .expect("create_collection must succeed when NAC is unset (no-op gate)");
         drop(guard);
 
         assert!(
-            matches!(err, db::error::Error::NotAuthorized { .. }),
-            "expected NotAuthorized from delete_collection, got: {err:?}"
+            db.get_collection("Widget").unwrap().is_some(),
+            "create_collection with NAC unset must persist the collection"
         );
-    }
-    assert!(
-        db.get_collection("Widget").unwrap().is_some(),
-        "denied delete_collection must not remove the collection"
-    );
+    })
+    .unwrap()
+}
 
-    // Owner: delete succeeds.
-    {
-        let guard =
-            defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
-        db.delete_collection("Widget")
-            .await
-            .expect("owner must be allowed to delete_collection");
-        drop(guard);
-    }
-    assert!(
-        db.get_collection("Widget").unwrap().is_none(),
-        "owner delete_collection must remove the collection"
-    );
+#[test]
+fn delete_collection_gated_by_nac() {
+    workers::block_on(async {
+        // Proves the raw `delete_collection` honors `check_node_access`:
+        // a non-owner is denied (and the collection survives), the owner succeeds.
+        let _serial = AMBIENT_GUARD.lock().await;
+
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
+
+        // Seed: owner creates the collection so there is something to delete.
+        {
+            let guard =
+                defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
+            db.create_collection(widget_schema())
+                .await
+                .expect("owner must be allowed to create_collection");
+            drop(guard);
+        }
+        assert!(
+            db.get_collection("Widget").unwrap().is_some(),
+            "collection must exist before delete test"
+        );
+
+        // Non-owner: denied, collection survives.
+        {
+            let guard = defra_core::current_identity::scoped_current_identity(Some(
+                STRANGER_DID.to_string(),
+            ));
+            let err = db
+                .delete_collection("Widget")
+                .await
+                .expect_err("non-owner must be denied raw delete_collection");
+            drop(guard);
+
+            assert!(
+                matches!(err, db::error::Error::NotAuthorized { .. }),
+                "expected NotAuthorized from delete_collection, got: {err:?}"
+            );
+        }
+        assert!(
+            db.get_collection("Widget").unwrap().is_some(),
+            "denied delete_collection must not remove the collection"
+        );
+
+        // Owner: delete succeeds.
+        {
+            let guard =
+                defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
+            db.delete_collection("Widget")
+                .await
+                .expect("owner must be allowed to delete_collection");
+            drop(guard);
+        }
+        assert!(
+            db.get_collection("Widget").unwrap().is_none(),
+            "owner delete_collection must remove the collection"
+        );
+    })
+    .unwrap()
 }
 
 // =============================================================================
@@ -269,74 +299,84 @@ async fn delete_collection_gated_by_nac() {
 
 const WIDGET_SDL: &str = "type Widget { name: String }";
 
-#[tokio::test]
-async fn add_schema_in_txn_denied_for_non_owner() {
-    let _serial = AMBIENT_GUARD.lock().await;
+#[test]
+fn add_schema_in_txn_denied_for_non_owner() {
+    workers::block_on(async {
+        let _serial = AMBIENT_GUARD.lock().await;
 
-    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.set_nac_manager(enabled_manager().await);
-    let registry = DbTransactionRegistry::new(db.clone());
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.set_nac_manager(enabled_manager().await);
+        let registry = DbTransactionRegistry::new(db.clone());
 
-    let guard =
-        defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
-    let txn_id = registry.begin(false).await.unwrap();
-    let err = registry
-        .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
-        .await
-        .expect_err("non-owner must be denied transactional add_schema_in_txn");
-    drop(guard);
+        let guard =
+            defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
+        let txn_id = registry.begin(false).await.unwrap();
+        let err = registry
+            .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
+            .await
+            .expect_err("non-owner must be denied transactional add_schema_in_txn");
+        drop(guard);
 
-    assert!(
-        matches!(err, db::error::Error::NotAuthorized { .. }),
-        "expected NotAuthorized from add_schema_in_txn, got: {err:?}"
-    );
-    assert!(
-        db.get_collection("Widget").unwrap().is_none(),
-        "denied add_schema_in_txn must not persist the collection"
-    );
+        assert!(
+            matches!(err, db::error::Error::NotAuthorized { .. }),
+            "expected NotAuthorized from add_schema_in_txn, got: {err:?}"
+        );
+        assert!(
+            db.get_collection("Widget").unwrap().is_none(),
+            "denied add_schema_in_txn must not persist the collection"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn add_schema_in_txn_allowed_for_owner() {
-    let _serial = AMBIENT_GUARD.lock().await;
+#[test]
+fn add_schema_in_txn_allowed_for_owner() {
+    workers::block_on(async {
+        let _serial = AMBIENT_GUARD.lock().await;
 
-    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.set_nac_manager(enabled_manager().await);
-    let registry = DbTransactionRegistry::new(db.clone());
+        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+        db.set_nac_manager(enabled_manager().await);
+        let registry = DbTransactionRegistry::new(db.clone());
 
-    let guard = defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
-    let txn_id = registry.begin(false).await.unwrap();
-    registry
-        .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
-        .await
-        .expect("owner must be allowed to add_schema_in_txn");
-    registry.commit(&txn_id).await.expect("commit must succeed");
-    drop(guard);
+        let guard =
+            defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
+        let txn_id = registry.begin(false).await.unwrap();
+        registry
+            .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
+            .await
+            .expect("owner must be allowed to add_schema_in_txn");
+        registry.commit(&txn_id).await.expect("commit must succeed");
+        drop(guard);
 
-    assert!(
-        db.get_collection("Widget").unwrap().is_some(),
-        "owner add_schema_in_txn must persist the collection after commit"
-    );
+        assert!(
+            db.get_collection("Widget").unwrap().is_some(),
+            "owner add_schema_in_txn must persist the collection after commit"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn set_active_collection_version_denied_for_non_owner() {
-    // The other raw schema-mutation method is also gated.
-    let _serial = AMBIENT_GUARD.lock().await;
+#[test]
+fn set_active_collection_version_denied_for_non_owner() {
+    workers::block_on(async {
+        // The other raw schema-mutation method is also gated.
+        let _serial = AMBIENT_GUARD.lock().await;
 
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    db.set_nac_manager(enabled_manager().await);
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        db.set_nac_manager(enabled_manager().await);
 
-    let guard =
-        defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
-    let err = db
-        .set_active_collection_version("v-widget-1")
-        .await
-        .expect_err("non-owner must be denied set_active_collection_version");
-    drop(guard);
+        let guard =
+            defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
+        let err = db
+            .set_active_collection_version("v-widget-1")
+            .await
+            .expect_err("non-owner must be denied set_active_collection_version");
+        drop(guard);
 
-    assert!(
-        matches!(err, db::error::Error::NotAuthorized { .. }),
-        "expected NotAuthorized from set_active_collection_version, got: {err:?}"
-    );
+        assert!(
+            matches!(err, db::error::Error::NotAuthorized { .. }),
+            "expected NotAuthorized from set_active_collection_version, got: {err:?}"
+        );
+    })
+    .unwrap()
 }

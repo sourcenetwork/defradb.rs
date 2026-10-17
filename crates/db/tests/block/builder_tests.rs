@@ -19,124 +19,136 @@ fn make_test_blockstore() -> Arc<DefraBlockstore<RegolithStore>> {
     Arc::new(DefraBlockstore::new(store, false))
 }
 
-#[tokio::test]
-async fn test_build_blocks_creates_proper_structure() {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Alice".to_string()));
-    doc.set("age", NormalValue::Int(30));
+#[test]
+fn test_build_blocks_creates_proper_structure() {
+    workers::block_on(async {
+        let mut doc = Document::new();
+        doc.set("name", NormalValue::String("Alice".to_string()));
+        doc.set("age", NormalValue::Int(30));
 
-    let blockstore = make_test_blockstore();
-    let schema_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
+        let blockstore = make_test_blockstore();
+        let schema_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
 
-    let result = build_blocks_from_document(
-        &doc,
-        &crate::common::schema::version(schema_version_id),
-        &blockstore,
-    )
-    .await
-    .unwrap();
+        let result = build_blocks_from_document(
+            &doc,
+            &crate::common::schema::version(schema_version_id),
+            &blockstore,
+        )
+        .await
+        .unwrap();
 
-    // Should have created 2 field blocks (name, age)
-    assert_eq!(result.field_cids.len(), 2);
-    assert!(!result.doc_id.is_empty());
+        // Should have created 2 field blocks (name, age)
+        assert_eq!(result.field_cids.len(), 2);
+        assert!(!result.doc_id.is_empty());
 
-    // Composite block should be in blockstore
-    let stored = blockstore.get(&result.cid).await.unwrap();
-    assert!(stored.is_some());
-
-    // Each field block should be in blockstore
-    for field_cid in &result.field_cids {
-        let stored = blockstore.get(field_cid).await.unwrap();
+        // Composite block should be in blockstore
+        let stored = blockstore.get(&result.cid).await.unwrap();
         assert!(stored.is_some());
-    }
-}
 
-#[tokio::test]
-async fn test_build_blocks_derives_doc_id_from_genesis_cid() {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Dana".to_string()));
-    let blockstore = make_test_blockstore();
-
-    let result = build_blocks_from_document(
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        &blockstore,
-    )
-    .await
-    .unwrap();
-    assert_eq!(result.doc_id, derive_doc_id(&result.cid));
-    assert!(result.doc_id.starts_with("bae-"));
-}
-
-#[tokio::test]
-async fn test_field_block_contains_lww_delta() {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Bob".to_string()));
-
-    let blockstore = make_test_blockstore();
-    let schema_version_id = "schema-v1";
-
-    let result = build_blocks_from_document(
-        &doc,
-        &crate::common::schema::version(schema_version_id),
-        &blockstore,
-    )
-    .await
-    .unwrap();
-
-    // Get the field block
-    let field_cid = &result.field_cids[0];
-    let field_bytes = blockstore.get(field_cid).await.unwrap().unwrap();
-
-    // Decode and verify it's an LWW block
-    let field_block = Block::from_dag_cbor(&field_bytes).unwrap();
-    match &field_block.delta {
-        CrdtDelta::Lww(payload) => {
-            assert_eq!(payload.field_name, "name");
-            assert_eq!(payload.schema_version_id, schema_version_id);
-            assert_eq!(payload.priority, 1);
+        // Each field block should be in blockstore
+        for field_cid in &result.field_cids {
+            let stored = blockstore.get(field_cid).await.unwrap();
+            assert!(stored.is_some());
         }
-        _ => panic!("Expected LWW delta"),
-    }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_composite_block_has_field_links() {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Charlie".to_string()));
-    doc.set("age", NormalValue::Int(25));
+#[test]
+fn test_build_blocks_derives_doc_id_from_genesis_cid() {
+    workers::block_on(async {
+        let mut doc = Document::new();
+        doc.set("name", NormalValue::String("Dana".to_string()));
+        let blockstore = make_test_blockstore();
 
-    let blockstore = make_test_blockstore();
+        let result = build_blocks_from_document(
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            &blockstore,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.doc_id, derive_doc_id(&result.cid));
+        assert!(result.doc_id.starts_with("bae-"));
+    })
+    .unwrap()
+}
 
-    let result = build_blocks_from_document(
-        &doc,
-        &crate::common::schema::version("schema-v1"),
-        &blockstore,
-    )
-    .await
-    .unwrap();
+#[test]
+fn test_field_block_contains_lww_delta() {
+    workers::block_on(async {
+        let mut doc = Document::new();
+        doc.set("name", NormalValue::String("Bob".to_string()));
 
-    // Decode the composite block
-    let composite_block = Block::from_dag_cbor(&result.block).unwrap();
+        let blockstore = make_test_blockstore();
+        let schema_version_id = "schema-v1";
 
-    // Verify it's a Composite delta
-    match &composite_block.delta {
-        CrdtDelta::Composite(payload) => {
-            assert_eq!(payload.status, 1); // Active
-            assert_eq!(payload.priority, 1);
+        let result = build_blocks_from_document(
+            &doc,
+            &crate::common::schema::version(schema_version_id),
+            &blockstore,
+        )
+        .await
+        .unwrap();
+
+        // Get the field block
+        let field_cid = &result.field_cids[0];
+        let field_bytes = blockstore.get(field_cid).await.unwrap().unwrap();
+
+        // Decode and verify it's an LWW block
+        let field_block = Block::from_dag_cbor(&field_bytes).unwrap();
+        match &field_block.delta {
+            CrdtDelta::Lww(payload) => {
+                assert_eq!(payload.field_name, "name");
+                assert_eq!(payload.schema_version_id, schema_version_id);
+                assert_eq!(payload.priority, 1);
+            }
+            _ => panic!("Expected LWW delta"),
         }
-        _ => panic!("Expected Composite delta"),
-    }
+    })
+    .unwrap()
+}
 
-    // Verify links to field blocks
-    let links = composite_block.links.as_ref().expect("Should have links");
-    assert_eq!(links.len(), 2);
+#[test]
+fn test_composite_block_has_field_links() {
+    workers::block_on(async {
+        let mut doc = Document::new();
+        doc.set("name", NormalValue::String("Charlie".to_string()));
+        doc.set("age", NormalValue::Int(25));
 
-    // Links should reference field CIDs
-    let link_cids: Vec<Cid> = links.iter().map(|l| l.link).collect();
-    for field_cid in &result.field_cids {
-        assert!(link_cids.contains(field_cid));
-    }
+        let blockstore = make_test_blockstore();
+
+        let result = build_blocks_from_document(
+            &doc,
+            &crate::common::schema::version("schema-v1"),
+            &blockstore,
+        )
+        .await
+        .unwrap();
+
+        // Decode the composite block
+        let composite_block = Block::from_dag_cbor(&result.block).unwrap();
+
+        // Verify it's a Composite delta
+        match &composite_block.delta {
+            CrdtDelta::Composite(payload) => {
+                assert_eq!(payload.status, 1); // Active
+                assert_eq!(payload.priority, 1);
+            }
+            _ => panic!("Expected Composite delta"),
+        }
+
+        // Verify links to field blocks
+        let links = composite_block.links.as_ref().expect("Should have links");
+        assert_eq!(links.len(), 2);
+
+        // Links should reference field CIDs
+        let link_cids: Vec<Cid> = links.iter().map(|l| l.link).collect();
+        for field_cid in &result.field_cids {
+            assert!(link_cids.contains(field_cid));
+        }
+    })
+    .unwrap()
 }
 
 #[test]
@@ -225,93 +237,99 @@ async fn go_verifiable_gate() -> regolith::sync::MutexGuard<'static, ()> {
 
 /// Denied by default. A Go peer refuses `ES256`, so a node that has not opted in
 /// must not put such a block on the wire. This is the guard #1456 removed.
-#[tokio::test]
-async fn test_compute_signature_refuses_remote_secp256r1_without_the_gate() {
-    let _serial = go_verifiable_gate().await;
+#[test]
+fn test_compute_signature_refuses_remote_secp256r1_without_the_gate() {
+    workers::block_on(async {
+        let _serial = go_verifiable_gate().await;
 
-    let private_key = crypto::generate_secp256r1().expect("should generate secp256r1 key");
-    let public_key = private_key.public_key();
-    let public_key_hex = hex::encode(public_key.raw());
+        let private_key = crypto::generate_secp256r1().expect("should generate secp256r1 key");
+        let public_key = private_key.public_key();
+        let public_key_hex = hex::encode(public_key.raw());
 
-    let block = Block::new(
-        CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
-            status: 1,
-            priority: 1,
-        }),
-        Vec::new(),
-        Vec::new(),
-    );
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                schema_version_id: "schema-v1".to_string(),
+                status: 1,
+                priority: 1,
+            }),
+            Vec::new(),
+            Vec::new(),
+        );
 
-    let signer = defra_core::signing::SigningConfig {
-        key_type: defra_core::signing::SigningKeyType::Secp256r1,
-        private_key_bytes: Vec::new(),
-        public_key_bytes: public_key.raw_owned(),
-        public_key_hex,
-        remote_signer: Some(Arc::new(LocalSecp256r1Signer { private_key })),
-        signing_authorization: None,
-    };
+        let signer = defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Secp256r1,
+            private_key_bytes: Vec::new(),
+            public_key_bytes: public_key.raw_owned(),
+            public_key_hex,
+            remote_signer: Some(Arc::new(LocalSecp256r1Signer { private_key })),
+            signing_authorization: None,
+        };
 
-    let error = compute_signature(&block, &signer)
-        .expect_err("a type Go cannot verify must be refused by default");
-    assert!(
-        error.contains("DEFRA_ALLOW_NON_GO_VERIFIABLE_SIGNING"),
-        "the refusal must name the way to allow it: {error}"
-    );
+        let error = compute_signature(&block, &signer)
+            .expect_err("a type Go cannot verify must be refused by default");
+        assert!(
+            error.contains("DEFRA_ALLOW_NON_GO_VERIFIABLE_SIGNING"),
+            "the refusal must name the way to allow it: {error}"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_compute_signature_signs_remote_secp256r1_once_the_gate_is_open() {
-    let _serial = go_verifiable_gate().await;
-    defra_core::block::go_verifiable_policy::allow_non_go_verifiable_signing(true);
+#[test]
+fn test_compute_signature_signs_remote_secp256r1_once_the_gate_is_open() {
+    workers::block_on(async {
+        let _serial = go_verifiable_gate().await;
+        defra_core::block::go_verifiable_policy::allow_non_go_verifiable_signing(true);
 
-    let private_key = crypto::generate_secp256r1().expect("should generate secp256r1 key");
-    let public_key = private_key.public_key();
-    let public_key_hex = hex::encode(public_key.raw());
+        let private_key = crypto::generate_secp256r1().expect("should generate secp256r1 key");
+        let public_key = private_key.public_key();
+        let public_key_hex = hex::encode(public_key.raw());
 
-    let block = Block::new(
-        CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
-            status: 1,
-            priority: 1,
-        }),
-        Vec::new(),
-        Vec::new(),
-    );
+        let block = Block::new(
+            CrdtDelta::Composite(CompositeDeltaPayload {
+                schema_version_id: "schema-v1".to_string(),
+                status: 1,
+                priority: 1,
+            }),
+            Vec::new(),
+            Vec::new(),
+        );
 
-    let signer = defra_core::signing::SigningConfig {
-        key_type: defra_core::signing::SigningKeyType::Secp256r1,
-        private_key_bytes: Vec::new(),
-        public_key_bytes: public_key.raw_owned(),
-        public_key_hex: public_key_hex.clone(),
-        remote_signer: Some(Arc::new(LocalSecp256r1Signer { private_key })),
-        signing_authorization: None,
-    };
+        let signer = defra_core::signing::SigningConfig {
+            key_type: defra_core::signing::SigningKeyType::Secp256r1,
+            private_key_bytes: Vec::new(),
+            public_key_bytes: public_key.raw_owned(),
+            public_key_hex: public_key_hex.clone(),
+            remote_signer: Some(Arc::new(LocalSecp256r1Signer { private_key })),
+            signing_authorization: None,
+        };
 
-    let (_cid, sig_cbor) = compute_signature(&block, &signer)
-        .expect("a delegated secp256r1 signature must be produced")
-        .expect("a composite block is signed");
+        let (_cid, sig_cbor) = compute_signature(&block, &signer)
+            .expect("a delegated secp256r1 signature must be produced")
+            .expect("a composite block is signed");
 
-    let signature = defra_core::block::Signature::from_dag_cbor(&sig_cbor)
-        .expect("the signature block must decode");
-    assert_eq!(
-        signature.header.sig_type,
-        defra_core::block::SignatureType::ES256
-    );
-    assert_eq!(
-        signature.header.identity,
-        public_key_hex.clone().into_bytes()
-    );
+        let signature = defra_core::block::Signature::from_dag_cbor(&sig_cbor)
+            .expect("the signature block must decode");
+        assert_eq!(
+            signature.header.sig_type,
+            defra_core::block::SignatureType::ES256
+        );
+        assert_eq!(
+            signature.header.identity,
+            public_key_hex.clone().into_bytes()
+        );
 
-    let block_bytes = block.to_dag_cbor().expect("block encodes");
-    let recovered = crypto::public_key_from_string(crypto::KeyType::Secp256r1, &public_key_hex)
-        .expect("the identity in the header must resolve to a P-256 key");
-    assert!(
-        recovered
-            .verify(&block_bytes, &signature.value)
-            .expect("verification must not error"),
-        "the delegated signature must verify against the block bytes"
-    );
+        let block_bytes = block.to_dag_cbor().expect("block encodes");
+        let recovered = crypto::public_key_from_string(crypto::KeyType::Secp256r1, &public_key_hex)
+            .expect("the identity in the header must resolve to a P-256 key");
+        assert!(
+            recovered
+                .verify(&block_bytes, &signature.value)
+                .expect("verification must not error"),
+            "the delegated signature must verify against the block bytes"
+        );
+    })
+    .unwrap()
 }
 
 struct CapturingRemoteSigner {

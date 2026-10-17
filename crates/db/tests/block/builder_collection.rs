@@ -42,82 +42,85 @@ async fn collection_heads(store: &RegolithStore, collection_id: u32) -> Vec<Cid>
     heads
 }
 
-#[tokio::test]
-async fn concurrent_collection_transitions_preserve_and_merge_sibling_heads() {
-    const COLLECTION_ID: u32 = 7;
+#[test]
+fn concurrent_collection_transitions_preserve_and_merge_sibling_heads() {
+    workers::block_on(async {
+        const COLLECTION_ID: u32 = 7;
 
-    let store = RegolithStore::in_memory().unwrap();
-    let seed_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
-    let (seed_blocks, seed_heads) = views(&seed_txn);
-    write_collection_block(
-        &seed_blocks,
-        &seed_heads,
-        COLLECTION_ID,
-        "schema-v1",
-        test_cid(b"seed document"),
-        None,
-    )
-    .await
-    .unwrap();
-    drop((seed_blocks, seed_heads));
-    commit(seed_txn).await;
+        let store = RegolithStore::in_memory().unwrap();
+        let seed_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let (seed_blocks, seed_heads) = views(&seed_txn);
+        write_collection_block(
+            &seed_blocks,
+            &seed_heads,
+            COLLECTION_ID,
+            "schema-v1",
+            test_cid(b"seed document"),
+            None,
+        )
+        .await
+        .unwrap();
+        drop((seed_blocks, seed_heads));
+        commit(seed_txn).await;
 
-    let first_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
-    let second_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
-    let (first_blocks, first_heads) = views(&first_txn);
-    let (second_blocks, second_heads) = views(&second_txn);
+        let first_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let second_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let (first_blocks, first_heads) = views(&first_txn);
+        let (second_blocks, second_heads) = views(&second_txn);
 
-    let (first_cid, _) = write_collection_block(
-        &first_blocks,
-        &first_heads,
-        COLLECTION_ID,
-        "schema-v1",
-        test_cid(b"first document"),
-        None,
-    )
-    .await
-    .unwrap();
-    let (second_cid, _) = write_collection_block(
-        &second_blocks,
-        &second_heads,
-        COLLECTION_ID,
-        "schema-v1",
-        test_cid(b"second document"),
-        None,
-    )
-    .await
-    .unwrap();
-    drop((first_blocks, first_heads, second_blocks, second_heads));
+        let (first_cid, _) = write_collection_block(
+            &first_blocks,
+            &first_heads,
+            COLLECTION_ID,
+            "schema-v1",
+            test_cid(b"first document"),
+            None,
+        )
+        .await
+        .unwrap();
+        let (second_cid, _) = write_collection_block(
+            &second_blocks,
+            &second_heads,
+            COLLECTION_ID,
+            "schema-v1",
+            test_cid(b"second document"),
+            None,
+        )
+        .await
+        .unwrap();
+        drop((first_blocks, first_heads, second_blocks, second_heads));
 
-    commit(first_txn).await;
-    commit(second_txn).await;
+        commit(first_txn).await;
+        commit(second_txn).await;
 
-    let mut expected_siblings = vec![first_cid, second_cid];
-    expected_siblings.sort_by_cached_key(Cid::to_string);
-    assert_eq!(
-        collection_heads(&store, COLLECTION_ID).await,
-        expected_siblings
-    );
+        let mut expected_siblings = vec![first_cid, second_cid];
+        expected_siblings.sort_by_cached_key(Cid::to_string);
+        assert_eq!(
+            collection_heads(&store, COLLECTION_ID).await,
+            expected_siblings
+        );
 
-    let merge_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
-    let (merge_blocks, merge_heads) = views(&merge_txn);
-    let (merged_cid, merged_bytes) = write_collection_block(
-        &merge_blocks,
-        &merge_heads,
-        COLLECTION_ID,
-        "schema-v1",
-        test_cid(b"merge document"),
-        None,
-    )
-    .await
-    .unwrap();
-    let merged_block = Block::from_dag_cbor(&merged_bytes).unwrap();
-    assert_eq!(merged_block.heads, Some(expected_siblings));
-    drop((merge_blocks, merge_heads));
-    commit(merge_txn).await;
+        let merge_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let (merge_blocks, merge_heads) = views(&merge_txn);
+        let (merged_cid, merged_bytes) = write_collection_block(
+            &merge_blocks,
+            &merge_heads,
+            COLLECTION_ID,
+            "schema-v1",
+            test_cid(b"merge document"),
+            None,
+        )
+        .await
+        .unwrap();
+        let merged_block = Block::from_dag_cbor(&merged_bytes).unwrap();
+        assert_eq!(merged_block.heads, Some(expected_siblings));
+        drop((merge_blocks, merge_heads));
+        commit(merge_txn).await;
 
-    assert_eq!(
-        collection_heads(&store, COLLECTION_ID).await,
-        vec![merged_cid]
-    );
+        assert_eq!(
+            collection_heads(&store, COLLECTION_ID).await,
+            vec![merged_cid]
+        );
+    })
+    .unwrap()
 }
