@@ -16,18 +16,22 @@ use std::time::Duration;
 use embedded::{EmbeddedNodeConfig, Libp2pConfig, SigningConfig, TransportConfig};
 use identity::Did;
 use outcome::Result;
-use tokio::time::{sleep, Instant};
+use std::time::Instant;
 
 use support::{add_policy, add_schema, grant_collection_reader, new_identity, wait_for_fred, Node};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn branchable_grant_syncs_plain_doc_to_peer() -> Result<()> {
-    run_scenario(false).await
+#[test]
+fn branchable_grant_syncs_plain_doc_to_peer() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async { run_scenario(false).await })
+        .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn branchable_grant_syncs_encrypted_doc_to_peer() -> Result<()> {
-    run_scenario(true).await
+#[test]
+fn branchable_grant_syncs_encrypted_doc_to_peer() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async { run_scenario(true).await })
+        .unwrap()
 }
 
 async fn run_scenario(encrypt: bool) -> Result<()> {
@@ -125,4 +129,8 @@ async fn wait_for_listen_addr(system: &embedded::ManagedP2PSystem) -> Result<Str
         }
         sleep(Duration::from_millis(100)).await;
     }
+}
+
+async fn sleep(duration: Duration) {
+    edge::testing::edge().sleep(duration).await;
 }

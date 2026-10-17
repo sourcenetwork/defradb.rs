@@ -44,14 +44,15 @@ fn spread(i: usize) -> String {
     )
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_embedded_node_merges_pending_diskann_inserts() -> Result<()> {
-    merges_pending_inserts("R: 8, m: 2").await
+#[test]
+fn an_embedded_node_merges_pending_diskann_inserts() -> Result<()> {
+    workers::block_on(async { merges_pending_inserts("R: 8, m: 2").await }).unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_embedded_node_merges_pending_resident_code_inserts() -> Result<()> {
-    merges_pending_inserts("R: 8, m: 2, residentCodes: true").await
+#[test]
+fn an_embedded_node_merges_pending_resident_code_inserts() -> Result<()> {
+    workers::block_on(async { merges_pending_inserts("R: 8, m: 2, residentCodes: true").await })
+        .unwrap()
 }
 
 async fn merges_pending_inserts(diskann: &str) -> Result<()> {
@@ -88,7 +89,10 @@ async fn merges_pending_inserts(diskann: &str) -> Result<()> {
             Instant::now() < deadline,
             "the sweep never merged the pending DiskANN inserts"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        workers::delay(Duration::from_millis(100))
+            .unwrap()
+            .await
+            .unwrap();
     }
 
     let found = node

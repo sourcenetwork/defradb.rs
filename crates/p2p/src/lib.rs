@@ -108,8 +108,8 @@ pub use explicit_replay::{
 };
 #[cfg(feature = "libp2p-transport")]
 pub use host::{
-    convert_host_event, HostCommand, HostEvent, Libp2pTransport, P2PHost, P2PHostConfig,
-    P2PHostHandle, ResponseChannel,
+    convert_host_event, HostCommand, HostEvent, HostEventReceiver, Libp2pTransport, P2PHost,
+    P2PHostConfig, P2PHostHandle, ResponseChannel,
 };
 pub use message::{Message, MetaData, PushLogBroadcast, PushLogReply, PushLogRequest};
 #[cfg(feature = "libp2p-transport")]

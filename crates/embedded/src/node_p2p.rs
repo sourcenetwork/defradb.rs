@@ -13,9 +13,7 @@ use crate::node::{EmbeddedBlockstore, WireDocumentAcpCallback};
 #[cfg(feature = "libp2p")]
 use crate::node_recovery::{restore_libp2p_documents, restore_libp2p_replicators};
 #[cfg(feature = "libp2p")]
-use crate::node_tasks::spawn_libp2p_event_handler;
-#[cfg(feature = "libp2p")]
-use crate::node_tasks::spawn_replication_loop;
+use crate::node_tasks::{spawn_libp2p_event_handler, spawn_node_task, spawn_replication_loop};
 #[cfg(feature = "libp2p")]
 use crate::Libp2pConfig;
 use crate::ManagedP2PSystem;
@@ -66,7 +64,7 @@ pub(crate) struct P2PSetup {
 }
 
 #[cfg(feature = "libp2p")]
-async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: tokio::task::JoinHandle<()>) {
+async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: edge::Task<()>) {
     if let Err(error) = handle.shutdown().await {
         tracing::debug!(%error, "failed to signal P2P host during setup rollback");
     }
@@ -130,7 +128,7 @@ where
         )
         .await
         .map_err(Error::HostCreate)?;
-    let host_task = tokio::spawn(async move {
+    let host_task = spawn_node_task(edge, async move {
         host.run().await;
     });
 
@@ -220,7 +218,7 @@ where
     let merge_handler_inner_for_kms = replication.merge_handler_inner.clone();
 
     let coordinator_for_restore = coordinator.clone();
-    let pending_dag_resync_task = tokio::spawn(async move {
+    let pending_dag_resync_task = spawn_node_task(edge, async move {
         coordinator_for_restore
             .run_pending_dag_resync(std::time::Duration::from_secs(60))
             .await;
@@ -229,7 +227,7 @@ where
     // Receiver's re-arm loop (#1116 stage 2): dispatches due pending roots
     // at a tight cadence. Sibling of the resync sweep above.
     let coordinator_for_retry_clock = coordinator.clone();
-    let pending_dag_retry_task = tokio::spawn(async move {
+    let pending_dag_retry_task = spawn_node_task(edge, async move {
         coordinator_for_retry_clock
             .run_pending_dag_retry_clock(std::time::Duration::from_secs(2))
             .await
@@ -246,7 +244,7 @@ where
         db::merge::governance::SWEEP_INTERVAL,
         coordinator.shutdown_handle(),
     );
-    let governance_sweep_task = tokio::spawn(async move {
+    let governance_sweep_task = spawn_node_task(edge, async move {
         let _ = governance_sweep.await;
     });
 
@@ -287,12 +285,14 @@ where
         handle.clone(),
         se_correlator,
         manage_hooks.clone(),
+        edge,
     );
     let replication_task = spawn_replication_loop(
         coordinator.clone(),
         sync_events_rx,
         replication.merge_handler_on_pool(),
         event_bus.clone(),
+        edge,
     );
     let failure_recorder_task =
         defra_p2p_adapter::spawn_failure_recorder(retry_peers.clone(), failure_rx);
