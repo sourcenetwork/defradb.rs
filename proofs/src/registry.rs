@@ -572,4 +572,20 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_IndexReconciliation_Green.cfg",
         tiers: &[Behavioral],
     },
+    Property {
+        family: "Inbound stream admission",
+        name: "INV_ResidentWithinBudget / LIVE_HealthyHandled / LIVE_WaitEnds",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs handle_connection_streams; crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit; crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher",
+        model_ref: "MC_InboundAdmission_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Inbound stream admission",
+        name: "acquire_conserves / release_all_restores / admit_failure_keeps_nothing",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, InboundLease",
+        model_ref: "ByteBudget (lake build)",
+        tiers: &[Boundary],
+    },
 ];
