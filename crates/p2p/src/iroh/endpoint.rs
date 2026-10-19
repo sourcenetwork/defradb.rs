@@ -38,6 +38,9 @@ use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 use super::task_registry::TaskRegistry;
 
+/// Events each dispatch class may queue before its senders wait.
+const EVENT_LANE_CAPACITY: usize = 64;
+
 const MAX_COMMAND_BATCH: usize = 16;
 
 #[cfg(test)]
@@ -118,7 +121,7 @@ pub async fn spawn_endpoint(
     config: IrohEndpointConfig,
 ) -> crate::error::Result<(
     mpsc::Sender<IrohCommand>,
-    mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+    crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
     Arc<ReplicatorRegistry>,
     JoinHandle<()>,
 )> {
@@ -156,7 +159,9 @@ pub async fn spawn_endpoint(
     let gossip = Gossip::builder().spawn(endpoint.clone());
 
     let (command_tx, command_rx) = mpsc::channel::<IrohCommand>(256);
-    let (event_tx, event_rx) = mpsc::channel::<TransportEvent<iroh::endpoint::SendStream>>(256);
+    let (event_tx, event_rx) = crate::sync::dispatch_queue::<
+        TransportEvent<iroh::endpoint::SendStream>,
+    >(EVENT_LANE_CAPACITY);
     let replicators = Arc::new(ReplicatorRegistry::new());
 
     let gossip_heal = config.gossip_heal.clone();
@@ -187,7 +192,7 @@ async fn run_event_loop(
     node_identity: Option<Arc<identity::RawIdentity>>,
     admission: Arc<PeerAdmission>,
     mut command_rx: mpsc::Receiver<IrohCommand>,
-    event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: crate::sync::DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     replicators: Arc<ReplicatorRegistry>,
 ) {
     let shutdown_started = web_time::Instant::now();

@@ -10,7 +10,7 @@ use storage::corekv::Store;
 use crate::manage::hooks::ManageHooksCell;
 
 type Events =
-    tokio::sync::mpsc::Receiver<TransportEvent<<IrohTransport as P2PTransport>::ResponseToken>>;
+    p2p::sync::DispatchReceiver<TransportEvent<<IrohTransport as P2PTransport>::ResponseToken>>;
 
 /// Dispatch every transport event. Peer lifecycle is published to the event
 /// bus and re-arms retries; searchable-encryption and management traffic is

@@ -8,18 +8,18 @@ use identity::{Identity, RawIdentity};
 use iroh::SecretKey;
 use n0_future::task::JoinHandle;
 use n0_future::time::timeout;
-use tokio::sync::mpsc;
 
 use super::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
 use crate::message::{PushLogReply, PushLogRequest};
 use crate::signing::sign_with_transport;
+use crate::sync::DispatchReceiver;
 use crate::transport::{P2PTransport, PeerId, TransportEvent};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct TestNode {
     transport: IrohTransport,
-    events: mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+    events: DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
     task: JoinHandle<()>,
 }
 
@@ -82,7 +82,7 @@ fn signed_request(transport: &IrohTransport, label: &str) -> PushLogRequest {
 }
 
 async fn next_two_stream_request(
-    events: &mut mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+    events: &mut DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> (PeerId, PushLogRequest, iroh::endpoint::SendStream) {
     loop {
         let event = timeout(IO_TIMEOUT, events.recv())

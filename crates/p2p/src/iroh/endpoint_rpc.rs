@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::message::{CarFetchRequest, PushLogReply};
+use crate::sync::DispatchSender;
 use crate::transport::{PeerId, TransportEvent};
 use crate::QueryId;
 
@@ -643,7 +644,7 @@ pub(super) async fn handle_car_request_response(
     root_cid: cid::Cid,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: &PeerAdmission,
 ) -> crate::error::Result<()> {
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
@@ -711,7 +712,7 @@ async fn try_fetch_from_provider(
     request: CarFetchRequest,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: &PeerAdmission,
 ) -> CarFetchAttempt {
     // Per-provider CAR failures log at debug — the caller aggregates per-DAG
@@ -916,7 +917,7 @@ pub(super) struct BlockSyncResources {
     endpoint: Endpoint,
     peer_map: Arc<SharedPeerMap>,
     connection_cache: ConnectionCache,
-    event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: Arc<PeerAdmission>,
 }
 
@@ -925,7 +926,7 @@ impl BlockSyncResources {
         endpoint: Endpoint,
         peer_map: Arc<SharedPeerMap>,
         connection_cache: ConnectionCache,
-        event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+        event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
         admission: Arc<PeerAdmission>,
     ) -> Self {
         Self {

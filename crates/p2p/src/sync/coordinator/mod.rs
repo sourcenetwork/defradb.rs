@@ -809,12 +809,13 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Drain one transport event stream through the shared bounded scheduler.
-    pub async fn run_event_dispatcher<E, Handler, HandlerFuture>(
+    pub async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
         &self,
-        events: tokio::sync::mpsc::Receiver<E>,
+        events: Source,
         handler: Handler,
     ) where
         E: crate::sync::DispatchEvent + defra_core::thread_bounds::MaybeSend + 'static,
+        Source: crate::sync::DispatchSource<E>,
         Handler: Fn(E, crate::sync::DispatchAdmission) -> HandlerFuture
             + Clone
             + defra_core::thread_bounds::MaybeSend

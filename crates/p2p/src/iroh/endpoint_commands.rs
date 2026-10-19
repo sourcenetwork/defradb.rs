@@ -9,12 +9,12 @@ use iroh_gossip::net::Gossip;
 use iroh_gossip::proto::TopicId;
 use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::bitswap::ReplicatorRegistry;
 use crate::message::PushLogBroadcast;
+use crate::sync::DispatchSender;
 use crate::transport::{MessageId, PeerAddr, PeerId, TransportEvent};
 use crate::QueryId;
 
@@ -98,7 +98,7 @@ pub(super) async fn handle_command(
     replicators: &Arc<ReplicatorRegistry>,
     active_syncs: &mut RapidHashMap<u64, ActiveSync>,
     next_query_id: &mut u64,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> bool {
     let endpoint = &resources.endpoint;
     let gossip = &resources.gossip;
@@ -810,7 +810,7 @@ struct DialContext {
     resources: EndpointResources,
     pending_pushlog_replies: PendingPushLogReplies,
     subscription_senders: SubscriptionSenders,
-    event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
 }
 
 /// Dial a peer by EndpointId.
@@ -1024,7 +1024,7 @@ pub(super) async fn handle_subscribe(
     admission: &PeerAdmission,
     raw_topics: &RawTopics,
     topic: crate::topics::DefraTopic,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
     subscribe_topic_str(
         gossip,
@@ -1055,7 +1055,7 @@ pub(super) async fn subscribe_topic_str(
     admission: &PeerAdmission,
     raw_topics: &RawTopics,
     topic_str: String,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> crate::error::Result<bool> {
     use futures::StreamExt;
 

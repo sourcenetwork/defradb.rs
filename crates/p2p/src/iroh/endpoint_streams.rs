@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use iroh::endpoint::Connection;
 use iroh::EndpointId;
-use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::error::Error;
 use crate::message::{Message, PushLogReply};
+use crate::sync::DispatchSender;
 use crate::transport::{PeerId, TransportEvent};
 
 use super::endpoint::{
@@ -28,7 +28,7 @@ pub(super) async fn handle_incoming(
     resources: &EndpointResources,
     pending_pushlog_replies: &PendingPushLogReplies,
     subscription_senders: &SubscriptionSenders,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
 ) {
     let remote_addr = match incoming.remote_addr() {
         iroh::endpoint::IncomingAddr::Ip(addr) => Some(addr),
@@ -155,7 +155,7 @@ pub(super) async fn handle_incoming(
 /// Shared state for every stream accepted on one authenticated connection.
 #[derive(Clone)]
 pub(super) struct ConnectionStreamContext {
-    event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     peer_map: Arc<SharedPeerMap>,
     pending_pushlog_replies: PendingPushLogReplies,
     node_identity: Option<Arc<identity::RawIdentity>>,
@@ -166,7 +166,7 @@ impl ConnectionStreamContext {
     pub(super) fn new(
         resources: &EndpointResources,
         pending_pushlog_replies: PendingPushLogReplies,
-        event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+        event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     ) -> Self {
         Self {
             event_tx,
@@ -240,7 +240,7 @@ async fn dispatch_stream(
     peer_id: &PeerId,
     send: iroh::endpoint::SendStream,
     recv: &mut iroh::endpoint::RecvStream,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     pending_pushlog_replies: &PendingPushLogReplies,
     node_identity: Option<&identity::RawIdentity>,
 ) -> crate::error::Result<()> {

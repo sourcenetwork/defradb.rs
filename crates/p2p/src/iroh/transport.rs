@@ -1149,7 +1149,7 @@ mod tests {
         // Wait for the gossip mesh to form on BOTH sides so the broadcast is
         // deliverable from the sender to the receiver.
         async fn wait_peer_subscribed(
-            events: &mut tokio::sync::mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+            events: &mut crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
         ) {
             loop {
                 let event = timeout(Duration::from_secs(5), events.recv())
@@ -1253,7 +1253,7 @@ mod tests {
             .unwrap();
 
         async fn wait_peer_subscribed(
-            events: &mut tokio::sync::mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+            events: &mut crate::sync::DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
             want_topic: &str,
         ) {
             loop {
