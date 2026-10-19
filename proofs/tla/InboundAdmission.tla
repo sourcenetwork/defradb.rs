@@ -16,7 +16,7 @@
 \* waits for budget forever.
 \*
 \* Code it models (crates/p2p/src):
-\*   iroh/endpoint_streams.rs  admit_stream               (tag, length, admit, timed body read)
+\*   iroh/endpoint_streams.rs  admit_stream               (tag, length, admit, body read until idle)
 \*   iroh/inbound_budget.rs    InboundBudget::admit       (class budget + connection share)
 \*   sync/dispatch_queue.rs    dispatch_queue             (one queue per dispatch lane)
 \*   sync/event_dispatcher.rs  run_event_dispatcher       (holds the lease until handled)
@@ -155,8 +155,9 @@ BodyDone(s) ==
   /\ state' = [state EXCEPT ![s] = "queued"]
   /\ queue' = [queue EXCEPT ![KeyOf(s)] = Append(@, s)]
 
-\* The read deadline fires on a body that stopped arriving: reset the stream,
-\* which gives its budget back. Only stalled senders miss it.
+\* The read deadline fires on a body that stopped arriving (no byte for a
+\* while): reset the stream, which gives its budget back. A slow sender still
+\* makes progress, so only stalled senders miss it.
 ReadTimeout(s) ==
   /\ ReadDeadlineMode = "Deadline"
   /\ state[s] = "reading"

@@ -16,7 +16,7 @@ use super::endpoint::{
 };
 use super::gossip_heal;
 use super::inbound_budget::{
-    read_deadline, ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE,
+    ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE, BODY_IDLE_DEADLINE,
 };
 use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
@@ -31,7 +31,7 @@ const REFUSED_CONNECTION_CODE: u32 = 1;
 const RESET_UNKNOWN_SERVICE: u32 = 2;
 const RESET_MESSAGE_TOO_LARGE: u32 = 3;
 const RESET_BUSY: u32 = 4;
-const RESET_TOO_SLOW: u32 = 5;
+const RESET_STALLED: u32 = 5;
 
 /// Handle an incoming QUIC connection.
 pub(super) async fn handle_incoming(
@@ -288,16 +288,15 @@ async fn admit_stream(
         let _ = recv.stop(RESET_BUSY.into());
         return None;
     };
-    let Ok(body) =
-        n0_future::time::timeout(read_deadline(len), protocols::read_body(recv, len)).await
-    else {
-        debug!(peer_id = %peer_id, len, "Message body arrived too slowly");
-        let _ = recv.stop(RESET_TOO_SLOW.into());
-        return None;
-    };
-    let payload = body
+    let payload = protocols::read_body_until_idle(recv, len, BODY_IDLE_DEADLINE)
+        .await
         .inspect_err(|e| debug!(peer_id = %peer_id, error = %e, "Unreadable message body"))
         .ok()?;
+    let Some(payload) = payload else {
+        debug!(peer_id = %peer_id, len, "Message body stopped arriving");
+        let _ = recv.stop(RESET_STALLED.into());
+        return None;
+    };
     Some((service, payload, lease))
 }
 

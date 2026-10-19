@@ -92,7 +92,7 @@ async fn a_car_response_may_be_larger_than_a_general_message() {
 
 #[tokio::test]
 async fn a_body_that_never_arrives_is_stopped_and_frees_its_room() {
-    let deadline = super::inbound_budget::read_deadline(1);
+    let deadline = super::inbound_budget::BODY_IDLE_DEADLINE;
     assert_eq!(
         stop_code_for(protocols::STREAM_IDENTITY, 1, deadline + STOPPED).await,
         Some(5)

@@ -26,14 +26,9 @@ const BUDGET_BYTES: [usize; 4] = [
 /// How long a stream waits for room before it is reset.
 pub const ADMIT_DEADLINE: Duration = Duration::from_secs(5);
 
-/// The slowest a body may arrive. A sender that stalls is reset, so it cannot
-/// hold its room for longer than its body should take.
-const MIN_BODY_BYTES_PER_SEC: u64 = 256 * 1024;
-
-/// How long reading a `len`-byte body may take.
-pub fn read_deadline(len: usize) -> Duration {
-    ADMIT_DEADLINE + Duration::from_secs(len as u64 / MIN_BODY_BYTES_PER_SEC)
-}
+/// How long a body may go without a single byte arriving. A sender that
+/// stalls is reset so it cannot hold its room; a slow one is never cut off.
+pub const BODY_IDLE_DEADLINE: Duration = Duration::from_secs(10);
 
 /// The node-wide inbound byte budgets.
 #[derive(Debug)]

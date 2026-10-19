@@ -155,6 +155,34 @@ pub async fn read_body(recv: &mut RecvStream, len: usize) -> crate::error::Resul
     Ok(payload)
 }
 
+/// Read a `len`-byte body, giving up once no bytes arrive for `idle`.
+/// `Ok(None)` means the sender stalled.
+pub async fn read_body_until_idle(
+    recv: &mut RecvStream,
+    len: usize,
+    idle: std::time::Duration,
+) -> crate::error::Result<Option<Vec<u8>>> {
+    let mut payload = vec![0u8; len];
+    let mut filled = 0;
+    while filled < len {
+        let Ok(read) = n0_future::time::timeout(idle, recv.read(&mut payload[filled..])).await
+        else {
+            return Ok(None);
+        };
+        match read
+            .map_err(|e| crate::error::Error::Codec(format!("failed to read payload: {}", e)))?
+        {
+            Some(n) => filled += n,
+            None => {
+                return Err(crate::error::Error::Codec(format!(
+                    "stream ended after {filled} of {len} payload bytes"
+                )))
+            }
+        }
+    }
+    Ok(Some(payload))
+}
+
 /// Decode a CBOR message body. Passing the body by value frees it once
 /// decoded, so it is not held twice while the message waits to be queued.
 pub fn decode<T, Body>(payload: Body) -> crate::error::Result<T>
