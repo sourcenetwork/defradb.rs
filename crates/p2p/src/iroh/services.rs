@@ -61,84 +61,44 @@ pub struct Service {
     pub priority: Priority,
     /// The largest message body accepted on this tag.
     pub max_message: usize,
-    /// A response tag: its message must answer a request this node sent.
-    pub solicited: bool,
 }
 
-const fn service(
-    tag: &'static [u8],
-    priority: Priority,
-    max_message: usize,
-    solicited: bool,
-) -> Service {
+const fn service(tag: &'static [u8], priority: Priority, max_message: usize) -> Service {
     Service {
         tag,
         priority,
         max_message,
-        solicited,
     }
 }
 
 /// Every stream tag this node accepts.
 pub const SERVICES: &[Service] = &[
-    service(STREAM_IDENTITY, Priority::Control, MAX_MESSAGE_SIZE, false),
-    service(
-        STREAM_TWOSTREAM_RESP,
-        Priority::Control,
-        MAX_MESSAGE_SIZE,
-        true,
-    ),
-    service(
-        STREAM_MANAGE_REQ,
-        Priority::Control,
-        MAX_MANAGE_MSG_SIZE,
-        false,
-    ),
-    service(
-        STREAM_MANAGE_RESP,
-        Priority::Control,
-        MAX_MANAGE_MSG_SIZE,
-        true,
-    ),
+    service(STREAM_IDENTITY, Priority::Control, MAX_MESSAGE_SIZE),
+    service(STREAM_TWOSTREAM_RESP, Priority::Control, MAX_MESSAGE_SIZE),
+    service(STREAM_MANAGE_REQ, Priority::Control, MAX_MANAGE_MSG_SIZE),
+    service(STREAM_MANAGE_RESP, Priority::Control, MAX_MANAGE_MSG_SIZE),
     service(
         STREAM_MANAGE_QUERY_REQ,
         Priority::Control,
         MAX_MANAGE_MSG_SIZE,
-        false,
     ),
     service(
         STREAM_MANAGE_QUERY_RESP,
         Priority::Control,
         MAX_MANAGE_MSG_SIZE,
-        true,
     ),
-    service(
-        STREAM_PUSHLOG,
-        Priority::Replication,
-        MAX_MESSAGE_SIZE,
-        false,
-    ),
-    service(
-        STREAM_TWOSTREAM,
-        Priority::Replication,
-        MAX_MESSAGE_SIZE,
-        false,
-    ),
-    service(STREAM_SE, Priority::Replication, MAX_MESSAGE_SIZE, false),
-    service(STREAM_DOCSYNC, Priority::Sync, MAX_MESSAGE_SIZE, false),
-    service(STREAM_DOCSYNC_RESP, Priority::Sync, MAX_MESSAGE_SIZE, true),
-    service(STREAM_BRANCHABLE, Priority::Sync, MAX_MESSAGE_SIZE, false),
-    service(
-        STREAM_BRANCHABLE_RESP,
-        Priority::Sync,
-        MAX_MESSAGE_SIZE,
-        true,
-    ),
-    service(STREAM_SE_QUERY_REQ, Priority::Sync, MAX_MESSAGE_SIZE, false),
-    service(STREAM_SE_QUERY_RESP, Priority::Sync, MAX_MESSAGE_SIZE, true),
+    service(STREAM_PUSHLOG, Priority::Replication, MAX_MESSAGE_SIZE),
+    service(STREAM_TWOSTREAM, Priority::Replication, MAX_MESSAGE_SIZE),
+    service(STREAM_SE, Priority::Replication, MAX_MESSAGE_SIZE),
+    service(STREAM_DOCSYNC, Priority::Sync, MAX_MESSAGE_SIZE),
+    service(STREAM_DOCSYNC_RESP, Priority::Sync, MAX_MESSAGE_SIZE),
+    service(STREAM_BRANCHABLE, Priority::Sync, MAX_MESSAGE_SIZE),
+    service(STREAM_BRANCHABLE_RESP, Priority::Sync, MAX_MESSAGE_SIZE),
+    service(STREAM_SE_QUERY_REQ, Priority::Sync, MAX_MESSAGE_SIZE),
+    service(STREAM_SE_QUERY_RESP, Priority::Sync, MAX_MESSAGE_SIZE),
     // A CAR request is small, but its reply on the same stream is a block transfer.
-    service(STREAM_CAR, Priority::Bulk, MAX_MESSAGE_SIZE, false),
-    service(STREAM_CAR_RESP, Priority::Bulk, MAX_CAR_SIZE, true),
+    service(STREAM_CAR, Priority::Bulk, MAX_MESSAGE_SIZE),
+    service(STREAM_CAR_RESP, Priority::Bulk, MAX_CAR_SIZE),
 ];
 
 /// The service a stream tag names, if this node offers it.
@@ -185,17 +145,5 @@ mod tests {
     #[test]
     fn no_tag_collides_with_the_mux_alpn() {
         assert!(lookup(ALPN_MUX).is_none());
-    }
-
-    #[test]
-    fn response_tags_and_only_response_tags_are_solicited() {
-        for service in SERVICES {
-            assert_eq!(
-                service.solicited,
-                service.tag.ends_with(b"/resp"),
-                "tag {:?}",
-                String::from_utf8_lossy(service.tag)
-            );
-        }
     }
 }
