@@ -1,11 +1,12 @@
 //! Transport events queued by dispatch class, so a full class waits alone.
 //!
-//! One bounded lane per [`DispatchClass`]. When the completion workers are
-//! busy, the dispatcher stops taking from the completion lane only; requests,
-//! recovery and inline events keep flowing.
+//! One bounded lane per [`DispatchClass`]. Events leave in the order they were
+//! sent, as from a single queue. When the completion workers are busy, the
+//! dispatcher stops taking from the completion lane only; requests, recovery
+//! and inline events keep flowing past it.
 
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use defra_core::thread_bounds::MaybeSend;
@@ -42,23 +43,27 @@ where
 {
     let room: [Arc<Semaphore>; LANES] = std::array::from_fn(|_| Arc::new(Semaphore::new(capacity)));
     let signal = Arc::new(Signal::default());
-    let pairs: [_; LANES] = std::array::from_fn(|_| unbounded::<Queued<E>>());
+    let pairs: [_; LANES] = std::array::from_fn(|_| unbounded::<Sequenced<E>>());
     let sender = DispatchSender {
         shared: Arc::new(SenderShared {
             lanes: pairs.each_ref().map(|(sender, _)| sender.clone()),
             room: room.clone(),
             signal: Arc::clone(&signal),
+            next_seq: AtomicU64::new(0),
         }),
     };
     let receiver = DispatchReceiver {
         lanes: pairs.map(|(_, receiver)| receiver),
-        next_lane: 0,
+        heads: Default::default(),
         room,
         capacity,
         signal,
     };
     (sender, receiver)
 }
+
+/// A queued event and its place in send order.
+type Sequenced<E> = (u64, Queued<E>);
 
 /// What the two halves tell each other. One wake-up for every lane, so a
 /// waiting receiver registers once rather than on each lane.
@@ -73,9 +78,10 @@ struct SenderShared<E>
 where
     E: 'static,
 {
-    lanes: [UnboundedSender<Queued<E>>; LANES],
+    lanes: [UnboundedSender<Sequenced<E>>; LANES],
     room: [Arc<Semaphore>; LANES],
     signal: Arc<Signal>,
+    next_seq: AtomicU64,
 }
 
 impl<E> Drop for SenderShared<E>
@@ -133,9 +139,10 @@ where
         if signal.receiver_gone.load(Ordering::Acquire) {
             return Err(event);
         }
+        let seq = self.shared.next_seq.fetch_add(1, Ordering::Relaxed);
         self.shared.lanes[lane]
-            .try_send(Queued { event, lease })
-            .map_err(|queued| queued.event)?;
+            .try_send((seq, Queued { event, lease }))
+            .map_err(|(_, queued)| queued.event)?;
         signal.queued.notify_one();
         Ok(())
     }
@@ -146,9 +153,9 @@ pub struct DispatchReceiver<E>
 where
     E: 'static,
 {
-    lanes: [UnboundedReceiver<Queued<E>>; LANES],
-    /// Where the next look starts, so a busy lane cannot starve the others.
-    next_lane: usize,
+    lanes: [UnboundedReceiver<Sequenced<E>>; LANES],
+    /// The oldest event of each lane, taken off it to compare send order.
+    heads: [Option<Sequenced<E>>; LANES],
     room: [Arc<Semaphore>; LANES],
     capacity: usize,
     signal: Arc<Signal>,
@@ -158,8 +165,8 @@ impl<E> DispatchReceiver<E>
 where
     E: 'static,
 {
-    /// The next event from any lane, taking lanes in turn. `None` once every
-    /// sender is gone and every lane is empty.
+    /// The oldest event in any lane. `None` once every sender is gone and
+    /// every lane is empty.
     pub async fn recv(&mut self) -> Option<E> {
         self.next_queued(true).await.map(|queued| queued.event)
     }
@@ -202,16 +209,18 @@ where
     }
 
     fn take_next(&mut self, completion_open: bool) -> Option<Queued<E>> {
-        let start = self.next_lane;
-        (0..LANES)
-            .map(|offset| (start + offset) % LANES)
+        for (head, lane) in self.heads.iter_mut().zip(&self.lanes) {
+            if head.is_none() {
+                *head = lane.try_recv();
+            }
+        }
+        let (_, oldest) = (0..LANES)
             .filter(|&lane| completion_open || lane != COMPLETION_LANE)
-            .find_map(|lane| {
-                let queued = self.lanes[lane].try_recv()?;
-                self.room[lane].add_permits(1);
-                self.next_lane = (lane + 1) % LANES;
-                Some(queued)
-            })
+            .filter_map(|lane| Some((self.heads[lane].as_ref()?.0, lane)))
+            .min()?;
+        let (_, queued) = self.heads[oldest].take()?;
+        self.room[oldest].add_permits(1);
+        Some(queued)
     }
 }
 
@@ -306,6 +315,7 @@ mod tests {
             .await
             .expect("a full completion lane must not hold up a request")
             .unwrap();
+        assert_eq!(rx.recv().await, Some(TestEvent::Completion(0)));
         assert_eq!(rx.recv().await, Some(TestEvent::Request(1)));
     }
 
@@ -328,17 +338,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_request_flood_does_not_starve_completions() {
+    async fn open_lanes_keep_send_order() {
         let (tx, mut rx) = dispatch_queue(4);
-        tx.send(TestEvent::Request(0)).await.unwrap();
+        tx.send(TestEvent::Completion(0)).await.unwrap();
         tx.send(TestEvent::Request(1)).await.unwrap();
         tx.send(TestEvent::Completion(2)).await.unwrap();
 
-        let first_two = [rx.recv().await.unwrap(), rx.recv().await.unwrap()];
-        assert!(
-            first_two.contains(&TestEvent::Completion(2)),
-            "{first_two:?}"
-        );
+        assert_eq!(rx.recv().await, Some(TestEvent::Completion(0)));
+        assert_eq!(rx.recv().await, Some(TestEvent::Request(1)));
+        assert_eq!(rx.recv().await, Some(TestEvent::Completion(2)));
     }
 
     #[tokio::test]
