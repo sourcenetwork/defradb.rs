@@ -7,6 +7,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_ContinuationSlot_Green.cfg ContinuationSlot.tla GREEN"
+  "MC_ContinuationSlot_Red_LateClaim.cfg ContinuationSlot.tla RED"
   "MC_HistoryTurns_Green.cfg HistoryTurns.tla GREEN"
   "MC_HistoryTurns_Red_Admission.cfg HistoryTurns.tla RED"
   "MC_HistoryTurns_Red_Atomic.cfg HistoryTurns.tla RED"

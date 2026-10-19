@@ -49,6 +49,22 @@ use Tier::{Behavioral, Boundary, Contract};
 pub const PROPERTIES: &[Property] = &[
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_Released — an early reconciliation return releases its queued continuation slot",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/replication/handlers.rs::process_one_event; crates/p2p/src/sync/replication/continuation_tests.rs::already_merged_duplicate_continuation_releases_reservation_without_handler",
+        model_ref: "MC_ContinuationSlot_{Green,Red_LateClaim}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "owned_slot_released — dropping the continuation owner releases its slot",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs::claim_pending_dag_merge; crates/p2p/src/sync/replication/handlers.rs::process_one_event",
+        model_ref: "HistoryTurns.owned_slot_released (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Rejected-page cleanup compares the cursor incarnation before removing it",
         axis: Tla,
         anchor: "crates/db/src/merge/merge_handler/history.rs::reject_history; crates/db/tests/merge/history_cursor.rs",

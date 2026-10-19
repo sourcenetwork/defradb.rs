@@ -1,7 +1,9 @@
 use super::*;
 use crate::sync::coordinator::SyncCoordinator;
 use crate::sync::manager::pending::PENDING_MERGE_CONTINUATION_DELAY;
-use crate::sync::pending_store::{PendingDagStorage, PendingDagStore, PersistedPendingDag};
+use crate::sync::pending_store::{
+    PendingDagStorage, PendingDagStore, PersistedPendingDag, PersistedView,
+};
 use defra_core::{Block, CompositeDeltaPayload, CrdtDelta, DAGLink, LwwDeltaPayload};
 
 type TestCoordinator = SyncCoordinator<DefraBlockstore<RegolithStore>, NoopTransport>;
@@ -19,7 +21,7 @@ async fn restart(
         },
         AccessMode::Open,
         Arc::new(crate::ReplicatorRegistry::new()),
-        Arc::new(crate::sync::collection_store::NoOpCollectionStorage),
+        Arc::new(crate::sync::collection_store::MemoryCollectionStorage::default()),
         Arc::new(EqOnlyFilterMatcher),
     )
     .await
@@ -100,7 +102,9 @@ fn dispatch(coordinator: &TestCoordinator) -> usize {
 async fn pulled_roots_continue_without_a_pushlog_registration() {
     let (blockstore, pending) = stores();
     let root = seed(&blockstore, &pending, "pulled").await;
-    pending.remove(&root).await.unwrap();
+    let view = Arc::new(PersistedView::default());
+    pending.sweep(&view).await.unwrap();
+    assert!(pending.remove(&root, &view).await.unwrap());
     let (coordinator, mut events) = restart(blockstore.clone(), pending).await;
     let handler = RetryThenMergeHandler::yielding(root, 2);
     let config = ReplicationConfig::default();
@@ -279,7 +283,7 @@ async fn continuation_reservations_bound_queued_work_and_allow_independent_root(
     // Consume the event as the individual (duplicate-CID fallback) path does.
     let handler = RetryThenMergeHandler::yielding(root, 2);
     let event = events.try_recv().unwrap();
-    let result = super::super::handlers::process_event_serialized(
+    let result = super::super::handlers::process_one_event(
         &coordinator,
         event,
         &handler,

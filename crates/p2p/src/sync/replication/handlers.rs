@@ -998,7 +998,7 @@ where
 
 /// Process one sync event, unless the block it would merge already merged.
 ///
-/// It claims nothing and waits for no other merge or fetch of the CID: one
+/// It takes no merge lock and waits for no other merge or fetch of the CID: one
 /// merge per CID comes from the exactly-once race on the block's applied key
 /// (`h/p/`) in the merge transaction, which a concurrent merge of the same
 /// block loses or finds already applied.
@@ -1013,6 +1013,9 @@ where
     T: P2PTransport,
     H: MergeHandler + ?Sized + 'static,
 {
+    // Own the queued slot before reconciliation can return without merging.
+    let _pending_owner =
+        event_merge_cid(&event).and_then(|cid| coordinator.pending_dag_merge_guard(cid));
     if let Some(cid) = event_merge_cid(&event) {
         if let Some(result) = skipped_if_already_merged(coordinator, &event, cid).await {
             return result;

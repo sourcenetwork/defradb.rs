@@ -48,4 +48,13 @@ theorem stale_rejection_keeps_cursor (current observed : Nat) (h : current ≠ o
     rejectCursor current observed true = true := by
   simp [rejectCursor, h]
 
+-- Rust's queued continuation becomes a weakly registered owner before reconciliation.
+-- Dropping that owner releases the slot on skip, failure, cancellation or merge.
+def finishSlot (reserved owned : Bool) : Bool := reserved && !owned
+
+-- This is the release step of ContinuationSlot.tla, not a merge mutex.
+theorem owned_slot_released (reserved : Bool) : finishSlot reserved true = false := by
+  -- Neither initial reservation state can survive its owner's drop.
+  cases reserved <;> rfl
+
 end HistoryTurns
