@@ -117,23 +117,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         from_collection: bool,
         depth: usize,
     ) -> std::result::Result<MergeOutcome, MergeError> {
-        let txn = self.db.new_txn(true).await?;
-        let pending = txn
-            .systemstore()?
-            .has(&super::history::state_key(cid))
-            .await
-            .map_err(|e| MergeError::Storage(e.to_string()))?;
-        txn.force_discard()?;
-        if !pending {
-            match self
-                .process_composite_fast(cid, block, payload, metadata, from_collection, depth)
-                .await
-            {
-                Err(MergeError::DepthExceeded { .. } | MergeError::HistoryRequired) => {}
-                result => return result,
-            }
-        }
-        self.resume_composite_history(cid, block, payload, metadata, from_collection)
+        self.process_composite_fast(cid, block, payload, metadata, from_collection, depth)
             .await
     }
 
@@ -315,7 +299,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             depth,
         }];
 
-        let applied_txn = self.db.new_txn(true).await?;
         let mut steps = 0;
         let work_limit = self.max_merge_depth.max(1);
         while let Some(frame) = frames.pop() {
@@ -337,21 +320,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     let Some((block, payload)) = self.frame_block(&cid, source).await else {
                         continue;
                     };
-
-                    if Self::composite_was_applied(
-                        &applied_txn.systemstore()?,
-                        &applied_txn.headstore()?,
-                        &cid,
-                        &payload,
-                        &doc_id_str,
-                    )
-                    .await?
-                    {
-                        if is_root {
-                            return Ok(MergeOutcome::terminal_skip("already merged"));
-                        }
-                        continue;
-                    }
 
                     match self
                         .prepare_composite_merge(
@@ -752,6 +720,24 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         pending_field_block_finalizations: &SegQueue<PendingFieldBlockFinalization>,
         depth: usize,
     ) -> std::result::Result<MergeOutcome, MergeError> {
+        if self.history_mode {
+            return self
+                .history_turn(
+                    datastore,
+                    headstore,
+                    systemstore,
+                    cid,
+                    block,
+                    payload,
+                    metadata,
+                    from_collection,
+                    batch_merged,
+                    pending_events,
+                    pending_post_commit_actions,
+                    pending_field_block_finalizations,
+                )
+                .await;
+        }
         self.ensure_merge_depth(cid, depth)?;
         if systemstore
             .has(&super::history::state_key(cid))
@@ -782,6 +768,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         };
         let root_cid = *cid;
         let doc_id_for_index = doc_id.clone();
+        let mut block_reads = super::block_reads::BlockReads::default();
         let mut frames = vec![CompositeMergeFrame::Enter {
             cid: *cid,
             source: FrameSource::root(block, payload),
@@ -901,6 +888,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             &doc_id,
                             collection.map(|collection| *collection),
                             CompositeMergeMode::Batch,
+                            &mut block_reads,
                         )
                         .await?;
                     if is_root || (!outcome.is_merged() && !outcome.is_terminal_skip()) {
@@ -932,6 +920,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc_id_str: &str,
         collection_lookup: Option<Collection>,
         mode: CompositeMergeMode,
+        reads: &mut super::block_reads::BlockReads,
     ) -> std::result::Result<MergeOutcome, MergeError> {
         let doc_short_id = {
             let collection = collection_lookup.as_ref().ok_or_else(|| {
@@ -959,7 +948,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             collection_lookup.clone(),
             mode,
         );
-        let mut state = CompositeMergeState::default();
+        let mut state = CompositeMergeState {
+            reads: std::mem::take(reads),
+            ..CompositeMergeState::default()
+        };
 
         let process_result: std::result::Result<Option<MergeOutcome>, MergeError> = {
             let mut datastore = datastore.clone();
@@ -996,7 +988,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         };
 
-        match process_result {
+        let result = match process_result {
             Ok(Some(outcome)) => {
                 if outcome.is_terminal_skip() && !from_collection {
                     let merge_complete = MergeCompleteData {
@@ -1119,6 +1111,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Ok(MergeOutcome::Merged)
             }
             Err(e) => Err(e),
-        }
+        };
+        *reads = state.reads;
+        result
     }
 }

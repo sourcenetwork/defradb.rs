@@ -48,6 +48,30 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Rejected-page cleanup compares the cursor incarnation before removing it",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/history.rs::reject_history; crates/db/tests/merge/history_cursor.rs",
+        model_ref: "MC_RetryMarkerGeneration_{Green,Red_StaleAck,Red_Readd}.cfg (incarnation-fenced retirement abstraction)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "History turns commit cursor and writes together; reclaim preserves publications",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/history.rs; history_registry.rs; dispatch.rs",
+        model_ref: "MC_HistoryTurns_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Ancestor publication is idempotent and independent of cursor cleanup",
+        axis: Lean,
+        anchor: "crates/db/src/merge/merge_handler/history.rs",
+        model_ref: "HistoryTurns (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Vector index link maintenance",
         name: "INV_NoLostLinks — blind additions preserve links and stale structural pruning aborts",
         axis: Tla,

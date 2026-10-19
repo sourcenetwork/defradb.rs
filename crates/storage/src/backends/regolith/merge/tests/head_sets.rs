@@ -94,6 +94,21 @@ fn bases() -> impl Strategy<Value = Vec<u8>> {
     })
 }
 
+proptest! {
+    #[test]
+    fn decoded_head_updates_match_the_engine_fold(
+        base in bases(), writes in proptest::collection::vec(writes(), 0..32),
+    ) {
+        let mut cached = Set::read(&base).unwrap();
+        let mut applied = Vec::new();
+        for write in &writes {
+            cached.apply(write);
+            applied.push(write);
+            prop_assert_eq!(&cached, &fold(Some(&base), &applied));
+        }
+    }
+}
+
 #[test]
 fn head_set_folds_obey_the_engine_contract() {
     let checked = regolith::testing::check_merge_operator(

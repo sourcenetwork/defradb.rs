@@ -1,4 +1,4 @@
-//! Durable, bounded DFS for histories that do not fit the merge fast path.
+//! Disk-paged DFS within the caller's engine-owned merge attempt.
 
 use super::batch::{PendingFieldBlockFinalization, PendingMergeEvent, PendingPostCommitAction};
 use super::composite::{CompositeMergeMode, CompositeMergePreparation};
@@ -10,16 +10,19 @@ use storage::corekv::IterOptions;
 #[path = "history_registry.rs"]
 mod registry;
 
-const ROOTS_KEY: &[u8] = b"/merge-history/v1/roots";
-const MAX_ROOTS: u64 = 64;
+#[path = "history_keys.rs"]
+mod keys;
+
+#[path = "history_walk.rs"]
+mod walk;
+
+#[cfg(test)]
+#[path = "../../../tests/merge/history_cursor.rs"]
+mod tests;
+
+const MAX_ROOTS: usize = 64;
 const MAX_ROOTS_PER_PEER: usize = 16;
-// Operators can increase the durable per-root admission quota without changing history validity.
-fn max_nodes() -> u64 {
-    std::env::var("DEFRA_MERGE_HISTORY_MAX_NODES")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(262_144)
-}
+const PAGE_STEPS: usize = 256;
 
 pub(super) fn state_key(cid: &Cid) -> Vec<u8> {
     format!("/merge-history/v1/{cid}/state").into_bytes()
@@ -30,10 +33,11 @@ struct Progress {
     top: u64,
     nodes: u64,
     doc: Option<String>,
-    // Completion is retained until bounded cleanup has released every key.
     outcome: Option<Completion>,
     #[serde(default)]
     context: [u8; 32],
+    #[serde(default)]
+    generation: [u8; 16],
     #[serde(default)]
     last_active_unix: u64,
     #[serde(default)]
@@ -48,19 +52,16 @@ fn now_unix() -> u64 {
 }
 
 fn context_key(metadata: &BlockMetadata<'_>) -> Result<[u8; 32], MergeError> {
-    let authorization = metadata
-        .explicit_replay_authorization
-        .as_ref()
-        .map(|authorization| {
-            (
-                &authorization.source_peer_id,
-                &authorization.target_peer_id,
-                &authorization.collection_id,
-                &authorization.authorizer_did,
-                authorization.expires_at,
-                &authorization.capability,
-            )
-        });
+    let authorization = metadata.explicit_replay_authorization.as_ref().map(|auth| {
+        (
+            &auth.source_peer_id,
+            &auth.target_peer_id,
+            &auth.collection_id,
+            &auth.authorizer_did,
+            auth.expires_at,
+            &auth.capability,
+        )
+    });
     let bytes = serde_json::to_vec(&(
         metadata.collection_id,
         metadata.creator,
@@ -74,7 +75,7 @@ fn context_key(metadata: &BlockMetadata<'_>) -> Result<[u8; 32], MergeError> {
     Ok(Sha256::digest(bytes).into())
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Frame {
     cid: String,
     next: usize,
@@ -84,10 +85,10 @@ fn storage_error(error: impl std::fmt::Display) -> MergeError {
     MergeError::Storage(error.to_string())
 }
 
-async fn read<T: serde::de::DeserializeOwned>(
-    store: &NamespaceView,
-    key: &[u8],
-) -> Result<Option<T>, MergeError> {
+async fn read<T>(store: &NamespaceView, key: &[u8]) -> Result<Option<T>, MergeError>
+where
+    T: serde::de::DeserializeOwned,
+{
     store
         .get(key)
         .await
@@ -96,11 +97,10 @@ async fn read<T: serde::de::DeserializeOwned>(
         .transpose()
 }
 
-async fn write<T: Serialize>(
-    store: &NamespaceView,
-    key: &[u8],
-    value: &T,
-) -> Result<(), MergeError> {
+async fn write<T>(store: &NamespaceView, key: &[u8], value: &T) -> Result<(), MergeError>
+where
+    T: Serialize,
+{
     store
         .set(key, &serde_json::to_vec(value).map_err(storage_error)?)
         .await
@@ -112,6 +112,7 @@ enum Completion {
     Merged,
     Skipped(String),
     Rejected(String),
+    Deferred(String),
     Restart,
 }
 
@@ -133,12 +134,52 @@ impl Completion {
             Self::Merged => MergeOutcome::Merged,
             Self::Skipped(reason) => MergeOutcome::terminal_skip(reason),
             Self::Rejected(reason) => MergeOutcome::rejected(reason),
+            Self::Deferred(reason) => MergeOutcome::retryable_skip(reason),
             Self::Restart => MergeOutcome::Yielded,
         }
     }
 }
 
-impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+/// Delete only traversal bookkeeping, never document or block data.
+async fn cleanup(store: &NamespaceView, root: &Cid, budget: usize) -> Result<bool, MergeError> {
+    let mut iter = store
+        .iterator(
+            IterOptions::new()
+                .with_prefix(format!("/merge-history/v1/{root}/data/").into_bytes())
+                .with_validation(true),
+        )
+        .await
+        .map_err(storage_error)?;
+    let mut keys = Vec::with_capacity(budget);
+    for _ in 0..budget {
+        let Some(entry) = iter.next().await.map_err(storage_error)? else {
+            break;
+        };
+        keys.push(entry.key);
+    }
+    let more = iter.next().await.map_err(storage_error)?.is_some();
+    iter.close().await.map_err(storage_error)?;
+    for key in keys {
+        store.delete(&key).await.map_err(storage_error)?;
+    }
+    if !more {
+        store
+            .delete(&state_key(root))
+            .await
+            .map_err(storage_error)?;
+        store
+            .delete(&registry::admission_key(root))
+            .await
+            .map_err(storage_error)?;
+    }
+    Ok(more)
+}
+
+impl<S, B> DbMergeHandler<S, B>
+where
+    S: Store,
+    B: blockstore::Blockstore,
+{
     pub(super) async fn composite_was_applied(
         systemstore: &NamespaceView,
         headstore: &NamespaceView,
@@ -146,448 +187,94 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         payload: &defra_core::block::CompositeDeltaPayload,
         doc: &str,
     ) -> Result<bool, MergeError> {
-        use storage::corekv::Key;
         let Some(doc_ref) = crate::docid::map::get_doc_ref(systemstore, doc).await? else {
             return Ok(false);
         };
-        headstore
-            .has(
-                &storage::keys::headstore::HeadstorePriorityKey::new(
-                    doc_ref.doc_short_id,
-                    payload.priority,
-                    *cid,
-                )
-                .bytes(),
-            )
-            .await
-            .map_err(storage_error)
+        crate::block::heads::document::is_published(
+            headstore,
+            doc_ref.doc_short_id,
+            payload.priority,
+            cid,
+        )
+        .await
+        .map_err(storage_error)
     }
 
-    pub(super) async fn resume_composite_history(
+    /// Runs only after the rejected data attempt was discarded by the engine.
+    pub(super) async fn reject_history(
         &self,
+        store: &NamespaceView,
+        root: &Cid,
+        context: &[u8; 32],
+        generation: &[u8; 16],
+        reason: &str,
+    ) -> Result<MergeOutcome, MergeError> {
+        let Some(mut progress) = read::<Progress>(store, &state_key(root)).await? else {
+            return Ok(MergeOutcome::rejected(reason));
+        };
+        if &progress.context != context || &progress.generation != generation {
+            return Ok(MergeOutcome::Yielded);
+        }
+        progress.outcome = Some(Completion::Rejected(reason.to_owned()));
+        if cleanup(store, root, self.max_merge_depth.clamp(1, PAGE_STEPS)).await? {
+            write(store, &state_key(root), &progress).await?;
+            Ok(MergeOutcome::Yielded)
+        } else {
+            Ok(MergeOutcome::rejected(reason))
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn history_turn(
+        &self,
+        datastore: &NamespaceView,
+        headstore: &NamespaceView,
+        store: &NamespaceView,
         root: &Cid,
         block: &Block,
         payload: &defra_core::block::CompositeDeltaPayload,
         metadata: &BlockMetadata<'_>,
         from_collection: bool,
+        merged: &CidSet,
+        events: &SegQueue<PendingMergeEvent>,
+        actions: &SegQueue<PendingPostCommitAction>,
+        fields: &SegQueue<PendingFieldBlockFinalization>,
     ) -> Result<MergeOutcome, MergeError> {
-        let collection = self
-            .block_collection(&payload.schema_version_id, metadata.collection_id)
-            .await?;
-        let _collection_guard = match collection {
-            Some(collection) => Some(
-                self.db
-                    .collection_read_guard(collection.collection_id())
-                    .await?,
-            ),
-            None => None,
-        };
-        // Separate from document locks: multiple roots may share one document.
-        let _root_guard = self.merge_queue.acquire(&format!("history:{root}")).await;
-        let result = self
-            .history_turn(root, block, payload, metadata, from_collection)
-            .await;
-        if let Err(error) = &result {
-            if error.disposition() == defra_core::merge::MergeErrorDisposition::Terminal {
-                let txn = self.db.new_txn(false).await?;
-                let store = txn.systemstore()?;
-                if let Some(mut progress) = read::<Progress>(&store, &state_key(root)).await? {
-                    progress.outcome = Some(Completion::Rejected(error.to_string()));
-                    write(&store, &state_key(root), &progress).await?;
-                    drop(store);
-                    txn.force_commit().await?;
-                    return Ok(MergeOutcome::Yielded);
-                }
-            }
-        }
-        result
-    }
-
-    async fn history_turn(
-        &self,
-        root: &Cid,
-        root_block: &Block,
-        root_payload: &defra_core::block::CompositeDeltaPayload,
-        metadata: &BlockMetadata<'_>,
-        from_collection: bool,
-    ) -> Result<MergeOutcome, MergeError> {
-        let budget = self.max_merge_depth.clamp(1, 1024);
-        let node_limit = max_nodes();
         let context = context_key(metadata)?;
-        let prefix = format!("/merge-history/v1/{root}/data/");
-        let stack_key = |index| format!("{prefix}s/{index:020}").into_bytes();
-        let node_key = |cid: &Cid| format!("{prefix}n/{cid}").into_bytes();
-        let read_txn = self.db.new_txn(true).await?;
-        let previous = read::<Progress>(&read_txn.systemstore()?, &state_key(root)).await?;
-        read_txn.force_discard()?;
-        let _doc_guard = match previous
+        let previous = read::<Progress>(store, &state_key(root)).await?;
+        let generation = previous
             .as_ref()
-            .and_then(|progress| progress.doc.as_deref())
-        {
-            Some(doc) => Some(self.merge_queue.acquire(doc).await),
-            None => None,
-        };
-        let txn = self.db.new_txn(false).await?;
-        let store = txn.systemstore()?;
-        let mut progress = match read::<Progress>(&store, &state_key(root)).await? {
-            Some(progress) => progress,
-            None => {
-                let roots = read::<u64>(&store, ROOTS_KEY).await?.unwrap_or(0);
-                if roots >= MAX_ROOTS {
-                    if registry::reclaim_idle(&store, budget).await? {
-                        drop(store);
-                        txn.force_commit().await?;
-                        return Ok(MergeOutcome::Yielded);
-                    }
-                    return Ok(MergeOutcome::retryable_skip(
-                        "history admission quota reached",
-                    ));
-                }
-                if let Some(sender) = metadata.sender_peer {
-                    if !registry::sender_has_capacity(&store, sender).await? {
-                        return Ok(MergeOutcome::retryable_skip(
-                            "history admission quota reached for sender",
-                        ));
-                    }
-                }
-                // A collection carrier's DocID does not identify its linked composites.
-                // The walk derives and verifies their identity before applying frames.
-                if let Some(doc) = metadata
-                    .doc_id
-                    .filter(|doc| !from_collection && !doc.is_empty())
-                {
-                    match self
-                        .prepare_composite_merge(
-                            root,
-                            root_block,
-                            root_payload,
-                            metadata,
-                            doc,
-                            CompositeMergeMode::Batch,
-                        )
-                        .await?
-                    {
-                        CompositeMergePreparation::Ready(_) => {}
-                        CompositeMergePreparation::Complete(outcome) => return Ok(outcome),
-                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                            self.index_deferred(root, doc, metadata, awaiting);
-                            return Ok(outcome);
-                        }
-                    }
-                }
-                write(&store, ROOTS_KEY, &(roots + 1)).await?;
-                write(
-                    &store,
-                    &stack_key(0),
-                    &Frame {
-                        cid: root.to_string(),
-                        next: 0,
-                    },
-                )
-                .await?;
-                store
-                    .set(&node_key(root), &[0])
-                    .await
-                    .map_err(storage_error)?;
-                Progress {
-                    nodes: 1,
+            .map(|progress| progress.generation)
+            .unwrap_or_else(rand::random);
+        self.history_page(
+            datastore,
+            headstore,
+            store,
+            root,
+            block,
+            payload,
+            metadata,
+            from_collection,
+            merged,
+            events,
+            actions,
+            fields,
+            context,
+            generation,
+            previous,
+        )
+        .await
+        .map_err(|error| {
+            if error.disposition() == MergeErrorDisposition::Terminal {
+                MergeError::HistoryAborted(Box::new(HistoryRejection {
+                    root: *root,
                     context,
-                    last_active_unix: now_unix(),
-                    sender_peer: metadata.sender_peer.map(str::to_owned),
-                    ..Progress::default()
-                }
-            }
-        };
-
-        if progress.context != context {
-            // Never reuse eligibility or partial encrypted work under another grant.
-            progress.outcome = Some(Completion::Restart);
-            progress.context = context;
-        }
-        if let Some(completion) = progress.outcome.clone() {
-            let mut iter = store
-                .iterator(IterOptions::new().with_prefix(prefix.into_bytes()))
-                .await
-                .map_err(storage_error)?;
-            let mut keys = Vec::new();
-            for _ in 0..budget {
-                let Some(entry) = iter.next().await.map_err(storage_error)? else {
-                    break;
-                };
-                keys.push(entry.key);
-            }
-            let more = iter.next().await.map_err(storage_error)?.is_some();
-            drop(iter);
-            for key in keys {
-                store.delete(&key).await.map_err(storage_error)?;
-            }
-            if !more {
-                store
-                    .delete(&state_key(root))
-                    .await
-                    .map_err(storage_error)?;
-                let roots = read::<u64>(&store, ROOTS_KEY).await?.unwrap_or(1);
-                write(&store, ROOTS_KEY, &roots.saturating_sub(1)).await?;
+                    generation,
+                    reason: error.to_string(),
+                }))
             } else {
-                write(&store, &state_key(root), &progress).await?;
+                error
             }
-            drop(store);
-            txn.force_commit().await?;
-            if !more && matches!(completion, Completion::Merged) {
-                self.merged_composites.insert(*root, ());
-            }
-            return Ok(if more {
-                MergeOutcome::Yielded
-            } else {
-                completion.into_outcome()
-            });
-        }
-
-        let datastore = txn.datastore()?;
-        let headstore = txn.headstore()?;
-        let merged = cid_set();
-        let events: SegQueue<PendingMergeEvent> = SegQueue::new();
-        let actions: SegQueue<PendingPostCommitAction> = SegQueue::new();
-        let fields: SegQueue<PendingFieldBlockFinalization> = SegQueue::new();
-        let mut root_checked = false;
-        let mut waiting = None;
-        let before = (progress.top, progress.nodes, progress.doc.clone());
-
-        for _ in 0..budget {
-            let mut frame: Frame = read(&store, &stack_key(progress.top))
-                .await?
-                .ok_or_else(|| storage_error("missing history frame"))?;
-            let cid: Cid = frame.cid.parse().map_err(storage_error)?;
-            let block = if cid == *root {
-                root_block.clone()
-            } else {
-                let bytes = self
-                    .blockstore
-                    .get(&cid)
-                    .await
-                    .map_err(storage_error)?
-                    .ok_or_else(|| storage_error(format!("missing history block {cid}")))?;
-                Block::from_dag_cbor(&bytes).map_err(|e| MergeError::BlockDecode(e.to_string()))?
-            };
-            let CrdtDelta::Composite(payload) = &block.delta else {
-                return Err(MergeError::UnsupportedDelta(
-                    "non-composite history ancestor".into(),
-                ));
-            };
-            let heads = block.heads.as_deref().unwrap_or_default();
-            if progress.doc.is_none() {
-                let owners =
-                    crate::docid::map::get_doc_ids_for_block(&store, &cid.to_string()).await?;
-                progress.doc = if heads.is_empty() {
-                    Some(crate::block::builder::derive_doc_id(&cid))
-                } else if owners.len() == 1 {
-                    owners.into_iter().next()
-                } else {
-                    None
-                };
-            }
-            if let Some(doc) = progress.doc.as_deref() {
-                if _doc_guard.is_none() {
-                    // Identity discovery commits before taking the document lock next turn.
-                    break;
-                }
-                if !root_checked {
-                    match self
-                        .prepare_composite_merge(
-                            root,
-                            root_block,
-                            root_payload,
-                            metadata,
-                            doc,
-                            CompositeMergeMode::Batch,
-                        )
-                        .await?
-                    {
-                        CompositeMergePreparation::Ready(_) => {}
-                        CompositeMergePreparation::Complete(outcome) => {
-                            progress.outcome = Some(
-                                Completion::from_outcome(outcome).unwrap_or(Completion::Restart),
-                            );
-                            break;
-                        }
-                        CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                            self.index_deferred(root, doc, metadata, awaiting);
-                            progress.outcome = Some(Completion::Restart);
-                            tracing::debug!(?outcome, %root, "Releasing unready history admission");
-                            break;
-                        }
-                    }
-                    root_checked = true;
-                }
-                // The priority index survives restart and is shared by every walk
-                // of this document. Reapplying an ancestor would resurrect its head.
-                if Self::composite_was_applied(&store, &headstore, &cid, payload, doc).await? {
-                    store
-                        .set(&node_key(&cid), &[1])
-                        .await
-                        .map_err(storage_error)?;
-                    store
-                        .delete(&stack_key(progress.top))
-                        .await
-                        .map_err(storage_error)?;
-                    if progress.top == 0 {
-                        progress.outcome = Some(Completion::Merged);
-                        break;
-                    }
-                    progress.top -= 1;
-                    continue;
-                }
-            }
-
-            if let Some(parent) = heads.get(frame.next) {
-                match store.get(&node_key(parent)).await.map_err(storage_error)? {
-                    Some(value) if value.as_ref() == [1] => {
-                        frame.next += 1;
-                        write(&store, &stack_key(progress.top), &frame).await?;
-                        continue;
-                    }
-                    Some(_) => {
-                        return Err(MergeError::UnsupportedDelta(
-                            "cyclic composite history".into(),
-                        ))
-                    }
-                    None => {}
-                }
-                if progress.nodes >= node_limit {
-                    waiting = Some(MergeOutcome::retryable_skip(
-                        "history storage quota reached; increase DEFRA_MERGE_HISTORY_MAX_NODES",
-                    ));
-                    break;
-                }
-                frame.next += 1;
-                write(&store, &stack_key(progress.top), &frame).await?;
-                progress.nodes += 1;
-                progress.top += 1;
-                write(
-                    &store,
-                    &stack_key(progress.top),
-                    &Frame {
-                        cid: parent.to_string(),
-                        next: 0,
-                    },
-                )
-                .await?;
-                store
-                    .set(&node_key(parent), &[0])
-                    .await
-                    .map_err(storage_error)?;
-                continue;
-            }
-
-            let doc = progress
-                .doc
-                .as_deref()
-                .ok_or_else(|| storage_error("history has no identity"))?;
-            // Carrier metadata authorizes transport/decryption. prepare_composite_merge
-            // independently verifies this frame's signer for protected writes.
-            let outcome = match self
-                .prepare_composite_merge(
-                    &cid,
-                    &block,
-                    payload,
-                    metadata,
-                    doc,
-                    CompositeMergeMode::Batch,
-                )
-                .await?
-            {
-                CompositeMergePreparation::Ready(collection) => {
-                    let outcome = self
-                        .process_composite_delta_in_txn_body(
-                            &datastore,
-                            &headstore,
-                            &store,
-                            &cid,
-                            &block,
-                            payload,
-                            metadata,
-                            from_collection,
-                            cid == *root,
-                            &merged,
-                            &events,
-                            &actions,
-                            &fields,
-                            doc,
-                            collection.map(|collection| *collection),
-                            CompositeMergeMode::History,
-                        )
-                        .await?;
-                    if let MergeOutcome::Rejected { reason } = outcome {
-                        // Unique rejection may have staged document writes: discard the page.
-                        return Err(MergeError::UniqueConstraintViolation(reason));
-                    }
-                    outcome
-                }
-                CompositeMergePreparation::Complete(outcome) => outcome,
-                CompositeMergePreparation::Deferred { outcome, awaiting } => {
-                    self.index_deferred(root, doc, metadata, awaiting);
-                    outcome
-                }
-            };
-            if outcome.is_rejected() {
-                progress.outcome = Completion::from_outcome(outcome);
-                break;
-            }
-            if !outcome.is_merged() && !outcome.is_terminal_skip() {
-                waiting = Some(outcome);
-                break;
-            }
-            store
-                .set(&node_key(&cid), &[1])
-                .await
-                .map_err(storage_error)?;
-            store
-                .delete(&stack_key(progress.top))
-                .await
-                .map_err(storage_error)?;
-            if progress.top == 0 {
-                progress.outcome = Completion::from_outcome(outcome);
-                break;
-            }
-            progress.top -= 1;
-        }
-
-        // Applied counter markers, documents, visited nodes and the cursor commit together.
-        if before != (progress.top, progress.nodes, progress.doc.clone())
-            || progress.outcome.is_some()
-        {
-            progress.last_active_unix = now_unix();
-        }
-        write(&store, &state_key(root), &progress).await?;
-        drop(datastore);
-        drop(headstore);
-        drop(store);
-        txn.force_commit().await?;
-        let merged_cids: Vec<Cid> = merged.keys().collect();
-        self.merged_composites
-            .extend(merged_cids.iter().map(|cid| (*cid, ())));
-        for cid in &merged_cids {
-            self.release_merged_composite(cid, None).await;
-        }
-        while let Some(action) = actions.pop() {
-            if let Err(error) = action.action.run().await {
-                tracing::warn!(%error, "History post-commit action failed");
-            }
-        }
-        let mut cids = Vec::new();
-        while let Some(field) = fields.pop() {
-            cids.extend(field.cids);
-        }
-        cids.sort_unstable();
-        cids.dedup();
-        self.best_effort_finalize_linked_field_blocks(&cids).await;
-        if let Some(bus) = self.db.event_bus() {
-            let mut messages = Vec::new();
-            while let Some(event) = events.pop() {
-                messages.push(event.message);
-            }
-            bus.publish_batch(messages);
-        }
-        Ok(waiting.unwrap_or(MergeOutcome::Yielded))
+        })
     }
 }

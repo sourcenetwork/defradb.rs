@@ -138,6 +138,7 @@ async fn flush(store: &impl Blockstore, pending: &mut Vec<(Cid, Vec<u8>)>) {
 }
 
 pub async fn merge_turn(handler: &Handler, root: &MergeBlock, batch: bool) -> MergeOutcome {
+    let handler = handler.with_single_history_turn();
     let result = if batch {
         handler
             .handle_block_batch(std::slice::from_ref(root))

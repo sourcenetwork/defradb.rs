@@ -170,11 +170,9 @@ impl Fixture {
     }
 
     async fn attempt(&self, root: &MergeBlock, batch: bool) -> MergeOutcome {
+        let handler = self.handler.with_single_history_turn();
         if batch {
-            let mut results = self
-                .handler
-                .handle_block_batch(std::slice::from_ref(root))
-                .await;
+            let mut results = handler.handle_block_batch(std::slice::from_ref(root)).await;
             assert_eq!(results.len(), 1);
             results
                 .remove(0)
@@ -193,7 +191,7 @@ impl Fixture {
                 root.is_explicit_replicator,
             )
             .with_explicit_replay_authorization(root.explicit_replay_authorization.clone());
-            self.handler
+            handler
                 .handle_block(&root.cid, &root.block_data, metadata)
                 .await
                 .expect("history traversal must yield rather than error")
@@ -248,7 +246,8 @@ async fn strict_collection_history_uses_the_composites_document_identity() {
         for _ in 0..128 {
             let outcome = fixture
                 .handler
-                .process_collection_delta(&cid, &block, &payload, &metadata, 0)
+                .with_single_history_turn()
+                .handle_block(&cid, &block.to_dag_cbor().unwrap(), metadata.clone())
                 .await
                 .unwrap();
             if outcome == MergeOutcome::Yielded {
@@ -278,10 +277,15 @@ async fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
     hook.set_strict_replicated_doc_access(true);
     fixture.handler.set_composite_merge_hook(hook);
     let root = fixture.history(&attacker, None, 64).await;
-    let block = Block::from_dag_cbor(&root.block_data).unwrap();
-    let CrdtDelta::Composite(payload) = &block.delta else {
-        panic!("expected a composite root");
-    };
+    let block = Block::new(
+        CrdtDelta::Collection(CollectionDeltaPayload {
+            schema_version_id: "v1".into(),
+            priority: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("_head", root.cid)],
+    );
+    let cid = block.generate_cid().unwrap();
     let metadata = BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false);
     let expected = MergeOutcome::rejected(format!(
         "signer {} lacks update permission on protected document {}",
@@ -290,7 +294,8 @@ async fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
     for _ in 0..128 {
         let outcome = fixture
             .handler
-            .process_composite_delta(&root.cid, &block, payload, &metadata, true, 0)
+            .with_single_history_turn()
+            .handle_block(&cid, &block.to_dag_cbor().unwrap(), metadata.clone())
             .await
             .unwrap();
         if outcome != MergeOutcome::Yielded {

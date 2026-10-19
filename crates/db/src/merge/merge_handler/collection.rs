@@ -235,25 +235,6 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                     outcome = ?outcome,
                                     "Composite skipped"
                                 );
-                                if let Some(bus) = self.db.event_bus() {
-                                    let Ok(doc_id_str) = self
-                                        .resolve_composite_doc_id(link_cid, &linked_block, 0)
-                                        .await
-                                    else {
-                                        continue;
-                                    };
-                                    let col_id = metadata
-                                        .collection_id
-                                        .unwrap_or(&payload.schema_version_id)
-                                        .to_string();
-                                    bus.publish(Message::merge_complete(MergeCompleteData {
-                                        doc_id: doc_id_str,
-                                        subject_doc_id: None,
-                                        cid: *link_cid,
-                                        collection_id: col_id,
-                                        by_peer: metadata.sender_peer.unwrap_or("").to_string(),
-                                    }));
-                                }
                             }
                             Ok(outcome) => {
                                 tracing::debug!(
@@ -596,17 +577,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             });
                         }
                         Ok(outcome) if outcome.is_terminal_skip() => {
-                            let Ok(doc_id_str) = self
+                            let doc_id_str = self
                                 .resolve_composite_doc_id_in_txn(
                                     systemstore,
                                     link_cid,
                                     &linked_block,
                                     0,
                                 )
-                                .await
-                            else {
-                                continue;
-                            };
+                                .await?;
                             tracing::debug!(link_cid = %link_cid, outcome = ?outcome, "Composite skipped in batch");
                             let col_id = metadata
                                 .collection_id
@@ -630,7 +608,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             retryable_skip.get_or_insert(outcome);
                         }
                         Err(e) => {
-                            if matches!(e, MergeError::HistoryRequired) {
+                            if matches!(
+                                e,
+                                MergeError::HistoryRequired
+                                    | MergeError::HistoryAborted(_)
+                                    | MergeError::NeedsDecryptionKey(_)
+                                    | MergeError::DepthExceeded { .. }
+                            ) {
                                 return Err(e);
                             }
                             tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed in batch");
@@ -669,22 +653,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // Update collection headstore using the shared headstore view
         let collection_id = metadata.collection_id.unwrap_or(&payload.schema_version_id);
-        let short_id = {
-            let txn = self.db.new_txn(true).await?;
-            let short_id = if let Ok(systemstore) = txn.systemstore() {
-                crate::collection::require_persisted_collection_short_id(
-                    &systemstore,
-                    collection_id,
-                )
-                .await?
-            } else {
-                return Err(MergeError::Database(crate::error::Error::Other(
-                    "failed to access systemstore while resolving collection root_id".to_string(),
-                )));
-            };
-            let _ = txn.discard();
-            short_id
-        };
+        let short_id =
+            crate::collection::require_persisted_collection_short_id(systemstore, collection_id)
+                .await?;
 
         batch_merged_collections.insert(*cid, ());
 

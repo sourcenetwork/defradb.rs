@@ -26,15 +26,103 @@ impl CompositeMergeHook for AdmissionHook {
 
 async fn admitted_roots(handler: &Handler) -> u64 {
     let txn = handler.db().new_txn(true).await.unwrap();
-    let bytes = txn
+    let mut entries = txn
         .systemstore()
         .unwrap()
-        .get(b"/merge-history/v1/roots")
+        .iterator(
+            storage::corekv::IterOptions::new()
+                .with_prefix(b"/merge-history/v1/admissions/".to_vec()),
+        )
         .await
         .unwrap();
-    bytes
-        .map(|bytes| serde_json::from_slice(&bytes).unwrap())
-        .unwrap_or(0)
+    let mut count = 0;
+    while entries.next().await.unwrap().is_some() {
+        count += 1;
+    }
+    entries.close().await.unwrap();
+    count
+}
+
+struct ConcurrentAdmission {
+    calls: std::sync::atomic::AtomicUsize,
+    ready: regolith::sync::Barrier,
+}
+
+#[async_trait::async_trait]
+impl CompositeMergeHook for ConcurrentAdmission {
+    async fn on_protected_composite(
+        &self,
+        _: &str,
+        _: &schema::CollectionVersion,
+        _: &BlockMetadata<'_>,
+    ) -> Result<Option<MergeOutcome>, MergeError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) < 2 {
+            self.ready.wait().await;
+        }
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn concurrent_admissions_validate_the_last_free_slot() {
+    let initial = make_handler().await;
+    let handler = DbMergeHandler::new_with_max_merge_depth(
+        initial.db().clone(),
+        initial.blockstore().clone(),
+        8,
+    );
+    for index in 0..63 {
+        let mut history = History::default();
+        history
+            .append(
+                handler.blockstore().as_ref(),
+                16,
+                &format!("occupied-{index}"),
+            )
+            .await;
+        let mut root = history.root().clone();
+        root.sender_peer = Some(format!("peer-{}", index / 16));
+        assert_eq!(
+            merge_turn(&handler, &root, false).await,
+            MergeOutcome::Yielded
+        );
+    }
+    let mut left = History::default();
+    let mut right = History::default();
+    left.append(handler.blockstore().as_ref(), 16, "left").await;
+    right
+        .append(handler.blockstore().as_ref(), 16, "right")
+        .await;
+    handler.set_composite_merge_hook(Arc::new(ConcurrentAdmission {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        ready: regolith::sync::Barrier::new(2),
+    }));
+    let (left, right) = tokio::join!(
+        merge_turn(&handler, left.root(), false),
+        merge_turn(&handler, right.root(), false),
+    );
+    let outcomes = [left, right];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| **outcome == MergeOutcome::Yielded)
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(
+                outcome,
+                MergeOutcome::Skipped {
+                    terminal: false,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(admitted_roots(&handler).await, 64);
 }
 
 #[tokio::test]

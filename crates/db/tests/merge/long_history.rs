@@ -13,13 +13,47 @@ use storage::RegolithStore;
 use fixture::{converge, make_handler, make_handler_on, merge_turn, read_document, History};
 
 async fn history_converges(revisions: u64, batch: bool) {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        check_history(revisions, batch),
+    )
+    .await
+    .expect("history must converge without waiting for another P2P delivery");
+}
+
+async fn check_history(revisions: u64, batch: bool) {
     let handler = make_handler().await;
     let mut history = History::default();
     history
         .append(handler.blockstore().as_ref(), revisions, "revision")
         .await;
     let root = history.root();
-    converge(&handler, root, batch).await;
+    let outcome = if batch {
+        handler
+            .handle_block_batch(std::slice::from_ref(root))
+            .await
+            .remove(0)
+            .unwrap()
+    } else {
+        handler
+            .handle_block(
+                &root.cid,
+                &root.block_data,
+                BlockMetadata::normal(
+                    &root.doc_id,
+                    &root.collection_id,
+                    &root.creator,
+                    root.sender_peer.as_deref(),
+                    false,
+                ),
+            )
+            .await
+            .unwrap()
+    };
+    assert!(
+        outcome.is_merged() || outcome.is_terminal_skip(),
+        "{outcome:?}"
+    );
     let document = read_document(&handler, root).await.unwrap();
     assert_eq!(
         document.get("name"),
@@ -169,9 +203,6 @@ async fn disk_reopen_resumes_a_partially_applied_history() {
 
 #[tokio::test]
 async fn finishing_an_older_walk_does_not_resurrect_its_head() {
-    use storage::corekv::{IterOptions, Key};
-    use storage::keys::headstore::HeadstoreDocKey;
-
     let initial = make_handler().await;
     let handler = DbMergeHandler::new_with_max_merge_depth(
         initial.db().clone(),
@@ -205,16 +236,20 @@ async fn finishing_an_older_walk_does_not_resurrect_its_head() {
         .unwrap()
         .unwrap();
     let headstore = txn.headstore().unwrap();
-    let expected = HeadstoreDocKey::new(doc_ref.doc_short_id, "C", history.root().cid).bytes();
-    let mut prefix = expected.clone();
-    prefix.truncate(prefix.len() - history.root().cid.to_bytes().len());
-    let mut heads = headstore
-        .iterator(IterOptions::new().with_prefix(prefix))
+    let heads = db::block::heads::document::load(&headstore, doc_ref.doc_short_id)
         .await
         .unwrap();
-    assert_eq!(heads.next().await.unwrap().unwrap().key, expected);
-    assert!(
-        heads.next().await.unwrap().is_none(),
+    let composites: Vec<_> = heads
+        .live()
+        .filter_map(|(name, _)| {
+            db::block::heads::document::parse_name(name)
+                .filter(|(field, _)| *field == "C")
+                .map(|(_, cid)| cid)
+        })
+        .collect();
+    assert_eq!(
+        composites,
+        vec![history.root().cid],
         "a completed descendant must remain the only head"
     );
 }
@@ -346,18 +381,17 @@ async fn document_and_collection_deliveries_share_history_progress() {
     for _ in 0..128 {
         merge_turn(&handler, root, false).await;
         let outcome = handler
-            .process_collection_delta(
+            .with_single_history_turn()
+            .handle_block(
                 &cid,
-                &collection,
-                &payload,
-                &BlockMetadata::normal(
+                &collection.to_dag_cbor().unwrap(),
+                BlockMetadata::normal(
                     "",
                     "col-users",
                     "history-peer",
                     Some("another-provider"),
                     false,
                 ),
-                0,
             )
             .await
             .unwrap();

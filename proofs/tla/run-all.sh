@@ -7,6 +7,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_HistoryTurns_Green.cfg HistoryTurns.tla GREEN"
+  "MC_HistoryTurns_Red_Admission.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Atomic.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Fence.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Events.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Reclaim.cfg HistoryTurns.tla RED"
+  "MC_HistoryTurns_Red_Blocks.cfg HistoryTurns.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction

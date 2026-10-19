@@ -44,7 +44,8 @@ async fn stored_document(
 async fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
     let (base, blockstore, _bus) = make_handler_with_schema_and_bus().await;
     let handler =
-        DbMergeHandler::new_with_max_merge_depth(base.db().clone(), blockstore.clone(), 8);
+        DbMergeHandler::new_with_max_merge_depth(base.db().clone(), blockstore.clone(), 8)
+            .with_single_history_turn();
     let mut initial = Document::new();
     initial.set("name", NormalValue::String("Alice".into()));
     initial.set("age", NormalValue::Int(20));
