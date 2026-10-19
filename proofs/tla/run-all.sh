@@ -7,6 +7,15 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_RootedAuthorization_Green.cfg RootedAuthorization.tla GREEN"
+  "MC_RootedAuthorization_Red_DuplicateOwner.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_LostResume.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_StaleEviction.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_OverReserve.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_Slots.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_ActiveBudget.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_CancelNoWake.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_UnreachedGrant.cfg RootedAuthorization.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction

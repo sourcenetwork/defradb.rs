@@ -1,13 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Counts requested and discovered CIDs across active and retained walks.
-pub(super) struct CidBudget {
+/// A shared limit on saved cursor entries or their requested/discovered CIDs.
+pub(super) struct Budget {
     pub(super) limit: usize,
     used: AtomicUsize,
 }
 
-impl CidBudget {
+impl Budget {
     pub(super) fn new(limit: usize) -> Arc<Self> {
         Arc::new(Self {
             limit,
@@ -15,8 +15,8 @@ impl CidBudget {
         })
     }
 
-    pub(super) fn reserve(self: &Arc<Self>, count: usize) -> Option<CidReservation> {
-        self.try_reserve(count).then(|| CidReservation {
+    pub(super) fn reserve(self: &Arc<Self>, count: usize) -> Option<Reservation> {
+        self.try_reserve(count).then(|| Reservation {
             budget: self.clone(),
             count,
         })
@@ -44,23 +44,13 @@ impl CidBudget {
     }
 }
 
-/// The charge lives with the state, even after registry eviction or cancellation.
-pub(super) struct CidReservation {
-    budget: Arc<CidBudget>,
+/// A charge is released when state leaves the idle cache.
+pub(super) struct Reservation {
+    budget: Arc<Budget>,
     count: usize,
 }
 
-impl CidReservation {
-    pub(super) fn add(&mut self, count: usize) -> bool {
-        if !self.budget.try_reserve(count) {
-            return false;
-        }
-        self.count += count;
-        true
-    }
-}
-
-impl Drop for CidReservation {
+impl Drop for Reservation {
     fn drop(&mut self) {
         self.budget.used.fetch_sub(self.count, Ordering::Relaxed);
     }

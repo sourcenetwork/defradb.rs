@@ -1,34 +1,32 @@
 use super::*;
 
 pub(super) fn progress_with_budget(limit: usize) -> RootedAuthorizationProgress {
-    RootedAuthorizationProgress {
-        cid_budget: CidBudget::new(limit),
-        ..RootedAuthorizationProgress::default()
-    }
+    RootedAuthorizationProgress::with_retention_limit(limit)
 }
 
-#[test]
-fn concurrent_reservations_cannot_oversubscribe_the_shared_budget() {
-    let budget = CidBudget::new(8);
-    let barrier = Arc::new(std::sync::Barrier::new(17));
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_reservations_cannot_oversubscribe_the_shared_budget() {
+    let budget = Budget::new(8);
+    let barrier = Arc::new(regolith::sync::Barrier::new(17));
     let workers: Vec<_> = (0..16)
         .map(|_| {
             let budget = budget.clone();
             let barrier = barrier.clone();
-            std::thread::spawn(move || {
+            tokio::spawn(async move {
                 let reservation = budget.reserve(1);
-                barrier.wait();
-                barrier.wait();
+                barrier.wait().await;
+                barrier.wait().await;
                 reservation.is_some()
             })
         })
         .collect();
-    barrier.wait();
+    barrier.wait().await;
     let used = budget.used();
-    barrier.wait();
-    let admitted = workers
+    barrier.wait().await;
+    let admitted = futures::future::join_all(workers)
+        .await
         .into_iter()
-        .map(|worker| worker.join().unwrap())
+        .map(|worker| worker.unwrap())
         .filter(|admitted| *admitted)
         .count();
     assert_eq!(used, 8);
@@ -94,12 +92,12 @@ async fn missing_branch_preserves_exact_reached_grants_across_retries() {
             .unwrap(),
         requested
     );
-    assert!(progress.cursors.lock().unwrap().entries.is_empty());
+    assert!(progress.cursors.is_empty());
     assert_eq!(progress.cid_budget.used(), 0);
 }
 
 #[tokio::test]
-async fn wide_frontier_exhausts_retention_before_growing_past_the_cap() {
+async fn oversized_cursor_keeps_reached_grants_without_retaining_state() {
     let store = CountingReads::new(100);
     let links: Vec<_> = (0..10)
         .map(|value| Ipld::Link(ipld_block(value).0))
@@ -109,13 +107,14 @@ async fn wide_frontier_exhausts_retention_before_growing_past_the_cap() {
     store.put(&root, &data).await.unwrap();
     let (unrelated, _) = ipld_block(1000);
     let progress = progress_with_budget(4);
-    assert!(matches!(
+    assert_eq!(
         progress
             .walk(&store, root, RapidHashSet::from_iter([root, unrelated]))
-            .await,
-        Err(Error::ResponseTimeout)
-    ));
-    assert!(progress.cursors.lock().unwrap().entries.is_empty());
+            .await
+            .unwrap(),
+        RapidHashSet::from_iter([root])
+    );
+    assert!(progress.cursors.is_empty());
     assert_eq!(progress.cid_budget.used(), 0);
     // A root-only request must not spend the budget on unneeded children.
     assert_eq!(
@@ -153,23 +152,15 @@ async fn distinct_want_lists_share_one_retention_budget() {
                 }
             }
             assert!(progress.cid_budget.used() <= 48);
-            assert!(progress.cursors.lock().unwrap().entries.len() <= 2);
+            assert!(progress.cursors.len() <= 2);
         }
     }
     assert!(exhausted > 0);
-    let cursors: Vec<_> = progress
+    let retained: usize = progress
         .cursors
-        .lock()
-        .unwrap()
-        .entries
         .values()
-        .map(|entry| entry.cursor.clone())
-        .collect();
-    let mut retained = 0;
-    for cursor in cursors {
-        let state = cursor.lock().await;
-        retained += state.remaining.len() + state.authorized.len() + state.seen.len();
-    }
+        .map(|entry| entry.snapshot.cost)
+        .sum();
     assert_eq!(progress.cid_budget.used(), retained);
 }
 
@@ -184,8 +175,12 @@ async fn oversized_want_list_does_not_evict_an_existing_cursor() {
         .unwrap()
         .is_empty());
     let requested = (1..=3).map(|value| ipld_block(value).0).collect();
-    assert!(progress.walk(&store, root, requested).await.is_err());
-    assert_eq!(progress.cursors.lock().unwrap().entries.len(), 1);
+    assert!(progress
+        .walk(&store, root, requested)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(progress.cursors.len(), 1);
     assert_eq!(progress.cid_budget.used(), 2);
 }
 
@@ -201,17 +196,8 @@ async fn spare_want_list_capacity_is_not_retained() {
         .await
         .unwrap()
         .is_empty());
-    let cursor = progress
-        .cursors
-        .lock()
-        .unwrap()
-        .entries
-        .values()
-        .next()
-        .unwrap()
-        .cursor
-        .clone();
-    assert!(cursor.lock().await.remaining.capacity() <= 3);
+    let cursor = progress.cursors.values().next().unwrap();
+    assert!(cursor.snapshot.remaining_capacity <= 3);
     assert_eq!(progress.cid_budget.used(), 2);
 }
 
@@ -229,9 +215,8 @@ async fn idle_eviction_releases_its_retention_charge() {
             .is_empty());
         assert_eq!(progress.cid_budget.used(), 2);
     }
-    let cursors = progress.cursors.lock().unwrap();
-    assert_eq!(cursors.entries.len(), 1);
-    assert_eq!(cursors.entries.keys().next().unwrap().root, second);
+    assert_eq!(progress.cursors.len(), 1);
+    assert_eq!(progress.cursors.keys().next().unwrap().root, second);
 }
 
 #[tokio::test(start_paused = true)]
@@ -252,20 +237,25 @@ async fn expired_idle_cursors_release_the_budget_on_next_request() {
         .unwrap()
         .is_empty());
     assert_eq!(progress.cid_budget.used(), 2);
-    let cursors = progress.cursors.lock().unwrap();
-    assert_eq!(cursors.entries.len(), 1);
-    assert_eq!(cursors.entries.keys().next().unwrap().root, second);
+    assert_eq!(progress.cursors.len(), 1);
+    assert_eq!(progress.cursors.keys().next().unwrap().root, second);
 }
 
 #[tokio::test(start_paused = true)]
-async fn idle_expiry_does_not_remove_an_active_cursor() {
+async fn idle_expiry_does_not_cancel_an_active_walk() {
     let store = CountingReads::new(0);
     let (root, data) = ipld_block(1);
     store.put(&root, &data).await.unwrap();
     let (wanted, _) = ipld_block(2);
     let (missing, _) = ipld_block(3);
     let progress = progress_with_budget(4);
-    let mut active = Box::pin(progress.walk(&store, root, RapidHashSet::from_iter([wanted])));
+    let mut active = Box::pin(progress.walk_with_limits(
+        &store,
+        root,
+        RapidHashSet::from_iter([wanted]),
+        Duration::from_secs(3600),
+        100,
+    ));
     assert!(futures::poll!(active.as_mut()).is_pending());
     tokio::time::advance(CURSOR_IDLE_TTL).await;
     assert!(progress
@@ -273,14 +263,57 @@ async fn idle_expiry_does_not_remove_an_active_cursor() {
         .await
         .unwrap()
         .is_empty());
-    assert_eq!(progress.cursors.lock().unwrap().entries.len(), 2);
-    assert_eq!(progress.cid_budget.used(), 4);
-    drop(active);
+    assert_eq!(progress.cursors.len(), 1);
+    assert_eq!(progress.cid_budget.used(), 2);
+    store.block_read.add_permits(1);
+    assert!(active.await.unwrap().is_empty());
+    assert_eq!(progress.cursors.len(), 1);
+    assert_eq!(progress.cid_budget.used(), 2);
+}
+
+#[tokio::test]
+async fn stale_eviction_cannot_remove_a_replacement_cursor() {
+    let store = CountingReads::new(10);
+    let (root, _) = ipld_block(1);
+    let progress = progress_with_budget(2);
+    assert!(progress
+        .walk(&store, root, RapidHashSet::from_iter([root]))
+        .await
+        .unwrap()
+        .is_empty());
+    let (key, old) = progress.cursors.iter().next().unwrap();
+    assert!(progress
+        .walk(&store, root, RapidHashSet::from_iter([root]))
+        .await
+        .unwrap()
+        .is_empty());
+    let current = progress.cursors.get(&key).unwrap();
+    assert!(!Arc::ptr_eq(&old, &current));
+    assert!(!progress.remove_observed(&key, &old));
+    assert!(Arc::ptr_eq(&progress.cursors.get(&key).unwrap(), &current));
+    assert_eq!(progress.cid_budget.used(), 2);
+}
+
+#[tokio::test]
+async fn a_full_retention_cache_cannot_reject_a_valid_walk() {
+    let store = CountingReads::new(10);
+    let (missing, _) = ipld_block(1);
+    let (root, data) = ipld_block(2);
+    store.put(&root, &data).await.unwrap();
+    let progress = progress_with_budget(2);
     assert!(progress
         .walk(&store, missing, RapidHashSet::from_iter([missing]))
         .await
         .unwrap()
         .is_empty());
-    assert_eq!(progress.cursors.lock().unwrap().entries.len(), 1);
     assert_eq!(progress.cid_budget.used(), 2);
+    assert_eq!(
+        progress
+            .walk(&store, root, RapidHashSet::from_iter([root]))
+            .await
+            .unwrap(),
+        RapidHashSet::from_iter([root])
+    );
+    assert_eq!(progress.cid_budget.used(), 2);
+    assert_eq!(progress.cursors.keys().next().unwrap().root, missing);
 }

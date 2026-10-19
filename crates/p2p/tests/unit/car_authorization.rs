@@ -1,8 +1,8 @@
 struct CountingReads {
     inner: DefraBlockstore<RegolithStore>,
     reads: std::sync::atomic::AtomicUsize,
-    block_read: tokio::sync::Semaphore,
-    reading: tokio::sync::Notify,
+    block_read: regolith::sync::Semaphore,
+    reading: regolith::sync::Notify,
     delay: Duration,
     fail_size_once: std::sync::atomic::AtomicBool,
     fail_read_once: std::sync::atomic::AtomicBool,
@@ -19,7 +19,7 @@ impl Blockstore for CountingReads {
             return Err(blockstore::Error::Internal("injected read failure".into()));
         }
         self.reading.notify_one();
-        self.block_read.acquire().await.unwrap().forget();
+        self.block_read.acquire(1).await.forget();
         if !self.delay.is_zero() {
             tokio::time::sleep(self.delay).await;
         }
@@ -81,8 +81,8 @@ impl CountingReads {
         Self {
             inner: DefraBlockstore::new(Arc::new(RegolithStore::in_memory().unwrap()), true),
             reads: std::sync::atomic::AtomicUsize::new(0),
-            block_read: tokio::sync::Semaphore::new(permits),
-            reading: tokio::sync::Notify::new(),
+            block_read: regolith::sync::Semaphore::new(permits),
+            reading: regolith::sync::Notify::new(),
             delay: Duration::ZERO,
             fail_size_once: std::sync::atomic::AtomicBool::new(false),
             fail_read_once: std::sync::atomic::AtomicBool::new(false),
@@ -90,6 +90,8 @@ impl CountingReads {
     }
 }
 
+use super::budget::Budget;
+use super::registry::CURSOR_IDLE_TTL;
 use super::*;
 use blockstore::DefraBlockstore;
 use ipld_core::{codec::Codec, ipld, ipld::Ipld};
@@ -98,16 +100,21 @@ use serde_ipld_dagcbor::codec::DagCborCodec;
 use std::sync::Arc;
 use storage::RegolithStore;
 
+#[path = "car_authorization_concurrency.rs"]
+mod concurrency;
 #[path = "car_authorization_limits.rs"]
 mod limits;
 
-async fn walk_once<B: Blockstore>(
+async fn walk_once<B>(
     store: &B,
     root: Cid,
     requested: RapidHashSet<Cid>,
     budget: Duration,
     max_nodes: usize,
-) -> Result<RapidHashSet<Cid>> {
+) -> Result<RapidHashSet<Cid>>
+where
+    B: Blockstore,
+{
     RootedAuthorizationProgress::new()
         .walk_with_limits(store, root, requested, budget, max_nodes)
         .await
@@ -221,17 +228,8 @@ async fn duplicate_frontier_links_expand_each_block_once() {
         )
         .await
         .is_err());
-    let cursor = progress
-        .cursors
-        .lock()
-        .unwrap()
-        .entries
-        .values()
-        .next()
-        .unwrap()
-        .cursor
-        .clone();
-    assert_eq!(cursor.lock().await.queue.len(), count);
+    let cursor = progress.cursors.values().next().unwrap();
+    assert_eq!(cursor.snapshot.frontier_len, count);
     let authorized = progress.walk(&store, root, requested).await.unwrap();
     assert_eq!(
         authorized.len(),
@@ -511,11 +509,13 @@ async fn cancellation_during_a_payload_read_keeps_the_cursor() {
         _ = store.reading.notified() => {},
         result = &mut request => panic!("read must be gated: {result:?}"),
     }
-    assert_eq!(progress.cid_budget.used(), 2);
+    assert_eq!(progress.cid_budget.used(), 0);
+    let (missing, _) = ipld_block(500);
     assert!(progress
-        .walk(&store, root, RapidHashSet::from_iter([root]))
+        .walk(&store, missing, RapidHashSet::from_iter([missing]))
         .await
-        .is_err());
+        .unwrap()
+        .is_empty());
     assert_eq!(progress.cid_budget.used(), 2);
     drop(request);
     assert_eq!(progress.cid_budget.used(), 2);
@@ -564,7 +564,7 @@ async fn concurrent_requests_share_the_same_cursor() {
         assert!(futures::poll!(request.as_mut()).is_pending());
         requests.push(request);
     }
-    assert_eq!(progress.cid_budget.used(), 2);
+    assert_eq!(progress.cid_budget.used(), 0);
     store.block_read.add_permits(2);
     for result in futures::future::join_all(requests).await {
         assert_eq!(result.unwrap(), RapidHashSet::from_iter([leaf]));

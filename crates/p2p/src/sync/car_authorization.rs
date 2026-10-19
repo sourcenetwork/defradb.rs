@@ -4,9 +4,8 @@
 //! fails closed to independent per-block grants; a budget that outlives one
 //! request resumes from a retained frontier without re-reading.
 
-use rapidhash::{HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashSetExt, RapidHashSet};
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::time::Duration;
 
 use blockstore::Blockstore;
@@ -16,7 +15,9 @@ use crate::error::{Error, Result};
 
 #[path = "car_authorization_budget.rs"]
 mod budget;
-use budget::{CidBudget, CidReservation};
+#[path = "car_authorization_registry.rs"]
+mod registry;
+pub(crate) use registry::RootedAuthorizationProgress;
 
 // Bound server work below the transport request deadline. Exhausting this
 // budget is a retryable request failure, never a truncated authorization set.
@@ -24,13 +25,6 @@ const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Nodes attempted per pass; retained cursors resume on subsequent requests.
 const AUTHORIZATION_MAX_NODES: usize = 200_000;
-
-/// Incomplete root/want-list walks retained for continuation.
-const RETAINED_INCOMPLETE_WALKS: usize = 64;
-
-/// Shared by every cursor, including those held by active requests.
-const RETAINED_MAX_CIDS: usize = 262_144;
-const CURSOR_IDLE_TTL: Duration = Duration::from_secs(300);
 
 /// A single traversal pass: what is still looked for, what has been reached,
 /// and the not-yet-expanded frontier. Nodes are remembered at push time, so a
@@ -48,12 +42,10 @@ struct WalkState {
     /// so nobody would enqueue it again.
     in_flight: Option<Cid>,
     missing: VecDeque<Cid>,
-    reservation: CidReservation,
-    retention_exhausted: bool,
 }
 
 impl WalkState {
-    fn fresh(root: Cid, requested: RapidHashSet<Cid>, reservation: CidReservation) -> Self {
+    fn fresh(root: Cid, requested: RapidHashSet<Cid>) -> Self {
         let mut walk = Self {
             // Do not retain spare capacity supplied by the caller.
             remaining: requested.into_iter().collect(),
@@ -63,37 +55,25 @@ impl WalkState {
             expanded: 0,
             in_flight: None,
             missing: VecDeque::new(),
-            reservation,
-            retention_exhausted: false,
         };
-        // The initial reservation includes the root.
-        walk.seen.insert(root);
-        walk.queue.push_back(root);
+        walk.push(root);
         walk
     }
 
-    fn push(&mut self, cid: Cid) -> Result<()> {
-        if self.seen.contains(&cid) {
-            return Ok(());
+    fn push(&mut self, cid: Cid) {
+        if self.seen.insert(cid) {
+            self.queue.push_back(cid);
         }
-        if !self.reservation.add(1) {
-            self.retention_exhausted = true;
-            return Err(Error::ResponseTimeout);
-        }
-        self.seen.insert(cid);
-        self.queue.push_back(cid);
-        Ok(())
     }
 
-    async fn run<B: Blockstore>(
-        &mut self,
-        blockstore: &B,
-        budget: Duration,
-        max_nodes: usize,
-    ) -> Result<()> {
-        if self.retention_exhausted {
-            return Err(Error::ResponseTimeout);
-        }
+    fn can_resume(&self) -> bool {
+        !self.queue.is_empty() || !self.missing.is_empty() || self.in_flight.is_some()
+    }
+
+    async fn run<B>(&mut self, blockstore: &B, budget: Duration, max_nodes: usize) -> Result<()>
+    where
+        B: Blockstore,
+    {
         // Cancellation drops the future, not the cursor. Retry the interrupted read.
         if let Some(cid) = self.in_flight.take() {
             self.queue.push_front(cid);
@@ -169,13 +149,13 @@ impl WalkState {
                 // root.
                 let links = super::manager::links::extract_ipld_links(&data).unwrap_or_default();
                 for child in links {
-                    self.push(child)?;
+                    self.push(child);
                 }
                 self.in_flight = None;
             }
         })
         .await;
-        // Every non-Ok exit — wall-clock timeout, inner error, budget —
+        // Every non-Ok exit - wall-clock timeout, inner error, budget -
         // returns the in-flight CID to the front of the frontier, or the
         // resumed pass could never revisit it.
         if !matches!(outcome, Ok(Ok(()))) {
@@ -197,187 +177,6 @@ fn authorization_exhausted(timed_out: bool, expanded: usize) -> Error {
         "Rooted authorization walk exhausted its budget; failing closed to per-block grants"
     );
     Error::ResponseTimeout
-}
-
-/// Independent cursors for a root and an exact requested CID set.
-pub(crate) struct RootedAuthorizationProgress {
-    cursors: std::sync::Mutex<CursorRegistry>,
-    cid_budget: Arc<CidBudget>,
-}
-
-impl Default for RootedAuthorizationProgress {
-    fn default() -> Self {
-        Self {
-            cursors: std::sync::Mutex::default(),
-            cid_budget: CidBudget::new(RETAINED_MAX_CIDS),
-        }
-    }
-}
-
-#[derive(Default)]
-struct CursorRegistry {
-    entries: RapidHashMap<WalkKey, CursorEntry>,
-    order: VecDeque<WalkKey>,
-}
-
-struct CursorEntry {
-    cursor: Arc<tokio::sync::Mutex<WalkState>>,
-    last_used: n0_future::time::Instant,
-}
-
-impl CursorRegistry {
-    fn expire_idle(&mut self) {
-        self.entries.retain(|_, entry| {
-            entry.last_used.elapsed() < CURSOR_IDLE_TTL || Arc::strong_count(&entry.cursor) > 1
-        });
-        self.order.retain(|key| self.entries.contains_key(key));
-    }
-
-    fn evict_idle(&mut self) -> bool {
-        let Some(key) = self
-            .order
-            .iter()
-            .find(|key| {
-                self.entries
-                    .get(*key)
-                    .is_some_and(|entry| Arc::strong_count(&entry.cursor) == 1)
-            })
-            .cloned()
-        else {
-            return false;
-        };
-        self.remove(&key);
-        true
-    }
-
-    fn remove(&mut self, key: &WalkKey) {
-        self.entries.remove(key);
-        self.order.retain(|queued| queued != key);
-    }
-}
-
-#[derive(Clone, Eq, PartialEq, Hash)]
-struct WalkKey {
-    root: Cid,
-    requested: Vec<Cid>,
-}
-
-impl RootedAuthorizationProgress {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) async fn walk<B: Blockstore>(
-        &self,
-        blockstore: &B,
-        root: Cid,
-        requested: RapidHashSet<Cid>,
-    ) -> Result<RapidHashSet<Cid>> {
-        self.walk_with_limits(
-            blockstore,
-            root,
-            requested,
-            AUTHORIZATION_TIMEOUT,
-            AUTHORIZATION_MAX_NODES,
-        )
-        .await
-    }
-
-    pub(crate) async fn walk_with_limits<B: Blockstore>(
-        &self,
-        blockstore: &B,
-        root: Cid,
-        requested: RapidHashSet<Cid>,
-        budget: Duration,
-        max_nodes: usize,
-    ) -> Result<RapidHashSet<Cid>> {
-        if requested.is_empty() {
-            return Ok(RapidHashSet::new());
-        }
-        if requested.len() >= self.cid_budget.limit {
-            return Err(Error::ResponseTimeout);
-        }
-        let mut wanted: Vec<_> = requested.iter().copied().collect();
-        wanted.sort_unstable();
-        let key = WalkKey {
-            root,
-            requested: wanted,
-        };
-        let cursor = {
-            let mut cursors = self
-                .cursors
-                .lock()
-                .map_err(|_| std::io::Error::other("rooted cursor registry poisoned"))?;
-            cursors.expire_idle();
-            if let Some(entry) = cursors.entries.get_mut(&key) {
-                entry.last_used = n0_future::time::Instant::now();
-                let cursor = entry.cursor.clone();
-                cursors.order.retain(|queued| queued != &key);
-                cursors.order.push_back(key.clone());
-                cursor
-            } else {
-                if cursors.entries.len() >= RETAINED_INCOMPLETE_WALKS && !cursors.evict_idle() {
-                    return Err(Error::ResponseTimeout);
-                }
-                let reservation = loop {
-                    if let Some(reservation) = self.cid_budget.reserve(requested.len() + 1) {
-                        break reservation;
-                    }
-                    if !cursors.evict_idle() {
-                        return Err(Error::ResponseTimeout);
-                    }
-                };
-                let cursor = Arc::new(tokio::sync::Mutex::new(WalkState::fresh(
-                    root,
-                    requested,
-                    reservation,
-                )));
-                cursors.entries.insert(
-                    key.clone(),
-                    CursorEntry {
-                        cursor: cursor.clone(),
-                        last_used: n0_future::time::Instant::now(),
-                    },
-                );
-                cursors.order.push_back(key.clone());
-                cursor
-            }
-        };
-        let started = n0_future::time::Instant::now();
-        let mut state = n0_future::time::timeout(budget, cursor.lock())
-            .await
-            .map_err(|_| Error::ResponseTimeout)?;
-        let outcome = state
-            .run(
-                blockstore,
-                budget.saturating_sub(started.elapsed()),
-                max_nodes,
-            )
-            .await;
-        let retain = !state.retention_exhausted
-            && (outcome.is_err()
-                || (!state.remaining.is_empty()
-                    && (!state.queue.is_empty()
-                        || !state.missing.is_empty()
-                        || state.in_flight.is_some())));
-        // A waiter may still hold this completed cursor after a new one is installed.
-        let mut cursors = self
-            .cursors
-            .lock()
-            .map_err(|_| std::io::Error::other("rooted cursor registry poisoned"))?;
-        if let Some(entry) = cursors
-            .entries
-            .get_mut(&key)
-            .filter(|entry| Arc::ptr_eq(&entry.cursor, &cursor))
-        {
-            if retain {
-                entry.last_used = n0_future::time::Instant::now();
-            } else {
-                cursors.remove(&key);
-            }
-        }
-        outcome.map(|()| state.authorized.clone())
-    }
 }
 
 #[cfg(test)]
