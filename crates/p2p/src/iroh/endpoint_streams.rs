@@ -215,6 +215,8 @@ pub(super) async fn handle_connection_streams(
             else {
                 return;
             };
+            // Replies on this stream go out at the service's priority.
+            let _ = send.set_priority(service.priority.send_priority());
             if let Err(e) = dispatch_stream(
                 service.tag,
                 &peer_id,

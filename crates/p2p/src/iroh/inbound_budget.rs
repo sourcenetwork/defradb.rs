@@ -23,6 +23,13 @@ const BUDGET_BYTES: [usize; 4] = [
     128 * 1024 * 1024,
 ];
 
+/// The most body bytes one connection may hold across every class, which is
+/// also its QUIC receive window.
+pub const CONNECTION_RECEIVE_WINDOW: usize = share_of(BUDGET_BYTES[0])
+    + share_of(BUDGET_BYTES[1])
+    + share_of(BUDGET_BYTES[2])
+    + share_of(BUDGET_BYTES[3]);
+
 /// How long a stream waits for room before it is reset.
 pub const ADMIT_DEADLINE: Duration = Duration::from_secs(5);
 

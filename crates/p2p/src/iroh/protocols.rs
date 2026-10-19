@@ -84,6 +84,10 @@ pub async fn write_stream_tag(send: &mut SendStream, tag: &[u8]) -> crate::error
         )));
     }
 
+    if let Some(service) = super::services::lookup(tag) {
+        // Only fails on a stream that is already closed, which the write below reports.
+        let _ = send.set_priority(service.priority.send_priority());
+    }
     send.write_all(&[tag.len() as u8])
         .await
         .map_err(|e| crate::error::Error::Codec(format!("failed to write tag length: {}", e)))?;

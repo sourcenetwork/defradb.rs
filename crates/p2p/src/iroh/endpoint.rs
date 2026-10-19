@@ -28,7 +28,7 @@ use crate::transport::{PeerAddr, PeerId, TransportEvent};
 use super::command::IrohCommand;
 use super::endpoint_commands::handle_command;
 use super::endpoint_config::{
-    allowlist_state_from_config, apply_bind_config, apply_discovery_config, apply_multipath_config,
+    allowlist_state_from_config, apply_bind_config, apply_discovery_config, apply_transport_config,
     relay_mode_from_config, IrohEndpointConfig, PeerAdmission,
 };
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
@@ -150,7 +150,7 @@ pub async fn spawn_endpoint(
         .relay_mode(relay_mode)
         .secret_key(config.secret_key.clone())
         .alpns(alpns);
-    builder = apply_multipath_config(builder, config.max_concurrent_multipath_paths)?;
+    builder = apply_transport_config(builder, config.max_concurrent_multipath_paths)?;
     builder = apply_discovery_config(builder, &config.discovery)?;
     builder = apply_bind_config(builder, config.bind_addr, config.bind_port)?;
 

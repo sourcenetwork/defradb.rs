@@ -311,12 +311,25 @@ pub(super) fn allowlist_state_from_config(
     }
 }
 
-pub(super) fn apply_multipath_config(
+/// Bidirectional streams a peer may have open at once on one connection.
+const MAX_CONCURRENT_BIDI_STREAMS: u32 = 64;
+
+/// Configure QUIC: the stream and receive-window bounds that let flow control
+/// slow a peer before the inbound budget has to refuse it, and the optional
+/// multipath path limit.
+pub(super) fn apply_transport_config(
     builder: iroh::endpoint::Builder,
     max_concurrent: Option<u32>,
 ) -> crate::error::Result<iroh::endpoint::Builder> {
+    let transport_config = iroh::endpoint::QuicTransportConfig::builder()
+        .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into())
+        .receive_window(
+            u32::try_from(super::inbound_budget::CONNECTION_RECEIVE_WINDOW)
+                .expect("the receive window fits a u32")
+                .into(),
+        );
     let Some(max_concurrent) = max_concurrent else {
-        return Ok(builder);
+        return Ok(builder.transport_config(transport_config.build()));
     };
 
     if max_concurrent < MIN_CONCURRENT_MULTIPATH_PATHS {
@@ -326,7 +339,7 @@ pub(super) fn apply_multipath_config(
         )));
     }
 
-    let transport_config = iroh::endpoint::QuicTransportConfig::builder()
+    let transport_config = transport_config
         .max_concurrent_multipath_paths(max_concurrent)
         .build();
     tracing::info!(max_concurrent, "configured iroh multipath path limit");
@@ -486,7 +499,7 @@ mod tests {
     fn multipath_limit_rejects_values_iroh_would_ignore() {
         let builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal);
         let result =
-            apply_multipath_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS - 1));
+            apply_transport_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS - 1));
 
         assert!(matches!(
             result,
@@ -500,7 +513,7 @@ mod tests {
         let builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal);
 
         assert!(
-            apply_multipath_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS),).is_ok()
+            apply_transport_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS),).is_ok()
         );
     }
 

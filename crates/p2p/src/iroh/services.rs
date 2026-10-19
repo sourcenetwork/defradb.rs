@@ -34,6 +34,16 @@ impl Priority {
         self as usize
     }
 
+    /// QUIC send priority: higher is sent first within one connection.
+    pub const fn send_priority(self) -> i32 {
+        match self {
+            Priority::Control => 3,
+            Priority::Replication => 2,
+            Priority::Sync => 1,
+            Priority::Bulk => 0,
+        }
+    }
+
     pub const fn name(self) -> &'static str {
         match self {
             Priority::Control => "control",
@@ -124,9 +134,10 @@ pub const SERVICES: &[Service] = &[
         MAX_MESSAGE_SIZE,
         true,
     ),
-    service(STREAM_CAR, Priority::Sync, MAX_MESSAGE_SIZE, false),
     service(STREAM_SE_QUERY_REQ, Priority::Sync, MAX_MESSAGE_SIZE, false),
     service(STREAM_SE_QUERY_RESP, Priority::Sync, MAX_MESSAGE_SIZE, true),
+    // A CAR request is small, but its reply on the same stream is a block transfer.
+    service(STREAM_CAR, Priority::Bulk, MAX_MESSAGE_SIZE, false),
     service(STREAM_CAR_RESP, Priority::Bulk, MAX_CAR_SIZE, true),
 ];
 
@@ -163,6 +174,12 @@ mod tests {
                 String::from_utf8_lossy(service.tag)
             );
         }
+    }
+
+    #[test]
+    fn higher_priorities_are_sent_first() {
+        let order = Priority::ALL.map(Priority::send_priority);
+        assert!(order.windows(2).all(|pair| pair[0] > pair[1]), "{order:?}");
     }
 
     #[test]
