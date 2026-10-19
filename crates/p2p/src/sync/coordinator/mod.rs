@@ -160,6 +160,8 @@ pub struct SyncStatus {
     /// Current/high-water occupancy and terminal overload counters for the
     /// one shared inbound request scheduler.
     pub request_dispatch: crate::sync::DispatchSnapshot,
+    /// Inbound byte budget use per class; empty for transports without one.
+    pub inbound_budget: Vec<crate::transport::InboundClassSnapshot>,
     /// Current/high-water occupancy of bounded non-authoritative mutation
     /// gossip/artifact work. Durable head markers are installed before this
     /// pool is entered, so shedding here cannot lose a sync obligation.
@@ -847,6 +849,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             non_authoritative_broadcast_rejected_total,
         ) = self.runtime.shutdown.non_authoritative_broadcast_stats();
         let push_backlog = self.runtime.push_backlog.snapshot().await;
+        let inbound_budget = self.transport().inbound_budget().await.unwrap_or_default();
         let push_updates_coalesced_total = push_backlog.coalesced_total;
         SyncStatus {
             push_backlog,
@@ -865,6 +868,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             pending_resync_in_flight: self.manager.pending_resync_in_flight(),
             retained_background_tasks: self.runtime.shutdown.retained_task_count(),
             request_dispatch: self.runtime.dispatch_diagnostics.snapshot(),
+            inbound_budget,
             non_authoritative_broadcast_tasks,
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,

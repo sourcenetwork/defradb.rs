@@ -121,7 +121,7 @@ async fn spawn_bare_peer() -> BarePeer {
     }
 }
 
-async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
+pub(super) async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
     let secret_key = SecretKey::generate();
     let config = IrohEndpointConfig {
         secret_key: secret_key.clone(),

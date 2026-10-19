@@ -277,6 +277,19 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
     }
 }
 
+/// Point-in-time inbound byte budget use for one class.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct InboundClassSnapshot {
+    pub class: &'static str,
+    pub capacity_bytes: usize,
+    pub held_bytes: usize,
+    pub held_bytes_high_water: usize,
+    /// Streams reset because no room was free before the deadline.
+    pub busy_resets: u64,
+    /// Streams reset because their message exceeded the tag's limit.
+    pub oversized_resets: u64,
+}
+
 /// Trait abstracting the P2P transport layer.
 ///
 /// The sync coordinator is generic over this trait, allowing different transport
@@ -323,6 +336,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
     async fn listen(&self, addr: PeerAddr) -> Result<()>;
 
     async fn connected_peers(&self) -> Result<Vec<PeerId>>;
+
+    /// Inbound byte budget use per class, for transports that admit message
+    /// bodies against one.
+    async fn inbound_budget(&self) -> Result<Vec<InboundClassSnapshot>> {
+        Ok(Vec::new())
+    }
 
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>>;
 

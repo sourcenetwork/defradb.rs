@@ -160,6 +160,9 @@ pub(super) async fn handle_command(
         IrohCommand::ConnectedPeers { reply } => {
             let _ = reply.send(Ok(peer_map.connected_peers()));
         }
+        IrohCommand::InboundBudget { reply } => {
+            let _ = reply.send(Ok(resources.inbound_budget.snapshot().to_vec()));
+        }
         IrohCommand::ListenAddresses { reply } => {
             let endpoint_addr = endpoint.addr();
             let mut addrs = vec![

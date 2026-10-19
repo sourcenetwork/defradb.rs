@@ -21,6 +21,9 @@ mod endpoint_rpc;
 mod endpoint_streams;
 mod gossip_heal;
 #[cfg(test)]
+mod inbound_admission_tests;
+mod inbound_budget;
+#[cfg(test)]
 mod mux_tests;
 mod peer_map;
 mod protocols;
@@ -29,6 +32,7 @@ mod relay_server;
 #[cfg(all(test, feature = "iroh-relay-server"))]
 mod relay_server_tests;
 mod secret_key;
+mod services;
 mod task_registry;
 mod transport;
 #[cfg(test)]

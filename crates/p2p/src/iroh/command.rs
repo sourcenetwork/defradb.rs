@@ -61,6 +61,9 @@ pub enum IrohCommand {
     ConnectedPeers {
         reply: oneshot::Sender<crate::error::Result<Vec<PeerId>>>,
     },
+    InboundBudget {
+        reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::InboundClassSnapshot>>>,
+    },
     ListenAddresses {
         reply: oneshot::Sender<crate::error::Result<Vec<PeerAddr>>>,
     },

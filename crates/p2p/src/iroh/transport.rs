@@ -282,6 +282,11 @@ impl P2PTransport for IrohTransport {
             .await
     }
 
+    async fn inbound_budget(&self) -> Result<Vec<crate::transport::InboundClassSnapshot>> {
+        self.send_command(|reply| IrohCommand::InboundBudget { reply })
+            .await
+    }
+
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>> {
         self.send_command(|reply| IrohCommand::ListenAddresses { reply })
             .await

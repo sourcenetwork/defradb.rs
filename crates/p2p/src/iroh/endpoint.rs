@@ -34,6 +34,7 @@ use super::endpoint_config::{
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
 use super::endpoint_streams::handle_incoming;
 use super::gossip_heal::{self, GossipHealer};
+use super::inbound_budget::InboundBudget;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 use super::task_registry::TaskRegistry;
@@ -59,6 +60,7 @@ pub(super) struct EndpointResources {
     pub(super) spawned_tasks: SpawnedTasks,
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     pub(super) admission: Arc<PeerAdmission>,
+    pub(super) inbound_budget: Arc<InboundBudget>,
 }
 
 /// Handle to a gossip topic subscription.
@@ -218,6 +220,7 @@ async fn run_event_loop(
         spawned_tasks: Arc::clone(&spawned_tasks),
         node_identity,
         admission,
+        inbound_budget: Arc::default(),
     };
 
     // Emit Listening event with our endpoint address
