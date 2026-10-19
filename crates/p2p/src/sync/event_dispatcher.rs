@@ -716,9 +716,9 @@ mod tests {
     #[tokio::test]
     async fn full_completion_workers_do_not_block_requests_on_a_per_class_queue() {
         let (tx, rx) = crate::sync::dispatch_queue(64);
-        let completions_started = Arc::new(Semaphore::new(0));
-        let release_completions = Arc::new(Semaphore::new(0));
-        let request_observed = Arc::new(Semaphore::new(0));
+        let completions_started = Arc::new(regolith::sync::Semaphore::new(0));
+        let release_completions = Arc::new(regolith::sync::Semaphore::new(0));
+        let request_observed = Arc::new(regolith::sync::Semaphore::new(0));
 
         let dispatcher = {
             let completions_started = Arc::clone(&completions_started);
@@ -735,7 +735,7 @@ mod tests {
                         match event {
                             TestEvent::Completion => {
                                 completions_started.add_permits(1);
-                                let _permit = release_completions.acquire().await.unwrap();
+                                let _permit = release_completions.acquire(1).await;
                             }
                             TestEvent::Request(_) => request_observed.add_permits(1),
                             TestEvent::Recovery(_) => {}
@@ -749,17 +749,15 @@ mod tests {
             tx.send(TestEvent::Completion).await.unwrap();
         }
         completions_started
-            .acquire_many(MAX_ACTIVE_COMPLETIONS as u32)
+            .acquire(MAX_ACTIVE_COMPLETIONS)
             .await
-            .unwrap()
             .forget();
         tx.send(TestEvent::Completion).await.unwrap();
         tx.send(TestEvent::Request(0)).await.unwrap();
 
-        n0_future::time::timeout(Duration::from_secs(1), request_observed.acquire())
+        n0_future::time::timeout(Duration::from_secs(1), request_observed.acquire(1))
             .await
             .expect("busy completion workers must not hold up a request")
-            .unwrap()
             .forget();
 
         release_completions.add_permits(MAX_ACTIVE_COMPLETIONS + 1);
@@ -779,7 +777,7 @@ mod tests {
         let (tx, rx) = crate::sync::dispatch_queue(4);
         let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let released_during_handler = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let handled = Arc::new(Semaphore::new(0));
+        let handled = Arc::new(regolith::sync::Semaphore::new(0));
         let dispatcher = {
             let handled = Arc::clone(&handled);
             let released = Arc::clone(&released);
@@ -804,7 +802,7 @@ mod tests {
         tx.send_leased(TestEvent::Request(0), Box::new(Flag(Arc::clone(&released))))
             .await
             .unwrap();
-        handled.acquire().await.unwrap().forget();
+        handled.acquire(1).await.forget();
         drop(tx);
         dispatcher.await.unwrap();
 

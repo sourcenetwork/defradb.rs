@@ -6,10 +6,10 @@
 
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use defra_core::thread_bounds::MaybeSend;
-use regolith::sync::{unbounded, Semaphore, UnboundedReceiver, UnboundedSender};
+use regolith::sync::{unbounded, Notify, Semaphore, UnboundedReceiver, UnboundedSender};
 
 use super::{DispatchClass, DispatchEvent};
 
@@ -41,39 +41,65 @@ where
     E: DispatchEvent + 'static,
 {
     let room: [Arc<Semaphore>; LANES] = std::array::from_fn(|_| Arc::new(Semaphore::new(capacity)));
-    let closed = Arc::new(AtomicBool::new(false));
+    let signal = Arc::new(Signal::default());
     let pairs: [_; LANES] = std::array::from_fn(|_| unbounded::<Queued<E>>());
-    let senders = pairs.each_ref().map(|(sender, _)| sender.clone());
     let sender = DispatchSender {
         shared: Arc::new(SenderShared {
-            lanes: senders,
+            lanes: pairs.each_ref().map(|(sender, _)| sender.clone()),
             room: room.clone(),
-            closed: Arc::clone(&closed),
+            signal: Arc::clone(&signal),
         }),
     };
     let receiver = DispatchReceiver {
-        senders: Arc::downgrade(&sender.shared),
         lanes: pairs.map(|(_, receiver)| receiver),
-        drained: [false; LANES],
+        next_lane: 0,
         room,
         capacity,
-        closed,
+        signal,
     };
     (sender, receiver)
 }
 
-struct SenderShared<E: 'static> {
+/// What the two halves tell each other. One wake-up for every lane, so a
+/// waiting receiver registers once rather than on each lane.
+#[derive(Default)]
+struct Signal {
+    queued: Notify,
+    senders_gone: AtomicBool,
+    receiver_gone: AtomicBool,
+}
+
+struct SenderShared<E>
+where
+    E: 'static,
+{
     lanes: [UnboundedSender<Queued<E>>; LANES],
     room: [Arc<Semaphore>; LANES],
-    closed: Arc<AtomicBool>,
+    signal: Arc<Signal>,
+}
+
+impl<E> Drop for SenderShared<E>
+where
+    E: 'static,
+{
+    fn drop(&mut self) {
+        self.signal.senders_gone.store(true, Ordering::Release);
+        self.signal.queued.notify_one();
+    }
 }
 
 /// The sending half of a [`dispatch_queue`]. Every clone feeds the same lanes.
-pub struct DispatchSender<E: 'static> {
+pub struct DispatchSender<E>
+where
+    E: 'static,
+{
     shared: Arc<SenderShared<E>>,
 }
 
-impl<E: 'static> Clone for DispatchSender<E> {
+impl<E> Clone for DispatchSender<E>
+where
+    E: 'static,
+{
     fn clone(&self) -> Self {
         Self {
             shared: Arc::clone(&self.shared),
@@ -98,40 +124,49 @@ where
 
     async fn enqueue(&self, event: E, lease: Option<Lease>) -> Result<(), E> {
         let lane = lane(event.dispatch_class());
-        if self.shared.closed.load(Ordering::Acquire) {
+        let signal = &self.shared.signal;
+        if signal.receiver_gone.load(Ordering::Acquire) {
             return Err(event);
         }
         self.shared.room[lane].acquire(1).await.forget();
         // The receiver wakes every waiting sender when it goes away.
-        if self.shared.closed.load(Ordering::Acquire) {
+        if signal.receiver_gone.load(Ordering::Acquire) {
             return Err(event);
         }
         self.shared.lanes[lane]
             .try_send(Queued { event, lease })
-            .map_err(|queued| queued.event)
+            .map_err(|queued| queued.event)?;
+        signal.queued.notify_one();
+        Ok(())
     }
 }
 
 /// The receiving half of a [`dispatch_queue`].
-pub struct DispatchReceiver<E: 'static> {
-    senders: Weak<SenderShared<E>>,
+pub struct DispatchReceiver<E>
+where
+    E: 'static,
+{
     lanes: [UnboundedReceiver<Queued<E>>; LANES],
-    drained: [bool; LANES],
+    /// Where the next look starts, so a busy lane cannot starve the others.
+    next_lane: usize,
     room: [Arc<Semaphore>; LANES],
     capacity: usize,
-    closed: Arc<AtomicBool>,
+    signal: Arc<Signal>,
 }
 
-impl<E: 'static> DispatchReceiver<E> {
-    /// The next event from any lane, inline first and completion last. `None`
-    /// once every sender is gone and every lane is empty.
+impl<E> DispatchReceiver<E>
+where
+    E: 'static,
+{
+    /// The next event from any lane, taking lanes in turn. `None` once every
+    /// sender is gone and every lane is empty.
     pub async fn recv(&mut self) -> Option<E> {
         self.next_queued(true).await.map(|queued| queued.event)
     }
 
     /// Whether every sender is gone.
     pub fn is_closed(&self) -> bool {
-        self.senders.strong_count() == 0
+        self.signal.senders_gone.load(Ordering::Acquire)
     }
 
     /// Whether the lane for `class` has no room left.
@@ -139,60 +174,53 @@ impl<E: 'static> DispatchReceiver<E> {
         self.room[lane(class)].available_permits() == 0
     }
 
-    /// The next event already waiting in any lane, inline first.
+    /// The next event already waiting in any lane.
     pub fn try_recv(&mut self) -> Option<E> {
-        (0..LANES).find_map(|lane| {
-            let queued = self.lanes[lane].try_recv()?;
-            self.room[lane].add_permits(1);
-            Some(queued.event)
-        })
+        self.take_next(true).map(|queued| queued.event)
     }
 
     async fn next_queued(&mut self, completion_open: bool) -> Option<Queued<E>> {
         loop {
-            let [inline, admission, recovery, completion] = &self.lanes;
-            let drained = self.drained;
-            let (lane, received) = tokio::select! {
-                biased;
-                queued = inline.recv_async(), if !drained[0] => (0, queued),
-                queued = admission.recv_async(), if !drained[1] => (1, queued),
-                queued = recovery.recv_async(), if !drained[2] => (2, queued),
-                queued = completion.recv_async(), if completion_open && !drained[COMPLETION_LANE] => {
-                    (COMPLETION_LANE, queued)
-                }
-                else => {
-                    if drained.iter().all(|done| *done) {
-                        return None;
-                    }
-                    // Only the gated completion lane can still hold events; the
-                    // caller polls again once a completion worker is free.
-                    std::future::pending::<()>().await;
-                    unreachable!()
-                }
-            };
-            if let Some(queued) = self.take(lane, received) {
+            // Read before looking, so an event sent just before the last
+            // sender went away is still found.
+            let senders_gone = self.is_closed();
+            if let Some(queued) = self.take_next(completion_open) {
                 return Some(queued);
             }
+            if senders_gone
+                && self
+                    .room
+                    .iter()
+                    .all(|room| room.available_permits() == self.capacity)
+            {
+                return None;
+            }
+            // Only a gated completion lane can still hold events here; the
+            // caller polls again once a completion worker is free.
+            self.signal.queued.notified().await;
         }
     }
 
-    fn take(&mut self, lane: usize, received: Option<Queued<E>>) -> Option<Queued<E>> {
-        match received {
-            Some(queued) => {
+    fn take_next(&mut self, completion_open: bool) -> Option<Queued<E>> {
+        let start = self.next_lane;
+        (0..LANES)
+            .map(|offset| (start + offset) % LANES)
+            .filter(|&lane| completion_open || lane != COMPLETION_LANE)
+            .find_map(|lane| {
+                let queued = self.lanes[lane].try_recv()?;
                 self.room[lane].add_permits(1);
+                self.next_lane = (lane + 1) % LANES;
                 Some(queued)
-            }
-            None => {
-                self.drained[lane] = true;
-                None
-            }
-        }
+            })
     }
 }
 
-impl<E: 'static> Drop for DispatchReceiver<E> {
+impl<E> Drop for DispatchReceiver<E>
+where
+    E: 'static,
+{
     fn drop(&mut self) {
-        self.closed.store(true, Ordering::Release);
+        self.signal.receiver_gone.store(true, Ordering::Release);
         for room in &self.room {
             room.add_permits(Semaphore::MAX_PERMITS - self.capacity);
         }
@@ -296,6 +324,20 @@ mod tests {
         assert_eq!(
             tx.send(TestEvent::Request(2)).await,
             Err(TestEvent::Request(2))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_flood_does_not_starve_completions() {
+        let (tx, mut rx) = dispatch_queue(4);
+        tx.send(TestEvent::Request(0)).await.unwrap();
+        tx.send(TestEvent::Request(1)).await.unwrap();
+        tx.send(TestEvent::Completion(2)).await.unwrap();
+
+        let first_two = [rx.recv().await.unwrap(), rx.recv().await.unwrap()];
+        assert!(
+            first_two.contains(&TestEvent::Completion(2)),
+            "{first_two:?}"
         );
     }
 
