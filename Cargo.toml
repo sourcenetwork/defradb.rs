@@ -315,6 +315,7 @@ opt-level = "z"
 opt-level = "z"
 
 [patch.crates-io]
+regolith = { git = "https://github.com/sourcenetwork/regolith", rev = "a9cef302985f0996f6508a9c57a7184d5007b40a" }
 commonware-p2p = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }
 commonware-utils = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }
 commonware-codec = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }

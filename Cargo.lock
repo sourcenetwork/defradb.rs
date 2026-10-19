@@ -10481,8 +10481,7 @@ dependencies = [
 [[package]]
 name = "regolith"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41e4229e0c940e097792ae06705b5c32ce3bd950193ab6608a69abeb23d7b21d"
+source = "git+https://github.com/sourcenetwork/regolith?rev=a9cef302985f0996f6508a9c57a7184d5007b40a#a9cef302985f0996f6508a9c57a7184d5007b40a"
 dependencies = [
  "aes-gcm-siv",
  "getrandom 0.4.3",
