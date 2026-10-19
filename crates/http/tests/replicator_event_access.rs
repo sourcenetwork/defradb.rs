@@ -28,7 +28,7 @@ async fn frame(can_list: bool, message: Message) -> serde_json::Value {
         nac = nac.with_grant(caller, NodePermission::P2pReplicatorList);
     }
     let bus = Arc::new(ChannelBus::new());
-    let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()))
+    let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
         .with_nac(Arc::new(nac))
         .with_event_bus(bus.clone())
         .build();

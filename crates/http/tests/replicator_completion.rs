@@ -10,7 +10,7 @@ use tower::ServiceExt;
 #[tokio::test]
 async fn replay_outcomes_reach_the_event_stream() {
     let bus = Arc::new(ChannelBus::new());
-    let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()))
+    let state = AppStateBuilder::new(Arc::new(MockQueryExecutor::new()), edge::testing::edge())
         .with_event_bus(bus.clone())
         .build();
     let response = defra_http::create_router_with_state(state)
