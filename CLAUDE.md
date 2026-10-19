@@ -100,7 +100,8 @@ tools/
 ├── integration-test/       # Rust-native integration tests (primary validation)
 ├── lens-host/              # Standalone WASM Lens transform runner (JSON stdin → stdout)
 ├── otel-smoke/             # OTLP exporter smoke tests against a Compose-run collector
-└── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
+├── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
+└── vector-bench/           # Corpus, warm-up, memory-cap and usearch tools for vector_disk_cost
 ```
 
 Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
