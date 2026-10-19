@@ -16,9 +16,9 @@ use p2p::iroh::{
     load_or_generate_secret_key, spawn_endpoint, GossipHealConfig, IrohDiscoveryConfig,
     IrohEndpointConfig, IrohRelayModeConfig, IrohTransport,
 };
+use p2p::sync::DispatchReceiver;
 use p2p::topics::{DefraTopic, ENCRYPTION_TOPIC};
 use p2p::{P2PTransport, TransportEvent};
-use tokio::sync::mpsc::Receiver;
 use tokio::time::timeout;
 
 async fn test_config(gossip_heal: GossipHealConfig) -> IrohEndpointConfig {
@@ -38,7 +38,7 @@ async fn test_config(gossip_heal: GossipHealConfig) -> IrohEndpointConfig {
 }
 
 async fn wait_peer_subscribed<T>(
-    events: &mut Receiver<TransportEvent<T>>,
+    events: &mut DispatchReceiver<TransportEvent<T>>,
     want_topic: &str,
     context: &str,
 ) {
@@ -56,7 +56,7 @@ async fn wait_peer_subscribed<T>(
 }
 
 async fn wait_peer_unsubscribed<T>(
-    events: &mut Receiver<TransportEvent<T>>,
+    events: &mut DispatchReceiver<TransportEvent<T>>,
     want_topic: &str,
     context: &str,
 ) {
@@ -75,7 +75,7 @@ async fn wait_peer_unsubscribed<T>(
 
 async fn assert_raw_delivery<T>(
     from: &IrohTransport,
-    to_events: &mut Receiver<TransportEvent<T>>,
+    to_events: &mut DispatchReceiver<TransportEvent<T>>,
     payload: Vec<u8>,
     context: &str,
 ) {
@@ -255,7 +255,7 @@ async fn sweep_refresh_preserves_gossip_delivery() {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     for (events, node) in [(&mut events0, "node 0"), (&mut events1, "node 1")] {
-        while let Ok(event) = events.try_recv() {
+        while let Some(event) = events.try_recv() {
             if let TransportEvent::PeerUnsubscribed { topic, .. } = &event {
                 assert_ne!(
                     topic, ENCRYPTION_TOPIC,

@@ -42,8 +42,7 @@ where
 {
     let room: [Arc<Semaphore>; LANES] = std::array::from_fn(|_| Arc::new(Semaphore::new(capacity)));
     let closed = Arc::new(AtomicBool::new(false));
-    let pairs: [(UnboundedSender<Queued<E>>, UnboundedReceiver<Queued<E>>); LANES] =
-        std::array::from_fn(|_| unbounded());
+    let pairs: [_; LANES] = std::array::from_fn(|_| unbounded::<Queued<E>>());
     let senders = pairs.each_ref().map(|(sender, _)| sender.clone());
     let sender = DispatchSender {
         shared: Arc::new(SenderShared {
@@ -226,11 +225,8 @@ impl<E> DispatchSource<E> for tokio::sync::mpsc::Receiver<E>
 where
     E: MaybeSend,
 {
-    fn next(
-        &mut self,
-        _completion_open: bool,
-    ) -> impl Future<Output = Option<Queued<E>>> + MaybeSend {
-        async move { self.recv().await.map(|event| Queued { event, lease: None }) }
+    async fn next(&mut self, _completion_open: bool) -> Option<Queued<E>> {
+        self.recv().await.map(|event| Queued { event, lease: None })
     }
 }
 
