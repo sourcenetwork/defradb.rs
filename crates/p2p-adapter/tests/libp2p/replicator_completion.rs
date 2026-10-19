@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::time::Duration;
 
@@ -8,20 +8,38 @@ use async_trait::async_trait;
 use cid::Cid;
 use events::{Bus, ChannelBus, EventName};
 use p2p::{transport::PeerId, BitswapStoreAdapter};
+use regolith::sync::{Atom, Notify, SegQueue, Semaphore};
 
 use super::tests::{connect_hosts, identity_test_adapter, NoopBlockstore};
 use crate::{P2PError, P2POperations, P2PResult, ReplicationFilters, TransportDocPusher};
 
 #[derive(Default)]
 struct ReplayPusher {
-    calls: Mutex<Vec<Vec<String>>>,
+    calls: SegQueue<Vec<String>>,
     fail: AtomicBool,
-    gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
-    started: tokio::sync::Notify,
+    gate: Atom<Option<Arc<Semaphore>>>,
+    started: Notify,
+    installs: crate::replicator_install_store::tests::Harness,
 }
 
 #[async_trait]
 impl TransportDocPusher for ReplayPusher {
+    async fn prepare_replicator_install(
+        &self,
+        request: &crate::ReplicatorInstallRequest,
+    ) -> P2PResult<crate::ReplicatorInstall> {
+        self.installs.prepare(request).await
+    }
+
+    async fn finish_replicator_install(
+        &self,
+        plan: &crate::ReplicatorInstall,
+        error: Option<String>,
+        bus: Option<Arc<dyn events::Bus>>,
+    ) -> P2PResult<()> {
+        self.installs.finish_to(plan, error, bus).await
+    }
+
     async fn push_existing_docs(
         &self,
         _: &PeerId,
@@ -30,11 +48,11 @@ impl TransportDocPusher for ReplayPusher {
         _: Option<&[u8]>,
         _: Option<&[u8]>,
     ) -> P2PResult<()> {
-        self.calls.lock().unwrap().push(collections.to_vec());
-        let gate = self.gate.lock().unwrap().clone();
+        self.calls.push(collections.to_vec());
+        let gate = self.gate.load().clone();
         if let Some(gate) = gate {
             self.started.notify_one();
-            gate.acquire().await.unwrap().forget();
+            gate.acquire(1).await.forget();
         }
         if self.fail.load(Ordering::Relaxed) {
             Err(P2PError::Internal("replay failed".into()))
@@ -54,10 +72,10 @@ impl TransportDocPusher for ReplayPusher {
     async fn persist_replicator(&self, _: &str, _: &[String]) -> P2PResult<()> {
         Ok(())
     }
-    async fn retry_doc(&self, _: &PeerId, _: &str, _: &str) -> P2PResult<()> {
+    async fn retry_doc(&self, _: &PeerId, _: &str, _: &str, _: u64) -> P2PResult<()> {
         unreachable!()
     }
-    async fn retry_collection_commit(&self, _: &PeerId, _: &str) -> P2PResult<()> {
+    async fn retry_collection_commit(&self, _: &PeerId, _: &str, _: u64) -> P2PResult<()> {
         unreachable!()
     }
     async fn load_document_head_blocks(&self, _: &str) -> P2PResult<Vec<(Cid, bytes::Bytes)>> {
@@ -105,9 +123,9 @@ async fn every_successful_install_emits_a_correlated_completion() {
             "{}/p2p/{peer}",
             remote_handle.listen_addresses().await.unwrap()[0]
         );
+        let pusher = Arc::new(ReplayPusher::default());
         let bus = Arc::new(ChannelBus::default());
         let mut sub = bus.subscribe(&[EventName::ReplicatorCompleted]);
-        let pusher = Arc::new(ReplayPusher::default());
         let mut adapter = identity_test_adapter(handle);
         adapter.event_bus = Some(bus);
         adapter.doc_pusher = Some(pusher.clone());
@@ -143,13 +161,13 @@ async fn every_successful_install_emits_a_correlated_completion() {
             assert!(sub.try_recv().is_err(), "one completion per install");
         }
         assert_eq!(
-            *pusher.calls.lock().unwrap(),
+            std::iter::from_fn(|| pusher.calls.pop()).collect::<Vec<_>>(),
             vec![vec!["Note"], vec!["User"], vec!["Failed"]]
         );
 
         pusher.fail.store(false, Ordering::Relaxed);
-        let gate = Arc::new(tokio::sync::Semaphore::new(0));
-        *pusher.gate.lock().unwrap() = Some(gate.clone());
+        let gate = Arc::new(Semaphore::new(0));
+        pusher.gate.store(Some(gate.clone()));
         let requested = vec!["User".into(), "Failed".into(), "Pending".into()];
         adapter.add_replicator(requested.clone(), Some(&address), ReplicationFilters::new(), vec![], None).await.unwrap();
         pusher.started.notified().await;

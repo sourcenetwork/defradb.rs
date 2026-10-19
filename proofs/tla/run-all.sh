@@ -7,6 +7,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
+  "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Fence.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Duplicate.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Settle.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Durable.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Deadline.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Ordered.cfg ReplicatorInstall.tla RED"
+  "MC_ReplicatorInstall_Red_Recovery.cfg ReplicatorInstall.tla RED"
   "MC_RetryPreparedInputs_Green.cfg RetryPreparedInputs.tla GREEN" # exact-context external answer survives commit retry
   "MC_RetryPreparedInputs_Red_Recompute.cfg RetryPreparedInputs.tla RED" # clearing prepared memo repeats provider work
   "MC_RetryPreparedInputs_Red_InAttempt.cfg RetryPreparedInputs.tla RED" # provider work runs under active transaction

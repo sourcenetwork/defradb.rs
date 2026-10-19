@@ -20,6 +20,7 @@ use storage::corekv::{Key, Store};
 
 pub mod action;
 pub(crate) mod dump;
+pub mod replication;
 pub(crate) mod spawn;
 pub mod storage_stats;
 
@@ -234,6 +235,7 @@ pub struct DB<S: Store> {
     /// behind. The registry provides cancellation-safe mutual exclusion for
     /// operations running in this database instance.
     pub active_actions: Arc<crate::database::action::ActionRegistry>,
+    replication_runtime: Arc<replication::ReplicationRuntime>,
 }
 
 impl<S: Store> DB<S> {
@@ -278,6 +280,7 @@ impl<S: Store> DB<S> {
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
+            replication_runtime: Arc::default(),
         })
     }
 
@@ -347,6 +350,7 @@ impl<S: Store> DB<S> {
             merge_governance: regolith::sync::OnceCell::new(),
             local_commit_release: regolith::sync::OnceCell::new(),
             active_actions: Arc::new(crate::database::action::ActionRegistry::default()),
+            replication_runtime: Arc::default(),
         })
     }
 
@@ -753,6 +757,11 @@ impl<S: Store> DB<S> {
     /// Get a reference to the underlying store.
     pub fn store(&self) -> &Arc<S> {
         &self.store
+    }
+
+    /// Runtime identity and notifications shared by this database's transports.
+    pub fn replication_runtime(&self) -> &Arc<replication::ReplicationRuntime> {
+        &self.replication_runtime
     }
 
     /// Get the database options.

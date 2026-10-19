@@ -11,6 +11,30 @@ use p2p::P2PTransport;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
+    async fn prepare_replicator_install(
+        &self,
+        _request: &crate::ReplicatorInstallRequest,
+    ) -> P2PResult<crate::ReplicatorInstall> {
+        Err(P2PError::unsupported(
+            "durable replicator installs are unavailable",
+        ))
+    }
+
+    async fn finish_replicator_install(
+        &self,
+        _plan: &crate::ReplicatorInstall,
+        _error: Option<String>,
+        _bus: Option<Arc<dyn events::Bus>>,
+    ) -> P2PResult<()> {
+        Err(P2PError::unsupported(
+            "durable replicator installs are unavailable",
+        ))
+    }
+
+    async fn recover_replicator_installs(&self) -> P2PResult<()> {
+        Ok(())
+    }
+
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         Ok(storage::stores::PushRetryMarkerStats::default())
     }
@@ -119,6 +143,7 @@ pub struct DbTransportDocPusher<S: storage::corekv::Store, T: P2PTransport> {
     car_authority: p2p::sync::HeadHintCarAuthority,
     retry_schedule: storage::stores::RetrySchedule,
     document_acp: regolith::sync::OnceCell<Arc<dyn acp::DocumentACP>>,
+    installs: Arc<crate::replicator_installs::ReplicatorInstalls>,
 }
 
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<S, T> {
@@ -127,12 +152,16 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
         transport: T,
         car_authority: p2p::sync::HeadHintCarAuthority,
     ) -> Self {
+        let installs = Arc::new(crate::replicator_installs::ReplicatorInstalls::new(
+            Arc::clone(db.replication_runtime()),
+        ));
         Self {
             db,
             transport,
             car_authority,
             retry_schedule: storage::stores::RetrySchedule::default(),
             document_acp: regolith::sync::OnceCell::new(),
+            installs,
         }
     }
 
@@ -159,6 +188,49 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     for DbTransportDocPusher<S, T>
 {
+    async fn prepare_replicator_install(
+        &self,
+        request: &crate::ReplicatorInstallRequest,
+    ) -> P2PResult<crate::ReplicatorInstall> {
+        self.recover_replicator_installs().await?;
+        crate::replicator_install_store::prepare(
+            &self.db.peerstore(),
+            self.db.options().retry_options(),
+            &self.installs,
+            request,
+        )
+        .await
+    }
+
+    async fn finish_replicator_install(
+        &self,
+        plan: &crate::ReplicatorInstall,
+        error: Option<String>,
+        bus: Option<Arc<dyn events::Bus>>,
+    ) -> P2PResult<()> {
+        crate::replicator_install_store::finish(
+            &self.db.peerstore(),
+            self.db.options().retry_options(),
+            Arc::clone(&self.installs),
+            bus.or_else(|| self.db.event_bus().cloned()),
+            plan,
+            error,
+        )
+        .await
+    }
+
+    async fn recover_replicator_installs(&self) -> P2PResult<()> {
+        let peerstore = self.db.peerstore();
+        crate::replicator_install_store::recover(
+            &peerstore,
+            self.db.options().retry_options(),
+            Arc::clone(&self.installs),
+            self.db.event_bus().cloned(),
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         self.db
             .peerstore()

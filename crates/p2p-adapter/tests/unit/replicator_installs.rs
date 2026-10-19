@@ -1,39 +1,43 @@
 use super::ReplicatorInstalls;
-use std::{
-    future::{poll_fn, Future},
-    task::Poll,
-};
+use std::time::Duration;
 
 #[tokio::test]
-async fn a_waiting_install_does_not_block_another_peer() {
+async fn notifications_are_scoped_to_one_peer_and_install() {
     let installs = ReplicatorInstalls::default();
-    let first = installs.acquire("first").await;
-    let mut waiting = Box::pin(installs.acquire("first"));
-    poll_fn(|cx| {
-        assert!(waiting.as_mut().poll(cx).is_pending());
-        Poll::Ready(())
-    })
-    .await;
-    let other = installs.acquire("other").await;
-    drop(first);
-    let second = waiting.await;
-    drop(second);
-    drop(other);
-    let _next = installs.acquire("next").await;
-    assert_eq!(installs.peers.lock().unwrap().len(), 1);
+    let first = installs.watch("first", 1);
+    let next = installs.watch("first", 2);
+    let other = installs.watch("other", 1);
+    installs.finish("first", 1);
+    first.wait().await;
+    assert!(
+        n0_future::time::timeout(Duration::from_millis(1), next.wait())
+            .await
+            .is_err()
+    );
+    assert!(
+        n0_future::time::timeout(Duration::from_millis(1), other.wait())
+            .await
+            .is_err()
+    );
+    drop((first, next, other));
+    assert!(installs.waiters.is_empty());
 }
 
 #[tokio::test]
-async fn cancelled_waiter_leaves_the_install_lock_usable() {
+async fn cancelled_waiter_wakes_peers_to_recheck_without_retaining_entries() {
     let installs = ReplicatorInstalls::default();
-    let first = installs.acquire("peer").await;
-    let mut waiting = Box::pin(installs.acquire("peer"));
-    poll_fn(|cx| {
-        assert!(waiting.as_mut().poll(cx).is_pending());
-        Poll::Ready(())
-    })
-    .await;
-    drop(waiting);
+    let first = installs.watch("peer", 1);
+    let other = installs.watch("peer", 1);
     drop(first);
-    let _next = installs.acquire("peer").await;
+    other.wait().await;
+    let replacement = installs.watch("peer", 1);
+    drop(other);
+    assert_eq!(
+        installs.waiters.len(),
+        1,
+        "stale waiter cannot remove replacement"
+    );
+    installs.finish("peer", 1);
+    replacement.wait().await;
+    assert!(installs.waiters.is_empty());
 }
