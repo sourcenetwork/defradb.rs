@@ -21,6 +21,10 @@
 //! `THREADS=8` then measures warm queries per second with 8 searches in flight.
 //! `WARMUP=<file>` first runs the vectors in that file (same format as
 //! `queries.f32`) unmeasured, so pass 0 is warm on queries it has not seen.
+//! A build with `SPLIT=1` writes the resident layout into its own store,
+//! `db-resident`, which a query process opens with `DB=db-resident`.
+//! `tools/vector-bench` holds the corpus converter, the memory-capped runner,
+//! the warm-up query generator and the usearch reference.
 //!
 //! The corpus is synthetic and clustered unless `CORPUS_DIR` holds `base.f32`
 //! and `queries.f32` (little-endian, `DIMS` floats per vector, as
@@ -172,19 +176,44 @@ async fn snapshot(mem: &MemoryNodeStore) -> (Vec<Node>, Aux, Option<Meta>) {
 }
 
 /// Writes the graph in both layouts: records that carry their neighbours'
-/// codes, and records of ids only with every code kept once beside them.
-async fn build_diskann(vectors: &[Vec<f32>], store: &RegolithStore) {
+/// codes into `store`, and records of ids only with every code kept once
+/// beside them into `resident_store`.
+///
+/// `LIVE=<n>` grows the graph as a live database does: the quantizer trains
+/// on the write that reaches the training threshold, and pending inserts are
+/// merged every `n` inserts, as the background sweep merges whatever arrived
+/// since its last pass. Unset, the graph is built once at the end.
+/// `PENDING=<n>` leaves the last `n` inserts unmerged.
+async fn build_diskann(
+    vectors: &[Vec<f32>],
+    store: &RegolithStore,
+    resident_store: &RegolithStore,
+) {
     let start = Instant::now();
     let mut engine =
         DiskAnn::try_new(MemoryNodeStore::new(), Metric::Cosine, params(false), 7).unwrap();
+    let live: usize = env("LIVE", "0").parse().unwrap();
+    let pending: usize = env("PENDING", "0").parse().unwrap();
+    let merged = vectors.len() - pending;
+    let mut merges = 0;
+    let mut trained = false;
     for (i, v) in vectors.iter().enumerate() {
         engine.insert(NodeId(i as u64 + 1), v).await.unwrap();
-    }
-    while engine.should_build().await.unwrap() {
-        engine.build().await.unwrap();
+        let n = i + 1;
+        let due = live > 0 && n < merged && (!trained || n % live == 0);
+        if n == merged || due {
+            while engine.should_build().await.unwrap() {
+                engine.build().await.unwrap();
+                merges += 1;
+            }
+            trained = trained || engine.state().await.unwrap().is_some();
+        }
     }
     let m = engine.state().await.unwrap().unwrap().m as usize;
-    eprintln!("BUILD diskann m={m} in {:.1?}", start.elapsed());
+    eprintln!(
+        "BUILD diskann m={m} live={live} pending={pending} merges={merges} in {:.1?}",
+        start.elapsed()
+    );
 
     let (nodes, aux, _) = snapshot(engine.store()).await;
     drop(engine);
@@ -218,7 +247,7 @@ async fn build_diskann(vectors: &[Vec<f32>], store: &RegolithStore) {
     let mut with_codes = shared;
     with_codes.extend(records);
     write(store, RECORDS, &nodes, &with_codes, None).await;
-    write(store, RESIDENT, &nodes, &resident, None).await;
+    write(resident_store, RESIDENT, &nodes, &resident, None).await;
 }
 
 async fn build_hnsw(vectors: &[Vec<f32>], store: &RegolithStore) {
@@ -302,13 +331,20 @@ async fn build(n: usize, q: usize, dims: usize, dir: &Path) {
 
     let store =
         RegolithStore::open_with_options(dir.join("db"), RegolithStoreOptions::new()).unwrap();
+    let split = std::env::var("SPLIT").is_ok().then(|| {
+        RegolithStore::open_with_options(dir.join("db-resident"), RegolithStoreOptions::new())
+            .unwrap()
+    });
     for engine in env("ENGINES", "diskann,hnsw,ivfpq").split(',') {
         match engine {
-            "diskann" => build_diskann(&vectors, &store).await,
+            "diskann" => build_diskann(&vectors, &store, split.as_ref().unwrap_or(&store)).await,
             "hnsw" => build_hnsw(&vectors, &store).await,
             "ivfpq" => build_ivfpq(&vectors, &store).await,
             other => panic!("unknown engine {other}"),
         }
+    }
+    if let Some(split) = split {
+        split.close().await.ok();
     }
     store.close().await.ok();
 }
@@ -492,7 +528,7 @@ async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, p
         _ => RegolithStoreOptions::embedded(),
     };
     options.engine = options.engine.statistics(Some(stats));
-    let store = RegolithStore::open_with_options(dir.join("db"), options).unwrap();
+    let store = RegolithStore::open_with_options(dir.join(env("DB", "db")), options).unwrap();
     let codes = Arc::new(CodeCache::default());
     let mut txn = store.new_txn(true).await.unwrap();
     with_engine!(engine, &mut txn, codes, e => run.measure(&e).await);
