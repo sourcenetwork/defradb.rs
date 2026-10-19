@@ -23,8 +23,8 @@ jobs:
   native-consumer:
     name: Native ACP consumer
     runs-on: ubuntu-24.04
-    # Cold normal-release builds use both repositories; fixture gates are unchanged.
-    timeout-minutes: 180
+    # Full normal-release compilation is retained on a cache miss.
+    timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: '2'
       VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || 'e48e1d8f9f701da94554a176d913131e2e6a5277' }}
@@ -55,13 +55,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: native-consumer-1.98
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-targets: false
-          workspaces: |
-            .
-            .native/vera
+          cache-on-failure: true
+          cache-targets: true
+          cache-workspace-crates: true
+          workspaces: . -> .native/consumer-cache/defra-target
+      - name: Restore pinned Vera release runtime
+        id: runtime
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .native/consumer-cache/vera-runtime
+          key: native-consumer-vera-ubuntu24-rust1.98-${{ steps.vera.outputs.revision }}-${{ hashFiles('.github/scripts/native-consumer.py') }}
       - name: Qualify native provider and replicated authorization
-        run: python3 .github/scripts/native-consumer.py --vera .native/vera --runtime-ref "$VERA_RUNTIME_REVISION"
+        run: python3 .github/scripts/native-consumer.py --vera .native/vera --runtime-ref "$VERA_RUNTIME_REVISION" --cache-dir "$GITHUB_WORKSPACE/.native/consumer-cache"
+      - name: Save successfully built Vera runtime
+        if: always() && steps.runtime.outputs.cache-hit != 'true' && hashFiles('.native/consumer-cache/vera-runtime/manifest.json') != ''
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .native/consumer-cache/vera-runtime
+          key: ${{ steps.runtime.outputs.cache-primary-key }}
       - name: Retain numeric qualification results
         if: always()
         uses: actions/upload-artifact@v4
