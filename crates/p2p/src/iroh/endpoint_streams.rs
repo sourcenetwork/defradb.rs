@@ -15,7 +15,9 @@ use super::endpoint::{
     spawn_task, EndpointResources, PendingPushLogReplies, SpawnedTasks, SubscriptionSenders,
 };
 use super::gossip_heal;
-use super::inbound_budget::{ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE};
+use super::inbound_budget::{
+    read_deadline, ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE,
+};
 use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
 use super::services::{self, Service};
@@ -24,10 +26,12 @@ use super::services::{self, Service};
 /// allowlist. Distinct from the disconnect code (0) used elsewhere.
 const REFUSED_CONNECTION_CODE: u32 = 1;
 
-/// QUIC stream error codes sent when a stream is refused before its body is read.
+/// QUIC stream error codes sent when a stream is refused before its body is
+/// read, or reset because the body stopped arriving.
 const RESET_UNKNOWN_SERVICE: u32 = 2;
 const RESET_MESSAGE_TOO_LARGE: u32 = 3;
 const RESET_BUSY: u32 = 4;
+const RESET_TOO_SLOW: u32 = 5;
 
 /// Handle an incoming QUIC connection.
 pub(super) async fn handle_incoming(
@@ -221,7 +225,7 @@ pub(super) async fn handle_connection_streams(
                 service.tag,
                 &peer_id,
                 send,
-                &payload,
+                payload,
                 lease,
                 &event_tx,
                 &pending_pushlog_replies,
@@ -284,8 +288,14 @@ async fn admit_stream(
         let _ = recv.stop(RESET_BUSY.into());
         return None;
     };
-    let payload = protocols::read_body(recv, len)
-        .await
+    let Ok(body) =
+        n0_future::time::timeout(read_deadline(len), protocols::read_body(recv, len)).await
+    else {
+        debug!(peer_id = %peer_id, len, "Message body arrived too slowly");
+        let _ = recv.stop(RESET_TOO_SLOW.into());
+        return None;
+    };
+    let payload = body
         .inspect_err(|e| debug!(peer_id = %peer_id, error = %e, "Unreadable message body"))
         .ok()?;
     Some((service, payload, lease))
@@ -298,7 +308,7 @@ async fn dispatch_stream(
     tag: &[u8],
     peer_id: &PeerId,
     send: iroh::endpoint::SendStream,
-    payload: &[u8],
+    payload: Vec<u8>,
     lease: InboundLease,
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     pending_pushlog_replies: &PendingPushLogReplies,
@@ -512,7 +522,7 @@ async fn dispatch_stream(
             }
         }
         x if x == protocols::STREAM_SE => {
-            let request: crate::message::PushSEArtifactsRequest = protocols::decode(payload)?;
+            let request: crate::message::PushSEArtifactsRequest = protocols::decode(&payload)?;
             verify_iroh_message(&request)?;
             ensure_iroh_signed_sender(peer_id, request.sender_id.as_str())?;
             debug!(
@@ -521,13 +531,12 @@ async fn dispatch_stream(
                 artifact_count = request.artifacts.len(),
                 "Received SE artifacts"
             );
-            let data = defra_core::cbor::to_vec(&request)
-                .map_err(|e| crate::error::Error::Codec(e.to_string()))?;
+            drop(request);
             if event_tx
                 .send_leased(
                     TransportEvent::SEArtifactsReceived {
                         peer_id: peer_id.clone(),
-                        data,
+                        data: payload,
                     },
                     Box::new(lease),
                 )

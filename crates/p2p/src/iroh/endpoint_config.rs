@@ -314,8 +314,12 @@ pub(super) fn allowlist_state_from_config(
 /// Bidirectional streams a peer may have open at once on one connection.
 const MAX_CONCURRENT_BIDI_STREAMS: u32 = 64;
 
-/// Configure QUIC: the stream and receive-window bounds that let flow control
-/// slow a peer before the inbound budget has to refuse it, and the optional
+/// Bytes QUIC buffers for one connection before we read them. The inbound
+/// budget only counts bodies we have read, so this bounds the rest; the
+/// default is unlimited.
+const CONNECTION_RECEIVE_WINDOW: u32 = 16 * 1024 * 1024;
+
+/// Configure QUIC: the stream and receive-window bounds, and the optional
 /// multipath path limit.
 pub(super) fn apply_transport_config(
     builder: iroh::endpoint::Builder,
@@ -323,11 +327,7 @@ pub(super) fn apply_transport_config(
 ) -> crate::error::Result<iroh::endpoint::Builder> {
     let transport_config = iroh::endpoint::QuicTransportConfig::builder()
         .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into())
-        .receive_window(
-            u32::try_from(super::inbound_budget::CONNECTION_RECEIVE_WINDOW)
-                .expect("the receive window fits a u32")
-                .into(),
-        );
+        .receive_window(CONNECTION_RECEIVE_WINDOW.into());
     let Some(max_concurrent) = max_concurrent else {
         return Ok(builder.transport_config(transport_config.build()));
     };

@@ -23,15 +23,17 @@ const BUDGET_BYTES: [usize; 4] = [
     128 * 1024 * 1024,
 ];
 
-/// The most body bytes one connection may hold across every class, which is
-/// also its QUIC receive window.
-pub const CONNECTION_RECEIVE_WINDOW: usize = share_of(BUDGET_BYTES[0])
-    + share_of(BUDGET_BYTES[1])
-    + share_of(BUDGET_BYTES[2])
-    + share_of(BUDGET_BYTES[3]);
-
 /// How long a stream waits for room before it is reset.
 pub const ADMIT_DEADLINE: Duration = Duration::from_secs(5);
+
+/// The slowest a body may arrive. A sender that stalls is reset, so it cannot
+/// hold its room for longer than its body should take.
+const MIN_BODY_BYTES_PER_SEC: u64 = 256 * 1024;
+
+/// How long reading a `len`-byte body may take.
+pub fn read_deadline(len: usize) -> Duration {
+    ADMIT_DEADLINE + Duration::from_secs(len as u64 / MIN_BODY_BYTES_PER_SEC)
+}
 
 /// The node-wide inbound byte budgets.
 #[derive(Debug)]

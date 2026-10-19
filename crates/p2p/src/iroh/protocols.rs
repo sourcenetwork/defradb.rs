@@ -134,7 +134,7 @@ pub async fn read_message<T: serde::de::DeserializeOwned>(
             len, max_size
         )));
     }
-    decode(&read_body(recv, len).await?)
+    decode(read_body(recv, len).await?)
 }
 
 /// Read the four-byte length prefix of a message.
@@ -155,9 +155,15 @@ pub async fn read_body(recv: &mut RecvStream, len: usize) -> crate::error::Resul
     Ok(payload)
 }
 
-/// Decode a CBOR message body.
-pub fn decode<T: serde::de::DeserializeOwned>(payload: &[u8]) -> crate::error::Result<T> {
-    defra_core::cbor::from_slice(payload).map_err(|e| crate::error::Error::Codec(e.to_string()))
+/// Decode a CBOR message body. Passing the body by value frees it once
+/// decoded, so it is not held twice while the message waits to be queued.
+pub fn decode<T, Body>(payload: Body) -> crate::error::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    Body: AsRef<[u8]>,
+{
+    defra_core::cbor::from_slice(payload.as_ref())
+        .map_err(|e| crate::error::Error::Codec(e.to_string()))
 }
 
 /// Write a length-prefixed CBOR message to a QUIC send stream.
