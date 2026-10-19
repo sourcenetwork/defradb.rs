@@ -385,34 +385,13 @@ pub(super) fn validate_vector_index_metrics(
     new_state: &DefinitionState,
     _old_state: &DefinitionState,
 ) -> Vec<String> {
-    let mut errs = Vec::new();
-    for col in &new_state.collections {
-        for index in &col.indexes {
-            let Some(vector) = index.vector() else {
-                continue;
-            };
-            // Go required this from sourcenetwork/defradb#5188, which dropped
-            // inferring the length from an `@embedding` on the same field. A
-            // zero-dimension index cannot check a query vector's length, so a
-            // wrong-length query would silently be scored on its shared leading
-            // elements.
-            if vector.dimensions == 0 {
-                errs.push(format!(
-                    "index '{}' must set dimensions greater than zero",
-                    index.name
-                ));
-            }
-            if !vector.algorithm.supports_metric(vector.metric) {
-                errs.push(format!(
-                    "index '{}' cannot rank by {}: the {} algorithm does not order it",
-                    index.name,
-                    vector.metric.as_str(),
-                    vector.algorithm.as_str()
-                ));
-            }
-        }
-    }
-    errs
+    new_state
+        .collections
+        .iter()
+        .flat_map(|col| &col.indexes)
+        .filter_map(|index| Some(index.vector()?.creation_errors(&index.name)))
+        .flatten()
+        .collect()
 }
 
 /// Matches Go's validateEmbeddingFieldsForGeneration.
