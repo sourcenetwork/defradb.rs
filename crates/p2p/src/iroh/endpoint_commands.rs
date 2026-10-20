@@ -161,7 +161,7 @@ pub(super) async fn handle_command(
             let result = match msg.encode_gossip_payload() {
                 Ok(payload) => {
                     gossip
-                        .publish(topic.to_string(), Bytes::from(payload))
+                        .publish(topic.to_string(), Bytes::from(payload), false)
                         .await;
                     Ok(MessageId::new(uuid::Uuid::new_v4().to_string()))
                 }
@@ -179,7 +179,8 @@ pub(super) async fn handle_command(
             let _ = reply.send(Ok(gossip.subscribe(topic).await));
         }
         IrohCommand::PublishRaw { topic, data, reply } => {
-            gossip.publish(topic, Bytes::from(data)).await;
+            // A KMS reply: a broadcast before any neighbour joins is lost (#976).
+            gossip.publish(topic, Bytes::from(data), true).await;
             let _ = reply.send(Ok(MessageId::new(uuid::Uuid::new_v4().to_string())));
         }
         IrohCommand::TopicPeers { topic, reply } => {

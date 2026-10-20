@@ -85,6 +85,7 @@ enum Input {
     Publish {
         topic: String,
         payload: Bytes,
+        wait_for_neighbor: bool,
     },
     Connected {
         peer: EndpointId,
@@ -170,10 +171,16 @@ impl GossipHandle {
         true
     }
 
-    /// Broadcasts on `topic`. On a topic we are not subscribed to, the
-    /// driver joins it, waits briefly for a neighbour, then leaves again.
-    pub(super) async fn publish(&self, topic: String, payload: Bytes) {
-        self.inbox.push(Input::Publish { topic, payload }).await;
+    /// Broadcasts on `topic`, joining it for the broadcast if we are not
+    /// subscribed. `wait_for_neighbor` holds such a broadcast until a
+    /// neighbour joins (briefly), for a reply that must not reach nobody.
+    pub(super) async fn publish(&self, topic: String, payload: Bytes, wait_for_neighbor: bool) {
+        let input = Input::Publish {
+            topic,
+            payload,
+            wait_for_neighbor,
+        };
+        self.inbox.push(input).await;
     }
 
     pub(super) fn topic_peers(&self, topic: &str) -> Vec<PeerId> {

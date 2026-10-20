@@ -43,7 +43,8 @@ const JOIN_SAMPLE: usize = 8;
 /// Peers whose gossiped address we keep for dialling.
 const MAX_LEARNED: usize = 1024;
 
-/// How long a publish on a topic we just joined waits for a neighbour.
+/// How long a waiting publish on a topic we just joined holds for a
+/// neighbour.
 /// Gossip has no store-and-forward, so a broadcast with no neighbour
 /// reaches nobody.
 const NEIGHBOR_WAIT: Duration = Duration::from_secs(10);
@@ -202,7 +203,11 @@ where
         match input {
             Input::Join(name) => self.join(name, false),
             Input::Quit(name) => self.quit(topic_id(&name)),
-            Input::Publish { topic, payload } => self.publish(topic, payload),
+            Input::Publish {
+                topic,
+                payload,
+                wait_for_neighbor,
+            } => self.publish(topic, payload, wait_for_neighbor),
             Input::Connected { peer, connection } => self.connected(peer, connection),
             Input::Closed { peer, connection } => self.closed(peer, connection),
             Input::WriterDone { peer, writer } => {
@@ -299,7 +304,7 @@ where
         }
     }
 
-    fn publish(&mut self, name: String, payload: Bytes) {
+    fn publish(&mut self, name: String, payload: Bytes, wait_for_neighbor: bool) {
         let id = topic_id(&name);
         let ready = self
             .topics
@@ -315,6 +320,9 @@ where
             payload,
             deadline: Instant::now() + NEIGHBOR_WAIT,
         });
+        if !wait_for_neighbor {
+            self.flush_deferred(id, None);
+        }
     }
 
     fn broadcast(&mut self, id: TopicId, payload: Bytes) {
