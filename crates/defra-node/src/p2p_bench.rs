@@ -415,10 +415,24 @@ async fn measure_catch_up(update_count: usize) -> Duration {
     connect_and_replicate(&sender, &receiver).await;
     await_user_age(&receiver, update_count as i64).await;
     let elapsed = start.elapsed();
+    print_peer_fetches(&receiver).await;
 
     shutdown_nodes(&sender, &receiver).await;
 
     elapsed
+}
+
+/// Prints what the node measured about its fetches from each peer.
+async fn print_peer_fetches(node: &EmbeddedNode) {
+    let status = node
+        .p2p()
+        .expect("p2p")
+        .sync_status()
+        .await
+        .expect("sync status");
+    for peer in status["peer_fetches"].as_array().into_iter().flatten() {
+        println!("  peer_fetches {peer}");
+    }
 }
 
 /// Polls the node until its single `User` document reports `expected` as its age.

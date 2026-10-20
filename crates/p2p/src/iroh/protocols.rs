@@ -167,22 +167,25 @@ pub async fn read_to_end_observed<OnChunk>(
 where
     OnChunk: FnMut(usize),
 {
-    let mut data = Vec::new();
-    // Ask for one byte past the limit so an oversized stream is caught.
+    // Chunks are kept and copied once into an exact-size buffer, as
+    // `read_to_end` does, rather than regrowing one buffer per chunk.
+    let mut chunks = Vec::new();
+    let mut len = 0;
     while let Some(chunk) = recv
-        .read_chunk(size_limit + 1 - data.len())
+        .read_chunk(size_limit + 1 - len)
         .await
         .map_err(|e| crate::error::Error::Transport(e.to_string()))?
     {
         on_chunk(chunk.len());
-        data.extend_from_slice(&chunk);
-        if data.len() > size_limit {
+        len += chunk.len();
+        if len > size_limit {
             return Err(crate::error::Error::Transport(format!(
                 "stream longer than {size_limit} bytes"
             )));
         }
+        chunks.push(chunk);
     }
-    Ok(data)
+    Ok(chunks.concat())
 }
 
 pub async fn read_body_until_idle(
