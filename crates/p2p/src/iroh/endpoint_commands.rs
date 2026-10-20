@@ -163,6 +163,9 @@ pub(super) async fn handle_command(
         IrohCommand::InboundBudget { reply } => {
             let _ = reply.send(Ok(resources.inbound_budget.snapshot().to_vec()));
         }
+        IrohCommand::FetchStats { reply } => {
+            let _ = reply.send(Ok(resources.fetch_stats.snapshot()));
+        }
         IrohCommand::ListenAddresses { reply } => {
             let endpoint_addr = endpoint.addr();
             let mut addrs = vec![
@@ -533,6 +536,7 @@ pub(super) async fn handle_command(
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
             let admission = Arc::clone(&resources.admission);
+            let fetch_stats = Arc::clone(&resources.fetch_stats);
             let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
                 let result = handle_car_request_response(
@@ -543,6 +547,7 @@ pub(super) async fn handle_command(
                     &connection_cache,
                     &event_tx,
                     &admission,
+                    &fetch_stats,
                 )
                 .await;
                 let _ = reply.send(result);
@@ -747,6 +752,7 @@ pub(super) async fn handle_command(
                 Arc::clone(connection_cache),
                 event_tx.clone(),
                 Arc::clone(&resources.admission),
+                Arc::clone(&resources.fetch_stats),
             );
             let task = spawn_task(spawned_tasks, async move {
                 handle_block_sync(resources, query_id, root, providers, missing).await;

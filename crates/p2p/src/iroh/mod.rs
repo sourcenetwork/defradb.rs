@@ -19,6 +19,7 @@ mod endpoint_commands;
 mod endpoint_config;
 mod endpoint_rpc;
 mod endpoint_streams;
+mod fetch_stats;
 mod gossip_heal;
 #[cfg(test)]
 mod inbound_admission_tests;

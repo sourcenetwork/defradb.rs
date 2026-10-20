@@ -162,6 +162,8 @@ pub struct SyncStatus {
     pub request_dispatch: crate::sync::DispatchSnapshot,
     /// Inbound byte budget use per class; empty for transports without one.
     pub inbound_budget: Vec<crate::transport::InboundClassSnapshot>,
+    /// Per-peer measurements of our CAR fetches; empty for transports without them.
+    pub peer_fetches: Vec<crate::transport::PeerFetchStats>,
     /// Current/high-water occupancy of bounded non-authoritative mutation
     /// gossip/artifact work. Durable head markers are installed before this
     /// pool is entered, so shedding here cannot lose a sync obligation.
@@ -850,6 +852,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
         ) = self.runtime.shutdown.non_authoritative_broadcast_stats();
         let push_backlog = self.runtime.push_backlog.snapshot().await;
         let inbound_budget = self.transport().inbound_budget().await.unwrap_or_default();
+        let peer_fetches = self.transport().fetch_stats().await.unwrap_or_default();
         let push_updates_coalesced_total = push_backlog.coalesced_total;
         SyncStatus {
             push_backlog,
@@ -869,6 +872,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             retained_background_tasks: self.runtime.shutdown.retained_task_count(),
             request_dispatch: self.runtime.dispatch_diagnostics.snapshot(),
             inbound_budget,
+            peer_fetches,
             non_authoritative_broadcast_tasks,
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,

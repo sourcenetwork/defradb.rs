@@ -157,6 +157,34 @@ pub async fn read_body(recv: &mut RecvStream, len: usize) -> crate::error::Resul
 
 /// Read a `len`-byte body, giving up once no bytes arrive for `idle`.
 /// `Ok(None)` means the sender stalled.
+/// Reads a stream to its end, as `RecvStream::read_to_end` does, calling
+/// `on_chunk` with the size of each chunk as it arrives.
+pub async fn read_to_end_observed<OnChunk>(
+    recv: &mut RecvStream,
+    size_limit: usize,
+    mut on_chunk: OnChunk,
+) -> crate::error::Result<Vec<u8>>
+where
+    OnChunk: FnMut(usize),
+{
+    let mut data = Vec::new();
+    // Ask for one byte past the limit so an oversized stream is caught.
+    while let Some(chunk) = recv
+        .read_chunk(size_limit + 1 - data.len())
+        .await
+        .map_err(|e| crate::error::Error::Transport(e.to_string()))?
+    {
+        on_chunk(chunk.len());
+        data.extend_from_slice(&chunk);
+        if data.len() > size_limit {
+            return Err(crate::error::Error::Transport(format!(
+                "stream longer than {size_limit} bytes"
+            )));
+        }
+    }
+    Ok(data)
+}
+
 pub async fn read_body_until_idle(
     recv: &mut RecvStream,
     len: usize,

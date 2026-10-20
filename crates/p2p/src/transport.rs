@@ -290,6 +290,26 @@ pub struct InboundClassSnapshot {
     pub oversized_resets: u64,
 }
 
+/// Point-in-time measurements of the CAR fetches we made to one peer.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PeerFetchStats {
+    pub peer: String,
+    pub fetches: u64,
+    pub bytes: u64,
+    /// Rolling rate from the first to the last byte of a response.
+    pub delivery_rate_bytes_per_sec: u64,
+    /// Lowest round-trip time seen on the connection.
+    pub min_rtt_micros: Option<u64>,
+    /// Rolling shares of fetches that succeeded, timed out or came back
+    /// partial, in parts per million.
+    pub success_ppm: u64,
+    pub timeout_ppm: u64,
+    pub partial_ppm: u64,
+    pub in_flight: u64,
+    /// Response bytes received so far by fetches still in flight.
+    pub in_flight_bytes: u64,
+}
+
 /// Trait abstracting the P2P transport layer.
 ///
 /// The sync coordinator is generic over this trait, allowing different transport
@@ -340,6 +360,11 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
     /// Inbound byte budget use per class, for transports that admit message
     /// bodies against one.
     async fn inbound_budget(&self) -> Result<Vec<InboundClassSnapshot>> {
+        Ok(Vec::new())
+    }
+
+    /// Per-peer measurements of our CAR fetches, for transports that keep them.
+    async fn fetch_stats(&self) -> Result<Vec<PeerFetchStats>> {
         Ok(Vec::new())
     }
 

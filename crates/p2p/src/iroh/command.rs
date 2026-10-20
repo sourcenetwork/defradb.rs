@@ -64,6 +64,9 @@ pub enum IrohCommand {
     InboundBudget {
         reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::InboundClassSnapshot>>>,
     },
+    FetchStats {
+        reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::PeerFetchStats>>>,
+    },
     ListenAddresses {
         reply: oneshot::Sender<crate::error::Result<Vec<PeerAddr>>>,
     },

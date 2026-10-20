@@ -14,6 +14,7 @@ use crate::transport::{PeerId, TransportEvent};
 use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
+use super::fetch_stats::{selected_path_rtt, FetchOutcome, FetchStats, FetchTimer};
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 
@@ -58,6 +59,7 @@ enum CarFetchOutcome {
     OpenBiFailed(String),
     WriteFailed(String),
     ReadFailed(String),
+    ResponseTimedOut,
     EmptyResponse,
     HeaderOnlyCar,
     EventChannelClosed,
@@ -66,6 +68,15 @@ enum CarFetchOutcome {
 impl CarFetchOutcome {
     fn is_success(&self) -> bool {
         matches!(self, Self::Success)
+    }
+
+    fn fetch_outcome(&self) -> FetchOutcome {
+        match self {
+            Self::Success => FetchOutcome::Success,
+            Self::SizeLimited => FetchOutcome::Partial,
+            Self::ResponseTimedOut => FetchOutcome::TimedOut,
+            _ => FetchOutcome::Failed,
+        }
     }
 
     fn label(&self) -> &'static str {
@@ -77,6 +88,7 @@ impl CarFetchOutcome {
             Self::OpenBiFailed(_) => "open_bi_failed",
             Self::WriteFailed(_) => "write_failed",
             Self::ReadFailed(_) => "read_failed",
+            Self::ResponseTimedOut => "response_timed_out",
             Self::EmptyResponse => "empty_response",
             Self::HeaderOnlyCar => "header_only_car",
             Self::EventChannelClosed => "event_channel_closed",
@@ -92,6 +104,7 @@ impl CarFetchOutcome {
             | Self::ReadFailed(detail) => Some(detail),
             Self::Success
             | Self::SizeLimited
+            | Self::ResponseTimedOut
             | Self::EmptyResponse
             | Self::HeaderOnlyCar
             | Self::EventChannelClosed => None,
@@ -638,6 +651,7 @@ pub(super) async fn handle_send_only<T: serde::Serialize>(
 /// stream raw CAR bytes back on the same bidirectional stream. We must consume
 /// that response here; otherwise the remote writer sees a broken stream and the
 /// caller never receives a `CarFetchResponse`.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_car_request_response(
     endpoint: &Endpoint,
     peer_id: &PeerId,
@@ -646,6 +660,38 @@ pub(super) async fn handle_car_request_response(
     cache: &ConnectionCache,
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: &PeerAdmission,
+    fetch_stats: &FetchStats,
+) -> crate::error::Result<()> {
+    let mut timer = fetch_stats.start(peer_id);
+    let result = request_car_response(
+        endpoint,
+        peer_id,
+        root_cid,
+        direct_addr,
+        cache,
+        event_tx,
+        admission,
+        &mut timer,
+    )
+    .await;
+    timer.finish(match &result {
+        Ok(()) => FetchOutcome::Success,
+        Err(crate::error::Error::ResponseTimeout) => FetchOutcome::TimedOut,
+        Err(_) => FetchOutcome::Failed,
+    });
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn request_car_response(
+    endpoint: &Endpoint,
+    peer_id: &PeerId,
+    root_cid: cid::Cid,
+    direct_addr: Option<std::net::SocketAddr>,
+    cache: &ConnectionCache,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    admission: &PeerAdmission,
+    timer: &mut FetchTimer,
 ) -> crate::error::Result<()> {
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
@@ -671,19 +717,22 @@ pub(super) async fn handle_car_request_response(
         return Err(error);
     }
 
-    let car_data = n0_future::time::timeout(
-        REQUEST_RESPONSE_TIMEOUT,
-        recv.read_to_end(protocols::MAX_CAR_SIZE),
-    )
-    .await
-    .map_err(|_| {
-        retire_timed_out_connection(cache, peer_id, &connection);
-        crate::error::Error::ResponseTimeout
-    })?
-    .map_err(|e| {
-        evict_if_closed(cache, peer_id, &connection);
-        crate::error::Error::Transport(e.to_string())
-    })?;
+    let response = protocols::read_to_end_observed(&mut recv, protocols::MAX_CAR_SIZE, |len| {
+        timer.received(len)
+    });
+    let read = n0_future::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
+    timer.saw_rtt(selected_path_rtt(&connection));
+    let car_data = match read {
+        Ok(Ok(car_data)) => car_data,
+        Ok(Err(error)) => {
+            evict_if_closed(cache, peer_id, &connection);
+            return Err(error);
+        }
+        Err(_) => {
+            retire_timed_out_connection(cache, peer_id, &connection);
+            return Err(crate::error::Error::ResponseTimeout);
+        }
+    };
 
     if event_tx
         .send(TransportEvent::CarFetchResponse {
@@ -714,6 +763,7 @@ async fn try_fetch_from_provider(
     cache: &ConnectionCache,
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: &PeerAdmission,
+    timer: &mut FetchTimer,
 ) -> CarFetchAttempt {
     // Per-provider CAR failures log at debug — the caller aggregates per-DAG
     // outcomes into a single WARN via BitswapComplete (see issue #858).
@@ -801,12 +851,11 @@ async fn try_fetch_from_provider(
         "CAR fetch: request sent, waiting for response"
     );
 
-    let car_data = match n0_future::time::timeout(
-        REQUEST_RESPONSE_TIMEOUT,
-        recv.read_to_end(64 * 1024 * 1024),
-    )
-    .await
-    {
+    let response =
+        protocols::read_to_end_observed(&mut recv, 64 * 1024 * 1024, |len| timer.received(len));
+    let read = n0_future::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
+    timer.saw_rtt(selected_path_rtt(&connection));
+    let car_data = match read {
         Ok(Ok(data)) => data,
         Ok(Err(e)) => {
             evict_if_closed(cache, provider, &connection);
@@ -833,10 +882,7 @@ async fn try_fetch_from_provider(
             );
             return CarFetchAttempt {
                 provider: provider.clone(),
-                outcome: CarFetchOutcome::ReadFailed(format!(
-                    "timed out after {}s",
-                    REQUEST_RESPONSE_TIMEOUT.as_secs()
-                )),
+                outcome: CarFetchOutcome::ResponseTimedOut,
             };
         }
     };
@@ -919,6 +965,7 @@ pub(super) struct BlockSyncResources {
     connection_cache: ConnectionCache,
     event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: Arc<PeerAdmission>,
+    fetch_stats: Arc<FetchStats>,
 }
 
 impl BlockSyncResources {
@@ -928,6 +975,7 @@ impl BlockSyncResources {
         connection_cache: ConnectionCache,
         event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
         admission: Arc<PeerAdmission>,
+        fetch_stats: Arc<FetchStats>,
     ) -> Self {
         Self {
             endpoint,
@@ -935,6 +983,7 @@ impl BlockSyncResources {
             connection_cache,
             event_tx,
             admission,
+            fetch_stats,
         }
     }
 }
@@ -977,6 +1026,7 @@ pub(super) async fn handle_block_sync(
         connection_cache,
         event_tx,
         admission,
+        fetch_stats,
     } = resources;
 
     for provider in &providers {
@@ -987,9 +1037,10 @@ pub(super) async fn handle_block_sync(
         let admission = Arc::clone(&admission);
         let provider = provider.clone();
         let request = request.clone();
+        let mut timer = fetch_stats.start(&provider);
         tasks.spawn(async move {
             let direct_addr = super::endpoint::peer_direct_addr(&peer_map, &provider);
-            try_fetch_from_provider(
+            let attempt = try_fetch_from_provider(
                 &endpoint,
                 query_id,
                 &provider,
@@ -998,8 +1049,11 @@ pub(super) async fn handle_block_sync(
                 &connection_cache,
                 &event_tx,
                 &admission,
+                &mut timer,
             )
-            .await
+            .await;
+            timer.finish(attempt.outcome.fetch_outcome());
+            attempt
         });
     }
 

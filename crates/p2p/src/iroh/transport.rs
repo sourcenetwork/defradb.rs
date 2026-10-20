@@ -287,6 +287,11 @@ impl P2PTransport for IrohTransport {
             .await
     }
 
+    async fn fetch_stats(&self) -> Result<Vec<crate::transport::PeerFetchStats>> {
+        self.send_command(|reply| IrohCommand::FetchStats { reply })
+            .await
+    }
+
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>> {
         self.send_command(|reply| IrohCommand::ListenAddresses { reply })
             .await
