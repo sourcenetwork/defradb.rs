@@ -154,14 +154,15 @@ impl Quantizer for ProductQuantizer {
     }
 
     fn distance(&self, table: &[f32], code: &[u8]) -> f64 {
-        let mut total = 0.0f64;
+        // Four independent sums let the lookups overlap; one running total
+        // serialises every add behind the previous one.
+        let mut acc = [0.0f64; 4];
         for (j, part) in code.iter().enumerate().take(self.m) {
-            let at = j * CODEBOOK_SIZE + *part as usize;
-            if at < table.len() {
-                total += table[at] as f64;
+            if let Some(v) = table.get(j * CODEBOOK_SIZE + *part as usize) {
+                acc[j % 4] += *v as f64;
             }
         }
-        total
+        acc.iter().sum()
     }
 }
 
