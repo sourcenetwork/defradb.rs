@@ -127,7 +127,10 @@ pub use document::{DocID, Document, NormalValue};
 pub use schema::CollectionVersion;
 
 #[cfg(test)]
+#[path = "../tests/common/worker_io.rs"]
+mod worker_io;
+
+#[cfg(test)]
 mod common {
-    #[path = "../../tests/common/worker_io.rs"]
-    pub mod worker_io;
+    pub(crate) use super::worker_io;
 }
