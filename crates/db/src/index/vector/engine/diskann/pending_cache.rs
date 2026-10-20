@@ -53,7 +53,7 @@ impl Segment {
         self.ids.is_empty()
     }
 
-    fn bytes(&self) -> usize {
+    pub fn bytes(&self) -> usize {
         self.ids.len() * size_of::<NodeId>() + self.codes.len()
     }
 }
@@ -64,6 +64,9 @@ pub struct Copy {
     tag: Option<Tag>,
     segments: Vec<Arc<Segment>>,
     bytes: usize,
+    /// The pending list at `tag` was past [`MAX_PENDING_CACHE_BYTES`]: nothing
+    /// is held, and searches at that generation scan without copying.
+    oversized: bool,
 }
 
 impl Copy {
@@ -74,6 +77,7 @@ impl Copy {
             tag: Some(tag),
             segments: vec![Arc::new(segment)],
             bytes,
+            oversized: false,
         }
     }
 
@@ -100,7 +104,12 @@ impl Copy {
             tag: self.tag.map(|tag| Tag { position, ..tag }),
             segments,
             bytes,
+            oversized: false,
         }
+    }
+
+    pub fn is_oversized(&self) -> bool {
+        self.oversized
     }
 
     pub fn fits(&self) -> bool {
@@ -134,12 +143,21 @@ impl PendingCache {
 
     /// Publishes `next` if it is newer than the current copy: a later
     /// generation, or the same one caught up further. A copy past
-    /// [`MAX_PENDING_CACHE_BYTES`] drops the cache instead, so searches scan.
+    /// [`MAX_PENDING_CACHE_BYTES`] is published as an oversized marker instead,
+    /// so searches at its generation scan without building a copy to discard.
     pub fn publish(&self, next: Arc<Copy>) {
         let Some(tag) = next.tag else {
             return;
         };
-        let next = if next.fits() { next } else { Arc::default() };
+        let next = if next.fits() {
+            next
+        } else {
+            Arc::new(Copy {
+                tag: Some(tag),
+                oversized: true,
+                ..Copy::default()
+            })
+        };
         self.current.rcu(|current| match current.tag {
             Some(held)
                 if held.generation > tag.generation
