@@ -596,4 +596,12 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "FetchStats (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Gossip connection ownership",
+        name: "INV_RevokedHasNoGossip / INV_PathOnLiveConnection / INV_GossipNeverClosesShared / LIVE_HealthyReached",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/gossip/driver.rs GossipDriver; crates/p2p/src/iroh/endpoint_rpc.rs connect_with_cache; crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer",
+        model_ref: "MC_GossipOwnership_Green.cfg",
+        tiers: &[Boundary],
+    },
 ];
