@@ -375,13 +375,16 @@ fn rss() -> String {
 }
 
 /// Builds `engine`'s index over `txn` as `$e` and evaluates `$body` with it;
-/// `codes` is the resident-codes cache every search on the store shares.
+/// `codes` is the cache every DiskANN search on the store shares, as a node
+/// shares it: resident codes, and the pending list copy.
 macro_rules! with_engine {
     ($engine:expr, $txn:expr, $codes:expr, $e:ident => $body:expr) => {
         match $engine {
             "diskann" => {
                 let kv = KvNodeStore::new($txn, COLLECTION, RECORDS, 0);
-                let $e = DiskAnn::try_new(kv, Metric::Cosine, params(false), 7).unwrap();
+                let $e = DiskAnn::try_new(kv, Metric::Cosine, params(false), 7)
+                    .unwrap()
+                    .with_codes($codes.clone());
                 $body
             }
             "resident" => {
