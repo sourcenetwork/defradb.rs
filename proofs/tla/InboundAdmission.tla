@@ -6,9 +6,10 @@
 \* dispatch lane, and each lane has a fixed number of handler slots.
 \*
 \* Who acts: hostile connections send bulk messages whose handlers never
-\* finish, and one also starts a control message and stops sending halfway
-\* through its body. One healthy connection sends a control message, and
-\* sends it again whenever we reset it.
+\* finish, and one also starts a control message whose body never completes:
+\* either the sender stops, or it trickles one byte at a time, often enough
+\* that the idle timer never fires. One healthy connection sends a control
+\* message, and sends it again whenever we reset it.
 \*
 \* What must never happen: the bytes a class keeps in memory go over that
 \* class's budget, or one connection holds more than its share of a class.
@@ -16,7 +17,8 @@
 \* waits for budget forever.
 \*
 \* Code it models (crates/p2p/src):
-\*   iroh/endpoint_streams.rs  admit_stream               (tag, length, admit, body read until idle)
+\*   iroh/endpoint_streams.rs  admit_stream               (tag, length, admit, body read until idle and a total deadline)
+\*   iroh/inbound_budget.rs    body_deadline              (idle deadline plus length over the minimum rate)
 \*   iroh/inbound_budget.rs    InboundBudget::admit       (class budget + connection share)
 \*   sync/dispatch_queue.rs    dispatch_queue             (one queue per dispatch lane)
 \*   sync/event_dispatcher.rs  run_event_dispatcher       (holds the lease until handled)
@@ -34,6 +36,7 @@ CONSTANTS
   Lanes,            \* the dispatch lanes
   Healthy,          \* the stream we promise to handle
   Stalls,           \* streams whose sender stops halfway through the body
+  Trickles,         \* streams whose sender sends a byte now and then, below the minimum rate
   StuckClasses,     \* classes whose handlers never finish
   Budget,           \* [Classes -> Nat] bodies a class may hold at once
   Share,            \* bodies one connection may hold in one class at once
@@ -44,11 +47,11 @@ CONSTANTS
   LeaseMode,        \* "UntilHandled" | "UntilQueued"
   ReadMode,         \* "AdmitFirst" | "ReadFirst"
   DeadlineMode,     \* "Deadline" | "None"   (waiting for budget)
-  ReadDeadlineMode  \* "Deadline" | "None"   (reading the body)
+  ReadDeadlineMode  \* "Deadline" | "IdleOnly" | "None"   (reading the body)
 
 \* The healthy stream is a real stream, in a class whose handlers finish, and
 \* its sender does not stall.
-ASSUME Healthy \in Streams /\ ClassOf[Healthy] \notin StuckClasses /\ Healthy \notin Stalls
+ASSUME Healthy \in Streams /\ ClassOf[Healthy] \notin StuckClasses /\ Healthy \notin Stalls /\ Healthy \notin Trickles
 \* A connection may hold at least one body, and never more than the class.
 ASSUME \A c \in Classes : 1 <= Share /\ Share <= Budget[c]
 ASSUME BudgetMode \in {"PerClass", "Shared"}
@@ -57,7 +60,7 @@ ASSUME DrainMode \in {"PerLane", "Shared"}
 ASSUME LeaseMode \in {"UntilHandled", "UntilQueued"}
 ASSUME ReadMode \in {"AdmitFirst", "ReadFirst"}
 ASSUME DeadlineMode \in {"Deadline", "None"}
-ASSUME ReadDeadlineMode \in {"Deadline", "None"}
+ASSUME ReadDeadlineMode \in {"Deadline", "IdleOnly", "None"}
 
 VARIABLES
   state,  \* [Streams -> stage] where each stream is in its life
@@ -147,21 +150,25 @@ Timeout(s) ==
   /\ state' = [state EXCEPT ![s] = "reset"]
   /\ UNCHANGED queue
 
-\* The whole body arrived; hand it to its lane's queue. A stalling sender
-\* never gets here.
+\* The whole body arrived; hand it to its lane's queue. A stalling or
+\* trickling sender never gets here.
 BodyDone(s) ==
   /\ state[s] = "reading"
   /\ s \notin Stalls
+  /\ s \notin Trickles
   /\ state' = [state EXCEPT ![s] = "queued"]
   /\ queue' = [queue EXCEPT ![KeyOf(s)] = Append(@, s)]
 
-\* The read deadline fires on a body that stopped arriving (no byte for a
-\* while): reset the stream, which gives its budget back. A slow sender still
-\* makes progress, so only stalled senders miss it.
+\* A read deadline fires and resets the stream, which gives its budget back.
+\* The idle deadline fires on a body that stopped arriving (no byte for a
+\* while). The total deadline, derived from the declared length, also fires on
+\* a body that trickles in below the minimum rate. A sender that keeps above
+\* the minimum rate finishes in time, so only these two kinds miss it.
 ReadTimeout(s) ==
-  /\ ReadDeadlineMode = "Deadline"
+  /\ ReadDeadlineMode # "None"
   /\ state[s] = "reading"
-  /\ s \in Stalls
+  /\ \/ s \in Stalls
+     \/ (ReadDeadlineMode = "Deadline" /\ s \in Trickles)
   /\ state' = [state EXCEPT ![s] = "reset"]
   /\ UNCHANGED queue
 

@@ -14,6 +14,17 @@ const STOPPED: Duration = Duration::from_secs(5);
 /// of `len`, and return the code our node stopped that stream with, if it did
 /// within `wait`.
 async fn stop_code_for(tag: &[u8], len: u32, wait: Duration) -> Option<u32> {
+    stop_code_for_trickle(tag, len, wait, None).await
+}
+
+/// Like `stop_code_for`, but after the length the opener sends one body byte
+/// every `trickle`, never the whole body.
+async fn stop_code_for_trickle(
+    tag: &[u8],
+    len: u32,
+    wait: Duration,
+    trickle: Option<Duration>,
+) -> Option<u32> {
     let bare = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
         .alpns(vec![protocols::ALPN_MUX.to_vec()])
@@ -33,6 +44,14 @@ async fn stop_code_for(tag: &[u8], len: u32, wait: Duration) -> Option<u32> {
             let (mut send, _recv) = connection.open_bi().await.ok()?;
             protocols::write_stream_tag(&mut send, &tag).await.ok()?;
             send.write_all(&len.to_be_bytes()).await.ok()?;
+            if let Some(every) = trickle {
+                for _ in 1..len {
+                    tokio::time::sleep(every).await;
+                    if send.write_all(&[0]).await.is_err() {
+                        break;
+                    }
+                }
+            }
             let code = send.stopped().await.ok()??;
             Some(u32::try_from(code.into_inner()).expect("small stop code"))
         }
@@ -95,6 +114,23 @@ async fn a_body_that_never_arrives_is_stopped_and_frees_its_room() {
     let deadline = super::inbound_budget::BODY_IDLE_DEADLINE;
     assert_eq!(
         stop_code_for(protocols::STREAM_IDENTITY, 1, deadline + STOPPED).await,
+        Some(5)
+    );
+}
+
+#[tokio::test]
+async fn a_body_that_trickles_in_is_stopped_and_frees_its_room() {
+    let idle = super::inbound_budget::BODY_IDLE_DEADLINE;
+    let len = 1000;
+    assert!(Duration::from_secs(2) < idle);
+    assert_eq!(
+        stop_code_for_trickle(
+            protocols::STREAM_IDENTITY,
+            len,
+            super::inbound_budget::body_deadline(len as usize) + STOPPED,
+            Some(Duration::from_secs(2)),
+        )
+        .await,
         Some(5)
     );
 }

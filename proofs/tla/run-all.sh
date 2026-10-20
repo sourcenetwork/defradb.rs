@@ -227,6 +227,7 @@ RUNS=(
   "MC_InboundAdmission_Red_ReadFirst.cfg MC_InboundAdmission_Common.tla RED" # current main: body read before admission (INV_ResidentWithinBudget)
   "MC_InboundAdmission_Red_NoDeadline.cfg MC_InboundAdmission_Common.tla RED" # no deadline: a stream waits for budget forever (LIVE_WaitEnds)
   "MC_InboundAdmission_Red_NoReadDeadline.cfg MC_InboundAdmission_Common.tla RED" # no read deadline: a stalled body holds control forever (LIVE_HealthyHandled)
+  "MC_InboundAdmission_Red_IdleOnly.cfg MC_InboundAdmission_Common.tla RED" # idle deadline only: a trickling body holds control forever (LIVE_HealthyHandled)
   # ---- GovernanceContract.tla: what a merge validator may assume; GovernanceMerge.tla: the merge path checked to refine it ----
   "MC_GovernanceContract_Green.cfg            MC_GovernanceContract_Orphan.tla       GREEN" # re-drive + sweep: every settleable composite settles
   "MC_GovernanceContract_Green_Nameable.cfg   MC_GovernanceContract_Nameable.tla     GREEN" # nameable awaits: arrival re-drive alone settles them, no sweep

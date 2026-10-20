@@ -576,7 +576,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Inbound stream admission",
         name: "INV_ResidentWithinBudget / INV_ShareBound / LIVE_HealthyHandled / LIVE_WaitEnds",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/endpoint_streams.rs admit_stream; crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit; crates/p2p/src/sync/dispatch_queue.rs dispatch_queue; crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher",
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs admit_stream; crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, body_deadline; crates/p2p/src/sync/dispatch_queue.rs dispatch_queue; crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher",
         model_ref: "MC_InboundAdmission_Green.cfg",
         tiers: &[Boundary],
     },

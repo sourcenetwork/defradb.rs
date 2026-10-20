@@ -71,10 +71,16 @@ const fn service(tag: &'static [u8], priority: Priority, max_message: usize) -> 
     }
 }
 
+/// An identity request or reply is a peer ID or a token.
+const MAX_IDENTITY_MSG_SIZE: usize = 64 * 1024;
+
+/// A reverse-stream acknowledgement.
+const MAX_REPLY_MSG_SIZE: usize = 1024 * 1024;
+
 /// Every stream tag this node accepts.
 pub const SERVICES: &[Service] = &[
-    service(STREAM_IDENTITY, Priority::Control, MAX_MESSAGE_SIZE),
-    service(STREAM_TWOSTREAM_RESP, Priority::Control, MAX_MESSAGE_SIZE),
+    service(STREAM_IDENTITY, Priority::Control, MAX_IDENTITY_MSG_SIZE),
+    service(STREAM_TWOSTREAM_RESP, Priority::Control, MAX_REPLY_MSG_SIZE),
     service(STREAM_MANAGE_REQ, Priority::Control, MAX_MANAGE_MSG_SIZE),
     service(STREAM_MANAGE_RESP, Priority::Control, MAX_MANAGE_MSG_SIZE),
     service(

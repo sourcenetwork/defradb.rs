@@ -2,9 +2,9 @@
 EXTENDS InboundAdmission
 \* Shared values for the InboundAdmission configs.
 \* Connection a sends two bulk messages (a1, a4) and one control message (a2)
-\* whose body it stops sending halfway. Connections b and c send one bulk
-\* message each. Every bulk handler never returns. Connection h sends one
-\* control message: the one we promise to handle.
+\* whose body it trickles in below the minimum rate, one byte often enough that
+\* the idle timer never fires. Connections b and c send one bulk message each.
+\* Every bulk handler never returns. Connection h sends one control message: the one we promise to handle.
 \* Control holds one body, bulk two; a connection may hold one body per class.
 \* Bulk events are completions (CAR responses); control events are requests.
 mcStreams == {"a1", "a4", "b1", "c1", "a2", "h1"}
@@ -17,7 +17,8 @@ mcClassOf == [s \in mcStreams |-> IF s \in mcBulk THEN "bulk" ELSE "control"]
 mcLaneOf == [s \in mcStreams |-> IF s \in mcBulk THEN "completion" ELSE "admission"]
 mcClasses == {"control", "bulk"}
 mcLanes == {"admission", "completion"}
-mcStalls == {"a2"}
+mcStalls == {}
+mcTrickles == {"a2"}
 mcStuckClasses == {"bulk"}
 mcBudget == [c \in mcClasses |-> IF c = "control" THEN 1 ELSE 2]
 mcSlots == [l \in mcLanes |-> 1]

@@ -36,8 +36,21 @@ const fn permits_for(len: usize) -> usize {
 pub const ADMIT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// How long a body may go without a single byte arriving. A sender that
-/// stalls is reset so it cannot hold its room; a slow one is never cut off.
+/// stalls is reset so it cannot hold its room.
 pub const BODY_IDLE_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The slowest average rate, in bytes per second, at which a body may arrive.
+/// A sender that trickles bytes often enough to dodge the idle deadline still
+/// has to meet it, or it would hold its room for as long as it likes.
+const MIN_BODY_RATE: usize = 32 * 1024;
+
+/// The longest a `len`-byte body may take to arrive in full: the idle
+/// deadline plus the time it needs at the slowest accepted rate.
+pub fn body_deadline(len: usize) -> Duration {
+    let at_minimum_rate =
+        Duration::from_millis((len as u64).saturating_mul(1000) / MIN_BODY_RATE as u64);
+    BODY_IDLE_DEADLINE + at_minimum_rate
+}
 
 /// The node-wide inbound byte budgets.
 #[derive(Debug)]
@@ -177,6 +190,15 @@ mod tests {
                 String::from_utf8_lossy(service.tag)
             );
         }
+    }
+
+    #[test]
+    fn a_body_deadline_grows_with_the_declared_length() {
+        assert_eq!(body_deadline(0), BODY_IDLE_DEADLINE);
+        assert_eq!(
+            body_deadline(MIN_BODY_RATE * 30),
+            BODY_IDLE_DEADLINE + Duration::from_secs(30)
+        );
     }
 
     #[test]

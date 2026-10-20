@@ -16,7 +16,7 @@ use super::endpoint::{
 };
 use super::gossip_heal;
 use super::inbound_budget::{
-    ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE, BODY_IDLE_DEADLINE,
+    body_deadline, ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE, BODY_IDLE_DEADLINE,
 };
 use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
@@ -288,10 +288,16 @@ async fn admit_stream(
         let _ = recv.stop(RESET_BUSY.into());
         return None;
     };
-    let payload = protocols::read_body_until_idle(recv, len, BODY_IDLE_DEADLINE)
-        .await
-        .inspect_err(|e| debug!(peer_id = %peer_id, error = %e, "Unreadable message body"))
-        .ok()?;
+    // The idle deadline catches a sender that stops; the total deadline catches
+    // one that trickles bytes to keep its lease.
+    let payload = n0_future::time::timeout(
+        body_deadline(len),
+        protocols::read_body_until_idle(recv, len, BODY_IDLE_DEADLINE),
+    )
+    .await
+    .unwrap_or(Ok(None))
+    .inspect_err(|e| debug!(peer_id = %peer_id, error = %e, "Unreadable message body"))
+    .ok()?;
     let Some(payload) = payload else {
         debug!(peer_id = %peer_id, len, "Message body stopped arriving");
         let _ = recv.stop(RESET_STALLED.into());
