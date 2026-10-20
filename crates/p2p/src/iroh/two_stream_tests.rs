@@ -197,46 +197,6 @@ async fn two_stream_request_carries_cached_explicit_replay_capability() {
 }
 
 #[tokio::test]
-async fn two_stream_request_still_accepts_legacy_reverse_stream_reply() {
-    let sender = TestNode::spawn().await;
-    let mut receiver = TestNode::spawn().await;
-    connect(&sender.transport, &receiver.transport).await;
-
-    let request = signed_request(&sender.transport, "legacy-reply");
-    let message_id = request.message_id.clone();
-    let target = receiver.transport.local_peer_id().clone();
-    let sender_transport = sender.transport.clone();
-    let send_task = n0_future::task::spawn(async move {
-        sender_transport
-            .send_two_stream_request(&target, request)
-            .await
-    });
-
-    let (_, received, _) = next_two_stream_request(&mut receiver.events).await;
-    assert_eq!(received.message_id, message_id);
-    assert!(received.supports_same_stream_reply);
-    assert!(received.supports_retry_after);
-
-    let mut reply = PushLogReply::success(&message_id);
-    sign_with_transport(&receiver.transport, &mut reply).unwrap();
-    receiver
-        .transport
-        .send_two_stream_response(sender.transport.local_peer_id(), reply)
-        .await
-        .unwrap();
-
-    let received_reply = timeout(Duration::from_secs(1), send_task)
-        .await
-        .expect("legacy reverse-stream reply timed out")
-        .unwrap()
-        .unwrap();
-    assert_eq!(received_reply.message_id, message_id);
-
-    sender.shutdown().await;
-    receiver.shutdown().await;
-}
-
-#[tokio::test]
 async fn disconnected_two_stream_requests_release_send_slots_before_reply_timeout() {
     let sender = TestNode::spawn().await;
     let mut receiver = TestNode::spawn().await;

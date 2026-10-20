@@ -1,5 +1,6 @@
-//! A stream is refused before its body is read when its tag is unknown or its
-//! message is larger than its tag allows, and reset when its body stalls.
+//! A stream is refused before its body is read when its tag is unknown, it is
+//! a reply nobody asked that peer for, or its message is larger than its tag
+//! allows; and reset when its body stalls.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -14,7 +15,7 @@ const STOPPED: Duration = Duration::from_secs(5);
 /// of `len`, and return the code our node stopped that stream with, if it did
 /// within `wait`.
 async fn stop_code_for(tag: &[u8], len: u32, wait: Duration) -> Option<u32> {
-    stop_code_for_trickle(tag, len, wait, None).await
+    stop_code_for_trickle(tag, len, wait, None, false).await
 }
 
 /// Like `stop_code_for`, but after the length the opener sends one body byte
@@ -24,6 +25,7 @@ async fn stop_code_for_trickle(
     len: u32,
     wait: Duration,
     trickle: Option<Duration>,
+    after_se_query: bool,
 ) -> Option<u32> {
     let bare = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
@@ -41,6 +43,12 @@ async fn stop_code_for_trickle(
         let bare = bare.clone();
         async move {
             let connection = bare.accept().await?.await.ok()?;
+            // Our node's request stream opens only after it expects the reply.
+            let _request = if after_se_query {
+                Some(connection.accept_bi().await.ok()?)
+            } else {
+                None
+            };
             let (mut send, _recv) = connection.open_bi().await.ok()?;
             protocols::write_stream_tag(&mut send, &tag).await.ok()?;
             send.write_all(&len.to_be_bytes()).await.ok()?;
@@ -62,6 +70,14 @@ async fn stop_code_for_trickle(
         .dial(&bare_id, vec![PeerAddr::new(bare_addr.to_string())])
         .await
         .expect("dial bare peer");
+    if after_se_query {
+        let request = crate::message::QuerySEArtifactsRequest::new("collection", vec![]);
+        let transport = transport.clone();
+        let bare_id = bare_id.clone();
+        n0_future::task::spawn(async move {
+            let _ = transport.send_se_query_request(&bare_id, request).await;
+        });
+    }
     let code = n0_future::time::timeout(wait, opener)
         .await
         .ok()
@@ -90,22 +106,35 @@ async fn an_oversized_message_is_stopped_before_its_body_is_read() {
 }
 
 #[tokio::test]
-async fn a_car_response_may_be_larger_than_a_general_message() {
-    let over_car_limit = protocols::MAX_CAR_SIZE as u32 + 1;
+async fn a_reply_nobody_asked_for_is_stopped_before_its_length_is_read() {
     assert_eq!(
-        stop_code_for(protocols::STREAM_CAR_RESP, over_car_limit, STOPPED).await,
-        Some(3)
+        stop_code_for(protocols::STREAM_SE_QUERY_RESP, 1, STOPPED).await,
+        Some(6)
     );
-    // Within the CAR limit the node admits the stream and waits for its body.
-    let car_sized = protocols::MAX_MESSAGE_SIZE as u32 + 1;
+}
+
+#[tokio::test]
+async fn a_reply_to_our_request_is_admitted() {
+    // Admitted, the node waits for a body that never comes instead of stopping.
     assert_eq!(
-        stop_code_for(
-            protocols::STREAM_CAR_RESP,
-            car_sized,
-            Duration::from_secs(1)
+        stop_code_for_trickle(
+            protocols::STREAM_SE_QUERY_RESP,
+            1,
+            Duration::from_secs(1),
+            None,
+            true,
         )
         .await,
         None
+    );
+}
+
+#[tokio::test]
+async fn a_car_reply_on_a_stream_of_its_own_is_an_unknown_tag() {
+    // Every peer sends CAR blocks back on the request's stream.
+    assert_eq!(
+        stop_code_for(b"/defra-iroh/car/0.1/resp", u32::MAX, STOPPED).await,
+        Some(2)
     );
 }
 
@@ -129,6 +158,7 @@ async fn a_body_that_trickles_in_is_stopped_and_frees_its_room() {
             len,
             super::inbound_budget::body_deadline(len as usize) + STOPPED,
             Some(Duration::from_secs(2)),
+            false,
         )
         .await,
         Some(5)

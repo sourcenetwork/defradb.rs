@@ -409,13 +409,12 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_two_stream_response(&self, peer_id: &PeerId, reply: PushLogReply) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendTwoStreamResponse {
-            peer_id: peer_id.clone(),
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+    async fn send_two_stream_response(
+        &self,
+        _peer_id: &PeerId,
+        _reply: PushLogReply,
+    ) -> Result<()> {
+        Err(no_reply_stream("two-stream"))
     }
 
     async fn send_doc_sync_request(&self, peer_id: &PeerId, req: DocSyncRequest) -> Result<()> {
@@ -427,13 +426,8 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_doc_sync_response(&self, peer_id: &PeerId, reply: DocSyncReply) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendDocSyncResponse {
-            peer_id: peer_id.clone(),
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+    async fn send_doc_sync_response(&self, _peer_id: &PeerId, _reply: DocSyncReply) -> Result<()> {
+        Err(no_reply_stream("doc sync"))
     }
 
     async fn send_branchable_sync_request(
@@ -451,15 +445,10 @@ impl P2PTransport for IrohTransport {
 
     async fn send_branchable_sync_response(
         &self,
-        peer_id: &PeerId,
-        reply: BranchableSyncReply,
+        _peer_id: &PeerId,
+        _reply: BranchableSyncReply,
     ) -> Result<()> {
-        self.send_command(|r| IrohCommand::SendBranchableSyncResponse {
-            peer_id: peer_id.clone(),
-            reply_msg: reply,
-            reply: r,
-        })
-        .await
+        Err(no_reply_stream("branchable sync"))
     }
 
     async fn send_car_request(&self, peer_id: &PeerId, root_cid: Cid) -> Result<()> {
@@ -471,13 +460,8 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_car_response(&self, peer_id: &PeerId, car_data: Vec<u8>) -> Result<()> {
-        self.send_command(|reply| IrohCommand::SendCarResponse {
-            peer_id: peer_id.clone(),
-            car_data,
-            reply,
-        })
-        .await
+    async fn send_car_response(&self, _peer_id: &PeerId, _car_data: Vec<u8>) -> Result<()> {
+        Err(no_reply_stream("CAR"))
     }
 
     async fn send_doc_sync_response_token(
@@ -713,6 +697,14 @@ impl P2PTransport for IrohTransport {
 #[cfg(test)]
 #[path = "../../tests/iroh/transport_poll.rs"]
 mod poll_tests;
+
+/// Iroh writes every one of these replies on its request's stream, which
+/// every request carries; a reply without one has nowhere to go.
+fn no_reply_stream(kind: &str) -> crate::error::Error {
+    crate::error::Error::Transport(format!(
+        "an Iroh {kind} reply goes on its request's stream, and this one has none"
+    ))
+}
 
 #[cfg(test)]
 mod tests {

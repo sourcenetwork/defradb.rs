@@ -147,19 +147,9 @@ pub enum IrohCommand {
         request: PushLogRequest,
         reply: oneshot::Sender<crate::error::Result<PushLogReply>>,
     },
-    SendTwoStreamResponse {
-        peer_id: PeerId,
-        reply_msg: PushLogReply,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
     SendDocSyncRequest {
         peer_id: PeerId,
         request: DocSyncRequest,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
-    SendDocSyncResponse {
-        peer_id: PeerId,
-        reply_msg: DocSyncReply,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
     SendDocSyncResponseToken {
@@ -172,11 +162,6 @@ pub enum IrohCommand {
         request: BranchableSyncRequest,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
-    SendBranchableSyncResponse {
-        peer_id: PeerId,
-        reply_msg: BranchableSyncReply,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
     SendBranchableSyncResponseToken {
         send_stream: SendStream,
         reply_msg: BranchableSyncReply,
@@ -185,11 +170,6 @@ pub enum IrohCommand {
     SendCarRequest {
         peer_id: PeerId,
         root_cid: Cid,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
-    SendCarResponse {
-        peer_id: PeerId,
-        car_data: Vec<u8>,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
     SendSEArtifacts {

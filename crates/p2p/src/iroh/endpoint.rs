@@ -12,15 +12,13 @@ use std::sync::Arc;
 
 use iroh::Endpoint;
 use kovan_map::HopscotchMap;
-use kovan_queue::seg_queue::SegQueue;
 use n0_future::task::JoinHandle;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use defra_core::thread_bounds::MaybeSend;
 
 use crate::bitswap::ReplicatorRegistry;
-use crate::message::PushLogReply;
 use crate::tracked_task::TrackedAbort;
 use crate::transport::{PeerAddr, PeerId, TransportEvent};
 
@@ -39,6 +37,7 @@ use super::inbound_budget::InboundBudget;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 use super::records::{RecordsHandle, RECORDS_TOPIC};
+use super::solicited::Solicited;
 use super::task_registry::TaskRegistry;
 
 /// Events each dispatch class may queue before its senders wait.
@@ -64,6 +63,7 @@ pub(super) struct EndpointResources {
     pub(super) inbound_budget: Arc<InboundBudget>,
     pub(super) fetch_stats: Arc<FetchStats>,
     pub(super) records: RecordsHandle,
+    pub(super) solicited: Arc<Solicited>,
 }
 
 pub(super) type RawTopics = Arc<HopscotchMap<String, (), RandomState>>;
@@ -74,9 +74,6 @@ pub(super) struct ActiveSync {
 }
 
 pub(super) type SpawnedTasks = Arc<TaskRegistry>;
-/// A reply sender parked in a queue so the responder can take ownership of it.
-pub(super) type PushLogReplySlot = Arc<SegQueue<oneshot::Sender<PushLogReply>>>;
-pub(super) type PendingPushLogReplies = Arc<HopscotchMap<String, PushLogReplySlot, RandomState>>;
 
 pub(super) fn spawn_task(
     spawned_tasks: &SpawnedTasks,
@@ -180,8 +177,6 @@ async fn run_event_loop(
 ) {
     let shutdown_started = web_time::Instant::now();
     let peer_map = Arc::new(SharedPeerMap::new());
-    let pending_pushlog_replies: PendingPushLogReplies =
-        Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let gossip = GossipHandle::new();
     let records = RecordsHandle::new();
     let connection_cache = new_connection_cache(gossip.clone());
@@ -201,10 +196,11 @@ async fn run_event_loop(
         inbound_budget: Arc::default(),
         fetch_stats: Arc::default(),
         records: records.clone(),
+        solicited: Arc::new(Solicited::new()),
     };
     gossip.start(
         endpoint.id(),
-        GossipDialer::new(&resources, &pending_pushlog_replies, &event_tx),
+        GossipDialer::new(&resources, &event_tx),
         event_tx.clone(),
         Arc::clone(&raw_topics),
         records.clone(),
@@ -246,7 +242,6 @@ async fn run_event_loop(
                     let should_shutdown = handle_command(
                         cmd,
                         &resources,
-                        &pending_pushlog_replies,
                         &raw_topics,
                         &replicators,
                         &mut active_syncs,
@@ -268,16 +263,9 @@ async fn run_event_loop(
                 match incoming {
                     Some(incoming) => {
                         let resources = resources.clone();
-                        let pending_pushlog_replies = Arc::clone(&pending_pushlog_replies);
                         let event_tx = event_tx.clone();
                         let _ = spawn_task(&spawned_tasks, async move {
-                            handle_incoming(
-                                incoming,
-                                &resources,
-                                &pending_pushlog_replies,
-                                &event_tx,
-                            )
-                            .await;
+                            handle_incoming(incoming, &resources, &event_tx).await;
                         });
                     }
                     None => break,

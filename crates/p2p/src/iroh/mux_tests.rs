@@ -15,8 +15,8 @@ use n0_future::task::JoinHandle;
 use super::protocols;
 use super::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
 use crate::message::{
-    BranchableSyncReply, DocSyncReply, ManageMutateOp, ManageQueryOp, ManageQueryRequest,
-    ManageRequest, PushSEArtifactsRequest,
+    ManageMutateOp, ManageQueryOp, ManageQueryRequest, ManageReply, ManageRequest,
+    PushSEArtifactsRequest, QuerySEArtifactsReply, QuerySEArtifactsRequest,
 };
 use crate::transport::{P2PTransport, PeerAddr, PeerId};
 
@@ -144,20 +144,20 @@ pub(super) async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
 /// on a different stream tag.
 async fn drive_six_protocols(transport: &IrohTransport, peer: &PeerId) {
     transport
-        .send_doc_sync_response(peer, DocSyncReply::success("doc-sync", Vec::new()))
-        .await
-        .expect("doc sync response");
-    transport
-        .send_branchable_sync_response(
+        .send_se_query_request(
             peer,
-            BranchableSyncReply::success("branchable", "collection1", Vec::new()),
+            QuerySEArtifactsRequest::new("collection1", Vec::new()),
         )
         .await
-        .expect("branchable sync response");
+        .expect("se query request");
     transport
-        .send_car_response(peer, vec![1, 2, 3])
+        .send_se_query_response(peer, QuerySEArtifactsReply::success("se-query", Vec::new()))
         .await
-        .expect("car response");
+        .expect("se query response");
+    transport
+        .send_manage_response(peer, ManageReply::success("manage"))
+        .await
+        .expect("manage response");
     transport
         .send_se_artifacts(peer, PushSEArtifactsRequest::new("collection1", Vec::new()))
         .await
@@ -230,9 +230,12 @@ async fn repeated_sends_do_not_redial() {
 
     for _ in 0..5 {
         transport
-            .send_car_response(&peer.peer_id, vec![7])
+            .send_se_artifacts(
+                &peer.peer_id,
+                PushSEArtifactsRequest::new("collection1", Vec::new()),
+            )
             .await
-            .expect("car response");
+            .expect("se artifacts");
     }
 
     let observed = peer.observed();
@@ -260,9 +263,12 @@ async fn a_failed_stream_does_not_tear_down_the_connection() {
         .expect("dial bare peer");
 
     transport
-        .send_car_response(&peer.peer_id, vec![1])
+        .send_se_artifacts(
+            &peer.peer_id,
+            PushSEArtifactsRequest::new("collection1", Vec::new()),
+        )
         .await
-        .expect("car response before");
+        .expect("se artifacts before");
 
     // A CAR *request* expects bytes back; the bare peer never sends any, so this
     // stream fails on read. The connection itself stays healthy.
@@ -273,9 +279,12 @@ async fn a_failed_stream_does_not_tear_down_the_connection() {
     .await;
 
     transport
-        .send_car_response(&peer.peer_id, vec![2])
+        .send_se_artifacts(
+            &peer.peer_id,
+            PushSEArtifactsRequest::new("collection1", Vec::new()),
+        )
         .await
-        .expect("car response after");
+        .expect("se artifacts after");
 
     let observed = peer.observed();
     assert_eq!(

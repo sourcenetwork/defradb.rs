@@ -1,11 +1,10 @@
 //! What each mux stream tag carries, and the limits its message is read under.
 
 use super::protocols::{
-    MAX_CAR_SIZE, MAX_MANAGE_MSG_SIZE, MAX_MESSAGE_SIZE, MAX_RECORDS_MSG_SIZE, STREAM_BRANCHABLE,
-    STREAM_BRANCHABLE_RESP, STREAM_CAR, STREAM_CAR_RESP, STREAM_DOCSYNC, STREAM_DOCSYNC_RESP,
-    STREAM_IDENTITY, STREAM_MANAGE_QUERY_REQ, STREAM_MANAGE_QUERY_RESP, STREAM_MANAGE_REQ,
-    STREAM_MANAGE_RESP, STREAM_PUSHLOG, STREAM_SE, STREAM_SERVICE_RECORDS, STREAM_SE_QUERY_REQ,
-    STREAM_SE_QUERY_RESP, STREAM_TWOSTREAM, STREAM_TWOSTREAM_RESP,
+    MAX_MANAGE_MSG_SIZE, MAX_MESSAGE_SIZE, MAX_RECORDS_MSG_SIZE, STREAM_BRANCHABLE, STREAM_CAR,
+    STREAM_DOCSYNC, STREAM_IDENTITY, STREAM_MANAGE_QUERY_REQ, STREAM_MANAGE_QUERY_RESP,
+    STREAM_MANAGE_REQ, STREAM_MANAGE_RESP, STREAM_PUSHLOG, STREAM_SE, STREAM_SERVICE_RECORDS,
+    STREAM_SE_QUERY_REQ, STREAM_SE_QUERY_RESP, STREAM_TWOSTREAM,
 };
 
 /// How urgent a service's traffic is, highest first. Each priority has its own
@@ -61,6 +60,9 @@ pub struct Service {
     pub priority: Priority,
     /// The largest message body accepted on this tag.
     pub max_message: usize,
+    /// A reply to a request we sent, admitted only while one is expected
+    /// from the peer (`super::solicited`).
+    pub solicited: bool,
 }
 
 const fn service(tag: &'static [u8], priority: Priority, max_message: usize) -> Service {
@@ -68,27 +70,32 @@ const fn service(tag: &'static [u8], priority: Priority, max_message: usize) -> 
         tag,
         priority,
         max_message,
+        solicited: false,
+    }
+}
+
+const fn reply(tag: &'static [u8], priority: Priority, max_message: usize) -> Service {
+    Service {
+        solicited: true,
+        ..service(tag, priority, max_message)
     }
 }
 
 /// An identity request or reply is a peer ID or a token.
 const MAX_IDENTITY_MSG_SIZE: usize = 64 * 1024;
 
-/// A reverse-stream acknowledgement.
-const MAX_REPLY_MSG_SIZE: usize = 1024 * 1024;
-
-/// Every stream tag this node accepts.
+/// Every stream tag this node accepts. Every other reply comes back on its
+/// request's own stream, which every peer speaking the mux does.
 pub const SERVICES: &[Service] = &[
     service(STREAM_IDENTITY, Priority::Control, MAX_IDENTITY_MSG_SIZE),
-    service(STREAM_TWOSTREAM_RESP, Priority::Control, MAX_REPLY_MSG_SIZE),
     service(STREAM_MANAGE_REQ, Priority::Control, MAX_MANAGE_MSG_SIZE),
-    service(STREAM_MANAGE_RESP, Priority::Control, MAX_MANAGE_MSG_SIZE),
+    reply(STREAM_MANAGE_RESP, Priority::Control, MAX_MANAGE_MSG_SIZE),
     service(
         STREAM_MANAGE_QUERY_REQ,
         Priority::Control,
         MAX_MANAGE_MSG_SIZE,
     ),
-    service(
+    reply(
         STREAM_MANAGE_QUERY_RESP,
         Priority::Control,
         MAX_MANAGE_MSG_SIZE,
@@ -98,14 +105,11 @@ pub const SERVICES: &[Service] = &[
     service(STREAM_SE, Priority::Replication, MAX_MESSAGE_SIZE),
     service(STREAM_SERVICE_RECORDS, Priority::Sync, MAX_RECORDS_MSG_SIZE),
     service(STREAM_DOCSYNC, Priority::Sync, MAX_MESSAGE_SIZE),
-    service(STREAM_DOCSYNC_RESP, Priority::Sync, MAX_MESSAGE_SIZE),
     service(STREAM_BRANCHABLE, Priority::Sync, MAX_MESSAGE_SIZE),
-    service(STREAM_BRANCHABLE_RESP, Priority::Sync, MAX_MESSAGE_SIZE),
     service(STREAM_SE_QUERY_REQ, Priority::Sync, MAX_MESSAGE_SIZE),
-    service(STREAM_SE_QUERY_RESP, Priority::Sync, MAX_MESSAGE_SIZE),
+    reply(STREAM_SE_QUERY_RESP, Priority::Sync, MAX_MESSAGE_SIZE),
     // A CAR request is small, but its reply on the same stream is a block transfer.
     service(STREAM_CAR, Priority::Bulk, MAX_MESSAGE_SIZE),
-    service(STREAM_CAR_RESP, Priority::Bulk, MAX_CAR_SIZE),
 ];
 
 /// The service a stream tag names, if this node offers it.

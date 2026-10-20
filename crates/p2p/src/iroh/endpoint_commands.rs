@@ -4,8 +4,6 @@ use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use kovan_queue::seg_queue::SegQueue;
-use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::bitswap::ReplicatorRegistry;
@@ -15,12 +13,10 @@ use crate::QueryId;
 
 use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
-use super::endpoint::{
-    peer_direct_addr, spawn_task, ActiveSync, EndpointResources, PendingPushLogReplies, RawTopics,
-};
+use super::endpoint::{peer_direct_addr, spawn_task, ActiveSync, EndpointResources, RawTopics};
 use super::endpoint_rpc::{
     close_peer_connections, connect_mux, handle_block_sync, handle_car_request_response,
-    handle_fire_and_forget, handle_request_response, handle_send_only, handle_two_stream_request,
+    handle_fire_and_forget, handle_request_response, handle_two_stream_request,
     remember_connection, BlockSyncResources,
 };
 use super::endpoint_streams::ConnectionStreamContext;
@@ -36,7 +32,6 @@ use super::records::Input as RecordsInput;
 pub(super) async fn handle_command(
     cmd: IrohCommand,
     resources: &EndpointResources,
-    pending_pushlog_replies: &PendingPushLogReplies,
     raw_topics: &RawTopics,
     replicators: &Arc<ReplicatorRegistry>,
     active_syncs: &mut RapidHashMap<u64, ActiveSync>,
@@ -66,7 +61,6 @@ pub(super) async fn handle_command(
             // still get their result.
             let ctx = DialContext {
                 resources: resources.clone(),
-                pending_pushlog_replies: Arc::clone(pending_pushlog_replies),
                 event_tx: event_tx.clone(),
             };
             let _ = spawn_task(spawned_tasks, async move {
@@ -233,55 +227,13 @@ pub(super) async fn handle_command(
         } => {
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
-            let pending_pushlog_replies = pending_pushlog_replies.clone();
-            let connection_cache = Arc::clone(connection_cache);
-            let admission = Arc::clone(&resources.admission);
-            let message_id = request.message_id.clone();
-            let _ = spawn_task(spawned_tasks, async move {
-                let request_peer_id = peer_id.clone();
-                let request_message_id = message_id.clone();
-                let result = async move {
-                    let (reply_tx, reply_rx) = oneshot::channel();
-                    let slot = SegQueue::new();
-                    slot.push(reply_tx);
-                    pending_pushlog_replies.insert(request_message_id.clone(), Arc::new(slot));
-
-                    let result = handle_two_stream_request(
-                        &endpoint,
-                        &request_peer_id,
-                        &request,
-                        direct_addr,
-                        &connection_cache,
-                        reply_rx,
-                        &admission,
-                    )
-                    .await;
-                    if let Some(slot) = pending_pushlog_replies.remove(&request_message_id) {
-                        drop(slot.pop());
-                    }
-                    result
-                }
-                .await;
-                let _ = reply.send(result);
-            });
-        }
-        IrohCommand::SendTwoStreamResponse {
-            peer_id,
-            reply_msg,
-            reply,
-        } => {
-            // The reply path for a request that did not advertise same-stream
-            // reply support.
-            let direct_addr = peer_direct_addr(peer_map, &peer_id);
-            let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
             let admission = Arc::clone(&resources.admission);
             let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_send_only(
+                let result = handle_two_stream_request(
                     &endpoint,
                     &peer_id,
-                    protocols::STREAM_TWOSTREAM_RESP,
-                    &reply_msg,
+                    &request,
                     direct_addr,
                     &connection_cache,
                     &admission,
@@ -366,52 +318,6 @@ pub(super) async fn handle_command(
                 }
             });
         }
-        IrohCommand::SendDocSyncResponse {
-            peer_id,
-            reply_msg,
-            reply,
-        } => {
-            let direct_addr = peer_direct_addr(peer_map, &peer_id);
-            let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
-            let admission = Arc::clone(&resources.admission);
-            let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_fire_and_forget(
-                    &endpoint,
-                    &peer_id,
-                    protocols::STREAM_DOCSYNC_RESP,
-                    &reply_msg,
-                    direct_addr,
-                    &connection_cache,
-                    &admission,
-                )
-                .await;
-                let _ = reply.send(result);
-            });
-        }
-        IrohCommand::SendBranchableSyncResponse {
-            peer_id,
-            reply_msg,
-            reply,
-        } => {
-            let direct_addr = peer_direct_addr(peer_map, &peer_id);
-            let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
-            let admission = Arc::clone(&resources.admission);
-            let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_fire_and_forget(
-                    &endpoint,
-                    &peer_id,
-                    protocols::STREAM_BRANCHABLE_RESP,
-                    &reply_msg,
-                    direct_addr,
-                    &connection_cache,
-                    &admission,
-                )
-                .await;
-                let _ = reply.send(result);
-            });
-        }
         IrohCommand::SendDocSyncResponseToken {
             mut send_stream,
             reply_msg,
@@ -472,29 +378,6 @@ pub(super) async fn handle_command(
                 let _ = reply.send(result);
             });
         }
-        IrohCommand::SendCarResponse {
-            peer_id,
-            car_data,
-            reply,
-        } => {
-            let direct_addr = peer_direct_addr(peer_map, &peer_id);
-            let endpoint = endpoint.clone();
-            let connection_cache = Arc::clone(connection_cache);
-            let admission = Arc::clone(&resources.admission);
-            let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_fire_and_forget(
-                    &endpoint,
-                    &peer_id,
-                    protocols::STREAM_CAR_RESP,
-                    &car_data,
-                    direct_addr,
-                    &connection_cache,
-                    &admission,
-                )
-                .await;
-                let _ = reply.send(result);
-            });
-        }
         IrohCommand::SendSEArtifacts {
             peer_id,
             request,
@@ -523,6 +406,7 @@ pub(super) async fn handle_command(
             request,
             reply,
         } => {
+            expect_reply(resources, &peer_id, protocols::STREAM_SE_QUERY_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
@@ -569,6 +453,7 @@ pub(super) async fn handle_command(
             request,
             reply,
         } => {
+            expect_reply(resources, &peer_id, protocols::STREAM_MANAGE_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
@@ -615,6 +500,7 @@ pub(super) async fn handle_command(
             request,
             reply,
         } => {
+            expect_reply(resources, &peer_id, protocols::STREAM_MANAGE_QUERY_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
@@ -736,7 +622,6 @@ pub(super) async fn handle_command(
 #[derive(Clone)]
 struct DialContext {
     resources: EndpointResources,
-    pending_pushlog_replies: PendingPushLogReplies,
     event_tx: EventSender,
 }
 
@@ -745,14 +630,9 @@ struct DialContext {
 pub(super) struct GossipDialer(DialContext);
 
 impl GossipDialer {
-    pub(super) fn new(
-        resources: &EndpointResources,
-        pending_pushlog_replies: &PendingPushLogReplies,
-        event_tx: &EventSender,
-    ) -> Self {
+    pub(super) fn new(resources: &EndpointResources, event_tx: &EventSender) -> Self {
         Self(DialContext {
             resources: resources.clone(),
-            pending_pushlog_replies: Arc::clone(pending_pushlog_replies),
             event_tx: event_tx.clone(),
         })
     }
@@ -873,11 +753,7 @@ async fn handle_dial(
     // leave the count stuck above zero, which is worse than the race it was
     // meant to close: the revoked peer would sit in `connected_peers` forever,
     // looking connected when it holds nothing.
-    let stream_context = ConnectionStreamContext::new(
-        &ctx.resources,
-        Arc::clone(&ctx.pending_pushlog_replies),
-        ctx.event_tx.clone(),
-    );
+    let stream_context = ConnectionStreamContext::new(&ctx.resources, ctx.event_tx.clone());
     let _ = spawn_task(&ctx.resources.spawned_tasks, async move {
         super::endpoint_streams::handle_connection_streams(connection, endpoint_id, stream_context)
             .await;
@@ -951,5 +827,13 @@ async fn held_collection(
                 held,
             })
             .await;
+    }
+}
+
+/// Expects `peer_id`'s reply on `reply_tag`, before the request goes out so
+/// a fast reply finds it. An unparseable id fails the send itself.
+fn expect_reply(resources: &EndpointResources, peer_id: &PeerId, reply_tag: &'static [u8]) {
+    if let Ok(peer) = parse_endpoint_id(peer_id) {
+        resources.solicited.expect(peer, reply_tag);
     }
 }

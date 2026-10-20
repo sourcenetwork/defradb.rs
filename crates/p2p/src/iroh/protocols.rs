@@ -21,20 +21,11 @@ pub const STREAM_PUSHLOG: &[u8] = b"/defra-iroh/pushlog/0.1";
 /// Stream tag for document sync request.
 pub const STREAM_DOCSYNC: &[u8] = b"/defra-iroh/docsync/0.1";
 
-/// Stream tag for document sync response (separate from request to avoid ambiguous decoding).
-pub const STREAM_DOCSYNC_RESP: &[u8] = b"/defra-iroh/docsync/0.1/resp";
-
 /// Stream tag for branchable sync request.
 pub const STREAM_BRANCHABLE: &[u8] = b"/defra-iroh/branchable/0.1";
 
-/// Stream tag for branchable sync response.
-pub const STREAM_BRANCHABLE_RESP: &[u8] = b"/defra-iroh/branchable/0.1/resp";
-
 /// Stream tag for CAR block transfer request.
 pub const STREAM_CAR: &[u8] = b"/defra-iroh/car/0.1";
-
-/// Stream tag for CAR block transfer response.
-pub const STREAM_CAR_RESP: &[u8] = b"/defra-iroh/car/0.1/resp";
 
 /// Stream tag for audience-bound Defra peer identity resolution.
 pub const STREAM_IDENTITY: &[u8] = b"/defra-iroh/identity/0.1";
@@ -65,9 +56,6 @@ pub const STREAM_SERVICE_RECORDS: &[u8] = b"/defra-iroh/services/0.1";
 
 /// Stream tag for the two-stream push protocol.
 pub const STREAM_TWOSTREAM: &[u8] = b"/defra-iroh/twostream/0.1";
-
-/// Stream tag for two-stream push replies.
-pub const STREAM_TWOSTREAM_RESP: &[u8] = b"/defra-iroh/twostream/0.1/resp";
 
 /// Upper bound on a stream tag, enforced on read so a peer cannot make us
 /// allocate on a length it never intends to fill.

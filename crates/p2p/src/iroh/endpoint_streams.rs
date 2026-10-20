@@ -7,11 +7,11 @@ use iroh::EndpointId;
 use tracing::{debug, warn};
 
 use crate::error::Error;
-use crate::message::{Message, PushLogReply};
+use crate::message::Message;
 use crate::sync::DispatchSender;
 use crate::transport::{PeerId, TransportEvent};
 
-use super::endpoint::{spawn_task, EndpointResources, PendingPushLogReplies, SpawnedTasks};
+use super::endpoint::{spawn_task, EndpointResources, SpawnedTasks};
 use super::inbound_budget::{
     body_deadline, ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE, BODY_IDLE_DEADLINE,
 };
@@ -19,6 +19,7 @@ use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
 use super::records::{Input as RecordsInput, RecordsHandle, RecordsMessage};
 use super::services::{self, Service};
+use super::solicited::Solicited;
 
 /// QUIC application error code closing a connection refused by the inbound
 /// allowlist. Distinct from the disconnect code (0) used elsewhere.
@@ -30,12 +31,12 @@ const RESET_UNKNOWN_SERVICE: u32 = 2;
 const RESET_MESSAGE_TOO_LARGE: u32 = 3;
 const RESET_BUSY: u32 = 4;
 const RESET_STALLED: u32 = 5;
+const RESET_UNSOLICITED: u32 = 6;
 
 /// Handle an incoming QUIC connection.
 pub(super) async fn handle_incoming(
     incoming: iroh::endpoint::Incoming,
     resources: &EndpointResources,
-    pending_pushlog_replies: &PendingPushLogReplies,
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
 ) {
     let remote_addr = match incoming.remote_addr() {
@@ -122,11 +123,7 @@ pub(super) async fn handle_incoming(
     }
 
     // Spawn handler for this connection's streams
-    let context = ConnectionStreamContext::new(
-        resources,
-        Arc::clone(pending_pushlog_replies),
-        event_tx.clone(),
-    );
+    let context = ConnectionStreamContext::new(resources, event_tx.clone());
     let _ = spawn_task(&resources.spawned_tasks, async move {
         handle_connection_streams(connection, remote_id, context).await;
     });
@@ -137,29 +134,28 @@ pub(super) async fn handle_incoming(
 pub(super) struct ConnectionStreamContext {
     event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     peer_map: Arc<SharedPeerMap>,
-    pending_pushlog_replies: PendingPushLogReplies,
     node_identity: Option<Arc<identity::RawIdentity>>,
     spawned_tasks: SpawnedTasks,
     inbound_budget: Arc<InboundBudget>,
     share: Arc<ConnectionShare>,
     records: RecordsHandle,
+    solicited: Arc<Solicited>,
 }
 
 impl ConnectionStreamContext {
     pub(super) fn new(
         resources: &EndpointResources,
-        pending_pushlog_replies: PendingPushLogReplies,
         event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     ) -> Self {
         Self {
             event_tx,
             peer_map: Arc::clone(&resources.peer_map),
-            pending_pushlog_replies,
             node_identity: resources.node_identity.clone(),
             spawned_tasks: Arc::clone(&resources.spawned_tasks),
             inbound_budget: Arc::clone(&resources.inbound_budget),
             share: Arc::new(resources.inbound_budget.connection_share()),
             records: resources.records.clone(),
+            solicited: Arc::clone(&resources.solicited),
         }
     }
 }
@@ -180,14 +176,21 @@ pub(super) async fn handle_connection_streams(
     while let Ok((send, mut recv)) = connection.accept_bi().await {
         let peer_id = peer_id.clone();
         let event_tx = context.event_tx.clone();
-        let pending_pushlog_replies = context.pending_pushlog_replies.clone();
         let node_identity = context.node_identity.clone();
         let inbound_budget = Arc::clone(&context.inbound_budget);
         let share = Arc::clone(&context.share);
         let records = context.records.clone();
+        let solicited = Arc::clone(&context.solicited);
         let _ = spawn_task(&context.spawned_tasks, async move {
-            let Some((service, payload, lease)) =
-                admit_stream(&mut recv, &inbound_budget, &share, &peer_id).await
+            let Some((service, payload, lease)) = admit_stream(
+                &mut recv,
+                &inbound_budget,
+                &share,
+                &solicited,
+                remote_id,
+                &peer_id,
+            )
+            .await
             else {
                 return;
             };
@@ -211,7 +214,6 @@ pub(super) async fn handle_connection_streams(
                 payload,
                 lease,
                 &event_tx,
-                &pending_pushlog_replies,
                 node_identity.as_deref(),
             )
             .await
@@ -236,12 +238,15 @@ pub(super) async fn handle_connection_streams(
 }
 
 /// Read a stream's tag and length, then wait for room for its body. Resets
-/// the stream instead when the tag is unknown, the message is too large for
-/// its tag, or no room frees up before the deadline.
+/// the stream instead when the tag is unknown, is a reply nobody asked this
+/// peer for, the message is too large for its tag, or no room frees up
+/// before the deadline.
 async fn admit_stream(
     recv: &mut iroh::endpoint::RecvStream,
     budget: &InboundBudget,
     share: &ConnectionShare,
+    solicited: &Solicited,
+    remote_id: EndpointId,
     peer_id: &PeerId,
 ) -> Option<(&'static Service, Vec<u8>, InboundLease)> {
     let tag = protocols::read_stream_tag(recv)
@@ -253,6 +258,11 @@ async fn admit_stream(
         let _ = recv.stop(RESET_UNKNOWN_SERVICE.into());
         return None;
     };
+    if service.solicited && !solicited.take(remote_id, service.tag) {
+        debug!(peer_id = %peer_id, tag = %String::from_utf8_lossy(service.tag), "Reply stream with no request outstanding");
+        let _ = recv.stop(RESET_UNSOLICITED.into());
+        return None;
+    }
     let len = protocols::read_length(recv)
         .await
         .inspect_err(|e| debug!(peer_id = %peer_id, error = %e, "Unreadable message length"))
@@ -299,7 +309,6 @@ async fn dispatch_stream(
     payload: Vec<u8>,
     lease: InboundLease,
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
-    pending_pushlog_replies: &PendingPushLogReplies,
     node_identity: Option<&identity::RawIdentity>,
 ) -> crate::error::Result<()> {
     match tag {
@@ -369,25 +378,6 @@ async fn dispatch_stream(
                 warn!("Event channel closed, cannot emit TwoStreamRequest");
             }
         }
-        x if x == protocols::STREAM_TWOSTREAM_RESP => {
-            // The reverse-stream ACK, for a request that did not advertise
-            // same-stream reply support.
-            let reply: PushLogReply = protocols::decode(payload)?;
-            let sender = pending_pushlog_replies
-                .remove(&reply.message_id)
-                .and_then(|slot| slot.pop());
-            let pending_len_after_remove = pending_pushlog_replies.len();
-            if let Some(sender) = sender {
-                let _ = sender.send(reply);
-            } else {
-                warn!(
-                    peer_id = %peer_id,
-                    message_id = %reply.message_id,
-                    pending_reply_count = pending_len_after_remove,
-                    "Received unmatched two-stream reply on response protocol"
-                );
-            }
-        }
         x if x == protocols::STREAM_DOCSYNC => {
             let request: crate::message::DocSyncRequest = protocols::decode(payload)?;
             if event_tx
@@ -445,68 +435,6 @@ async fn dispatch_stream(
                 .is_err()
             {
                 warn!("Event channel closed, cannot emit CarFetchRequest");
-            }
-        }
-        x if x == protocols::STREAM_CAR_RESP => {
-            let car_data: Vec<u8> = protocols::decode(payload)?;
-            // Extract the root CID from the CAR headers for event correlation.
-            let root_cid = match crate::sync::car::decode_car(&car_data) {
-                Ok((roots, _)) => roots.into_iter().next(),
-                Err(e) => {
-                    warn!("Failed to decode CAR response: {}", e);
-                    None
-                }
-            };
-            if let Some(root_cid) = root_cid {
-                if event_tx
-                    .send_leased(
-                        TransportEvent::CarFetchResponse {
-                            query_id: None,
-                            peer_id: peer_id.clone(),
-                            root_cid,
-                            car_data,
-                        },
-                        Box::new(lease),
-                    )
-                    .await
-                    .is_err()
-                {
-                    warn!("Event channel closed, cannot emit CarFetchResponse");
-                }
-            }
-        }
-        x if x == protocols::STREAM_DOCSYNC_RESP => {
-            let reply: crate::message::DocSyncReply = protocols::decode(payload)?;
-            debug!(peer_id = %peer_id, "Received doc sync response via fire-and-forget");
-            if event_tx
-                .send_leased(
-                    TransportEvent::DocSyncReply {
-                        peer_id: peer_id.clone(),
-                        reply,
-                    },
-                    Box::new(lease),
-                )
-                .await
-                .is_err()
-            {
-                warn!("Event channel closed, cannot emit DocSyncReply");
-            }
-        }
-        x if x == protocols::STREAM_BRANCHABLE_RESP => {
-            let reply: crate::message::BranchableSyncReply = protocols::decode(payload)?;
-            debug!(peer_id = %peer_id, "Received branchable sync response via fire-and-forget");
-            if event_tx
-                .send_leased(
-                    TransportEvent::BranchableSyncReply {
-                        peer_id: peer_id.clone(),
-                        reply,
-                    },
-                    Box::new(lease),
-                )
-                .await
-                .is_err()
-            {
-                warn!("Event channel closed, cannot emit BranchableSyncReply");
             }
         }
         x if x == protocols::STREAM_SE => {

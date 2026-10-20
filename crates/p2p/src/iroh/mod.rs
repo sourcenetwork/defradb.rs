@@ -37,6 +37,7 @@ mod relay_server;
 mod relay_server_tests;
 mod secret_key;
 mod services;
+mod solicited;
 mod task_registry;
 mod transport;
 #[cfg(test)]
