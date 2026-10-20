@@ -64,13 +64,11 @@ pub(crate) struct P2PSetup {
 }
 
 #[cfg(feature = "libp2p")]
-async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: edge::Task<()>) {
+async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: edge::Service) {
     if let Err(error) = handle.shutdown().await {
         tracing::debug!(%error, "failed to signal P2P host during setup rollback");
     }
-    if let Err(error) = host_task.await {
-        tracing::debug!(%error, "P2P host task failed during setup rollback");
-    }
+    host_task.stopped().await;
 }
 
 /// Builds the libp2p host and every task around it on `edge`: the p2p crate

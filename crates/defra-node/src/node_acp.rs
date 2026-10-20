@@ -13,7 +13,15 @@ pub(crate) struct DocumentAcpSetup {
     pub local_zanzibar_store: Option<Arc<dyn acp::ZanzibarStore>>,
     #[cfg(feature = "vera")]
     pub vera_acp: Option<Arc<vera::VeraDocumentACP>>,
+    /// Starts settling the registrations a previous run left owed, on the
+    /// pool given; the node stops it with its other background tasks.
+    #[cfg(feature = "vera")]
+    pub redrive: Option<StartRedrive>,
 }
+
+#[cfg(feature = "vera")]
+pub(crate) type StartRedrive =
+    Box<dyn FnOnce(Option<&workers::Pool>) -> workers::Background + Send>;
 
 pub(crate) async fn create_document_acp<S>(
     store: Arc<S>,
@@ -39,10 +47,12 @@ where
                 .map_err(Error::VeraProvider)?,
             );
             let sh_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
+            let (document_acp, redrive) = gate_external_acp(sh_acp.clone(), store);
             Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(sh_acp.clone(), store, network)?,
+                document_acp,
                 local_zanzibar_store: None,
                 vera_acp: Some(sh_acp),
+                redrive: Some(redrive),
             })
         }
         #[cfg(feature = "vera")]
@@ -63,10 +73,12 @@ where
                 .map_err(Error::VeraProvider)?,
             );
             let vera_acp = Arc::new(vera::VeraDocumentACP::tuned(provider, &tuning, network));
+            let (document_acp, redrive) = gate_external_acp(vera_acp.clone(), store);
             Ok(DocumentAcpSetup {
-                document_acp: gate_external_acp(vera_acp.clone(), store, network)?,
+                document_acp,
                 local_zanzibar_store: None,
                 vera_acp: Some(vera_acp),
+                redrive: Some(redrive),
             })
         }
         crate::DocumentAcpConfig::Local => {
@@ -81,38 +93,35 @@ where
 /// Gate a Vera provider with the registrations creates still owe it, and
 /// settle in the background any a previous run left owed (a crash, or a
 /// provider call that failed). Until settled, such a document is readable only
-/// by its creator.
+/// by its creator. The redrive's storage runs on the pool it is started on;
+/// the provider sends its own calls to the network edge.
 #[cfg(feature = "vera")]
 fn gate_external_acp<S>(
     provider: Arc<dyn acp::DocumentACP>,
     store: Arc<S>,
-    network: Option<&edge::Edge>,
-) -> Result<Arc<dyn acp::DocumentACP>>
+) -> (Arc<dyn acp::DocumentACP>, StartRedrive)
 where
     S: storage::corekv::Store + 'static,
 {
     let gate = Arc::new(acp::ExternalDocumentAcp::new(provider, store));
     let redrive = Arc::clone(&gate);
-    // The redrive's provider calls are network work, on the node's runtime.
-    let network = match network {
-        Some(edge) => edge,
-        None => edge::on_demand()?,
-    };
-    drop(network.spawn(async move {
-        match redrive.redrive_owed().await {
-            Ok(report) if report.settled > 0 => tracing::info!(
-                settled = report.settled,
-                failed = report.failed,
-                "Settled ACP registrations owed from a previous run"
-            ),
-            Ok(_) => {}
-            Err(error) => tracing::warn!(
-                %error,
-                "Could not read owed ACP registrations; their documents stay readable only by their creators"
-            ),
-        }
-    }));
-    Ok(gate)
+    let start: StartRedrive = Box::new(move |pool| {
+        workers::spawn_background(pool, "acp::redrive_owed", move || async move {
+            match redrive.redrive_owed().await {
+                Ok(report) if report.settled > 0 => tracing::info!(
+                    settled = report.settled,
+                    failed = report.failed,
+                    "Settled ACP registrations owed from a previous run"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    %error,
+                    "Could not read owed ACP registrations; their documents stay readable only by their creators"
+                ),
+            }
+        })
+    });
+    (gate, start)
 }
 
 fn local_document_acp_setup(
@@ -124,6 +133,8 @@ fn local_document_acp_setup(
         local_zanzibar_store: Some(zanzibar_store),
         #[cfg(feature = "vera")]
         vera_acp: None,
+        #[cfg(feature = "vera")]
+        redrive: None,
     }
 }
 

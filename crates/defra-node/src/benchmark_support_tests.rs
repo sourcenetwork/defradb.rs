@@ -192,12 +192,12 @@ impl MockEmbeddingServer {
             .route("/embeddings", post(mock_embedding_handler))
             .with_state(state.clone());
 
-        let listener = defra_http::server::bind_listener(([127, 0, 0, 1], 0).into())
-            .await
-            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = edge::testing::edge().spawn_service(async move {
-            axum::serve(listener, app).await.unwrap();
+            defra_http::server::serve_router(listener, app)
+                .await
+                .unwrap();
         });
 
         Self {

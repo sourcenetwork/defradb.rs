@@ -885,11 +885,32 @@ impl EmbeddedNode {
                 .as_ref()
                 .map(|network| Ok(network.runtime().clone()))
                 .unwrap_or_else(|| edge::on_demand().cloned());
-            match runtime {
-                Ok(runtime) => {
-                    let _ = runtime.spawn_blocking(move || handle.shutdown()).await;
+            // The slot keeps the handle when the runtime refuses the work,
+            // so its flush moves to a thread of its own instead of running
+            // on the caller as the dropped closure's handle.
+            let slot = Arc::new(single_slot(Some(handle)));
+            let flushing = Arc::clone(&slot);
+            let flushed = match runtime {
+                Ok(runtime) => runtime
+                    .spawn_blocking(move || {
+                        if let Some(handle) = flushing.pop() {
+                            handle.shutdown();
+                        }
+                    })
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            if let Err(error) = flushed {
+                tracing::warn!(%error, "telemetry did not flush on the network runtime");
+            }
+            if let Some(handle) = slot.pop() {
+                if let Err(error) = std::thread::Builder::new()
+                    .name("defra-otel-shutdown".to_string())
+                    .spawn(move || handle.shutdown())
+                {
+                    tracing::warn!(%error, "telemetry could not start its flush thread");
                 }
-                Err(_) => handle.shutdown(),
             }
         }
 
@@ -1524,38 +1545,20 @@ impl NodeBuilder {
                 server
             };
 
+            let server = match http_cfg.extra_routes {
+                Some(extra) => server.with_extra_routes(extra),
+                None => server,
+            };
             let addr = http_cfg.address;
-            let extra_routes = http_cfg.extra_routes;
             let bound = http_cfg.listener;
             // The accept loop is a service of the node's scope: shutting the
             // node down stops it accepting.
             let service = network.edge().spawn_service(async move {
-                let router_result = server.router();
-                let run_result = async {
-                    let mut router = router_result?;
-                    if let Some(extra) = extra_routes {
-                        router = router.merge(extra);
-                    }
-
-                    let listener = match bound {
-                        Some(listener) => {
-                            listener
-                                .set_nonblocking(true)
-                                .map_err(|source| Error::ListenerPrepare { addr, source })?;
-                            defra_http::server::adopt_listener(listener)
-                                .map_err(|source| Error::ListenerAdopt { addr, source })?
-                        }
-                        None => defra_http::server::bind_listener(addr)
-                            .await
-                            .map_err(|source| Error::ListenerBind { addr, source })?,
-                    };
-
-                    axum::serve(listener, router).await.map_err(Error::Serve)?;
-                    Ok::<(), Error>(())
-                }
-                .await;
-
-                if let Err(e) = run_result {
+                let served = match bound {
+                    Some(listener) => server.serve_on(listener).await,
+                    None => server.run().await,
+                };
+                if let Err(e) = served {
                     tracing::error!(error = %e, address = %addr, "HTTP server exited with error");
                 }
             });
@@ -1860,6 +1863,8 @@ impl NodeBuilder {
         // GraphQL requests run on the database's worker pool, routed there
         // once at the boundary.
         let runner = query::pooled::PooledExecutor::wrap(Arc::new(query_runner), pool.as_ref());
+        #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
+        let redrive = acp_setup.redrive;
         #[cfg(feature = "vera")]
         let policy_lookup =
             acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);
@@ -1888,6 +1893,10 @@ impl NodeBuilder {
             database.clone().start_vector_rebuild_task(),
             database.clone().start_downsample_task(),
         ]);
+        #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
+        if let Some(start_redrive) = redrive {
+            background_tasks.0.push(start_redrive(database.pool()));
+        }
         let block_ops: Arc<dyn BlockOps> = Arc::new(db_impls::DbBlockOps::new(
             database,
             document_acp.clone(),

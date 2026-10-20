@@ -117,17 +117,17 @@ pub struct Server {
     node_options: Option<Arc<Map<String, serde_json::Value>>>,
     node_identity_did: Option<String>,
     dev_mode: bool,
+    extra_routes: Option<Router>,
 }
 
-/// Binds a listener on `addr` for [`axum::serve`]. Call it on the network
-/// runtime.
-pub async fn bind_listener(addr: SocketAddr) -> std::io::Result<TcpListener> {
-    TcpListener::bind(addr).await
+/// Serves `router`, which is not a [`Server`]'s (a test fixture), on a bound
+/// listener. Call it on the network runtime.
+pub async fn serve_router(listener: std::net::TcpListener, router: Router) -> std::io::Result<()> {
+    axum::serve(adopt(listener)?, router).await
 }
 
-/// Adopts a bound, non-blocking standard listener for [`axum::serve`]. Call
-/// it on the network runtime.
-pub fn adopt_listener(listener: std::net::TcpListener) -> std::io::Result<TcpListener> {
+fn adopt(listener: std::net::TcpListener) -> std::io::Result<TcpListener> {
+    listener.set_nonblocking(true)?;
     TcpListener::from_std(listener)
 }
 
@@ -187,7 +187,14 @@ impl Server {
             node_options: None,
             node_identity_did: None,
             dev_mode: false,
+            extra_routes: None,
         }
+    }
+
+    /// Serve `routes` beside the API's own.
+    pub fn with_extra_routes(mut self, routes: Router) -> Self {
+        self.extra_routes = Some(routes);
+        self
     }
 
     /// Serve HTTPS using a previously validated certificate and private key.
@@ -627,30 +634,30 @@ impl Server {
         Ok(valid_origins)
     }
 
-    /// Run the server (blocks until shutdown).
+    /// Binds the configured address and serves until shutdown. Call it on
+    /// the network runtime.
     pub async fn run(self) -> Result<()> {
-        let router = self.router()?;
-        let listener = TcpListener::bind(self.config.address).await.map_err(|e| {
-            let hint = match e.kind() {
-                std::io::ErrorKind::AddrInUse => "port is already in use",
-                std::io::ErrorKind::PermissionDenied => "permission denied (try port > 1024)",
-                std::io::ErrorKind::AddrNotAvailable => "address not available on this host",
-                _ => "check network configuration",
-            };
-            tracing::error!(
-                address = %self.config.address,
-                error = %e,
-                hint = hint,
-                "Failed to bind HTTP server"
-            );
-            crate::error::HttpError::Internal(format!(
-                "failed to bind to {}: {} ({})",
-                self.config.address, e, hint
-            ))
-        })?;
+        let listener = TcpListener::bind(self.config.address)
+            .await
+            .map_err(|e| self.bind_error(e))?;
+        self.serve(listener).await
+    }
 
+    /// Serves on `listener`, already bound by the caller, until shutdown.
+    /// Call it on the network runtime.
+    pub async fn serve_on(self, listener: std::net::TcpListener) -> Result<()> {
+        let listener = adopt(listener).map_err(|e| self.bind_error(e))?;
+        self.serve(listener).await
+    }
+
+    async fn serve(self, listener: TcpListener) -> Result<()> {
+        let mut router = self.router()?;
+        if let Some(extra) = self.extra_routes {
+            router = router.merge(extra);
+        }
+        let address = listener.local_addr().unwrap_or(self.config.address);
         let scheme = if self.tls.is_some() { "https" } else { "http" };
-        tracing::info!("Providing HTTP API at {scheme}://{}", self.config.address);
+        tracing::info!("Providing HTTP API at {scheme}://{address}");
 
         let result = match self.tls {
             Some(tls) => tls.serve(listener, router).await,
@@ -662,6 +669,25 @@ impl Server {
         })?;
 
         Ok(())
+    }
+
+    fn bind_error(&self, e: std::io::Error) -> crate::error::HttpError {
+        let hint = match e.kind() {
+            std::io::ErrorKind::AddrInUse => "port is already in use",
+            std::io::ErrorKind::PermissionDenied => "permission denied (try port > 1024)",
+            std::io::ErrorKind::AddrNotAvailable => "address not available on this host",
+            _ => "check network configuration",
+        };
+        tracing::error!(
+            address = %self.config.address,
+            error = %e,
+            hint = hint,
+            "Failed to bind HTTP server"
+        );
+        crate::error::HttpError::Internal(format!(
+            "failed to bind to {}: {} ({})",
+            self.config.address, e, hint
+        ))
     }
 
     /// Get the configured address.

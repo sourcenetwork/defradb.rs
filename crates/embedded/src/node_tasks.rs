@@ -21,6 +21,11 @@ impl BackgroundTasks {
         Self { tasks: queue }
     }
 
+    #[cfg(feature = "vera")]
+    pub(crate) fn push(&self, task: workers::Background) {
+        self.tasks.push(task);
+    }
+
     /// Stop and await all node-owned background tasks.
     ///
     /// Awaiting the stop is important for persistent stores: a stopped task
@@ -42,15 +47,14 @@ impl Drop for BackgroundTasks {
     }
 }
 
-/// Runs `future`, which lives as long as the node, on the network edge. Its
-/// completion has no deadline of its own: shutdown aborts it, then waits for
-/// it to let go of what it holds.
+/// Runs `future`, which lives as long as the node, on the network edge as a
+/// service: shutdown stops it, then waits for it to let go of what it holds.
 #[cfg(feature = "libp2p")]
-pub(crate) fn spawn_node_task<F>(edge: &edge::Edge, future: F) -> edge::Task<()>
+pub(crate) fn spawn_node_task<F>(edge: &edge::Edge, future: F) -> edge::Service
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    edge.spawn(future).within(std::time::Duration::MAX)
+    edge.spawn_service(future)
 }
 
 #[cfg(feature = "libp2p")]
@@ -65,7 +69,7 @@ pub(crate) fn spawn_libp2p_event_handler<B, S>(
     se_correlator: p2p::SeQueryCorrelator,
     manage_hooks: defra_p2p_adapter::manage::hooks::ManageHooksCell,
     edge: &edge::Edge,
-) -> edge::Task<()>
+) -> edge::Service
 where
     B: blockstore::Blockstore + 'static,
     S: storage::corekv::Store + 'static,
@@ -276,7 +280,7 @@ pub(crate) fn spawn_replication_loop<B, T, S>(
     merge_handler: Arc<db::merge::PooledMergeHandler<EmbeddedMergeHandler<S>>>,
     event_bus: Arc<dyn events::Bus>,
     edge: &edge::Edge,
-) -> edge::Task<()>
+) -> edge::Service
 where
     B: blockstore::Blockstore + 'static,
     T: p2p::P2PTransport,
