@@ -314,6 +314,23 @@ pub fn can_be_ordered_by_filtered_index(
     (true, reversed.unwrap_or(false))
 }
 
+/// Longest leading order satisfied by this index after equality-fixed fields.
+pub fn filtered_index_order_prefix(
+    order_by: &OrderBy,
+    index: &IndexDescription,
+    filter: &Filter,
+) -> (usize, bool) {
+    for count in (1..=order_by.conditions.len()).rev() {
+        let mut prefix = order_by.clone();
+        prefix.conditions.truncate(count);
+        let (ordered, reverse) = can_be_ordered_by_filtered_index(&prefix, index, filter);
+        if ordered {
+            return (count, reverse);
+        }
+    }
+    (0, false)
+}
+
 /// Select the best index for a filter from available indexes.
 ///
 /// Returns the index that can most efficiently evaluate the filter, judged by

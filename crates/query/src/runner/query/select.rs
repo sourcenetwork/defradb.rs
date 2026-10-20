@@ -8,7 +8,7 @@ use crate::error::{QueryError, Result};
 use crate::executor::GqlWarning;
 use crate::mapper::{Filter, Requestable, Select};
 use crate::planner::index_selection::{
-    can_be_ordered_by_filtered_index, can_be_ordered_by_index, can_or_filter_use_index,
+    can_be_ordered_by_index, can_or_filter_use_index, filtered_index_order_prefix,
 };
 use crate::txn::TransactionRegistry;
 
@@ -224,7 +224,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     collection.indexes.iter().any(|idx| {
                         select.filter.as_ref().map_or_else(
                             || can_be_ordered_by_index(o, idx).0,
-                            |filter| can_be_ordered_by_filtered_index(o, idx, filter).0,
+                            |filter| filtered_index_order_prefix(o, idx, filter).0 > 0,
                         )
                     })
                 })
