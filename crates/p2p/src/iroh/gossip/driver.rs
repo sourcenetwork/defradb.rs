@@ -27,7 +27,7 @@ use crate::transport::PeerAddr;
 
 use super::delivery::{Closed, Delivery};
 use super::frame::{read_gossip_frame, write_gossip_frame, ProtoMessage};
-use super::mailbox::{Mailbox, Wake};
+use crate::iroh::mailbox::{Mailbox, Wake};
 use super::{protocols, spawn_task, topic_id, AddrInfo, Input, Network, SpawnedTasks, Subscribed};
 
 /// Messages queued for one peer's stream before more are dropped.

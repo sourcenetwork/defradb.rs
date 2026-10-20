@@ -4,7 +4,6 @@
 mod delivery;
 mod driver;
 mod frame;
-mod mailbox;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -28,7 +27,7 @@ use delivery::Delivery;
 pub(super) use delivery::EventSender;
 use driver::Driver;
 use frame::ProtoMessage;
-use mailbox::{Mailbox, Wake};
+use crate::iroh::mailbox::{Mailbox, Wake};
 
 /// Inputs the driver may hold before senders wait.
 const INBOX_CAPACITY: usize = 1024;
