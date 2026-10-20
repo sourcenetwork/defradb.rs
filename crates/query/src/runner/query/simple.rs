@@ -80,16 +80,15 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 if let Some(best_index) =
                     select_best_index_with_estimates(filter, &collection.indexes, &estimates)
                 {
-                    // Extract limit/offset for index optimization
-                    let limit = select.limit.as_ref().and_then(|l| l.limit);
-                    let offset = select.limit.as_ref().map(|l| l.offset).unwrap_or(0);
+                    // Filtering, authorization, sorting and pagination run in the plan
+                    // below; candidate reads cannot apply its offset or limit first.
                     if let Some(params) = filter_to_index_scan(
                         filter,
                         best_index,
                         select.order_by.as_ref(),
                         &collection.fields,
-                        limit,
-                        offset,
+                        None,
+                        0,
                     ) {
                         debug!(
                             collection = %select.collection_name,

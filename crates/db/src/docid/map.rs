@@ -204,6 +204,19 @@ pub async fn get_doc_id(systemstore: &NamespaceView, doc_short_id: u64) -> Resul
     }
 }
 
+pub(crate) async fn resolve_doc_id_pairs(
+    systemstore: &NamespaceView,
+    doc_short_ids: &[u64],
+) -> Result<Vec<(String, u64)>> {
+    let mut pairs = Vec::with_capacity(doc_short_ids.len());
+    for &short_id in doc_short_ids {
+        if let Some(doc_id) = get_doc_id(systemstore, short_id).await? {
+            pairs.push((doc_id, short_id));
+        }
+    }
+    Ok(pairs)
+}
+
 /// Resolve doc short IDs to public DocIDs, preserving order and skipping
 /// IDs with no mapping (index scan read path).
 pub async fn resolve_doc_ids(

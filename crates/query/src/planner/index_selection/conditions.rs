@@ -267,6 +267,53 @@ pub fn can_be_ordered_by_index(order_by: &OrderBy, index: &IndexDescription) -> 
     }
 }
 
+/// Equality-fixed scalar fields do not affect order within an index prefix.
+/// Range, membership and nested-JSON conditions cannot be skipped this way.
+pub fn can_be_ordered_by_filtered_index(
+    order_by: &OrderBy,
+    index: &IndexDescription,
+    filter: &Filter,
+) -> (bool, bool) {
+    let conditions = extract_field_conditions(filter);
+    let fixed = |name: &str| {
+        conditions.iter().any(|condition| {
+            condition.field_name == name
+                && condition.op == FilterOp::Eq
+                && condition.array_op.is_none()
+                && condition.json_path.is_none()
+                && matches!(condition.value, ConditionValue::Single(_))
+        })
+    };
+    let ordered = order_by
+        .conditions
+        .iter()
+        .filter(|condition| condition.fields.len() != 1 || !fixed(&condition.fields[0]))
+        .collect::<Vec<_>>();
+    let varying = index
+        .fields
+        .iter()
+        .filter(|field| !fixed(&field.name))
+        .collect::<Vec<_>>();
+    if order_by.is_empty() || ordered.is_empty() {
+        return can_be_ordered_by_index(order_by, index);
+    }
+    if ordered.len() > varying.len() {
+        return (false, false);
+    }
+    let mut reversed = None;
+    for (condition, field) in ordered.iter().zip(&varying) {
+        if condition.fields.len() != 1 || condition.fields[0] != field.name {
+            return (false, false);
+        }
+        let reverse = (condition.direction == OrderDirection::Desc) != field.descending;
+        if reversed.is_some_and(|previous| previous != reverse) {
+            return (false, false);
+        }
+        reversed = Some(reverse);
+    }
+    (true, reversed.unwrap_or(false))
+}
+
 /// Select the best index for a filter from available indexes.
 ///
 /// Returns the index that can most efficiently evaluate the filter, judged by
