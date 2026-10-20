@@ -233,6 +233,10 @@ RUNS=(
   "MC_GossipOwnership_Red_NoRecheck.cfg MC_GossipOwnership_Common.tla RED" # no admission check after connecting: a revoke during the dial is missed (INV_RevokedHasNoGossip)
   "MC_GossipOwnership_Red_GossipCloses.cfg MC_GossipOwnership_Common.tla RED" # forgetting a peer closes the shared connection (INV_GossipNeverClosesShared)
   "MC_GossipOwnership_Red_ForgetForever.cfg MC_GossipOwnership_Common.tla RED" # gossip may drop the healthy peer forever: it is never reached (LIVE_HealthyReached)
+  "MC_ServiceRecords_Green.cfg ServiceRecords.tla GREEN" # #2080: a record replaces only a lower seq, an expired record is never used, a stale pointer triggers a query
+  "MC_ServiceRecords_Red_AnySeq.cfg ServiceRecords.tla RED" # the last record in wins: a late older record replaces a newer one (INV_SeqNeverGoesBack)
+  "MC_ServiceRecords_Red_NoExpiryCheck.cfg ServiceRecords.tla RED" # peers picked from an expired record (INV_NoExpiredChosen)
+  "MC_ServiceRecords_Red_GossipOnly.cfg ServiceRecords.tla RED" # no query on a stale pointer: lost gossip leaves an old record forever (LIVE_NewestReached)
   # ---- GovernanceContract.tla: what a merge validator may assume; GovernanceMerge.tla: the merge path checked to refine it ----
   "MC_GovernanceContract_Green.cfg            MC_GovernanceContract_Orphan.tla       GREEN" # re-drive + sweep: every settleable composite settles
   "MC_GovernanceContract_Green_Nameable.cfg   MC_GovernanceContract_Nameable.tla     GREEN" # nameable awaits: arrival re-drive alone settles them, no sweep

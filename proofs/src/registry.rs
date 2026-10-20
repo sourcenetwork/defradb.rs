@@ -612,4 +612,12 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "GossipFrame (lake build)",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Iroh service records",
+        name: "INV_SeqNeverGoesBack / INV_NoExpiredChosen / LIVE_NewestReached",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check",
+        model_ref: "MC_ServiceRecords_Green.cfg",
+        tiers: &[Boundary],
+    },
 ];
