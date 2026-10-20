@@ -49,43 +49,44 @@ fn unresponsive_embedding_provider_times_out() {
 }
 
 #[test]
-    edge::testing::edge().block_on(async {
-    workers::block_on(async {
-        let (url, requests, _server) = fixture();
-        let config = EmbeddingClientConfig::new()
-            .with_url(url)
-            .with_model("default-model")
-            .with_api_key("secret");
-        assert_eq!(
-            embed_text(&config, "question", None).await.unwrap(),
-            vec![3.0, 4.0]
-        );
-        let request = requests.try_recv().unwrap();
-        assert_eq!(request.header("authorization"), Some("Bearer secret"));
-        assert_eq!(
-            request.body,
-            json!({"input": "question", "model": "default-model"})
-        );
+fn query_embeddings_share_document_provider_contracts() {
+    edge::testing::edge()
+        .block_on(async {
+            let (url, requests, _server) = fixture();
+            let config = EmbeddingClientConfig::new()
+                .with_url(url)
+                .with_model("default-model")
+                .with_api_key("secret");
+            assert_eq!(
+                embed_text(&config, "question", None).await.unwrap(),
+                vec![3.0, 4.0]
+            );
+            let request = requests.try_recv().unwrap();
+            assert_eq!(request.header("authorization"), Some("Bearer secret"));
+            assert_eq!(
+                request.body,
+                json!({"input": "question", "model": "default-model"})
+            );
 
-        assert_eq!(
-            embed_text_with_provider(&config, "ollama", "question", Some("local-model"))
+            assert_eq!(
+                embed_text_with_provider(&config, "ollama", "question", Some("local-model"))
+                    .await
+                    .unwrap(),
+                vec![0.6, 0.8]
+            );
+            let request = requests.try_recv().unwrap();
+            assert!(request.header("authorization").is_none());
+            assert_eq!(
+                request.body,
+                json!({"prompt": "question", "model": "local-model"})
+            );
+            let error = embed_text_with_provider(&config, "unknown", "question", None)
                 .await
-                .unwrap(),
-            vec![0.6, 0.8]
-        );
-        let request = requests.try_recv().unwrap();
-        assert!(request.header("authorization").is_none());
-        assert_eq!(
-            request.body,
-            json!({"prompt": "question", "model": "local-model"})
-        );
-        let error = embed_text_with_provider(&config, "unknown", "question", None)
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("unsupported embedding provider"));
-        assert!(requests.try_recv().is_none());
-    })
-    .unwrap()
+                .unwrap_err();
+            assert!(error.to_string().contains("unsupported embedding provider"));
+            assert!(requests.try_recv().is_none());
+        })
+        .unwrap()
 }
 
 #[test]
