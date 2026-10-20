@@ -7,11 +7,14 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 
 use async_trait::async_trait;
 use cid::Cid;
+use clock::sleep;
 use db::merge::governance::{
     FieldValue, MergeCandidate, MergeValidator, MergeVerdict, MergeView, SignatureStatus,
 };
@@ -361,8 +364,4 @@ async fn wait_for_notes(node: &Node, expected: &[&str]) -> Result<()> {
         }
         sleep(Duration::from_millis(200)).await;
     }
-}
-
-async fn sleep(duration: Duration) {
-    edge::testing::edge().sleep(duration).await;
 }

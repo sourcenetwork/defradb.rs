@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::clock::sleep;
 use crate::outcome::Result;
 use acp::StorePolicyOptions;
 use defra_core::current_identity::with_scoped_identity;
@@ -134,8 +135,4 @@ pub async fn wait_for_fred(node: &Node, reader: &Did) -> Result<()> {
         }
         sleep(Duration::from_millis(250)).await;
     }
-}
-
-async fn sleep(duration: Duration) {
-    edge::testing::edge().sleep(duration).await;
 }

@@ -14,9 +14,12 @@
 //! docIDs from the artifacts A pushed). Both hold the same 32-byte SE key.
 #![cfg(any(feature = "libp2p", feature = "iroh"))]
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 
+use clock::sleep;
 use embedded::{EmbeddedNode, EmbeddedStore, NodeBuilder, ReplicatorPushOptions};
 use outcome::Result;
 use std::time::{Duration, Instant};
@@ -321,8 +324,4 @@ async fn wait_for_se_query(
         }
         sleep(Duration::from_millis(250)).await;
     }
-}
-
-async fn sleep(duration: Duration) {
-    edge::testing::edge().sleep(duration).await;
 }

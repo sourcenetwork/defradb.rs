@@ -4,6 +4,8 @@
 //! it awaited arrived, reaches this node's own replicators like any composite
 //! that merged on its first attempt.
 
+#[path = "support/clock.rs"]
+mod clock;
 mod iroh_peers;
 #[path = "support/outcome.rs"]
 mod outcome;
@@ -12,6 +14,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cid::Cid;
+use clock::sleep;
 use db::merge::governance::{FieldValue, MergeCandidate, MergeValidator, MergeVerdict, MergeView};
 use document::NormalValue;
 use embedded::{AccessHooks, NodeBuilder};
@@ -109,8 +112,4 @@ fn a_composite_merged_by_redrive_reaches_this_nodes_replicators() -> Result<()> 
             Ok(())
         })
         .unwrap()
-}
-
-async fn sleep(duration: Duration) {
-    edge::testing::edge().sleep(duration).await;
 }

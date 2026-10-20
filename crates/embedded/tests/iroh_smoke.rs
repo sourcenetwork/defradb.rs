@@ -2,9 +2,12 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 
+use clock::sleep;
 use embedded::{IrohConfig, NodeBuilder};
 use outcome::Result;
 use std::time::{Duration, Instant};
@@ -213,8 +216,4 @@ fn extract_created_doc_id(response: &query::QueryResponse) -> Result<String> {
         .and_then(|value| value.as_str())
         .map(str::to_string)
         .expect("add_Book response missing _docID"))
-}
-
-async fn sleep(duration: Duration) {
-    edge::testing::edge().sleep(duration).await;
 }

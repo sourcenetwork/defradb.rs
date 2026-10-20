@@ -6,6 +6,8 @@
 //! it, as Go does (`cbindings/node_new.go` sets it independently of signing).
 #![cfg(feature = "libp2p")]
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 mod support;
@@ -13,6 +15,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use clock::sleep;
 use embedded::{EmbeddedNodeConfig, Libp2pConfig, SigningConfig, TransportConfig};
 use identity::Did;
 use outcome::Result;
@@ -129,8 +132,4 @@ async fn wait_for_listen_addr(system: &embedded::ManagedP2PSystem) -> Result<Str
         }
         sleep(Duration::from_millis(100)).await;
     }
-}
-
-async fn sleep(duration: Duration) {
-    edge::testing::edge().sleep(duration).await;
 }

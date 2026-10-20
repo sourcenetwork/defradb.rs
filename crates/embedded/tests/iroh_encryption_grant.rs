@@ -3,6 +3,8 @@
 //! but for a `reader` grant to the peer's node identity.
 #![cfg(feature = "iroh")]
 
+#[path = "support/clock.rs"]
+mod clock;
 #[path = "support/outcome.rs"]
 mod outcome;
 mod support;
@@ -12,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use blockstore::Blockstore;
+use clock::sleep;
 use embedded::{EmbeddedNodeConfig, IrohConfig, SigningConfig, TransportConfig};
 use identity::Did;
 use outcome::Result;
@@ -219,8 +222,4 @@ async fn connectable_iroh_addr(system: &embedded::ManagedP2PSystem) -> Result<St
         }
         sleep(Duration::from_millis(100)).await;
     }
-}
-
-async fn sleep(duration: Duration) {
-    edge::testing::edge().sleep(duration).await;
 }
