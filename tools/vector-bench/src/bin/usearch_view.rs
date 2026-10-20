@@ -1,23 +1,22 @@
 //! usearch M 32 saved to disk, then served by mmap (`view`), for the
 //! memory-capped runs.
 //!
-//! `usearch_view build <base.f32> <index file>` builds and saves it;
+//! `usearch_view build <base.f32> <bench dir> <index file>` builds and saves it;
 //! `usearch_view view <index file> <bench dir> <ef> <warmup.f32>` maps it,
-//! runs 500 warm-up queries, then measures the bench dir's queries.
+//! runs 500 warm-up queries, then measures the bench dir's queries. The bench dir
+//! holds the corpus `dims` and `count`, which both commands follow.
 
 use std::path::Path;
 use std::time::Instant;
 
 use rayon::prelude::*;
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
-use vector_bench::{hits, read_f32, read_u64};
-
-const DIMS: usize = 768;
+use vector_bench::{hits, read_base, read_f32, read_u64};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let opts = IndexOptions {
-        dimensions: DIMS,
+    let options = |dimensions| IndexOptions {
+        dimensions,
         metric: MetricKind::Cos,
         quantization: ScalarKind::F32,
         connectivity: 32,
@@ -25,10 +24,10 @@ fn main() {
         expansion_search: 128,
         multi: false,
     };
-    let index = Index::new(&opts).unwrap();
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        [_, "build", base, path] => {
-            let base = read_f32(Path::new(base), DIMS);
+        [_, "build", base, bench, path] => {
+            let (dims, base) = read_base(Path::new(base), Path::new(bench));
+            let index = Index::new(&options(dims)).unwrap();
             index.reserve(base.len()).unwrap();
             base.par_iter()
                 .enumerate()
@@ -37,13 +36,19 @@ fn main() {
             println!("SAVED {} MiB", std::fs::metadata(path).unwrap().len() >> 20);
         }
         [_, "view", path, bench, ef, warmup] => {
+            let dims: usize = std::fs::read_to_string(Path::new(bench).join("dims"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            let index = Index::new(&options(dims)).unwrap();
             index.view(path).unwrap();
             let ef: usize = ef.parse().unwrap();
             index.change_expansion_search(ef);
-            let queries = read_f32(&Path::new(bench).join("queries.f32"), DIMS);
+            let queries = read_f32(&Path::new(bench).join("queries.f32"), dims);
             let truth = read_u64(&Path::new(bench).join("truth.u64"));
             let t0 = Instant::now();
-            for q in read_f32(Path::new(warmup), DIMS).iter().take(500) {
+            for q in read_f32(Path::new(warmup), dims).iter().take(500) {
                 index.search(q, 10).unwrap();
             }
             println!("WARMUP 500 in {:.1}s", t0.elapsed().as_secs_f64());
@@ -73,6 +78,6 @@ fn main() {
                 total as f64 / t.elapsed().as_secs_f64()
             );
         }
-        _ => panic!("usage: usearch_view build <base.f32> <index> | view <index> <bench dir> <ef> <warmup.f32>"),
+        _ => panic!("usage: usearch_view build <base.f32> <bench dir> <index> | view <index> <bench dir> <ef> <warmup.f32>"),
     }
 }

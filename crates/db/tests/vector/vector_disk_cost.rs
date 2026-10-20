@@ -328,6 +328,7 @@ async fn build(n: usize, q: usize, dims: usize, dir: &Path) {
         .collect();
     std::fs::write(dir.join("truth.u64"), ids).unwrap();
     std::fs::write(dir.join("dims"), dims.to_string()).unwrap();
+    std::fs::write(dir.join("count"), vectors.len().to_string()).unwrap();
 
     let store =
         RegolithStore::open_with_options(dir.join("db"), RegolithStoreOptions::new()).unwrap();
@@ -367,11 +368,10 @@ fn rss() -> String {
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()
         .unwrap();
-    let kib: u64 = String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse()
-        .unwrap_or(0);
-    format!("current={}MiB", kib >> 10)
+    match String::from_utf8_lossy(&out.stdout).trim().parse::<u64>() {
+        Ok(kib) => format!("current={}MiB", kib >> 10),
+        Err(_) => "unknown".to_string(),
+    }
 }
 
 /// Builds `engine`'s index over `txn` as `$e` and evaluates `$body` with it;
@@ -410,7 +410,7 @@ struct Run {
     label: String,
     effort: Option<usize>,
     passes: usize,
-    queries: Vec<Vec<f32>>,
+    queries: Arc<Vec<Vec<f32>>>,
     truth: Vec<Vec<u64>>,
     warmup: Vec<Vec<f32>>,
     stats: Arc<Statistics>,
@@ -461,35 +461,42 @@ impl Run {
         eprintln!("RSS {} {}", self.label, rss());
     }
 
-    /// Queries per second with `threads` searches in flight, each thread on
-    /// its own read transaction and runtime, after the latency passes.
-    fn throughput(
+    /// Queries per second with `threads` searches in flight, each a task on
+    /// its own worker of a pool and its own read transaction, after the
+    /// latency passes.
+    async fn throughput(
         &self,
-        store: &RegolithStore,
+        store: &Arc<RegolithStore>,
         engine: &str,
         codes: &Arc<CodeCache>,
         threads: usize,
     ) {
+        let pool = workers::Pool::start(workers::Config::unplaced(threads)).unwrap();
         let start = Instant::now();
-        std::thread::scope(|scope| {
-            for _ in 0..threads {
-                scope.spawn(|| {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .build()
-                        .unwrap();
-                    runtime.block_on(async {
-                        let mut txn = store.new_txn(true).await.unwrap();
-                        with_engine!(engine, &mut txn, codes, e => {
-                            for query in &self.queries {
-                                e.search(query.as_slice(), K, self.effort).await.unwrap();
-                            }
-                        });
-                        txn.discard();
+        let mut done = Vec::with_capacity(threads);
+        for worker in 0..threads {
+            let (store, codes) = (Arc::clone(store), Arc::clone(codes));
+            let (queries, effort) = (Arc::clone(&self.queries), self.effort);
+            let engine = engine.to_string();
+            done.push(
+                pool.submit(workers::Target::Worker(worker), move || async move {
+                    let mut txn = store.new_txn(true).await.unwrap();
+                    with_engine!(engine.as_str(), &mut txn, codes, e => {
+                        for query in queries.iter() {
+                            e.search(query.as_slice(), K, effort).await.unwrap();
+                        }
                     });
-                });
-            }
-        });
+                    txn.discard();
+                })
+                .await
+                .unwrap(),
+            );
+        }
+        for completion in done {
+            completion.await.unwrap();
+        }
         let qps = (threads * self.queries.len()) as f64 / start.elapsed().as_secs_f64();
+        pool.stop().await.unwrap();
         eprintln!(
             "QPS {} effort={} threads={threads}: {qps:.0}",
             self.label,
@@ -516,7 +523,7 @@ async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, p
         label: format!("{profile}/{engine}"),
         effort,
         passes,
-        queries: read_f32(&dir.join("queries.f32"), dims),
+        queries: Arc::new(read_f32(&dir.join("queries.f32"), dims)),
         truth: ids.as_chunks::<K>().0.iter().map(|t| t.to_vec()).collect(),
         warmup: std::env::var("WARMUP")
             .map_or_else(|_| Vec::new(), |p| read_f32(Path::new(&p), dims)),
@@ -528,21 +535,26 @@ async fn query(dir: &Path, engine: &str, profile: &str, effort: Option<usize>, p
         _ => RegolithStoreOptions::embedded(),
     };
     options.engine = options.engine.statistics(Some(stats));
-    let store = RegolithStore::open_with_options(dir.join(env("DB", "db")), options).unwrap();
+    let store =
+        Arc::new(RegolithStore::open_with_options(dir.join(env("DB", "db")), options).unwrap());
     let codes = Arc::new(CodeCache::default());
     let mut txn = store.new_txn(true).await.unwrap();
     with_engine!(engine, &mut txn, codes, e => run.measure(&e).await);
     txn.discard();
     let threads: usize = env("THREADS", "0").parse().unwrap();
     if threads > 0 {
-        run.throughput(&store, engine, &codes, threads);
+        run.throughput(&store, engine, &codes, threads).await;
     }
     store.close().await.ok();
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore]
-async fn vector_disk_cost() {
+fn vector_disk_cost() {
+    workers::block_on(run_vector_disk_cost()).unwrap();
+}
+
+async fn run_vector_disk_cost() {
     let dir = std::path::PathBuf::from(env("DIR", "target/vector-disk-cost"));
     std::fs::create_dir_all(&dir).unwrap();
     match env("PHASE", "query").as_str() {

@@ -2,16 +2,15 @@
 //! `vector_disk_cost`, for scale.
 //!
 //! `usearch_ref <base.f32> <bench dir> <M> <ef_construction>`; the bench dir
-//! is any `vector_disk_cost` build, which holds `queries.f32` and `truth.u64`.
+//! is any `vector_disk_cost` build, which holds `queries.f32`, `truth.u64`, `dims`
+//! and `count`; the base file is cut to that count.
 
 use std::path::Path;
 use std::time::Instant;
 
 use rayon::prelude::*;
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
-use vector_bench::{hits, read_f32, read_u64, rss};
-
-const DIMS: usize = 768;
+use vector_bench::{hits, read_base, read_f32, read_u64, rss};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -19,11 +18,12 @@ fn main() {
         panic!("usage: usearch_ref <base.f32> <bench dir> <M> <ef_construction>");
     };
     let (m, efc): (usize, usize) = (m.parse().unwrap(), efc.parse().unwrap());
-    let base = read_f32(Path::new(base), DIMS);
-    let queries = read_f32(&Path::new(bench).join("queries.f32"), DIMS);
-    let truth = read_u64(&Path::new(bench).join("truth.u64"));
+    let bench = Path::new(bench);
+    let (dims, base) = read_base(Path::new(base), bench);
+    let queries = read_f32(&bench.join("queries.f32"), dims);
+    let truth = read_u64(&bench.join("truth.u64"));
     let opts = IndexOptions {
-        dimensions: DIMS,
+        dimensions: dims,
         metric: MetricKind::Cos,
         quantization: ScalarKind::F32,
         connectivity: m,

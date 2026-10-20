@@ -13,6 +13,22 @@ pub fn read_f32(path: &Path, dims: usize) -> Vec<Vec<f32>> {
     floats.chunks_exact(dims).map(<[f32]>::to_vec).collect()
 }
 
+/// The corpus `vector_disk_cost` built into `bench`: its dimensions and
+/// vector count, and the base file read back and cut to that count.
+pub fn read_base(base: &Path, bench: &Path) -> (usize, Vec<Vec<f32>>) {
+    let number = |name: &str| -> usize {
+        std::fs::read_to_string(bench.join(name))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    };
+    let (dims, count) = (number("dims"), number("count"));
+    let mut vectors = read_f32(base, dims);
+    vectors.truncate(count);
+    (dims, vectors)
+}
+
 pub fn read_u64(path: &Path) -> Vec<u64> {
     std::fs::read(path)
         .unwrap()
