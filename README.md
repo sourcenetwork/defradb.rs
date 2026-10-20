@@ -188,9 +188,9 @@ response as an unknown handle. Renewed tokens for the same identity retain acces
 Rust-native tests that exercise the full node via CLI + HTTP API. Primary validation method.
 
 ```bash
-cargo test -p integration-test                              # All areas
-cargo test -p integration-test --test basic                  # Specific area
-cargo test -p integration-test --test acp -- negative::      # Specific module
+cargo nextest run -p integration-test                         # All areas
+cargo nextest run -p integration-test --test basic             # Specific area
+cargo nextest run -p integration-test --test acp -- negative:: # Specific module
 ```
 
 Areas: `basic`, `query`, `acp`, `nac`, `p2p`, `fts`, `encryption`, `identity`, `backup`, `vera`, `verars`

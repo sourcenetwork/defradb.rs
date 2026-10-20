@@ -411,19 +411,24 @@ that is correct but slower is not done.
 
 ```bash
 # Run all integration tests
-cargo test -p integration-test
+cargo nextest run -p integration-test
 
 # Run a specific area
-cargo test -p integration-test --test acp
-cargo test -p integration-test --test p2p
-cargo test -p integration-test --test basic
+cargo nextest run -p integration-test --test acp
+cargo nextest run -p integration-test --test p2p
+cargo nextest run -p integration-test --test basic
 
 # Run a specific submodule within an area
-cargo test -p integration-test --test acp -- negative::
+cargo nextest run -p integration-test --test acp -- negative::
 
 # Run a specific test
-cargo test -p integration-test --test acp -- basic::rust_acp_basic
+cargo nextest run -p integration-test --test acp -- basic::rust_acp_basic
 ```
+
+Tests run under [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest
+--locked`), one process per test. `.config/nextest.toml` holds the test groups
+that keep the P2P, Iroh, admission and TLA conformance suites one test at a
+time, and the `ci*` profiles CI runs with.
 
 Integration tests live in `tools/integration-test/tests/` and exercise the full
 Rust node via CLI + HTTP API. Each area is a `[[test]]` binary with submodules:
@@ -464,8 +469,9 @@ Single-purpose binaries, each its own `[[test]]` with no submodules:
 ### Rust Commands
 
 ```bash
-cargo test                         # Run all unit tests
-cargo test -p crdt                 # Test specific crate
+cargo nextest run                  # Run all unit tests
+cargo test --doc                   # Doctests, which nextest skips
+cargo nextest run -p crdt          # Test specific crate
 cargo clippy --all --all-targets -- -D warnings  # Lint, benches included
 just check-node-graph              # Feature-graph contracts for defra-node
 cargo fmt --all                    # Format
@@ -530,10 +536,10 @@ git worktree remove ../defradb.rs-foo              # Remove worktree
 
 ## Before Committing
 
-1. `cargo test` passes
+1. `cargo nextest run` and `cargo test --doc` pass
 2. `cargo clippy --all --all-targets -- -D warnings` clean
 3. `cargo fmt --all` applied
-4. If touching core behavior: `cargo test -p integration-test` passes
+4. If touching core behavior: `cargo nextest run -p integration-test` passes
 
 ## ACP / Searchable Encryption
 
