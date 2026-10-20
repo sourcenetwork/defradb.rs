@@ -177,7 +177,7 @@ async fn ordered_prefix_sorts_only_the_boundary_tie_group() {
 #[tokio::test]
 async fn partial_index_order_keeps_residual_filter_and_page_offset() {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type TiePage @index(fields: [\"scope\", \"seq\"]) { scope: String seq: Int rank: Int keep: Boolean }").await.unwrap();
+    node.add_schema("type TiePage @index(fields: [\"scope\", \"seq\"]) { scope: String @index seq: Int rank: Int keep: Boolean }").await.unwrap();
     let input = (0..120)
         .map(|i| {
             format!(
