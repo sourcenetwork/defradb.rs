@@ -7,7 +7,7 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use super::cache::Codes;
 use super::codec::{self, GraphState, Record, Trained};
-use super::pending_cache::{Copy, Segment, Tag};
+use super::pending_cache::{Copy, Segment, Tag, MAX_PENDING_CACHE_BYTES};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Admit, Candidate, Neighbor, VectorIndexEngine};
@@ -359,6 +359,9 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             return self.scan_pending(None, &mut push).await;
         };
         let copy = cache.load();
+        if copy.is_oversized() && copy.tag().is_some_and(|tag| tag.generation >= generation) {
+            return self.scan_pending(None, &mut push).await;
+        }
         let reload = match copy.tag() {
             Some(tag) if tag.generation == generation && head >= tag.loaded_at => {
                 if tag.position >= head {
@@ -391,7 +394,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
     }
 
     /// Visits every pending vector in the snapshot, copying each into `into`
-    /// when given one.
+    /// when given one, and stops copying once `into` is past the cap.
     async fn scan_pending<F>(&self, mut into: Option<&mut Segment>, visit: &mut F) -> Result<()>
     where
         F: FnMut(NodeId, &[u8]) + MaybeSend,
@@ -401,6 +404,9 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 let id = codec::id_from_key(key)?;
                 if let Some(segment) = into.as_deref_mut() {
                     segment.push(id, code);
+                    if segment.bytes() > MAX_PENDING_CACHE_BYTES {
+                        into = None;
+                    }
                 }
                 visit(id, code);
                 Ok(())

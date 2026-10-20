@@ -193,7 +193,7 @@ fn a_merge_truncates_the_log_it_absorbed() {
 }
 
 #[test]
-fn a_newer_copy_wins_and_an_oversized_one_drops_the_cache() {
+fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
     let cache = PendingCache::default();
     let copy = |generation, position, ids: &[u64]| {
         let mut segment = Segment::default();
@@ -235,7 +235,12 @@ fn a_newer_copy_wins_and_an_oversized_one_drops_the_cache() {
         position: 0,
     };
     cache.publish(Arc::new(Copy::loaded(tag, big)));
-    assert_eq!(cache.load().tag(), None, "past the cap nothing is cached");
+    let marker = cache.load();
+    assert!(marker.is_oversized(), "past the cap only a marker is kept");
+    assert_eq!(marker.tag().unwrap().generation, 3);
+    let mut held = 0;
+    marker.for_each(1, |_, _| held += 1);
+    assert_eq!(held, 0, "the marker holds nothing");
 }
 
 #[test]

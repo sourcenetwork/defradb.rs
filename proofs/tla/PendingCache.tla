@@ -81,7 +81,9 @@
 \*                seen as crates/db/src/index/vector/store/kv.rs
 \*                pending_log's write count differing from the log head
 \*   Search       graph.rs pending_candidates: the four rules above, and
-\*                PendingCache::publish
+\*                PendingCache::publish. A copy past the 64 MiB cap is
+\*                published as an oversized marker that is never read as
+\*                cover, so it acts as no cache: the scan of the last rule
 EXTENDS Naturals, Integers, FiniteSets, Sequences, TLC
 
 \* Nodes: the vector ids. Readers: the searches. MaxCommits: how many
