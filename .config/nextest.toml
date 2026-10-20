@@ -1,0 +1,104 @@
+[store]
+dir = "target/nextest"
+
+[profile.default]
+retries = 0
+slow-timeout = { period = "60s" }
+
+# Integration tests spawn real defra nodes, each with a worker per core.
+# Counting every such test as two threads halves how many run at once, the
+# same ceiling as the eight threads the suites once ran with on 16 cores.
+[[profile.default.overrides]]
+filter = "package(integration-test) | binary_id(=conformance::tla_conformance)"
+threads-required = 2
+
+# These tests start node clusters that race for ephemeral ports and wall
+# clock budgets, so each binary runs one test at a time.
+[[profile.default.overrides]]
+filter = "binary_id(=integration-test::p2p)"
+test-group = "p2p"
+
+[[profile.default.overrides]]
+filter = "binary_id(=integration-test::p2p_iroh)"
+test-group = "p2p-iroh"
+
+[[profile.default.overrides]]
+filter = """
+binary_id(/^integration-test::p2p_admission/)
+| binary_id(=integration-test::p2p_backlog)
+| binary_id(=integration-test::issue1154_repro)
+"""
+test-group = "p2p-admission"
+
+[[profile.default.overrides]]
+filter = "binary_id(=conformance::tla_conformance)"
+test-group = "tla-conformance"
+
+# These tests flip process-wide state (the deterministic nonce flag, the
+# keyring secret env var) and use #[serial] so they never overlap. #[serial]
+# only orders threads inside one process, and nextest starts a process per
+# test, so the group is what keeps them one at a time here.
+[[profile.default.overrides]]
+filter = "binary_id(=crypto::go_compat_encryption) | (binary_id(=keyring) & test(/^tests::/))"
+test-group = "serial-env"
+
+[test-groups]
+p2p = { max-threads = 1 }
+p2p-iroh = { max-threads = 1 }
+p2p-admission = { max-threads = 1 }
+tla-conformance = { max-threads = 1 }
+serial-env = { max-threads = 1 }
+
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
+# One retry, so a flaky test still passes the job but shows up as FLAKY in
+# the summary and the JUnit report instead of hiding.
+retries = 1
+# A hung test is killed after 15 minutes and named, instead of the job
+# running into its own timeout with no hint of which test hung.
+slow-timeout = { period = "60s", terminate-after = 15 }
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# The Iroh tests CI runs: the transport's connection tests, the schema
+# version sync tests, and the sync ownership fences.
+[profile.ci-iroh]
+inherits = "ci"
+default-filter = """
+binary_id(=integration-test::p2p_iroh) & (
+    test(connection::)
+    | test(sync::version::initial_col_version)
+    | test(sync::version::patch_version_of_)
+    | test(peer::create::create_propagates_to_last_node_in_chain)
+    | test(peer::create::head_hint_fanout_above_car_worker_bound_quiesces)
+)
+"""
+
+# Every go_ variant except the five link-collection rejections, skipped since
+# #762 because they were written as guards for the #746 divergence.
+[profile.ci-go-compat]
+inherits = "ci"
+default-filter = """
+test(go_)
+& not test(/go_acp_link_collection_(nonexistent_policy|nonexistent_resource|missing_read_perm|missing_update_perm|missing_delete_perm)_reject/)
+"""
+
+# The ignored cross-runtime parity runs of the TLA conformance suite.
+[profile.ci-go-parity]
+inherits = "ci"
+default-filter = """
+binary_id(=conformance::tla_conformance) & (
+    test(parity_counter_3node)
+    | test(parity_counter_storm_go_go)
+    | test(parity_delete_update)
+    | test(parity_indexed_lww)
+    | test(parity_mixed_fields_3node)
+    | test(parity_lww_tie_partition)
+    | test(parity_samedoc_mixed_restart)
+    | test(parity_unique_twins_rust_rust)
+    | test(parity_unique_twins_go_go)
+    | test(parity_unique_twins_mixed)
+)
+"""
