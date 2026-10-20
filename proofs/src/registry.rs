@@ -604,4 +604,12 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_GossipOwnership_Green.cfg",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Gossip connection ownership",
+        name: "decode_encode / decode_all_encode_all / decode_rejects_oversized / read_tag_write_tag",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/gossip/frame.rs write_gossip_frame, read_gossip_frame; crates/p2p/src/iroh/protocols.rs write_stream_tag, read_stream_tag",
+        model_ref: "GossipFrame (lake build)",
+        tiers: &[Boundary],
+    },
 ];
