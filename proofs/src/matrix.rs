@@ -44,6 +44,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Peer fetch stats",
     "Gossip connection ownership",
     "Iroh service records",
+    "Iroh solicited replies",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {

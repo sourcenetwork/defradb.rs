@@ -621,6 +621,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        family: "Iroh solicited replies",
+        name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take, Solicited::prune; crates/p2p/src/iroh/endpoint_streams.rs admit_stream; crates/p2p/src/iroh/endpoint_commands.rs handle_command",
+        model_ref: "MC_SolicitedReplies_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Iroh service records",
         name: "validate_sound / validate_complete / offer_never_lowers / offer_keeps_only_valid / live_not_expired / encodeKey_injective / no_secret_not_advertised / distinct_ids_distinct_keys / parse_print",
         axis: Lean,
