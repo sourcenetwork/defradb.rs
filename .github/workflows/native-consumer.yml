@@ -24,7 +24,7 @@ jobs:
     name: Native ACP consumer
     runs-on: ubuntu-24.04
     # Full normal-release compilation is retained on a cache miss.
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: '2'
       VERA_RUNTIME_REVISION: ${{ inputs.vera_revision || 'e48e1d8f9f701da94554a176d913131e2e6a5277' }}
