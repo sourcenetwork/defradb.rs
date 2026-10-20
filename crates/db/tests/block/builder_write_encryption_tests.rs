@@ -815,13 +815,13 @@ async fn document_encryption_writes_no_immutable_block() {
     let (blockstore, links) = create_immutable_record(&enc).await;
 
     assert!(!links.contains_key(defra_core::block::IMMUTABLE_LINK_NAME));
-    for name in ["author", "kind"] {
-        assert!(
-            field_block(&blockstore, &links[name])
-                .await
-                .encryption
-                .is_some(),
-            "`{name}` must be encrypted"
+    for (name, plaintext) in [("author", "did:key:alice"), ("kind", "note")] {
+        let block = field_block(&blockstore, &links[name]).await;
+        assert!(block.encryption.is_some(), "`{name}` must be encrypted");
+        assert_ne!(
+            delta_data(&block),
+            encode_value_as_cbor(&NormalValue::String(plaintext.to_string())).unwrap(),
+            "`{name}` payload must not be plaintext"
         );
     }
 }
