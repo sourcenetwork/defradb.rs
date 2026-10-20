@@ -1,6 +1,7 @@
 //! Vector index engines, quantization and recall gates.
 
 mod diskann_engine;
+mod diskann_pending_cache;
 mod diskann_resident;
 mod diskann_streaming;
 mod edge_selection;

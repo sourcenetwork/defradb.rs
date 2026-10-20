@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use defra_core::thread_bounds::MaybeSend;
 
-use super::{Meta, Node, NodeId, VectorNodeStore};
+use super::{Meta, Node, NodeId, PendingLog, VectorNodeStore};
 use crate::index::error::Result;
 
 /// A graph held entirely in memory.
@@ -19,6 +19,8 @@ pub struct MemoryNodeStore {
     nodes: BTreeMap<NodeId, Node>,
     meta: Option<Meta>,
     aux: BTreeMap<(u8, Vec<u8>), Bytes>,
+    /// The pending log, entry `p` at index `p - 1`; `None` once truncated.
+    log: Vec<Option<Bytes>>,
 }
 
 impl MemoryNodeStore {
@@ -74,6 +76,7 @@ impl VectorNodeStore for MemoryNodeStore {
         self.nodes.clear();
         self.meta = None;
         self.aux.clear();
+        self.log.fill(None);
         Ok(())
     }
 
@@ -120,5 +123,41 @@ impl VectorNodeStore for MemoryNodeStore {
             visit(key, value)?;
         }
         Ok(())
+    }
+
+    /// One writer and no transactions: every write is committed at once.
+    async fn pending_log(&self) -> Result<Option<PendingLog>> {
+        Ok(Some(PendingLog {
+            head: self.log.len() as u64,
+            own_writes: false,
+        }))
+    }
+
+    async fn append_pending_log(&mut self, entry: &[u8]) -> Result<()> {
+        self.log.push(Some(Bytes::copy_from_slice(entry)));
+        Ok(())
+    }
+
+    async fn pending_log_entry(&self, position: u64) -> Result<Option<Bytes>> {
+        Ok(position
+            .checked_sub(1)
+            .and_then(|at| self.log.get(at as usize))
+            .cloned()
+            .flatten())
+    }
+
+    async fn truncate_pending_log(&mut self, from: u64, through: u64) -> Result<()> {
+        for position in from.max(1)..=through.min(self.log.len() as u64) {
+            self.log[position as usize - 1] = None;
+        }
+        Ok(())
+    }
+
+    async fn pending_log_tail(&self) -> Result<Option<u64>> {
+        Ok(self
+            .log
+            .iter()
+            .position(Option::is_some)
+            .map(|at| at as u64 + 1))
     }
 }

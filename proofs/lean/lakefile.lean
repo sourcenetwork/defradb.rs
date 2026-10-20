@@ -77,3 +77,6 @@ lean_lib WalkCutoff where
 
 @[default_target]
 lean_lib PqFourSums where
+
+@[default_target]
+lean_lib PendingCache where

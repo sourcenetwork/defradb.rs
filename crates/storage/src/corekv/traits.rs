@@ -149,6 +149,17 @@ pub trait Writer: MaybeSendSync + private::Sealed {
         ))
     }
 
+    /// [`truncate_log`](Self::truncate_log) through a shared reference.
+    async fn truncate_log_shared(
+        &self,
+        _log: &super::types::AppendLog,
+        _positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        Err(super::errors::Error::Other(
+            "commit-ordered log truncate is unsupported by this store".into(),
+        ))
+    }
+
     /// [`set`](Self::set) through a shared reference.
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()>;
 
@@ -168,6 +179,16 @@ pub trait Writer: MaybeSendSync + private::Sealed {
         once_key: Option<&[u8]>,
     ) -> Result<()> {
         self.append_shared(log, entry, once_key).await
+    }
+
+    /// Drops the log's entries at `positions` when the transaction commits;
+    /// the head stays, so positions keep counting. Never a conflict.
+    async fn truncate_log(
+        &mut self,
+        log: &super::types::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        self.truncate_log_shared(log, positions).await
     }
 
     /// Store a key-value pair.
@@ -483,6 +504,14 @@ impl Writer for Box<dyn Txn> {
         (**self).append_shared(log, entry, once_key).await
     }
 
+    async fn truncate_log_shared(
+        &self,
+        log: &super::types::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        (**self).truncate_log_shared(log, positions).await
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         (**self).set_shared(key, value).await
     }
@@ -504,6 +533,14 @@ impl Writer for Box<dyn Txn> {
         once_key: Option<&[u8]>,
     ) -> Result<()> {
         (**self).append(log, entry, once_key).await
+    }
+
+    async fn truncate_log(
+        &mut self,
+        log: &super::types::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        (**self).truncate_log(log, positions).await
     }
 
     async fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {

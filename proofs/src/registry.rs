@@ -184,6 +184,22 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "DiskANN pending cache",
+        name: "INV_NoHiddenPending — a search using the in-memory pending list never misses a vector its snapshot or its own transaction has pending",
+        axis: Tla,
+        anchor: "crates/db/src/index/vector/engine/diskann/graph.rs pending_candidates; crates/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/db/src/index/vector/engine/diskann/mod.rs insert, delete; crates/db/src/index/vector/engine/diskann/merge.rs merge",
+        model_ref: "MC_PendingCache_Green.cfg (GREEN) / MC_PendingCache_Red_NoGeneration.cfg / MC_PendingCache_Red_NoLoadedAt.cfg / MC_PendingCache_Red_SilentDeletes.cfg / MC_PendingCache_Red_StillPending.cfg / MC_PendingCache_Red_OwnWrites.cfg (RED)",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "DiskANN pending cache",
+        name: "window_covered — a cache loaded once and caught up on every logged insert holds every vector any snapshot in its window has pending, for logs of any length",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/pending_cache.rs PendingCache; crates/db/src/index/vector/engine/diskann/mod.rs insert, delete",
+        model_ref: "PendingCache.Covers.window_covered / catch_up_in_steps / still_pending_filter_loses",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Vector index link maintenance",
         name: "INV_NoLostLinks — blind additions preserve links and stale structural pruning aborts",
         axis: Tla,

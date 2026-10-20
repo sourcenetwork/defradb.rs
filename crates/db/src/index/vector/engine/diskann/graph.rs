@@ -7,12 +7,14 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use super::cache::Codes;
 use super::codec::{self, GraphState, Record, Trained};
+use super::pending_cache::{Copy, Segment, Tag};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Admit, Candidate, Neighbor, VectorIndexEngine};
 use crate::index::vector::engine::select::{EdgeSelector, RobustPrune};
 use crate::index::vector::quantize::{ProductQuantizer, Quantizer};
 use crate::index::vector::store::{NodeId, VectorNodeStore};
+use defra_core::thread_bounds::MaybeSend;
 use defra_core::vector::Element;
 
 /// A node the walk reached, ranked by its code.
@@ -330,6 +332,103 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .collect()
     }
 
+    /// Every vector the snapshot has pending, ranked by its code, from the
+    /// shared copy where it provably covers the snapshot and a scan where it
+    /// may not (`proofs/tla/PendingCache.tla`). A scan the copy could not
+    /// stand in for reloads it.
+    async fn pending_candidates(
+        &self,
+        pq: &ProductQuantizer,
+        table: &[f32],
+        generation: u64,
+        out: &mut Vec<Visit>,
+    ) -> Result<()> {
+        let m = pq.code_len();
+        let mut push = |id: NodeId, code: &[u8]| {
+            out.push(Visit {
+                id,
+                distance: pq.distance(table, code),
+                code: Vec::new(),
+            })
+        };
+        let cache = match (&self.codes, self.store().pending_log().await?) {
+            (Some(codes), Some(log)) if !log.own_writes => Some((&codes.pending, log.head)),
+            _ => None,
+        };
+        let Some((cache, head)) = cache else {
+            return self.scan_pending(None, &mut push).await;
+        };
+        let copy = cache.load();
+        let reload = match copy.tag() {
+            Some(tag) if tag.generation == generation && head >= tag.loaded_at => {
+                if tag.position >= head {
+                    copy.for_each(m, push);
+                    return Ok(());
+                }
+                if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
+                    let next = Arc::new(copy.caught_up(head, added));
+                    next.for_each(m, push);
+                    cache.publish(next);
+                    return Ok(());
+                }
+                true
+            }
+            Some(tag) => tag.generation < generation,
+            None => true,
+        };
+        if !reload {
+            return self.scan_pending(None, &mut push).await;
+        }
+        let mut segment = Segment::default();
+        self.scan_pending(Some(&mut segment), &mut push).await?;
+        let tag = Tag {
+            generation,
+            loaded_at: head,
+            position: head,
+        };
+        cache.publish(Arc::new(Copy::loaded(tag, segment)));
+        Ok(())
+    }
+
+    /// Visits every pending vector in the snapshot, copying each into `into`
+    /// when given one.
+    async fn scan_pending<F>(&self, mut into: Option<&mut Segment>, visit: &mut F) -> Result<()>
+    where
+        F: FnMut(NodeId, &[u8]) + MaybeSend,
+    {
+        self.store()
+            .iterate_aux(codec::PENDING, b"", |key, code| {
+                let id = codec::id_from_key(key)?;
+                if let Some(segment) = into.as_deref_mut() {
+                    segment.push(id, code);
+                }
+                visit(id, code);
+                Ok(())
+            })
+            .await
+    }
+
+    /// The inserts logged after `from` through `through`, or `None` when an
+    /// entry is gone: a truncate the copy did not see, which only a scan can
+    /// stand in for.
+    async fn read_pending_log(&self, m: usize, from: u64, through: u64) -> Result<Option<Segment>> {
+        let mut added = Segment::default();
+        for position in from + 1..=through {
+            let Some(bytes) = self.store().pending_log_entry(position).await? else {
+                return Ok(None);
+            };
+            if let codec::LogEntry::Insert(id, code) = codec::decode_log_entry(&bytes)? {
+                if code.len() != m {
+                    return Err(Error::Other(
+                        "vector index: DISKANN pending log code has the wrong width".into(),
+                    ));
+                }
+                added.push(id, &code);
+            }
+        }
+        Ok(Some(added))
+    }
+
     /// Walks the graph and scans the pending codes, then re-ranks the best `L`
     /// admitted candidates of both by their full vectors.
     ///
@@ -367,15 +466,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             Some(entry) => self.walk(&pq, entry, &table, l).await?,
             None => Vec::new(),
         };
-        self.store()
-            .iterate_aux(codec::PENDING, b"", |key, code| {
-                candidates.push(Visit {
-                    id: codec::id_from_key(key)?,
-                    distance: pq.distance(&table, code),
-                    code: Vec::new(),
-                });
-                Ok(())
-            })
+        self.pending_candidates(&pq, &table, graph.generation, &mut candidates)
             .await?;
         candidates.sort_by(by_distance);
 
