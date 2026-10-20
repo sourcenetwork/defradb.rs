@@ -60,6 +60,9 @@ pub const STREAM_MANAGE_QUERY_REQ: &[u8] = b"/defra-iroh/manage-query/0.1/req";
 /// Stream tag for management query responses.
 pub const STREAM_MANAGE_QUERY_RESP: &[u8] = b"/defra-iroh/manage-query/0.1/resp";
 
+/// Stream tag for service record requests and replies, both ways.
+pub const STREAM_SERVICE_RECORDS: &[u8] = b"/defra-iroh/services/0.1";
+
 /// Stream tag for the two-stream push protocol.
 pub const STREAM_TWOSTREAM: &[u8] = b"/defra-iroh/twostream/0.1";
 
@@ -78,6 +81,10 @@ pub const MAX_CAR_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
 
 /// Maximum size for management messages.
 pub const MAX_MANAGE_MSG_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
+
+/// A records reply: at most `MAX_REPLY_RECORDS` records with their signatures.
+pub const MAX_RECORDS_MSG_SIZE: usize =
+    super::records::MAX_REPLY_RECORDS * (super::records::MAX_RECORD_BYTES + 128);
 
 /// Write the tag naming the protocol this stream carries.
 ///

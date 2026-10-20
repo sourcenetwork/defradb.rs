@@ -103,6 +103,9 @@ async fn spawn_bare_peer() -> BarePeer {
                 n0_future::task::spawn(async move {
                     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
                         match protocols::read_stream_tag(&mut recv).await {
+                            // The node asks every new peer for its service
+                            // record on its own; that is not a send under test.
+                            Ok(tag) if tag == protocols::STREAM_SERVICE_RECORDS => {}
                             Ok(tag) => observed.tags.push(tag),
                             Err(_) => break,
                         }

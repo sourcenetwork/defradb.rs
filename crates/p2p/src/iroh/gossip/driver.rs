@@ -27,8 +27,8 @@ use crate::transport::PeerAddr;
 
 use super::delivery::{Closed, Delivery};
 use super::frame::{read_gossip_frame, write_gossip_frame, ProtoMessage};
-use crate::iroh::mailbox::{Mailbox, Wake};
 use super::{protocols, spawn_task, topic_id, AddrInfo, Input, Network, SpawnedTasks, Subscribed};
+use crate::iroh::mailbox::{Mailbox, Wake};
 
 /// Messages queued for one peer's stream before more are dropped.
 const SEND_QUEUE: usize = 64;
@@ -203,6 +203,7 @@ where
         match input {
             Input::Join(name) => self.join(name, false),
             Input::Quit(name) => self.quit(topic_id(&name)),
+            Input::Hint { topic, peers } => self.hint(topic, peers),
             Input::Publish {
                 topic,
                 payload,
@@ -295,6 +296,17 @@ where
             .sample(&mut self.rng, JOIN_SAMPLE);
         self.queued
             .push_back(InEvent::Command(id, Command::Join(bootstrap)));
+    }
+
+    fn hint(&mut self, name: String, peers: Vec<EndpointId>) {
+        let id = topic_id(&name);
+        if !self.topics.contains_key(&id) {
+            return;
+        }
+        if !peers.is_empty() {
+            self.queued
+                .push_back(InEvent::Command(id, Command::Join(peers)));
+        }
     }
 
     fn quit(&mut self, id: TopicId) {
@@ -448,6 +460,7 @@ where
         if !first {
             return;
         }
+        self.delivery.connected(peer);
 
         let own_addr = self.network.local_addr();
         if own_addr != self.own_addr {

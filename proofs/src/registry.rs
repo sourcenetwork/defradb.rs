@@ -616,7 +616,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Iroh service records",
         name: "INV_SeqNeverGoesBack / INV_NoExpiredChosen / LIVE_NewestReached",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check",
+        anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check; crates/p2p/src/iroh/records/task.rs Records::renew, Records::on_input",
         model_ref: "MC_ServiceRecords_Green.cfg",
         tiers: &[Boundary],
     },

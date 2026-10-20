@@ -20,7 +20,8 @@ pub struct SignedRecord {
 impl SignedRecord {
     /// The first 8 bytes of the record's hash, as its pointer names it.
     pub fn hash(&self) -> u64 {
-        let digest = blake3::hash(&postcard::to_allocvec(self).expect("a signed record always encodes"));
+        let digest =
+            blake3::hash(&postcard::to_allocvec(self).expect("a signed record always encodes"));
         u64::from_be_bytes(digest.as_bytes()[..8].try_into().expect("8 bytes"))
     }
 }
@@ -65,7 +66,10 @@ pub fn verify(signed: &SignedRecord, now: u64) -> Result<ServiceRecord, Rejectio
         .map_err(|_| Rejection::BadSignature)?;
     PublicKey::from_bytes(&record.node)
         .map_err(|_| Rejection::BadSignature)?
-        .verify(&signed_bytes(&signed.body), &Signature::from_bytes(&signature))
+        .verify(
+            &signed_bytes(&signed.body),
+            &Signature::from_bytes(&signature),
+        )
         .map_err(|_| Rejection::BadSignature)?;
     if now >= record.expires_at {
         return Err(Rejection::Expired);

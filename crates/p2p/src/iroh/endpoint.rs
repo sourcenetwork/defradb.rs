@@ -30,6 +30,7 @@ use super::endpoint_config::{
     allowlist_state_from_config, apply_bind_config, apply_discovery_config, apply_transport_config,
     relay_mode_from_config, IrohEndpointConfig, PeerAdmission,
 };
+use super::endpoint_records::EndpointNet;
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
 use super::endpoint_streams::handle_incoming;
 use super::fetch_stats::FetchStats;
@@ -37,6 +38,7 @@ use super::gossip::GossipHandle;
 use super::inbound_budget::InboundBudget;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
+use super::records::{RecordsHandle, RECORDS_TOPIC};
 use super::task_registry::TaskRegistry;
 
 /// Events each dispatch class may queue before its senders wait.
@@ -61,6 +63,7 @@ pub(super) struct EndpointResources {
     pub(super) admission: Arc<PeerAdmission>,
     pub(super) inbound_budget: Arc<InboundBudget>,
     pub(super) fetch_stats: Arc<FetchStats>,
+    pub(super) records: RecordsHandle,
 }
 
 pub(super) type RawTopics = Arc<HopscotchMap<String, (), RandomState>>;
@@ -180,6 +183,7 @@ async fn run_event_loop(
     let pending_pushlog_replies: PendingPushLogReplies =
         Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let gossip = GossipHandle::new();
+    let records = RecordsHandle::new();
     let connection_cache = new_connection_cache(gossip.clone());
     let raw_topics: RawTopics = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let mut active_syncs: RapidHashMap<u64, ActiveSync> = RapidHashMap::new();
@@ -196,14 +200,24 @@ async fn run_event_loop(
         admission,
         inbound_budget: Arc::default(),
         fetch_stats: Arc::default(),
+        records: records.clone(),
     };
     gossip.start(
         endpoint.id(),
         GossipDialer::new(&resources, &pending_pushlog_replies, &event_tx),
         event_tx.clone(),
         Arc::clone(&raw_topics),
+        records.clone(),
         Arc::clone(&spawned_tasks),
     );
+    let net = EndpointNet::new(resources.clone(), records.clone());
+    let key = endpoint.secret_key().clone();
+    let records_task = records.clone();
+    let _ = spawn_task(
+        &spawned_tasks,
+        async move { records_task.run(key, net).await },
+    );
+    gossip.subscribe(RECORDS_TOPIC.to_owned()).await;
 
     // Emit Listening event with our endpoint address
     let addr_str = format!("iroh://{}", endpoint.id());
@@ -277,6 +291,7 @@ async fn run_event_loop(
     drop(command_rx);
 
     gossip.close();
+    records.close();
 
     let syncs_started = web_time::Instant::now();
     for (_, sync) in active_syncs.drain() {

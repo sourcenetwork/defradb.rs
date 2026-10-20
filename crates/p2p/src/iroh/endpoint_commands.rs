@@ -27,6 +27,7 @@ use super::endpoint_streams::ConnectionStreamContext;
 use super::gossip::{AddrInfo, EventSender, Network};
 use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id};
 use super::protocols;
+use super::records::Input as RecordsInput;
 
 /// Handle a command from `IrohTransport`.
 ///
@@ -151,11 +152,33 @@ pub(super) async fn handle_command(
                 let _ = reply.send(result);
             });
         }
+        IrohCommand::SetServiceProfile { profile, reply } => {
+            resources
+                .records
+                .push_change(RecordsInput::Profile(profile))
+                .await;
+            let _ = reply.send(Ok(()));
+        }
+        IrohCommand::ServiceRecord { peer_id, reply } => match parse_endpoint_id(&peer_id) {
+            Ok(node) => {
+                resources
+                    .records
+                    .push_change(RecordsInput::Lookup { node, reply })
+                    .await
+            }
+            Err(error) => {
+                let _ = reply.send(Err(error));
+            }
+        },
         IrohCommand::Subscribe { topic, reply } => {
-            let _ = reply.send(Ok(gossip.subscribe(topic.to_string()).await));
+            let joined = gossip.subscribe(topic.to_string()).await;
+            held_collection(resources, &topic, true).await;
+            let _ = reply.send(Ok(joined));
         }
         IrohCommand::Unsubscribe { topic, reply } => {
-            let _ = reply.send(Ok(gossip.unsubscribe(topic.to_string()).await));
+            let left = gossip.unsubscribe(topic.to_string()).await;
+            held_collection(resources, &topic, false).await;
+            let _ = reply.send(Ok(left));
         }
         IrohCommand::Publish { topic, msg, reply } => {
             let result = match msg.encode_gossip_payload() {
@@ -911,4 +934,22 @@ fn handle_deny_peer(peer_id: PeerId, resources: &EndpointResources) -> crate::er
     let endpoint_id = parse_endpoint_id(&peer_id)?;
     resources.admission.revoke(endpoint_id);
     handle_disconnect(peer_id, resources)
+}
+
+/// Tells the records task about a collection we start or stop holding, so
+/// our record advertises it and its join is pointed at other holders.
+async fn held_collection(
+    resources: &EndpointResources,
+    topic: &crate::topics::DefraTopic,
+    held: bool,
+) {
+    if let crate::topics::DefraTopic::Collection(id) = topic {
+        resources
+            .records
+            .push_change(RecordsInput::Collection {
+                id: id.clone(),
+                held,
+            })
+            .await;
+    }
 }

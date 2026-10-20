@@ -10,6 +10,7 @@ use crate::transport::{MessageId, TransportEvent};
 
 use super::super::endpoint::RawTopics;
 use super::super::peer_map::endpoint_id_to_peer_id;
+use crate::iroh::records::{Input as RecordsInput, RecordsHandle, RECORDS_TOPIC};
 
 pub(crate) type EventSender = DispatchSender<TransportEvent<iroh::endpoint::SendStream>>;
 
@@ -19,9 +20,15 @@ pub(super) struct Closed;
 pub(super) struct Delivery {
     pub(super) event_tx: EventSender,
     pub(super) raw_topics: RawTopics,
+    pub(super) records: RecordsHandle,
 }
 
 impl Delivery {
+    /// Our first connection to `peer`: the records task looks up its record.
+    pub(super) fn connected(&self, peer: EndpointId) {
+        self.records.push(RecordsInput::Connected(peer));
+    }
+
     pub(super) async fn neighbor(
         &self,
         topic: &str,
@@ -46,6 +53,10 @@ impl Delivery {
         let Event::Received(msg) = event else {
             return Ok(());
         };
+        if topic == RECORDS_TOPIC {
+            self.records.push(RecordsInput::Announced(msg.content));
+            return Ok(());
+        }
         let sender_peer_id = endpoint_id_to_peer_id(&msg.delivered_from);
         let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
         if self.raw_topics.contains_key(topic) {

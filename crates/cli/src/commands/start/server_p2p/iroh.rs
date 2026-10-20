@@ -73,6 +73,11 @@ impl Node {
         let se_transport =
             se_key.map(|key| peer.se_query_transport(db::merge::filled_se_key_handle(key, None)));
 
+        peer.transport
+            .set_service_profile(Self::service_profile(config, se_key.is_some())?)
+            .await
+            .map_err(Error::P2P)?;
+
         let merge_handler_for_kms = Arc::clone(&peer.replication.merge_handler_inner);
         Ok(P2PSetup {
             host_handle: None,
@@ -142,6 +147,54 @@ impl Node {
                 }
             }
         }
+    }
+
+    /// What this node advertises in its service record. Searchable
+    /// encryption queries are offered when an SE key is loaded; KMS always is,
+    /// since every p2p node serves keys; a relay when this node hosts one.
+    fn service_profile(config: &Config, se_key: bool) -> Result<p2p::iroh::ServiceProfile> {
+        use p2p::iroh::{NetworkSecret, Role, Service};
+
+        let net = &config.net;
+        let secret = match &net.iroh_network_secret {
+            Some(hex) => Some(NetworkSecret::from_hex(&hex.0).ok_or_else(|| {
+                Error::InvalidConfig("net.iroh_network_secret must be 64 hex characters".into())
+            })?),
+            None => None,
+        };
+        let role = match net.iroh_service_role.as_deref() {
+            None | Some("replica") => Role::Replica,
+            Some("archive") => Role::Archive,
+            Some("reader") => Role::Reader,
+            Some(other) => {
+                return Err(Error::InvalidConfig(format!(
+                    "net.iroh_service_role must be replica, archive or reader, not {other}"
+                )))
+            }
+        };
+        let mut offers = vec![Service::Kms];
+        if se_key {
+            offers.push(Service::SeQuery);
+        }
+        if net.iroh_replicator {
+            offers.push(Service::Replicator);
+        }
+        let relays = net
+            .iroh_relay_server
+            .iter()
+            .filter_map(|server| server.public_url.clone());
+        offers.extend(relays.map(|url| Service::Relay { url }));
+        offers.extend(
+            net.iroh_custom_services
+                .iter()
+                .map(|name| Service::Custom { name: name.clone() }),
+        );
+        Ok(p2p::iroh::ServiceProfile {
+            secret,
+            role,
+            public_collections: net.iroh_public_collections.iter().cloned().collect(),
+            offers,
+        })
     }
 
     fn iroh_relay_urls(config: &Config) -> Vec<String> {

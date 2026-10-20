@@ -13,11 +13,12 @@ use iroh::{EndpointId, SecretKey};
 use n0_future::time::{Duration, Instant};
 use rapidhash::{HashSetExt, RapidHashSet};
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use super::{
-    advertised_key, blind, sign, Book, CollectionKey, NetworkSecret, Pointer, Refresh, Role,
-    Service, ServiceRecord, SignedRecord, MAX_RECORD_BYTES, MAX_SERVICES,
+    advertised_key, blind, sign, verify, Book, CollectionKey, NetworkSecret, Pointer, Refresh,
+    Role, Service, ServiceRecord, SignedRecord, MAX_RECORD_BYTES, MAX_SERVICES,
 };
 use crate::iroh::mailbox::{Mailbox, Wake};
 
@@ -55,9 +56,13 @@ pub struct ServiceProfile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecordsMessage {
     /// Send me `node`'s record.
-    Ask { node: [u8; 32] },
+    Ask {
+        node: [u8; 32],
+    },
     /// Send me records of nodes advertising `key`.
-    Who { key: CollectionKey },
+    Who {
+        key: CollectionKey,
+    },
     Records(Vec<SignedRecord>),
 }
 
@@ -77,12 +82,26 @@ pub trait Net {
 
 pub enum Input {
     Profile(ServiceProfile),
-    Collection { id: String, held: bool },
+    Collection {
+        id: String,
+        held: bool,
+    },
     Announced(Bytes),
-    Message { from: EndpointId, message: RecordsMessage },
+    Message {
+        from: EndpointId,
+        message: RecordsMessage,
+    },
     Connected(EndpointId),
     /// `None` when the peer publishes no pointer we can read.
-    Pointer { node: EndpointId, pointer: Option<Pointer> },
+    Pointer {
+        node: EndpointId,
+        pointer: Option<Pointer>,
+    },
+    /// The live record we hold for `node`, ours included.
+    Lookup {
+        node: EndpointId,
+        reply: oneshot::Sender<crate::error::Result<Option<ServiceRecord>>>,
+    },
 }
 
 #[derive(Clone)]
@@ -180,10 +199,6 @@ where
         }
     }
 
-    pub fn book(&self) -> &Book {
-        &self.book
-    }
-
     pub fn on_input(&mut self, input: Input, now: Instant, unix: u64) {
         match input {
             Input::Profile(profile) => {
@@ -207,6 +222,14 @@ where
             },
             Input::Message { from, message } => self.on_message(from, message, unix),
             Input::Connected(peer) => self.net.resolve(peer),
+            Input::Lookup { node, reply } => {
+                let record = if node == self.me {
+                    self.own.as_ref().and_then(|own| verify(own, unix).ok())
+                } else {
+                    self.book.live(&node, unix).cloned()
+                };
+                let _ = reply.send(Ok(record));
+            }
             Input::Pointer { node, pointer } => {
                 // A peer with no readable pointer is asked only while we hold
                 // nothing live for it.
@@ -216,7 +239,12 @@ where
                     None => return,
                 };
                 if node != self.me && self.refresh.check(&self.book, node, &pointer, now) {
-                    self.net.send(node, RecordsMessage::Ask { node: *node.as_bytes() });
+                    self.net.send(
+                        node,
+                        RecordsMessage::Ask {
+                            node: *node.as_bytes(),
+                        },
+                    );
                 }
             }
         }
@@ -299,7 +327,10 @@ where
     /// its blinded key and its plain one (a peer may have made it public).
     fn hint_join(&mut self, id: String, unix: u64) {
         let mut peers = Vec::new();
-        let secret = self.profile.as_ref().and_then(|profile| profile.secret.as_ref());
+        let secret = self
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.secret.as_ref());
         let keys = secret
             .map(|secret| blind(secret, &id))
             .into_iter()
@@ -345,14 +376,17 @@ fn build(
             role: profile.role,
         });
         let fits = record.services.len() <= MAX_SERVICES
-            && postcard::to_allocvec(&record).map_or(false, |body| body.len() <= MAX_RECORD_BYTES);
+            && postcard::to_allocvec(&record).is_ok_and(|body| body.len() <= MAX_RECORD_BYTES);
         if !fits {
             record.services.pop();
             left_out += 1;
         }
     }
     if left_out > 0 {
-        warn!(left_out, "service record full: some collections are not advertised");
+        warn!(
+            left_out,
+            "service record full: some collections are not advertised"
+        );
     }
     record
 }

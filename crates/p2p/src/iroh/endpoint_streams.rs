@@ -17,6 +17,7 @@ use super::inbound_budget::{
 };
 use super::peer_map::{endpoint_id_to_peer_id, SharedPeerMap};
 use super::protocols;
+use super::records::{Input as RecordsInput, RecordsHandle, RecordsMessage};
 use super::services::{self, Service};
 
 /// QUIC application error code closing a connection refused by the inbound
@@ -141,6 +142,7 @@ pub(super) struct ConnectionStreamContext {
     spawned_tasks: SpawnedTasks,
     inbound_budget: Arc<InboundBudget>,
     share: Arc<ConnectionShare>,
+    records: RecordsHandle,
 }
 
 impl ConnectionStreamContext {
@@ -157,6 +159,7 @@ impl ConnectionStreamContext {
             spawned_tasks: Arc::clone(&resources.spawned_tasks),
             inbound_budget: Arc::clone(&resources.inbound_budget),
             share: Arc::new(resources.inbound_budget.connection_share()),
+            records: resources.records.clone(),
         }
     }
 }
@@ -181,6 +184,7 @@ pub(super) async fn handle_connection_streams(
         let node_identity = context.node_identity.clone();
         let inbound_budget = Arc::clone(&context.inbound_budget);
         let share = Arc::clone(&context.share);
+        let records = context.records.clone();
         let _ = spawn_task(&context.spawned_tasks, async move {
             let Some((service, payload, lease)) =
                 admit_stream(&mut recv, &inbound_budget, &share, &peer_id).await
@@ -189,6 +193,17 @@ pub(super) async fn handle_connection_streams(
             };
             // Replies on this stream go out at the service's priority.
             let _ = send.set_priority(service.priority.send_priority());
+            if service.tag == protocols::STREAM_SERVICE_RECORDS {
+                match protocols::decode::<RecordsMessage, _>(payload) {
+                    Ok(message) => records.push(RecordsInput::Message {
+                        from: remote_id,
+                        message,
+                    }),
+                    Err(e) => debug!("Undecodable records message from {}: {}", peer_id, e),
+                }
+                drop(lease);
+                return;
+            }
             if let Err(e) = dispatch_stream(
                 service.tag,
                 &peer_id,

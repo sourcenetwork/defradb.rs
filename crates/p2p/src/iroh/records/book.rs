@@ -3,7 +3,7 @@
 //! `proofs/lean/ServiceRecord/Validation.lean`.
 
 use iroh::EndpointId;
-use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 
 use super::{verify, CollectionKey, Pointer, Rejection, Service, ServiceRecord, SignedRecord};
 
@@ -17,7 +17,6 @@ pub struct Book {
 struct Held {
     record: ServiceRecord,
     signed: SignedRecord,
-    hash: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -42,7 +41,11 @@ impl Book {
     pub fn offer(&mut self, signed: SignedRecord, now: u64) -> Result<Offered, Rejection> {
         let record = verify(&signed, now)?;
         let node = EndpointId::from_bytes(&record.node).map_err(|_| Rejection::BadSignature)?;
-        if self.held.get(&node).is_some_and(|old| old.record.seq >= record.seq) {
+        if self
+            .held
+            .get(&node)
+            .is_some_and(|old| old.record.seq >= record.seq)
+        {
             return Ok(Offered::Stale);
         }
         self.remove(&node);
@@ -50,10 +53,9 @@ impl Book {
             self.make_room(now);
         }
         for key in collection_keys(&record) {
-            self.by_key.entry(key.encode()).or_insert_with(RapidHashSet::new).insert(node);
+            self.by_key.entry(key.encode()).or_default().insert(node);
         }
-        let hash = signed.hash();
-        self.held.insert(node, Held { record, signed, hash });
+        self.held.insert(node, Held { record, signed });
         Ok(Offered::Taken)
     }
 
@@ -92,14 +94,7 @@ impl Book {
         }
     }
 
-    /// The pointer to the record we hold for `node`.
-    pub fn pointer(&self, node: &EndpointId) -> Option<Pointer> {
-        self.held.get(node).map(|held| Pointer {
-            seq: held.record.seq,
-            hash: held.hash,
-        })
-    }
-
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.held.len()
     }

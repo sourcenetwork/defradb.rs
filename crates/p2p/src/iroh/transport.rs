@@ -26,6 +26,7 @@ use crate::QueryId;
 
 use super::command::IrohCommand;
 use super::endpoint_config::AdmissionAuthority;
+use super::records::{ServiceProfile, ServiceRecord};
 
 /// Iroh-backed P2P transport.
 ///
@@ -42,6 +43,19 @@ pub struct IrohTransport {
 }
 
 impl IrohTransport {
+    /// The live service record this node holds for `peer_id`, or its own.
+    pub async fn service_record(&self, peer_id: PeerId) -> Result<Option<ServiceRecord>> {
+        self.send_command(|reply| IrohCommand::ServiceRecord { peer_id, reply })
+            .await
+    }
+
+    /// Sets what this node advertises in its service record. Until it is
+    /// set, the node advertises nothing but still reads other records.
+    pub async fn set_service_profile(&self, profile: ServiceProfile) -> Result<()> {
+        self.send_command(|reply| IrohCommand::SetServiceProfile { profile, reply })
+            .await
+    }
+
     /// Create a new `IrohTransport` with the given command channel and identity.
     pub fn new(command_tx: mpsc::Sender<IrohCommand>, secret_key: SecretKey) -> Self {
         let node_id = secret_key.public();
@@ -709,12 +723,16 @@ mod tests {
     use identity::Identity as _;
     use n0_future::time::timeout;
 
-    use crate::iroh::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig};
+    use crate::iroh::records::RECORDS_TOPIC;
+    use crate::iroh::{
+        spawn_endpoint, CollectionKey, IrohDiscoveryConfig, IrohEndpointConfig, Role, Service,
+    };
     use crate::message::{
         PushLogBroadcast, PushSEArtifactsRequest, QuerySEArtifactsReply, QuerySEArtifactsRequest,
         SEArtifact, SEFieldQuery,
     };
     use crate::signing::sign_with_transport;
+    use crate::topics::DefraTopic;
     use crate::transport::{P2PTransport, TransportEvent};
 
     use super::*;
@@ -1209,6 +1227,81 @@ mod tests {
         transport1.shutdown().await.unwrap();
         task0.await.unwrap();
         task1.await.unwrap();
+    }
+
+    /// A record one node signs reaches a connected peer's book over the
+    /// discovery topic, and advertises the public collection it holds.
+    #[tokio::test]
+    async fn a_service_record_reaches_a_connected_peer() {
+        let key0 = SecretKey::generate();
+        let key1 = SecretKey::generate();
+        let (command_tx0, _events0, _replicators0, task0) =
+            spawn_endpoint(test_config(key0.clone())).await.unwrap();
+        let (command_tx1, mut events1, _replicators1, task1) =
+            spawn_endpoint(test_config(key1.clone())).await.unwrap();
+        let transport0 = IrohTransport::new(command_tx0, key0);
+        let transport1 = IrohTransport::new(command_tx1, key1);
+        transport1
+            .dial(
+                transport0.local_peer_id(),
+                transport0.listen_addresses().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        loop {
+            let event = timeout(Duration::from_secs(5), events1.recv())
+                .await
+                .expect("timed out waiting for the records topic")
+                .expect("iroh event channel closed");
+            if matches!(&event, TransportEvent::PeerSubscribed { topic, .. } if topic == RECORDS_TOPIC)
+            {
+                break;
+            }
+        }
+
+        transport0
+            .subscribe(DefraTopic::Collection("users".into()))
+            .await
+            .unwrap();
+        let mut public_collections = rapidhash::RapidHashSet::default();
+        public_collections.insert("users".to_owned());
+        transport0
+            .set_service_profile(ServiceProfile {
+                secret: None,
+                role: Role::Archive,
+                public_collections,
+                offers: vec![Service::Kms],
+            })
+            .await
+            .unwrap();
+
+        let record = timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(record) = transport1
+                    .service_record(transport0.local_peer_id().clone())
+                    .await
+                    .unwrap()
+                {
+                    return record;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the record never reached the peer");
+        assert_eq!(
+            record.services,
+            vec![
+                Service::Kms,
+                Service::Collection {
+                    key: CollectionKey::Plain("users".into()),
+                    role: Role::Archive,
+                },
+            ]
+        );
+
+        task0.abort();
+        task1.abort();
     }
 
     /// Regression for #976: `subscribe_raw` must JOIN the gossip mesh for a raw

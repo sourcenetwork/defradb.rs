@@ -17,6 +17,7 @@ mod config;
 mod endpoint;
 mod endpoint_commands;
 mod endpoint_config;
+mod endpoint_records;
 mod endpoint_rpc;
 mod endpoint_streams;
 mod fetch_stats;
@@ -51,6 +52,7 @@ pub use endpoint::spawn_endpoint;
 pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use iroh::SecretKey;
+pub use records::{CollectionKey, NetworkSecret, Role, Service, ServiceProfile, ServiceRecord};
 #[cfg(feature = "iroh-relay-server")]
 pub use relay_server::{IrohRelayServer, IrohRelayServerConfig, IrohRelayTlsConfig};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]

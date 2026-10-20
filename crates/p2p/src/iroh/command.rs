@@ -82,6 +82,18 @@ pub enum IrohCommand {
         reply: oneshot::Sender<crate::error::Result<crate::message::IdentityResponse>>,
     },
 
+    /// What this node advertises in its service record.
+    SetServiceProfile {
+        profile: super::records::ServiceProfile,
+        reply: oneshot::Sender<crate::error::Result<()>>,
+    },
+
+    /// The live service record we hold for a peer, or our own.
+    ServiceRecord {
+        peer_id: PeerId,
+        reply: oneshot::Sender<crate::error::Result<Option<super::records::ServiceRecord>>>,
+    },
+
     // PubSub
     Subscribe {
         topic: crate::topics::DefraTopic,

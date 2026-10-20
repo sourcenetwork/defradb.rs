@@ -16,13 +16,12 @@ mod refresh;
 mod task;
 mod verify;
 
-pub use book::{Book, Offered};
+pub use book::Book;
 pub use key::{advertised_key, blind, CollectionKey, NetworkSecret};
 pub use pointer::Pointer;
 pub use refresh::Refresh;
 pub use task::{
-    Input, Net, Records, RecordsHandle, RecordsMessage, ServiceProfile, MAX_REPLY_RECORDS,
-    RECORDS_TOPIC,
+    Input, Net, RecordsHandle, RecordsMessage, ServiceProfile, MAX_REPLY_RECORDS, RECORDS_TOPIC,
 };
 pub use verify::{sign, verify, Rejection, SignedRecord};
 

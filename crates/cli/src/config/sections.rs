@@ -276,6 +276,17 @@ impl Default for DatastoreConfig {
     }
 }
 
+/// The hex network secret, kept out of logs.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NetworkSecretHex(pub String);
+
+impl std::fmt::Debug for NetworkSecretHex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NetworkSecretHex([REDACTED])")
+    }
+}
+
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetConfig {
@@ -355,6 +366,25 @@ pub struct NetConfig {
     /// default; custom values must be at least 9.
     #[serde(default)]
     pub iroh_max_concurrent_multipath_paths: Option<u32>,
+    /// 32 bytes of hex shared by the nodes of one network. It blinds the
+    /// collection ids this node advertises in its service record, so only
+    /// nodes with the secret can tell which collections it holds. Unset
+    /// advertises only `iroh_public_collections`.
+    #[serde(default)]
+    pub iroh_network_secret: Option<NetworkSecretHex>,
+    /// Collections advertised by their plain id, readable by any node.
+    #[serde(default)]
+    pub iroh_public_collections: Vec<String>,
+    /// How this node holds the collections it advertises: `replica`
+    /// (the default), `archive` or `reader`.
+    #[serde(default)]
+    pub iroh_service_role: Option<String>,
+    /// Advertise that this node accepts replicators.
+    #[serde(default)]
+    pub iroh_replicator: bool,
+    /// Extra service names to advertise, for applications built on defra.
+    #[serde(default)]
+    pub iroh_custom_services: Vec<String>,
     /// Per-peer rate limit burst capacity (max tokens in bucket). Default: 500.
     #[serde(default = "default_rate_limit_burst")]
     pub p2p_rate_limit_burst: u32,
@@ -465,6 +495,11 @@ impl Default for NetConfig {
             iroh_allowed_peers: Vec::new(),
             iroh_relay_server: None,
             iroh_max_concurrent_multipath_paths: None,
+            iroh_network_secret: None,
+            iroh_public_collections: Vec::new(),
+            iroh_service_role: None,
+            iroh_replicator: false,
+            iroh_custom_services: Vec::new(),
             p2p_rate_limit_burst: default_rate_limit_burst(),
             p2p_rate_limit_rate: default_rate_limit_rate(),
             p2p_max_doc_sync_request_doc_ids: default_max_doc_sync_request_doc_ids(),
@@ -497,6 +532,31 @@ impl NetConfig {
                 ));
             }
             relay_server.validate()?;
+        }
+
+        if let Some(secret) = &self.iroh_network_secret {
+            if secret.0.len() != 64 || !secret.0.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(Error::InvalidConfig(
+                    "net.iroh_network_secret must be 64 hex characters (32 bytes)".into(),
+                ));
+            }
+        }
+        if let Some(role) = &self.iroh_service_role {
+            if !matches!(role.as_str(), "replica" | "archive" | "reader") {
+                return Err(Error::InvalidConfig(format!(
+                    "net.iroh_service_role must be replica, archive or reader, not {role}"
+                )));
+            }
+        }
+        // Peers refuse a record carrying a longer name.
+        if let Some(name) = self
+            .iroh_custom_services
+            .iter()
+            .find(|name| name.len() > 128)
+        {
+            return Err(Error::InvalidConfig(format!(
+                "net.iroh_custom_services name over 128 bytes: {name}"
+            )));
         }
 
         // Multiaddr validation only applies to libp2p transport

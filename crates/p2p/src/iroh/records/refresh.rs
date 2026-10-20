@@ -27,7 +27,13 @@ impl Refresh {
 
     /// Whether to query `node` now, given the pointer it publishes. Records
     /// the ask, so a node is asked at most once per interval.
-    pub fn check(&mut self, book: &Book, node: EndpointId, pointer: &Pointer, now: Instant) -> bool {
+    pub fn check(
+        &mut self,
+        book: &Book,
+        node: EndpointId,
+        pointer: &Pointer,
+        now: Instant,
+    ) -> bool {
         if !book.is_behind(&node, pointer) {
             return false;
         }
@@ -39,7 +45,8 @@ impl Refresh {
             return false;
         }
         if self.asked.len() >= MAX_ASKED {
-            self.asked.retain(|_, last| now.duration_since(*last) < ASK_INTERVAL);
+            self.asked
+                .retain(|_, last| now.duration_since(*last) < ASK_INTERVAL);
         }
         if self.asked.len() < MAX_ASKED {
             self.asked.insert(node, now);

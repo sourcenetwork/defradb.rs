@@ -20,6 +20,8 @@
 \*   book.rs      Book::offer     (a record replaces only a lower seq, never an expired one)
 \*   book.rs      Book::live      (an expired record is never handed out)
 \*   refresh.rs   Refresh::check  (query the owner when its pointer is ahead of the book)
+\*   task.rs      Records::renew  (Publish and UpdatePointer: a higher seq, then its pointer)
+\*   task.rs      Records::on_input, Input::Pointer and RecordsMessage::Records (Query, Deliver)
 EXTENDS Naturals
 
 CONSTANTS
