@@ -91,8 +91,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         let mut codes = Codes::default();
         self.store()
             .iterate_aux(codec::CODE, b"", |key, code| {
-                codes.insert(codec::id_from_key(key)?, code);
-                Ok(())
+                codes.insert(codec::id_from_key(key)?, code)
             })
             .await?;
         cache.replace(generation, codes);

@@ -88,7 +88,7 @@ async fn the_cache_reloads_after_a_merge() {
 fn an_older_reload_does_not_replace_a_newer_one() {
     let codes = |code: u8| {
         let mut codes = Codes::default();
-        codes.insert(NodeId(1), &[code]);
+        codes.insert(NodeId(1), &[code]).unwrap();
         codes
     };
     let cache = CodeCache::default();
@@ -98,4 +98,43 @@ fn an_older_reload_does_not_replace_a_newer_one() {
 
     assert!(cache.is_current(2));
     assert_eq!(cache.get(NodeId(1)), Some(vec![2]));
+}
+
+/// Each loaded code reads back from its own slot, and a miss filled after the
+/// load reads back beside them.
+#[test]
+fn every_loaded_code_reads_back() {
+    let code = |id: u64| id.wrapping_mul(0x9e37_79b9_7f4a_7c15).to_le_bytes();
+    let ids = 1..=1000u64;
+    let mut codes = Codes::default();
+    for id in ids.clone() {
+        codes.insert(NodeId(id), &code(id)).unwrap();
+    }
+    let cache = CodeCache::default();
+    cache.replace(1, codes);
+    let miss = 1001;
+    cache.insert(NodeId(miss), code(miss).to_vec());
+
+    for id in ids.chain([miss]) {
+        assert_eq!(cache.get(NodeId(id)), Some(code(id).to_vec()), "node {id}");
+    }
+    assert_eq!(cache.get(NodeId(miss + 1)), None);
+}
+
+/// A code of another length is refused, naming the node and both lengths.
+#[test]
+fn a_code_of_another_length_is_refused() {
+    let mut codes = Codes::default();
+    codes.insert(NodeId(1), &[1, 2, 3]).unwrap();
+
+    let err = codes.insert(NodeId(2), &[1, 2]).unwrap_err();
+
+    assert!(matches!(
+        err,
+        db::index::Error::DiskAnnCodeLength {
+            id: 2,
+            expected: 3,
+            got: 2
+        }
+    ));
 }

@@ -13,6 +13,7 @@ use kovan_map::HopscotchMap;
 use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 
+use crate::index::error::{Error, Result};
 use crate::index::vector::store::NodeId;
 
 /// Codes loaded in one pass, back to back in one array with an index of where
@@ -26,15 +27,24 @@ pub struct Codes {
 }
 
 impl Codes {
-    /// Every code of one index has the same length, set by the first.
-    pub fn insert(&mut self, id: NodeId, code: &[u8]) {
+    /// Every code of one index has the same length, set by the first; a code
+    /// of another length would shift every later slot, so it is refused.
+    pub fn insert(&mut self, id: NodeId, code: &[u8]) -> Result<()> {
         if self.index.is_empty() {
             self.len = code.len();
         }
-        debug_assert_eq!(code.len(), self.len);
-        self.index
-            .insert(id, (self.bytes.len() / self.len.max(1)) as u32);
+        if code.len() != self.len {
+            return Err(Error::DiskAnnCodeLength {
+                id: id.0,
+                expected: self.len,
+                got: code.len(),
+            });
+        }
+        let slot = u32::try_from(self.bytes.len() / self.len.max(1))
+            .map_err(|_| Error::DiskAnnCodeSlots { id: id.0 })?;
+        self.index.insert(id, slot);
         self.bytes.extend_from_slice(code);
+        Ok(())
     }
 
     fn get(&self, id: NodeId) -> Option<&[u8]> {
