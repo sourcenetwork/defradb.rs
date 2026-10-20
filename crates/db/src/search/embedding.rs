@@ -706,7 +706,7 @@ mod prepared_input_tests {
         workers::block_on(async {
             let provider_calls = std::sync::Arc::new(AtomicUsize::new(0));
             let call_count = std::sync::Arc::clone(&provider_calls);
-            let server = HttpServer::start(move |_| {
+            let server = HttpServer::start(&["/embeddings"], move |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 json!({"data": [{"embedding": [1.0, 2.0]}]})
             });
