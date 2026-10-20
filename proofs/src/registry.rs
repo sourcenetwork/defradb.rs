@@ -620,4 +620,12 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_ServiceRecords_Green.cfg",
         tiers: &[Boundary],
     },
+    Property {
+        family: "Iroh service records",
+        name: "validate_sound / validate_complete / offer_never_lowers / offer_keeps_only_valid / live_not_expired / encodeKey_injective / no_secret_not_advertised / distinct_ids_distinct_keys / parse_print",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/records/verify.rs verify; crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse",
+        model_ref: "ServiceRecord (lake build)",
+        tiers: &[Boundary],
+    },
 ];
