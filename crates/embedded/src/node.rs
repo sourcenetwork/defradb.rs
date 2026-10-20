@@ -30,7 +30,7 @@ pub(crate) type EmbeddedBlockstore<S> = blockstore::DefraBlockstore<S>;
 pub(crate) type EmbeddedMergeHandler<S> = db::merge::AcpMergeHandler<S, EmbeddedBlockstore<S>>;
 type EmbeddedTxnRegistry<S> = db::DbTransactionRegistry<S>;
 #[cfg(feature = "libp2p")]
-pub(crate) type WireDocumentAcpCallback = Box<dyn FnOnce(Arc<dyn acp::DocumentACP>, bool)>;
+pub(crate) type WireDocumentAcpCallback = Box<dyn FnOnce(Arc<dyn acp::DocumentACP>, bool) + Send>;
 pub(crate) type WireKmsCallback = Box<dyn FnOnce(Arc<dyn kms::KmsService>) + Send>;
 
 /// Resolve the identity acting in `context` into a creator DID for ACP

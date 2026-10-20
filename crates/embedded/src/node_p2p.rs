@@ -73,6 +73,8 @@ async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: edge::Task
     }
 }
 
+/// Builds the libp2p host and every task around it on `edge`: the p2p crate
+/// spawns onto the runtime it runs on, so the caller may be on any thread.
 #[cfg(feature = "libp2p")]
 pub(crate) async fn setup_libp2p<S>(
     store: Arc<S>,
@@ -86,6 +88,34 @@ pub(crate) async fn setup_libp2p<S>(
 where
     S: storage::corekv::Store + 'static,
 {
+    edge.spawn(assemble_libp2p(
+        store,
+        database,
+        event_bus,
+        config.clone(),
+        sync_config,
+        peer_keyring.cloned(),
+        edge.clone(),
+    ))
+    .await
+    .map_err(Error::NetworkSetup)?
+}
+
+#[cfg(feature = "libp2p")]
+async fn assemble_libp2p<S>(
+    store: Arc<S>,
+    database: Arc<db::DB<S>>,
+    event_bus: Arc<dyn events::Bus>,
+    config: Libp2pConfig,
+    sync_config: SyncConfig,
+    peer_keyring: Option<crate::PeerKeyring>,
+    edge: edge::Edge,
+) -> Result<P2PSetup>
+where
+    S: storage::corekv::Store + 'static,
+{
+    let edge = &edge;
+    let peer_keyring = peer_keyring.as_ref();
     use p2p::bitswap::BitswapStoreAdapter;
     use p2p::sync::DocumentHeadProvider;
     use storage::stores::Peerstore;

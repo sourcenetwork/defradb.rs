@@ -46,10 +46,28 @@ pub struct IrohPeer<S: Store + 'static> {
 }
 
 impl<S: Store + 'static> IrohPeer<S> {
+    /// Binds the endpoint and starts every peer task on `config.edge`, so
+    /// the caller may be on any thread or executor.
+    pub async fn start(
+        store: Arc<S>,
+        database: Arc<db::DB<S>>,
+        event_bus: Arc<dyn events::Bus>,
+        config: IrohPeerConfig,
+    ) -> p2p::Result<Self> {
+        let edge = config.edge.clone();
+        edge.spawn(Self::assemble(store, database, event_bus, config))
+            .await
+            .map_err(|error| {
+                p2p::Error::Transport(format!(
+                    "iroh peer did not start on the network runtime: {error}"
+                ))
+            })?
+    }
+
     // Nothing here is Send on wasm32, and nothing needs to be: the browser has
     // one thread.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-    pub async fn start(
+    async fn assemble(
         store: Arc<S>,
         database: Arc<db::DB<S>>,
         event_bus: Arc<dyn events::Bus>,
