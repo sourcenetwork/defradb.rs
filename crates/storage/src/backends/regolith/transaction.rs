@@ -298,6 +298,16 @@ impl Writer for RegolithTxn {
         readied!(txn.append(&layout, entry, once_key)).map_err(map_txn_error)
     }
 
+    async fn truncate_log_shared(
+        &self,
+        log: &crate::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        let layout: Arc<dyn regolith::LogLayout> = log.keys().clone();
+        let txn = self.writable()?;
+        readied!(txn.truncate_log(&layout, positions.clone())).map_err(map_txn_error)
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let txn = self.write_target(key)?;
         readied!(txn.put(key, value)).map_err(map_txn_error)
@@ -322,6 +332,16 @@ impl Writer for RegolithTxn {
         let layout: Arc<dyn regolith::LogLayout> = log.keys().clone();
         let txn = self.writable()?;
         readied!(txn.append(&layout, entry, once_key)).map_err(map_txn_error)
+    }
+
+    async fn truncate_log(
+        &mut self,
+        log: &crate::corekv::AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        let layout: Arc<dyn regolith::LogLayout> = log.keys().clone();
+        let txn = self.writable()?;
+        readied!(txn.truncate_log(&layout, positions.clone())).map_err(map_txn_error)
     }
 
     async fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
@@ -464,7 +484,7 @@ impl Txn for RegolithTxn {
 #[cfg(test)]
 mod append_tests {
     use crate::backends::RegolithStore;
-    use crate::corekv::{AppendLog, Store, Writer};
+    use crate::corekv::{AppendLog, Reader, Store, Writer};
 
     /// A pending append holds the layout its log already shares, not a copy.
     #[test]
@@ -478,6 +498,44 @@ mod append_tests {
                 .unwrap();
             assert_eq!(std::sync::Arc::strong_count(log.keys()), 2);
             txn.discard();
+        })
+        .unwrap()
+    }
+
+    /// A truncate drops the entries it names once it commits and leaves the
+    /// head, so positions keep counting; a transaction begun before it still
+    /// reads what it dropped.
+    #[test]
+    fn a_truncate_drops_the_named_entries_and_keeps_the_head() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let log = AppendLog::new(b"s/arrival/c1/head".to_vec(), b"s/arrival/c1/row/".to_vec());
+            for entry in [&b"one"[..], b"two", b"three"] {
+                let mut txn = store.new_txn(false).await.unwrap();
+                txn.append(&log, entry, None).await.unwrap();
+                txn.commit().await.unwrap();
+            }
+            let before = store.new_txn(true).await.unwrap();
+
+            let mut txn = store.new_txn(false).await.unwrap();
+            txn.truncate_log(&log, 1..=2).await.unwrap();
+            txn.commit().await.unwrap();
+
+            let after = store.new_txn(true).await.unwrap();
+            assert!(after.get(&log.entry_key(1)).await.unwrap().is_none());
+            assert!(after.get(&log.entry_key(2)).await.unwrap().is_none());
+            assert_eq!(
+                after.get(&log.entry_key(3)).await.unwrap().as_deref(),
+                Some(&b"three"[..])
+            );
+            assert_eq!(
+                after.get(log.head_key()).await.unwrap().as_deref(),
+                Some(&3u64.to_be_bytes()[..])
+            );
+            assert_eq!(
+                before.get(&log.entry_key(1)).await.unwrap().as_deref(),
+                Some(&b"one"[..])
+            );
         })
         .unwrap()
     }

@@ -17,6 +17,15 @@ use crate::index::error::Result;
 
 pub use storage::vector::{Meta, Node, NodeId};
 
+/// A pending log as one transaction sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingLog {
+    /// The newest committed position in the transaction's snapshot.
+    pub head: u64,
+    /// Whether the transaction has made pending writes of its own.
+    pub own_writes: bool,
+}
+
 /// Where a graph lives.
 ///
 /// Generic rather than `dyn`, matching `CollectionIndex`: the KV adapter is
@@ -119,4 +128,34 @@ pub trait VectorNodeStore: MaybeSendSync {
     async fn iterate_aux<F>(&self, kind: u8, key_prefix: &[u8], visit: F) -> Result<()>
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend;
+
+    /// The head of this build's pending log, and whether this transaction
+    /// has pending writes of its own, which the log shows only once they
+    /// commit. `None` for a store that keeps no log: its searches scan.
+    async fn pending_log(&self) -> Result<Option<PendingLog>> {
+        Ok(None)
+    }
+
+    /// Records one pending put or delete: `entry` goes to the log at the
+    /// position its commit takes, and the write is counted. A store that
+    /// keeps no log ignores it.
+    async fn append_pending_log(&mut self, _entry: &[u8]) -> Result<()> {
+        Ok(())
+    }
+
+    /// The entry at `position`; `None` once truncated.
+    async fn pending_log_entry(&self, _position: u64) -> Result<Option<Bytes>> {
+        Ok(None)
+    }
+
+    /// Drops every entry from `from` through `through`, which a merge has
+    /// absorbed. The head stays, so positions keep counting.
+    async fn truncate_pending_log(&mut self, _from: u64, _through: u64) -> Result<()> {
+        Ok(())
+    }
+
+    /// The oldest entry still held, `None` when every entry was truncated.
+    async fn pending_log_tail(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
 }

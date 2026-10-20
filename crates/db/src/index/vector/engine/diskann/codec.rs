@@ -8,6 +8,15 @@
 //! Deleted  empty: a tombstone awaiting consolidation
 //! ```
 //!
+//! Every pending put and delete also appends one entry to the build's pending
+//! log (`keys::vector_pending_log`), so a search can catch an in-memory copy
+//! of the pending list up instead of scanning it:
+//!
+//! ```text
+//! Insert   1 tag (1)  8 id  m code
+//! Delete   1 tag (0)  8 id
+//! ```
+//!
 //! A record carries its neighbours' codes so one read ranks every edge out of
 //! a node: the layout of AiSAQ and LM-DiskANN, and the reason the walk needs
 //! nothing resident.
@@ -240,6 +249,45 @@ pub fn neighbor_ids(bytes: &[u8], m: usize, resident_codes: bool) -> Result<Vec<
         .into_iter()
         .map(|(id, _)| id)
         .collect())
+}
+
+/// One entry of the pending log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogEntry {
+    /// A vector put on the pending list, with the code it was given.
+    Insert(NodeId, Vec<u8>),
+    /// A vector taken off it.
+    Delete(NodeId),
+}
+
+const LOG_DELETE: u8 = 0;
+const LOG_INSERT: u8 = 1;
+
+pub fn encode_log_entry(entry: &LogEntry) -> Vec<u8> {
+    let (tag, id, code) = match entry {
+        LogEntry::Insert(id, code) => (LOG_INSERT, id, code.as_slice()),
+        LogEntry::Delete(id) => (LOG_DELETE, id, [].as_slice()),
+    };
+    let mut buf = Vec::with_capacity(9 + code.len());
+    buf.push(tag);
+    buf.extend_from_slice(&id.0.to_le_bytes());
+    buf.extend_from_slice(code);
+    buf
+}
+
+pub fn decode_log_entry(bytes: &[u8]) -> Result<LogEntry> {
+    let Some((&tag, rest)) = bytes.split_first() else {
+        return Err(invalid("DISKANN pending log entry is empty"));
+    };
+    let Some((id, code)) = rest.split_first_chunk::<8>() else {
+        return Err(invalid("DISKANN pending log entry is truncated"));
+    };
+    let id = NodeId(u64::from_le_bytes(*id));
+    match tag {
+        LOG_INSERT => Ok(LogEntry::Insert(id, code.to_vec())),
+        LOG_DELETE if code.is_empty() => Ok(LogEntry::Delete(id)),
+        _ => Err(invalid("unsupported DISKANN pending log entry")),
+    }
 }
 
 fn invalid(message: &str) -> Error {

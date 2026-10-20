@@ -25,8 +25,10 @@
 //! pending set meanwhile does not abort it.
 //!
 //! Unlike the paper the pending set is not an in-memory graph: it lives in the
-//! store, which keeps it transactional and durable without a redo log, and is
-//! scanned by code between merges.
+//! store, which keeps it transactional and durable without a redo log. Every
+//! pending write also appends to a commit-ordered log, so searches share an
+//! in-memory copy of the set and catch it up from the log rather than scan it
+//! ([`pending_cache`]).
 //!
 //! ADC ranks by squared distance, which orders cosine only on unit vectors and
 //! Euclidean by definition, so the engine refuses only a dot-product metric.
@@ -39,6 +41,7 @@ pub mod codec;
 mod graph;
 mod merge;
 mod params;
+mod pending_cache;
 
 #[cfg(test)]
 pub(crate) use cache::BUILT as CODE_CACHES_BUILT;
@@ -49,6 +52,7 @@ pub use params::{
     DiskAnnParams, CONSOLIDATE_MIN_DELETED, MAX_ALPHA_PERCENT, MAX_L, MAX_M, MAX_PLAN_PENDING,
     MAX_R, MERGE_MIN_BATCH, SLACK_PERCENT, TRAIN_THRESHOLD,
 };
+pub use pending_cache::{Copy, PendingCache, Segment, Tag, MAX_PENDING_CACHE_BYTES};
 
 use std::sync::Arc;
 
@@ -72,8 +76,9 @@ pub struct DiskAnn<S> {
     /// Fixed once trained. Shared so a write can hold it while borrowing the
     /// store mutably.
     quantizer: TrainedCache<Arc<ProductQuantizer>>,
-    /// Where a resident-codes search reads codes; without it each code is a
-    /// point read.
+    /// Where a resident-codes search reads codes, and where every search
+    /// finds the copy of the pending list; without it each code is a point
+    /// read and the pending list is scanned.
     codes: Option<Arc<CodeCache>>,
 }
 
@@ -193,7 +198,12 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
         pq.encode(&self.metric.prepare(vector), &mut code);
         let key = codec::record_key(id);
         self.store_mut().delete_aux(codec::DELETED, &key).await?;
-        self.store_mut().put_aux(codec::PENDING, &key, &code).await
+        self.store_mut()
+            .put_aux(codec::PENDING, &key, &code)
+            .await?;
+        self.store_mut()
+            .append_pending_log(&codec::encode_log_entry(&codec::LogEntry::Insert(id, code)))
+            .await
     }
 
     /// Tombstones the node: it leaves the pending set and joins the delete
@@ -211,6 +221,9 @@ impl<S: VectorNodeStore> VectorIndexEngine for DiskAnn<S> {
             let key = codec::record_key(id);
             self.store_mut().delete_aux(codec::PENDING, &key).await?;
             self.store_mut().put_aux(codec::DELETED, &key, b"").await?;
+            self.store_mut()
+                .append_pending_log(&codec::encode_log_entry(&codec::LogEntry::Delete(id)))
+                .await?;
         }
         Ok(true)
     }

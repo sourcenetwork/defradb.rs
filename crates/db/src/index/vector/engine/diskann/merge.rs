@@ -154,7 +154,25 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             self.merge_slice(&pq, &mut graph, ids).await?;
         }
         graph.generation += 1;
-        self.put_graph_state(&graph).await
+        self.put_graph_state(&graph).await?;
+        self.truncate_pending_log().await
+    }
+
+    /// Drops the log entries this transaction sees: a search at the new
+    /// generation loads its copy by a scan, so it never needs them. A search
+    /// still at an older snapshot reads them there.
+    pub(super) async fn truncate_pending_log(&mut self) -> Result<()> {
+        let Some(log) = self.store().pending_log().await? else {
+            return Ok(());
+        };
+        if let Some(tail) = self.store().pending_log_tail().await? {
+            if tail <= log.head {
+                self.store_mut()
+                    .truncate_pending_log(tail, log.head)
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     /// The insert and patch phases for one slice of pending inserts.

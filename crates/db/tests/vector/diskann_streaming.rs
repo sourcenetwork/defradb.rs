@@ -321,7 +321,7 @@ fn a_plan_applies_like_a_build() {
 const COLLECTION: u32 = 31;
 const INDEX_ID: u32 = 3;
 
-fn description() -> IndexDescription {
+pub(crate) fn description() -> IndexDescription {
     IndexDescription {
         name: "by_embedding".to_string(),
         id: INDEX_ID,
@@ -351,7 +351,7 @@ fn description() -> IndexDescription {
     })
 }
 
-fn value(vector: &[f32]) -> Vec<NormalValue> {
+pub(crate) fn value(vector: &[f32]) -> Vec<NormalValue> {
     vec![NormalValue::Float32Array(vector.to_vec())]
 }
 
@@ -373,7 +373,7 @@ async fn saved_store() -> (RegolithStore, VectorIndex) {
 }
 
 /// Plans on a snapshot and merges on a write, the way the sweep does.
-async fn merge_due(store: &RegolithStore, index: &VectorIndex) -> bool {
+pub(crate) async fn merge_due(store: &RegolithStore, index: &VectorIndex) -> bool {
     let mut snapshot = store.new_txn(true).await.unwrap();
     let plan = index.merge_plan(&mut snapshot).await.unwrap();
     snapshot.discard();
@@ -387,7 +387,7 @@ async fn merge_due(store: &RegolithStore, index: &VectorIndex) -> bool {
 }
 
 /// A trained index on regolith with nothing pending.
-async fn trained_store() -> (RegolithStore, VectorIndex) {
+pub(crate) async fn trained_store() -> (RegolithStore, VectorIndex) {
     let (store, index) = saved_store().await;
     assert!(merge_due(&store, &index).await);
     assert!(

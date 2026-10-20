@@ -321,6 +321,7 @@ iroh = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe
 iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "26dfe1d469e274d38fe3b41617a20f9bb7a10072" }
+regolith = { path = "../regolith-log-truncate" }
 commonware-p2p = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }
 commonware-utils = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }
 commonware-codec = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }

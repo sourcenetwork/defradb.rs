@@ -143,6 +143,14 @@ impl Writer for InterceptingRetryAttemptIO {
         (self.interceptor)(log.head_key(), Some(entry))?;
         self.inner.append_shared(log, entry, once_key).await
     }
+    async fn truncate_log_shared(
+        &self,
+        log: &AppendLog,
+        positions: std::ops::RangeInclusive<u64>,
+    ) -> Result<()> {
+        (self.interceptor)(log.head_key(), None)?;
+        self.inner.truncate_log_shared(log, positions).await
+    }
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         (self.interceptor)(key, Some(value))?;
         self.inner.set_shared(key, value).await
