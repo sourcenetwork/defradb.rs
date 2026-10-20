@@ -41,6 +41,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Worker pool CPU ledger",
     "Worker default pool",
     "Inbound stream admission",
+    "Peer fetch stats",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {

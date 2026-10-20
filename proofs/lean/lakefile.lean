@@ -41,3 +41,6 @@ lean_lib DefaultPool where
 
 @[default_target]
 lean_lib ByteBudget where
+
+@[default_target]
+lean_lib FetchStats where
