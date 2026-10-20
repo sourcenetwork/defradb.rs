@@ -48,6 +48,9 @@ const MAX_LEARNED: usize = 1024;
 /// reaches nobody.
 const NEIGHBOR_WAIT: Duration = Duration::from_secs(10);
 
+/// Inputs handled before the driver lets other tasks on its thread run.
+const INPUTS_PER_SLICE: usize = 64;
+
 /// QUIC stream error code for a uni stream with a tag we do not serve.
 const RESET_UNKNOWN_SERVICE: u32 = 2;
 
@@ -162,7 +165,12 @@ where
 
     pub(super) async fn run(mut self) {
         let inbox = Arc::clone(&self.io.inbox);
+        let mut handled = 0;
         loop {
+            handled = (handled + 1) % INPUTS_PER_SLICE;
+            if handled == 0 {
+                tokio::task::yield_now().await;
+            }
             let wake_at = self.next_deadline();
             let input = tokio::select! {
                 input = inbox.next() => match input {
