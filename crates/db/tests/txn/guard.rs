@@ -86,9 +86,7 @@ fn aborting_owner_removes_transaction() {
                 .await
                 .unwrap();
             create(&guard).await;
-            ready
-                .try_send(guard.handle().ok().unwrap().clone())
-                .unwrap();
+            ready.try_send(guard.handle().unwrap().clone()).unwrap();
             std::future::pending::<()>().await;
             drop(guard);
         });

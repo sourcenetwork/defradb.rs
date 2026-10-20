@@ -80,7 +80,8 @@ fn inactive_patch_keeps_the_active_version_in_cache() {
         let cached = db.get_collection("Users").unwrap().unwrap();
         assert_eq!(cached.version_id(), original.version_id());
         assert!(cached.schema().is_active);
-    });
+    })
+    .unwrap();
 }
 
 #[test]
