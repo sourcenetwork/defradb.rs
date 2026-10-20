@@ -456,6 +456,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The flat code table is a pure in-memory structure loaded once per
+        // graph generation; its laws are proven, and the unit tests in
+        // crates/db/tests/vector/diskann_resident.rs exercise the Rust side.
+        family: "DiskANN resident code table",
+        name: "get_returns_inserted / get_in_bounds / insert_refuses_other_length: each slot reads back its own code, in bounds",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/cache.rs Codes::insert, Codes::get",
+        model_ref: "DiskAnnCodes (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Index-maintenance consistency",
         name: "onDocumentUpdate_correct / _no_stale / _none_missing",
         axis: Lean,

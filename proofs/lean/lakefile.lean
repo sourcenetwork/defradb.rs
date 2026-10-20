@@ -29,3 +29,6 @@ lean_lib SingleFlight where
 
 @[default_target]
 lean_lib CommitFence where
+
+@[default_target]
+lean_lib DiskAnnCodes where
