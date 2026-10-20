@@ -23,6 +23,15 @@ const BUDGET_BYTES: [usize; 4] = [
     128 * 1024 * 1024,
 ];
 
+/// Room is counted in KiB, so the largest budget fits a semaphore on 32-bit
+/// targets, where one holds fewer than 64 Mi permits.
+const PERMIT_BYTES: usize = 1024;
+
+/// The permits a `len`-byte body takes: its size in KiB, rounded up.
+const fn permits_for(len: usize) -> usize {
+    len.div_ceil(PERMIT_BYTES)
+}
+
 /// How long a stream waits for room before it is reset.
 pub const ADMIT_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -38,7 +47,7 @@ pub struct InboundBudget {
 
 #[derive(Debug)]
 struct ClassBudget {
-    bytes: Arc<Semaphore>,
+    room: Arc<Semaphore>,
     stats: Arc<ClassStats>,
 }
 
@@ -53,7 +62,7 @@ struct ClassStats {
 /// One connection's share of every class budget.
 #[derive(Debug)]
 pub struct ConnectionShare {
-    bytes: [Arc<Semaphore>; 4],
+    room: [Arc<Semaphore>; 4],
 }
 
 /// No room was free before the deadline.
@@ -79,7 +88,7 @@ impl Default for InboundBudget {
     fn default() -> Self {
         Self {
             classes: BUDGET_BYTES.map(|capacity| ClassBudget {
-                bytes: Arc::new(Semaphore::new(capacity)),
+                room: Arc::new(Semaphore::new(permits_for(capacity))),
                 stats: Arc::default(),
             }),
         }
@@ -90,7 +99,8 @@ impl InboundBudget {
     /// A new connection's share: half of each class budget.
     pub fn connection_share(&self) -> ConnectionShare {
         ConnectionShare {
-            bytes: BUDGET_BYTES.map(|capacity| Arc::new(Semaphore::new(share_of(capacity)))),
+            room: BUDGET_BYTES
+                .map(|capacity| Arc::new(Semaphore::new(permits_for(share_of(capacity))))),
         }
     }
 
@@ -105,9 +115,10 @@ impl InboundBudget {
         deadline: Duration,
     ) -> Result<InboundLease, Busy> {
         let class = &self.classes[priority.index()];
+        let permits = permits_for(len);
         let acquire = async {
-            let share = share.bytes[priority.index()].acquire_owned(len).await;
-            let class_bytes = class.bytes.acquire_owned(len).await;
+            let share = share.room[priority.index()].acquire_owned(permits).await;
+            let class_bytes = class.room.acquire_owned(permits).await;
             (share, class_bytes)
         };
         let Ok((share, class_bytes)) = n0_future::time::timeout(deadline, acquire).await else {
@@ -165,6 +176,16 @@ mod tests {
                 "{:?} cannot fit its largest message",
                 String::from_utf8_lossy(service.tag)
             );
+        }
+    }
+
+    #[test]
+    fn every_budget_fits_a_32_bit_semaphore() {
+        // regolith keeps 6 flag bits beside the count, so a 32-bit
+        // `Semaphore::MAX_PERMITS` is `u32::MAX >> 6`.
+        let max_32_bit = (u32::MAX >> 6) as usize;
+        for capacity in BUDGET_BYTES {
+            assert!(permits_for(capacity) <= max_32_bit);
         }
     }
 
@@ -274,6 +295,6 @@ mod tests {
                 .unwrap_err(),
             Busy
         );
-        assert_eq!(third.bytes[3].available_permits(), half);
+        assert_eq!(third.room[3].available_permits(), permits_for(half));
     }
 }

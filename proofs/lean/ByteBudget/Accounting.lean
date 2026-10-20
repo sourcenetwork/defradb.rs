@@ -19,7 +19,10 @@ takes on trust by giving every body size 1.
 
 Rust anchors: `InboundBudget::admit` and `InboundLease` (its `Drop` gives the
 room back) in `crates/p2p/src/iroh/inbound_budget.rs`. Each pool is a
-`regolith::sync::Semaphore` counted in bytes; it is modeled here as its free count.
+`regolith::sync::Semaphore` counted in KiB (`permits_for`), so a 128 MiB budget
+fits a semaphore on 32-bit targets; it is modeled here as its free count, in
+units. The last section shows that rounding each body up to whole KiB never lets
+more bytes in than the budget holds.
 -/
 
 namespace ByteBudget
@@ -137,5 +140,33 @@ theorem admit_success_takes_n (share cls n share' cls' : Nat)
   · simp [admitBoth, tryAcquire, hs, hc] at h; omega
   -- Any pool without room makes admission fail, which contradicts the success we were given.
   all_goals simp [admitBoth, tryAcquire, hs, hc] at h
+
+-- One unit of room is a KiB.
+def unitBytes : Nat := 1024
+
+-- The units a `len`-byte body takes: its size in KiB, rounded up.
+def units (len : Nat) : Nat := (len + unitBytes - 1) / unitBytes
+
+-- Promise: a body never has more bytes than the units it took.
+theorem body_fits_its_units (len : Nat) : len ≤ unitBytes * units len := by
+  -- Rounding up a division by 1024 is plain arithmetic once both are unfolded.
+  simp only [units, unitBytes]
+  omega
+
+-- Promise: the bytes of every held body together fit in the units they took, so a
+-- pool of `cap` units never lets in more than `unitBytes * cap` bytes.
+theorem bodies_fit_their_units (lens : List Nat) :
+    held lens ≤ unitBytes * held (lens.map units) := by
+  -- Induct on the bodies.
+  induction lens with
+  -- No bodies: zero bytes in zero units.
+  | nil => simp [held]
+  -- One body then the rest: its own bytes fit its units, and the rest's fit theirs.
+  | cons n rest ih =>
+    -- The first body's bound.
+    have := body_fits_its_units n
+    -- Unfold both sums one step and add the two bounds.
+    simp only [held, List.foldr, List.map, unitBytes] at *
+    omega
 
 end ByteBudget
