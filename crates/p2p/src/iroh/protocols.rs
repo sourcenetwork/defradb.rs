@@ -5,8 +5,15 @@
 
 use iroh::endpoint::{RecvStream, SendStream};
 
-/// The single ALPN every Defra protocol is multiplexed over.
-pub const ALPN_MUX: &[u8] = b"/defra-iroh/mux/0.1";
+/// The single ALPN every Defra protocol is multiplexed over, gossip included.
+pub const ALPN_MUX: &[u8] = b"/defra-iroh/mux/0.2";
+
+/// The mux before gossip moved onto it. Still accepted and offered, so older
+/// peers keep every protocol except gossip.
+pub const ALPN_MUX_V1: &[u8] = b"/defra-iroh/mux/0.1";
+
+/// Stream tag for the gossip stream, the only uni stream on a connection.
+pub const STREAM_GOSSIP: &[u8] = b"/defra-iroh/gossip/0.1";
 
 /// Stream tag for PushLog request-response.
 pub const STREAM_PUSHLOG: &[u8] = b"/defra-iroh/pushlog/0.1";
@@ -155,8 +162,6 @@ pub async fn read_body(recv: &mut RecvStream, len: usize) -> crate::error::Resul
     Ok(payload)
 }
 
-/// Read a `len`-byte body, giving up once no bytes arrive for `idle`.
-/// `Ok(None)` means the sender stalled.
 /// Reads a stream to its end, as `RecvStream::read_to_end` does, calling
 /// `on_chunk` with the size of each chunk as it arrives.
 pub async fn read_to_end_observed<OnChunk>(
@@ -188,6 +193,8 @@ where
     Ok(chunks.concat())
 }
 
+/// Read a `len`-byte body, giving up once no bytes arrive for `idle`.
+/// `Ok(None)` means the sender stalled.
 pub async fn read_body_until_idle(
     recv: &mut RecvStream,
     len: usize,

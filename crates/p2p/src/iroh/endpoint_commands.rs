@@ -1,19 +1,14 @@
 //! Command handlers for the iroh endpoint event loop.
 
-use rapidhash::fast::RandomState;
 use rapidhash::RapidHashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use iroh_gossip::net::Gossip;
-use iroh_gossip::proto::TopicId;
-use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::bitswap::ReplicatorRegistry;
-use crate::message::PushLogBroadcast;
 use crate::sync::DispatchSender;
 use crate::transport::{MessageId, PeerAddr, PeerId, TransportEvent};
 use crate::QueryId;
@@ -21,69 +16,17 @@ use crate::QueryId;
 use super::addr::{endpoint_addr_from_parts, endpoint_ticket_string};
 use super::command::IrohCommand;
 use super::endpoint::{
-    peer_direct_addr, snapshot_subscription_senders, spawn_task, ActiveSync, EndpointResources,
-    Neighbors, PendingPushLogReplies, RawTopics, SpawnedTasks, SubscriptionSenders,
-    TopicSubscription,
+    peer_direct_addr, spawn_task, ActiveSync, EndpointResources, PendingPushLogReplies, RawTopics,
 };
-use super::endpoint_config::PeerAdmission;
 use super::endpoint_rpc::{
-    close_peer_connections, handle_block_sync, handle_car_request_response, handle_fire_and_forget,
-    handle_request_response, handle_send_only, handle_two_stream_request, remember_connection,
-    BlockSyncResources,
+    close_peer_connections, connect_mux, handle_block_sync, handle_car_request_response,
+    handle_fire_and_forget, handle_request_response, handle_send_only, handle_two_stream_request,
+    remember_connection, BlockSyncResources,
 };
 use super::endpoint_streams::ConnectionStreamContext;
-use super::gossip_heal;
-use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id, SharedPeerMap};
+use super::gossip::{AddrInfo, EventSender, Network};
+use super::peer_map::{endpoint_id_to_peer_id, parse_endpoint_id};
 use super::protocols;
-
-/// Authenticate the endpoint that originated a PushLog gossip envelope.
-///
-/// Iroh's `delivered_from` authenticates only the last hop. New publishers
-/// therefore sign the canonical envelope with their endpoint key. The signed
-/// origin proves who emitted the hint. The connected hop is retained only as
-/// ingress metadata: a gossip relay may not own the linked DAG. During a
-/// rolling upgrade, an unsigned envelope is accepted only when Iroh proves it
-/// arrived directly from its publisher; any payload `SourcePeerID` is ignored.
-fn authenticate_pushlog_origin(
-    broadcast: &mut PushLogBroadcast,
-    delivered_from: &iroh::EndpointId,
-    is_direct: bool,
-) -> crate::error::Result<iroh::EndpointId> {
-    match (
-        broadcast.source_peer_id.as_deref(),
-        broadcast.origin_signature.as_deref(),
-    ) {
-        (Some(claimed_source), Some(signature_bytes)) => {
-            let origin: iroh::EndpointId =
-                claimed_source
-                    .parse()
-                    .map_err(|error: iroh::KeyParsingError| {
-                        crate::error::Error::InvalidPeerId(error.to_string())
-                    })?;
-            let signature = iroh::Signature::try_from(signature_bytes)
-                .map_err(|_| crate::error::Error::InvalidSignature)?;
-            let signing_bytes = broadcast.origin_signing_bytes()?;
-            origin
-                .verify(&signing_bytes, &signature)
-                .map_err(|_| crate::error::Error::InvalidSignature)?;
-            broadcast.authenticate_origin_peer(origin.to_string());
-            broadcast.authenticate_source_peer(delivered_from.to_string());
-            Ok(origin)
-        }
-        (_, Some(_)) => Err(crate::error::Error::InvalidSignature),
-        (_, None) if is_direct => {
-            let origin = *delivered_from;
-            // Never retain an unsigned payload claim, even on the compatible
-            // direct path. Iroh's authenticated delivery metadata is the
-            // authority in this case.
-            broadcast.source_peer_id = Some(origin.to_string());
-            broadcast.authenticate_origin_peer(origin.to_string());
-            broadcast.authenticate_source_peer(origin.to_string());
-            Ok(origin)
-        }
-        (_, None) => Err(crate::error::Error::MissingSignature),
-    }
-}
 
 /// Handle a command from `IrohTransport`.
 ///
@@ -93,7 +36,6 @@ pub(super) async fn handle_command(
     cmd: IrohCommand,
     resources: &EndpointResources,
     pending_pushlog_replies: &PendingPushLogReplies,
-    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
     raw_topics: &RawTopics,
     replicators: &Arc<ReplicatorRegistry>,
     active_syncs: &mut RapidHashMap<u64, ActiveSync>,
@@ -124,7 +66,6 @@ pub(super) async fn handle_command(
             let ctx = DialContext {
                 resources: resources.clone(),
                 pending_pushlog_replies: Arc::clone(pending_pushlog_replies),
-                subscription_senders: snapshot_subscription_senders(subscriptions),
                 event_tx: event_tx.clone(),
             };
             let _ = spawn_task(spawned_tasks, async move {
@@ -211,37 +152,21 @@ pub(super) async fn handle_command(
             });
         }
         IrohCommand::Subscribe { topic, reply } => {
-            let result = handle_subscribe(
-                gossip,
-                subscriptions,
-                peer_map,
-                &resources.admission,
-                raw_topics,
-                topic,
-                event_tx,
-            )
-            .await;
-            let _ = reply.send(result);
+            let _ = reply.send(Ok(gossip.subscribe(topic.to_string()).await));
         }
         IrohCommand::Unsubscribe { topic, reply } => {
-            let topic_str = topic.to_string();
-            if let Some(sub) = subscriptions.remove(&topic_str) {
-                sub.reader_task.abort();
-                let _ = reply.send(Ok(true));
-            } else {
-                let _ = reply.send(Ok(false));
-            }
+            let _ = reply.send(Ok(gossip.unsubscribe(topic.to_string()).await));
         }
         IrohCommand::Publish { topic, msg, reply } => {
-            let result = handle_publish(
-                gossip,
-                subscriptions,
-                peer_map,
-                &resources.admission,
-                topic,
-                msg,
-                spawned_tasks,
-            );
+            let result = match msg.encode_gossip_payload() {
+                Ok(payload) => {
+                    gossip
+                        .publish(topic.to_string(), Bytes::from(payload))
+                        .await;
+                    Ok(MessageId::new(uuid::Uuid::new_v4().to_string()))
+                }
+                Err(error) => Err(crate::error::Error::CborSerialization(error.to_string())),
+            };
             let _ = reply.send(result);
         }
         IrohCommand::RegisterRawTopic { topic, reply } => {
@@ -249,46 +174,16 @@ pub(super) async fn handle_command(
             let _ = reply.send(Ok(()));
         }
         IrohCommand::SubscribeRaw { topic, reply } => {
-            // Mark as raw-routed first so the reader spawned below emits
-            // GossipRawMessage (not a decoded PushLogBroadcast) for it, then
-            // join the gossip mesh with a real reader task.
+            // Raw first, so the topic is never delivered as a decoded PushLog.
             raw_topics.insert_if_absent(topic.clone(), ());
-            let result = subscribe_topic_str(
-                gossip,
-                subscriptions,
-                peer_map,
-                &resources.admission,
-                raw_topics,
-                topic,
-                event_tx,
-            )
-            .await;
-            let _ = reply.send(result);
+            let _ = reply.send(Ok(gossip.subscribe(topic).await));
         }
         IrohCommand::PublishRaw { topic, data, reply } => {
-            let result = handle_publish_raw(
-                gossip,
-                subscriptions,
-                peer_map,
-                &resources.admission,
-                topic,
-                data,
-                spawned_tasks,
-            );
-            let _ = reply.send(result);
+            gossip.publish(topic, Bytes::from(data)).await;
+            let _ = reply.send(Ok(MessageId::new(uuid::Uuid::new_v4().to_string())));
         }
         IrohCommand::TopicPeers { topic, reply } => {
-            let topic_str = topic.to_string();
-            let peers = subscriptions
-                .get(&topic_str)
-                .map(|sub| {
-                    sub.neighbors
-                        .keys()
-                        .map(|id| endpoint_id_to_peer_id(&id))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let _ = reply.send(Ok(peers));
+            let _ = reply.send(Ok(gossip.topic_peers(&topic.to_string())));
         }
         IrohCommand::SendPushLogResponse {
             mut send_stream,
@@ -813,13 +708,49 @@ pub(super) async fn handle_command(
 /// branch of the endpoint `select!` starves the sibling `accept()` branch — so
 /// two peers dialing each other in-window deadlock (neither accepts the other's
 /// inbound connection). Spawning the dial (like `accept()` already spawns) keeps
-/// the loop free to accept. `subscriptions` is captured as an owned senders
-/// snapshot (the only previously-borrowed field).
+/// the loop free to accept.
+#[derive(Clone)]
 struct DialContext {
     resources: EndpointResources,
     pending_pushlog_replies: PendingPushLogReplies,
-    subscription_senders: SubscriptionSenders,
-    event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: EventSender,
+}
+
+/// Gossip's way out to the network: its dials take the same admission checks
+/// as every other dial.
+pub(super) struct GossipDialer(DialContext);
+
+impl GossipDialer {
+    pub(super) fn new(
+        resources: &EndpointResources,
+        pending_pushlog_replies: &PendingPushLogReplies,
+        event_tx: &EventSender,
+    ) -> Self {
+        Self(DialContext {
+            resources: resources.clone(),
+            pending_pushlog_replies: Arc::clone(pending_pushlog_replies),
+            event_tx: event_tx.clone(),
+        })
+    }
+}
+
+impl Network for GossipDialer {
+    fn dial(&self, peer: iroh::EndpointId, addrs: Vec<PeerAddr>) {
+        let ctx = self.0.clone();
+        let tasks = Arc::clone(&ctx.resources.spawned_tasks);
+        let _ = spawn_task(&tasks, async move {
+            let gossip = ctx.resources.gossip.clone();
+            let peer_id = endpoint_id_to_peer_id(&peer);
+            if let Err(error) = handle_dial(ctx, &peer_id, addrs).await {
+                debug!(%peer_id, %error, "Gossip dial failed");
+                gossip.dial_failed(peer).await;
+            }
+        });
+    }
+
+    fn local_addr(&self) -> AddrInfo {
+        self.0.resources.endpoint.addr().into()
+    }
 }
 
 /// Dial a peer by EndpointId.
@@ -865,12 +796,7 @@ async fn handle_dial(
 
     let direct_addresses: Vec<std::net::SocketAddr> = endpoint_addr.ip_addrs().copied().collect();
 
-    let connection = ctx
-        .resources
-        .endpoint
-        .connect(endpoint_addr, protocols::ALPN_MUX)
-        .await
-        .map_err(|e| crate::error::Error::Dial(e.to_string()))?;
+    let connection = connect_mux(&ctx.resources.endpoint, endpoint_addr).await?;
 
     // Send over the connection we just opened instead of dialling a second one
     // on the first message.
@@ -908,12 +834,11 @@ async fn handle_dial(
         warn!("Event channel closed, cannot emit PeerConnected");
     }
 
-    if admitted && is_new {
-        gossip_heal::spawn_peer_connected_heal(
-            &ctx.resources,
-            &ctx.subscription_senders,
-            endpoint_id,
-        );
+    if admitted {
+        ctx.resources
+            .gossip
+            .connected(endpoint_id, &connection)
+            .await;
     }
 
     // Keep connection alive by spawning a handler for incoming streams.
@@ -946,8 +871,7 @@ async fn handle_dial(
 /// Hang up the live connection to a peer.
 ///
 /// Closes the connection handle retained in `peer_map` (covering dial- and
-/// accept-initiated connections), any cached outbound-send connections, and
-/// any gossip connection injected by the heal path. iroh `Connection` clones
+/// accept-initiated connections) and any cached outbound-send connections. iroh `Connection` clones
 /// share the underlying QUIC connection, so closing any handle tears down the
 /// connection; the stream task then observes the `accept_bi` error, decrements
 /// the count, and emits `PeerDisconnected`.
@@ -960,14 +884,6 @@ fn handle_disconnect(peer_id: PeerId, resources: &EndpointResources) -> crate::e
         &resources.connection_cache,
         &endpoint_id,
     );
-    if let Some(connection) = resources.healer.take_conn(&endpoint_id) {
-        connection.close(0u32.into(), b"disconnect");
-    }
-    // Gossip connections this node accepted live in none of the above: they
-    // are handed to the gossip layer before the peer ever reaches `peer_map`.
-    for connection in resources.healer.take_accepted(&endpoint_id) {
-        connection.close(0u32.into(), b"disconnect");
-    }
     Ok(())
 }
 
@@ -994,478 +910,4 @@ fn handle_deny_peer(peer_id: PeerId, resources: &EndpointResources) -> crate::er
     let endpoint_id = parse_endpoint_id(&peer_id)?;
     resources.admission.revoke(endpoint_id);
     handle_disconnect(peer_id, resources)
-}
-
-/// The connected peers that may be handed to gossip as mesh neighbours.
-///
-/// Filtered, because seeding gossip with a peer id is not passive: iroh-gossip
-/// holds the raw endpoint and dials its own mesh, so a revoked peer named here
-/// is a revoked peer this node asks gossip to go and connect to, over a path
-/// neither `handle_dial` nor the accept check ever sees. `peer_map` alone is
-/// not safe to use for this: `take_connections` deliberately leaves the count
-/// entry behind for the stream tasks to clear, so a peer revoked a moment ago
-/// is still listed there with no live handles.
-///
-/// One function rather than a filter repeated at each call site, so the
-/// subscribe and publish paths cannot drift apart on who counts as a
-/// neighbour.
-fn admitted_neighbours(
-    peer_map: &SharedPeerMap,
-    admission: &PeerAdmission,
-) -> Vec<iroh::EndpointId> {
-    peer_map
-        .endpoint_ids()
-        .into_iter()
-        .filter(|id| admission.admits_outbound(id))
-        .collect()
-}
-
-/// Subscribe to a gossip topic.
-///
-/// Passes all currently connected peers as initial neighbors so gossip messages
-/// are immediately deliverable. iroh-gossip requires explicit neighbors unlike
-/// libp2p-gossipsub which discovers them automatically.
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_subscribe(
-    gossip: &Gossip,
-    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
-    peer_map: &SharedPeerMap,
-    admission: &PeerAdmission,
-    raw_topics: &RawTopics,
-    topic: crate::topics::DefraTopic,
-    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
-) -> crate::error::Result<bool> {
-    subscribe_topic_str(
-        gossip,
-        subscriptions,
-        peer_map,
-        admission,
-        raw_topics,
-        topic.to_string(),
-        event_tx,
-    )
-    .await
-}
-
-/// Join the gossip mesh for an arbitrary topic string and spawn a reader task.
-///
-/// Shared by [`handle_subscribe`] (typed `DefraTopic`) and the `SubscribeRaw`
-/// command (raw string sub-topics such as the KMS `encryption/<peer>/_response`
-/// reply topic). The topic id is derived via [`topic_to_id`] from the same
-/// string `handle_publish_raw` uses, so a subscriber and a publisher of the
-/// same string topic meet on the same iroh-gossip `TopicId`. The reader emits
-/// [`TransportEvent::GossipRawMessage`] for any topic present in `raw_topics`,
-/// and a decoded [`TransportEvent::GossipMessage`] otherwise.
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn subscribe_topic_str(
-    gossip: &Gossip,
-    subscriptions: &mut RapidHashMap<String, TopicSubscription>,
-    peer_map: &SharedPeerMap,
-    admission: &PeerAdmission,
-    raw_topics: &RawTopics,
-    topic_str: String,
-    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
-) -> crate::error::Result<bool> {
-    use futures::StreamExt;
-
-    if subscriptions.contains_key(&topic_str) {
-        return Ok(false);
-    }
-
-    let topic_id = topic_to_id(&topic_str);
-    let initial_peers = admitted_neighbours(peer_map, admission);
-    let gossip_topic = gossip
-        .subscribe(topic_id, initial_peers)
-        .await
-        .map_err(|e| crate::error::Error::GossipSubSubscription(e.to_string()))?;
-
-    let (sender, mut receiver) = gossip_topic.split();
-    let neighbors: Neighbors = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
-    neighbors.extend(receiver.neighbors().map(|id| (id, ())));
-
-    let event_tx = event_tx.clone();
-    let topic_str_clone = topic_str.clone();
-    let reader_neighbors = Arc::clone(&neighbors);
-    let raw_topics_reader = Arc::clone(raw_topics);
-    let reader_task = n0_future::task::spawn(async move {
-        while let Some(result) = receiver.next().await {
-            match result {
-                Ok(event) => match event {
-                    iroh_gossip::api::Event::Received(msg) => {
-                        let sender_peer_id = endpoint_id_to_peer_id(&msg.delivered_from);
-                        if raw_topics_reader.contains_key(&topic_str_clone) {
-                            let msg_id = MessageId::new(uuid::Uuid::new_v4().to_string());
-                            if event_tx
-                                .send(TransportEvent::GossipRawMessage {
-                                    propagation_source: sender_peer_id,
-                                    message_id: msg_id,
-                                    topic: topic_str_clone.clone(),
-                                    data: msg.content.to_vec(),
-                                })
-                                .await
-                                .is_err()
-                            {
-                                debug!("Event channel closed, stopping gossip reader");
-                                break;
-                            }
-                            continue;
-                        }
-                        match crate::message::PushLogBroadcast::decode_gossip_payload(&msg.content)
-                        {
-                            Ok((mut broadcast, encoding)) => {
-                                let origin = match authenticate_pushlog_origin(
-                                    &mut broadcast,
-                                    &msg.delivered_from,
-                                    msg.scope.is_direct(),
-                                ) {
-                                    Ok(origin) => origin,
-                                    Err(error) => {
-                                        warn!(
-                                            peer_id = %sender_peer_id,
-                                            claimed_source_peer_id = ?broadcast.source_peer_id,
-                                            topic = %topic_str_clone,
-                                            is_direct = msg.scope.is_direct(),
-                                            error = %error,
-                                            "Dropping Iroh head hint with unauthenticated origin"
-                                        );
-                                        continue;
-                                    }
-                                };
-                                debug!(
-                                    peer_id = %sender_peer_id,
-                                    origin_peer_id = %origin,
-                                    is_direct = msg.scope.is_direct(),
-                                    topic = %topic_str_clone,
-                                    "Authenticated Iroh head-hint origin and ingress hop"
-                                );
-                                if encoding != crate::message::PushLogGossipPayloadEncoding::PostcardBroadcast {
-                                    debug!(
-                                        peer_id = %sender_peer_id,
-                                        topic = %topic_str_clone,
-                                        message_size = msg.content.len(),
-                                        ?encoding,
-                                        "Decoded Iroh gossip message via compatibility fallback"
-                                    );
-                                }
-                                let msg_id = MessageId::new(uuid::Uuid::new_v4().to_string());
-                                if event_tx
-                                    .send(TransportEvent::GossipMessage {
-                                        propagation_source: sender_peer_id,
-                                        message_id: msg_id,
-                                        topic: topic_str_clone.clone(),
-                                        message: broadcast,
-                                    })
-                                    .await
-                                    .is_err()
-                                {
-                                    debug!("Event channel closed, stopping gossip reader");
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                let payload_info =
-                                    crate::message::PushLogBroadcast::inspect_gossip_payload(
-                                        &msg.content,
-                                    );
-                                let sample = crate::sync::GossipDecodeFailureSample {
-                                    transport: crate::sync::GossipTransport::Iroh,
-                                    peer_id: sender_peer_id.to_string(),
-                                    topic: topic_str_clone.clone(),
-                                    message_size: msg.content.len(),
-                                    error: e.clone(),
-                                    payload_fingerprint: payload_info.payload_fingerprint,
-                                    payload_shape_hint: payload_info.payload_shape_hint,
-                                    occurrences: 0,
-                                };
-                                // Exponential-backoff sampling: warn on the
-                                // 1st, 2nd, 4th, 8th... occurrence; remainder
-                                // at debug. Counter is process-global and
-                                // surfaced via SyncDiagnostics (issue #858).
-                                let count = crate::sync::record_gossip_decode_failure_sample(
-                                    sample.clone(),
-                                );
-                                if count == 1 || count.is_power_of_two() {
-                                    warn!(
-                                        peer_id = %sender_peer_id,
-                                        topic = %topic_str_clone,
-                                        message_size = msg.content.len(),
-                                        total_failures = count,
-                                        error = %e,
-                                        payload_fingerprint = %sample.payload_fingerprint,
-                                        payload_shape = %sample.payload_shape_hint,
-                                        "Failed to decode Iroh gossip message as PushLogBroadcast or PushLogRequest"
-                                    );
-                                } else {
-                                    debug!(
-                                        peer_id = %sender_peer_id,
-                                        topic = %topic_str_clone,
-                                        message_size = msg.content.len(),
-                                        total_failures = count,
-                                        error = %e,
-                                        payload_fingerprint = %sample.payload_fingerprint,
-                                        payload_shape = %sample.payload_shape_hint,
-                                        "Failed to decode Iroh gossip message"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    iroh_gossip::api::Event::NeighborUp(id) => {
-                        reader_neighbors.insert_if_absent(id, ());
-                        if event_tx
-                            .send(TransportEvent::PeerSubscribed {
-                                peer_id: endpoint_id_to_peer_id(&id),
-                                topic: topic_str_clone.clone(),
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    iroh_gossip::api::Event::NeighborDown(id) => {
-                        reader_neighbors.remove(&id);
-                        if event_tx
-                            .send(TransportEvent::PeerUnsubscribed {
-                                peer_id: endpoint_id_to_peer_id(&id),
-                                topic: topic_str_clone.clone(),
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    iroh_gossip::api::Event::Lagged => {
-                        warn!(
-                            topic = %topic_str_clone,
-                            "Gossip lagged — some messages were missed"
-                        );
-                    }
-                },
-                Err(e) => {
-                    debug!("Gossip receiver error: {}", e);
-                    break;
-                }
-            }
-        }
-    });
-
-    subscriptions.insert(
-        topic_str,
-        TopicSubscription {
-            sender,
-            reader_task,
-            neighbors,
-        },
-    );
-    Ok(true)
-}
-
-fn handle_publish(
-    gossip: &Gossip,
-    subscriptions: &RapidHashMap<String, TopicSubscription>,
-    peer_map: &SharedPeerMap,
-    admission: &PeerAdmission,
-    topic: crate::topics::DefraTopic,
-    msg: PushLogBroadcast,
-    spawned_tasks: &SpawnedTasks,
-) -> crate::error::Result<MessageId> {
-    let topic_str = topic.to_string();
-    let topic_id = topic_to_id(&topic_str);
-    let sender = subscriptions.get(&topic_str).map(|sub| sub.sender.clone());
-    let gossip = gossip.clone();
-    let initial_peers = admitted_neighbours(peer_map, admission);
-    let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
-    let payload = msg
-        .encode_gossip_payload()
-        .map_err(|error| crate::error::Error::CborSerialization(error.to_string()))?;
-
-    let _ = spawn_task(spawned_tasks, async move {
-        let sender = if let Some(sender) = sender {
-            sender
-        } else {
-            match gossip.subscribe(topic_id, initial_peers).await {
-                Ok(topic) => {
-                    let (sender, _receiver) = topic.split();
-                    sender
-                }
-                Err(error) => {
-                    warn!(
-                        topic = %topic_str,
-                        error = %error,
-                        "Failed to create ephemeral Iroh gossip publisher"
-                    );
-                    return;
-                }
-            }
-        };
-
-        if let Err(error) = sender.broadcast(Bytes::from(payload)).await {
-            warn!(
-                topic = %topic_str,
-                error = %error,
-                "Failed to publish Iroh gossip message"
-            );
-        }
-    });
-
-    Ok(message_id)
-}
-
-/// Publish raw bytes on a gossip topic (no PushLogBroadcast encoding).
-///
-/// Used by the KMS pubsub transport. Mirrors `handle_publish` but broadcasts
-/// `data` directly instead of encoding a `PushLogBroadcast`.
-fn handle_publish_raw(
-    gossip: &Gossip,
-    subscriptions: &RapidHashMap<String, TopicSubscription>,
-    peer_map: &SharedPeerMap,
-    admission: &PeerAdmission,
-    topic_str: String,
-    data: Vec<u8>,
-    spawned_tasks: &SpawnedTasks,
-) -> crate::error::Result<MessageId> {
-    let topic_id = topic_to_id(&topic_str);
-    let sender = subscriptions.get(&topic_str).map(|sub| sub.sender.clone());
-    let gossip = gossip.clone();
-    let initial_peers = admitted_neighbours(peer_map, admission);
-    let message_id = MessageId::new(uuid::Uuid::new_v4().to_string());
-
-    let _ = spawn_task(spawned_tasks, async move {
-        let sender = if let Some(sender) = sender {
-            sender
-        } else {
-            // No persistent subscription for this topic (the responder side of a
-            // KMS `_response` reply, which only ever publishes here). Join
-            // ephemerally and WAIT for the mesh to graft to at least one
-            // neighbor before broadcasting — iroh-gossip has no store-and-
-            // forward, so a broadcast on a freshly-joined, ungrafted topic
-            // reaches nobody and the reply is silently lost (#976).
-            match gossip.subscribe(topic_id, initial_peers).await {
-                Ok(mut topic) => {
-                    if let Err(error) =
-                        n0_future::time::timeout(RAW_PUBLISH_JOIN_TIMEOUT, topic.joined()).await
-                    {
-                        warn!(
-                            topic = %topic_str,
-                            error = %error,
-                            "Timed out waiting for raw Iroh gossip mesh to graft; broadcasting anyway"
-                        );
-                    }
-                    topic.split().0
-                }
-                Err(error) => {
-                    warn!(
-                        topic = %topic_str,
-                        error = %error,
-                        "Failed to create ephemeral Iroh gossip publisher (raw)"
-                    );
-                    return;
-                }
-            }
-        };
-
-        if let Err(error) = sender.broadcast(Bytes::from(data)).await {
-            warn!(
-                topic = %topic_str,
-                error = %error,
-                "Failed to publish raw Iroh gossip message"
-            );
-        }
-    });
-
-    Ok(message_id)
-}
-
-/// Upper bound on how long a raw publish waits for its freshly-joined gossip
-/// topic to graft to a neighbor before broadcasting anyway. Bounds the KMS
-/// reply path so a permanently-unreachable peer cannot wedge the publish task.
-const RAW_PUBLISH_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-/// Hash a topic string to an iroh-gossip `TopicId`.
-fn topic_to_id(topic: &str) -> TopicId {
-    let hash = blake3::hash(topic.as_bytes());
-    TopicId::from(*hash.as_bytes())
-}
-
-#[cfg(test)]
-mod origin_tests {
-    use super::*;
-
-    fn broadcast() -> PushLogBroadcast {
-        PushLogBroadcast::new(
-            "doc".to_string(),
-            Bytes::from_static(&[1, 2, 3]),
-            "collection".to_string(),
-            "creator".to_string(),
-            Bytes::from_static(&[4, 5, 6]),
-        )
-    }
-
-    #[test]
-    fn relayed_origin_is_verified_and_hop_is_only_ingress_metadata() {
-        let origin = iroh::SecretKey::generate();
-        let relay = iroh::SecretKey::generate().public();
-        let mut message = broadcast();
-        message.source_peer_id = Some(origin.public().to_string());
-        let bytes = message.origin_signing_bytes().unwrap();
-        message.origin_signature = Some(origin.sign(&bytes).to_bytes().to_vec());
-
-        let authenticated = authenticate_pushlog_origin(&mut message, &relay, false).unwrap();
-        assert_eq!(authenticated, origin.public());
-        assert_eq!(
-            message.authenticated_origin_peer_id(),
-            Some(origin.public().to_string().as_str())
-        );
-        assert_eq!(
-            message.authenticated_source_peer_id(),
-            Some(relay.to_string().as_str())
-        );
-    }
-
-    #[test]
-    fn forged_relayed_origin_is_rejected() {
-        let claimed = iroh::SecretKey::generate();
-        let forger = iroh::SecretKey::generate();
-        let relay = iroh::SecretKey::generate().public();
-        let mut message = broadcast();
-        message.source_peer_id = Some(claimed.public().to_string());
-        let bytes = message.origin_signing_bytes().unwrap();
-        message.origin_signature = Some(forger.sign(&bytes).to_bytes().to_vec());
-
-        assert!(matches!(
-            authenticate_pushlog_origin(&mut message, &relay, false),
-            Err(crate::error::Error::InvalidSignature)
-        ));
-        assert!(message.authenticated_source_peer_id().is_none());
-        assert!(message.authenticated_origin_peer_id().is_none());
-    }
-
-    #[test]
-    fn rolling_unsigned_compatibility_is_direct_only_and_ignores_claim() {
-        let direct = iroh::SecretKey::generate().public();
-        let relay = iroh::SecretKey::generate().public();
-        let mut direct_message = broadcast();
-        direct_message.source_peer_id = Some("forged".to_string());
-        assert_eq!(
-            authenticate_pushlog_origin(&mut direct_message, &direct, true).unwrap(),
-            direct
-        );
-        assert_eq!(
-            direct_message.authenticated_source_peer_id(),
-            Some(direct.to_string().as_str())
-        );
-        assert_eq!(
-            direct_message.authenticated_origin_peer_id(),
-            Some(direct.to_string().as_str())
-        );
-
-        let mut relayed_message = broadcast();
-        relayed_message.source_peer_id = Some("forged".to_string());
-        assert!(matches!(
-            authenticate_pushlog_origin(&mut relayed_message, &relay, false),
-            Err(crate::error::Error::MissingSignature)
-        ));
-    }
 }

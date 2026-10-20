@@ -7,7 +7,6 @@ use iroh::{EndpointId, SecretKey};
 use kovan_map::HopscotchMap;
 
 use super::config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
-use super::gossip_heal::GossipHealConfig;
 
 // iroh 1.0 silently ignores custom values below its internal default plus one.
 const MIN_CONCURRENT_MULTIPATH_PATHS: u32 = 9;
@@ -32,8 +31,6 @@ pub struct IrohEndpointConfig {
     /// Maximum QUIC paths that may be open concurrently for one connection.
     /// `None` keeps iroh's default; custom values must be at least 9.
     pub max_concurrent_multipath_paths: Option<u32>,
-    /// Gossip send-path healing (#1092).
-    pub gossip_heal: GossipHealConfig,
     /// Inbound-connection authorization. Defaults to accepting every peer,
     /// matching the transport's behavior before this allowlist existed.
     pub allowlist: IrohAllowlistConfig,
@@ -49,7 +46,6 @@ impl Default for IrohEndpointConfig {
             bind_port: None,
             bind_addr: None,
             max_concurrent_multipath_paths: None,
-            gossip_heal: GossipHealConfig::default(),
             allowlist: IrohAllowlistConfig::default(),
         }
     }
@@ -314,6 +310,10 @@ pub(super) fn allowlist_state_from_config(
 /// Bidirectional streams a peer may have open at once on one connection.
 const MAX_CONCURRENT_BIDI_STREAMS: u32 = 64;
 
+/// Gossip is the only uni stream, one per direction; a few more cover a
+/// stream being replaced.
+const MAX_CONCURRENT_UNI_STREAMS: u32 = 4;
+
 /// Bytes QUIC buffers for one connection before we read them. The inbound
 /// budget only counts bodies we have read, so this bounds the rest; the
 /// default is unlimited.
@@ -327,6 +327,7 @@ pub(super) fn apply_transport_config(
 ) -> crate::error::Result<iroh::endpoint::Builder> {
     let transport_config = iroh::endpoint::QuicTransportConfig::builder()
         .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into())
+        .max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into())
         .receive_window(CONNECTION_RECEIVE_WINDOW.into());
     let Some(max_concurrent) = max_concurrent else {
         return Ok(builder.transport_config(transport_config.build()));

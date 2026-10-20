@@ -15,6 +15,7 @@ use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
 use super::fetch_stats::{selected_path_rtt, FetchOutcome, FetchStats, FetchTimer};
+use super::gossip::GossipHandle;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
 
@@ -23,14 +24,17 @@ use super::protocols;
 pub(super) struct ConnectionCacheState {
     connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
+    /// Every connection we dial carries gossip too, so gossip hears of it.
+    gossip: GossipHandle,
 }
 
 pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
 
-pub(super) fn new_connection_cache() -> ConnectionCache {
+pub(super) fn new_connection_cache(gossip: GossipHandle) -> ConnectionCache {
     Arc::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
+        gossip,
     })
 }
 
@@ -163,18 +167,33 @@ fn endpoint_addr(
 async fn connect_once(
     endpoint: &Endpoint,
     endpoint_id: iroh::EndpointId,
-    alpn: &[u8],
     direct_addr: Option<std::net::SocketAddr>,
 ) -> crate::error::Result<iroh::endpoint::Connection> {
     n0_future::time::timeout(
         CONNECT_TIMEOUT,
-        endpoint.connect(endpoint_addr(endpoint_id, direct_addr), alpn),
+        connect_mux(endpoint, endpoint_addr(endpoint_id, direct_addr)),
     )
     .await
     .map_err(|_| {
         crate::error::Error::Dial(format!("timed out after {}s", CONNECT_TIMEOUT.as_secs()))
     })?
-    .map_err(|e| crate::error::Error::Dial(e.to_string()))
+}
+
+/// Dials the mux, offering the version before gossip moved onto it so older
+/// peers still connect.
+pub(super) async fn connect_mux(
+    endpoint: &Endpoint,
+    addr: iroh::EndpointAddr,
+) -> crate::error::Result<iroh::endpoint::Connection> {
+    let options = iroh::endpoint::ConnectOptions::new()
+        .with_additional_alpns(vec![protocols::ALPN_MUX_V1.to_vec()]);
+    let connecting = endpoint
+        .connect_with_opts(addr, protocols::ALPN_MUX, options)
+        .await
+        .map_err(|e| crate::error::Error::Dial(e.to_string()))?;
+    connecting
+        .await
+        .map_err(|e| crate::error::Error::Dial(e.to_string()))
 }
 
 /// Open a stream for `tag` on the peer's shared connection and announce which
@@ -359,14 +378,7 @@ async fn connect_with_cache(
         return Ok(connection);
     }
 
-    let connection = match connect_with_direct_addr_fallback(
-        endpoint,
-        peer_id,
-        protocols::ALPN_MUX,
-        direct_addr,
-    )
-    .await
-    {
+    let connection = match connect_with_direct_addr_fallback(endpoint, peer_id, direct_addr).await {
         Ok(connection) => connection,
         Err(error) => {
             cache.dial_guards.remove(&endpoint_id);
@@ -390,30 +402,26 @@ async fn connect_with_cache(
         )));
     }
 
+    cache.gossip.connected(endpoint_id, &connection).await;
     Ok(connection)
 }
 
-/// Dial `alpn`, preferring a known direct address before falling back to
+/// Dial the mux, preferring a known direct address before falling back to
 /// discovery.
-///
-/// Gossip healing is the one caller that passes an ALPN other than
-/// [`protocols::ALPN_MUX`], because iroh-gossip owns its own handshake.
-pub(super) async fn connect_with_direct_addr_fallback(
+async fn connect_with_direct_addr_fallback(
     endpoint: &Endpoint,
     peer_id: &PeerId,
-    alpn: &[u8],
     direct_addr: Option<std::net::SocketAddr>,
 ) -> crate::error::Result<iroh::endpoint::Connection> {
     let endpoint_id = parse_endpoint_id(peer_id)?;
 
     if let Some(sa) = direct_addr {
-        match connect_once(endpoint, endpoint_id, alpn, Some(sa)).await {
+        match connect_once(endpoint, endpoint_id, Some(sa)).await {
             Ok(connection) => return Ok(connection),
             Err(error) => {
                 debug!(
                     peer_id = %peer_id,
                     direct_addr = %sa,
-                    alpn = %String::from_utf8_lossy(alpn),
                     error = %error,
                     "Direct iroh dial failed, retrying without cached direct address"
                 );
@@ -421,7 +429,7 @@ pub(super) async fn connect_with_direct_addr_fallback(
         }
     }
 
-    connect_once(endpoint, endpoint_id, alpn, None).await
+    connect_once(endpoint, endpoint_id, None).await
 }
 
 /// Send a request and wait for a response (bidirectional stream).
@@ -1222,7 +1230,7 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         remember_connection(&cache, &peer, &connection).expect("cache connection");
 
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
@@ -1269,7 +1277,7 @@ mod tests {
         let conn_b = dial_ep.connect(addr, b"test/b").await.expect("connect b");
 
         let peer_map = Arc::new(SharedPeerMap::new());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         let id = accept_ep.id();
         peer_map.increment_connections(id, None, conn_a.clone());
         peer_map.increment_connections(id, None, conn_b.clone());
@@ -1309,7 +1317,7 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         remember_connection(&cache, &peer, &connection).expect("cache connection");
 
         retire_timed_out_connection(&cache, &peer, &connection);
@@ -1353,7 +1361,7 @@ mod tests {
             .await
             .expect("connect new");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         remember_connection(&cache, &peer, &old).expect("cache old");
         remember_connection(&cache, &peer, &newer).expect("cache new");
 
@@ -1382,7 +1390,7 @@ mod tests {
             .copied()
             .expect("listener direct address");
         let peer_id = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         let barrier = Arc::new(regolith::sync::Barrier::new(CALLERS));
         let (accepted_tx, mut accepted_rx) = tokio::sync::mpsc::unbounded_channel();

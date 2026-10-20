@@ -505,7 +505,6 @@ where
             bind_port: config.bind_port,
             bind_addr: config.bind_addr,
             max_concurrent_multipath_paths: config.max_concurrent_multipath_paths,
-            gossip_heal: p2p::iroh::GossipHealConfig::from_env(),
             allowlist: config.allowlist.clone(),
         },
         document_acp,

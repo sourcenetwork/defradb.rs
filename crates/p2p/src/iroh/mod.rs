@@ -20,7 +20,7 @@ mod endpoint_config;
 mod endpoint_rpc;
 mod endpoint_streams;
 mod fetch_stats;
-mod gossip_heal;
+mod gossip;
 #[cfg(test)]
 mod inbound_admission_tests;
 mod inbound_budget;
@@ -47,7 +47,6 @@ pub use addr::{
 pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::spawn_endpoint;
 pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
-pub use gossip_heal::GossipHealConfig;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use iroh::SecretKey;
 #[cfg(feature = "iroh-relay-server")]

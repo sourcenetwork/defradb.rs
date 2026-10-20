@@ -2,7 +2,7 @@
 //!
 //! `IrohEndpoint` runs as a spawned tokio task and processes:
 //! - Incoming QUIC connections
-//! - Gossip events from iroh-gossip
+//! - The gossip driver, which rides those connections
 //! - Commands from the `IrohTransport` facade
 
 use rapidhash::fast::RandomState;
@@ -10,8 +10,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use std::future::Future;
 use std::sync::Arc;
 
-use iroh::{Endpoint, EndpointId};
-use iroh_gossip::net::Gossip;
+use iroh::Endpoint;
 use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
 use n0_future::task::JoinHandle;
@@ -26,7 +25,7 @@ use crate::tracked_task::TrackedAbort;
 use crate::transport::{PeerAddr, PeerId, TransportEvent};
 
 use super::command::IrohCommand;
-use super::endpoint_commands::handle_command;
+use super::endpoint_commands::{handle_command, GossipDialer};
 use super::endpoint_config::{
     allowlist_state_from_config, apply_bind_config, apply_discovery_config, apply_transport_config,
     relay_mode_from_config, IrohEndpointConfig, PeerAdmission,
@@ -34,7 +33,7 @@ use super::endpoint_config::{
 use super::endpoint_rpc::{new_connection_cache, ConnectionCache};
 use super::endpoint_streams::handle_incoming;
 use super::fetch_stats::FetchStats;
-use super::gossip_heal::{self, GossipHealer};
+use super::gossip::GossipHandle;
 use super::inbound_budget::InboundBudget;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
@@ -50,14 +49,13 @@ const MAX_COMMAND_BATCH: usize = 16;
 mod task_shutdown_tests;
 
 /// Shared handles to the endpoint's long-lived state, cloneable into spawned
-/// tasks (dials, incoming connections, gossip heals).
+/// tasks (dials, incoming connections).
 #[derive(Clone)]
 pub(super) struct EndpointResources {
     pub(super) endpoint: Endpoint,
-    pub(super) gossip: Gossip,
+    pub(super) gossip: GossipHandle,
     pub(super) peer_map: Arc<SharedPeerMap>,
     pub(super) connection_cache: ConnectionCache,
-    pub(super) healer: Arc<GossipHealer>,
     pub(super) spawned_tasks: SpawnedTasks,
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     pub(super) admission: Arc<PeerAdmission>,
@@ -65,15 +63,6 @@ pub(super) struct EndpointResources {
     pub(super) fetch_stats: Arc<FetchStats>,
 }
 
-/// Handle to a gossip topic subscription.
-pub(super) struct TopicSubscription {
-    pub(super) sender: iroh_gossip::api::GossipSender,
-    pub(super) reader_task: JoinHandle<()>,
-    pub(super) neighbors: Neighbors,
-}
-
-pub(super) type SubscriptionSenders = Vec<(String, iroh_gossip::api::GossipSender)>;
-pub(super) type Neighbors = Arc<HopscotchMap<EndpointId, (), RandomState>>;
 pub(super) type RawTopics = Arc<HopscotchMap<String, (), RandomState>>;
 
 /// Active block sync task.
@@ -93,18 +82,12 @@ pub(super) fn spawn_task(
     spawned_tasks.spawn(future)
 }
 
-async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks, readers: Vec<JoinHandle<()>>) {
+async fn shutdown_tracked_tasks(spawned_tasks: SpawnedTasks) {
     let tasks = spawned_tasks.close();
-    let task_count = tasks.len() + readers.len();
-    for reader in &readers {
-        reader.abort();
-    }
+    let task_count = tasks.len();
     let drain = async move {
         for task in tasks {
             let _ = task.await;
-        }
-        for reader in readers {
-            let _ = reader.await;
         }
     };
     if n0_future::time::timeout(std::time::Duration::from_secs(5), drain)
@@ -129,11 +112,11 @@ pub async fn spawn_endpoint(
     Arc<ReplicatorRegistry>,
     JoinHandle<()>,
 )> {
-    // Every Defra protocol is multiplexed over one ALPN. Gossip keeps its own:
-    // iroh-gossip owns that handshake and takes whole connections.
+    // Every Defra protocol, gossip included, is multiplexed over one ALPN. The
+    // version before gossip moved onto it is still served, without gossip.
     let alpns: Vec<Vec<u8>> = vec![
         protocols::ALPN_MUX.to_vec(),
-        iroh_gossip::net::GOSSIP_ALPN.to_vec(),
+        protocols::ALPN_MUX_V1.to_vec(),
     ];
 
     let relay_mode = relay_mode_from_config(&config.relay_mode)?;
@@ -160,19 +143,14 @@ pub async fn spawn_endpoint(
         crate::error::Error::Transport(format!("failed to bind iroh endpoint: {}", e))
     })?;
 
-    let gossip = Gossip::builder().spawn(endpoint.clone());
-
     let (command_tx, command_rx) = mpsc::channel::<IrohCommand>(256);
     let (event_tx, event_rx) = crate::sync::dispatch_queue::<
         TransportEvent<iroh::endpoint::SendStream>,
     >(EVENT_LANE_CAPACITY);
     let replicators = Arc::new(ReplicatorRegistry::new());
 
-    let gossip_heal = config.gossip_heal.clone();
     let task = n0_future::task::spawn(run_event_loop(
         endpoint,
-        gossip,
-        gossip_heal,
         node_identity,
         admission,
         command_rx,
@@ -191,8 +169,6 @@ mod lifecycle_tests;
 #[allow(clippy::too_many_arguments)]
 async fn run_event_loop(
     endpoint: Endpoint,
-    gossip: Gossip,
-    gossip_heal_config: super::gossip_heal::GossipHealConfig,
     node_identity: Option<Arc<identity::RawIdentity>>,
     admission: Arc<PeerAdmission>,
     mut command_rx: mpsc::Receiver<IrohCommand>,
@@ -203,28 +179,31 @@ async fn run_event_loop(
     let peer_map = Arc::new(SharedPeerMap::new());
     let pending_pushlog_replies: PendingPushLogReplies =
         Arc::new(HopscotchMap::with_hasher(RandomState::default()));
-    let connection_cache = new_connection_cache();
-    let mut subscriptions: RapidHashMap<String, TopicSubscription> = RapidHashMap::new();
+    let gossip = GossipHandle::new();
+    let connection_cache = new_connection_cache(gossip.clone());
     let raw_topics: RawTopics = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
     let mut active_syncs: RapidHashMap<u64, ActiveSync> = RapidHashMap::new();
     let spawned_tasks: SpawnedTasks = Arc::new(TaskRegistry::default());
     let mut next_query_id: u64 = 1;
 
-    let heal_enabled = gossip_heal_config.enabled();
-    let mut heal_tick = n0_future::time::interval(gossip_heal_config.tick_period());
-    heal_tick.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Delay);
     let resources = EndpointResources {
         endpoint: endpoint.clone(),
         gossip: gossip.clone(),
         peer_map: Arc::clone(&peer_map),
         connection_cache: Arc::clone(&connection_cache),
-        healer: Arc::new(GossipHealer::new(gossip_heal_config)),
         spawned_tasks: Arc::clone(&spawned_tasks),
         node_identity,
         admission,
         inbound_budget: Arc::default(),
         fetch_stats: Arc::default(),
     };
+    gossip.start(
+        endpoint.id(),
+        GossipDialer::new(&resources, &pending_pushlog_replies, &event_tx),
+        event_tx.clone(),
+        Arc::clone(&raw_topics),
+        Arc::clone(&spawned_tasks),
+    );
 
     // Emit Listening event with our endpoint address
     let addr_str = format!("iroh://{}", endpoint.id());
@@ -254,7 +233,6 @@ async fn run_event_loop(
                         cmd,
                         &resources,
                         &pending_pushlog_replies,
-                        &mut subscriptions,
                         &raw_topics,
                         &replicators,
                         &mut active_syncs,
@@ -277,14 +255,12 @@ async fn run_event_loop(
                     Some(incoming) => {
                         let resources = resources.clone();
                         let pending_pushlog_replies = Arc::clone(&pending_pushlog_replies);
-                        let subscription_senders = snapshot_subscription_senders(&subscriptions);
                         let event_tx = event_tx.clone();
                         let _ = spawn_task(&spawned_tasks, async move {
                             handle_incoming(
                                 incoming,
                                 &resources,
                                 &pending_pushlog_replies,
-                                &subscription_senders,
                                 &event_tx,
                             )
                             .await;
@@ -293,9 +269,6 @@ async fn run_event_loop(
                     None => break,
                 }
             }
-            _ = heal_tick.tick(), if heal_enabled => {
-                gossip_heal::sweep(&resources, &subscriptions);
-            }
             else => break,
         }
     }
@@ -303,17 +276,7 @@ async fn run_event_loop(
     // Reject queued and new commands before waiting for network teardown.
     drop(command_rx);
 
-    // Clean up
-    let subscriptions_started = web_time::Instant::now();
-    let mut readers = Vec::with_capacity(subscriptions.len());
-    for (_, sub) in subscriptions.drain() {
-        sub.reader_task.abort();
-        readers.push(sub.reader_task);
-    }
-    warn!(
-        elapsed_ms = subscriptions_started.elapsed().as_millis(),
-        "Iroh endpoint shutdown: subscriptions aborted"
-    );
+    gossip.close();
 
     let syncs_started = web_time::Instant::now();
     for (_, sync) in active_syncs.drain() {
@@ -325,21 +288,11 @@ async fn run_event_loop(
     );
 
     let tracked_started = web_time::Instant::now();
-    shutdown_tracked_tasks(spawned_tasks, readers).await;
+    shutdown_tracked_tasks(spawned_tasks).await;
     debug!(
         elapsed_ms = tracked_started.elapsed().as_millis(),
         "Iroh endpoint shutdown: task drain finished"
     );
-
-    let gossip_started = web_time::Instant::now();
-    match n0_future::time::timeout(std::time::Duration::from_secs(1), gossip.shutdown()).await {
-        Ok(Ok(())) => warn!(
-            elapsed_ms = gossip_started.elapsed().as_millis(),
-            "Iroh endpoint shutdown: gossip stopped"
-        ),
-        Ok(Err(error)) => debug!(%error, "Iroh gossip shutdown failed"),
-        Err(_) => debug!("Timed out waiting for Iroh gossip shutdown"),
-    }
 
     let close_started = web_time::Instant::now();
     endpoint.close().await;
@@ -348,36 +301,6 @@ async fn run_event_loop(
         total_elapsed_ms = shutdown_started.elapsed().as_millis(),
         "Iroh endpoint shut down"
     );
-}
-
-pub(super) fn snapshot_subscription_senders(
-    subscriptions: &RapidHashMap<String, TopicSubscription>,
-) -> SubscriptionSenders {
-    subscriptions
-        .iter()
-        .map(|(topic, sub)| (topic.clone(), sub.sender.clone()))
-        .collect()
-}
-
-/// Join a newly connected peer into all active gossip topic subscriptions.
-///
-/// iroh-gossip subscriptions are created with an explicit neighbor list.
-/// When a new peer connects after subscription, we add them as a neighbor
-/// so they can receive (and send us) gossip messages on all subscribed topics.
-pub(super) async fn join_peer_to_subscription_senders(
-    subscriptions: &[(String, iroh_gossip::api::GossipSender)],
-    endpoint_id: EndpointId,
-) {
-    for (topic, sub) in subscriptions.iter() {
-        if let Err(e) = sub.join_peers(vec![endpoint_id]).await {
-            debug!(
-                topic = %topic,
-                peer = %endpoint_id,
-                "Failed to add new peer to gossip topic: {}",
-                e
-            );
-        }
-    }
 }
 
 /// Look up the cached direct socket address for a peer from the peer map.

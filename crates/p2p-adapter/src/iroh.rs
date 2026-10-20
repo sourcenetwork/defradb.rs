@@ -1189,7 +1189,6 @@ mod tests {
             bind_port: None,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
-            gossip_heal: Default::default(),
             allowlist: Default::default(),
         }
     }

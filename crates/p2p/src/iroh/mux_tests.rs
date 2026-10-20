@@ -131,7 +131,6 @@ pub(super) async fn spawn_transport() -> (IrohTransport, JoinHandle<()>) {
         bind_port: None,
         bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         max_concurrent_multipath_paths: None,
-        gossip_heal: Default::default(),
         allowlist: Default::default(),
     };
     let (command_tx, _events, _replicators, task) = spawn_endpoint(config).await.unwrap();

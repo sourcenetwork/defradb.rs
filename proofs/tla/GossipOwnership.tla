@@ -14,7 +14,9 @@
 \* share. What must always happen: a healthy peer gossip wants is reached.
 \*
 \* Code it models (crates/p2p/src/iroh):
-\*   gossip/driver.rs         GossipDriver        (one send path per connected peer)
+\*   gossip/driver.rs         Driver::send        (a send path only on a live connection)
+\*   gossip/driver.rs         Driver::connected   (a connection already closed is ignored)
+\*   gossip/driver.rs         Driver::forget      (drops the send path, never the connection)
 \*   endpoint_rpc.rs          connect_with_cache  (admission before and after dialing)
 \*   endpoint_streams.rs      handle_incoming     (admission on accept)
 \*   endpoint_commands.rs     handle_deny_peer    (revoke, then close the connection)

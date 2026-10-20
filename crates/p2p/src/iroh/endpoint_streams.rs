@@ -11,10 +11,7 @@ use crate::message::{Message, PushLogReply};
 use crate::sync::DispatchSender;
 use crate::transport::{PeerId, TransportEvent};
 
-use super::endpoint::{
-    spawn_task, EndpointResources, PendingPushLogReplies, SpawnedTasks, SubscriptionSenders,
-};
-use super::gossip_heal;
+use super::endpoint::{spawn_task, EndpointResources, PendingPushLogReplies, SpawnedTasks};
 use super::inbound_budget::{
     body_deadline, ConnectionShare, InboundBudget, InboundLease, ADMIT_DEADLINE, BODY_IDLE_DEADLINE,
 };
@@ -38,7 +35,6 @@ pub(super) async fn handle_incoming(
     incoming: iroh::endpoint::Incoming,
     resources: &EndpointResources,
     pending_pushlog_replies: &PendingPushLogReplies,
-    subscription_senders: &SubscriptionSenders,
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
 ) {
     let remote_addr = match incoming.remote_addr() {
@@ -77,7 +73,7 @@ pub(super) async fn handle_incoming(
     // Establish identity from the accepted connection itself (the iroh
     // endpoint id authenticated by the QUIC/TLS handshake), never from
     // anything the caller sends in a payload. A refused peer is closed here,
-    // before it reaches the gossip layer or the mux layer below.
+    // before it reaches the mux layer below.
     let remote_id = connection.remote_id();
     if !resources.admission.admits_inbound(&remote_id) {
         warn!(
@@ -85,34 +81,6 @@ pub(super) async fn handle_incoming(
             "Refused inbound Iroh connection: peer is not admitted"
         );
         connection.close(REFUSED_CONNECTION_CODE.into(), b"peer not authorized");
-        return;
-    }
-
-    let conn_alpn = connection.alpn().to_vec();
-
-    // If it's a gossip ALPN, hand off to the gossip layer
-    if conn_alpn == iroh_gossip::net::GOSSIP_ALPN {
-        // Retain a handle BEFORE gossip takes ownership, and re-check after.
-        // Gossip connections never reach `peer_map`, so this handle is the
-        // only thing a later revoke can close; retaining it first means a
-        // revoke racing this accept either finds the handle here, or is seen
-        // by the re-check below.
-        resources
-            .healer
-            .retain_accepted(remote_id, connection.clone());
-        if !resources.admission.admits_inbound(&remote_id) {
-            warn!(
-                peer_id = %endpoint_id_to_peer_id(&remote_id),
-                "Refused inbound gossip connection: peer was revoked while it was being accepted"
-            );
-            for conn in resources.healer.take_accepted(&remote_id) {
-                conn.close(REFUSED_CONNECTION_CODE.into(), b"peer not authorized");
-            }
-            return;
-        }
-        if let Err(e) = resources.gossip.handle_connection(connection).await {
-            debug!("Gossip handle_connection error: {}", e);
-        }
         return;
     }
 
@@ -148,8 +116,8 @@ pub(super) async fn handle_incoming(
         warn!("Event channel closed, cannot emit PeerConnected");
     }
 
-    if admitted && is_new {
-        gossip_heal::spawn_peer_connected_heal(resources, subscription_senders, remote_id);
+    if admitted {
+        resources.gossip.connected(remote_id, &connection).await;
     }
 
     // Spawn handler for this connection's streams

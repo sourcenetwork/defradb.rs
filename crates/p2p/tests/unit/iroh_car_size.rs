@@ -39,7 +39,7 @@ async fn size_notice_does_not_cancel_alternate_provider_or_emit_generic_failure(
                     Some(ready_rx),
                 ))
             });
-            let cache = new_connection_cache();
+            let cache = new_connection_cache(GossipHandle::new());
             let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
             let peer_map = Arc::new(SharedPeerMap::new());
             let endpoints = if alternate {
@@ -125,7 +125,7 @@ async fn each_provider_fetch_is_measured() {
         let limited_task = tokio::spawn(serve(limited.clone(), notice, None));
         let healthy_task = tokio::spawn(serve(healthy.clone(), blocks, Some(ready_rx)));
 
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         let peer_map = Arc::new(SharedPeerMap::new());
         let mut providers = Vec::new();
