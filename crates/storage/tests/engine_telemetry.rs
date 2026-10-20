@@ -2,6 +2,7 @@ use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
+use storage::backends::test_suite::on_workers;
 use storage::corekv::{
     Error, RetryAttemptError, RetryAttemptFn, RetryAttemptFuture, RetryAttemptValue, RetryOptions,
     RetryTxn, Store, TxnCallbacks, Writer,
@@ -19,7 +20,7 @@ impl regolith::EventListener for CallerListener {
 
 #[test]
 fn engine_counters_and_conflict_reasons_preserve_caller_instrumentation() {
-    workers::block_on(async {
+    on_workers(|| async {
         let engine = Arc::new(regolith::Statistics::default());
         let listener = Arc::new(CallerListener::default());
         let mut options = RegolithStoreOptions::memory();
@@ -63,13 +64,12 @@ fn engine_counters_and_conflict_reasons_preserve_caller_instrumentation() {
                 .conflicts,
             0
         );
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn accepted_blind_merges_are_visible_in_policy_tickers() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut seed = store.new_txn(false).await.unwrap();
         seed.set(b"counter", &0_i64.to_be_bytes()).await.unwrap();
@@ -86,8 +86,7 @@ fn accepted_blind_merges_are_visible_in_policy_tickers() {
         let stats = store.transaction_stats_handle().unwrap().snapshot();
         assert_eq!(stats.conflicts, 0);
         assert_eq!(stats.engine["regolith.policy.blind_merges_commuted"], 1);
-    })
-    .unwrap()
+    });
 }
 
 fn exported_total(name: &str) -> u64 {
@@ -102,7 +101,7 @@ fn exported_total(name: &str) -> u64 {
 /// the exported totals. Other tests commit concurrently, so totals only grow.
 #[test]
 fn engine_tickers_are_exported_and_kept_when_the_store_closes() {
-    workers::block_on(async {
+    on_workers(|| async {
         let before = exported_total("regolith.commit.count");
         let store = RegolithStore::in_memory().unwrap();
         let reported: Vec<&str> = store
@@ -131,8 +130,7 @@ fn engine_tickers_are_exported_and_kept_when_the_store_closes() {
 
         drop(store);
         assert!(exported_total("regolith.commit.count") >= live);
-    })
-    .unwrap()
+    });
 }
 
 struct ConflictOnceAttempt {
@@ -169,7 +167,7 @@ impl RetryAttemptFn for ConflictOnceAttempt {
 
 #[test]
 fn retry_adapter_counts_native_conflicts_and_commits_once() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let mut seed = store.new_txn(false).await.unwrap();
         seed.set(b"retry-counter", b"seed").await.unwrap();
@@ -207,6 +205,5 @@ fn retry_adapter_counts_native_conflicts_and_commits_once() {
         assert_eq!(after.commits - before.commits, 2); // writer and winning attempt
         assert_eq!(after.conflicts - before.conflicts, 1);
         assert_eq!(after.conflict_reasons.get("read/put"), Some(&1));
-    })
-    .unwrap()
+    });
 }

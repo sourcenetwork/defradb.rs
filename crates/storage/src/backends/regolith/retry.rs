@@ -262,35 +262,91 @@ impl RetryTxn for RegolithRetryTxn<'_> {
 #[cfg(test)]
 mod retry_cold_io_tests {
     use super::*;
+    use std::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crate::backends::RegolithStore;
     use crate::corekv::Store;
 
-    struct YieldingAttempt;
+    /// Pending until the executor has polled the task that awaits the retry
+    /// again: an attempt driven by re-polling it inside one poll of that task
+    /// never sees the count move.
+    struct YieldToExecutor {
+        task_polls: Arc<AtomicUsize>,
+        seen: Option<usize>,
+        stalled: usize,
+    }
+
+    impl std::future::Future for YieldToExecutor {
+        type Output = ();
+
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            let polls = self.task_polls.load(Ordering::SeqCst);
+            if self.seen.is_some_and(|seen| seen != polls) {
+                return std::task::Poll::Ready(());
+            }
+            self.seen = Some(polls);
+            self.stalled += 1;
+            assert!(
+                self.stalled < 64,
+                "the attempt was re-polled without its task being polled"
+            );
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+
+    struct YieldingAttempt {
+        task_polls: Arc<AtomicUsize>,
+    }
     impl crate::corekv::RetryAttemptFn for YieldingAttempt {
         fn run<'a>(
             &'a mut self,
             _retry: &'a mut dyn RetryTxn,
         ) -> crate::corekv::RetryAttemptFuture<'a> {
+            let task_polls = Arc::clone(&self.task_polls);
             Box::pin(async move {
                 // More yields than any one poll budget. The engine queue must
-                // finish an attempt that keeps handing the thread back.
+                // finish an attempt that keeps handing the thread back, one
+                // poll of its task at a time.
                 for _ in 0..1024 {
-                    workers::yield_now().await;
+                    YieldToExecutor {
+                        task_polls: Arc::clone(&task_polls),
+                        seen: None,
+                        stalled: 0,
+                    }
+                    .await;
                 }
                 Ok(Box::new(()) as RetryAttemptValue)
             })
         }
     }
 
+    /// Off a worker, so the attempt is driven by the task that awaits it.
     #[test]
     fn retry_queue_completes_an_attempt_that_yields_repeatedly() {
-        workers::block_on(async {
-            let store = RegolithStore::in_memory().unwrap();
-            store
-                .transact_retry(RetryOptions::new(1), Box::new(YieldingAttempt))
+        let task_polls = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&task_polls);
+        workers::block_on_timeout(
+            async move {
+                let store = RegolithStore::in_memory().unwrap();
+                let retry = store.transact_retry(
+                    RetryOptions::new(1),
+                    Box::new(YieldingAttempt { task_polls }),
+                );
+                let mut retry = std::pin::pin!(retry);
+                std::future::poll_fn(|cx| {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    retry.as_mut().poll(cx)
+                })
                 .await
                 .unwrap();
-        })
+            },
+            std::time::Duration::from_secs(30),
+        )
         .unwrap()
     }
 
@@ -331,7 +387,7 @@ mod retry_cold_io_tests {
 
     #[test]
     fn scoped_retry_io_reads_cold_sst_points_and_scans() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let directory = tempfile::tempdir().unwrap();
             let store = RegolithStore::open(directory.path()).unwrap();
             let mut txn = store.new_txn(false).await.unwrap();
@@ -356,8 +412,7 @@ mod retry_cold_io_tests {
             );
             txn.discard();
             store.close().await.unwrap();
-        })
-        .unwrap()
+        });
     }
 }
 
@@ -392,7 +447,7 @@ mod retry_read_tests {
 
     #[test]
     fn a_write_free_attempt_and_an_update_of_what_it_read_both_commit() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let mut seed = store.new_txn(false).await.unwrap();
             seed.set(b"flag", b"old").await.unwrap();
@@ -412,8 +467,7 @@ mod retry_read_tests {
                 Some(&b"new"[..])
             );
             read.discard();
-        })
-        .unwrap()
+        });
     }
     fn counting(count: &Arc<AtomicUsize>) -> TxnCallback {
         let count = Arc::clone(count);
@@ -458,7 +512,7 @@ mod retry_read_tests {
     /// the one that won its commit callbacks.
     #[test]
     fn an_attempt_that_loses_runs_its_abort_callbacks_and_the_winner_its_commit_ones() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let mut seed = store.new_txn(false).await.unwrap();
             seed.set(b"flag", b"old").await.unwrap();
@@ -477,8 +531,7 @@ mod retry_read_tests {
                 .unwrap();
             assert_eq!(committed.load(Ordering::SeqCst), 1);
             assert_eq!(aborted.load(Ordering::SeqCst), 1);
-        })
-        .unwrap()
+        });
     }
 }
 
@@ -523,7 +576,7 @@ mod retry_order_tests {
 
     #[test]
     fn regular_commit_waits_for_earlier_retry_postcommit_hook() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let events = Arc::new(SegQueue::new());
             let entered = Arc::new(Notify::new());
@@ -558,7 +611,6 @@ mod retry_order_tests {
                 std::iter::from_fn(|| events.pop()).collect::<Vec<_>>(),
                 vec![1, 2]
             );
-        })
-        .unwrap()
+        });
     }
 }

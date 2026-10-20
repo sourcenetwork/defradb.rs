@@ -6,6 +6,7 @@
 use bytes::Bytes;
 use cid::Cid;
 use std::str::FromStr;
+use storage::backends::test_suite::on_workers;
 use storage::corekv::{IterOptions, Key, Store};
 use storage::keys::{
     blockstore::BlockstoreKey, datastore::DataStoreKey, headstore::HeadstoreDocKey,
@@ -15,16 +16,15 @@ use storage::stores::multistore::MemoryMultistore;
 
 #[test]
 fn test_multistore_creation() {
-    workers::block_on(async {
+    on_workers(|| async {
         let ms = MemoryMultistore::new_memory().unwrap();
         assert!(ms.close().await.is_ok());
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_multistore_all_stores_isolated() {
-    workers::block_on(async {
+    on_workers(|| async {
         let ms = MemoryMultistore::new_memory().unwrap();
 
         // Write to each store with same logical key
@@ -82,13 +82,12 @@ fn test_multistore_all_stores_isolated() {
         let txn = ms.peerstore.new_txn(true).await.unwrap();
         let val = txn.get(&ps_key.bytes()).await.unwrap();
         assert_eq!(val, Some(Bytes::from_static(b"peerstore_value")));
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_multistore_rootstore_sees_all() {
-    workers::block_on(async {
+    on_workers(|| async {
         let ms = MemoryMultistore::new_memory().unwrap();
 
         // Write to datastore (namespace 'd')
@@ -100,8 +99,7 @@ fn test_multistore_rootstore_sees_all() {
         let txn = ms.root.new_txn(true).await.unwrap();
         let value = txn.get(b"dkey1").await.unwrap();
         assert_eq!(value, Some(Bytes::from_static(b"value1")));
-    })
-    .unwrap()
+    });
 }
 
 // =========================================================================
@@ -110,7 +108,7 @@ fn test_multistore_rootstore_sees_all() {
 
 #[test]
 fn test_multistore_stores_cannot_see_each_others_data() {
-    workers::block_on(async {
+    on_workers(|| async {
         let ms = MemoryMultistore::new_memory().unwrap();
 
         // Write to datastore
@@ -137,13 +135,12 @@ fn test_multistore_stores_cannot_see_each_others_data() {
         let txn = ms.peerstore.new_txn(true).await.unwrap();
         let value = txn.get(b"shared_key").await.unwrap();
         assert_eq!(value, None, "Peerstore should not see datastore's data");
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_multistore_same_key_different_values() {
-    workers::block_on(async {
+    on_workers(|| async {
         // Each store can have the same key with different values
         let ms = MemoryMultistore::new_memory().unwrap();
 
@@ -178,13 +175,12 @@ fn test_multistore_same_key_different_values() {
             txn.get(b"key").await.unwrap(),
             Some(Bytes::from_static(b"peerstore"))
         );
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_multistore_raw_prefix_collision_prevented() {
-    workers::block_on(async {
+    on_workers(|| async {
         // Test that writing raw bytes that happen to match another namespace's prefix
         // doesn't cause data to leak between stores
         let ms = MemoryMultistore::new_memory().unwrap();
@@ -212,13 +208,12 @@ fn test_multistore_raw_prefix_collision_prevented() {
             Some(Bytes::from_static(b"not_a_real_block")),
             "Key should be prefixed with datastore namespace"
         );
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_multistore_iterator_isolation() {
-    workers::block_on(async {
+    on_workers(|| async {
         // Test that iterators only see data from their own namespace
         let ms = MemoryMultistore::new_memory().unwrap();
 
@@ -266,13 +261,12 @@ fn test_multistore_iterator_isolation() {
         }
         assert_eq!(ss_keys.len(), 1);
         assert!(ss_keys.contains(&"s_key1".to_string()));
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_multistore_delete_isolation() {
-    workers::block_on(async {
+    on_workers(|| async {
         // Test that deleting from one store doesn't affect others
         let ms = MemoryMultistore::new_memory().unwrap();
 
@@ -301,13 +295,12 @@ fn test_multistore_delete_isolation() {
             Some(Bytes::from_static(b"systemstore")),
             "Systemstore should be unaffected by datastore delete"
         );
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_multistore_encstore_separate_from_blockstore() {
-    workers::block_on(async {
+    on_workers(|| async {
         // Encstore uses blockstore implementation but different namespace
         let ms = MemoryMultistore::new_memory().unwrap();
 
@@ -333,8 +326,7 @@ fn test_multistore_encstore_separate_from_blockstore() {
             txn.get(b"block").await.unwrap(),
             Some(Bytes::from_static(b"encstore_data"))
         );
-    })
-    .unwrap()
+    });
 }
 
 // =========================================================================
@@ -344,7 +336,7 @@ fn test_multistore_encstore_separate_from_blockstore() {
 
 #[test]
 fn test_namespace_iterator_strips_prefix() {
-    workers::block_on(async {
+    on_workers(|| async {
         // This test verifies that when iterating within a namespace,
         // the returned keys have the namespace prefix removed
         let ms = MemoryMultistore::new_memory().unwrap();
@@ -373,13 +365,12 @@ fn test_namespace_iterator_strips_prefix() {
         }
 
         assert_eq!(keys, vec!["key1", "key2", "key3"]);
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_namespace_iterator_strips_prefix_with_user_prefix() {
-    workers::block_on(async {
+    on_workers(|| async {
         // Test that when user specifies a prefix, the returned keys
         // are relative to that prefix (namespace still stripped)
         let ms = MemoryMultistore::new_memory().unwrap();
@@ -403,13 +394,12 @@ fn test_namespace_iterator_strips_prefix_with_user_prefix() {
 
         // Should get "users/alice" and "users/bob" without namespace prefix
         assert_eq!(keys, vec!["users/alice", "users/bob"]);
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_namespace_iterator_reverse_strips_prefix() {
-    workers::block_on(async {
+    on_workers(|| async {
         let ms = MemoryMultistore::new_memory().unwrap();
 
         let mut txn = ms.systemstore.new_txn(false).await.unwrap();
@@ -435,13 +425,12 @@ fn test_namespace_iterator_reverse_strips_prefix() {
         }
 
         assert_eq!(keys, vec!["c", "b", "a"]);
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_rootstore_iterator_shows_full_keys() {
-    workers::block_on(async {
+    on_workers(|| async {
         // Rootstore has no namespace, so it should show the raw keys
         // including other stores' namespace prefixes
         let ms = MemoryMultistore::new_memory().unwrap();
@@ -474,13 +463,12 @@ fn test_rootstore_iterator_shows_full_keys() {
             keys.contains(&"smykey".to_string()),
             "Should see systemstore key with 's' prefix"
         );
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_get_size_through_namespace() {
-    workers::block_on(async {
+    on_workers(|| async {
         let ms = MemoryMultistore::new_memory().unwrap();
 
         let mut txn = ms.datastore.new_txn(false).await.unwrap();
@@ -491,8 +479,7 @@ fn test_get_size_through_namespace() {
         let txn = ms.datastore.new_txn(true).await.unwrap();
         assert_eq!(txn.get_size(b"sized_key").await.unwrap(), Some(5));
         assert_eq!(txn.get_size(b"nonexistent").await.unwrap(), None);
-    })
-    .unwrap()
+    });
 }
 
 // =========================================================================
@@ -501,23 +488,23 @@ fn test_get_size_through_namespace() {
 // =========================================================================
 mod persistent_multistore_tests {
     use bytes::Bytes;
+    use storage::backends::test_suite::on_workers;
     use storage::corekv::{IterOptions, Store};
     use storage::stores::multistore::PersistentMultistore;
     use tempfile::TempDir;
 
     #[test]
     fn test_redb_multistore_creation_and_close() {
-        workers::block_on(async {
+        on_workers(|| async {
             let temp_dir = TempDir::new().unwrap();
             let ms = PersistentMultistore::open(temp_dir.path()).unwrap();
             assert!(ms.close().await.is_ok());
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn test_redb_multistore_persistence_across_stores() {
-        workers::block_on(async {
+        on_workers(|| async {
             let temp_dir = TempDir::new().unwrap();
 
             // Write to multiple stores
@@ -578,13 +565,12 @@ mod persistent_multistore_tests {
 
                 ms.close().await.unwrap();
             }
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn test_redb_multistore_namespace_isolation() {
-        workers::block_on(async {
+        on_workers(|| async {
             let temp_dir = TempDir::new().unwrap();
             let ms = PersistentMultistore::open(temp_dir.path()).unwrap();
 
@@ -624,13 +610,12 @@ mod persistent_multistore_tests {
             txn.discard();
 
             ms.close().await.unwrap();
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn test_redb_multistore_iterator_isolation() {
-        workers::block_on(async {
+        on_workers(|| async {
             let temp_dir = TempDir::new().unwrap();
             let ms = PersistentMultistore::open(temp_dir.path()).unwrap();
 
@@ -672,13 +657,12 @@ mod persistent_multistore_tests {
             assert!(bs_keys.contains(&"b_key1".to_string()));
 
             ms.close().await.unwrap();
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn test_redb_multistore_transaction_across_stores() {
-        workers::block_on(async {
+        on_workers(|| async {
             let temp_dir = TempDir::new().unwrap();
             let ms = PersistentMultistore::open(temp_dir.path()).unwrap();
 
@@ -715,13 +699,12 @@ mod persistent_multistore_tests {
             new_reader.discard();
 
             ms.close().await.unwrap();
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn test_redb_multistore_uncommitted_data_lost() {
-        workers::block_on(async {
+        on_workers(|| async {
             let temp_dir = TempDir::new().unwrap();
 
             // Write but don't commit
@@ -749,13 +732,12 @@ mod persistent_multistore_tests {
 
                 ms.close().await.unwrap();
             }
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn test_redb_multistore_delete_persistence() {
-        workers::block_on(async {
+        on_workers(|| async {
             let temp_dir = TempDir::new().unwrap();
 
             // Write and then delete
@@ -793,13 +775,12 @@ mod persistent_multistore_tests {
 
                 ms.close().await.unwrap();
             }
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn test_redb_multistore_concurrent_store_access() {
-        workers::block_on(async {
+        on_workers(|| async {
             use std::sync::atomic::{AtomicUsize, Ordering};
             use std::sync::Arc;
 
@@ -930,7 +911,6 @@ mod persistent_multistore_tests {
             txn.discard();
 
             ms.close().await.unwrap();
-        })
-        .unwrap()
+        });
     }
 }

@@ -7,6 +7,7 @@
 
 use document::NormalValue;
 use schema::{IndexDescription, IndexedFieldDescription};
+use storage::backends::test_suite::on_workers;
 use storage::corekv::Store;
 use storage::index::{CollectionIndex, SimpleIndex, UniqueIndex};
 use storage::RegolithStore;
@@ -69,7 +70,7 @@ fn composite_index_description(unique: bool) -> IndexDescription {
 
 #[test]
 fn test_simple_index_save_too_few_values() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -101,13 +102,12 @@ fn test_simple_index_save_too_few_values() {
             "error should mention the doc short ID: {}",
             err_msg
         );
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_simple_index_save_too_many_values() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -137,13 +137,12 @@ fn test_simple_index_save_too_many_values() {
             "error should mention actual count: {}",
             err_msg
         );
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_simple_index_update_old_values_mismatch() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -159,13 +158,12 @@ fn test_simple_index_update_old_values_mismatch() {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("field count"));
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_simple_index_update_new_values_mismatch() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -181,13 +179,12 @@ fn test_simple_index_update_new_values_mismatch() {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("field count"));
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_simple_index_delete_values_mismatch() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -199,13 +196,12 @@ fn test_simple_index_delete_values_mismatch() {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("field count"));
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_unique_index_save_too_few_values() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -217,13 +213,12 @@ fn test_unique_index_save_too_few_values() {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("field count mismatch"));
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_unique_index_save_too_many_values() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -238,13 +233,12 @@ fn test_unique_index_save_too_many_values() {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("field count mismatch"));
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_unique_index_empty_values() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -257,8 +251,7 @@ fn test_unique_index_empty_values() {
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("field count mismatch"));
         assert!(err_msg.contains("got 0"));
-    })
-    .unwrap()
+    });
 }
 
 // ============================================================================
@@ -303,7 +296,7 @@ fn test_unique_index_try_new_rejects_non_unique() {
 
 #[test]
 fn test_concurrent_saves_to_simple_index() {
-    workers::block_on(async {
+    on_workers(|| async {
         use std::sync::Arc;
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -342,13 +335,12 @@ fn test_concurrent_saves_to_simple_index() {
             .unwrap();
         let count = iter.count().await.unwrap();
         assert_eq!(count, 10, "all 10 concurrent saves should succeed");
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_concurrent_saves_to_unique_index_different_values() {
-    workers::block_on(async {
+    on_workers(|| async {
         use std::sync::Arc;
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -387,13 +379,12 @@ fn test_concurrent_saves_to_unique_index_different_values() {
             .unwrap();
         let count = iter.count().await.unwrap();
         assert_eq!(count, 10);
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_concurrent_save_and_delete() {
-    workers::block_on(async {
+    on_workers(|| async {
         use std::sync::Arc;
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -463,13 +454,12 @@ fn test_concurrent_save_and_delete() {
             .unwrap();
         let count = iter.count().await.unwrap();
         assert_eq!(count, 7, "should have 7 entries after concurrent ops");
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_concurrent_updates() {
-    workers::block_on(async {
+    on_workers(|| async {
         use std::sync::Arc;
 
         let store = Arc::new(RegolithStore::in_memory().unwrap());
@@ -520,8 +510,7 @@ fn test_concurrent_updates() {
             .unwrap();
         let count = iter.count().await.unwrap();
         assert_eq!(count, 5);
-    })
-    .unwrap()
+    });
 }
 
 // ============================================================================
@@ -530,7 +519,7 @@ fn test_concurrent_updates() {
 
 #[test]
 fn test_composite_unique_partial_null_first_field() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -544,13 +533,12 @@ fn test_composite_unique_partial_null_first_field() {
         index.save(&mut txn, 1, &values1).await.unwrap();
         index.save(&mut txn, 2, &values2).await.unwrap();
         txn.commit().await.unwrap();
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_composite_unique_partial_null_second_field() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -572,13 +560,12 @@ fn test_composite_unique_partial_null_second_field() {
         index.save(&mut txn, 1, &values1).await.unwrap();
         index.save(&mut txn, 2, &values2).await.unwrap();
         txn.commit().await.unwrap();
-    })
-    .unwrap()
+    });
 }
 
 #[test]
 fn test_composite_unique_enforced_on_non_null() {
-    workers::block_on(async {
+    on_workers(|| async {
         let store = RegolithStore::in_memory().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();
 
@@ -603,6 +590,5 @@ fn test_composite_unique_enforced_on_non_null() {
             error.to_string(),
             storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE
         );
-    })
-    .unwrap()
+    });
 }

@@ -156,7 +156,7 @@ mod post_commit_tests {
 
     #[test]
     fn a_failed_hook_after_a_durable_commit_is_reported_and_the_commit_stands() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let out = Out::default();
             let before = telemetry::storage_event_count(StorageEvent::PostCommitHookFailed);
@@ -169,8 +169,7 @@ mod post_commit_tests {
             assert_eq!(out.get(), vec![1]);
             assert!(telemetry::storage_event_count(StorageEvent::PostCommitHookFailed) > before);
             assert_eq!(read(&store, b"doc").await.as_deref(), Some(&b"v"[..]));
-        })
-        .unwrap()
+        });
     }
 
     /// An attempt that writes `key` (when given) and registers `events`, and
@@ -206,7 +205,7 @@ mod post_commit_tests {
 
     #[test]
     fn a_failed_hook_after_a_durable_retry_commit_is_reported_and_the_commit_stands() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let out = Out::default();
             let before = telemetry::storage_event_count(StorageEvent::PostCommitHookFailed);
@@ -223,13 +222,12 @@ mod post_commit_tests {
             assert_eq!(out.get(), vec![2]);
             assert!(telemetry::storage_event_count(StorageEvent::PostCommitHookFailed) > before);
             assert_eq!(read(&store, b"doc").await.as_deref(), Some(&b"v"[..]));
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn an_eventful_transaction_that_writes_nothing_dispatches_its_events() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let out = Out::default();
             let mut txn = store.new_txn(false).await.unwrap();
@@ -247,13 +245,12 @@ mod post_commit_tests {
                 .await
                 .unwrap();
             assert_eq!(out.get(), vec![1, 2]);
-        })
-        .unwrap()
+        });
     }
 
     #[test]
     fn an_eventful_transaction_that_only_appends_dispatches_its_events() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let out = Out::default();
             let log = AppendLog::new(b"s/arrival/c1/head".to_vec(), b"s/arrival/c1/row/".to_vec());
@@ -268,8 +265,7 @@ mod post_commit_tests {
                 txn.commit().await.unwrap();
             }
             assert_eq!(out.get(), vec![1, 2]);
-        })
-        .unwrap()
+        });
     }
 
     /// An attempt that writes and whose hook holds the stream until
@@ -304,7 +300,7 @@ mod post_commit_tests {
     /// drains the stream; that thread must not panic.
     #[test]
     fn a_panicking_event_does_not_reach_the_commit_that_drains_it() {
-        workers::block_on(async {
+        crate::backends::test_suite::on_workers(|| async {
             let store = RegolithStore::in_memory().unwrap();
             let before = telemetry::storage_event_count(StorageEvent::PostCommitEventPanicked);
             let entered = Arc::new(Signal::new());
@@ -336,7 +332,6 @@ mod post_commit_tests {
             release.set();
             held.await.unwrap().unwrap();
             assert!(telemetry::storage_event_count(StorageEvent::PostCommitEventPanicked) > before);
-        })
-        .unwrap()
+        });
     }
 }
