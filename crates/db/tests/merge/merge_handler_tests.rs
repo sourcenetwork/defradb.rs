@@ -2622,27 +2622,31 @@ fn deep_composite_parent_chain_merges_on_worker_stack() {
         }
 
         let (latest_cid, latest_block, latest_payload) = latest.expect("chain is not empty");
-        let (handler, outcome) = workers::spawn(None, "test", move || async move {
-            let metadata = BlockMetadata::normal(
-                &doc_id_str,
-                "col-users",
-                "did:key:z6MkrDeepCompositeReplay",
-                None,
-                false,
-            );
-            let outcome = handler
-                .process_composite_delta(
-                    &latest_cid,
-                    &latest_block,
-                    &latest_payload,
-                    &metadata,
+        let (handler, outcome) = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let metadata = BlockMetadata::normal(
+                    &doc_id_str,
+                    "col-users",
+                    "did:key:z6MkrDeepCompositeReplay",
+                    None,
                     false,
-                    0,
-                )
-                .await
-                .unwrap();
-            (handler, outcome)
-        })
+                );
+                let outcome = handler
+                    .process_composite_delta(
+                        &latest_cid,
+                        &latest_block,
+                        &latest_payload,
+                        &metadata,
+                        false,
+                        0,
+                    )
+                    .await
+                    .unwrap();
+                (handler, outcome)
+            },
+        )
         .unwrap()
         .await
         .expect("composite merge task should not overflow its worker stack");
@@ -2693,20 +2697,30 @@ fn deep_collection_parent_chain_merges_on_worker_stack() {
         }
 
         let (latest_cid, latest_block, latest_payload) = latest.expect("chain is not empty");
-        let (handler, outcome) = workers::spawn(None, "test", move || async move {
-            let metadata = BlockMetadata::normal(
-                "collection-chain",
-                "col-users",
-                "did:key:z6MkrDeepCollectionReplay",
-                None,
-                false,
-            );
-            let outcome = handler
-                .process_collection_delta(&latest_cid, &latest_block, &latest_payload, &metadata, 0)
-                .await
-                .unwrap();
-            (handler, outcome)
-        })
+        let (handler, outcome) = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let metadata = BlockMetadata::normal(
+                    "collection-chain",
+                    "col-users",
+                    "did:key:z6MkrDeepCollectionReplay",
+                    None,
+                    false,
+                );
+                let outcome = handler
+                    .process_collection_delta(
+                        &latest_cid,
+                        &latest_block,
+                        &latest_payload,
+                        &metadata,
+                        0,
+                    )
+                    .await
+                    .unwrap();
+                (handler, outcome)
+            },
+        )
         .unwrap()
         .await
         .expect("collection merge task should not overflow its worker stack");

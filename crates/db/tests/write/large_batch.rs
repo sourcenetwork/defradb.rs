@@ -73,7 +73,7 @@ fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
         let texts = Arc::clone(&embedded_texts);
         // An OpenAI-compatible endpoint: `input` is one text or an array of
         // them, answered in order with their indices.
-        let server = HttpServer::start(move |request| {
+        let server = HttpServer::start(&["/embeddings"], move |request| {
             calls.fetch_add(1, Ordering::SeqCst);
             let count = match &request.body["input"] {
                 Value::Array(inputs) => inputs.len(),

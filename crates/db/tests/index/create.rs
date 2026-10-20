@@ -319,56 +319,76 @@ fn create_index_keeps_pace_with_concurrent_writers() {
         let created = 0..200;
 
         let creator = db.clone();
-        let index_task = workers::spawn(None, "test", move || async move {
-            let (fields, kind) = by_name();
-            creator
-                .create_index("Racing", Some("by_name"), fields, kind)
-                .await
-        })
+        let index_task = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let (fields, kind) = by_name();
+                creator
+                    .create_index("Racing", Some("by_name"), fields, kind)
+                    .await
+            },
+        )
         .unwrap();
         let updater = {
             let mutator = mutator.clone();
             let ids = ids.clone();
             let updated = updated.clone();
-            workers::spawn(None, "test", move || async move {
-                for i in updated {
-                    retrying(|| async {
-                        let mut doc = Document::new();
-                        doc.set_id(ids[i].clone());
-                        doc.set("name", NormalValue::String(format!("upd-{i}")));
-                        mutator
-                            .update("Racing", doc, RapidHashSet::from_iter(["name".to_string()]))
-                            .await
-                    })
-                    .await;
-                }
-            })
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "test",
+                move || async move {
+                    for i in updated {
+                        retrying(|| async {
+                            let mut doc = Document::new();
+                            doc.set_id(ids[i].clone());
+                            doc.set("name", NormalValue::String(format!("upd-{i}")));
+                            mutator
+                                .update(
+                                    "Racing",
+                                    doc,
+                                    RapidHashSet::from_iter(["name".to_string()]),
+                                )
+                                .await
+                        })
+                        .await;
+                    }
+                },
+            )
             .unwrap()
         };
         let deleter = {
             let mutator = mutator.clone();
             let ids = ids.clone();
             let deleted = deleted.clone();
-            workers::spawn(None, "test", move || async move {
-                for i in deleted {
-                    retrying(|| mutator.delete("Racing", &ids[i])).await;
-                }
-            })
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "test",
+                move || async move {
+                    for i in deleted {
+                        retrying(|| mutator.delete("Racing", &ids[i])).await;
+                    }
+                },
+            )
             .unwrap()
         };
         let inserter = {
             let mutator = mutator.clone();
             let created = created.clone();
-            workers::spawn(None, "test", move || async move {
-                for i in created {
-                    retrying(|| async {
-                        let mut doc = Document::new();
-                        doc.set("name", NormalValue::String(format!("new-{i}")));
-                        mutator.create("Racing", doc).await
-                    })
-                    .await;
-                }
-            })
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "test",
+                move || async move {
+                    for i in created {
+                        retrying(|| async {
+                            let mut doc = Document::new();
+                            doc.set("name", NormalValue::String(format!("new-{i}")));
+                            mutator.create("Racing", doc).await
+                        })
+                        .await;
+                    }
+                },
+            )
             .unwrap()
         };
         let index = index_task.await.unwrap().unwrap();
@@ -439,12 +459,16 @@ fn create_index_fence_includes_old_schema_writes_before_definition_commit() {
 
         gate.armed.store(true, Ordering::SeqCst);
         let creator = db.clone();
-        let index_task = workers::spawn(None, "test", move || async move {
-            let (fields, kind) = by_name();
-            creator
-                .create_index("Racing", Some("by_name"), fields, kind)
-                .await
-        })
+        let index_task = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let (fields, kind) = by_name();
+                creator
+                    .create_index("Racing", Some("by_name"), fields, kind)
+                    .await
+            },
+        )
         .unwrap();
 
         // The index definition has been staged, but its transaction has not

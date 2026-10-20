@@ -695,11 +695,15 @@ fn lazy_full_scan_is_write_free_even_when_paused() {
 
         transform_store.arm_on_call(3);
         let fetch_db = db.clone();
-        let fetch = workers::spawn(None, "test", move || async move {
-            db::LensedAutoCommitFetcher::new(fetch_db)
-                .get_all("Users")
-                .await
-        })
+        let fetch = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                db::LensedAutoCommitFetcher::new(fetch_db)
+                    .get_all("Users")
+                    .await
+            },
+        )
         .unwrap();
 
         workers::timeout(
@@ -945,11 +949,15 @@ fn concurrent_lazy_reads_of_same_document_are_idempotent() {
         transform_store.arm();
         let first_db = db.clone();
         let first_doc_id = doc_id.to_string();
-        let first = workers::spawn(None, "test", move || async move {
-            db::LensedAutoCommitFetcher::new(first_db)
-                .get_by_ids("Users", &[first_doc_id])
-                .await
-        })
+        let first = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                db::LensedAutoCommitFetcher::new(first_db)
+                    .get_by_ids("Users", &[first_doc_id])
+                    .await
+            },
+        )
         .unwrap();
 
         workers::timeout(
@@ -1021,11 +1029,15 @@ fn concurrent_update_wins_over_stale_lazy_write_back() {
         transform_store.arm();
         let query_db = db.clone();
         let query_doc_id = doc_id.to_string();
-        let query = workers::spawn(None, "test", move || async move {
-            db::LensedAutoCommitFetcher::new(query_db)
-                .get_by_ids("Users", &[query_doc_id])
-                .await
-        })
+        let query = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                db::LensedAutoCommitFetcher::new(query_db)
+                    .get_by_ids("Users", &[query_doc_id])
+                    .await
+            },
+        )
         .unwrap();
 
         workers::timeout(

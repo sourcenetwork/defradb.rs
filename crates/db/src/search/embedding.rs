@@ -277,6 +277,7 @@ pub(crate) async fn resolve_prepared_embedding_request(request: &[u8]) -> Result
         &request.model,
         &request.api_key,
         &request.text,
+        EMBEDDING_TIMEOUT,
     )
     .await
     .map_err(|error| error.to_string())?;
@@ -334,6 +335,7 @@ pub async fn embed_text_with_provider(
         &input.model,
         &input.api_key,
         &input.text,
+        embedding_config.timeout.unwrap_or(EMBEDDING_TIMEOUT),
     )
     .await
     .map_err(Error::from)
@@ -443,8 +445,8 @@ pub(crate) fn normalized_embedding_url(url: &str) -> &str {
     url.trim().trim_end_matches('/')
 }
 
-/// How long one embedding request may take, on every target.
-const EMBEDDING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long one embedding request may take unless the config sets another.
+pub(crate) const EMBEDDING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Why an embedding request failed, and whether sending it again may
 /// succeed: a timeout, a transport error, 429 or 5xx.
@@ -486,8 +488,9 @@ async fn call_embedding(
     model: &str,
     api_key: &str,
     text: &str,
+    timeout: std::time::Duration,
 ) -> Result<Vec<f64>, EmbeddingCallError> {
-    call_embeddings(provider, url, model, api_key, &[text])
+    call_embeddings(provider, url, model, api_key, &[text], timeout)
         .await?
         .pop()
         .unwrap_or_else(|| {
@@ -509,6 +512,7 @@ pub(crate) async fn call_embeddings(
     model: &str,
     api_key: &str,
     texts: &[&str],
+    timeout: std::time::Duration,
 ) -> Result<Vec<Result<Vec<f64>, EmbeddingCallError>>, EmbeddingCallError> {
     let endpoint = format!("{}/embeddings", normalized_embedding_url(url));
     match provider {
@@ -519,7 +523,7 @@ pub(crate) async fn call_embeddings(
             };
             let bearer = (!api_key.is_empty()).then_some(api_key);
             let body = serde_json::json!({ "model": model, "input": input });
-            let result = post_embedding_request(&endpoint, &body, bearer).await?;
+            let result = post_embedding_request(&endpoint, &body, bearer, timeout).await?;
             Ok(openai_vectors(&result, texts.len()))
         }
         "ollama" => {
@@ -529,7 +533,7 @@ pub(crate) async fn call_embeddings(
                     futures::future::join_all(
                         chunk
                             .iter()
-                            .map(|text| ollama_embedding(&endpoint, model, text)),
+                            .map(|text| ollama_embedding(&endpoint, model, text, timeout)),
                     )
                     .await,
                 );
@@ -547,21 +551,23 @@ async fn ollama_embedding(
     endpoint: &str,
     model: &str,
     text: &str,
+    timeout: std::time::Duration,
 ) -> Result<Vec<f64>, EmbeddingCallError> {
     let body = serde_json::json!({ "model": model, "prompt": text });
-    let result = post_embedding_request(endpoint, &body, None).await?;
+    let result = post_embedding_request(endpoint, &body, None, timeout).await?;
     let mut vector = vector_at(&result, "/embedding")?;
     normalize_embedding(&mut vector)
         .map_err(|error| EmbeddingCallError::final_error(error.to_string()))?;
     Ok(vector)
 }
 
-/// One embedding request, bounded by [`EMBEDDING_TIMEOUT`]: the JSON answer,
+/// One embedding request, bounded by `timeout`: the JSON answer,
 /// or why there is none.
 async fn post_embedding_request(
     endpoint: &str,
     body: &serde_json::Value,
     bearer: Option<&str>,
+    timeout: std::time::Duration,
 ) -> Result<serde_json::Value, EmbeddingCallError> {
     let mut request = embedding_client().post(endpoint);
     if let Some(api_key) = bearer {
@@ -583,10 +589,10 @@ async fn post_embedding_request(
         }
         resp.json::<serde_json::Value>().await.map_err(transport)
     };
-    n0_future::time::timeout(EMBEDDING_TIMEOUT, exchange)
+    n0_future::time::timeout(timeout, exchange)
         .await
         .map_err(|_| EmbeddingCallError {
-            message: format!("embedding provider gave no answer within {EMBEDDING_TIMEOUT:?}"),
+            message: format!("embedding provider gave no answer within {timeout:?}"),
             retryable: true,
         })?
 }

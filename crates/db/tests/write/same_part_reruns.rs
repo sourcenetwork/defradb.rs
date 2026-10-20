@@ -221,9 +221,11 @@ impl Node {
                 self.id.clone(),
                 paused.to_owned(),
             );
-            workers::spawn(None, "test", move || async move {
-                set_left(&*queries, &id, &value).await
-            })
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "test",
+                move || async move { set_left(&*queries, &id, &value).await },
+            )
             .unwrap()
         };
         for (stop, value) in self.gate.stops.iter().zip([winner, third]) {
@@ -352,17 +354,21 @@ fn concurrent_updates_of_one_field_each_lose_at_most_once() {
                     node.id.clone(),
                     Arc::clone(&start),
                 );
-                workers::spawn(None, "test", move || async move {
-                    start.wait().await;
-                    for update in 0..UPDATES {
-                        set_left(
-                            &*queries,
-                            &id,
-                            &format!("writer-{writer:02}-update-{update:02}"),
-                        )
-                        .await;
-                    }
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        start.wait().await;
+                        for update in 0..UPDATES {
+                            set_left(
+                                &*queries,
+                                &id,
+                                &format!("writer-{writer:02}-update-{update:02}"),
+                            )
+                            .await;
+                        }
+                    },
+                )
                 .unwrap()
             })
             .collect();
@@ -395,15 +401,19 @@ fn an_update_builds_on_heads_that_landed_before_its_transaction() {
         node.gate.armed.store(true, Ordering::SeqCst);
         let watched = {
             let (db, id) = (Arc::clone(&node.db), node.id.clone());
-            workers::spawn(None, "test", move || async move {
-                let mut doc = document::Document::new();
-                doc.set_id(document::DocID::from_string(&id).unwrap());
-                doc.set("left".to_string(), NormalValue::String("aaa".to_string()));
-                AutoCommitMutator::new(db)
-                    .update("Sample", doc, ["left".to_string()].into_iter().collect())
-                    .await
-                    .unwrap();
-            })
+            workers::spawn(
+                Some(crate::common::worker_io::pool()),
+                "test",
+                move || async move {
+                    let mut doc = document::Document::new();
+                    doc.set_id(document::DocID::from_string(&id).unwrap());
+                    doc.set("left".to_string(), NormalValue::String("aaa".to_string()));
+                    AutoCommitMutator::new(db)
+                        .update("Sample", doc, ["left".to_string()].into_iter().collect())
+                        .await
+                        .unwrap();
+                },
+            )
             .unwrap()
         };
         node.gate.stops[0].reached.wait().await;

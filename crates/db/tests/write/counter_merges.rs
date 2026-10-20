@@ -86,32 +86,40 @@ fn sixty_four_concurrent_increments_and_other_field_updates_never_conflict() {
         for _ in 0..WRITERS {
             let (db, doc_id, start) = (db.clone(), doc_id.clone(), start.clone());
             tasks.push(
-                workers::spawn(None, "test", move || async move {
-                    let mutator = AutoCommitMutator::new(db);
-                    start.wait().await;
-                    increment(&mutator, &doc_id, 1).await;
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let mutator = AutoCommitMutator::new(db);
+                        start.wait().await;
+                        increment(&mutator, &doc_id, 1).await;
+                    },
+                )
                 .unwrap(),
             );
         }
         for label in 0..LABELS {
             let (db, doc_id, start) = (db.clone(), doc_id.clone(), start.clone());
             tasks.push(
-                workers::spawn(None, "test", move || async move {
-                    let mutator = AutoCommitMutator::new(db);
-                    let field = format!("label{label}");
-                    let mut doc = Document::new();
-                    doc.set_id(doc_id);
-                    doc.set(
-                        field.clone(),
-                        NormalValue::String(format!("set by {label}")),
-                    );
-                    start.wait().await;
-                    mutator
-                        .update("Tally", doc, RapidHashSet::from_iter([field]))
-                        .await
-                        .expect("an update of another field commits");
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let mutator = AutoCommitMutator::new(db);
+                        let field = format!("label{label}");
+                        let mut doc = Document::new();
+                        doc.set_id(doc_id);
+                        doc.set(
+                            field.clone(),
+                            NormalValue::String(format!("set by {label}")),
+                        );
+                        start.wait().await;
+                        mutator
+                            .update("Tally", doc, RapidHashSet::from_iter([field]))
+                            .await
+                            .expect("an update of another field commits");
+                    },
+                )
                 .unwrap(),
             );
         }

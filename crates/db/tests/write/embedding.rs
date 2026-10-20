@@ -28,7 +28,7 @@ impl Fixture {
 async fn fixture() -> Fixture {
     let calls = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&calls);
-    let server = HttpServer::start(move |request| {
+    let server = HttpServer::start(&["/embeddings"], move |request| {
         let request = request.body;
         counted.fetch_add(1, Ordering::SeqCst);
         assert_eq!(request["model"], "test-model");

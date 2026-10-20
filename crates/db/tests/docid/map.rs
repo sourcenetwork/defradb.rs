@@ -137,13 +137,17 @@ fn allocator_keeps_ids_unique_across_many_database_instances() {
         for _ in 0..DATABASES {
             let db = DB::from_arc(store.clone()).unwrap();
             tasks.push(
-                workers::spawn(None, "test", move || async move {
-                    let mut ids = Vec::with_capacity(IDS_PER_DATABASE);
-                    for _ in 0..IDS_PER_DATABASE {
-                        ids.push(db.next_doc_short_id().await.unwrap());
-                    }
-                    ids
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let mut ids = Vec::with_capacity(IDS_PER_DATABASE);
+                        for _ in 0..IDS_PER_DATABASE {
+                            ids.push(db.next_doc_short_id().await.unwrap());
+                        }
+                        ids
+                    },
+                )
                 .unwrap(),
             );
         }

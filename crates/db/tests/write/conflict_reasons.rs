@@ -133,7 +133,10 @@ impl Fixture {
     {
         self.gate.armed.store(true, Ordering::SeqCst);
         let paused = paused(self.mutator());
-        let paused = workers::spawn(None, "test", move || paused).unwrap();
+        let paused = workers::spawn(Some(crate::common::worker_io::pool()), "test", move || {
+            paused
+        })
+        .unwrap();
         self.gate.paused.wait().await;
         let won = winner(self.mutator()).await;
         self.gate.release.set();

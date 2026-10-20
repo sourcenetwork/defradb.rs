@@ -80,18 +80,23 @@ fn aborting_owner_removes_transaction() {
     workers::block_on(async {
         let fixture = Fixture::new().await;
         let executor = fixture.runner.clone();
-        let (ready, handle) = futures::channel::oneshot::channel();
+        let (ready, handle) = regolith::sync::bounded(1);
         let (owner, abort) = futures::future::abortable(async move {
             let guard = TransactionGuard::begin(executor.as_ref(), false)
                 .await
                 .unwrap();
             create(&guard).await;
-            ready.send(guard.handle().unwrap().clone()).unwrap();
+            ready
+                .try_send(guard.handle().ok().unwrap().clone())
+                .unwrap();
             std::future::pending::<()>().await;
             drop(guard);
         });
-        let task = workers::spawn(None, "test", move || owner).unwrap();
-        let handle = handle.await.unwrap();
+        let task = workers::spawn(Some(crate::common::worker_io::pool()), "test", move || {
+            owner
+        })
+        .unwrap();
+        let handle = handle.recv_async().await.unwrap();
         abort.abort();
         assert!(task.await.unwrap().is_err());
         fixture.assert_discarded(&handle).await;
@@ -139,15 +144,19 @@ fn cancellation_while_finalization_waits_for_an_active_request_releases_the_tran
             let active = {
                 let (registry, handle) = (fixture.registry.clone(), handle.clone());
                 let (gate, entered) = (gate.clone(), entered.clone());
-                workers::spawn(None, "test", move || async move {
-                    let job = query::txn::txn_job(move |_| {
-                        Box::pin(async move {
-                            entered.set();
-                            gate.wait().await;
-                        })
-                    });
-                    registry.run(&handle, None, job).await
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let job = query::txn::txn_job(move |_| {
+                            Box::pin(async move {
+                                entered.set();
+                                gate.wait().await;
+                            })
+                        });
+                        registry.run(&handle, None, job).await
+                    },
+                )
                 .unwrap()
             };
             entered.wait().await;

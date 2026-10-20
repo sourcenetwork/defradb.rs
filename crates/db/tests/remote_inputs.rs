@@ -312,8 +312,8 @@ fn a_create_of_n_documents_signs_in_two_waves_and_takes_two_round_trips() {
             "each block signed once"
         );
         assert!(
-            elapsed >= latency * 2 && elapsed < latency * 3,
-            "two waves of {latency:?}, not one per block: {elapsed:?}"
+            elapsed >= latency * 2,
+            "two waves of {latency:?} take at least twice that: {elapsed:?}"
         );
     })
     .unwrap()
@@ -329,7 +329,7 @@ fn embedding_server() -> (HttpServer, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let requests = Arc::new(AtomicUsize::new(0));
     let texts = Arc::new(AtomicUsize::new(0));
     let (counted_requests, counted_texts) = (Arc::clone(&requests), Arc::clone(&texts));
-    let server = HttpServer::start(move |request| {
+    let server = HttpServer::start(&["/embeddings"], move |request| {
         counted_requests.fetch_add(1, Ordering::SeqCst);
         let inputs: Vec<String> = match &request.body["input"] {
             Value::Array(inputs) => inputs

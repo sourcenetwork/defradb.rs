@@ -134,15 +134,18 @@ fn set_embedding_uses_each_field_provider_and_model() {
         use serde_json::json;
 
         let (requests, received) = regolith::sync::unbounded();
-        let server = HttpServer::start(move |request| {
-            let (provider, response) = if request.path.starts_with("/openai") {
-                ("openai", json!({"data": [{"embedding": [3.0, 4.0]}]}))
-            } else {
-                ("ollama", json!({"embedding": [0.0, 2.0]}))
-            };
-            requests.try_send((provider, request)).ok().unwrap();
-            response
-        });
+        let server = HttpServer::start(
+            &["/openai/embeddings", "/ollama/embeddings"],
+            move |request| {
+                let (provider, response) = if request.path.starts_with("/openai") {
+                    ("openai", json!({"data": [{"embedding": [3.0, 4.0]}]}))
+                } else {
+                    ("ollama", json!({"embedding": [0.0, 2.0]}))
+                };
+                requests.try_send((provider, request)).ok().unwrap();
+                response
+            },
+        );
         let address = server.url();
 
         let openai = embedding_with_provider(

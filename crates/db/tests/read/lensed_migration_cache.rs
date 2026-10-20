@@ -123,10 +123,14 @@ fn concurrent_loads_publish_every_context_into_one_snapshot() {
         for index in 0..32 {
             let fetcher = Arc::clone(&fetcher);
             tasks.push(
-                workers::spawn(None, "test", move || async move {
-                    let collection = users(&format!("v{}", index % 8));
-                    fetcher.load_migration_context(&collection).await.unwrap().0
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let collection = users(&format!("v{}", index % 8));
+                        fetcher.load_migration_context(&collection).await.unwrap().0
+                    },
+                )
                 .unwrap(),
             );
         }

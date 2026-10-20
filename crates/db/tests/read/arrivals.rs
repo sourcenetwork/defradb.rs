@@ -138,11 +138,15 @@ fn concurrent_autocommit_arrivals_are_contiguous() {
         let mut creates: futures::stream::FuturesUnordered<_> = (0..64)
             .map(|index| {
                 let db = db.clone();
-                workers::spawn(None, "test", move || async move {
-                    let mut doc = Document::new();
-                    doc.set("name", format!("arrival-{index}"));
-                    AutoCommitMutator::new(db).create("Users", doc).await
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let mut doc = Document::new();
+                        doc.set("name", format!("arrival-{index}"));
+                        AutoCommitMutator::new(db).create("Users", doc).await
+                    },
+                )
                 .unwrap()
             })
             .collect();

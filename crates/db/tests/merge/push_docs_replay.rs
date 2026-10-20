@@ -33,20 +33,24 @@ fn replay_push_gate_caps_concurrent_sends() {
             let max_seen = max_seen.clone();
             let peer = peer.clone();
             handles.push(
-                workers::spawn(None, "test", move || async move {
-                    gate.send_pushlog(&peer, async move {
-                        let active = current.fetch_add(1, Ordering::SeqCst) + 1;
-                        record_max(&max_seen, active);
-                        workers::delay(Duration::from_millis(50))
-                            .unwrap()
-                            .await
-                            .unwrap();
-                        current.fetch_sub(1, Ordering::SeqCst);
-                        Ok(PushLogReply::success("message"))
-                    })
-                    .await
-                    .unwrap();
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        gate.send_pushlog(&peer, async move {
+                            let active = current.fetch_add(1, Ordering::SeqCst) + 1;
+                            record_max(&max_seen, active);
+                            workers::delay(Duration::from_millis(50))
+                                .unwrap()
+                                .await
+                                .unwrap();
+                            current.fetch_sub(1, Ordering::SeqCst);
+                            Ok(PushLogReply::success("message"))
+                        })
+                        .await
+                        .unwrap();
+                    },
+                )
                 .unwrap(),
             );
         }
@@ -141,22 +145,26 @@ fn replay_hint_is_durable_while_another_send_is_still_pending() {
             ReplayPushGate::new(ReplayPushConfig::default())
                 .on(p2p::network::Network::on(edge::testing::edge())),
         );
-        let (started, ready) = futures::channel::oneshot::channel();
-        let (release, wait) = futures::channel::oneshot::channel();
+        let (started, ready) = regolith::sync::bounded(1);
+        let (release, wait) = regolith::sync::bounded(1);
         let slow_gate = gate.clone();
         let slow_peer = peer.clone();
-        let slow = workers::spawn(None, "test", move || async move {
-            slow_gate
-                .send_pushlog(&slow_peer, async {
-                    started.send(()).unwrap();
-                    wait.await.unwrap();
-                    Ok(PushLogReply::success("slow"))
-                })
-                .await
-                .unwrap();
-        })
+        let slow = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                slow_gate
+                    .send_pushlog(&slow_peer, async {
+                        started.try_send(()).ok().unwrap();
+                        wait.recv_async().await.unwrap();
+                        Ok(PushLogReply::success("slow"))
+                    })
+                    .await
+                    .unwrap();
+            },
+        )
         .unwrap();
-        ready.await.unwrap();
+        ready.recv_async().await.unwrap();
         let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
         reply.retry_after_ms = Some(45_000);
         let reply = gate.send_pushlog(&peer, async { Ok(reply) }).await.unwrap();
@@ -179,7 +187,7 @@ fn replay_hint_is_durable_while_another_send_is_still_pending() {
                 .len(),
             2
         );
-        release.send(()).unwrap();
+        release.try_send(()).ok().unwrap();
         slow.await.unwrap();
     })
     .unwrap()
@@ -206,45 +214,53 @@ fn durable_hint_arriving_while_waiting_for_send_permit_prevents_dispatch() {
             })
             .on(p2p::network::Network::on(edge::testing::edge())),
         );
-        let (started, ready) = futures::channel::oneshot::channel();
-        let (release, wait) = futures::channel::oneshot::channel();
+        let (started, ready) = regolith::sync::bounded(1);
+        let (release, wait) = regolith::sync::bounded(1);
         let first_gate = gate.clone();
         let first_peer = peer.clone();
-        let first = workers::spawn(None, "test", move || async move {
-            first_gate
-                .send_pushlog(&first_peer, async {
-                    started.send(()).unwrap();
-                    wait.await.unwrap();
-                    Ok(PushLogReply::success("first"))
-                })
-                .await
-                .unwrap();
-        })
+        let first = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                first_gate
+                    .send_pushlog(&first_peer, async {
+                        started.try_send(()).ok().unwrap();
+                        wait.recv_async().await.unwrap();
+                        Ok(PushLogReply::success("first"))
+                    })
+                    .await
+                    .unwrap();
+            },
+        )
         .unwrap();
-        ready.await.unwrap();
+        ready.recv_async().await.unwrap();
         let waiting_gate = gate.clone();
         let waiting_store = peerstore.clone();
         let waiting_peer = peer.clone();
-        let (entered, entered_rx) = futures::channel::oneshot::channel();
-        let waiting = workers::spawn(None, "test", move || async move {
-            let attempt = waiting_gate.send_pushlog_with_admission(
-                &waiting_peer,
-                check_retry_admission(&waiting_store, &waiting_peer),
-                async { panic!("hint installed while queued must prevent transport dispatch") },
-            );
-            let mut attempt = std::pin::pin!(attempt);
-            assert!(futures::poll!(&mut attempt).is_pending());
-            entered.send(()).unwrap();
-            attempt.await
-        })
+        let (entered, entered_rx) = regolith::sync::bounded(1);
+        let waiting = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                let attempt = waiting_gate.send_pushlog_with_admission(
+                    &waiting_peer,
+                    check_retry_admission(&waiting_store, &waiting_peer),
+                    async { panic!("hint installed while queued must prevent transport dispatch") },
+                );
+                let mut attempt = std::pin::pin!(attempt);
+                assert!(futures::poll!(&mut attempt).is_pending());
+                entered.try_send(()).ok().unwrap();
+                attempt.await
+            },
+        )
         .unwrap();
-        entered_rx.await.unwrap();
+        entered_rx.recv_async().await.unwrap();
         let mut reply = PushLogReply::error("limited", p2p::error::RATE_LIMITED_MESSAGE);
         reply.retry_after_ms = Some(45_000);
         persist_retry_after(&peerstore, &peer, &reply)
             .await
             .unwrap();
-        release.send(()).unwrap();
+        release.try_send(()).ok().unwrap();
         first.await.unwrap();
         assert!(matches!(
             waiting.await.unwrap(),

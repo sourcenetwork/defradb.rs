@@ -13,7 +13,7 @@ struct Fixture {
 }
 
 async fn fixture_with_counter(counter: bool) -> Fixture {
-    let server = HttpServer::start(|request| {
+    let server = HttpServer::start(&["/embeddings"], |request| {
         let request = request.body;
         assert_eq!(request["model"], "test-model");
         let vector = match request["input"].as_str().unwrap() {

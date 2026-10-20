@@ -1054,16 +1054,20 @@ fn auto_commit_create_registers_acp_before_publishing_update() {
         mutator.set_document_acp(acp.clone());
         let mut sub = bus.subscribe(&[EventName::Update]);
         let owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
-        let create = workers::spawn(None, "test", move || async move {
-            defra_core::signing::scope_broadcast_creator_did(
-                Some(owner.to_string()),
-                mutator.create(
-                    "TestDoc",
-                    Document::from_json_str(r#"{"x": 1}"#).expect("doc"),
-                ),
-            )
-            .await
-        })
+        let create = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                defra_core::signing::scope_broadcast_creator_did(
+                    Some(owner.to_string()),
+                    mutator.create(
+                        "TestDoc",
+                        Document::from_json_str(r#"{"x": 1}"#).expect("doc"),
+                    ),
+                )
+                .await
+            },
+        )
         .unwrap();
 
         let message = workers::timeout(std::time::Duration::from_secs(1), sub.recv())
@@ -1227,7 +1231,7 @@ fn transactional_broadcasts_and_releases_follow_commit_receipts() {
             .expect("first create");
         let first_txn = first.take_txn().await.expect("take first");
         let first_commit = workers::spawn(
-            None,
+            Some(crate::common::worker_io::pool()),
             "test",
             move || async move { first_txn.commit().await },
         )

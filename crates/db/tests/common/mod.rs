@@ -13,3 +13,4 @@ pub mod owned;
 pub mod refusing_lens_store;
 pub mod schema;
 pub mod stream;
+pub mod worker_io;

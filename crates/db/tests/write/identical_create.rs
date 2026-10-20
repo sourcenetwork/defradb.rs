@@ -89,12 +89,16 @@ fn concurrent_identical_autocommit_creates_exactly_one_commits() {
             .map(|_| {
                 let mutator = AutoCommitMutator::new(Arc::clone(&db));
                 let barrier = Arc::clone(&barrier);
-                workers::spawn(None, "test", move || async move {
-                    barrier.wait().await;
-                    mutator
-                        .create("Twin", Document::from_json_str(DOC).unwrap())
-                        .await
-                })
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        barrier.wait().await;
+                        mutator
+                            .create("Twin", Document::from_json_str(DOC).unwrap())
+                            .await
+                    },
+                )
                 .unwrap()
             })
             .collect();

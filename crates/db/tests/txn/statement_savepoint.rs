@@ -217,7 +217,10 @@ fn cancelling_a_statement_rolls_back_only_that_statement_before_commit() {
                 )
                 .await
         });
-        let mutation = workers::spawn(None, "test", move || mutation).unwrap();
+        let mutation = workers::spawn(Some(crate::common::worker_io::pool()), "test", move || {
+            mutation
+        })
+        .unwrap();
         gate.entered.notified().await;
         abort.abort();
         assert!(mutation.await.unwrap().is_err());
@@ -274,16 +277,20 @@ fn timing_out_a_statement_rolls_back_only_that_statement_before_commit() {
         gate.armed.store(true, Ordering::SeqCst);
         let runner_for_task = Arc::clone(&runner);
         let handle_for_task = handle.clone();
-        let mutation = workers::spawn(None, "test", move || async move {
-            runner_for_task
-                .execute_in_txn(
-                    QueryRequest::new(
-                        r#"mutation { add_Users(input: {name: "timed out"}) { _docID } }"#,
-                    ),
-                    &handle_for_task,
-                )
-                .await
-        })
+        let mutation = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move {
+                runner_for_task
+                    .execute_in_txn(
+                        QueryRequest::new(
+                            r#"mutation { add_Users(input: {name: "timed out"}) { _docID } }"#,
+                        ),
+                        &handle_for_task,
+                    )
+                    .await
+            },
+        )
         .unwrap();
         gate.entered.notified().await;
         let timed_out = mutation.await.unwrap();

@@ -740,31 +740,35 @@ fn test_concurrent_parallel_transaction_operations() {
         let handles: Vec<_> = (0..10)
             .map(|i| {
                 let reg = registry.clone();
-                workers::spawn(None, "test", move || async move {
-                    let txn_id = reg.begin(true).await.unwrap();
-                    workers::delay(std::time::Duration::from_millis(1))
-                        .unwrap()
-                        .await
-                        .unwrap();
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        let txn_id = reg.begin(true).await.unwrap();
+                        workers::delay(std::time::Duration::from_millis(1))
+                            .unwrap()
+                            .await
+                            .unwrap();
 
-                    assert!(
-                        found(&reg, &txn_id).await,
-                        "Task {} should find its transaction",
-                        i
-                    );
+                        assert!(
+                            found(&reg, &txn_id).await,
+                            "Task {} should find its transaction",
+                            i
+                        );
 
-                    workers::delay(std::time::Duration::from_millis(1))
-                        .unwrap()
-                        .await
-                        .unwrap();
-                    reg.rollback(&txn_id).await.unwrap();
+                        workers::delay(std::time::Duration::from_millis(1))
+                            .unwrap()
+                            .await
+                            .unwrap();
+                        reg.rollback(&txn_id).await.unwrap();
 
-                    assert!(
-                        !found(&reg, &txn_id).await,
-                        "Task {} transaction should be gone after rollback",
-                        i
-                    );
-                })
+                        assert!(
+                            !found(&reg, &txn_id).await,
+                            "Task {} transaction should be gone after rollback",
+                            i
+                        );
+                    },
+                )
                 .unwrap()
             })
             .collect();
@@ -863,7 +867,7 @@ fn test_concurrent_commit_same_transaction() {
         let reg1 = registry.clone();
         let txn1 = txn_id.clone();
         let handle1 = workers::spawn(
-            None,
+            Some(crate::common::worker_io::pool()),
             "test",
             move || async move { reg1.commit(&txn1).await },
         )
@@ -872,7 +876,7 @@ fn test_concurrent_commit_same_transaction() {
         let reg2 = registry.clone();
         let txn2 = txn_id.clone();
         let handle2 = workers::spawn(
-            None,
+            Some(crate::common::worker_io::pool()),
             "test",
             move || async move { reg2.commit(&txn2).await },
         )
@@ -902,7 +906,7 @@ fn test_concurrent_rollback_same_transaction() {
         let reg1 = registry.clone();
         let txn1 = txn_id.clone();
         let handle1 = workers::spawn(
-            None,
+            Some(crate::common::worker_io::pool()),
             "test",
             move || async move { reg1.rollback(&txn1).await },
         )
@@ -911,7 +915,7 @@ fn test_concurrent_rollback_same_transaction() {
         let reg2 = registry.clone();
         let txn2 = txn_id.clone();
         let handle2 = workers::spawn(
-            None,
+            Some(crate::common::worker_io::pool()),
             "test",
             move || async move { reg2.rollback(&txn2).await },
         )
@@ -941,7 +945,7 @@ fn test_concurrent_commit_and_rollback_same_transaction() {
         let reg1 = registry.clone();
         let txn1 = txn_id.clone();
         let handle1 = workers::spawn(
-            None,
+            Some(crate::common::worker_io::pool()),
             "test",
             move || async move { reg1.commit(&txn1).await },
         )
@@ -950,7 +954,7 @@ fn test_concurrent_commit_and_rollback_same_transaction() {
         let reg2 = registry.clone();
         let txn2 = txn_id.clone();
         let handle2 = workers::spawn(
-            None,
+            Some(crate::common::worker_io::pool()),
             "test",
             move || async move { reg2.rollback(&txn2).await },
         )

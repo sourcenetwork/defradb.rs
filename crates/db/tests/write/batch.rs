@@ -93,8 +93,12 @@ fn batch_create_registers_external_acp_before_ordered_event() {
         .await
         .expect("create");
 
-        let commit =
-            workers::spawn(None, "test", move || async move { mutator.commit().await }).unwrap();
+        let commit = workers::spawn(
+            Some(crate::common::worker_io::pool()),
+            "test",
+            move || async move { mutator.commit().await },
+        )
+        .unwrap();
         let message = workers::timeout(std::time::Duration::from_secs(1), sub.recv())
             .await
             .expect("event arrived within timeout")

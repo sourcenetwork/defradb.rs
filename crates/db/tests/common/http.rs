@@ -1,7 +1,9 @@
 //! A blocking JSON-over-HTTP/1.1 server on plain std threads, for tests whose
 //! code under test makes network requests (embedding providers). It owns no
 //! runtime: the network side of the request runs wherever the code under test
-//! puts it.
+//! puts it. It answers only `POST` to the paths it was started with: another
+//! path is a 404, another method a 405 and a body that is not JSON a 400, so a
+//! test proves the URL the client builds.
 
 #![allow(dead_code)]
 
@@ -38,12 +40,13 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    /// Answers every request with `handler`'s JSON. A handler that panics
-    /// answers 500.
-    pub fn start<H>(handler: H) -> Self
+    /// Answers every `POST` to one of `paths` with `handler`'s JSON. A
+    /// handler that panics answers 500.
+    pub fn start<H>(paths: &[&str], handler: H) -> Self
     where
         H: Fn(Request) -> Value + Send + Sync + 'static,
     {
+        let paths: Arc<Vec<String>> = Arc::new(paths.iter().map(|path| path.to_string()).collect());
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
@@ -57,7 +60,8 @@ impl HttpServer {
                     }
                     let Ok(stream) = stream else { continue };
                     let handler = Arc::clone(&handler);
-                    std::thread::spawn(move || serve_connection(stream, &*handler));
+                    let paths = Arc::clone(&paths);
+                    std::thread::spawn(move || serve_connection(stream, &paths, &*handler));
                 }
             })
         };
@@ -84,7 +88,7 @@ impl Drop for HttpServer {
     }
 }
 
-fn serve_connection<H>(stream: TcpStream, handler: &H)
+fn serve_connection<H>(stream: TcpStream, paths: &[String], handler: &H)
 where
     H: Fn(Request) -> Value,
 {
@@ -93,9 +97,22 @@ where
     };
     let mut reader = BufReader::new(stream);
     while let Some(request) = read_request(&mut reader) {
-        let (status, body) = match catch_unwind(AssertUnwindSafe(|| handler(request))) {
-            Ok(body) => ("200 OK", body.to_string()),
-            Err(_) => ("500 Internal Server Error", String::new()),
+        let (status, body) = if !paths.contains(&request.path) {
+            ("404 Not Found", String::new())
+        } else if request.method != "POST" {
+            ("405 Method Not Allowed", String::new())
+        } else if let Some(json) = request.body {
+            let request = Request {
+                path: request.path,
+                headers: request.headers,
+                body: json,
+            };
+            match catch_unwind(AssertUnwindSafe(|| handler(request))) {
+                Ok(body) => ("200 OK", body.to_string()),
+                Err(_) => ("500 Internal Server Error", String::new()),
+            }
+        } else {
+            ("400 Bad Request", String::new())
         };
         let response = format!(
             "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
@@ -107,12 +124,21 @@ where
     }
 }
 
-fn read_request(reader: &mut BufReader<TcpStream>) -> Option<Request> {
+struct RawRequest {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    body: Option<Value>,
+}
+
+fn read_request(reader: &mut BufReader<TcpStream>) -> Option<RawRequest> {
     let mut line = String::new();
     if reader.read_line(&mut line).ok()? == 0 {
         return None;
     }
-    let path = line.split_whitespace().nth(1)?.to_string();
+    let mut parts = line.split_whitespace();
+    let method = parts.next()?.to_string();
+    let path = parts.next()?.to_string();
     let mut headers = Vec::new();
     let mut length = 0;
     loop {
@@ -130,9 +156,10 @@ fn read_request(reader: &mut BufReader<TcpStream>) -> Option<Request> {
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body).ok()?;
-    Some(Request {
+    Some(RawRequest {
+        method,
         path,
         headers,
-        body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+        body: serde_json::from_slice(&body).ok(),
     })
 }
