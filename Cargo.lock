@@ -27,7 +27,6 @@ dependencies = [
  "storage",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "workers",
  "zanzibar 0.5.0",

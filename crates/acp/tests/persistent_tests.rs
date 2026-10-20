@@ -8,6 +8,8 @@ use storage::corekv::{IterOptions, Reader, Store, Writer};
 use storage::namespace::{Namespace, NamespacedStore};
 use tempfile::TempDir;
 
+mod common;
+
 fn test_did() -> Did {
     Did::new("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK").unwrap()
 }
@@ -354,40 +356,40 @@ fn test_unified_store_atomic_registration() {
     .unwrap()
 }
 
-#[tokio::test]
-async fn test_unified_store_atomic_registration_concurrent() {
-    let tmp_dir = TempDir::new().unwrap();
-    let db_path = tmp_dir.path().join("data");
+#[test]
+fn test_unified_store_atomic_registration_concurrent() {
+    common::on_pool(|pool| async move {
+        let tmp_dir = TempDir::new().unwrap();
+        let db_path = tmp_dir.path().join("data");
 
-    let redb_store = Arc::new(storage::RegolithStore::open(&db_path).unwrap());
-    let acp_store = Arc::new(PersistentAcpStore::from_store(redb_store.clone()));
+        let redb_store = Arc::new(storage::RegolithStore::open(&db_path).unwrap());
+        let acp_store = Arc::new(PersistentAcpStore::from_store(redb_store.clone()));
 
-    let owner1 = test_did();
-    let owner2 = test_did2();
+        let mut registrations = Vec::new();
+        for (worker, owner) in [test_did(), test_did2()].into_iter().enumerate() {
+            let store = acp_store.clone();
+            registrations.push(
+                pool.submit(workers::Target::Worker(worker + 1), move || async move {
+                    store.register_doc_atomic(&owner, "users", "doc1").await
+                })
+                .await
+                .unwrap(),
+            );
+        }
 
-    // Spawn concurrent registration attempts
-    let store1 = acp_store.clone();
-    let o1 = owner1.clone();
-    let h1 = tokio::spawn(async move { store1.register_doc_atomic(&o1, "users", "doc1").await });
+        let mut winners = 0;
+        for registration in registrations {
+            if registration.await.unwrap().unwrap() {
+                winners += 1;
+            }
+        }
+        assert_eq!(
+            winners, 1,
+            "exactly one concurrent registration must succeed"
+        );
 
-    let store2 = acp_store.clone();
-    let o2 = owner2.clone();
-    let h2 = tokio::spawn(async move { store2.register_doc_atomic(&o2, "users", "doc1").await });
-
-    let (r1, r2) = tokio::join!(h1, h2);
-    let success1 = r1.unwrap().unwrap();
-    let success2 = r2.unwrap().unwrap();
-
-    // Exactly one should succeed
-    assert!(
-        (success1 && !success2) || (!success1 && success2),
-        "Exactly one concurrent registration must succeed, got: r1={}, r2={}",
-        success1,
-        success2
-    );
-
-    // Document should be registered
-    assert!(acp_store.is_doc_registered("users", "doc1").await.unwrap());
+        assert!(acp_store.is_doc_registered("users", "doc1").await.unwrap());
+    })
 }
 
 #[test]
