@@ -8,6 +8,8 @@ use storage::{RegolithStore, RegolithStoreOptions};
 use zanzibar::store::ZanzibarStore;
 use zanzibar::types::Relationship;
 
+mod common;
+
 fn did(name: &str) -> Did {
     Did::new(format!("did:key:{name}")).unwrap()
 }
@@ -425,7 +427,7 @@ fn a_grant_racing_an_unregister_leaves_no_orphaned_grant() {
 /// without its owner, so the stranger never reads one.
 #[test]
 fn no_snapshot_ever_shows_a_created_document_without_its_owner() {
-    workers::block_on(async {
+    common::on_pool(|pool| async move {
         const DOCS: usize = 64;
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let persistent = Arc::new(PersistentZanzibarStore::from_store(store.clone()));
@@ -442,7 +444,7 @@ fn no_snapshot_ever_shows_a_created_document_without_its_owner() {
 
         let writer = {
             let (store, acp, done) = (store.clone(), acp.clone(), done.clone());
-            workers::spawn(None, "test", move || async move {
+            pool.submit(workers::Target::Worker(1), move || async move {
                 for index in 0..DOCS {
                     let txn = BasicTxn::new(store.as_ref(), index as u64, false)
                         .await
@@ -460,6 +462,7 @@ fn no_snapshot_ever_shows_a_created_document_without_its_owner() {
                 }
                 done.store(true, std::sync::atomic::Ordering::SeqCst);
             })
+            .await
             .unwrap()
         };
 
@@ -505,5 +508,4 @@ fn no_snapshot_ever_shows_a_created_document_without_its_owner() {
         writer.await.unwrap();
         assert!(snapshots > 0);
     })
-    .unwrap()
 }

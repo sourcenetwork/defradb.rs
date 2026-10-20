@@ -17,6 +17,18 @@ use storage::keys::blockstore::{BlockstoreKey, ToMergeIndexKey};
 use storage::namespace::{Namespace, NamespacedStore};
 use storage::RegolithStore;
 
+fn on_pool<F, Fut>(body: F)
+where
+    F: FnOnce(workers::Pool) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    let pool = storage::start_pool(workers::Config::unplaced(4), None).unwrap();
+    let handle = pool.clone();
+    pool.submit_and_wait(workers::Target::Worker(0), move || body(handle))
+        .unwrap();
+    pool.shutdown_blocking().unwrap();
+}
+
 fn cid() -> Cid {
     Cid::from_str("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy").unwrap()
 }
@@ -166,7 +178,7 @@ fn block_writes_run_under_the_configured_retry_budget() {
 /// engine: the losers' re-runs find the block stored, so every put succeeds.
 #[test]
 fn concurrent_puts_of_one_new_block_all_succeed() {
-    workers::block_on(async {
+    on_pool(|pool| async move {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let blockstore = Arc::new(DefraBlockstore::new(store, true));
         for round in 0..64_u32 {
@@ -175,16 +187,19 @@ fn concurrent_puts_of_one_new_block_all_succeed() {
                 use multihash_codetable::MultihashDigest;
                 Cid::new_v1(0x55, multihash_codetable::Code::Sha2_256.digest(&data))
             };
-            let writers: Vec<_> = (0..16)
-                .map(|_| {
-                    let blockstore = Arc::clone(&blockstore);
-                    let data = data.clone();
-                    workers::spawn(None, "test", move || async move {
+            let mut writers = Vec::new();
+            for writer in 0..16 {
+                let blockstore = Arc::clone(&blockstore);
+                let data = data.clone();
+                let target = workers::Target::Worker(writer % 4);
+                writers.push(
+                    pool.submit(target, move || async move {
                         blockstore.put(&block, &data).await
                     })
-                    .unwrap()
-                })
-                .collect();
+                    .await
+                    .unwrap(),
+                );
+            }
             for writer in writers {
                 writer.await.unwrap().unwrap();
             }
@@ -194,5 +209,4 @@ fn concurrent_puts_of_one_new_block_all_succeed() {
             );
         }
     })
-    .unwrap()
 }

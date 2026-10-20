@@ -12,6 +12,8 @@ use storage::RegolithStore;
 use zanzibar::store::{MemoryZanzibarStore, ZanzibarStore};
 use zanzibar::types::Policy;
 
+mod common;
+
 /// The policy used to capture the golden vectors below, byte-for-byte as it was
 /// fed to a Go node.
 const GO_ORACLE_POLICY: &str = r#"
@@ -136,7 +138,7 @@ fn persistent_store_counter_seeds_from_existing_policies() {
 /// gaps at worst: every instance hands out distinct values above the seed.
 #[test]
 fn persistent_store_counter_seeding_never_repeats_across_instances() {
-    workers::block_on(async {
+    common::on_pool(|pool| async move {
         let backing = Arc::new(RegolithStore::in_memory().unwrap());
         let legacy = PersistentZanzibarStore::from_store(backing.clone());
         for id in ["policy-a", "policy-b", "policy-c"] {
@@ -148,12 +150,13 @@ fn persistent_store_counter_seeding_never_repeats_across_instances() {
         drop(legacy);
 
         let mut handles = Vec::new();
-        for _ in 0..8 {
+        for worker in 0..8 {
             let store = PersistentZanzibarStore::from_store(backing.clone());
             handles.push(
-                workers::spawn(None, "test", move || async move {
+                pool.submit(workers::Target::Worker(worker % 4), move || async move {
                     store.next_policy_counter().await.unwrap()
                 })
+                .await
                 .unwrap(),
             );
         }
@@ -170,7 +173,6 @@ fn persistent_store_counter_seeding_never_repeats_across_instances() {
             "no instance re-mints a counter a stored policy spent: {issued:?}"
         );
     })
-    .unwrap()
 }
 
 /// NAC shares this key space but mints its policy id from a constant rather
@@ -215,16 +217,17 @@ fn persistent_store_counter_seeds_at_one_when_empty() {
 /// in-process lock, so transaction conflicts must be retried by the store.
 #[test]
 fn persistent_store_counter_never_repeats_across_instances() {
-    workers::block_on(async {
+    common::on_pool(|pool| async move {
         let backing = Arc::new(RegolithStore::in_memory().unwrap());
 
         let mut handles = Vec::new();
-        for _ in 0..8 {
+        for worker in 0..8 {
             let store = PersistentZanzibarStore::from_store(backing.clone());
             handles.push(
-                workers::spawn(None, "test", move || async move {
+                pool.submit(workers::Target::Worker(worker % 4), move || async move {
                     store.next_policy_counter().await
                 })
+                .await
                 .unwrap(),
             );
         }
@@ -242,25 +245,25 @@ fn persistent_store_counter_never_repeats_across_instances() {
             "concurrent store instances must each receive a distinct counter value"
         );
     })
-    .unwrap()
 }
 
 /// Go's counter is a non-atomic read-modify-write guarded by a per-call mutex,
 /// so concurrent creates there can mint colliding ids. Ours must not.
 #[test]
 fn persistent_store_counter_is_atomic_under_concurrency() {
-    workers::block_on(async {
+    common::on_pool(|pool| async move {
         let store = Arc::new(PersistentZanzibarStore::from_store(Arc::new(
             RegolithStore::in_memory().unwrap(),
         )));
 
         let mut handles = Vec::new();
-        for _ in 0..8 {
+        for worker in 0..8 {
             let store = store.clone();
             handles.push(
-                workers::spawn(None, "test", move || async move {
+                pool.submit(workers::Target::Worker(worker % 4), move || async move {
                     store.next_policy_counter().await.unwrap()
                 })
+                .await
                 .unwrap(),
             );
         }
@@ -277,5 +280,4 @@ fn persistent_store_counter_is_atomic_under_concurrency() {
             "concurrent callers must each receive a distinct counter value"
         );
     })
-    .unwrap()
 }
