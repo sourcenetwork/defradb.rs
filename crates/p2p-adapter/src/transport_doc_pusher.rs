@@ -26,6 +26,17 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         ))
     }
 
+    async fn document_heads_acknowledged(
+        &self,
+        _peer_id: &str,
+        _collection_name: &str,
+        _doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        Err(P2PError::unsupported(
+            "document head acknowledgement is unavailable",
+        ))
+    }
+
     async fn push_existing_docs(
         &self,
         peer_id: &PeerId,
@@ -174,6 +185,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         doc_ids: &[String],
     ) -> P2PResult<Vec<bool>> {
         db::merge::replication_acknowledged(&self.db, peer_id, collection_name, doc_ids)
+            .await
+            .map_err(P2PError::internal)
+    }
+
+    async fn document_heads_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        db::merge::document_heads_acknowledged(&self.db, peer_id, collection_name, doc_ids)
             .await
             .map_err(P2PError::internal)
     }

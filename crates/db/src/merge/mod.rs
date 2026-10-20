@@ -46,7 +46,7 @@ pub use replication::{
     create_replication_stack_with_max_merge_depth, load_document_head_blocks,
     load_persisted_collections, ReplicationStack,
 };
-pub use replication_ack::replication_acknowledged;
+pub use replication_ack::{document_heads_acknowledged, replication_acknowledged};
 pub use se::{
     fetch_doc_ids, generate_doc_artifacts, generate_field_artifact, store_artifacts, FieldQuery,
 };

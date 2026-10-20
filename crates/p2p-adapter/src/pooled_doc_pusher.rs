@@ -94,6 +94,25 @@ impl TransportDocPusher for PooledDocPusher {
         .await
     }
 
+    async fn document_heads_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        let (peer_id, collection_name, doc_ids) = (
+            peer_id.to_owned(),
+            collection_name.to_owned(),
+            doc_ids.to_vec(),
+        );
+        self.on_pool(move |inner| async move {
+            inner
+                .document_heads_acknowledged(&peer_id, &collection_name, &doc_ids)
+                .await
+        })
+        .await
+    }
+
     async fn push_existing_docs(
         &self,
         peer_id: &PeerId,
