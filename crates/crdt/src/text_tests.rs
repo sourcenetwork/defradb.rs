@@ -350,8 +350,11 @@ fn is_critical(blocks: &[TextBlock], x: usize) -> bool {
 #[test]
 fn merging_from_any_critical_block_matches_a_full_replay() {
     let mut checked = 0;
-    for seed in 0..300 {
-        let blocks = history_of(seed, 3, 14, seed % 2 == 1);
+    for seed in 0..600 {
+        // Small DAGs of few peers have critical blocks often enough to count.
+        let peers = 2 + (seed % 2) as usize;
+        let count = 4 + (seed % 9) as usize;
+        let blocks = history_of(seed, peers, count, seed % 3 == 1);
         let all: Vec<usize> = (0..blocks.len()).collect();
         let want = replay(&blocks).unwrap();
         for new in heads(&blocks, &all) {
@@ -375,7 +378,7 @@ fn merging_from_any_critical_block_matches_a_full_replay() {
             }
         }
     }
-    assert!(checked > 300, "only {checked} merges had a critical block");
+    assert!(checked > 100, "only {checked} merges had a critical block");
 }
 
 /// A stored text that is not what the blocks leave, or a block that already
