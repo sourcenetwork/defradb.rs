@@ -225,10 +225,8 @@ RUNS=(
   "MC_VectorLinks_Red_Prune.cfg VectorLinks.tla RED"
   "MC_PendingCache_Green.cfg PendingCache.tla GREEN" # no search hides a pending vector its snapshot holds
   "MC_PendingCache_Red_NoGeneration.cfg PendingCache.tla RED" # a cache of another generation lacks what a merge linked
-  "MC_PendingCache_Red_NoLoadedAt.cfg PendingCache.tla RED" # a cache loaded after the snapshot lacks a later delete
-  "MC_PendingCache_Red_SilentDeletes.cfg PendingCache.tla RED" # deletes that append nothing leave one head for two lists
-  "MC_PendingCache_Red_StillPending.cfg PendingCache.tla RED" # an id-only log drops a vector inserted and deleted in a window
-  "MC_PendingCache_Red_OwnWrites.cfg PendingCache.tla RED" # a transaction with its own pending writes uses the cache
+  "MC_PendingCache_Red_TruncateThroughHead.cfg PendingCache.tla RED" # a merge truncating through the head drops vectors it never linked
+  "MC_PendingCache_Red_OwnWrites.cfg PendingCache.tla RED" # a search leaves out its own transaction's appends
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)

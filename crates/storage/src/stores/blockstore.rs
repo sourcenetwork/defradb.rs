@@ -314,6 +314,10 @@ impl Writer for BlockstoreTxn {
         self.txn.truncate_log_shared(log, positions).await
     }
 
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(log).await
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         self.txn.set_shared(key, value).await
     }

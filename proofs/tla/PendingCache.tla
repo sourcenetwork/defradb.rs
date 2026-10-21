@@ -2,114 +2,136 @@
 \* The story, in plain words.
 \*
 \* A DiskANN index does not link a new vector into its graph right away. The
-\* vector waits in a pending list until a background merge links it in, and
-\* until then every search reads the whole pending list as well as walking
-\* the graph, so a search finds every vector its snapshot holds. Reading that
-\* list from storage on every search is slow, so each node keeps a copy of
-\* it in memory: the pending cache.
+\* vector waits as pending until a background merge links it in, and until
+\* then every search reads every pending vector as well as walking the graph,
+\* so a search finds every vector its snapshot holds.
 \*
-\* A copy is only safe if no search ever trusts it to hold less than the
-\* search's own snapshot holds. A vector a search's snapshot has pending but
-\* the cache lacks is a vector that search can never return: a hidden vector.
-\* Extra vectors in the cache cost nothing, because a search ranks every
-\* candidate by the full vector it reads in its own snapshot, and drops a
-\* candidate that snapshot does not have.
+\* The pending vectors are a commit-ordered log, and nothing else. An insert
+\* appends the vector's id and its code, and that one append is its only
+\* pending write. The log's head is the newest position, positions follow
+\* commit order with no holes, and the oldest entries a merge has dealt with
+\* are truncated. What is pending at a snapshot is every vector its live
+\* entries insert.
 \*
-\* How the code keeps the copy honest. Every change to the pending list also
-\* appends one entry to a commit-ordered log, in the same transaction: an
-\* insert appends the vector's id and its code, a delete appends the id
-\* alone. The log's head is the newest position, and positions follow commit
-\* order with no holes. A merge removes the vectors it links, bumps the
-\* graph's generation, and truncates the log through its head, all in one
-\* transaction. The cache is tagged with the generation it belongs to, the
-\* head it was fully loaded at (loadedAt), and the head it has caught up to
-\* (pos). A search reads the generation and the head in its snapshot, then:
-\*   1. its transaction wrote to the pending list itself: it scans;
-\*   2. the cache is of its generation and its head is at least loadedAt:
-\*      it reads the log entries after pos up to its head, adds the inserted
-\*      ones to the cache, and uses the cache;
-\*   3. the cache is of an older generation, or there is none: it scans the
-\*      pending list and loads the cache from that scan;
-\*   4. otherwise (the cache is newer than the search): it scans.
-\* Catch-ups only ever add to the cache, so a cache that is ahead of a
-\* search is still a superset of what the search needs.
+\* A delete appends nothing. A deleted vector's entry stays a candidate until
+\* a merge truncates it, which costs a search nothing: a search ranks every
+\* candidate by the full vector it reads in its own snapshot, and drops one
+\* that snapshot does not have or has deleted. A merge skips it the same way.
+\*
+\* A merge links the live vectors a prefix of the log inserts, up to a
+\* position it picks (at most a plan's worth), bumps the graph's generation,
+\* and truncates the log through that position, all in one transaction.
+\* Entries past it, inserts that landed while the merge ran among them, stay
+\* for the next merge.
+\*
+\* Reading the log on every search is slow, so each node keeps a copy of
+\* what is pending in memory: the pending cache. A copy is only safe if no
+\* search ever trusts it to hold less than the search's own snapshot holds. A
+\* vector a search's snapshot has pending but the cache lacks is a vector that
+\* search can never return: a hidden vector. Extra vectors cost nothing, for
+\* the reason a deleted one costs nothing.
+\*
+\* The cache is tagged with the generation it belongs to and the head it has
+\* caught up to (pos). A search reads the generation and the head in its
+\* snapshot, then:
+\*   1. the cache is of its generation: it reads the log entries after pos up
+\*      to its head, adds what they insert to the cache, and uses the cache;
+\*   2. the cache is of an older generation, or there is none: it reads the
+\*      log and loads the cache from that read;
+\*   3. otherwise (the cache is newer than the search): it reads the log.
+\* Whichever it used, it adds the vectors its own transaction appended and
+\* has not committed: regolith hands those back from the transaction's
+\* buffer, without positions. Catch-ups only ever add, and within one
+\* generation the log only grows, so a cache that is ahead of a search still
+\* holds everything that search needs.
 \*
 \* A tiny example. Vector a is inserted (log position 1) and a search loads
-\* the cache at head 1: {a}. Vector b is inserted (position 2) and deleted
-\* (position 3). A search at head 3 catches up through 3: b's insert entry
-\* carries b, so the cache becomes {a, b}, although b is gone at head 3. A
-\* slower search that took its snapshot at head 2, where b is pending, uses
-\* that cache and finds b. Had the catch-up kept only what is still pending
-\* at head 3, the slower search would have hidden b.
+\* the cache at head 1: {a}. A merge links a and truncates position 1: the
+\* generation is now 1. A search whose snapshot is still at generation 0 has
+\* a pending and a not yet in its graph; were it to use a cache loaded at
+\* generation 1, which no longer holds a, it would hide a. The generation
+\* check sends it to the log instead.
 \*
 \* What must never happen:
-\*   1. a search ends without a vector its snapshot has pending
-\*      - INV_NoHiddenPending;
+\*   1. a search ends without a vector its snapshot, or its own transaction,
+\*      has pending - INV_NoHiddenPending;
 \*   2. the cache lacks a vector that some snapshot it is valid for has
-\*      pending - INV_CacheCovers.
+\*      pending - INV_CacheCovers;
+\*   3. a live vector is neither linked nor pending, so no search can ever
+\*      find it - INV_NoLostVector.
 \*
 \* Each guard has a RED configuration that removes it and fails:
 \*   MC_PendingCache_Red_NoGeneration: the cache is used whatever its
 \*     generation, so a search older than a merge uses a cache loaded after
-\*     it and misses what that merge linked;
-\*   MC_PendingCache_Red_NoLoadedAt: the cache is used by a search older than
-\*     its load, so a vector deleted between the two is missing;
-\*   MC_PendingCache_Red_SilentDeletes: deletes append nothing, so two
-\*     snapshots with one head can hold different pending lists;
-\*   MC_PendingCache_Red_StillPending: a catch-up adds only what is still
-\*     pending at its own snapshot (an id-only log), as the example shows;
-\*   MC_PendingCache_Red_OwnWrites: a transaction that wrote to the pending
-\*     list uses the cache, which cannot hold its uncommitted writes.
+\*     it and misses what that merge linked, as the example shows;
+\*   MC_PendingCache_Red_OwnWrites: a search leaves out its own transaction's
+\*     appends, which no log read can show it;
+\*   MC_PendingCache_Red_TruncateThroughHead: a merge truncates through the
+\*     head rather than through what it linked, and drops vectors it never
+\*     linked.
 \*
-\* The log is regolith's commit-ordered append, and the truncate is
-\* sourcenetwork/regolith#299. A snapshot sees the log as it was at its
-\* commit: entries a later merge truncates are still there for it (MVCC).
+\* The log is regolith's commit-ordered append, the truncate is
+\* sourcenetwork/regolith#300, and the own appends are
+\* Transaction::appended. A snapshot sees the log as it was at its commit:
+\* entries a later merge truncates are still there for it (MVCC).
 \*
 \* Correspondence with the Rust code (crates/db/src/index/vector/engine/
 \* diskann/, the functions this change adds or touches):
-\*   db           the committed pending list (codec::PENDING), graph state
-\*                generation (codec GraphState::generation) and the pending
-\*                log, one record per commit
+\*   db           the committed state, one record per commit: the pending
+\*                log (store/kv.rs pending_log_head, iterate_pending_log,
+\*                pending_log_entry), graph state generation (codec
+\*                GraphState::generation), the live vectors (the staging
+\*                store) and the linked ones (codec::GRAPH)
+\*   Pending      graph.rs scan_pending: every vector the live entries insert
 \*   cache        pending_cache.rs PendingCache, its published Copy and Tag
-\*   Insert       mod.rs insert: put_aux(PENDING) and the log append
-\*   Delete       mod.rs delete: delete_aux(PENDING) and the log append
-\*   Merge        merge.rs merge: delete_aux(PENDING) per linked vector,
-\*                generation += 1, then truncate_pending_log through the
-\*                head it read
+\*   Insert       mod.rs insert: the staging write and the log append
+\*   Delete       mod.rs delete: the staging delete and the codec::DELETED
+\*                tombstone; nothing goes to the log
+\*   Merge        merge.rs merge_plan (the log read up to MAX_PLAN_PENDING
+\*                vectors, and the position it stopped at) and merge (links
+\*                the live ones, generation += 1, truncate_pending_log
+\*                through that position)
 \*   Begin        graph.rs search_graph: the snapshot, then the cache load
-\*   OwnWrite     a pending put or delete made by the search's transaction,
-\*                seen as crates/db/src/index/vector/store/kv.rs
-\*                pending_log's write count differing from the log head
-\*   Search       graph.rs pending_candidates: the four rules above, and
-\*                PendingCache::publish. A copy past the 64 MiB cap is
-\*                published as an oversized marker that is never read as
-\*                cover, so it acts as no cache: the scan of the last rule
+\*   OwnWrite     an insert made by the search's own transaction, read back
+\*                by store/kv.rs own_pending_log (regolith
+\*                Transaction::appended)
+\*   Search       graph.rs pending_candidates: the three rules above, the
+\*                own appends, and PendingCache::publish. A copy past the
+\*                64 MiB cap is published as an oversized marker that is
+\*                never read as cover, so it acts as no cache: the log read
+\*                of the last rule
 EXTENDS Naturals, Integers, FiniteSets, Sequences, TLC
 
 \* Nodes: the vector ids. Readers: the searches. MaxCommits: how many
 \* commits TLC explores. The rest switch each guard on (TRUE) or off.
 CONSTANTS Nodes, Readers, MaxCommits,
-          GenerationCheck, LoadedAtCheck, DeletesAppend, EntriesCarryCode,
-          OwnWritesScan
+          GenerationCheck, OwnAppendsRead, TruncateThroughLinked
 
 \* db: one record per commit, the newest last; a snapshot is an index into it.
 \* cache: the published PendingCache; gen = -1 means nothing is loaded.
-\* rs: each search's progress, snapshot, its own write, the copy of the
+\* rs: each search's progress, snapshot, its own appends, the copy of the
 \*     cache it loaded, and whether its candidates held everything it needed.
 VARIABLES db, cache, rs
 \* Every variable, for the steps that leave some unchanged.
 vars == <<db, cache, rs>>
 
 \* The cache before anything was loaded.
-NoCache == [gen |-> -1, loadedAt |-> 0, pos |-> 0, ids |-> {}]
+NoCache == [gen |-> -1, pos |-> 0, ids |-> {}]
 
-\* The state before any commit: nothing pending, an empty log, generation 0.
-\* entry is the log, position by position; trunc is the newest truncated
-\* position, so the live entries are trunc+1 .. head.
-Genesis == [pending |-> {}, head |-> 0, entry |-> <<>>, trunc |-> 0, gen |-> 0]
+\* The state before any commit: an empty log, generation 0, nothing live or
+\* linked. entry is the log, the vector each position inserts; trunc is the
+\* newest truncated position, so the live entries are trunc+1 .. head.
+Genesis == [head |-> 0, entry |-> <<>>, trunc |-> 0, gen |-> 0,
+            live |-> {}, graph |-> {}]
 
 \* The newest committed state.
 Last == db[Len(db)]
+
+\* The vectors snapshot s's log inserts at positions from+1 .. to.
+Inserted(s, from, to) == {s.entry[p] : p \in (from + 1)..to}
+
+\* What is pending at snapshot s: every vector its live entries insert.
+Pending(s) == Inserted(s, s.trunc, s.head)
 
 \* A search that has not started.
 Idle == [phase |-> "idle", snap |-> 0, own |-> {}, seen |-> NoCache, ok |-> TRUE]
@@ -122,36 +144,33 @@ Init == /\ db = <<Genesis>>
 \* Room for one more commit, so TLC's search stays finite.
 CanCommit == Len(db) <= MaxCommits
 
-\* Commits one more state: the newest, with `pending` and the log changed.
-\* `logged` is the entry the commit appends, or <<>> for none.
-CommitWith(pending, logged) ==
-  LET s == Last IN
-  db' = Append(db, [s EXCEPT !.pending = pending,
-                             !.head = IF logged = <<>> THEN @ ELSE @ + 1,
-                             !.entry = IF logged = <<>> THEN @ ELSE Append(@, logged[1])])
-
-\* An insert (mod.rs insert): the vector becomes pending, and its id and
-\* code go to the log. Inserting a pending vector again is an update.
+\* An insert (mod.rs insert): the vector is live, and its id and code go to
+\* the log. Inserting a live vector again is an update.
 Insert(n) == /\ CanCommit
-             /\ CommitWith(Last.pending \cup {n}, <<[node |-> n, kind |-> "ins"]>>)
+             /\ db' = Append(db, [Last EXCEPT !.head = @ + 1,
+                                              !.entry = Append(@, n),
+                                              !.live = @ \cup {n}])
              /\ UNCHANGED <<cache, rs>>
 
-\* A delete (mod.rs delete): the vector leaves the pending list, and its id
-\* goes to the log, unless the SilentDeletes bug skips the append.
+\* A delete (mod.rs delete): the vector is no longer live. Nothing goes to
+\* the log, and a linked vector stays in the graph as a tombstone.
 Delete(n) == /\ CanCommit
-             /\ n \in Last.pending
-             /\ CommitWith(Last.pending \ {n},
-                           IF DeletesAppend THEN <<[node |-> n, kind |-> "del"]>> ELSE <<>>)
+             /\ n \in Last.live
+             /\ db' = Append(db, [Last EXCEPT !.live = @ \ {n}])
              /\ UNCHANGED <<cache, rs>>
 
-\* A merge (merge.rs merge): links some pending vectors (`linked`, possibly
-\* none, as a consolidation-only merge does), bumps the generation, and
-\* truncates the log through its head. The head stays where it is.
+\* A merge (merge.rs merge_plan, then merge): reads the log up to a position
+\* c it picks, links the live vectors those entries insert, bumps the
+\* generation, and truncates the log through c. Picking c = trunc links
+\* nothing, as a consolidation-only merge does. The TruncateThroughHead bug
+\* (TruncateThroughLinked = FALSE) truncates through the head instead.
 Merge == /\ CanCommit
-         /\ \E linked \in SUBSET Last.pending:
-              db' = Append(db, [Last EXCEPT !.pending = @ \ linked,
-                                            !.gen = @ + 1,
-                                            !.trunc = Last.head])
+         /\ \E c \in Last.trunc..Last.head:
+              LET linked == Inserted(Last, Last.trunc, c) \cap Last.live
+              IN db' = Append(db, [Last EXCEPT !.graph = @ \cup linked,
+                                               !.gen = @ + 1,
+                                               !.trunc = IF TruncateThroughLinked
+                                                         THEN c ELSE Last.head])
          /\ UNCHANGED <<cache, rs>>
 
 \* A search's transaction begins: it takes the newest snapshot. It may run
@@ -167,9 +186,9 @@ Load(r) == /\ rs[r].phase = "snap"
            /\ rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "loaded", !.seen = cache]]
            /\ UNCHANGED <<db, cache>>
 
-\* The search's own transaction puts a vector on the pending list before it
-\* searches. Nothing is committed; only this search can see it. One such
-\* write is enough to break the rule it tests, and keeps TLC's search small.
+\* The search's own transaction inserts a vector before it searches. Nothing
+\* is committed, so it has no log position; only this search can see it. One
+\* such write is enough to break the rule it tests, and keeps TLC small.
 OwnWrite(r, n) == /\ rs[r].phase = "snap"
                   /\ rs[r].own = {}
                   /\ rs' = [rs EXCEPT ![r].own = {n}]
@@ -189,38 +208,34 @@ Publish(next) == cache' = IF Newer(next) THEN next ELSE cache
 Search(r) ==
   LET st == db[rs[r].snap]                    \* the search's snapshot
       seen == rs[r].seen                      \* the cache copy it loaded
-      visible == st.pending \cup rs[r].own    \* what its scan would find
-      done(got) == rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "done", !.ok = visible \subseteq got]]
+      needed == Pending(st) \cup rs[r].own    \* what it must find
+      \* Its own appends, read back from its transaction; the OwnWrites bug
+      \* leaves them out.
+      own == IF OwnAppendsRead THEN rs[r].own ELSE {}
+      \* Ends the search with candidates `got` plus its own appends.
+      done(got) == rs' = [rs EXCEPT ![r] = [@ EXCEPT !.phase = "done",
+                                                     !.ok = needed \subseteq (got \cup own)]]
       \* The cache belongs to this search's generation; the NoGeneration bug
       \* accepts any loaded cache.
       sameGen == IF GenerationCheck THEN seen.gen = st.gen ELSE seen.gen >= 0
-      \* The search is no older than the cache's load; the NoLoadedAt bug
-      \* skips the check.
-      fresh == ~LoadedAtCheck \/ st.head >= seen.loadedAt
-      \* The log positions the cache has not seen, up to the search's head.
-      need == {p \in (seen.pos + 1)..st.head : p > st.trunc}
-      \* The vectors those entries insert. The StillPending bug keeps only
-      \* those still pending at this snapshot, as an id-only log must.
-      added == {st.entry[p].node : p \in {q \in need : st.entry[q].kind = "ins"}}
-      kept == IF EntriesCarryCode THEN added ELSE added \cap st.pending
+      \* What the log entries after pos, up to the search's head, insert:
+      \* the live ones only, since a truncated entry is gone from the log.
+      added == Inserted(st, IF seen.pos > st.trunc THEN seen.pos ELSE st.trunc, st.head)
   IN /\ rs[r].phase = "loaded"
      \* The rules are tried in order, as the code's if-else chain tries them.
-     /\ IF rs[r].own # {} /\ OwnWritesScan
-        \* Rule 1: its own writes are only in its scan.
-        THEN done(visible) /\ UNCHANGED cache
-        ELSE IF sameGen /\ fresh /\ seen.pos >= st.head
-        \* Rule 2, nothing to catch up on.
+     /\ IF sameGen /\ seen.pos >= st.head
+        \* Rule 1, nothing to catch up on.
         THEN done(seen.ids) /\ UNCHANGED cache
-        ELSE IF sameGen /\ fresh
-        \* Rule 2, caught up through the search's head, then published.
-        THEN LET next == [seen EXCEPT !.pos = st.head, !.ids = @ \cup kept]
+        ELSE IF sameGen
+        \* Rule 1, caught up through the search's head, then published.
+        THEN LET next == [seen EXCEPT !.pos = st.head, !.ids = @ \cup added]
              IN done(next.ids) /\ Publish(next)
         ELSE IF seen.gen < st.gen
-        \* Rule 3: a full load from the scan, then published.
-        THEN done(visible) /\ Publish([gen |-> st.gen, loadedAt |-> st.head,
-                                       pos |-> st.head, ids |-> st.pending])
-        \* Rule 4: the cache is newer than the search.
-        ELSE done(visible) /\ UNCHANGED cache
+        \* Rule 2: a full load from the log, then published.
+        THEN done(Pending(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
+                                           ids |-> Pending(st)])
+        \* Rule 3: the cache is newer than the search.
+        ELSE done(Pending(st)) /\ UNCHANGED cache
      \* A search commits nothing.
      /\ UNCHANGED db
 
@@ -250,11 +265,13 @@ Symmetry == Permutations(Nodes) \cup Permutations(Readers)
 INV_NoHiddenPending == \A r \in Readers: rs[r].phase = "done" => rs[r].ok
 
 \* Promise 2: the published cache holds every vector pending at any snapshot
-\* it is valid for: its generation, a head at or after its load, and a head
-\* it has caught up to.
+\* it is valid for: its generation, and a head it has caught up to.
 INV_CacheCovers ==
   cache.gen >= 0 =>
     \A s \in 1..Len(db):
-      (db[s].gen = cache.gen /\ cache.loadedAt <= db[s].head /\ db[s].head <= cache.pos)
-        => db[s].pending \subseteq cache.ids
+      (db[s].gen = cache.gen /\ db[s].head <= cache.pos)
+        => Pending(db[s]) \subseteq cache.ids
+
+\* Promise 3: at every snapshot, every live vector is linked or pending.
+INV_NoLostVector == \A s \in 1..Len(db): db[s].live \subseteq db[s].graph \cup Pending(db[s])
 ====

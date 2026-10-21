@@ -333,6 +333,11 @@ impl Writer for NamespacedRetryAttemptIO {
         self.inner().truncate_log_shared(&log, positions).await
     }
 
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        let log = log.prefixed(&[self.namespace.prefix()]);
+        self.inner().appended(&log).await
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let key = self.namespace.prefix_key(key);
         self.inner().set_shared(&key, value).await
@@ -420,6 +425,11 @@ impl Writer for NamespacedTxn {
     ) -> Result<()> {
         let log = log.prefixed(&[self.namespace.prefix()]);
         self.txn.truncate_log_shared(&log, positions).await
+    }
+
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        let log = log.prefixed(&[self.namespace.prefix()]);
+        self.txn.appended(&log).await
     }
 
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {

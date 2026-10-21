@@ -160,6 +160,15 @@ pub trait Writer: MaybeSendSync + private::Sealed {
         ))
     }
 
+    /// The entries this transaction appended to `log` and has not committed,
+    /// oldest first. They have no position yet, so no read of the log shows
+    /// them. A read-only transaction has none.
+    async fn appended(&self, _log: &super::types::AppendLog) -> Result<Vec<Vec<u8>>> {
+        Err(super::errors::Error::Other(
+            "commit-ordered append is unsupported by this store".into(),
+        ))
+    }
+
     /// [`set`](Self::set) through a shared reference.
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()>;
 
@@ -510,6 +519,10 @@ impl Writer for Box<dyn Txn> {
         positions: std::ops::RangeInclusive<u64>,
     ) -> Result<()> {
         (**self).truncate_log_shared(log, positions).await
+    }
+
+    async fn appended(&self, log: &super::types::AppendLog) -> Result<Vec<Vec<u8>>> {
+        (**self).appended(log).await
     }
 
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {

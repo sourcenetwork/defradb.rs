@@ -308,6 +308,15 @@ impl Writer for RegolithTxn {
         readied!(txn.truncate_log(&layout, positions.clone())).map_err(map_txn_error)
     }
 
+    /// A read-only transaction appends nothing, so it has none.
+    async fn appended(&self, log: &crate::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        let layout: Arc<dyn regolith::LogLayout> = log.keys().clone();
+        match self.handle()?.as_ref() {
+            Handle::Writable(txn) => Ok(txn.appended(&layout)),
+            Handle::ReadOnly(_) => Ok(Vec::new()),
+        }
+    }
+
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let txn = self.write_target(key)?;
         readied!(txn.put(key, value)).map_err(map_txn_error)

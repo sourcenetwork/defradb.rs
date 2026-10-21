@@ -167,7 +167,7 @@ fn an_insert_after_training_is_found() {
             CORPUS as u64,
             "the insert is pending, not in the graph yet"
         );
-        assert_eq!(count(&index, codec::PENDING).await, 1);
+        assert_eq!(pending(&index).await, 1);
     })
     .unwrap()
 }
@@ -375,6 +375,34 @@ impl VectorNodeStore for Counting {
     async fn delete_aux(&mut self, kind: u8, key: &[u8]) -> db::index::error::Result<()> {
         self.inner.delete_aux(kind, key).await
     }
+    async fn pending_log_head(&self) -> db::index::error::Result<u64> {
+        self.inner.pending_log_head().await
+    }
+    async fn append_pending_log(&mut self, entry: &[u8]) -> db::index::error::Result<()> {
+        self.inner.append_pending_log(entry).await
+    }
+    async fn pending_log_entry(
+        &self,
+        position: u64,
+    ) -> db::index::error::Result<Option<bytes::Bytes>> {
+        self.inner.pending_log_entry(position).await
+    }
+    async fn iterate_pending_log<F>(&self, visit: F) -> db::index::error::Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> db::index::error::Result<std::ops::ControlFlow<()>> + Send,
+    {
+        self.inner.iterate_pending_log(visit).await
+    }
+    async fn truncate_pending_log(
+        &mut self,
+        from: u64,
+        through: u64,
+    ) -> db::index::error::Result<()> {
+        self.inner.truncate_pending_log(from, through).await
+    }
+    async fn pending_log_tail(&self) -> db::index::error::Result<Option<u64>> {
+        self.inner.pending_log_tail().await
+    }
     async fn iterate_aux<F>(
         &self,
         kind: u8,
@@ -487,6 +515,20 @@ pub async fn count(index: &DiskAnn<MemoryNodeStore>, kind: u8) -> usize {
         .iterate_aux(kind, b"", |_, _| {
             n += 1;
             Ok(())
+        })
+        .await
+        .unwrap();
+    n
+}
+
+/// How many entries the pending log holds: one per insert since the last merge.
+pub async fn pending(index: &DiskAnn<MemoryNodeStore>) -> usize {
+    let mut n = 0;
+    index
+        .store()
+        .iterate_pending_log(|_, _| {
+            n += 1;
+            Ok(std::ops::ControlFlow::Continue(()))
         })
         .await
         .unwrap();

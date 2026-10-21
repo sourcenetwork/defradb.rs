@@ -1,2 +1,2 @@
 import PendingCache.Covers
--- The covering law: a cache of a full load plus every insert logged since covers every snapshot in between.
+-- The pending log laws: a cache of a load plus every insert logged since covers every snapshot of its generation, and a merge that cuts the log anywhere loses no vector.

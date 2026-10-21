@@ -104,6 +104,15 @@ impl SharedTxn {
         self.txn()?.truncate_log_shared(&log, positions).await
     }
 
+    pub async fn appended(
+        &self,
+        namespace: Namespace,
+        log: &storage::corekv::AppendLog,
+    ) -> Result<Vec<Vec<u8>>> {
+        let log = log.prefixed(&[namespace.prefix()]);
+        self.txn()?.appended(&log).await
+    }
+
     /// Create a new shared transaction.
     // `Txn` drops its `Send + Sync` bounds on wasm32 (see `MaybeSendSync`), so
     // there the Arc wraps a non-Send value. That is sound in the
@@ -267,6 +276,10 @@ impl NamespaceView {
         self.txn.truncate_log(self.namespace, log, positions).await
     }
 
+    pub async fn appended(&self, log: &storage::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(self.namespace, log).await
+    }
+
     /// Create a new namespace view.
     pub fn new(txn: Arc<SharedTxn>, namespace: Namespace) -> Self {
         Self { txn, namespace }
@@ -394,6 +407,10 @@ impl Writer for NamespaceView {
         positions: std::ops::RangeInclusive<u64>,
     ) -> Result<()> {
         self.txn.truncate_log(self.namespace, log, positions).await
+    }
+
+    async fn appended(&self, log: &storage::corekv::AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.txn.appended(self.namespace, log).await
     }
 
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
