@@ -115,6 +115,10 @@
         {
           "_deleted": false,
           "title": "Kernel"
+        },
+        {
+          "_deleted": true,
+          "title": "Notes"
         }
       ]
     },
