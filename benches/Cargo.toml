@@ -108,6 +108,10 @@ name = "cursor_codec"
 harness = false
 
 [[bench]]
+name = "text_merge"
+harness = false
+
+[[bench]]
 name = "document_read"
 harness = false
 
