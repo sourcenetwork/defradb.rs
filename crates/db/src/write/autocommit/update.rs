@@ -361,6 +361,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         .map_err(|error| {
             query::error::QueryError::execution(format!("failed to create index manager: {error}"))
         })?;
+        let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
         let result: query::error::Result<(Document, usize, Cid, Bytes, Option<(Cid, Bytes)>)> =
             async {
                 self.db

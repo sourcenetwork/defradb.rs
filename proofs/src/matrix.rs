@@ -38,6 +38,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "DiskANN walk cutoff",
     "PQ distance four sums",
     "DiskANN pending cache",
+    "DiskANN shared quantizer",
     "Commit-ordered document arrivals",
     "Retry input and marker fencing",
     "Collection schema-version OCC",

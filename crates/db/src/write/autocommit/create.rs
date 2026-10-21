@@ -322,6 +322,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     attempt.collection_name
                 ))
             })?;
+            let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
             let stores = CreateStores {
                 datastore: &datastore,
                 systemstore: &systemstore,

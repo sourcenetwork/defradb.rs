@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 48 families (bounded model claims)
+### Modeled: 49 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
 | Storage failure classification | TLA+ / Lean | storage, db, query, http |
@@ -51,6 +51,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
 | DiskANN pending cache | TLA+ & Lean | db-index (vector), storage |
+| DiskANN shared quantizer | TLA+ & Lean | db-index (vector), db-write |
 | Retry input and marker fencing | TLA+ | db, query, storage |
 | Collection schema-version OCC | TLA+ | db |
 | Schema publication completion | TLA+ / Lean | storage, db |

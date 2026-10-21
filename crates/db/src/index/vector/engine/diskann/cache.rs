@@ -16,6 +16,7 @@ use rapidhash::RapidHashMap;
 
 use super::pending_cache::PendingCache;
 use crate::index::error::{Error, Result};
+use crate::index::vector::quantize::ProductQuantizer;
 use crate::index::vector::store::NodeId;
 
 /// Codes loaded in one pass, back to back in one array with an index of where
@@ -67,6 +68,14 @@ impl Codes {
 pub struct CodeCache {
     loaded: Atom<Arc<Loaded>>,
     pub pending: PendingCache,
+    quantizer: Atom<Option<Arc<SharedQuantizer>>>,
+}
+
+/// A quantizer and the training whose codebooks it was built from.
+#[derive(Debug)]
+struct SharedQuantizer {
+    training: u128,
+    quantizer: Arc<ProductQuantizer>,
 }
 
 #[derive(Debug, Default)]
@@ -78,6 +87,26 @@ struct Loaded {
 }
 
 impl CodeCache {
+    /// The quantizer built from `training`'s codebooks, if one was shared.
+    ///
+    /// Codebooks are written once, by the training that names them, so a
+    /// match is the stored codebooks whatever snapshot the caller reads.
+    pub fn quantizer(&self, training: u128) -> Option<Arc<ProductQuantizer>> {
+        match &*self.quantizer.load() {
+            Some(shared) if shared.training == training => Some(shared.quantizer.clone()),
+            _ => None,
+        }
+    }
+
+    /// Shares `quantizer`, built from `training`'s codebooks. Whichever share
+    /// lands last stays; a caller with the other training builds its own.
+    pub fn share_quantizer(&self, training: u128, quantizer: Arc<ProductQuantizer>) {
+        self.quantizer.store(Some(Arc::new(SharedQuantizer {
+            training,
+            quantizer,
+        })));
+    }
+
     pub fn get(&self, id: NodeId) -> Option<Vec<u8>> {
         let loaded = self.loaded.load();
         match loaded.codes.get(id) {

@@ -320,6 +320,9 @@ RUNS=(
   "MC_PendingCache_Red_FutureVersion.cfg PendingCache.tla RED" # a search scores an entry past its head from a cache ahead of it
   "MC_PendingCache_Red_HeadBlindMarks.cfg PendingCache.tla RED" # a marker from a search's future hides the entry newest for it
   "MC_PendingCache_Red_NoGapCheck.cfg PendingCache.tla RED" # a copy loaded across a missing entry numbers the rest wrong
+  "MC_SharedQuantizer_Green.cfg SharedQuantizer.tla GREEN" # a writer encodes only with its snapshot's codebooks
+  "MC_SharedQuantizer_Red_NoTagCheck.cfg SharedQuantizer.tla RED" # a shared quantizer used whatever its tag encodes with a rebuilt index's old codebooks
+  "MC_SharedQuantizer_Red_TagPerRequest.cfg SharedQuantizer.tla RED" # a tag drawn once per request names an aborted attempt's codebooks and the retry's
   "MC_HeadSet_Green.cfg            HeadSet.tla                  GREEN" # derived heads: writers only write keys naming themselves, so concurrent appends never conflict and siblings form
   "MC_HeadSet_Red_EagerDelete.cfg  HeadSet.tla                  RED"   # eager delete: both writers delete the same observed head key, so regolith refuses one (INV_NoWriteConflict)
   "MC_HeadSet_Red_MarkersOnly.cfg  HeadSet.tla                  RED"   # reclamation that drops a head's markers but keeps its head key resurrects a superseded head (INV_HeadsExact)

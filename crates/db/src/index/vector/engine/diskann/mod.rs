@@ -82,6 +82,9 @@ pub struct DiskAnn<S> {
     /// finds the copy of the pending list; without it each code is a point
     /// read and the pending list is scanned.
     codes: Option<Arc<CodeCache>>,
+    /// Where the quantizer is shared between transactions; without it each
+    /// engine reads and rebuilds it from the codebooks.
+    shared: Option<Arc<CodeCache>>,
 }
 
 impl<S: VectorNodeStore> DiskAnn<S> {
@@ -99,11 +102,20 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             seed,
             quantizer: TrainedCache::new(),
             codes: None,
+            shared: None,
         })
     }
 
     pub fn with_codes(mut self, codes: Arc<CodeCache>) -> Self {
+        self.shared = Some(codes.clone());
         self.codes = Some(codes);
+        self
+    }
+
+    /// Shares the quantizer through `cache` and nothing else: what a write,
+    /// which neither walks nor scans, needs of it.
+    pub fn with_shared_quantizer(mut self, cache: Arc<CodeCache>) -> Self {
+        self.shared = Some(cache);
         self
     }
 
@@ -152,6 +164,10 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         if let Some(quantizer) = self.quantizer.get() {
             return Ok(quantizer.clone());
         }
+        let shared = self.shared.as_ref().zip(trained.training);
+        if let Some(quantizer) = shared.and_then(|(cache, training)| cache.quantizer(training)) {
+            return Ok(self.quantizer.get_or_init_racy(|| quantizer).clone());
+        }
         let mut books = Vec::with_capacity(trained.m as usize);
         for sub in 0..trained.m {
             let bytes = self
@@ -165,6 +181,9 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             trained.dimensions as usize,
             books,
         )?);
+        if let Some((cache, training)) = shared {
+            cache.share_quantizer(training, quantizer.clone());
+        }
         Ok(self.quantizer.get_or_init_racy(|| quantizer).clone())
     }
 }

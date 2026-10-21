@@ -43,6 +43,8 @@ pub const CODE: u8 = b'c';
 
 const VERSION: u8 = 0x01;
 const TRAINED_LEN: usize = 1 + 4 + 4;
+const TRAINED_ID_VERSION: u8 = 0x02;
+const TRAINED_ID_LEN: usize = TRAINED_LEN + 16;
 const GRAPH_STATE_LEN: usize = 1 + 1 + 8 + 8 + 8;
 
 /// What training fixed: the width and the quantizer's subspace count.
@@ -50,6 +52,10 @@ const GRAPH_STATE_LEN: usize = 1 + 1 + 8 + 8 + 8;
 pub struct Trained {
     pub dimensions: u32,
     pub m: u32,
+    /// Drawn at random by the training that wrote the codebooks, so one value
+    /// names one set of codebooks: what a shared quantizer is matched by.
+    /// `None` for an index trained before it was recorded.
+    pub training: Option<u128>,
 }
 
 /// What merges change.
@@ -94,20 +100,32 @@ impl State {
 }
 
 pub fn encode_trained(trained: &Trained) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(TRAINED_LEN);
-    buf.push(VERSION);
+    let mut buf = Vec::with_capacity(TRAINED_ID_LEN);
+    buf.push(match trained.training {
+        Some(_) => TRAINED_ID_VERSION,
+        None => VERSION,
+    });
     buf.extend_from_slice(&trained.dimensions.to_le_bytes());
     buf.extend_from_slice(&trained.m.to_le_bytes());
+    if let Some(training) = trained.training {
+        buf.extend_from_slice(&training.to_le_bytes());
+    }
     buf
 }
 
+/// Reads both encodings: the original, and the one that adds the training.
 pub fn decode_trained(bytes: &[u8]) -> Result<Trained> {
-    if bytes.len() != TRAINED_LEN || bytes[0] != VERSION {
-        return Err(invalid("unsupported DISKANN trained-state encoding"));
-    }
+    let training = match (bytes.first(), bytes.len()) {
+        (Some(&VERSION), TRAINED_LEN) => None,
+        (Some(&TRAINED_ID_VERSION), TRAINED_ID_LEN) => Some(u128::from_le_bytes(
+            bytes[TRAINED_LEN..].try_into().unwrap(),
+        )),
+        _ => return Err(invalid("unsupported DISKANN trained-state encoding")),
+    };
     Ok(Trained {
         dimensions: u32::from_le_bytes(bytes[1..5].try_into().unwrap()),
         m: u32::from_le_bytes(bytes[5..9].try_into().unwrap()),
+        training,
     })
 }
 
