@@ -765,3 +765,103 @@ fn document_policy_covers_field_whose_history_predates_encryption() {
     })
     .unwrap()
 }
+
+fn immutable_schema() -> schema::CollectionVersion {
+    use schema::{FieldDescription, FieldKind};
+    schema::CollectionVersion::new(
+        "Records",
+        "v1",
+        "col-records",
+        vec![
+            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("2", "author", FieldKind::string()).as_immutable(),
+            FieldDescription::new("3", "kind", FieldKind::string()).as_immutable(),
+        ],
+    )
+}
+
+/// Create a record under `enc` and return the composite's links by name.
+async fn create_immutable_record(
+    enc: &EncryptionConfig,
+) -> (NamespaceView, std::collections::BTreeMap<String, Cid>) {
+    let (blockstore, headstore) = stores().await;
+    let mut doc = Document::new();
+    doc.set("author", NormalValue::String("did:key:alice".to_string()));
+    doc.set("kind", NormalValue::String("note".to_string()));
+
+    let created = write_document_blocks(
+        &blockstore,
+        &headstore,
+        &doc,
+        &immutable_schema(),
+        DocStorageIdentity::new(11, 11),
+        None,
+        Some(enc),
+        None,
+        None,
+    )
+    .await
+    .expect("create should succeed");
+
+    let links = Block::from_dag_cbor(&created.block)
+        .unwrap()
+        .links
+        .unwrap_or_default()
+        .into_iter()
+        .map(|link| (link.name, link.link))
+        .collect();
+    (blockstore, links)
+}
+
+/// An encrypted `@immutable` field keeps its own encrypted block: the
+/// Immutable block holds plaintext, so it carries only the fields left clear.
+#[test]
+fn encrypted_immutable_field_stays_out_of_the_immutable_block() {
+    workers::block_on(async {
+        let enc = EncryptionConfig {
+            encrypt_doc: false,
+            encrypt_fields: vec!["author".to_string()],
+        };
+        let (blockstore, links) = create_immutable_record(&enc).await;
+
+        let immutable =
+            field_block(&blockstore, &links[defra_core::block::IMMUTABLE_LINK_NAME]).await;
+        let CrdtDelta::Immutable(payload) = immutable.delta else {
+            panic!("expected an Immutable block, got {:?}", immutable.delta);
+        };
+        assert_eq!(payload.fields.keys().collect::<Vec<_>>(), ["kind"]);
+
+        let author = field_block(&blockstore, &links["author"]).await;
+        assert!(author.encryption.is_some(), "`author` must be encrypted");
+        assert_ne!(
+            delta_data(&author),
+            encode_value_as_cbor(&NormalValue::String("did:key:alice".to_string())).unwrap()
+        );
+    })
+    .unwrap()
+}
+
+/// Whole-document encryption leaves no field in the clear, so no Immutable
+/// block is written.
+#[test]
+fn document_encryption_writes_no_immutable_block() {
+    workers::block_on(async {
+        let enc = EncryptionConfig {
+            encrypt_doc: true,
+            encrypt_fields: vec![],
+        };
+        let (blockstore, links) = create_immutable_record(&enc).await;
+
+        assert!(!links.contains_key(defra_core::block::IMMUTABLE_LINK_NAME));
+        for (name, plaintext) in [("author", "did:key:alice"), ("kind", "note")] {
+            let block = field_block(&blockstore, &links[name]).await;
+            assert!(block.encryption.is_some(), "`{name}` must be encrypted");
+            assert_ne!(
+                delta_data(&block),
+                encode_value_as_cbor(&NormalValue::String(plaintext.to_string())).unwrap(),
+                "`{name}` payload must not be plaintext"
+            );
+        }
+    })
+    .unwrap()
+}

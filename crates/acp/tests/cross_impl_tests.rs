@@ -569,116 +569,140 @@ fn parse_and_run_fixture(yaml: &str) -> TestFixture {
     serde_yaml::from_str(yaml).expect("Failed to parse YAML fixture")
 }
 
-#[tokio::test]
-async fn test_fixture_basic_ownership() {
-    let fixture = parse_and_run_fixture(BASIC_OWNERSHIP_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_basic_ownership() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(BASIC_OWNERSHIP_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_fixture_computed_userset() {
-    let fixture = parse_and_run_fixture(COMPUTED_USERSET_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_computed_userset() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(COMPUTED_USERSET_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_fixture_tuple_to_userset() {
-    let fixture = parse_and_run_fixture(TUPLE_TO_USERSET_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_tuple_to_userset() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(TUPLE_TO_USERSET_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_fixture_intersection() {
-    let fixture = parse_and_run_fixture(INTERSECTION_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_intersection() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(INTERSECTION_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_fixture_difference() {
-    let fixture = parse_and_run_fixture(DIFFERENCE_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_difference() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(DIFFERENCE_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_fixture_wildcard() {
-    let fixture = parse_and_run_fixture(WILDCARD_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_wildcard() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(WILDCARD_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_fixture_expression_precedence() {
-    let fixture = parse_and_run_fixture(EXPRESSION_PRECEDENCE_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_expression_precedence() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(EXPRESSION_PRECEDENCE_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn test_fixture_cycle_detection() {
-    let fixture = parse_and_run_fixture(CYCLE_DETECTION_YAML);
-    let results = run_fixture(&fixture).await;
+#[test]
+fn test_fixture_cycle_detection() {
+    workers::block_on(async {
+        let fixture = parse_and_run_fixture(CYCLE_DETECTION_YAML);
+        let results = run_fixture(&fixture).await;
 
-    for (check, expected, actual) in results {
-        assert_eq!(
-            expected, actual,
-            "Check failed: {} - expected {}, got {}",
-            check.description, expected, actual
-        );
-    }
+        for (check, expected, actual) in results {
+            assert_eq!(
+                expected, actual,
+                "Check failed: {} - expected {}, got {}",
+                check.description, expected, actual
+            );
+        }
+    })
+    .unwrap()
 }
 
 /// Test that YAML fixtures can be serialized and deserialized correctly.

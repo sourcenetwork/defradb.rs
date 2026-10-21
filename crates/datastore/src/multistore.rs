@@ -489,96 +489,108 @@ mod tests {
     use storage::corekv::Store;
     use storage::RegolithStore;
 
-    #[tokio::test]
-    async fn test_shared_txn_namespace_isolation() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_shared_txn_namespace_isolation() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn);
 
-        // Write to datastore namespace
-        shared
-            .set(Namespace::Datastore, b"key", b"datastore_value")
-            .await
-            .unwrap();
+            // Write to datastore namespace
+            shared
+                .set(Namespace::Datastore, b"key", b"datastore_value")
+                .await
+                .unwrap();
 
-        // Write to systemstore namespace
-        shared
-            .set(Namespace::Systemstore, b"key", b"systemstore_value")
-            .await
-            .unwrap();
+            // Write to systemstore namespace
+            shared
+                .set(Namespace::Systemstore, b"key", b"systemstore_value")
+                .await
+                .unwrap();
 
-        // Read back - each should see its own value
-        assert_eq!(
-            shared.get(Namespace::Datastore, b"key").await.unwrap(),
-            Some(Bytes::from_static(b"datastore_value"))
-        );
-        assert_eq!(
-            shared.get(Namespace::Systemstore, b"key").await.unwrap(),
-            Some(Bytes::from_static(b"systemstore_value"))
-        );
+            // Read back - each should see its own value
+            assert_eq!(
+                shared.get(Namespace::Datastore, b"key").await.unwrap(),
+                Some(Bytes::from_static(b"datastore_value"))
+            );
+            assert_eq!(
+                shared.get(Namespace::Systemstore, b"key").await.unwrap(),
+                Some(Bytes::from_static(b"systemstore_value"))
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_namespace_view() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_namespace_view() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn);
 
-        let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
-        let ss = NamespaceView::new(shared.clone(), Namespace::Systemstore);
+            let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
+            let ss = NamespaceView::new(shared.clone(), Namespace::Systemstore);
 
-        // Write through views
-        ds.set(b"key", b"datastore_value").await.unwrap();
-        ss.set(b"key", b"systemstore_value").await.unwrap();
+            // Write through views
+            ds.set(b"key", b"datastore_value").await.unwrap();
+            ss.set(b"key", b"systemstore_value").await.unwrap();
 
-        // Read back
-        assert_eq!(
-            ds.get(b"key").await.unwrap(),
-            Some(Bytes::from_static(b"datastore_value"))
-        );
-        assert_eq!(
-            ss.get(b"key").await.unwrap(),
-            Some(Bytes::from_static(b"systemstore_value"))
-        );
+            // Read back
+            assert_eq!(
+                ds.get(b"key").await.unwrap(),
+                Some(Bytes::from_static(b"datastore_value"))
+            );
+            assert_eq!(
+                ss.get(b"key").await.unwrap(),
+                Some(Bytes::from_static(b"systemstore_value"))
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_root_view_sees_prefixed() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_root_view_sees_prefixed() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn);
 
-        let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
-        let root = RootView::new(shared.clone());
+            let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
+            let root = RootView::new(shared.clone());
 
-        // Write through datastore view
-        ds.set(b"mykey", b"value").await.unwrap();
+            // Write through datastore view
+            ds.set(b"mykey", b"value").await.unwrap();
 
-        // Root should see it with 'd' prefix
-        let value = root.get(b"dmykey").await.unwrap();
-        assert_eq!(value, Some(Bytes::from_static(b"value")));
+            // Root should see it with 'd' prefix
+            let value = root.get(b"dmykey").await.unwrap();
+            assert_eq!(value, Some(Bytes::from_static(b"value")));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_namespace_iterator() {
-        let store = RegolithStore::in_memory().unwrap();
-        let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+    #[test]
+    fn test_namespace_iterator() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let txn = store.new_txn(false).await.unwrap();
+            let shared = SharedTxn::new(txn);
 
-        let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
+            let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
 
-        // Write multiple keys
-        ds.set(b"key1", b"value1").await.unwrap();
-        ds.set(b"key2", b"value2").await.unwrap();
-        ds.set(b"key3", b"value3").await.unwrap();
+            // Write multiple keys
+            ds.set(b"key1", b"value1").await.unwrap();
+            ds.set(b"key2", b"value2").await.unwrap();
+            ds.set(b"key3", b"value3").await.unwrap();
 
-        // Iterate
-        let mut iter = ds.iterator(IterOptions::new()).await.unwrap();
-        let mut count = 0;
-        while let Some(pair) = iter.next().await.unwrap() {
-            assert!(pair.key.starts_with(b"key"));
-            count += 1;
-        }
-        assert_eq!(count, 3);
+            // Iterate
+            let mut iter = ds.iterator(IterOptions::new()).await.unwrap();
+            let mut count = 0;
+            while let Some(pair) = iter.next().await.unwrap() {
+                assert!(pair.key.starts_with(b"key"));
+                count += 1;
+            }
+            assert_eq!(count, 3);
+        })
+        .unwrap()
     }
 }

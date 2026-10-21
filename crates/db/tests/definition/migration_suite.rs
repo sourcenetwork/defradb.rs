@@ -538,13 +538,34 @@ fn eager_materialize_restamps_transformless_paths() {
             load_user(&db, &doc_id).await.schema_version_id(),
             Some(v2.as_str())
         );
-        assert_eq!(
+        assert_ne!(
             load_user_blob(&db, &doc_id).await,
             before_blob,
-            "identity materialization must update only the version key"
+            "materialization must encode the active version's part IDs"
         );
         assert_eq!(db.materialize_collection("Users").await.unwrap(), 0);
         assert_eq!(namespace_counts(&db).await, before_counts);
+        let mut update = document::Document::new();
+        update.set_id(doc_id.clone());
+        update.set("name", document::NormalValue::String("Bob".into()));
+        update.set("verified", document::NormalValue::Bool(true));
+        AutoCommitMutator::new(db.clone())
+            .update(
+                "Users",
+                update,
+                RapidHashSet::from_iter(["name".to_string(), "verified".to_string()]),
+            )
+            .await
+            .unwrap();
+        let updated = load_user(&db, &doc_id).await;
+        assert_eq!(
+            updated.get("name"),
+            Some(&document::NormalValue::String("Bob".into()))
+        );
+        assert_eq!(
+            updated.get("verified"),
+            Some(&document::NormalValue::Bool(true))
+        );
     })
     .unwrap()
 }

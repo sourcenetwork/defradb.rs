@@ -35,26 +35,29 @@ fn floating_point_operands_are_not_folded() {
     );
 }
 
-#[tokio::test]
-async fn encrypted_concurrent_operands_survive_reopen() {
-    let dir = tempfile::tempdir().unwrap();
-    let options = RegolithStoreOptions::default().with_encryption_key([17; 32]);
-    {
-        let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
-        let mut first = store.new_txn(false).await.unwrap();
-        let mut second = store.new_txn(false).await.unwrap();
-        first.merge(b"counter", &counter_i64(7)).await.unwrap();
-        second.merge(b"counter", &counter_i64(11)).await.unwrap();
-        first.commit().await.unwrap();
-        second.commit().await.unwrap();
-        store.close().await.unwrap();
-    }
-    let store = RegolithStore::open_with_options(dir.path(), options).unwrap();
-    let reader = store.new_txn(true).await.unwrap();
-    assert_eq!(
-        reader.get(b"counter").await.unwrap().unwrap().as_ref(),
-        &18i64.to_be_bytes()
-    );
+#[test]
+fn encrypted_concurrent_operands_survive_reopen() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let options = RegolithStoreOptions::default().with_encryption_key([17; 32]);
+        {
+            let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
+            let mut first = store.new_txn(false).await.unwrap();
+            let mut second = store.new_txn(false).await.unwrap();
+            first.merge(b"counter", &counter_i64(7)).await.unwrap();
+            second.merge(b"counter", &counter_i64(11)).await.unwrap();
+            first.commit().await.unwrap();
+            second.commit().await.unwrap();
+            store.close().await.unwrap();
+        }
+        let store = RegolithStore::open_with_options(dir.path(), options).unwrap();
+        let reader = store.new_txn(true).await.unwrap();
+        assert_eq!(
+            reader.get(b"counter").await.unwrap().unwrap().as_ref(),
+            &18i64.to_be_bytes()
+        );
+    })
+    .unwrap()
 }
 
 #[test]

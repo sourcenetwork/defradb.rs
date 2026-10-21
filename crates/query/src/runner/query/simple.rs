@@ -80,16 +80,15 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 if let Some(best_index) =
                     select_best_index_with_estimates(filter, &collection.indexes, &estimates)
                 {
-                    // Extract limit/offset for index optimization
-                    let limit = select.limit.as_ref().and_then(|l| l.limit);
-                    let offset = select.limit.as_ref().map(|l| l.offset).unwrap_or(0);
+                    // Filtering, authorization, sorting and pagination run in the plan
+                    // below; candidate reads cannot apply its offset or limit first.
                     if let Some(params) = filter_to_index_scan(
                         filter,
                         best_index,
                         select.order_by.as_ref(),
                         &collection.fields,
-                        limit,
-                        offset,
+                        None,
+                        0,
                     ) {
                         debug!(
                             collection = %select.collection_name,
@@ -267,8 +266,9 @@ mod tests {
         (QueryRunner::new(fetcher, vec![collection]), reads)
     }
 
-    #[tokio::test]
-    async fn ordinary_scoped_id_queries_seek_without_index_prefetch() {
+    #[test]
+    fn ordinary_scoped_id_queries_seek_without_index_prefetch() {
+        workers::block_on(async {
         let id = NOTE_ID;
         let (runner, reads) = point_only_runner(&["owner"]);
         let data = runner.execute_query(&format!(r#"{{
@@ -280,12 +280,15 @@ mod tests {
         assert_eq!(data["rejected"], serde_json::json!([]));
         assert_eq!(data["missing"], serde_json::json!([]));
         assert_eq!(reads.load(Ordering::Relaxed), 3);
+    })
+    .unwrap()
     }
 
     /// Ordering by an indexed field routes through the planner, and two
     /// eligible indexes are the case where estimation would otherwise run.
-    #[tokio::test]
-    async fn planner_scoped_id_queries_seek_without_index_estimates() {
+    #[test]
+    fn planner_scoped_id_queries_seek_without_index_estimates() {
+        workers::block_on(async {
         let id = NOTE_ID;
         let (runner, reads) = point_only_runner(&["owner", "status"]);
         let data = runner.execute_query(&format!(r#"{{
@@ -295,5 +298,7 @@ mod tests {
         assert_eq!(data["matching"][0]["_docID"], id);
         assert_eq!(data["rejected"], serde_json::json!([]));
         assert_eq!(reads.load(Ordering::Relaxed), 2);
+    })
+    .unwrap()
     }
 }
