@@ -19,8 +19,8 @@ starts with (`prefix_encode`), so the scan misses nothing under it.
 
 Bytes are modeled as numbers; only `0`, `1` and `255` are special.
 
-Rust anchors: the JSON CRDT is not written yet. This file is its contract
-(issue #2129), for the path keys in `crates/defra-core/src/json_crdt.rs`.
+Rust anchors: `encode_path` and `decode_path` in
+`crates/defra-core/src/json_crdt.rs`, the path keys (issue #2129).
 -/
 
 namespace JsonCrdt
