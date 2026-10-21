@@ -59,6 +59,12 @@ fn op(path: &[&str], edit: JsonEdit) -> JsonOp {
     }
 }
 
+/// What a frontier reads as: its value and its conflicts. Two peers holding
+/// the same blocks agree on both, whatever order they merged them in.
+fn view(frontier: &Frontier) -> (Option<Value>, Vec<Conflict>) {
+    (frontier.materialize(), frontier.conflicts())
+}
+
 fn create(sim: &mut Sim, value: Value) -> usize {
     sim.write(&[], diff(None, Some(&value)))
 }
@@ -83,7 +89,7 @@ fn disjoint_keys_both_survive_in_any_order() {
     let right = sim.write(&[root], vec![set(&["b"], json!(3))]);
     let one = sim.merge(&[root, left, right]);
     let two = sim.merge(&[root, right, left]);
-    assert_eq!(one, two);
+    assert_eq!(view(&one), view(&two));
     assert_eq!(one.value(), json!({"a": 2, "b": 3}));
     assert!(one.conflicts().is_empty());
 }
@@ -95,7 +101,7 @@ fn one_path_resolves_by_priority_then_block_and_lists_the_loser() {
     let left = sim.write(&[root], vec![set(&["a"], json!("left"))]);
     let right = sim.write(&[root], vec![set(&["a"], json!("right"))]);
     let merged = sim.merge(&[root, left, right]);
-    assert_eq!(merged, sim.merge(&[root, right, left]));
+    assert_eq!(view(&merged), view(&sim.merge(&[root, right, left])));
     let winner = if sim.blocks[left].0 > sim.blocks[right].0 {
         "left"
     } else {
@@ -122,7 +128,7 @@ fn an_update_beats_a_concurrent_delete_above_it() {
     let delete = sim.write(&[root], vec![op(&["a"], JsonEdit::Delete)]);
     let update = sim.write(&[root], vec![set(&["a", "b"], json!(2))]);
     let merged = sim.merge(&[root, delete, update]);
-    assert_eq!(merged, sim.merge(&[root, update, delete]));
+    assert_eq!(view(&merged), view(&sim.merge(&[root, update, delete])));
     assert_eq!(merged.value(), json!({"a": {"b": 2}}));
     let conflicts = merged.conflicts();
     assert_eq!(conflicts.len(), 1);
@@ -136,7 +142,7 @@ fn a_delete_never_brings_a_path_back() {
     let outer = sim.write(&[root], vec![op(&["a"], JsonEdit::Delete)]);
     let inner = sim.write(&[root], vec![op(&["a", "b"], JsonEdit::Delete)]);
     let merged = sim.merge(&[root, outer, inner]);
-    assert_eq!(merged, sim.merge(&[root, inner, outer]));
+    assert_eq!(view(&merged), view(&sim.merge(&[root, inner, outer])));
     assert_eq!(merged.value(), json!({}));
 }
 
@@ -147,7 +153,7 @@ fn a_type_clash_resolves_by_the_same_order_and_the_loser_takes_its_children() {
     let value = sim.write(&[root], vec![set(&["a"], json!(5))]);
     let child = sim.write(&[root], vec![set(&["a", "c"], json!(2))]);
     let merged = sim.merge(&[root, value, child]);
-    assert_eq!(merged, sim.merge(&[root, child, value]));
+    assert_eq!(view(&merged), view(&sim.merge(&[root, child, value])));
     let expected = if sim.blocks[value].0 > sim.blocks[child].0 {
         json!({"a": 5})
     } else {
@@ -186,7 +192,7 @@ fn three_writers_converge_whatever_the_order() {
     ];
     let first = sim.merge(&orders[0]);
     for order in &orders[1..] {
-        assert_eq!(sim.merge(order), first);
+        assert_eq!(view(&sim.merge(order)), view(&first));
     }
     assert_eq!(first.value(), json!({"a": {"b": 9, "d": "z"}}));
 }

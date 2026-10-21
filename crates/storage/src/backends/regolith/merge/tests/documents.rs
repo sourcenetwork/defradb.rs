@@ -517,3 +517,67 @@ fn text_parts_replace_in_commit_order_and_obey_engine_contracts() {
         Some(NormalValue::String("abc".into()))
     );
 }
+
+/// A Json part on field 7: entries and removes drawn from a few paths and
+/// blocks, so operands overlap, remove each other's entries and re-add them.
+fn json_part(
+) -> impl regolith::testing::proptest::strategy::Strategy<Value = StoredDocument> + Clone {
+    use defra_core::json_crdt::{Entry, Frontier, JsonEdit};
+    use regolith::testing::proptest::prelude::*;
+    let paths = || {
+        prop_oneof![
+            Just(vec![]),
+            Just(vec!["a".to_owned()]),
+            Just(vec!["a".to_owned(), "b".to_owned()]),
+            Just(vec!["c".to_owned()]),
+        ]
+    };
+    let entry = (paths(), 0u8..4, 0u8..3).prop_map(|(path, block, edit)| Entry {
+        path,
+        block: vec![block],
+        priority: u64::from(block),
+        edit: match edit {
+            0 => JsonEdit::Set(serde_json::json!(block)),
+            1 => JsonEdit::Map,
+            _ => JsonEdit::Delete,
+        },
+        seen: vec![vec![block.saturating_sub(1)]],
+    });
+    let remove = (paths(), 0u8..4).prop_map(|(path, block)| (path, vec![block]));
+    (
+        regolith::testing::proptest::collection::vec(remove, 0..3),
+        regolith::testing::proptest::collection::vec(entry, 0..3),
+    )
+        .prop_map(|(removes, entries)| StoredDocument {
+            fields: [(
+                7,
+                StoredField::json("meta".to_owned(), 1, &Frontier { removes, entries }).unwrap(),
+            )]
+            .into(),
+        })
+}
+
+#[test]
+fn json_parts_compose_exactly_and_touch_only_their_field() {
+    use regolith::testing::proptest::strategy::{Just, Strategy};
+    let checked = regolith::testing::check_merge_operator(
+        &DefraMergeOperator,
+        Just(b"doc".to_vec()),
+        json_part().prop_map(|value| {
+            let mut settled = StoredDocument::default();
+            settled.apply(value).unwrap();
+            settled.encode().unwrap()
+        }),
+        json_part().prop_map(|value| document_parts(&value).unwrap()),
+    )
+    .unwrap();
+    assert!(checked.folds > 0);
+    let checked = regolith::testing::check_touches(
+        &DefraMergeOperator,
+        Just(b"doc".to_vec()),
+        json_part().prop_map(|value| document_parts(&value).unwrap()),
+        regolith::testing::proptest::collection::vec(5u32..9, 0..3),
+    )
+    .unwrap();
+    assert!(checked.folds > 0);
+}

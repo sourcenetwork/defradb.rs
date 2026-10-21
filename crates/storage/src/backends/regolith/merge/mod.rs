@@ -178,6 +178,7 @@ impl MergeOperator for DefraMergeOperator {
             // a Text replacement keeps the later one in any grouping, and
             // wrapping integer counter sums are exact in any grouping.
             // Floating-point counter sums are not, so they keep their order.
+            // Json operands compose exactly, keeping what each removes.
             if left
                 .fields
                 .values()
@@ -188,12 +189,13 @@ impl MergeOperator for DefraMergeOperator {
                         document::stored::ValueKind::Lww
                             | document::stored::ValueKind::Int64
                             | document::stored::ValueKind::Text
+                            | document::stored::ValueKind::Json
                     )
                 })
             {
                 return None;
             }
-            left.apply(right)?;
+            left.fold(right)?;
             return document_parts(&left);
         }
         let (INT64, left) = decode(left)? else {

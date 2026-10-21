@@ -330,6 +330,16 @@ impl StoredDocument {
     /// Apply one operand in commit order. Callers put a fresh value instead
     /// when the schema version changes; IDs and names cannot be repurposed.
     pub fn apply(&mut self, operand: Self) -> Option<()> {
+        self.apply_settling(operand, true)
+    }
+
+    /// Fold a later operand into this one, leaving an operand: a Json part
+    /// keeps the entries both remove, for the value they land on later.
+    pub fn fold(&mut self, operand: Self) -> Option<()> {
+        self.apply_settling(operand, false)
+    }
+
+    fn apply_settling(&mut self, operand: Self, settle: bool) -> Option<()> {
         for (id, mut incoming) in operand.fields {
             let Some(current) = self.fields.get_mut(&id) else {
                 if self
@@ -342,7 +352,7 @@ impl StoredDocument {
                 // A counter part the value lacks starts from zero, so the
                 // increment lands exactly as it would on a stored zero.
                 if incoming.kind == ValueKind::Json {
-                    incoming.value = compose_json(None, &incoming.value, true)?;
+                    incoming.value = compose_json(None, &incoming.value, settle)?;
                 } else if !matches!(incoming.kind, ValueKind::Lww | ValueKind::Text) {
                     let zero: &[u8] = if incoming.kind == ValueKind::Float32 {
                         &[0; 4]
@@ -365,7 +375,7 @@ impl StoredDocument {
                     incoming.value
                 }
                 ValueKind::Text => incoming.value,
-                ValueKind::Json => compose_json(Some(&current.value), &incoming.value, true)?,
+                ValueKind::Json => compose_json(Some(&current.value), &incoming.value, settle)?,
                 kind => counter_sum(kind, &current.value, &incoming.value)?,
             };
             current.priority = current.priority.max(incoming.priority);

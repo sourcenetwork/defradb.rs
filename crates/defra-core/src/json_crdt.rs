@@ -368,29 +368,9 @@ impl Frontier {
         self.removes = removes.into_values().collect();
     }
 
-    /// The same frontier as a stored value. What it removes no longer matters,
-    /// and an entry only needs to remember the edits above it that are still
-    /// there, which leaves every peer holding the same blocks with the same
-    /// bytes, whatever order it merged them in.
+    /// The same frontier as a stored value: what it removes no longer matters.
     pub fn settle(&mut self) {
         self.removes.clear();
-        let present: BTreeMap<Vec<u8>, BTreeSet<Vec<u8>>> =
-            self.entries
-                .iter()
-                .fold(BTreeMap::new(), |mut present, entry| {
-                    present
-                        .entry(encode_path(&entry.path))
-                        .or_default()
-                        .insert(entry.block.clone());
-                    present
-                });
-        for entry in &mut self.entries {
-            let above: BTreeSet<&Vec<u8>> = (0..entry.path.len())
-                .filter_map(|depth| present.get(&encode_path(&entry.path[..depth])))
-                .flatten()
-                .collect();
-            entry.seen.retain(|block| above.contains(block));
-        }
     }
 
     /// The operand that writes `ops`, from the block `block` at `priority`,
