@@ -502,6 +502,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 for (field_name, value) in &mutation.update_input {
                     input_obj.insert(field_name.clone(), value.clone());
                 }
+                for (field_name, op) in &mutation.update_ops {
+                    input_obj.insert(
+                        field_name.clone(),
+                        serde_json::to_value(op).unwrap_or(JsonValue::Null),
+                    );
+                }
                 mutation_attrs.insert("input".to_string(), JsonValue::Object(input_obj));
             }
             MutationType::Delete => {

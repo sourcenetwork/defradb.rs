@@ -16,7 +16,7 @@ use tracing;
 use crate::document::{document_to_plan_doc, DocumentMapping};
 use crate::error::{QueryError, Result};
 use crate::fetcher::DocFetcher;
-use crate::mapper::Filter;
+use crate::mapper::{FieldOp, Filter};
 use crate::mutator::{DocMutator, UpdateResult};
 use crate::planner::{Doc, PlanNode};
 
@@ -36,6 +36,8 @@ fn is_known_prepared_update_target(
 pub struct UpdateInput {
     /// Field values to update, keyed by field name
     pub fields: RapidHashMap<String, JsonValue>,
+    /// Explicit CRDT ops, keyed by field
+    pub ops: RapidHashMap<String, FieldOp>,
 }
 
 impl UpdateInput {
@@ -43,6 +45,7 @@ impl UpdateInput {
     pub fn new() -> Self {
         Self {
             fields: RapidHashMap::new(),
+            ops: RapidHashMap::new(),
         }
     }
 
@@ -101,6 +104,13 @@ impl UpdateInput {
             modified_count += 1;
         }
 
+        for (field_name, op) in &self.ops {
+            let field_def =
+                collection.and_then(|c| c.fields.iter().find(|f| f.name == *field_name));
+            super::update_ops::apply_op(doc, field_name, field_def, op, request_time)?;
+            modified_count += 1;
+        }
+
         Ok(modified_count)
     }
 }
@@ -112,7 +122,7 @@ impl Default for UpdateInput {
 }
 
 /// Validate that a PCounter increment is non-negative.
-fn validate_pcounter_increment(value: &NormalValue) -> Result<()> {
+pub(super) fn validate_pcounter_increment(value: &NormalValue) -> Result<()> {
     let is_negative = match value {
         NormalValue::Int(v) => *v < 0,
         NormalValue::Float64(v) => *v < 0.0,
@@ -128,7 +138,10 @@ fn validate_pcounter_increment(value: &NormalValue) -> Result<()> {
 /// Increment a counter value by an increment amount.
 /// For counter CRDTs, updates add to the current value rather than replacing it.
 /// Uses wrapping arithmetic to match Go DefraDB overflow behavior.
-fn increment_value(current: Option<&NormalValue>, increment: &NormalValue) -> Result<NormalValue> {
+pub(super) fn increment_value(
+    current: Option<&NormalValue>,
+    increment: &NormalValue,
+) -> Result<NormalValue> {
     match increment {
         NormalValue::Int(inc) => {
             let cur = match current {

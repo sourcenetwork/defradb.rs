@@ -373,7 +373,7 @@ impl Document {
 
     /// Insert `text` at character `pos` of the Text field `field`.
     pub fn insert_text(&mut self, field: impl Into<String>, pos: u64, text: impl Into<String>) {
-        self.push_text_op(
+        self.edit_text(
             field.into(),
             defra_core::TextOp::Insert {
                 pos,
@@ -384,7 +384,7 @@ impl Document {
 
     /// Delete `len` characters at character `pos` of the Text field `field`.
     pub fn delete_text(&mut self, field: impl Into<String>, pos: u64, len: u64) {
-        self.push_text_op(field.into(), defra_core::TextOp::Delete { pos, len });
+        self.edit_text(field.into(), defra_core::TextOp::Delete { pos, len });
     }
 
     /// Replace `len` characters at character `pos` of the Text field `field`
@@ -403,7 +403,7 @@ impl Document {
 
     /// Append one edit to `field`'s Text ops, and apply it to the value this
     /// document holds.
-    fn push_text_op(&mut self, field: String, op: defra_core::TextOp) {
+    pub fn edit_text(&mut self, field: String, op: defra_core::TextOp) {
         let current = self
             .get(&field)
             .and_then(NormalValue::as_str)

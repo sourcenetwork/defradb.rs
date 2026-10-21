@@ -6,7 +6,7 @@
 use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
 
-use super::{Filter, Requestable};
+use super::{FieldOp, Filter, Requestable};
 use crate::document::DocumentMapping;
 
 /// Type of mutation operation.
@@ -72,6 +72,8 @@ pub struct Mutation {
     pub create_input: Vec<RapidHashMap<String, JsonValue>>,
     /// For UPDATE: Fields to update (patch)
     pub update_input: RapidHashMap<String, JsonValue>,
+    /// For UPDATE: Explicit CRDT ops, keyed by field
+    pub update_ops: RapidHashMap<String, FieldOp>,
     /// For UPDATE/DELETE: Specific document IDs to target
     pub doc_ids: Option<Vec<String>>,
     /// For UPDATE/DELETE: Filter to find documents to target
@@ -105,6 +107,7 @@ impl Mutation {
             alias: None,
             create_input: Vec::new(),
             update_input: RapidHashMap::new(),
+            update_ops: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -122,6 +125,7 @@ impl Mutation {
             alias: None,
             create_input: Vec::new(),
             update_input: RapidHashMap::new(),
+            update_ops: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -139,6 +143,7 @@ impl Mutation {
             alias: None,
             create_input: Vec::new(),
             update_input: RapidHashMap::new(),
+            update_ops: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -156,6 +161,7 @@ impl Mutation {
             alias: None,
             create_input: Vec::new(),
             update_input: RapidHashMap::new(),
+            update_ops: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -173,6 +179,7 @@ impl Mutation {
             alias: None,
             create_input: Vec::new(),
             update_input: RapidHashMap::new(),
+            update_ops: RapidHashMap::new(),
             doc_ids: None,
             filter: None,
             fields: Vec::new(),
@@ -211,6 +218,15 @@ impl Mutation {
     pub fn with_update_input(mut self, input: RapidHashMap<String, JsonValue>) -> Self {
         self.update_input = input;
         self
+    }
+
+    /// Every field this update writes, through its input or an op.
+    pub fn update_fields(&self) -> rapidhash::RapidHashSet<String> {
+        self.update_input
+            .keys()
+            .chain(self.update_ops.keys())
+            .cloned()
+            .collect()
     }
 
     /// Set document IDs to target.

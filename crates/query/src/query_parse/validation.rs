@@ -208,6 +208,7 @@ mod tests {
             alias: None,
             create_input: vec![],
             update_input: Default::default(),
+            update_ops: Default::default(),
             doc_ids: None,
             filter: None,
             fields: vec![],

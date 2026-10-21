@@ -14,7 +14,9 @@ use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 use serde_json::Value as JsonValue;
 
 use crate::error::{QueryError, Result};
-use crate::mapper::{parse_mutation_name, FullTextSearch, Mutation, MutationType, Similarity};
+use crate::mapper::{
+    parse_mutation_name, split_update_input, FullTextSearch, Mutation, MutationType, Similarity,
+};
 
 use super::filters::parse_filter_value;
 use super::parser::{parse_selection_set, FragmentMap};
@@ -69,7 +71,7 @@ pub(super) fn parse_field_to_mutation(
                 has_input_arg = true;
                 if !matches!(arg_value, Value::Null) {
                     let input = parse_update_input(arg_value, variables)?;
-                    mutation.update_input = input;
+                    (mutation.update_input, mutation.update_ops) = split_update_input(input)?;
                 }
             }
 

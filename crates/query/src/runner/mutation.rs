@@ -424,6 +424,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 doc_ids: &validation_ids,
                 create_input: &mutation.create_input,
                 update_input: &mutation.update_input,
+                update_ops: &mutation.update_ops,
             };
             if strict_attempt {
                 let exact_request = serde_json::to_vec(&(
@@ -435,6 +436,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                     &validation_ids,
                     &mutation.create_input,
                     &mutation.update_input,
+                    &mutation.update_ops,
                 ))
                 .map_err(|error| QueryError::execution(error.to_string()))?;
                 let prepared_request = crate::prepared::PreparedInputRequest::new(
