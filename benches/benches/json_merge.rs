@@ -9,15 +9,16 @@
 //! are the field's heads: one key set over the frontier, every entry in its
 //! past. `concurrent` is the same edit from a block that has not seen the
 //! last write, so the merge asks of each entry whether it is in the block's
-//! past. `rewrite_all` is the operand of one block setting every key, as a
-//! whole-value write that changes them all diffs into. `read` materializes
-//! the field, and `conflicts` lists its losers; `replay` rebuilds the
-//! frontier from the whole DAG, as a time-travel read does.
+//! past. Neither times copying the frontier it starts from. `rewrite_all` is
+//! the operand of one block setting every key, as a whole-value write that
+//! changes them all diffs into. `read` materializes the field, and
+//! `conflicts` lists its losers; `replay` rebuilds the frontier from the
+//! whole DAG, as a time-travel read does.
 
 use std::collections::BTreeSet;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use defra_core::json_crdt::{self, Frontier, JsonEdit, JsonOp, ReplayBlock};
 use serde_json::json;
 
@@ -59,11 +60,14 @@ fn merge(c: &mut Criterion) {
         }];
         let id = vec![0xff; 32];
         group.bench_with_input(BenchmarkId::new("fast_path", keys), &frontier, |b, f| {
-            b.iter(|| {
-                let mut f = f.clone();
-                f.compose(f.local_delta(black_box(&edit), &id, keys as u64 + 1));
-                black_box(f)
-            })
+            b.iter_batched(
+                || f.clone(),
+                |mut f| {
+                    f.compose(f.local_delta(black_box(&edit), &id, keys as u64 + 1));
+                    f
+                },
+                BatchSize::LargeInput,
+            )
         });
         let last = blocks.last().map(|b| b.cid.clone()).unwrap_or_default();
         let past: BTreeSet<Vec<u8>> = blocks
@@ -72,11 +76,14 @@ fn merge(c: &mut Criterion) {
             .filter(|cid| *cid != last)
             .collect();
         group.bench_with_input(BenchmarkId::new("concurrent", keys), &frontier, |b, f| {
-            b.iter(|| {
-                let mut f = f.clone();
-                f.compose(f.delta(black_box(&edit), &id, keys as u64, |e| past.contains(e)));
-                black_box(f)
-            })
+            b.iter_batched(
+                || f.clone(),
+                |mut f| {
+                    f.compose(f.delta(black_box(&edit), &id, keys as u64, |e| past.contains(e)));
+                    f
+                },
+                BatchSize::LargeInput,
+            )
         });
         let rewrite: Vec<JsonOp> = (0..keys)
             .map(|n| JsonOp {
