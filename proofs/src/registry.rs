@@ -361,10 +361,10 @@ pub const PROPERTIES: &[Property] = &[
         // same invariants on random DAGs; the db tests merge real blocks
         // between two nodes.
         family: "Text CRDT convergence",
-        name: "INV_Converge / INV_MatchesReplay / INV_Intent / INV_PlacedAsIntended / INV_NoInterleave: Fugue text converges, keeps every edit where its author put it, and never interleaves runs",
+        name: "INV_Converge / INV_MatchesReplay / INV_Intent / INV_PlacedAsIntended / INV_NoInterleave / INV_CriticalReplay: Fugue text converges, keeps every edit where its author put it, never interleaves runs, and replays a concurrent merge from its critical block",
         axis: Tla,
-        anchor: "crates/crdt/src/text.rs Tree::apply, Tree::attach, replay; crates/db/src/merge/merge_handler/text.rs process_text_delta_in_txn; crates/db/src/write/autocommit/helpers.rs set_text_ops; crates/crdt/src/text_tests.rs, crates/db/tests/merge/text_merge.rs",
-        model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText,Red_NextNode}.cfg",
+        anchor: "crates/crdt/src/text.rs Tree::apply, Tree::attach, replay; crates/crdt/src/text.rs merge_text; crates/db/src/merge/merge_handler/text.rs process_text_delta_in_txn, critical_block; crates/db/src/write/autocommit/helpers.rs set_text_ops; crates/crdt/src/text_tests.rs, crates/db/tests/merge/text_merge.rs",
+        model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText,Red_NextNode,Red_CommonAncestor}.cfg",
         tiers: &[Contract],
     },
     Property {
