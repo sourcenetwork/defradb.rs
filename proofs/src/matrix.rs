@@ -41,6 +41,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Worker pool CPU ledger",
     "Worker default pool",
     "Text CRDT convergence",
+    "JSON CRDT per-path merge",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {

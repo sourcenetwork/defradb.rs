@@ -381,6 +381,30 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        // The JSON CRDT (#2129) is specified before it is written. Each path is
+        // a register: racing edits resolve by priority, then CID; an edit wipes
+        // only what it had seen below it, so an update beats a concurrent
+        // delete; the conflicts query lists exactly the racers that lost. Bound
+        // as a boundary until crates/crdt/src/json.rs exists.
+        family: "JSON CRDT per-path merge",
+        name: "INV_Converge / INV_MatchesReplay / INV_DisjointKept / INV_SamePathLww / INV_UpdateWins / INV_TypeClash / INV_ConflictsAreLosers: per-path JSON merge converges and keeps every edit nothing saw",
+        axis: Tla,
+        anchor: "planned: crates/crdt/src/json.rs (per-path frontiers, winner, conflicts); crates/db/src/merge/merge_handler/json.rs (merge after parents)",
+        model_ref: "MC_JsonCrdt_{Green,Red_DeleteWins,Red_NoCid}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A path's register keeps the same winner whatever order edits arrive
+        // in, or if one arrives twice; a path's key reads back as the path, and
+        // one key starts another only when its path is above the other's.
+        family: "JSON CRDT per-path merge",
+        name: "join_comm / join_assoc / join_idem / decode_encode / encode_prefix: order-free registers and nesting path keys",
+        axis: Lean,
+        anchor: "planned: crates/crdt/src/json.rs",
+        model_ref: "JsonCrdt.{Lww,Path} (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,

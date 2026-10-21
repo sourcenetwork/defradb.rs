@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 31 families (bounded model claims)
+### Modeled: 32 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
 | B3 filtered replication | TLA+ | p2p, db-merge |
@@ -53,6 +53,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Worker default pool | TLA+ & Lean | workers |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
+| JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is
