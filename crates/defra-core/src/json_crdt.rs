@@ -73,14 +73,8 @@ pub struct Frontier {
     pub entries: Vec<Entry>,
 }
 
-/// What a local write or a merge leaves for a JSON field: the ops its block
-/// carries, the operand that writes them, and the frontier after it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct JsonWrite {
-    pub ops: Vec<JsonOp>,
-    pub delta: Frontier,
-    pub frontier: Frontier,
-}
+/// Removed entries by (path key, block), each with its path and block.
+type Removes = BTreeMap<(Vec<u8>, Vec<u8>), (Path, Vec<u8>)>;
 
 /// One edit that lost a race at a path, as the conflicts query lists it.
 #[derive(Debug, Clone, PartialEq)]
@@ -359,12 +353,11 @@ impl Frontier {
             entries.insert(key(&entry.path, &entry.block), entry);
         }
         self.entries = entries.into_values().collect();
-        let removes: BTreeMap<(Vec<u8>, Vec<u8>), (Path, Vec<u8>)> =
-            std::mem::take(&mut self.removes)
-                .into_iter()
-                .chain(later.removes)
-                .map(|(path, block)| (key(&path, &block), (path, block)))
-                .collect();
+        let removes: Removes = std::mem::take(&mut self.removes)
+            .into_iter()
+            .chain(later.removes)
+            .map(|(path, block)| (key(&path, &block), (path, block)))
+            .collect();
         self.removes = removes.into_values().collect();
     }
 
@@ -381,7 +374,7 @@ impl Frontier {
     where
         F: Fn(&[u8]) -> bool,
     {
-        let mut removes: BTreeMap<(Vec<u8>, Vec<u8>), (Path, Vec<u8>)> = BTreeMap::new();
+        let mut removes = Removes::new();
         let mut entries = Vec::with_capacity(ops.len());
         for op in ops {
             let mut seen = BTreeSet::new();

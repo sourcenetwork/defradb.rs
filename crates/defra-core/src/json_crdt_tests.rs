@@ -1,10 +1,17 @@
 use super::*;
 use serde_json::json;
 
-/// A block of a field's DAG: its ID, its parents (indexes of earlier blocks)
-/// and its ops. Its priority is one above its highest parent.
+/// A block of a field's DAG. Its priority is one above its highest parent.
+struct SimBlock {
+    id: Vec<u8>,
+    /// Indexes of earlier blocks.
+    parents: Vec<usize>,
+    priority: u64,
+    ops: Vec<JsonOp>,
+}
+
 struct Sim {
-    blocks: Vec<(Vec<u8>, Vec<usize>, u64, Vec<JsonOp>)>,
+    blocks: Vec<SimBlock>,
 }
 
 impl Sim {
@@ -13,19 +20,28 @@ impl Sim {
     }
 
     fn write(&mut self, parents: &[usize], ops: Vec<JsonOp>) -> usize {
-        let priority = 1 + parents.iter().map(|&p| self.blocks[p].2).max().unwrap_or(0);
-        let parent_ids: Vec<Vec<u8>> = parents.iter().map(|&p| self.blocks[p].0.clone()).collect();
+        let priority = 1 + parents
+            .iter()
+            .map(|&p| self.blocks[p].priority)
+            .max()
+            .unwrap_or(0);
+        let parent_ids: Vec<Vec<u8>> = parents.iter().map(|&p| self.blocks[p].id.clone()).collect();
         let id = block_id(priority, &parent_ids, &encode_ops(&ops).unwrap());
-        self.blocks.push((id, parents.to_vec(), priority, ops));
+        self.blocks.push(SimBlock {
+            id,
+            parents: parents.to_vec(),
+            priority,
+            ops,
+        });
         self.blocks.len() - 1
     }
 
     fn past(&self, block: usize) -> BTreeSet<Vec<u8>> {
         let mut past = BTreeSet::new();
-        let mut stack = self.blocks[block].1.clone();
+        let mut stack = self.blocks[block].parents.clone();
         while let Some(next) = stack.pop() {
-            if past.insert(self.blocks[next].0.clone()) {
-                stack.extend(self.blocks[next].1.iter().copied());
+            if past.insert(self.blocks[next].id.clone()) {
+                stack.extend(self.blocks[next].parents.iter().copied());
             }
         }
         past
@@ -36,10 +52,12 @@ impl Sim {
         let mut frontier = Frontier::default();
         let mut merged = BTreeSet::new();
         for &b in order {
-            assert!(self.blocks[b].1.iter().all(|p| merged.contains(p)));
+            assert!(self.blocks[b].parents.iter().all(|p| merged.contains(p)));
             let past = self.past(b);
-            let (id, _, priority, ops) = &self.blocks[b];
-            let delta = frontier.delta(ops, id, *priority, |block| past.contains(block));
+            let block = &self.blocks[b];
+            let delta = frontier.delta(&block.ops, &block.id, block.priority, |id| {
+                past.contains(id)
+            });
             frontier.compose(delta);
             frontier.settle();
             merged.insert(b);
@@ -102,7 +120,7 @@ fn one_path_resolves_by_priority_then_block_and_lists_the_loser() {
     let right = sim.write(&[root], vec![set(&["a"], json!("right"))]);
     let merged = sim.merge(&[root, left, right]);
     assert_eq!(view(&merged), view(&sim.merge(&[root, right, left])));
-    let winner = if sim.blocks[left].0 > sim.blocks[right].0 {
+    let winner = if sim.blocks[left].id > sim.blocks[right].id {
         "left"
     } else {
         "right"
@@ -154,7 +172,7 @@ fn a_type_clash_resolves_by_the_same_order_and_the_loser_takes_its_children() {
     let child = sim.write(&[root], vec![set(&["a", "c"], json!(2))]);
     let merged = sim.merge(&[root, value, child]);
     assert_eq!(view(&merged), view(&sim.merge(&[root, child, value])));
-    let expected = if sim.blocks[value].0 > sim.blocks[child].0 {
+    let expected = if sim.blocks[value].id > sim.blocks[child].id {
         json!({"a": 5})
     } else {
         json!({"a": {"c": 2}})
@@ -288,9 +306,9 @@ fn a_replay_of_the_whole_dag_matches_merging_it_block_by_block() {
             .iter()
             .map(|&b| ReplayBlock {
                 cid: cid(b),
-                parents: sim.blocks[b].1.iter().map(|&p| cid(p)).collect(),
-                priority: sim.blocks[b].2,
-                data: encode_ops(&sim.blocks[b].3).unwrap(),
+                parents: sim.blocks[b].parents.iter().map(|&p| cid(p)).collect(),
+                priority: sim.blocks[b].priority,
+                data: encode_ops(&sim.blocks[b].ops).unwrap(),
             })
             .collect(),
     )

@@ -9,6 +9,7 @@ use super::update::{increment_value, validate_pcounter_increment};
 use crate::error::{QueryError, Result};
 use crate::mapper::FieldOp;
 use defra_core::json_crdt::{JsonEdit, JsonOp};
+use serde_json::Value as JsonValue;
 
 /// Apply `op` to `field` of `doc`, whose current values it holds.
 pub(super) fn apply_op(
