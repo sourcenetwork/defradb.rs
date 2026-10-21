@@ -8,6 +8,7 @@ use super::create_conversions::json_to_normal_value_with_kind_and_time;
 use super::update::{increment_value, validate_pcounter_increment};
 use crate::error::{QueryError, Result};
 use crate::mapper::FieldOp;
+use defra_core::json_crdt::{JsonEdit, JsonOp};
 
 /// Apply `op` to `field` of `doc`, whose current values it holds.
 pub(super) fn apply_op(
@@ -20,6 +21,30 @@ pub(super) fn apply_op(
     let crdt = field_def.map(|f| f.crdt_type);
     let kind = field_def.map(|f| &f.kind);
     match op {
+        FieldOp::Set(value) if crdt.is_some_and(|c| c.is_json()) => {
+            doc.edit_json(
+                field.to_string(),
+                deep_set(&mut Vec::new(), doc.get(field), value),
+            );
+            Ok(())
+        }
+        FieldOp::JsonDelete(paths) => {
+            if !crdt.is_some_and(|c| c.is_json()) {
+                return Err(QueryError::execution(format!(
+                    "a list of keys deletes a path of a `@crdt(type: json)` field, and `{field}` \
+                     is not one"
+                )));
+            }
+            let ops = paths
+                .iter()
+                .map(|path| JsonOp {
+                    path: path.clone(),
+                    edit: JsonEdit::Delete,
+                })
+                .collect();
+            doc.edit_json(field.to_string(), ops);
+            Ok(())
+        }
         FieldOp::Set(value) => {
             // Two peers setting a counter at once would each add their own gap.
             if crdt.is_some_and(|c| c.is_counter()) {
@@ -52,6 +77,47 @@ pub(super) fn apply_op(
             }
             Ok(())
         }
+    }
+}
+
+/// The ops that set each leaf of `value` at its path below `path`, over
+/// `current`, the field's value. An object makes its path a map where it is
+/// not one yet, and sets its keys; any other value is set whole.
+fn deep_set(
+    path: &mut Vec<String>,
+    current: Option<&NormalValue>,
+    value: &JsonValue,
+) -> Vec<JsonOp> {
+    let current = current.and_then(document::json_value);
+    let mut ops = Vec::new();
+    deep_set_at(path, current.as_ref(), value, &mut ops);
+    ops
+}
+
+fn deep_set_at(
+    path: &mut Vec<String>,
+    current: Option<&JsonValue>,
+    value: &JsonValue,
+    ops: &mut Vec<JsonOp>,
+) {
+    let JsonValue::Object(map) = value else {
+        ops.push(JsonOp {
+            path: path.clone(),
+            edit: JsonEdit::Set(value.clone()),
+        });
+        return;
+    };
+    let current = current.and_then(JsonValue::as_object);
+    if current.is_none() {
+        ops.push(JsonOp {
+            path: path.clone(),
+            edit: JsonEdit::Map,
+        });
+    }
+    for (key, child) in map {
+        path.push(key.clone());
+        deep_set_at(path, current.and_then(|map| map.get(key)), child, ops);
+        path.pop();
     }
 }
 
