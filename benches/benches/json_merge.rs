@@ -9,9 +9,10 @@
 //! are the field's heads: one key set over the frontier, every entry in its
 //! past. `concurrent` is the same edit from a block that has not seen the
 //! last write, so the merge asks of each entry whether it is in the block's
-//! past. `read` materializes the field, and `conflicts` lists its losers;
-//! `replay` rebuilds the frontier from the whole DAG, as a time-travel read
-//! does.
+//! past. `rewrite_all` is the operand of one block setting every key, as a
+//! whole-value write that changes them all diffs into. `read` materializes
+//! the field, and `conflicts` lists its losers; `replay` rebuilds the
+//! frontier from the whole DAG, as a time-travel read does.
 
 use std::collections::BTreeSet;
 use std::hint::black_box;
@@ -76,6 +77,15 @@ fn merge(c: &mut Criterion) {
                 f.compose(f.delta(black_box(&edit), &id, keys as u64, |e| past.contains(e)));
                 black_box(f)
             })
+        });
+        let rewrite: Vec<JsonOp> = (0..keys)
+            .map(|n| JsonOp {
+                path: vec![format!("k{n}")],
+                edit: JsonEdit::Set(json!("rewritten")),
+            })
+            .collect();
+        group.bench_with_input(BenchmarkId::new("rewrite_all", keys), &frontier, |b, f| {
+            b.iter(|| black_box(f.local_delta(black_box(&rewrite), &id, keys as u64 + 1)))
         });
         group.bench_with_input(BenchmarkId::new("read", keys), &frontier, |b, f| {
             b.iter(|| black_box(f.materialize()))
