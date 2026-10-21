@@ -17,12 +17,14 @@ impl super::Planner {
     /// Returns `Some((IndexScanParams, index_provides_ordering))` if an index
     /// can be used, `None` otherwise. Tries filter-based selection first,
     /// then falls back to ordering-based selection (matching Go behavior).
+    /// Ordinary indexes drop logically deleted entries, so a select that
+    /// includes deleted documents cannot use them as its source.
     pub(in crate::planner) fn try_select_index(
         &self,
         select: &Select,
         collection: &CollectionVersion,
     ) -> Option<(IndexScanParams, bool)> {
-        if collection.indexes.is_empty() {
+        if select.show_deleted || collection.indexes.is_empty() {
             return None;
         }
 
