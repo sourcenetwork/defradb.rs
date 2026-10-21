@@ -1,0 +1,345 @@
+---- MODULE JsonCrdt ----
+\* The story, in plain words.
+\*
+\* A JSON field holds a small tree of maps, lists and plain values, and many
+\* peers edit it at once. Every edit is one block in the document's DAG. A
+\* block knows every block its author had seen (its causal past) and says one
+\* thing about one path in the tree: "set this path to a value", "set it to
+\* an empty map {}", "set it to an empty list []", or "delete this path".
+\*
+\* Each path is its own register, so edits to different paths never touch.
+\* When edits to one path race, the one with the higher priority (the DAG
+\* height) wins, and the block ID (the CID) breaks a tie. The losers are not
+\* thrown away: a conflicts query lists them.
+\*
+\* Edits at different depths meet in two ways:
+\*   * An edit to a path wipes out the edits below it that it had seen. Setting
+\*     "a" to 5 removes the old "a.b"; deleting "a" removes it too.
+\*   * An edit below a path it had not seen survives. If Alice deletes "a"
+\*     while Bob, at the same time, sets "a.b" to 1, Bob's edit stays, and
+\*     "a" comes back as a map holding it. An update beats a concurrent delete.
+\*     If Alice had set "a" to 5 instead, "a" can't be both 5 and a map:
+\*     Alice's 5 and Bob's implied map race like any two edits to "a", and the
+\*     loser takes its children with it.
+\*
+\* Example: "a" and "a.b" are empty. Alice deletes "a"; Bob sets "a.b" to 1,
+\* neither having seen the other. Every peer ends with {"a": {"b": 1}}, and
+\* the conflicts query at "a" lists Alice's delete.
+\*
+\* What must never happen:
+\*   * two peers holding the same blocks show different JSON or conflicts;
+\*   * a peer's JSON, built one block at a time, differs from reading its
+\*     blocks from scratch;
+\*   * an edit vanishes when nothing else touched its path or the paths
+\*     above and below it;
+\*   * edits racing on one path end anywhere but at the highest priority,
+\*     then the highest CID;
+\*   * a concurrent delete above an edit removes it;
+\*   * a type clash resolves other than by that same order;
+\*   * the conflicts query lists anything but the racing edits that lost.
+\*
+\* Code this models (defradb.rs). The JSON CRDT is not written yet: this model
+\* is its contract (issue #2129), and these are the files it will live in:
+\*   crates/crdt/src/json.rs                       the per-path registers: the
+\*                                                 frontier of racing edits,
+\*                                                 the winner, the conflicts
+\*   crates/db/src/merge/merge_handler/json.rs     applies a received JSON block
+\*                                                 once its parents are merged
+\*
+\* Correspondence table (model -> planned Rust):
+\*   Create        json.rs: a write turns a JSON value into one op per path and
+\*                 emits a block whose parents are the field's heads
+\*   Deliver       merge_handler/json.rs: a received block is merged once every
+\*                 parent block is local (the DAG sync's causal buffer)
+\*   Apply         json.rs: add the op to its path's frontier, drop the edits
+\*                 it saw at that path and below, refresh the winners
+\*   front         json.rs: each path's frontier, the edits that no later edit
+\*                 of the same path or of a path above has seen
+\*   win           json.rs: each path's current winner among its own edits
+\*   Beats         json.rs: priority, then CID
+\*   Winner, Doc   json.rs: reading the JSON from the frontiers
+\*   Conflicts     json.rs: the conflicts query
+\*   SpecDoc       the same JSON read straight from a set of blocks, with no
+\*                 incremental state; no Rust counterpart
+
+EXTENDS Naturals, FiniteSets
+
+CONSTANTS
+  Peers,       \* the peers editing one JSON field
+  MaxBlocks,   \* how many edit blocks may be written in all, so the model stays finite
+  UseCid,      \* TRUE: a priority tie is broken by the CID (the design)
+  DeleteWins   \* TRUE: a delete beats a concurrent edit below it (the RED)
+
+VARIABLES
+  blocks,   \* the blocks written so far; the index is the block ID
+  nblocks,  \* how many blocks have been written
+  known,    \* for each peer, the IDs of the blocks it has merged
+  front,    \* for each peer and path, the frontier of edits to that path
+  win       \* for each peer and path, the winner among that path's own edits, or 0
+
+\* Every variable, for "nothing changed".
+vars == <<blocks, nblocks, known, front, win>>
+
+\* The paths of a small JSON tree: "a", "a.b" under it, and "c" beside them.
+Paths == {"a", "ab", "c"}
+
+\* The path one level up; the root is the document's own map.
+Parent(p) == IF p = "ab" THEN "a" ELSE "root"
+
+\* Whether path p is strictly above path q.
+Above(p, q) == p = "a" /\ q = "ab"
+
+\* The paths strictly below p.
+Below(p) == {q \in Paths : Above(p, q)}
+
+\* Whether p and q are one path, or one sits above the other.
+Related(p, q) == p = q \/ Above(p, q) \/ Above(q, p)
+
+\* What an edit does: set a plain value, set {}, set [], or delete.
+Kinds == {"value", "map", "list", "delete"}
+
+\* The IDs blocks may take. A real CID is a hash; here it is a number handed
+\* out in the order blocks are written. The model tries every order of writes,
+\* so two concurrent blocks get their IDs both ways round.
+Ids == 1..MaxBlocks
+
+\* What a path reads as. A plain value is shown as the ID of the block that
+\* set it, so two different values never look alike.
+Absent == 0     \* the path is not there
+MapVal == 100   \* the path holds a map
+ListVal == 101  \* the path holds a list
+
+\* A slot for a block not written yet.
+NoBlock == [author |-> "none", path |-> "none", kind |-> "none", past |-> {}, prio |-> 0]
+
+\* Shorthands for a block's fields, by ID.
+PathOf(b) == blocks[b].path   \* the path it edits
+KindOf(b) == blocks[b].kind   \* what it does there
+Past(b) == blocks[b].past     \* the blocks its author had seen
+Prio(b) == blocks[b].prio     \* its priority: one more than the highest it saw
+
+\* Two blocks race when neither author had seen the other's block.
+Concurrent(x, y) == x # y /\ x \notin Past(y) /\ y \notin Past(x)
+
+\* Block x beats block y: higher priority, or the same priority and a higher
+\* CID. With UseCid off (the RED) a tie beats nothing.
+Beats(x, y) ==
+  \/ Prio(x) > Prio(y)                              \* higher priority wins
+  \/ UseCid /\ Prio(x) = Prio(y) /\ x > y           \* a tie goes to the higher CID
+
+\* The block in s that nothing else in s beats, or 0 for an empty s. With
+\* the CID tiebreak there is exactly one; without it, ties pick one.
+Best(s) == IF s = {} THEN 0 ELSE CHOOSE x \in s : \A y \in s : ~Beats(y, x)
+
+\* The highest number in a set of numbers, 0 for none.
+Max(s) == IF s = {} THEN 0 ELSE CHOOSE m \in s : \A n \in s : n <= m
+
+\* What block b says about path p: its own edit if it edits p, and "p is a
+\* map" if it edits a path below p.
+KindAt(b, p) == IF PathOf(b) = p THEN KindOf(b) ELSE "map"
+
+\* What a winning block makes path p read as.
+ValueOf(b, p) ==
+  CASE KindAt(b, p) = "value"  -> b         \* the plain value it set
+    [] KindAt(b, p) = "map"    -> MapVal    \* a map
+    [] KindAt(b, p) = "list"   -> ListVal   \* a list
+    [] KindAt(b, p) = "delete" -> Absent    \* gone
+
+\* The winner at path p, read from frontiers f and own-edit winners w. The
+\* edits below p each say "p is a map". When any exist, a delete of p can't
+\* win (an update beats a concurrent delete), so the race is between p's
+\* other edits and those implied maps. With no edits below, p's own winner
+\* stands. In the RED, deletes stay in the race.
+Winner(f, w, p) ==
+  LET below == UNION {f[q] : q \in Below(p)}                  \* edits below p
+      own == IF DeleteWins THEN f[p]                          \* RED: deletes race too
+             ELSE {b \in f[p] : KindOf(b) # "delete"}         \* design: deletes sit out
+  IN IF below = {} THEN w[p]                                  \* nothing below: own winner
+     ELSE Best(own \cup below)                                \* else everything races
+
+\* What path p reads as on its own, before looking above it.
+NodeVal(f, w, p) ==
+  LET b == Winner(f, w, p)                     \* the winning edit
+  IN IF b = 0 THEN Absent ELSE ValueOf(b, p)   \* none: absent; else its value
+
+\* The JSON: each path's value, absent when the path above isn't a map.
+DocOf(f, w) ==
+  [p \in Paths |->
+     IF Parent(p) # "root" /\ NodeVal(f, w, Parent(p)) # MapVal
+       THEN Absent                             \* the parent isn't a map: no child
+       ELSE NodeVal(f, w, p)]                  \* otherwise its own value
+
+\* The conflicts at path p: every edit in the race that lost to the winner
+\* without having been seen by it, except implied maps losing to a map (they
+\* agree, so nothing was dropped).
+ConflictsOf(f, w, p) ==
+  LET b == Winner(f, w, p)                                   \* the winner
+      racers == f[p] \cup UNION {f[q] : q \in Below(p)}      \* p's edits and those below
+  IN IF b = 0 THEN {}                                        \* no winner, no conflict
+     ELSE {c \in racers :
+             /\ Concurrent(c, b)                             \* it raced the winner
+             /\ ~(KindAt(c, p) = "map" /\ KindAt(b, p) = "map")} \* and said something else
+
+\* The conflicts query at every path.
+AllConflicts(f, w) == [p \in Paths |-> ConflictsOf(f, w, p)]
+
+\* A peer's JSON and conflicts, from its incremental state.
+Doc(n) == DocOf(front[n], win[n])
+Conf(n) == AllConflicts(front[n], win[n])
+
+\* ---- The same, read straight from a set of blocks k ----
+
+\* Block b was seen by a later edit of its own path: superseded.
+Superseded(k, b) == \E y \in k : PathOf(y) = PathOf(b) /\ b \in Past(y)
+
+\* Block b was seen by an edit of a path above it: wiped out.
+Wiped(k, b) == \E x \in k : Above(PathOf(x), PathOf(b)) /\ b \in Past(x)
+
+\* The frontier of path p in k: its edits nothing later has seen.
+SpecFront(k) == [p \in Paths |->
+                   {b \in k : PathOf(b) = p /\ ~Superseded(k, b) /\ ~Wiped(k, b)}]
+
+\* Each path's own winner in k.
+SpecWin(k) == [p \in Paths |-> Best(SpecFront(k)[p])]
+
+\* The JSON and conflicts that the blocks k say, read from scratch.
+SpecDoc(k) == DocOf(SpecFront(k), SpecWin(k))
+SpecConf(k) == AllConflicts(SpecFront(k), SpecWin(k))
+
+\* ---- Behaviour ----
+
+\* The kinds of value each variable may hold.
+TypeOK ==
+  /\ nblocks \in 0..MaxBlocks                                 \* within the allowance
+  /\ \A n \in Peers : known[n] \subseteq 1..nblocks           \* only written blocks
+  /\ \A n \in Peers : \A p \in Paths : front[n][p] \subseteq known[n]   \* frontiers hold merged blocks
+  /\ \A n \in Peers : \A p \in Paths : win[n][p] \in {0} \cup front[n][p] \* a winner is on the frontier
+
+\* At the start nothing is written and nobody holds anything.
+Init ==
+  /\ blocks = [i \in Ids |-> NoBlock]                    \* every slot empty
+  /\ nblocks = 0                                         \* no block yet
+  /\ known = [n \in Peers |-> {}]                        \* nobody merged anything
+  /\ front = [n \in Peers |-> [p \in Paths |-> {}]]      \* every frontier empty
+  /\ win = [n \in Peers |-> [p \in Paths |-> 0]]         \* no winner anywhere
+
+\* Peer n merges block b: it joins its path's frontier, and
+\* the edits it had seen leave that frontier and every frontier below. A path
+\* keeps its winner unless the new block beats it or the winner just left;
+\* then the best of what remains takes over.
+Apply(n, b) ==
+  LET p == PathOf(b)                                          \* the path b edits
+      f == [q \in Paths |->
+              IF q = p THEN (front[n][q] \ Past(b)) \cup {b}  \* b joins, what it saw leaves
+              ELSE IF Above(p, q) THEN front[n][q] \ Past(b)  \* below: what it saw is wiped
+              ELSE front[n][q]]                               \* elsewhere: untouched
+      old == win[n]                                           \* the winners before
+      w == [q \in Paths |->
+              IF old[q] \notin f[q] THEN Best(f[q])           \* winner gone: best remaining
+              ELSE IF q = p /\ Beats(b, old[q]) THEN b        \* b beats it: b
+              ELSE old[q]]                                    \* otherwise it stays
+  IN /\ known' = [known EXCEPT ![n] = @ \cup {b}]             \* n now holds b
+     /\ front' = [front EXCEPT ![n] = f]                      \* its new frontiers
+     /\ win' = [win EXCEPT ![n] = w]                          \* its new winners
+
+\* Peer n writes a new block: an edit of kind k at path p, having seen every
+\* block it holds. It merges the block itself through Deliver, and writes
+\* nothing else until it has, as a real author merges its own edit at once.
+Create(n, p, k) ==
+  LET b == nblocks + 1                                        \* the next ID
+  IN /\ nblocks < MaxBlocks                                   \* within the allowance
+     /\ \A x \in 1..nblocks : blocks[x].author = n => x \in known[n] \* its own blocks are merged
+     /\ blocks' = [blocks EXCEPT ![b] =
+                    [author |-> n, path |-> p, kind |-> k, past |-> known[n],
+                     prio |-> 1 + Max({Prio(x) : x \in known[n]})]] \* one above anything it saw
+     /\ nblocks' = b                                          \* one more block
+     /\ UNCHANGED <<known, front, win>>
+
+\* Peer n receives block b, once it holds every block b's author had seen.
+Deliver(n, b) ==
+  /\ b \in 1..nblocks              \* b has been written
+  /\ b \notin known[n]             \* n doesn't hold it yet
+  /\ Past(b) \subseteq known[n]    \* the causal buffer: its past is merged
+  /\ Apply(n, b)                   \* merge it
+  /\ UNCHANGED <<blocks, nblocks>>
+
+\* Every block is written and every peer holds them all.
+Done == nblocks = MaxBlocks /\ \A n \in Peers : known[n] = 1..nblocks
+
+\* One step: a peer writes a block or receives one. Once everything is
+\* written and delivered nothing more happens, which is not a deadlock.
+Next ==
+  \/ \E n \in Peers, p \in Paths, k \in Kinds : Create(n, p, k)  \* someone edits
+  \/ \E n \in Peers, b \in Ids : Deliver(n, b)                    \* someone receives
+  \/ Done /\ UNCHANGED vars                                       \* or all is settled
+
+\* The whole behaviour: start, then any sequence of steps.
+Spec == Init /\ [][Next]_vars
+
+\* ---- What must hold ----
+
+\* The value block b sets at its own path.
+OwnVal(b) == ValueOf(b, PathOf(b))
+
+\* The blocks of k on path p's line: p itself and the paths above and below.
+Line(k, p) == {b \in k : Related(PathOf(b), p)}
+
+\* Two peers holding the same blocks show the same JSON and the same conflicts.
+INV_Converge ==
+  \A n, m \in Peers : known[n] = known[m] => (Doc(n) = Doc(m) /\ Conf(n) = Conf(m))
+
+\* A peer's JSON and conflicts, built one block at a time, are what reading
+\* its blocks from scratch gives.
+INV_MatchesReplay ==
+  \A n \in Peers : Doc(n) = SpecDoc(known[n]) /\ Conf(n) = SpecConf(known[n])
+
+\* An edit that is alone on its line shows, whatever happens on other paths.
+INV_DisjointKept ==
+  \A n \in Peers : \A b \in known[n] :
+    Line(known[n], PathOf(b)) = {b} => Doc(n)[PathOf(b)] = OwnVal(b)
+
+\* When only one path's own edits are on its line, it reads as the edit with
+\* the highest priority, then the highest CID.
+INV_SamePathLww ==
+  \A n \in Peers : \A p \in Paths :
+    LET own == {b \in known[n] : PathOf(b) = p}      \* p's own edits
+        top == CHOOSE x \in own : \A y \in own : x = y \/ Prio(x) > Prio(y) \/ (Prio(x) = Prio(y) /\ x > y)
+    IN (own # {} /\ Line(known[n], p) = own) => Doc(n)[p] = OwnVal(top)
+
+\* A delete racing an edit below it, alone on their line, leaves the edit in
+\* place and the deleted path back as a map holding it.
+INV_UpdateWins ==
+  \A n \in Peers : \A x, b \in known[n] :
+    (/\ KindOf(x) = "delete"                      \* x deletes a path
+     /\ Above(PathOf(x), PathOf(b))               \* above b's path
+     /\ KindOf(b) # "delete"                      \* b is an update
+     /\ Concurrent(x, b)                          \* neither saw the other
+     /\ Line(known[n], PathOf(b)) = {x, b})       \* nothing else on the line
+    => (Doc(n)[PathOf(b)] = OwnVal(b) /\ Doc(n)[PathOf(x)] = MapVal)
+
+\* A plain value or a list set on a path, racing an edit below it, alone on
+\* their line: the higher priority, then CID, wins, and the loser's side goes.
+INV_TypeClash ==
+  \A n \in Peers : \A x, b \in known[n] :
+    (/\ KindOf(x) \in {"value", "list"}           \* x makes the path not a map
+     /\ Above(PathOf(x), PathOf(b))               \* above b's path
+     /\ KindOf(b) # "delete"                      \* b needs it to be a map
+     /\ Concurrent(x, b)                          \* neither saw the other
+     /\ Line(known[n], PathOf(b)) = {x, b})       \* nothing else on the line
+    => IF Prio(x) > Prio(b) \/ (Prio(x) = Prio(b) /\ x > b)
+         THEN Doc(n)[PathOf(x)] = OwnVal(x) /\ Doc(n)[PathOf(b)] = Absent  \* x wins
+         ELSE Doc(n)[PathOf(x)] = MapVal /\ Doc(n)[PathOf(b)] = OwnVal(b)  \* b wins
+
+\* The conflicts query never lists a path's winner or an edit the winner had
+\* seen, and lists every edit of that path that raced the winner and said
+\* something different.
+INV_ConflictsAreLosers ==
+  \A n \in Peers : \A p \in Paths :
+    LET b == Winner(front[n], win[n], p) IN
+    b # 0 =>                                                      \* a path with a winner
+    /\ b \notin Conf(n)[p]                                        \* never the winner
+    /\ \A c \in Conf(n)[p] : Concurrent(c, b)                     \* only racers
+    /\ \A c \in front[n][p] :                                     \* every racing own edit
+         (Concurrent(c, b) /\ ~(KindAt(c, p) = "map" /\ KindAt(b, p) = "map"))
+           => c \in Conf(n)[p]
+====
