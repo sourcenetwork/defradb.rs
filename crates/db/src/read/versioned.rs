@@ -766,8 +766,9 @@ impl<S: Store> VersionedFetcher<S> {
         let mut texts: RapidHashMap<&str, Vec<crdt::TextBlock>> = RapidHashMap::new();
         for (cid, block) in blocks {
             if let CrdtDelta::Text(payload) = &block.delta {
-                let ops = defra_core::TextOp::decode_all(&payload.data)
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
+                let ops = defra_core::TextEdits::decode(&payload.data)
+                    .map_err(|e| Error::Serialization(e.to_string()))?
+                    .ops;
                 texts
                     .entry(payload.field_name.as_str())
                     .or_default()

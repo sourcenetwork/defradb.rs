@@ -1,7 +1,7 @@
 //! A Text field's block carries edits, not a value.
 
 use defra_core::block::{CrdtDelta, TextDeltaPayload};
-use defra_core::TextOp;
+use defra_core::{TextEdits, TextOp};
 use document::{Document, NormalValue};
 use schema::CollectionVersion;
 
@@ -13,9 +13,10 @@ pub(crate) fn is_text(schema: &CollectionVersion, field: &str) -> bool {
         .any(|f| f.name == field && f.crdt_type.is_text())
 }
 
-/// The encoded ops of a Text field's block: the edits the write recorded, or,
+/// The encoded edits of a Text field's block: the ops the write recorded, or,
 /// without them, an insert of the whole value on create and a replacement of
-/// the whole text on update.
+/// the whole text on update. `value` is the text the ops leave, so its length
+/// is the block's.
 pub(crate) fn ops_bytes(
     doc: &Document,
     field: &str,
@@ -28,7 +29,12 @@ pub(crate) fn ops_bytes(
         None if is_create => TextOp::diff("", text),
         None => TextOp::replace_all(text),
     };
-    TextOp::encode_all(&ops).map_err(|error| error.to_string())
+    TextEdits {
+        ops,
+        len: text.chars().count() as u64,
+    }
+    .encode()
+    .map_err(|error| error.to_string())
 }
 
 pub(crate) fn delta(

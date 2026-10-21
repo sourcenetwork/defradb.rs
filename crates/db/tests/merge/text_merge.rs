@@ -235,3 +235,39 @@ async fn a_text_update_beside_another_field_keeps_both() {
         assert_eq!(node.body().await, text("final"));
     }
 }
+
+/// Several edits, deletes among them, reach both nodes before they edit at
+/// once: the merge replays from the last block both had, over placeholders
+/// for its text, and both nodes end at the same text with both edits kept.
+#[tokio::test]
+async fn concurrent_edits_after_a_synced_history_with_deletes_converge() {
+    let alice = Node::open().await;
+    let bob = Node::open().await;
+    let doc_id = alice.create("the quick brown fox").await;
+    for head in alice.heads(&doc_id).await {
+        bob.receive(&alice, &doc_id, &head).await;
+    }
+    for (at, len, with) in [(4, 6, ""), (0, 3, "A"), (7, 0, " lazy"), (1, 1, "")] {
+        let mut step = edit(&doc_id);
+        step.replace_text("body", at, len, with);
+        let block = alice.update(step, &["body"]).await;
+        bob.receive(&alice, &doc_id, &block).await;
+    }
+    let synced = alice.body().await;
+    assert_eq!(bob.body().await, synced);
+    let synced = synced.as_str().unwrap().to_owned();
+
+    let mut front = edit(&doc_id);
+    front.insert_text("body", 0, "<<");
+    let from_alice = alice.update(front, &["body"]).await;
+    let mut back = edit(&doc_id);
+    back.insert_text("body", synced.chars().count() as u64, ">>");
+    back.delete_text("body", 0, 1);
+    let from_bob = bob.update(back, &["body"]).await;
+
+    alice.receive(&bob, &doc_id, &from_bob).await;
+    bob.receive(&alice, &doc_id, &from_alice).await;
+    let expected = format!("<<{}>>", &synced[1..]);
+    assert_eq!(alice.body().await, text(&expected));
+    assert_eq!(bob.body().await, text(&expected));
+}

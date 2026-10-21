@@ -26,7 +26,7 @@ pub use composite::{CompositeDAG, CompositeDelta, STATUS_ACTIVE, STATUS_DELETED}
 pub use counter::{Counter, CounterDelta, NumericKind};
 pub use lww::{Lww, LwwDelta};
 pub use priority::{decode_priority, encode_priority};
-pub use text::{replay as replay_text, TextBlock};
+pub use text::{merge_text, replay as replay_text, TextBlock};
 pub use traits::{Delta, MergeResult, ReplicatedData};
 
 #[cfg(test)]
