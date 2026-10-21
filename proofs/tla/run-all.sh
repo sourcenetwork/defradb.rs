@@ -98,6 +98,10 @@ RUNS=(
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
+  "MC_TextCrdt_Green.cfg TextCrdt.tla GREEN" # Text CRDT: same blocks same text, incremental equals replay, edits land at their position
+  "MC_TextCrdt_Red_ArrivalOrder.cfg TextCrdt.tla RED" # siblings ordered by arrival: peers with the same blocks differ (INV_Converge)
+  "MC_TextCrdt_Red_NoCausalBuffer.cfg TextCrdt.tla RED" # block merged before its parents: text differs from replay (INV_MatchesReplay)
+  "MC_TextCrdt_Red_CurrentText.cfg TextCrdt.tla RED" # position read in the receiver's text: character misplaced (INV_PlacedAsIntended)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)
