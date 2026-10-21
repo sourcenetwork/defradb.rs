@@ -12,8 +12,14 @@
 \* admission tasks (taking expectations, concurrently with the endpoint
 \* task), and time (closing the reply window).
 \*
+\* The connection's mux version decides where those replies go. On mux 0.2
+\* both sides reply on the request's own stream, so a reply stream on a 0.2
+\* connection answers nothing and is refused. On mux 0.1, an older peer
+\* replies on a new stream, and the expectations decide.
+\*
 \* What must never happen: a reply stream is admitted when no reply is owed,
-\* or a reply that is owed is refused.
+\* a reply stream is admitted on a 0.2 connection, or a reply that is owed is
+\* refused.
 \*
 \* Matching is per peer and reply tag, the keys the stream tag and the
 \* connection give before the body is read. Which request a reply answers is
@@ -28,7 +34,9 @@
 \*   solicited.rs          Solicited::take   (Admit)
 \*   solicited.rs          Solicited::prune  (Prune)
 \*   endpoint_commands.rs  the SE query, manage and manage query request arms (expect, then send)
-\*   endpoint_streams.rs   admit_stream      (take before reading the length)
+\*   endpoint_streams.rs   admit_stream      (refuse on 0.2, else take before reading the length)
+\*   endpoint_streams.rs   dispatch_stream   (a 0.2 request carries its stream as the reply token)
+\*   endpoint_rpc.rs       handle_reply_on_stream (the requester reads a 0.2 reply on the request stream)
 EXTENDS Naturals
 
 CONSTANTS
@@ -37,7 +45,10 @@ CONSTANTS
   TakeMode,   \* "Decrement" (admitting uses up one expectation) | "Keep"
   PruneMode,  \* "ExpiredSerial" | "ExpiredConcurrent" (prune may run between an expect's read and write) | "Any" (prune live entries too)
   SendMode,   \* "ExpectFirst" (expect, then send) | "SendFirst" (send, then expect)
-  ExpiredMode \* "Reset" (an expect drops an expired entry's leftovers) | "Carry"
+  ExpiredMode, \* "Reset" (an expect drops an expired entry's leftovers) | "Carry"
+  Mux,         \* the connection's mux version: "V1" (0.1) | "V2" (0.2)
+  ReplyMode,   \* where the peer replies on 0.2: "RequestStream" | "NewStream"
+  RespMode     \* what admission does with a reply stream on 0.2: "Refuse" | "Gate"
 
 \* The endpoint sends at least one request.
 ASSUME MaxReq \in Nat \ {0}
@@ -46,6 +57,9 @@ ASSUME TakeMode \in {"Decrement", "Keep"}
 ASSUME PruneMode \in {"ExpiredSerial", "ExpiredConcurrent", "Any"}
 ASSUME SendMode \in {"ExpectFirst", "SendFirst"}
 ASSUME ExpiredMode \in {"Reset", "Carry"}
+ASSUME Mux \in {"V1", "V2"}
+ASSUME ReplyMode \in {"RequestStream", "NewStream"}
+ASSUME RespMode \in {"Refuse", "Gate"}
 
 VARIABLES
   sent,        \* requests the endpoint has started
@@ -58,9 +72,10 @@ VARIABLES
   owed,        \* ghost: replies the peer still owes inside the window
   inflight,    \* honest replies on their way
   bad,         \* ghost: a reply stream was admitted when none was owed
-  refused      \* ghost: an owed honest reply was refused
+  refused,     \* ghost: an owed honest reply was refused
+  streamOnV2   \* ghost: a reply stream was admitted on a 0.2 connection
 
-vars == <<sent, entry, count, live, nextId, expecting, seen, owed, inflight, bad, refused>>
+vars == <<sent, entry, count, live, nextId, expecting, seen, owed, inflight, bad, refused, streamOnV2>>
 
 TypeOK ==
   /\ sent \in 0..MaxReq
@@ -74,6 +89,7 @@ TypeOK ==
   /\ inflight \in 0..MaxReq
   /\ bad \in BOOLEAN
   /\ refused \in BOOLEAN
+  /\ streamOnV2 \in BOOLEAN
 
 \* Nothing sent, nothing expected, nothing owed.
 Init ==
@@ -88,6 +104,7 @@ Init ==
   /\ inflight = 0
   /\ bad = FALSE
   /\ refused = FALSE
+  /\ streamOnV2 = FALSE
 
 \* The request goes out: from now on the peer owes a reply.
 SendRequest ==
@@ -105,7 +122,7 @@ ExpectRead ==
   /\ IF SendMode = "SendFirst"
      THEN SendRequest
      ELSE UNCHANGED <<owed, inflight>>
-  /\ UNCHANGED <<entry, count, live, nextId, bad, refused>>
+  /\ UNCHANGED <<entry, count, live, nextId, bad, refused, streamOnV2>>
 
 \* The expect writes: it adds one to the entry it read and moves its deadline
 \* on, or inserts a new entry if it found none. An entry whose deadline has
@@ -132,7 +149,7 @@ ExpectWrite ==
   /\ IF SendMode = "ExpectFirst"
      THEN SendRequest
      ELSE UNCHANGED <<owed, inflight>>
-  /\ UNCHANGED <<sent, seen, bad, refused>>
+  /\ UNCHANGED <<sent, seen, bad, refused, streamOnV2>>
 
 \* Time passes the entry's deadline. The requester has given up, so nothing
 \* is owed any more; replies still on their way arrive late.
@@ -140,7 +157,7 @@ Expire ==
   /\ live
   /\ live' = FALSE
   /\ owed' = 0
-  /\ UNCHANGED <<sent, entry, count, nextId, expecting, seen, inflight, bad, refused>>
+  /\ UNCHANGED <<sent, entry, count, nextId, expecting, seen, inflight, bad, refused, streamOnV2>>
 
 \* The endpoint task removes the entry. Only an expired one, unless the mode
 \* plants the bug; and never between its own expect's read and write, since
@@ -152,29 +169,38 @@ Prune ==
   /\ entry' = 0
   /\ count' = 0
   /\ live' = FALSE
-  /\ UNCHANGED <<sent, nextId, expecting, seen, owed, inflight, bad, refused>>
+  /\ UNCHANGED <<sent, nextId, expecting, seen, owed, inflight, bad, refused, streamOnV2>>
 
-\* Admission's check: a live entry with an expectation left.
+\* Admission's check: not a 0.2 connection, and a live entry with an
+\* expectation left.
 Accepts ==
-  MatchMode = "NoMatch" \/ (entry # 0 /\ live /\ count > 0)
+  /\ Mux = "V1" \/ RespMode = "Gate"
+  /\ MatchMode = "NoMatch" \/ (entry # 0 /\ live /\ count > 0)
 
 \* A reply stream arrives. Admitted: it uses up an expectation, and is a bug
-\* if no reply was owed. Refused: a bug if it was an owed honest reply.
+\* if no reply was owed or the connection is 0.2. Refused: a bug if it was an
+\* owed honest reply.
 Admit(honest) ==
   /\ IF Accepts
      THEN /\ count' = IF TakeMode = "Decrement" /\ count > 0 THEN count - 1 ELSE count
           /\ bad' = (bad \/ owed = 0)
           /\ owed' = IF owed > 0 THEN owed - 1 ELSE 0
+          /\ streamOnV2' = (streamOnV2 \/ Mux = "V2")
           /\ UNCHANGED refused
      ELSE /\ refused' = (refused \/ (honest /\ owed > 0))
-          /\ UNCHANGED <<count, bad, owed>>
+          /\ UNCHANGED <<count, bad, owed, streamOnV2>>
   /\ UNCHANGED <<sent, entry, live, nextId, expecting, seen>>
 
-\* The peer's reply to one of our requests arrives.
+\* The peer's reply to one of our requests arrives. On 0.2 it comes back on
+\* the request's own stream, which only that request reads: it is handled
+\* while owed, and after the window the requester has stopped reading.
 HonestReply ==
   /\ inflight > 0
   /\ inflight' = inflight - 1
-  /\ Admit(TRUE)
+  /\ IF Mux = "V2" /\ ReplyMode = "RequestStream"
+     THEN /\ owed' = IF owed > 0 THEN owed - 1 ELSE 0
+          /\ UNCHANGED <<sent, entry, count, live, nextId, expecting, seen, bad, refused, streamOnV2>>
+     ELSE Admit(TRUE)
 
 \* A reply stream nobody asked for, or a second reply to one request.
 ForgedReply ==
@@ -199,4 +225,7 @@ INV_NoUnsolicitedAdmitted == ~bad
 
 \* A reply the peer owes, inside its window, is never refused.
 INV_SolicitedAdmitted == ~refused
+
+\* On a 0.2 connection no reply stream is admitted, owed or not.
+INV_NoReplyStreamOnV2 == ~streamOnV2
 ====

@@ -622,9 +622,9 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Iroh solicited replies",
-        name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted",
+        name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,
-        anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take, Solicited::prune; crates/p2p/src/iroh/endpoint_streams.rs admit_stream; crates/p2p/src/iroh/endpoint_commands.rs handle_command",
+        anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take, Solicited::prune; crates/p2p/src/iroh/endpoint_streams.rs admit_stream, dispatch_stream; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/endpoint_rpc.rs handle_reply_on_stream",
         model_ref: "MC_SolicitedReplies_Green.cfg",
         tiers: &[Boundary],
     },

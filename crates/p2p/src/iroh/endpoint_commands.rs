@@ -16,8 +16,8 @@ use super::command::IrohCommand;
 use super::endpoint::{peer_direct_addr, spawn_task, ActiveSync, EndpointResources, RawTopics};
 use super::endpoint_rpc::{
     close_peer_connections, connect_mux, handle_block_sync, handle_car_request_response,
-    handle_fire_and_forget, handle_request_response, handle_two_stream_request,
-    remember_connection, BlockSyncResources,
+    handle_fire_and_forget, handle_reply_on_stream, handle_request_response,
+    handle_two_stream_request, remember_connection, BlockSyncResources,
 };
 use super::endpoint_streams::ConnectionStreamContext;
 use super::gossip::{AddrInfo, EventSender, Network};
@@ -406,23 +406,27 @@ pub(super) async fn handle_command(
             request,
             reply,
         } => {
+            // An older peer replies on a stream of its own.
             expect_reply(resources, &peer_id, protocols::STREAM_SE_QUERY_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
             let admission = Arc::clone(&resources.admission);
+            let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_fire_and_forget(
+                handle_reply_on_stream(
                     &endpoint,
-                    &peer_id,
+                    peer_id,
                     protocols::STREAM_SE_QUERY_REQ,
                     &request,
                     direct_addr,
                     &connection_cache,
                     &admission,
+                    &event_tx,
+                    reply,
+                    |peer_id, reply| TransportEvent::SEQueryReply { peer_id, reply },
                 )
                 .await;
-                let _ = reply.send(result);
             });
         }
         IrohCommand::SendSEQueryResponse {
@@ -453,23 +457,27 @@ pub(super) async fn handle_command(
             request,
             reply,
         } => {
+            // An older peer replies on a stream of its own.
             expect_reply(resources, &peer_id, protocols::STREAM_MANAGE_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
             let admission = Arc::clone(&resources.admission);
+            let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_fire_and_forget(
+                handle_reply_on_stream(
                     &endpoint,
-                    &peer_id,
+                    peer_id,
                     protocols::STREAM_MANAGE_REQ,
                     &request,
                     direct_addr,
                     &connection_cache,
                     &admission,
+                    &event_tx,
+                    reply,
+                    |peer_id, reply| TransportEvent::ManageReply { peer_id, reply },
                 )
                 .await;
-                let _ = reply.send(result);
             });
         }
         IrohCommand::SendManageResponse {
@@ -500,23 +508,27 @@ pub(super) async fn handle_command(
             request,
             reply,
         } => {
+            // An older peer replies on a stream of its own.
             expect_reply(resources, &peer_id, protocols::STREAM_MANAGE_QUERY_RESP);
             let direct_addr = peer_direct_addr(peer_map, &peer_id);
             let endpoint = endpoint.clone();
             let connection_cache = Arc::clone(connection_cache);
             let admission = Arc::clone(&resources.admission);
+            let event_tx = event_tx.clone();
             let _ = spawn_task(spawned_tasks, async move {
-                let result = handle_fire_and_forget(
+                handle_reply_on_stream(
                     &endpoint,
-                    &peer_id,
+                    peer_id,
                     protocols::STREAM_MANAGE_QUERY_REQ,
                     &request,
                     direct_addr,
                     &connection_cache,
                     &admission,
+                    &event_tx,
+                    reply,
+                    |peer_id, reply| TransportEvent::ManageQueryReply { peer_id, reply },
                 )
                 .await;
-                let _ = reply.send(result);
             });
         }
         IrohCommand::SendManageQueryResponse {

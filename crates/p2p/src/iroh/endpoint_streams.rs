@@ -172,6 +172,8 @@ pub(super) async fn handle_connection_streams(
     context: ConnectionStreamContext,
 ) {
     let peer_id = endpoint_id_to_peer_id(&remote_id);
+    // On mux 0.2 every reply goes back on its request's stream.
+    let replies_on_stream = connection.alpn() == protocols::ALPN_MUX;
 
     while let Ok((send, mut recv)) = connection.accept_bi().await {
         let peer_id = peer_id.clone();
@@ -187,6 +189,7 @@ pub(super) async fn handle_connection_streams(
                 &inbound_budget,
                 &share,
                 &solicited,
+                replies_on_stream,
                 remote_id,
                 &peer_id,
             )
@@ -215,6 +218,7 @@ pub(super) async fn handle_connection_streams(
                 lease,
                 &event_tx,
                 node_identity.as_deref(),
+                replies_on_stream,
             )
             .await
             {
@@ -238,14 +242,16 @@ pub(super) async fn handle_connection_streams(
 }
 
 /// Read a stream's tag and length, then wait for room for its body. Resets
-/// the stream instead when the tag is unknown, is a reply nobody asked this
-/// peer for, the message is too large for its tag, or no room frees up
-/// before the deadline.
+/// the stream instead when the tag is unknown, is a reply stream on a
+/// connection whose replies use their request's stream, is a reply nobody
+/// asked this peer for, the message is too large for its tag, or no room
+/// frees up before the deadline.
 async fn admit_stream(
     recv: &mut iroh::endpoint::RecvStream,
     budget: &InboundBudget,
     share: &ConnectionShare,
     solicited: &Solicited,
+    replies_on_stream: bool,
     remote_id: EndpointId,
     peer_id: &PeerId,
 ) -> Option<(&'static Service, Vec<u8>, InboundLease)> {
@@ -258,7 +264,7 @@ async fn admit_stream(
         let _ = recv.stop(RESET_UNKNOWN_SERVICE.into());
         return None;
     };
-    if service.solicited && !solicited.take(remote_id, service.tag) {
+    if service.solicited && (replies_on_stream || !solicited.take(remote_id, service.tag)) {
         debug!(peer_id = %peer_id, tag = %String::from_utf8_lossy(service.tag), "Reply stream with no request outstanding");
         let _ = recv.stop(RESET_UNSOLICITED.into());
         return None;
@@ -310,6 +316,7 @@ async fn dispatch_stream(
     lease: InboundLease,
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     node_identity: Option<&identity::RawIdentity>,
+    replies_on_stream: bool,
 ) -> crate::error::Result<()> {
     match tag {
         x if x == protocols::STREAM_IDENTITY => {
@@ -478,6 +485,7 @@ async fn dispatch_stream(
                     TransportEvent::SEQueryRequest {
                         peer_id: peer_id.clone(),
                         request,
+                        token: replies_on_stream.then_some(send),
                     },
                     Box::new(lease),
                 )
@@ -525,6 +533,7 @@ async fn dispatch_stream(
                     TransportEvent::ManageRequest {
                         peer_id: peer_id.clone(),
                         request,
+                        token: replies_on_stream.then_some(send),
                     },
                     Box::new(lease),
                 )
@@ -571,6 +580,7 @@ async fn dispatch_stream(
                     TransportEvent::ManageQueryRequest {
                         peer_id: peer_id.clone(),
                         request,
+                        token: replies_on_stream.then_some(send),
                     },
                     Box::new(lease),
                 )
@@ -610,7 +620,10 @@ async fn dispatch_stream(
     Ok(())
 }
 
-fn ensure_iroh_signed_sender(peer_id: &PeerId, sender_id: &str) -> crate::error::Result<()> {
+pub(super) fn ensure_iroh_signed_sender(
+    peer_id: &PeerId,
+    sender_id: &str,
+) -> crate::error::Result<()> {
     if sender_id == peer_id.as_str() {
         Ok(())
     } else {
@@ -621,7 +634,7 @@ fn ensure_iroh_signed_sender(peer_id: &PeerId, sender_id: &str) -> crate::error:
     }
 }
 
-fn verify_iroh_message<M>(msg: &M) -> crate::error::Result<()>
+pub(super) fn verify_iroh_message<M>(msg: &M) -> crate::error::Result<()>
 where
     M: Message + serde::Serialize + Clone,
 {

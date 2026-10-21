@@ -535,8 +535,12 @@ impl P2PTransport for IrohTransport {
     async fn send_se_query_response(
         &self,
         peer_id: &PeerId,
+        token: Option<Self::ResponseToken>,
         reply_msg: QuerySEArtifactsReply,
     ) -> Result<()> {
+        if let Some(send_stream) = token {
+            return reply_on_stream(send_stream, &reply_msg).await;
+        }
         self.send_command(|reply| IrohCommand::SendSEQueryResponse {
             peer_id: peer_id.clone(),
             reply_msg,
@@ -554,7 +558,15 @@ impl P2PTransport for IrohTransport {
         .await
     }
 
-    async fn send_manage_response(&self, peer_id: &PeerId, reply_msg: ManageReply) -> Result<()> {
+    async fn send_manage_response(
+        &self,
+        peer_id: &PeerId,
+        token: Option<Self::ResponseToken>,
+        reply_msg: ManageReply,
+    ) -> Result<()> {
+        if let Some(send_stream) = token {
+            return reply_on_stream(send_stream, &reply_msg).await;
+        }
         self.send_command(|reply| IrohCommand::SendManageResponse {
             peer_id: peer_id.clone(),
             reply_msg,
@@ -579,8 +591,12 @@ impl P2PTransport for IrohTransport {
     async fn send_manage_query_response(
         &self,
         peer_id: &PeerId,
+        token: Option<Self::ResponseToken>,
         reply_msg: ManageQueryReply,
     ) -> Result<()> {
+        if let Some(send_stream) = token {
+            return reply_on_stream(send_stream, &reply_msg).await;
+        }
         self.send_command(|reply| IrohCommand::SendManageQueryResponse {
             peer_id: peer_id.clone(),
             reply_msg,
@@ -704,6 +720,16 @@ fn no_reply_stream(kind: &str) -> crate::error::Error {
     crate::error::Error::Transport(format!(
         "an Iroh {kind} reply goes on its request's stream, and this one has none"
     ))
+}
+
+async fn reply_on_stream<T>(mut send_stream: iroh::endpoint::SendStream, reply: &T) -> Result<()>
+where
+    T: serde::Serialize,
+{
+    super::protocols::write_message(&mut send_stream, reply).await?;
+    send_stream
+        .finish()
+        .map_err(|e| Error::Transport(format!("failed to finish stream: {e}")))
 }
 
 #[cfg(test)]
@@ -866,14 +892,19 @@ mod tests {
             .await
             .unwrap();
 
-        let received_request = loop {
+        let (received_request, token) = loop {
             let event = timeout(Duration::from_secs(5), events1.recv())
                 .await
                 .expect("timed out waiting for SE query request")
                 .expect("iroh event channel closed");
-            if let TransportEvent::SEQueryRequest { peer_id, request } = event {
+            if let TransportEvent::SEQueryRequest {
+                peer_id,
+                request,
+                token,
+            } = event
+            {
                 assert_eq!(peer_id, *transport0.local_peer_id());
-                break request;
+                break (request, token);
             }
         };
         assert_eq!(received_request.message_id, request_message_id);
@@ -889,7 +920,7 @@ mod tests {
             QuerySEArtifactsReply::success(&request_message_id, vec!["doc1".into(), "doc2".into()]);
         sign_with_transport(&transport1, &mut reply).unwrap();
         transport1
-            .send_se_query_response(transport0.local_peer_id(), reply)
+            .send_se_query_response(transport0.local_peer_id(), token, reply)
             .await
             .unwrap();
 

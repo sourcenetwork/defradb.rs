@@ -215,6 +215,8 @@ pub enum TransportEvent<ResponseToken> {
     SEQueryRequest {
         peer_id: PeerId,
         request: QuerySEArtifactsRequest,
+        /// The request's stream, when the reply goes back on it.
+        token: Option<ResponseToken>,
     },
     SEQueryReply {
         peer_id: PeerId,
@@ -223,6 +225,8 @@ pub enum TransportEvent<ResponseToken> {
     ManageRequest {
         peer_id: PeerId,
         request: ManageRequest,
+        /// The request's stream, when the reply goes back on it.
+        token: Option<ResponseToken>,
     },
     ManageReply {
         peer_id: PeerId,
@@ -231,6 +235,8 @@ pub enum TransportEvent<ResponseToken> {
     ManageQueryRequest {
         peer_id: PeerId,
         request: ManageQueryRequest,
+        /// The request's stream, when the reply goes back on it.
+        token: Option<ResponseToken>,
     },
     ManageQueryReply {
         peer_id: PeerId,
@@ -488,9 +494,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
+    /// Replies on the request's stream when its event carried one, otherwise
+    /// on a stream of its own.
     async fn send_se_query_response(
         &self,
         _peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
         _reply: QuerySEArtifactsReply,
     ) -> Result<()> {
         Err(crate::error::Error::Transport(
@@ -504,7 +513,14 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
-    async fn send_manage_response(&self, _peer_id: &PeerId, _reply: ManageReply) -> Result<()> {
+    /// Replies on the request's stream when its event carried one, otherwise
+    /// on a stream of its own.
+    async fn send_manage_response(
+        &self,
+        _peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
+        _reply: ManageReply,
+    ) -> Result<()> {
         Err(crate::error::Error::Transport(
             "send_manage_response is not supported on this transport".to_string(),
         ))
@@ -520,9 +536,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
+    /// Replies on the request's stream when its event carried one, otherwise
+    /// on a stream of its own.
     async fn send_manage_query_response(
         &self,
         _peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
         _reply: ManageQueryReply,
     ) -> Result<()> {
         Err(crate::error::Error::Transport(

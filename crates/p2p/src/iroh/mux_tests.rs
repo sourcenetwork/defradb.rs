@@ -55,6 +55,15 @@ struct BarePeer {
 }
 
 impl BarePeer {
+    /// Waits until `count` streams have been read, since a request returns
+    /// once it is written, before the peer reads it.
+    async fn wait_for_streams(&self, count: usize) {
+        let deadline = n0_future::time::Instant::now() + Duration::from_secs(5);
+        while self.observed.tags.len() < count && n0_future::time::Instant::now() < deadline {
+            n0_future::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     fn observed(&self) -> Observed {
         let mut tags = Vec::new();
         while let Some(tag) = self.observed.tags.pop() {
@@ -151,11 +160,15 @@ async fn drive_six_protocols(transport: &IrohTransport, peer: &PeerId) {
         .await
         .expect("se query request");
     transport
-        .send_se_query_response(peer, QuerySEArtifactsReply::success("se-query", Vec::new()))
+        .send_se_query_response(
+            peer,
+            None,
+            QuerySEArtifactsReply::success("se-query", Vec::new()),
+        )
         .await
         .expect("se query response");
     transport
-        .send_manage_response(peer, ManageReply::success("manage"))
+        .send_manage_response(peer, None, ManageReply::success("manage"))
         .await
         .expect("manage response");
     transport
@@ -196,6 +209,7 @@ async fn six_protocols_share_one_connection() {
         .expect("dial bare peer");
 
     drive_six_protocols(&transport, &peer.peer_id).await;
+    peer.wait_for_streams(6).await;
 
     let observed = peer.observed();
     assert_eq!(

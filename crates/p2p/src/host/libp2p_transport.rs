@@ -269,6 +269,7 @@ impl P2PTransport for Libp2pTransport {
     async fn send_se_query_response(
         &self,
         peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
         reply: QuerySEArtifactsReply,
     ) -> Result<()> {
         let pid = parse_libp2p_peer_id(peer_id)?;
@@ -280,7 +281,12 @@ impl P2PTransport for Libp2pTransport {
         self.handle.send_manage_request(pid, req).await
     }
 
-    async fn send_manage_response(&self, peer_id: &PeerId, reply: ManageReply) -> Result<()> {
+    async fn send_manage_response(
+        &self,
+        peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
+        reply: ManageReply,
+    ) -> Result<()> {
         let pid = parse_libp2p_peer_id(peer_id)?;
         self.handle.send_manage_response(pid, reply).await
     }
@@ -297,6 +303,7 @@ impl P2PTransport for Libp2pTransport {
     async fn send_manage_query_response(
         &self,
         peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
         reply: ManageQueryReply,
     ) -> Result<()> {
         let pid = parse_libp2p_peer_id(peer_id)?;
@@ -488,6 +495,7 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
         HostEvent::SEQueryRequest { peer_id, request } => TransportEvent::SEQueryRequest {
             peer_id: PeerId::from(peer_id),
             request,
+            token: None,
         },
         HostEvent::SEQueryReply { peer_id, reply } => TransportEvent::SEQueryReply {
             peer_id: PeerId::from(peer_id),
@@ -496,6 +504,7 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
         HostEvent::ManageRequest { peer_id, request } => TransportEvent::ManageRequest {
             peer_id: PeerId::from(peer_id),
             request,
+            token: None,
         },
         HostEvent::ManageReply { peer_id, reply } => TransportEvent::ManageReply {
             peer_id: PeerId::from(peer_id),
@@ -504,6 +513,7 @@ pub fn convert_host_event(event: crate::host::HostEvent) -> TransportEvent<Respo
         HostEvent::ManageQueryRequest { peer_id, request } => TransportEvent::ManageQueryRequest {
             peer_id: PeerId::from(peer_id),
             request,
+            token: None,
         },
         HostEvent::ManageQueryReply { peer_id, reply } => TransportEvent::ManageQueryReply {
             peer_id: PeerId::from(peer_id),

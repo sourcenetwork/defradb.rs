@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;
+use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::message::{CarFetchRequest, PushLogReply};
@@ -553,7 +554,9 @@ pub(super) async fn handle_two_stream_request(
         })
 }
 
-async fn send_one_way_message<T: serde::Serialize>(
+/// Open a stream for `tag`, write `msg` and finish our side. Returns the
+/// connection and the stream's receive side.
+async fn send_on_new_stream<T>(
     endpoint: &Endpoint,
     peer_id: &PeerId,
     tag: &[u8],
@@ -561,10 +564,13 @@ async fn send_one_way_message<T: serde::Serialize>(
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
     admission: &PeerAdmission,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<(iroh::endpoint::Connection, iroh::endpoint::RecvStream)>
+where
+    T: serde::Serialize,
+{
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
-    let (mut send, mut recv) = match open_tagged_stream(&connection, peer_id, tag).await {
+    let (mut send, recv) = match open_tagged_stream(&connection, peer_id, tag).await {
         Ok(streams) => streams,
         Err(error) => {
             evict_if_closed(cache, peer_id, &connection);
@@ -583,6 +589,20 @@ async fn send_one_way_message<T: serde::Serialize>(
         evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
+    Ok((connection, recv))
+}
+
+async fn send_one_way_message<T: serde::Serialize>(
+    endpoint: &Endpoint,
+    peer_id: &PeerId,
+    tag: &[u8],
+    msg: &T,
+    direct_addr: Option<std::net::SocketAddr>,
+    cache: &ConnectionCache,
+    admission: &PeerAdmission,
+) -> crate::error::Result<()> {
+    let (_, mut recv) =
+        send_on_new_stream(endpoint, peer_id, tag, msg, direct_addr, cache, admission).await?;
 
     // Wait for peer to close their side of the stream (via RESET_STREAM or FIN).
     // This ensures the connection stays open long enough for the peer's accept_bi()
@@ -590,6 +610,77 @@ async fn send_one_way_message<T: serde::Serialize>(
     let _ = n0_future::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
 
     Ok(())
+}
+
+/// Send a request whose reply is emitted as a transport event, and report on
+/// `sent` once the request is written. On mux 0.2 the reply comes back on the
+/// request's stream and is read here; an older peer opens a reply stream of
+/// its own, which admission checks against the expected replies.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn handle_reply_on_stream<Req, Reply, ToEvent>(
+    endpoint: &Endpoint,
+    peer_id: PeerId,
+    tag: &[u8],
+    request: &Req,
+    direct_addr: Option<std::net::SocketAddr>,
+    cache: &ConnectionCache,
+    admission: &PeerAdmission,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    sent: oneshot::Sender<crate::error::Result<()>>,
+    to_event: ToEvent,
+) where
+    Req: serde::Serialize,
+    Reply: crate::message::Message + serde::Serialize + serde::de::DeserializeOwned + Clone,
+    ToEvent: FnOnce(PeerId, Reply) -> TransportEvent<iroh::endpoint::SendStream>,
+{
+    let (connection, mut recv) = match send_on_new_stream(
+        endpoint,
+        &peer_id,
+        tag,
+        request,
+        direct_addr,
+        cache,
+        admission,
+    )
+    .await
+    {
+        Ok(sent_on) => {
+            let _ = sent.send(Ok(()));
+            sent_on
+        }
+        Err(error) => {
+            let _ = sent.send(Err(error));
+            return;
+        }
+    };
+    if connection.alpn() != protocols::ALPN_MUX {
+        let _ =
+            n0_future::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
+        return;
+    }
+
+    let reply = n0_future::time::timeout(
+        REQUEST_RESPONSE_TIMEOUT,
+        protocols::read_message::<Reply>(&mut recv, protocols::MAX_MESSAGE_SIZE),
+    )
+    .await
+    .map_err(|_| crate::error::Error::ResponseTimeout)
+    .and_then(|read| read)
+    .and_then(|reply| {
+        super::endpoint_streams::verify_iroh_message(&reply)?;
+        super::endpoint_streams::ensure_iroh_signed_sender(&peer_id, reply.sender_id())?;
+        Ok(reply)
+    });
+    match reply {
+        Ok(reply) => {
+            if event_tx.send(to_event(peer_id, reply)).await.is_err() {
+                debug!("Event channel closed, cannot emit a reply");
+            }
+        }
+        Err(error) => {
+            debug!(peer_id = %peer_id, stream_tag = %String::from_utf8_lossy(tag), error = %error, "No reply on the request stream");
+        }
+    }
 }
 
 /// Send a message without expecting a response.
