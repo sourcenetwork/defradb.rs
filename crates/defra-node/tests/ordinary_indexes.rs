@@ -125,3 +125,91 @@ async fn ordered_index_stream_stops_after_passing_residual_rows() {
     );
     node.shutdown().await;
 }
+
+#[tokio::test]
+async fn ordered_prefix_sorts_only_the_boundary_tie_group() {
+    let node = EmbeddedNode::builder().build().await.unwrap();
+    node.add_schema("type TieEntry @index(fields: [\"scope\", \"seq\"], unique: true) { scope: String seq: Int rank: Int }")
+        .await.unwrap();
+    let inputs = (0..120)
+        .map(|seq| format!("{{scope: \"s\", seq: {seq}, rank: {}}}", 120 - seq))
+        .chain([
+            "{scope: \"s\", seq: null, rank: 2}".into(),
+            "{scope: \"s\", seq: null, rank: 1}".into(),
+        ])
+        .collect::<Vec<_>>()
+        .join(",");
+    let created = node
+        .execute(&format!(
+            "mutation {{ create_TieEntry(input: [{inputs}]) {{ _docID }} }}"
+        ))
+        .await;
+    assert!(!created.has_errors(), "{:?}", created.errors);
+    for (direction, expected) in [
+        ("DESC", vec![Some(119), Some(118), Some(117), Some(116)]),
+        ("ASC", vec![None, None, Some(0), Some(1)]),
+    ] {
+        let query = format!("query {{ TieEntry(filter: {{scope: {{_eq: \"s\"}}}}, order: [{{seq: {direction}}}, {{_docID: ASC}}], limit: 4) {{ _docID seq rank }} }}");
+        let response = node.execute(&query).await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        let data = response.data.unwrap();
+        let rows = data["TieEntry"].as_array().unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["seq"].as_i64())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        if direction == "ASC" {
+            assert!(rows[0]["_docID"].as_str() < rows[1]["_docID"].as_str());
+        }
+        let explained = node
+            .execute(&query.replacen("query", "query @explain(type: execute)", 1))
+            .await;
+        assert!(!explained.has_errors(), "{:?}", explained.errors);
+        let plan = explained.data.unwrap();
+        let fetched = scan_count(&plan, "docFetches").unwrap();
+        assert!(fetched <= 6, "page must not materialize 122 rows: {plan}");
+    }
+    node.shutdown().await;
+}
+
+#[tokio::test]
+async fn partial_index_order_keeps_residual_filter_and_page_offset() {
+    let node = EmbeddedNode::builder().build().await.unwrap();
+    node.add_schema("type TiePage @index(fields: [\"scope\", \"seq\"]) { scope: String @index seq: Int rank: Int keep: Boolean }").await.unwrap();
+    let input = (0..120)
+        .map(|i| {
+            format!(
+                "{{scope: \"s\", seq: {}, rank: {}, keep: {}}}",
+                i / 3,
+                i % 3,
+                i % 3 != 1
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let created = node
+        .execute(&format!(
+            "mutation {{ create_TiePage(input:[{input}]) {{_docID}} }}"
+        ))
+        .await;
+    assert!(!created.has_errors(), "{:?}", created.errors);
+    let query = r#"query { TiePage(filter:{scope:{_eq:"s"},keep:{_eq:true}},order:[{seq:DESC},{rank:ASC}],offset:1,limit:3){seq rank} }"#;
+    let result = node.execute(query).await;
+    assert!(!result.has_errors(), "{:?}", result.errors);
+    assert_eq!(
+        result.data.unwrap()["TiePage"],
+        serde_json::json!([{"seq":39,"rank":2},{"seq":38,"rank":0},{"seq":38,"rank":2}])
+    );
+    let result = node
+        .execute(&query.replacen("query", "query @explain(type:execute)", 1))
+        .await;
+    assert!(!result.has_errors(), "{:?}", result.errors);
+    let plan = result.data.unwrap();
+    assert!(
+        scan_count(&plan, "docFetches").unwrap() <= 8,
+        "must finish two matching tie groups: {plan}"
+    );
+    node.shutdown().await;
+}

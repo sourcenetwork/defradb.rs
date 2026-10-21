@@ -8,7 +8,7 @@ use crate::mapper::{Filter, FilterOp, OrderBy};
 
 use super::conditions::{
     can_be_ordered_by_filtered_index, can_use_index, extract_field_conditions,
-    should_fallback_to_full_scan,
+    filtered_index_order_prefix, should_fallback_to_full_scan,
 };
 use super::types::{ConditionValue, IndexScanParams, IndexScanType, ScanValueFilter};
 use super::values::{
@@ -225,8 +225,8 @@ pub fn filter_to_index_scan(
 
     // Determine if we need to reverse the scan based on ordering
     let reverse = order_by
-        .map(|o| can_be_ordered_by_filtered_index(o, index, filter))
-        .map(|(can_order, needs_reverse)| can_order && needs_reverse)
+        .map(|o| filtered_index_order_prefix(o, index, filter))
+        .map(|(prefix, needs_reverse)| prefix > 0 && needs_reverse)
         .unwrap_or(false);
 
     // For descending indexes, range bounds must be swapped because the encoding
