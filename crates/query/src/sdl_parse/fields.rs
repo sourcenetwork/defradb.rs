@@ -416,6 +416,7 @@ impl<'a> SdlParser<'a> {
             "pncounter" | "counter" | "pn_counter" => Ok(CType::PnCounter),
             "pcounter" | "p_counter" => Ok(CType::PCounter),
             "text" => Ok(CType::Text),
+            "json" => Ok(CType::Json),
             other => Err(QueryError::parse(format!(
                 "Argument \"type\" has invalid value \"{}\"",
                 other

@@ -93,6 +93,29 @@ pub struct TextDeltaPayload {
     pub data: Vec<u8>,
 }
 
+/// JSON delta payload for block embedding: edits at paths of a JSON field.
+///
+/// Shaped as an LWW delta, so a field's encryption treats both alike; `data`
+/// is the CBOR of the block's [`JsonOp`](crate::json_crdt::JsonOp)s, one per
+/// path. A Rust-only delta: Go peers cannot decode it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JsonDeltaPayload {
+    /// Field name
+    #[serde(rename = "fieldName")]
+    pub field_name: String,
+
+    /// Priority
+    pub priority: u64,
+
+    /// Collection version identifier
+    #[serde(rename = "collectionVersionID")]
+    pub schema_version_id: String,
+
+    /// The encoded ops
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
 /// Counter delta payload for block embedding
 ///
 /// Matches Go's `crdt.CounterDelta` structure.

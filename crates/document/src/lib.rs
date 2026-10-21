@@ -40,7 +40,7 @@ mod value;
 mod write_preparation;
 
 pub use doc_id::{validate_doc_ids, DocID, DOC_ID_V0, SDN_NAMESPACE_V0};
-pub use document::Document;
+pub use document::{apply_json_ops, json_value, Document};
 pub use error::{Error, Result};
 pub use field::{special, Field};
 pub use json_leaf::{JsonLeafValue, JsonScalarValue};

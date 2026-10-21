@@ -4,6 +4,8 @@
 //! Empty LWW bytes are a tombstone; their priority must survive materialization.
 use std::collections::BTreeMap;
 
+use defra_core::json_crdt::Frontier;
+
 use crate::encoding::{cbor_to_normal_value, normal_value_to_cbor};
 use crate::{Document, Error, NormalValue, Result};
 
@@ -20,6 +22,11 @@ pub enum ValueKind {
     /// writer of a Text part read it validated first, so an operand replaces
     /// the stored text in commit order whatever its priority.
     Text = 4,
+    /// A Json field's frontier ([`defra_core::json_crdt::Frontier`]), as its
+    /// CBOR. An operand removes the entries its writer had seen and adds its
+    /// own, so operands compose exactly and writers of disjoint paths never
+    /// conflict.
+    Json = 5,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +61,18 @@ impl StoredField {
         Ok(Self {
             kind: ValueKind::Text,
             ..Self::lww(name, priority, value)?
+        })
+    }
+
+    /// A Json part: a frontier as the stored value, or an operand on it.
+    pub fn json(name: String, priority: u64, frontier: &Frontier) -> Result<Self> {
+        Ok(Self {
+            name,
+            kind: ValueKind::Json,
+            priority,
+            value: frontier
+                .encode()
+                .map_err(|error| Error::CborEncode(error.to_string()))?,
         })
     }
 
@@ -96,7 +115,7 @@ impl StoredField {
                 .or_else(|| value.as_float32().map(f64::from))
                 .or_else(|| value.as_int().map(|v| v as f64))
                 .map(|v| v.to_be_bytes().to_vec()),
-            ValueKind::Lww | ValueKind::Text => None,
+            ValueKind::Lww | ValueKind::Text | ValueKind::Json => None,
         };
         let Some(value) = bytes else {
             return Err(Error::InvalidFieldValue {
@@ -155,6 +174,12 @@ fn materialize(kind: ValueKind, value: &[u8]) -> Option<NormalValue> {
         ValueKind::Float64 => Some(NormalValue::Float64(f64::from_be_bytes(
             value.try_into().ok()?,
         ))),
+        ValueKind::Json => Some(
+            Frontier::decode(value)
+                .ok()?
+                .materialize()
+                .map_or(NormalValue::Null, NormalValue::Json),
+        ),
     }
 }
 
@@ -163,6 +188,7 @@ fn materialize(kind: ValueKind, value: &[u8]) -> Option<NormalValue> {
 fn stores(kind: ValueKind, value: &[u8]) -> bool {
     match kind {
         ValueKind::Lww | ValueKind::Text => materialize(kind, value).is_some(),
+        ValueKind::Json => Frontier::decode(value).is_ok(),
         ValueKind::Int64 | ValueKind::Float64 => value.len() == 8,
         ValueKind::Float32 => value.len() == 4,
     }
@@ -260,6 +286,7 @@ impl StoredDocument {
                 2 => ValueKind::Float32,
                 3 => ValueKind::Float64,
                 4 => ValueKind::Text,
+                5 => ValueKind::Json,
                 _ => return None,
             };
             let priority = u64::from_be_bytes(take(&mut input, 8)?.try_into().ok()?);
@@ -314,7 +341,9 @@ impl StoredDocument {
                 }
                 // A counter part the value lacks starts from zero, so the
                 // increment lands exactly as it would on a stored zero.
-                if !matches!(incoming.kind, ValueKind::Lww | ValueKind::Text) {
+                if incoming.kind == ValueKind::Json {
+                    incoming.value = compose_json(None, &incoming.value, true)?;
+                } else if !matches!(incoming.kind, ValueKind::Lww | ValueKind::Text) {
                     let zero: &[u8] = if incoming.kind == ValueKind::Float32 {
                         &[0; 4]
                     } else {
@@ -336,6 +365,7 @@ impl StoredDocument {
                     incoming.value
                 }
                 ValueKind::Text => incoming.value,
+                ValueKind::Json => compose_json(Some(&current.value), &incoming.value, true)?,
                 kind => counter_sum(kind, &current.value, &incoming.value)?,
             };
             current.priority = current.priority.max(incoming.priority);
@@ -360,8 +390,22 @@ fn counter_sum(kind: ValueKind, current: &[u8], increment: &[u8]) -> Option<Vec<
             + f64::from_be_bytes(increment.try_into().ok()?))
         .to_be_bytes()
         .to_vec(),
-        ValueKind::Lww | ValueKind::Text => return None,
+        ValueKind::Lww | ValueKind::Text | ValueKind::Json => return None,
     })
+}
+
+/// A Json part after `later` lands on `earlier` (none: an empty frontier).
+/// `settle` when the result is a stored value rather than an operand.
+pub fn compose_json(earlier: Option<&[u8]>, later: &[u8], settle: bool) -> Option<Vec<u8>> {
+    let mut frontier = match earlier {
+        Some(bytes) => Frontier::decode(bytes).ok()?,
+        None => Frontier::default(),
+    };
+    frontier.compose(Frontier::decode(later).ok()?);
+    if settle {
+        frontier.settle();
+    }
+    frontier.encode().ok()
 }
 
 /// `stored` plus `delta` for a counter of `kind`, added exactly as the merge

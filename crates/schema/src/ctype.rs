@@ -10,6 +10,7 @@
 //! - 4 = PnCounter
 //! - 5 = PCounter
 //! - 6 = Text (Rust-only)
+//! - 7 = Json (Rust-only)
 
 use crate::{FieldKind, ScalarKind};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -34,6 +35,8 @@ pub enum CType {
     PCounter,
     /// Collaborative text: a Fugue sequence of characters (Rust-only)
     Text,
+    /// JSON with a register per path, merged path by path (Rust-only)
+    Json,
     /// Unknown CRDT type (preserves raw value for validation errors)
     Unknown(u8),
 }
@@ -51,6 +54,7 @@ impl Serialize for CType {
             CType::PnCounter => 4,
             CType::PCounter => 5,
             CType::Text => 6,
+            CType::Json => 7,
             CType::Unknown(v) => *v,
         };
         serializer.serialize_u8(value)
@@ -79,6 +83,8 @@ impl<'de> Deserialize<'de> for CType {
                     4 => CType::PnCounter,
                     5 => CType::PCounter,
                     6 => CType::Text,
+                    7 => CType::Json,
+                    7 => CType::Json,
                     _ => CType::Unknown(kind), // Preserve unknown for validation
                 })
             }
@@ -91,6 +97,7 @@ impl<'de> Deserialize<'de> for CType {
                 "PnCounter" | "pncounter" | "PN_COUNTER" => Ok(CType::PnCounter),
                 "PCounter" | "pcounter" | "P_COUNTER" => Ok(CType::PCounter),
                 "Text" | "text" | "TEXT" => Ok(CType::Text),
+                "Json" | "json" | "JSON" => Ok(CType::Json),
                 _ => Err(de::Error::custom("unknown crdt string representation")),
             },
             // Null defaults to LwwRegister
@@ -111,6 +118,7 @@ impl CType {
             CType::PnCounter => 4,
             CType::PCounter => 5,
             CType::Text => 6,
+            CType::Json => 7,
             CType::Unknown(v) => v,
         }
     }
@@ -125,6 +133,7 @@ impl CType {
             4 => CType::PnCounter,
             5 => CType::PCounter,
             6 => CType::Text,
+            7 => CType::Json,
             v => CType::Unknown(v),
         }
     }
@@ -142,6 +151,9 @@ impl CType {
             CType::Text => kind
                 .as_scalar()
                 .is_some_and(|scalar| scalar.base_kind() == ScalarKind::String),
+            CType::Json => kind
+                .as_scalar()
+                .is_some_and(|scalar| scalar.base_kind() == ScalarKind::Json),
             CType::Unknown(_) => false,
         }
     }
@@ -154,6 +166,11 @@ impl CType {
     /// Returns true if this is the Text type
     pub fn is_text(&self) -> bool {
         matches!(self, CType::Text)
+    }
+
+    /// Returns true if this is the Json type
+    pub fn is_json(&self) -> bool {
+        matches!(self, CType::Json)
     }
 
     /// Returns true if this counter type allows decrement (negative increments)
@@ -175,6 +192,7 @@ impl fmt::Display for CType {
             CType::PnCounter => write!(f, "PnCounter"),
             CType::PCounter => write!(f, "PCounter"),
             CType::Text => write!(f, "Text"),
+            CType::Json => write!(f, "Json"),
             CType::Unknown(v) => write!(f, "Unknown({})", v),
         }
     }
@@ -219,6 +237,20 @@ mod tests {
         );
         assert_eq!(CType::from_u8(CType::Text.to_u8()), CType::Text);
         assert_eq!(CType::Text.to_string(), "Text");
+    }
+
+    #[test]
+    fn json_is_crdt_seven_on_json_fields_only() {
+        assert!(CType::Json.is_compatible_with(&FieldKind::json()));
+        assert!(!CType::Json.is_compatible_with(&FieldKind::string()));
+        assert!(CType::Json.is_json());
+        assert_eq!(serde_json::to_string(&CType::Json).unwrap(), "7");
+        assert_eq!(
+            serde_json::from_str::<CType>("\"json\"").unwrap(),
+            CType::Json
+        );
+        assert_eq!(CType::from_u8(7), CType::Json);
+        assert_eq!(CType::Json.to_string(), "Json");
     }
 
     #[test]

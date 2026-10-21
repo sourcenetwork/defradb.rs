@@ -1,6 +1,7 @@
 //! Document type for DefraDB
 
 use cid::Cid;
+use defra_core::json_crdt::{self, Frontier, JsonEdit, JsonOp};
 use rapidhash::{HashMapExt, RapidHashMap};
 use schema::{CType, CollectionVersion};
 use serde::{Deserialize, Serialize};
@@ -73,6 +74,14 @@ pub struct Document {
     #[serde(skip)]
     text_ops: RapidHashMap<String, Vec<defra_core::TextOp>>,
 
+    /// Edits to Json fields at paths, and the operand each lands on the
+    /// field's stored frontier. The block builder writes the ops as the
+    /// field's Json block; the document value write merges the operand.
+    #[serde(skip)]
+    json_ops: RapidHashMap<String, Vec<JsonOp>>,
+    #[serde(skip)]
+    json_deltas: RapidHashMap<String, Frontier>,
+
     #[serde(skip)]
     write_preparation: Option<std::sync::Arc<crate::WritePreparation>>,
 }
@@ -105,6 +114,8 @@ impl Document {
             deleted: false,
             counter_deltas: RapidHashMap::new(),
             text_ops: RapidHashMap::new(),
+            json_ops: RapidHashMap::new(),
+            json_deltas: RapidHashMap::new(),
             write_preparation: None,
         }
     }
@@ -123,6 +134,8 @@ impl Document {
             deleted: false,
             counter_deltas: RapidHashMap::new(),
             text_ops: RapidHashMap::new(),
+            json_ops: RapidHashMap::new(),
+            json_deltas: RapidHashMap::new(),
             write_preparation: None,
         }
     }
@@ -140,6 +153,8 @@ impl Document {
             deleted: false,
             counter_deltas: RapidHashMap::new(),
             text_ops: RapidHashMap::new(),
+            json_ops: RapidHashMap::new(),
+            json_deltas: RapidHashMap::new(),
             write_preparation: None,
         }
     }
@@ -423,6 +438,46 @@ impl Document {
         self.text_ops.insert(field.into(), ops);
     }
 
+    /// Append edits to `field`'s Json ops, and apply them to the value this
+    /// document holds.
+    pub fn edit_json(&mut self, field: String, ops: Vec<JsonOp>) {
+        let mut value = self.get(&field).and_then(json_value);
+        apply_json_ops(&mut value, &ops);
+        self.set(
+            field.clone(),
+            value.map_or(NormalValue::Null, NormalValue::Json),
+        );
+        self.json_ops.entry(field).or_default().extend(ops);
+    }
+
+    /// The explicit edits to the Json field `field`, if any.
+    pub fn json_ops(&self, field: &str) -> Option<&[JsonOp]> {
+        self.json_ops.get(field).map(Vec::as_slice)
+    }
+
+    /// The edits a write of the Json field `field` makes: its explicit ops,
+    /// or else its value written over an absent field.
+    pub fn json_ops_or_value(&self, field: &str) -> Vec<JsonOp> {
+        match self.json_ops(field) {
+            Some(ops) => ops.to_vec(),
+            None => json_crdt::diff(None, self.get(field).and_then(json_value).as_ref()),
+        }
+    }
+
+    /// Replace the edits to the Json field `field`.
+    pub fn set_json_ops(&mut self, field: impl Into<String>, ops: Vec<JsonOp>) {
+        self.json_ops.insert(field.into(), ops);
+    }
+
+    /// The operand this write lands on the Json field `field`'s frontier.
+    pub fn json_delta(&self, field: &str) -> Option<&Frontier> {
+        self.json_deltas.get(field)
+    }
+
+    pub fn set_json_delta(&mut self, field: impl Into<String>, delta: Frontier) {
+        self.json_deltas.insert(field.into(), delta);
+    }
+
     /// Get all dirty fields.
     pub fn dirty_fields(&self) -> impl Iterator<Item = (&str, &FieldValue)> {
         self.values
@@ -547,5 +602,59 @@ impl Default for Document {
 impl PartialEq for Document {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id && self.values == other.values
+    }
+}
+
+/// A Json field's value as JSON, `None` when nil.
+pub fn json_value(value: &NormalValue) -> Option<serde_json::Value> {
+    if value.is_nil() {
+        return None;
+    }
+    match value.as_json() {
+        Some(json) => Some(json.clone()),
+        None => normal_value_to_json(value).ok(),
+    }
+}
+
+/// `value` after `ops`, in order, each at its path. A path through a value
+/// that is not a map makes it one, as the merge does.
+pub fn apply_json_ops(value: &mut Option<serde_json::Value>, ops: &[JsonOp]) {
+    use serde_json::Value;
+    for op in ops {
+        let Some((last, parents)) = op.path.split_last() else {
+            *value = match &op.edit {
+                JsonEdit::Set(new) => Some(new.clone()),
+                JsonEdit::Map => Some(Value::Object(Default::default())),
+                JsonEdit::Delete => None,
+            };
+            continue;
+        };
+        let mut node = value.get_or_insert(Value::Null);
+        for key in parents {
+            node = map_of(node).entry(key.clone()).or_insert(Value::Null);
+        }
+        let map = map_of(node);
+        match &op.edit {
+            JsonEdit::Set(new) => {
+                map.insert(last.clone(), new.clone());
+            }
+            JsonEdit::Map => {
+                map_of(map.entry(last.clone()).or_insert(Value::Null));
+            }
+            JsonEdit::Delete => {
+                map.remove(last);
+            }
+        }
+    }
+}
+
+/// The map `node` holds, after making it an empty one if it held anything else.
+fn map_of(node: &mut serde_json::Value) -> &mut serde_json::Map<String, serde_json::Value> {
+    if !node.is_object() {
+        *node = serde_json::Value::Object(Default::default());
+    }
+    match node {
+        serde_json::Value::Object(map) => map,
+        _ => unreachable!("the node was just made a map"),
     }
 }
