@@ -143,10 +143,16 @@ async fn deleted_rows_remain_visible_with_indexed_filters_and_ordering() {
     );
     let first = data(
         &node,
-        "{RetainedNote(showDeleted: true, first: 1, order: {rank: ASC}) {rank}}",
+        "{RetainedNote(showDeleted: true, limit: 1, order: {rank: ASC}) {rank}}",
     )
     .await;
     assert_eq!(first["RetainedNote"], serde_json::json!([{"rank":1}]));
+    let second = data(
+        &node,
+        "{RetainedNote(showDeleted: true, limit: 1, offset: 1, order: {rank: ASC}) {rank}}",
+    )
+    .await;
+    assert_eq!(second["RetainedNote"], serde_json::json!([{"rank":2}]));
     for selection in [
         r#"filter: {owner: {_eq: "absent"}}"#.to_owned(),
         format!(r#"docID: "{retired}", filter: {{owner: {{_eq: "other"}}}}"#),
