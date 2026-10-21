@@ -381,18 +381,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
-        // The JSON CRDT (#2129) is specified before it is written. Each path is
-        // a register: racing edits resolve by priority, then CID; an edit wipes
-        // only what it had seen below it, so an update beats a concurrent
-        // delete; only a set below a path makes it a map, so a delete creates
-        // nothing; the conflicts query lists exactly the racers that lost.
-        // Bound as a boundary until crates/crdt/src/json.rs exists.
+        // The JSON CRDT (#2129). Each path is a register: racing edits resolve
+        // by priority, then block ID; an edit wipes only what it had seen below
+        // it, so an update beats a concurrent delete; only a set below a path
+        // makes it a map, so a delete creates nothing; the conflicts query
+        // lists exactly the racers that lost. The defra-core tests check the
+        // same invariants on block DAGs; the integration tests merge real
+        // blocks between two nodes.
         family: "JSON CRDT per-path merge",
         name: "INV_Converge / INV_MatchesReplay / INV_DisjointKept / INV_SamePathLww / INV_UpdateWins / INV_TypeClash / INV_ConflictsAreLosers / INV_DeleteCreatesNothing: per-path JSON merge converges, keeps every edit nothing saw, and never lets a delete create a path",
         axis: Tla,
-        anchor: "planned: crates/crdt/src/json.rs (per-path frontiers, winner, conflicts); crates/db/src/merge/merge_handler/json.rs (merge after parents)",
+        anchor: "crates/defra-core/src/json_crdt.rs Frontier::delta, Frontier::compose, Frontier::materialize, Frontier::conflicts, replay; crates/db/src/merge/merge_handler/json.rs process_json_delta_in_txn, json_past; crates/db/src/write/autocommit/helpers.rs set_json_ops; crates/defra-core/src/json_crdt_tests.rs, tools/integration-test/tests/p2p/json_crdt.rs",
         model_ref: "MC_JsonCrdt_{Green,Red_DeleteWins,Red_NoCid,Red_DeleteImpliesMap}.cfg",
-        tiers: &[Boundary],
+        tiers: &[Contract],
     },
     Property {
         // A path's register keeps the same winner whatever order edits arrive
@@ -401,9 +402,9 @@ pub const PROPERTIES: &[Property] = &[
         family: "JSON CRDT per-path merge",
         name: "join_comm / join_assoc / join_idem / decode_encode / encode_prefix: order-free registers and nesting path keys",
         axis: Lean,
-        anchor: "planned: crates/crdt/src/json.rs",
+        anchor: "crates/defra-core/src/json_crdt.rs beats, encode_path, decode_path",
         model_ref: "JsonCrdt.{Lww,Path} (lake build)",
-        tiers: &[Boundary],
+        tiers: &[Contract],
     },
     Property {
         family: "Storage transaction validation",

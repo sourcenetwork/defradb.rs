@@ -41,30 +41,40 @@
 \*   * a type clash resolves other than by that same order;
 \*   * the conflicts query lists anything but the racing edits that lost.
 \*
-\* Code this models (defradb.rs). The JSON CRDT is not written yet: this model
-\* is its contract (issue #2129), and these are the files it will live in:
-\*   crates/crdt/src/json.rs                       the per-path registers: the
+\* Code this models (defradb.rs):
+\*   crates/defra-core/src/json_crdt.rs            the per-path registers: the
 \*                                                 frontier of racing edits,
 \*                                                 the winner, the conflicts
 \*   crates/db/src/merge/merge_handler/json.rs     applies a received JSON block
 \*                                                 once its parents are merged
+\*   crates/db/src/write/autocommit/helpers.rs     a local write's ops and
+\*                                                 operand (set_json_ops)
 \*
-\* Correspondence table (model -> planned Rust):
-\*   Create        json.rs: a write turns a JSON value into one op per path and
-\*                 emits a block whose parents are the field's heads
-\*   Deliver       merge_handler/json.rs: a received block is merged once every
-\*                 parent block is local (the DAG sync's causal buffer)
-\*   Apply         json.rs: add the op to its path's frontier, drop the edits
-\*                 it saw at that path and below, refresh the winners
-\*   front         json.rs: each path's frontier, the edits that no later edit
-\*                 of the same path or of a path above has seen
-\*   win           json.rs: each path's current winner among its own edits
-\*   Beats         json.rs: priority, then CID
-\*   Implied       json.rs: the sets below a path, each making it a map
-\*   Winner, Doc   json.rs: reading the JSON from the frontiers
-\*   Conflicts     json.rs: the conflicts query
-\*   SpecDoc       the same JSON read straight from a set of blocks, with no
-\*                 incremental state; no Rust counterpart
+\* Correspondence table (model -> Rust):
+\*   Create        json_crdt.rs diff, and update_ops.rs deep_set: a write turns
+\*                 a JSON value into ops at paths; set_json_ops gives its block
+\*                 the field's heads as parents. One block may carry ops at
+\*                 several distinct paths: they act as a chain of one-op blocks
+\*                 sharing one ID, which never race one another
+\*   Deliver       merge_handler/json.rs process_json_delta_in_txn: a received
+\*                 block is merged once every parent block is local
+\*   Apply         json_crdt.rs Frontier::delta, then Frontier::compose: drop
+\*                 the edits in the block's past at its paths and below, add
+\*                 its edits; json_past finds that past by walking its DAG
+\*   front         json_crdt.rs Frontier::entries, stored as the field's part
+\*   win, Winner   json_crdt.rs Index::winner
+\*   Beats         json_crdt.rs beats: priority, then block ID. The ID
+\*                 (block_id) is a digest of the block's priority, parents and
+\*                 plain ops: it stands in for the CID, which a local writer
+\*                 does not know yet when it writes the stored value
+\*   Implied       json_crdt.rs Index::racers: the sets below a path
+\*   Doc           json_crdt.rs Frontier::materialize
+\*   Conflicts     json_crdt.rs Frontier::conflicts, read by _jsonConflicts
+\*                 (crates/db/src/read/json_conflicts.rs); an edit's `seen`
+\*                 records the edits above it in its past, which is how the
+\*                 code tells two edits at different depths are concurrent
+\*   SpecDoc       json_crdt.rs replay: the JSON read straight from the whole
+\*                 DAG, used by time-travel reads (crates/db/src/read/versioned.rs)
 
 EXTENDS Naturals, FiniteSets
 
