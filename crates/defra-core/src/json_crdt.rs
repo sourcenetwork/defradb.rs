@@ -481,31 +481,148 @@ pub struct ReplayBlock {
 }
 
 /// The frontier of a whole Json DAG: every block merged after its parents,
-/// which a higher priority than each of them guarantees.
+/// which a higher priority than each of them guarantees. A block whose
+/// parents are the tips merged so far has every entry in its past; any other
+/// walks down its ancestors only as far as the entries it touches reach.
+/// Each op reads only its own path, the paths below it and the ones above.
 pub fn replay(mut blocks: Vec<ReplayBlock>) -> Result<Frontier> {
     blocks.sort_by(|a, b| (a.priority, &a.cid).cmp(&(b.priority, &b.cid)));
-    let mut pasts: BTreeMap<Vec<u8>, BTreeSet<Vec<u8>>> = BTreeMap::new();
-    let mut ids: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
-    let mut frontier = Frontier::default();
+    let mut merged: BTreeMap<Vec<u8>, Merged> = BTreeMap::new();
+    let mut tips: BTreeSet<Vec<u8>> = BTreeSet::new();
+    let mut entries: BTreeMap<EntryKey, Entry> = BTreeMap::new();
     for block in blocks {
         let id = block_id(block.priority, &block.parents, &block.data);
-        let mut past = BTreeSet::new();
-        for parent in &block.parents {
-            if let Some(parent_id) = ids.get(parent) {
-                past.insert(parent_id.clone());
-            }
-            if let Some(parent_past) = pasts.get(parent) {
-                past.extend(parent_past.iter().cloned());
+        let ops = decode_ops(&block.data)?;
+        let parents: BTreeSet<Vec<u8>> = block.parents.iter().cloned().collect();
+        let all_past = parents == tips;
+        let mut touched: Vec<Touched<'_>> = Vec::new();
+        for (op_index, op) in ops.iter().enumerate() {
+            let key = encode_path(&op.path);
+            let below = entries
+                .range((key.clone(), Vec::new())..)
+                .take_while(|((path, _), _)| path.starts_with(&key));
+            touched.extend(below.map(|(key, entry)| Touched {
+                below: true,
+                op_index,
+                key,
+                entry,
+            }));
+            for depth in 0..op.path.len() {
+                let above = encode_path(&op.path[..depth]);
+                let at = entries
+                    .range((above.clone(), Vec::new())..)
+                    .take_while(|((path, _), _)| *path == above);
+                touched.extend(at.map(|(key, entry)| Touched {
+                    below: false,
+                    op_index,
+                    key,
+                    entry,
+                }));
             }
         }
-        let ops = decode_ops(&block.data)?;
-        let delta = frontier.delta(&ops, &id, block.priority, |entry| past.contains(entry));
-        frontier.compose(delta);
-        frontier.settle();
-        ids.insert(block.cid.clone(), id);
-        pasts.insert(block.cid, past);
+        let past = if all_past {
+            BTreeSet::new()
+        } else {
+            let lowest = touched.iter().map(|t| t.entry.priority).min();
+            past_ids(&merged, &block.parents, lowest.unwrap_or(u64::MAX))
+        };
+        let in_past = |entry: &Entry| all_past || past.contains(&entry.block);
+        let mut removed = Vec::new();
+        let mut seen: Vec<BTreeSet<Vec<u8>>> = vec![BTreeSet::new(); ops.len()];
+        for touched in touched {
+            if !in_past(touched.entry) {
+                continue;
+            }
+            if touched.below {
+                removed.push(touched.key.clone());
+            } else {
+                seen[touched.op_index].insert(touched.entry.block.clone());
+            }
+        }
+        for key in removed {
+            entries.remove(&key);
+        }
+        for (op, seen) in ops.into_iter().zip(seen) {
+            entries.insert(
+                (encode_path(&op.path), id.clone()),
+                Entry {
+                    path: op.path,
+                    block: id.clone(),
+                    priority: block.priority,
+                    edit: op.edit,
+                    seen: seen.into_iter().collect(),
+                },
+            );
+        }
+        for parent in &parents {
+            tips.remove(parent);
+        }
+        tips.insert(block.cid.clone());
+        merged.insert(
+            block.cid,
+            Merged {
+                id,
+                priority: block.priority,
+                parents: block.parents,
+            },
+        );
     }
-    Ok(frontier)
+    Ok(Frontier {
+        removes: Vec::new(),
+        entries: entries.into_values().collect(),
+    })
+}
+
+/// An entry's place in a replay: its path key and its block ID.
+type EntryKey = (Vec<u8>, Vec<u8>);
+
+/// A block a replay has merged: its ID, priority and parents' CIDs.
+struct Merged {
+    id: Vec<u8>,
+    priority: u64,
+    parents: Vec<Vec<u8>>,
+}
+
+/// An entry an op of the block being replayed reaches: at or below its
+/// path, or above it.
+struct Touched<'a> {
+    below: bool,
+    op_index: usize,
+    key: &'a EntryKey,
+    entry: &'a Entry,
+}
+
+/// The IDs of the merged blocks below `parents`, down to priority `lowest`:
+/// no block further down can be an entry of that priority or above.
+fn past_ids(
+    merged: &BTreeMap<Vec<u8>, Merged>,
+    parents: &[Vec<u8>],
+    lowest: u64,
+) -> BTreeSet<Vec<u8>> {
+    let mut ids = BTreeSet::new();
+    let mut visited: BTreeSet<&[u8]> = BTreeSet::new();
+    let mut waiting: BTreeSet<(u64, &[u8])> = BTreeSet::new();
+    let mut next: Vec<&[u8]> = parents.iter().map(Vec::as_slice).collect();
+    loop {
+        for cid in next.drain(..) {
+            if let Some((cid, block)) = merged.get_key_value(cid) {
+                if visited.insert(cid.as_slice()) {
+                    waiting.insert((block.priority, cid.as_slice()));
+                }
+            }
+        }
+        let Some((priority, cid)) = waiting.pop_last() else {
+            break;
+        };
+        if priority < lowest {
+            break;
+        }
+        if let Some(block) = merged.get(cid) {
+            ids.insert(block.id.clone());
+            next.extend(block.parents.iter().map(Vec::as_slice));
+        }
+    }
+    ids
 }
 
 #[cfg(test)]
