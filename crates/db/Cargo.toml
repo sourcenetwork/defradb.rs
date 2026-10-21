@@ -107,6 +107,9 @@ p2p = { path = "../p2p", default-features = false }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 p2p = { path = "../p2p", default-features = false, features = ["iroh-transport"] }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 defra-core = { path = "../defra-core", features = ["ambient"] }
 # The test network runtime the P2P push tests wait on.

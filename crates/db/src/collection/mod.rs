@@ -41,6 +41,7 @@ pub mod selector;
 pub mod snapshot;
 pub mod stream;
 mod truncator;
+mod unchanged;
 pub mod validation;
 
 pub(crate) use index_status::IndexStatuses;

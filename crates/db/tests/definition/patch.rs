@@ -56,6 +56,29 @@ const ADD_AGE_PATCH: &str = r#"
 "#;
 
 #[tokio::test]
+async fn inactive_patch_keeps_the_active_version_in_cache() {
+    let db = users_db().await;
+    let original = db.get_collection("Users").unwrap().unwrap();
+    let patched = db
+        .patch_collection(
+            "Users",
+            r#"[
+                {"op":"add","path":"/Users/Fields/-","value":{"Name":"label","Kind":"String"}},
+                {"op":"replace","path":"/IsActive","value":false}
+            ]"#,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(!patched.is_active);
+    assert_ne!(patched.version_id, original.version_id());
+    let cached = db.get_collection("Users").unwrap().unwrap();
+    assert_eq!(cached.version_id(), original.version_id());
+    assert!(cached.schema().is_active);
+}
+
+#[tokio::test]
 async fn patch_collection_registers_migration_atomically() {
     let db = users_db().await;
     let original = db.get_collection("Users").unwrap().unwrap();

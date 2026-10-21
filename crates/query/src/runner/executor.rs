@@ -19,16 +19,25 @@ use super::turn::answered;
 use super::{DocFetcher, QueryRunner};
 
 /// `future`'s output, or why its deadline ended it first: `limit` passed, or
-/// the deadline could not be kept. The deadline is a timer of the worker
-/// pool's deadline queue: the calling worker's, or the fallback pool's off
-/// the pool. A browser keeps no deadline: the future runs to its end.
+/// the deadline could not be kept. A worker runs its timer locally; an
+/// off-worker caller uses the process default. A browser keeps no deadline:
+/// the future runs to its end.
 pub async fn within_deadline<F: Future>(
     limit: Option<std::time::Duration>,
     future: F,
 ) -> std::result::Result<F::Output, String> {
+    within_deadline_on(limit, None, future).await
+}
+
+/// [`within_deadline`] using an explicit owner for off-worker timers.
+async fn within_deadline_on<F: Future>(
+    limit: Option<std::time::Duration>,
+    deadline_pool: Option<&workers::Pool>,
+    future: F,
+) -> std::result::Result<F::Output, String> {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(limit) = limit {
-        return workers::timeout(limit, future)
+        return workers::timeout_on(deadline_pool, limit, future)
             .await
             .map_err(|error| match error {
                 workers::Error::TimedOut => format!(
@@ -39,7 +48,7 @@ pub async fn within_deadline<F: Future>(
             });
     }
     #[cfg(target_arch = "wasm32")]
-    let _ = limit;
+    let _ = (limit, deadline_pool);
     Ok(future.await)
 }
 
@@ -47,8 +56,9 @@ pub async fn within_deadline<F: Future>(
 async fn await_with_timeout<T, F: Future<Output = Result<T>>>(
     future: F,
     limit: Option<std::time::Duration>,
+    deadline_pool: Option<&workers::Pool>,
 ) -> Result<T> {
-    within_deadline(limit, future)
+    within_deadline_on(limit, deadline_pool, future)
         .await
         .map_err(crate::error::QueryError::execution)?
 }
@@ -121,7 +131,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         request: &QueryRequest,
     ) -> Result<Option<std::sync::Arc<crate::prepared::PreparedMutations>>> {
         let runner = self.for_query(request);
-        await_with_timeout(runner.prepare_mutations(request), self.deadline()).await
+        await_with_timeout(
+            runner.prepare_mutations(request),
+            self.deadline(),
+            self.deadline_pool.as_ref(),
+        )
+        .await
     }
 
     async fn execute_prepared(
@@ -441,7 +456,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             }
         });
 
-        let result = await_with_timeout(execution, self.deadline()).await;
+        let result =
+            await_with_timeout(execution, self.deadline(), self.deadline_pool.as_ref()).await;
 
         match result {
             Ok(data) => QueryResponse {
@@ -658,6 +674,24 @@ mod tests {
 
     use crate::fetcher::{DocFetcher, FetchByIdsResult};
     use crate::test_utils::{MockFetcher, MockTxnRegistry};
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn caller_deadline_uses_its_configured_node_pool() {
+        let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+        pool.shutdown_blocking().unwrap();
+        let runner = QueryRunner::new(MockFetcher::new(), vec![]).with_deadline_pool(Some(pool));
+
+        let result = runner
+            .prepare_request(&QueryRequest::new("{ probe }"))
+            .await;
+
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("deadline could not be kept: the worker pool is shut down"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn truncate_uses_collection_truncate_permission() {

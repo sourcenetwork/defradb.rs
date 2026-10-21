@@ -31,4 +31,13 @@ lean_lib SingleFlight where
 lean_lib CommitFence where
 
 @[default_target]
+lean_lib EngineTickers where
+
+@[default_target]
+lean_lib CpuLedger where
+
+@[default_target]
+lean_lib DefaultPool where
+
+@[default_target]
 lean_lib DiskAnnCodes where

@@ -191,6 +191,8 @@ pub struct QueryRunner<F: DocFetcher, R: TransactionRegistry = NoOpTransactionRe
     pub(crate) nac: Arc<dyn NacChecker>,
     /// Query execution timeout in seconds (0 = no timeout). Default: 30.
     pub(crate) query_timeout: u64,
+    /// Pool that owns this runner's off-worker deadline timers.
+    pub(crate) deadline_pool: Option<workers::Pool>,
     /// Query parsing and filter evaluation guardrails.
     pub(crate) query_limits: QueryLimits,
     /// Optional searchable-encryption remote query transport.
@@ -231,6 +233,7 @@ where
             lens_store: self.lens_store.clone(),
             nac: self.nac.clone(),
             query_timeout: self.query_timeout,
+            deadline_pool: self.deadline_pool.clone(),
             query_limits: self.query_limits,
             se_transport: self.se_transport.clone(),
             retry_inputs: self.retry_inputs.clone(),
@@ -260,6 +263,7 @@ impl<F: DocFetcher + 'static> QueryRunner<F, NoOpTransactionRegistry> {
             lens_store: None,
             nac: Arc::new(NoOpNacChecker),
             query_timeout: 30,
+            deadline_pool: None,
             query_limits: QueryLimits::default(),
             read_validator: None,
             write_validator: None,
@@ -287,6 +291,7 @@ impl<F: DocFetcher + 'static> QueryRunner<F, NoOpTransactionRegistry> {
             lens_store: None,
             nac: Arc::new(NoOpNacChecker),
             query_timeout: 30,
+            deadline_pool: None,
             query_limits: QueryLimits::default(),
             read_validator: None,
             write_validator: None,
@@ -316,6 +321,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             lens_store: None,
             nac: Arc::new(NoOpNacChecker),
             query_timeout: 30,
+            deadline_pool: None,
             query_limits: QueryLimits::default(),
             read_validator: None,
             write_validator: None,
@@ -348,6 +354,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             lens_store: None,
             nac: Arc::new(NoOpNacChecker),
             query_timeout: 30,
+            deadline_pool: None,
             query_limits: QueryLimits::default(),
             read_validator: None,
             retry_inputs: None,
@@ -379,6 +386,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             lens_store: None,
             nac: Arc::new(NoOpNacChecker),
             query_timeout: 30,
+            deadline_pool: None,
             query_limits: QueryLimits::default(),
             read_validator: None,
             retry_inputs: None,
@@ -598,6 +606,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     /// Set query execution timeout in seconds (0 = no timeout).
     pub fn with_query_timeout(mut self, timeout_secs: u64) -> Self {
         self.query_timeout = timeout_secs;
+        self
+    }
+
+    /// Set the pool that owns off-worker deadline timers for this runner.
+    /// Standalone runners without an owning pool use the process default.
+    pub fn with_deadline_pool(mut self, pool: Option<workers::Pool>) -> Self {
+        self.deadline_pool = pool;
         self
     }
 

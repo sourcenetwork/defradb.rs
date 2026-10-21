@@ -1831,6 +1831,7 @@ impl NodeBuilder {
         }
 
         // Assemble query runner
+        let pool = database.pool().cloned();
         let query_runner =
             query::QueryRunner::with_arc_registry_and_provider(fetcher, provider, registry.clone())
                 .with_mutator(mutator)
@@ -1838,7 +1839,8 @@ impl NodeBuilder {
                 .with_acp(document_acp.clone())
                 .with_lens_store(database.lens_store().clone())
                 .with_query_limits(query_limits)
-                .with_introspection_cache(introspection_cache);
+                .with_introspection_cache(introspection_cache)
+                .with_deadline_pool(pool.clone());
         let query_runner = if let Some(timeout) = query_timeout {
             query_runner.with_query_timeout(timeout_secs(timeout))
         } else {
@@ -1847,8 +1849,7 @@ impl NodeBuilder {
 
         // GraphQL requests run on the database's worker pool, routed there
         // once at the boundary.
-        let runner = query::pooled::PooledExecutor::wrap(Arc::new(query_runner), database.pool());
-        let pool = database.pool().cloned();
+        let runner = query::pooled::PooledExecutor::wrap(Arc::new(query_runner), pool.as_ref());
         #[cfg(feature = "vera")]
         let policy_lookup =
             acp_ops::PolicyLookup::new(acp_setup.local_zanzibar_store, acp_setup.vera_acp);

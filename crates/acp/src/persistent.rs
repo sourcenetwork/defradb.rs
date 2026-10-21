@@ -404,16 +404,20 @@ impl<S: Store + Send + Sync> AcpStore for PersistentAcpStore<S> {
         // Validate inputs to prevent path traversal
         RelationTuple::validate_prefix(collection_id, doc_id)?;
 
-        // Use a single write transaction for both check and write
-        // RocksDB transactions provide atomicity and isolation
         let mut txn = self
             .store
             .new_txn(false)
             .await
             .map_err(|e| Error::storage_txn("register_doc_atomic:begin", e))?;
 
+        // The scan decides, so it is validated: racing registrations write
+        // different owner keys, and only a key landing in the scanned range
+        // after this snapshot makes the losers' commits conflict
+        // (proofs/tla/RegisterDocOnce.tla).
         let prefix = RelationTuple::doc_prefix(collection_id, doc_id);
-        let iter_opts = IterOptions::new().with_prefix(prefix.into_bytes());
+        let iter_opts = IterOptions::new()
+            .with_prefix(prefix.into_bytes())
+            .with_validation(true);
 
         let mut iter = txn
             .iterator(iter_opts)
@@ -444,15 +448,6 @@ impl<S: Store + Send + Sync> AcpStore for PersistentAcpStore<S> {
         txn.set(key.as_bytes(), &value)
             .await
             .map_err(|e| Error::storage_write("register_doc_atomic:set_tuple", e))?;
-
-        // Write a sentinel key so concurrent registrations for the same doc conflict.
-        // Without this, two owners writing different keys would both succeed under
-        // snapshot isolation (the conflict tracker only detects write-write conflicts
-        // on the same key).
-        let sentinel = format!("/acp-reg/{}/{}", collection_id, doc_id);
-        txn.set(sentinel.as_bytes(), &[1])
-            .await
-            .map_err(|e| Error::storage_write("register_doc_atomic:set_sentinel", e))?;
 
         match txn.commit().await {
             Ok(()) => Ok(true),

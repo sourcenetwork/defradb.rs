@@ -313,3 +313,63 @@ async fn empty_in_probes_share_the_estimation_budget() {
     );
     assert!(db.store().point_gets() - before <= 13);
 }
+
+#[tokio::test]
+async fn ordered_composite_page_streams_only_matching_documents() {
+    let db = Arc::new(DB::new(CountingStore::new(RegolithStore::in_memory().unwrap())).unwrap());
+    let mut version = schema();
+    version.indexes = vec![IndexDescription {
+        name: "Events_scope_seq".into(),
+        id: 1,
+        fields: ["market", "hour", "seq"]
+            .into_iter()
+            .map(|name| IndexedFieldDescription {
+                name: name.into(),
+                descending: false,
+            })
+            .collect(),
+        unique: true,
+        kind: None,
+        auto_generated: false,
+    }];
+    db.create_collection(version).await.unwrap();
+    let docs = (0..COLLECTION_SIZE)
+        .map(|seq| {
+            let mut doc = Document::new();
+            doc.set("market", NormalValue::String("zcat".into()));
+            doc.set("hour", NormalValue::String("h000".into()));
+            doc.set("seq", NormalValue::Int(seq as i64));
+            doc
+        })
+        .collect();
+    AutoCommitMutator::new(db.clone())
+        .create_many("Events", docs)
+        .await
+        .unwrap();
+    let runner = query::QueryRunner::with_provider(
+        LensedAutoCommitFetcher::new(db.clone()),
+        db::DbCollectionProvider::new_arc(db.clone()),
+    );
+    let before = db.store().point_gets();
+    let response = runner
+        .execute(QueryRequest::new(
+            r#"{
+        Events(filter: {market: {_eq: "zcat"}, hour: {_eq: "h000"}, seq: {_lt: 993}},
+               order: [{seq: DESC}], offset: 2, limit: 5) {seq}
+    }"#,
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let values = response.data.as_ref().unwrap()["Events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["seq"].as_i64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(values, [990, 989, 988, 987, 986]);
+    let reads = db.store().point_gets() - before;
+    assert!(
+        reads < COLLECTION_SIZE * 2,
+        "page performed {reads} point reads"
+    );
+}

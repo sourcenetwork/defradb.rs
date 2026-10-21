@@ -327,6 +327,33 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral, Contract],
     },
     Property {
+        // The light client checks an answer at the newest root it has
+        // authenticated, and refuses one that a block finalized during the
+        // round trip overtook. The vera provider asks such a read again, at
+        // most ATTEMPTS times: the refusal reaches a caller only after a block
+        // overtook every ask, and a stale answer is never accepted.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_NeverStale / INV_FailsOnlyWhenEveryAskOvertaken / INV_AttemptsBounded / LIVE_Answers: a proven read the chain overtook is asked again, bounded, never accepted stale",
+        axis: Tla,
+        anchor: "crates/vera/src/vera_rs/provider/verified.rs verified, ATTEMPTS; crates/vera/src/vera_rs/provider.rs create_policy, query_policy, query_object_owner, verify_access, create_access_decision; acp-light-client HeaderChain::accept_response",
+        model_ref: "MC_VerifiedRead_{Green,Green_Exhausted,Red_AcceptStale,Red_NoRetry,Red_Uncapped}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Registrations of one document that race each write their own owner
+        // key, so only the commit can refuse all but one. The deciding prefix
+        // scan is a validated scan: a registration that commits under the
+        // prefix after another's snapshot makes the other conflict, and it
+        // returns false. The sentinel byte it replaces never conflicted on
+        // regolith, which commits a write that leaves a key as it was.
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "INV_OneOwner / INV_WinnersOwn / INV_SomeoneWins: racing registrations of one document leave exactly one owner",
+        axis: Tla,
+        anchor: "crates/acp/src/persistent.rs PersistentAcpStore::register_doc_atomic, delete_doc_tuples; crates/acp/src/store.rs AcpStore::register_doc_atomic",
+        model_ref: "MC_RegisterDocOnce_{Green,Red_NoValidation,Red_Sentinel}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,
@@ -397,6 +424,76 @@ pub const PROPERTIES: &[Property] = &[
         axis: Lean,
         anchor: "crates/db/src/txn/fence.rs Fence::abandon, Fence::finish",
         model_ref: "CommitFence.Swap (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Every open store exports its engine's commit and policy tickers. A
+        // read of the totals, or the store's close, adds what the engine
+        // counted past the export's mark by swapping the mark forward with one
+        // compare-and-swap; only the winner adds, exactly the stretch it
+        // claimed. The close adds before it leaves the map. The finding
+        // configuration shows the claim and the add are two steps: a read can
+        // briefly miss a closed store's counts that another read claimed and
+        // has not added yet. The race test exercises the code on real threads;
+        // nothing drives this model against the binary.
+        family: "Engine ticker export",
+        name: "INV_Accounted / INV_NeverOvercount / INV_ClosedComplete / INV_LeftClaimed / INV_QuiescentExact / PROP_TotalNeverBack / PROP_MarkNeverBack / LIVE_EveryCallEnds: every count reaches the exported total once, and the total never goes back",
+        axis: Tla,
+        anchor: "crates/telemetry/src/engine_tickers.rs Source::publish, EngineTickerExport::drop, engine_ticker_totals; crates/storage/src/backends/shared.rs TransactionMetrics",
+        model_ref: "MC_EngineTickers_{Green,Green_TwoSources,Red_Backward,Red_BlindStore,Red_GiveUp,Red_StaleSeen,Red_RemoveFirst,Red_WeakClose,Red_Reset,Red_SharedStats,Red_CountAfterClose,Finding_ClaimGap}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Engine ticker export",
+        name: "failed_attempt_changes_nothing / run_gain / run_total_eq_gains / publishAlone_comm / closed_export_adds_exactly: a mark moved by compare-and-swap adds each count once",
+        axis: Lean,
+        anchor: "crates/telemetry/src/engine_tickers.rs Source::publish",
+        model_ref: "EngineTickers.Mark, EngineTickers.Race (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A placed pool claims its CPUs in the process's ledger, one counter
+        // per CPU: alone, moving each counter from 0 to 1 with one
+        // compare-and-swap and giving back what it took when one CPU is
+        // held; or shared, adding one whatever the counter was. After its
+        // capped claims alone fail it shares and says so. Its Hold gives back
+        // exactly what it raised once the pool and every thread placed
+        // through it are gone.
+        family: "Worker pool CPU ledger",
+        name: "INV_AloneTakesDisjoint / INV_AloneRunsAlone / INV_TakenAlone / INV_AllOrNothing / INV_HeldNeverFree / INV_CountExact / INV_DoneLeavesNothing / LIVE_StartEnds: placed pools never share a CPU unless one of them says it shares",
+        axis: Tla,
+        anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop; crates/workers/src/placement/reserve.rs reserve, shared; crates/workers/src/pool/placer.rs Placer::holding; crates/workers/src/pool/start.rs Pool::start_in",
+        model_ref: "MC_CpuLedger_{Green,Red_SplitTake,Red_NoRollback,Red_ReleaseLoser,Red_ShareUncounted,Red_NoAttemptCap,Red_ReleaseEarly,Red_RunOutsideHold,Red_DoubleRelease,Red_ForgetHold}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Worker pool CPU ledger",
+        name: "hold_all_or_nothing / rollback_restores / hold_won_alone / hold_step / share_step / release_alone_step / release_shared_step: a claim alone takes all or nothing, the counters stay exact, Holds claimed alone stay apart",
+        axis: Lean,
+        anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop",
+        model_ref: "CpuLedger.{Hold,Count,Exclusive} (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // `default_pool()` answers the first registered pool that still runs,
+        // else one pool started once for the process. Registration moves the
+        // slot only off a pool that stopped, with one compare-and-swap; the
+        // started pool is built under a one-permit turn and published once; a
+        // worker thread never waits for that start; `Pool::stop` never times
+        // its own deadline on the pool it stops.
+        family: "Worker default pool",
+        name: "INV_NeverHandsOutClosing / INV_FirstRunningWins / INV_RegisteredWins / INV_OneStart / INV_OneDefault / INV_ErrorHonest / INV_StopDeadlineElsewhere / INV_MakeDefaultTellsTruth / INV_WorkerNeverWaits / INV_RegistrationKeepsNothingAlive / LIVE_EveryCallReturns / LIVE_EveryRegisterReturns: one default pool, never a closing one",
+        axis: Tla,
+        anchor: "crates/workers/src/pool/default.rs default_pool, Pool::make_default, DefaultPool::register, DefaultPool::get, DefaultPool::started; crates/workers/src/pool/mod.rs Pool::stop; crates/workers/src/pool/deadline.rs delay_on",
+        model_ref: "MC_DefaultPool_{Green,Red_AnswerYes,Red_BlindRegister,Red_FailKeepsTurn,Red_NoClosingCheck,Red_NoRecheck,Red_NoRetry,Red_NoTurn,Red_RacyCell,Red_RegisterClosing,Red_RegisterOverwrites,Red_ShutStarted,Red_StartedFirst,Red_StopAsksFirst,Red_StrongSlot,Red_WorkerRefusedFirst,Red_WorkerWaits}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Worker default pool",
+        name: "first_running_wins / stopped_never_selected / later_registrations_change_nothing / first_calls_agree / registered_wins / stop_deadline_elsewhere: the first running registered pool wins, a stopped one never does, every caller gets one started pool",
+        axis: Lean,
+        anchor: "crates/workers/src/pool/default.rs DefaultPool::register, DefaultPool::get",
+        model_ref: "DefaultPool.{Slot,Cell,Get} (lake build)",
         tiers: &[Boundary],
     },
     Property {

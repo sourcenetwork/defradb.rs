@@ -665,3 +665,48 @@ fn test_select_best_index_with_partial_estimates_uses_shape() {
     let best = select_best_index_with_estimates(&filter, &indexes, &counts).unwrap();
     assert_eq!(best.name, "market_idx");
 }
+
+#[test]
+fn ordering_skips_only_equality_fixed_index_fields() {
+    let index = composite_index(&["node", "session", "sequence", "key"]);
+    for (filter, order, expected) in [
+        (
+            r#"{node: {_eq: "n"}, session: {_eq: "s"}}"#,
+            "[{sequence: DESC}]",
+            (true, true),
+        ),
+        (
+            r#"{node: {_eq: "n"}, session: {_eq: "s"}}"#,
+            "[{sequence: ASC}]",
+            (true, false),
+        ),
+        (
+            r#"{node: {_eq: "n"}, session: {_eq: "s"}}"#,
+            "[{sequence: DESC}, {key: ASC}]",
+            (false, false),
+        ),
+        (
+            r#"{node: {_eq: "n"}, session: {_gt: "s"}}"#,
+            "[{sequence: DESC}]",
+            (false, false),
+        ),
+        (
+            r#"{node: {_in: ["n"]}, session: {_eq: "s"}}"#,
+            "[{sequence: DESC}]",
+            (false, false),
+        ),
+    ] {
+        let query = format!("{{ Events(filter: {filter}, order: {order}) {{ sequence }} }}");
+        let selects = crate::query_parse::parse_query(&query).unwrap();
+        let select = &selects[0];
+        assert_eq!(
+            can_be_ordered_by_filtered_index(
+                select.order_by.as_ref().unwrap(),
+                &index,
+                select.filter.as_ref().unwrap(),
+            ),
+            expected,
+            "{query}"
+        );
+    }
+}

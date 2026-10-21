@@ -524,8 +524,6 @@ impl<S: Store> crate::database::DB<S> {
                 let mut cache = old.clone();
                 if let Some(collection) = &cached_collection {
                     cache.put_named(&registered_name, collection.clone());
-                } else {
-                    cache.remove(&registered_name);
                 }
                 cache
             });

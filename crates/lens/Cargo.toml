@@ -56,6 +56,9 @@ wasmtime = { version = "49.0.2", optional = true, default-features = false, feat
     "std",
 ] }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 

@@ -33,10 +33,14 @@ serde_yaml = "0.9"
 kovan.workspace = true
 regolith.workspace = true
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 bytes = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+workers = { path = "../workers" }
 
 [lints]
 workspace = true

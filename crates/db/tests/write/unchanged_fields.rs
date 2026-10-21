@@ -146,3 +146,59 @@ async fn transaction_update_writes_only_the_changed_field() {
     assert_eq!(result.fields_modified, 1);
     assert_eq!(block_count(&db).await, before + 2);
 }
+
+#[tokio::test]
+async fn batch_update_with_current_values_writes_nothing() {
+    use db::write::autocommit::batch::BatchMutator;
+    use query::mutator::MutationBatchController;
+
+    let (db, doc_id) = setup().await;
+    let before = block_count(&db).await;
+    let mutator =
+        BatchMutator::new(Arc::clone(&db), Arc::new(db.new_txn(false).await.unwrap())).await;
+    let mut doc = mutator
+        .get_for_update("Status", &doc_id)
+        .await
+        .unwrap()
+        .unwrap();
+    doc.set_write_preparation(Arc::new(document::WritePreparation::new(1, 1)));
+    let result = mutator
+        .update("Status", doc, fields(&["state", "detail"]))
+        .await
+        .unwrap();
+    mutator.commit().await.unwrap();
+
+    assert_eq!(result.fields_modified, 0);
+    assert!(result.commit_cid.is_none());
+    assert!(result.document.write_preparation().is_none());
+    assert_eq!(block_count(&db).await, before);
+}
+
+#[tokio::test]
+async fn batch_update_writes_only_the_changed_field() {
+    use db::write::autocommit::batch::BatchMutator;
+    use query::mutator::MutationBatchController;
+
+    let (db, doc_id) = setup().await;
+    let before = block_count(&db).await;
+    let mutator =
+        BatchMutator::new(Arc::clone(&db), Arc::new(db.new_txn(false).await.unwrap())).await;
+    let mut doc = mutator
+        .get_for_update("Status", &doc_id)
+        .await
+        .unwrap()
+        .unwrap();
+    doc.set("state", NormalValue::String("busy".into()));
+    let result = mutator
+        .update("Status", doc, fields(&["state", "detail"]))
+        .await
+        .unwrap();
+    mutator.commit().await.unwrap();
+
+    assert_eq!(result.fields_modified, 1);
+    assert_eq!(block_count(&db).await, before + 2);
+    assert_eq!(
+        result.document.get("detail"),
+        Some(&NormalValue::String("boot".into()))
+    );
+}

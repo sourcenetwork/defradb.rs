@@ -17,9 +17,13 @@
 use std::hint::black_box;
 use std::sync::Arc;
 
-use acp::{DocumentACP, DocumentPermission, Identity, LocalDocumentACP, MemoryAcpStore};
+use acp::{
+    DocumentACP, DocumentPermission, Identity, LocalDocumentACP, MemoryAcpStore, PersistentAcpStore,
+};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use identity::Did;
+use storage::{RegolithStore, RegolithStoreOptions};
+use tempfile::TempDir;
 
 mod common;
 
@@ -152,6 +156,23 @@ fn registration(c: &mut Criterion) {
             },
             criterion::BatchSize::SmallInput,
         )
+    });
+
+    // The store a node runs: on regolith the commit decides who owns the
+    // document. One store serves every iteration, so each registration lands
+    // among the ones before it.
+    let dir = TempDir::new().expect("a temporary directory");
+    let store = Arc::new(
+        RegolithStore::open_with_options(dir.path(), RegolithStoreOptions::new())
+            .expect("a regolith store"),
+    );
+    let persistent = LocalDocumentACP::new(Arc::new(PersistentAcpStore::from_store(store)));
+    group.bench_function("register_doc_object_regolith", |b| {
+        b.iter(|| {
+            seq += 1;
+            rt.block_on(persistent.register_doc_object(&owner, POLICY, RESOURCE, &doc_id(seq)))
+                .expect("the document to register")
+        })
     });
     group.finish();
 }

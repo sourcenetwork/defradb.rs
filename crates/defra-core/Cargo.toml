@@ -65,6 +65,9 @@ tokio = { workspace = true, features = ["rt"], optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 futures.workspace = true
 multihash-codetable.workspace = true
