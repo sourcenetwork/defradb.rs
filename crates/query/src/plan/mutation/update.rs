@@ -49,6 +49,11 @@ impl UpdateInput {
         }
     }
 
+    /// Every field this update writes, through a value or an op.
+    pub fn field_names(&self) -> RapidHashSet<String> {
+        self.fields.keys().chain(self.ops.keys()).cloned().collect()
+    }
+
     /// Add a field value to update.
     pub fn with_field(mut self, name: impl Into<String>, value: JsonValue) -> Self {
         self.fields.insert(name.into(), value);
@@ -382,7 +387,7 @@ impl UpdateNode {
             return None;
         }
         let collection = self.collection.as_deref()?;
-        let patch: RapidHashSet<String> = self.input.fields.keys().cloned().collect();
+        let patch: RapidHashSet<String> = self.input.field_names();
         self.mutator
             .update_run()
             .planned(collection, &patch, self.filter.as_ref())
@@ -513,8 +518,7 @@ impl PlanNode for UpdateNode {
                     )?;
 
                     // Collect the modified field names for block creation
-                    let mut modified_fields: RapidHashSet<String> =
-                        self.input.fields.keys().cloned().collect();
+                    let mut modified_fields: RapidHashSet<String> = self.input.field_names();
 
                     if let Some(embeddings) = &self.prepared_embeddings {
                         let id = doc.id().map(ToString::to_string).unwrap_or_default();
@@ -690,6 +694,12 @@ impl PlanNode for UpdateNode {
         let mut input_obj = serde_json::Map::new();
         for (field_name, value) in &self.input.fields {
             input_obj.insert(field_name.clone(), value.clone());
+        }
+        for (field_name, op) in &self.input.ops {
+            input_obj.insert(
+                field_name.clone(),
+                serde_json::to_value(op).unwrap_or(JsonValue::Null),
+            );
         }
         obj.insert("input".to_string(), JsonValue::Object(input_obj));
 

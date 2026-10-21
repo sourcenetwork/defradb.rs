@@ -267,7 +267,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         {
                             let input = self.build_update_input(mutation, collection)?;
                             input.apply_to_with_time(doc, Some(collection), Some(request_time))?;
-                            input.fields.keys().cloned().collect()
+                            input.field_names()
                         } else {
                             let input = self
                                 .build_upsert_input_from_map(collection, &mutation.update_input)?;
