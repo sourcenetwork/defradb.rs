@@ -21,14 +21,15 @@ pub(super) fn apply_op(
     let kind = field_def.map(|f| &f.kind);
     match op {
         FieldOp::Set(value) => {
-            let value = json_to_normal_value_with_kind_and_time(value, kind, request_time)?;
+            // Two peers setting a counter at once would each add their own gap.
             if crdt.is_some_and(|c| c.is_counter()) {
-                let gap = gap(doc.get(field), &value)?;
-                add_to_counter(doc, field, crdt, gap)
-            } else {
-                doc.set(field.to_string(), value);
-                Ok(())
+                return Err(QueryError::execution(format!(
+                    "`{field}` is a counter, which merges increments; use `increment`"
+                )));
             }
+            let value = json_to_normal_value_with_kind_and_time(value, kind, request_time)?;
+            doc.set(field.to_string(), value);
+            Ok(())
         }
         FieldOp::Increment(amount) => {
             if !crdt.is_some_and(|c| c.is_counter()) {
@@ -71,15 +72,4 @@ fn add_to_counter(
     doc.set_counter_delta(field.to_string(), amount);
     doc.set(field.to_string(), total);
     Ok(())
-}
-
-/// What a counter at `current` needs added to reach `target`.
-fn gap(current: Option<&NormalValue>, target: &NormalValue) -> Result<NormalValue> {
-    let negated = match current {
-        Some(NormalValue::Int(v)) => NormalValue::Int(v.wrapping_neg()),
-        Some(NormalValue::Float64(v)) => NormalValue::Float64(-v),
-        Some(NormalValue::Float32(v)) => NormalValue::Float32(-v),
-        _ => return Ok(target.clone()),
-    };
-    increment_value(Some(&negated), target)
 }

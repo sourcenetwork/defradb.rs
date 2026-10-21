@@ -64,12 +64,6 @@ async fn graphql_update_applies_each_op_and_keeps_field_keyed_input() {
     assert_eq!(after["title"], "b");
     assert_eq!(after["views"], 4, "a field-keyed counter still increments");
 
-    let after = update(&client, &doc_id, r#"{set: {views: 10}}"#);
-    assert_eq!(
-        after["views"], 10,
-        "an explicit set moves the counter to it"
-    );
-
     let after = update(&client, &doc_id, r#"{delete: {body: {at: 0, length: 6}}}"#);
     assert_eq!(after["body"], "brave world");
     let after = update(
@@ -81,7 +75,7 @@ async fn graphql_update_applies_each_op_and_keeps_field_keyed_input() {
 
     assert_eq!(
         stored(&client),
-        json!({"title": "b", "body": "bold world", "views": 10, "set": "t"})
+        json!({"title": "b", "body": "bold world", "views": 4, "set": "t"})
     );
 }
 
@@ -93,7 +87,8 @@ async fn graphql_update_explains_an_op_on_the_wrong_field() {
     for (input, expected) in [
         (r#"{increment: {title: 1}}"#, "not one"),
         (r#"{insert: {title: {at: 0, value: "x"}}}"#, "not one"),
-        (r#"{set: {views: 0}}"#, "only grows"),
+        (r#"{set: {views: 0}}"#, "use `increment`"),
+        (r#"{increment: {views: -1}}"#, "only grows"),
         (r#"{set: "x"}"#, "set: { set: ... }"),
         (r#"{title: "x", set: {title: "y"}}"#, "more than one op"),
     ] {
