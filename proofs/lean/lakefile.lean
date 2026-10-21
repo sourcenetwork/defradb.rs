@@ -38,3 +38,6 @@ lean_lib CpuLedger where
 
 @[default_target]
 lean_lib DefaultPool where
+
+@[default_target]
+lean_lib DiskAnnCodes where

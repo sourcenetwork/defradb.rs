@@ -31,37 +31,43 @@ async fn guarded_db() -> DB<RegolithStore> {
     db
 }
 
-#[tokio::test]
-async fn the_identity_acting_in_the_context_is_the_one_checked() {
-    let db = guarded_db().await;
+#[test]
+fn the_identity_acting_in_the_context_is_the_one_checked() {
+    workers::block_on(async {
+        let db = guarded_db().await;
 
-    db.check_node_access_as(&acting(OWNER_DID), NodePermission::DocumentUpdate)
-        .await
-        .expect("the owner acting in the context must be allowed");
-    let denied = db
-        .check_node_access_as(&acting(STRANGER_DID), NodePermission::DocumentUpdate)
-        .await
-        .expect_err("a stranger acting in the context must be denied");
-    assert!(
-        matches!(denied, db::error::Error::NotAuthorized { .. }),
-        "expected NotAuthorized, got: {denied:?}"
-    );
+        db.check_node_access_as(&acting(OWNER_DID), NodePermission::DocumentUpdate)
+            .await
+            .expect("the owner acting in the context must be allowed");
+        let denied = db
+            .check_node_access_as(&acting(STRANGER_DID), NodePermission::DocumentUpdate)
+            .await
+            .expect_err("a stranger acting in the context must be denied");
+        assert!(
+            matches!(denied, db::error::Error::NotAuthorized { .. }),
+            "expected NotAuthorized, got: {denied:?}"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_identity_on_the_thread_grants_a_request_nothing() {
-    let db = guarded_db().await;
+#[test]
+fn an_identity_on_the_thread_grants_a_request_nothing() {
+    workers::block_on(async {
+        let db = guarded_db().await;
 
-    // The owner set the old way, on this thread, must not reach a request
-    // whose context names no one.
-    defra_core::current_identity::set_current_identity(Some(OWNER_DID.to_string()));
-    let result = db
-        .check_node_access_as(&RequestContext::default(), NodePermission::DocumentUpdate)
-        .await;
-    defra_core::current_identity::set_current_identity(None);
+        // The owner set the old way, on this thread, must not reach a request
+        // whose context names no one.
+        defra_core::current_identity::set_current_identity(Some(OWNER_DID.to_string()));
+        let result = db
+            .check_node_access_as(&RequestContext::default(), NodePermission::DocumentUpdate)
+            .await;
+        defra_core::current_identity::set_current_identity(None);
 
-    assert!(
-        matches!(result, Err(db::error::Error::NotAuthorized { .. })),
-        "an anonymous request was allowed as the identity on its thread: {result:?}"
-    );
+        assert!(
+            matches!(result, Err(db::error::Error::NotAuthorized { .. })),
+            "an anonymous request was allowed as the identity on its thread: {result:?}"
+        );
+    })
+    .unwrap()
 }

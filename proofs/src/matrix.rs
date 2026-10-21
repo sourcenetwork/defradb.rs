@@ -33,6 +33,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Order-preserving key encoding",
     "Concurrent collection-head transitions",
     "Vector index link maintenance",
+    "DiskANN resident code table",
     "Commit-ordered document arrivals",
     "Retry input and marker fencing",
     "Collection schema-version OCC",

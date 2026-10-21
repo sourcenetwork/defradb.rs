@@ -63,6 +63,8 @@ ignore = [
     "RUSTSEC-2026-0098",
     "RUSTSEC-2026-0099",
     "RUSTSEC-2026-0104",
+    # emSign intermediates: 0.101 has no fix; our direct 0.103 is on 0.103.16.
+    "RUSTSEC-2026-0382",
     # rustls 0.21 from the same reqwest 0.11. 0346 needs a custom session
     # store that logs with Debug, which we don't have; 0349 is fixed only in
     # rustls 0.23.46, which our direct rustls is already on.

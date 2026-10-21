@@ -555,22 +555,25 @@ impl<S: Store> crate::database::DB<S> {
 #[cfg(test)]
 mod tests {
 
-    #[tokio::test]
-    async fn schema_head_is_not_published_when_collection_transaction_is_discarded() {
-        let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let schema = query::parse_sdl("type HeadPublicationProbe { value: String }")
-            .unwrap()
-            .remove(0);
+    #[test]
+    fn schema_head_is_not_published_when_collection_transaction_is_discarded() {
+        workers::block_on(async {
+            let db = crate::DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let schema = query::parse_sdl("type HeadPublicationProbe { value: String }")
+                .unwrap()
+                .remove(0);
 
-        let mut txn = db.new_txn(false).await.unwrap();
-        db.create_collection_with_txn(&mut txn, schema.clone())
-            .await
-            .unwrap();
-        assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
-        txn.discard().unwrap();
-        assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
+            let mut txn = db.new_txn(false).await.unwrap();
+            db.create_collection_with_txn(&mut txn, schema.clone())
+                .await
+                .unwrap();
+            assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
+            txn.discard().unwrap();
+            assert!(db.schema_heads.get("HeadPublicationProbe").is_none());
 
-        db.create_collection(schema).await.unwrap();
-        assert!(db.schema_heads.get("HeadPublicationProbe").is_some());
+            db.create_collection(schema).await.unwrap();
+            assert!(db.schema_heads.get("HeadPublicationProbe").is_some());
+        })
+        .unwrap()
     }
 }

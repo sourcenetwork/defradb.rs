@@ -6,8 +6,9 @@ use document::Document;
 use query::{mutator::DocMutator, QueryExecutor, QueryRequest};
 use schema::{CollectionVersion, FieldDescription, FieldKind, PolicyDescription};
 
-#[tokio::test]
-async fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
+#[test]
+fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
+    workers::block_on(async {
     for has_visible_match in [false, true] {
         let fixture = super::kms::fixture().await;
         fixture
@@ -71,4 +72,6 @@ async fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
             assert_eq!(data["upsert_Protected"][0]["left"], "created");
         }
     }
+})
+    .unwrap()
 }
