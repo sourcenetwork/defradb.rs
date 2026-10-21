@@ -448,7 +448,10 @@ impl<S: Store> VersionedFetcher<S> {
             .filter(|block| {
                 matches!(
                     block.delta,
-                    CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Text(_)
+                    CrdtDelta::Lww(_)
+                        | CrdtDelta::Counter(_)
+                        | CrdtDelta::Text(_)
+                        | CrdtDelta::Json(_)
                 )
             })
             .filter_map(|block| block.encryption)
@@ -468,6 +471,7 @@ impl<S: Store> VersionedFetcher<S> {
                 CrdtDelta::Lww(payload) => &mut payload.data,
                 CrdtDelta::Counter(payload) => &mut payload.data,
                 CrdtDelta::Text(payload) => &mut payload.data,
+                CrdtDelta::Json(payload) => &mut payload.data,
                 _ => continue,
             };
             let plaintext = keys
@@ -783,6 +787,30 @@ impl<S: Store> VersionedFetcher<S> {
             let text =
                 crdt::replay_text(&history).map_err(|e| Error::Serialization(e.to_string()))?;
             field_values.insert(field.to_owned(), (0, NormalValue::String(text)));
+        }
+
+        // A Json field is the replay of all its blocks.
+        let mut jsons: RapidHashMap<&str, Vec<defra_core::json_crdt::ReplayBlock>> =
+            RapidHashMap::new();
+        for (cid, block) in blocks {
+            if let CrdtDelta::Json(payload) = &block.delta {
+                jsons.entry(payload.field_name.as_str()).or_default().push(
+                    defra_core::json_crdt::ReplayBlock {
+                        cid: cid.to_bytes(),
+                        parents: block.heads.iter().flatten().map(Cid::to_bytes).collect(),
+                        priority: payload.priority,
+                        data: payload.data.clone(),
+                    },
+                );
+            }
+        }
+        for (field, history) in jsons {
+            let frontier = defra_core::json_crdt::replay(history)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            let value = frontier
+                .materialize()
+                .map_or(NormalValue::Null, NormalValue::Json);
+            field_values.insert(field.to_owned(), (0, value));
         }
 
         // Build document from collected field values

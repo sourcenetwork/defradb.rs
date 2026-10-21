@@ -28,6 +28,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             CrdtDelta::Lww(_)
             | CrdtDelta::Counter(_)
             | CrdtDelta::Text(_)
+            | CrdtDelta::Json(_)
             | CrdtDelta::Immutable(_) => match self.resolve_field_block_doc_id(cid).await? {
                 Some(doc_id) => doc_id,
                 None => return Ok(None),

@@ -19,6 +19,7 @@ mod encryption;
 pub(crate) mod error;
 mod frame_source;
 pub mod hook;
+mod json;
 mod lww;
 mod merge_keys;
 mod protected_update;

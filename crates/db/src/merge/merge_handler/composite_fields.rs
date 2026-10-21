@@ -250,6 +250,46 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             .field_values
                             .insert(text_payload.field_name.clone(), result.value);
                     }
+                    CrdtDelta::Json(json_payload) => {
+                        state
+                            .field_block_priorities
+                            .insert(link_cid, json_payload.priority);
+                        let parents = state
+                            .field_block_heads
+                            .get(&json_payload.field_name)
+                            .cloned()
+                            .unwrap_or_default();
+                        let result = self
+                            .process_json_delta_in_txn(
+                                datastore,
+                                headstore,
+                                &link_cid,
+                                &parents,
+                                &json_payload,
+                                context.metadata.collection_id,
+                                context.doc_short_id,
+                                context.metadata,
+                                &mut state.reads,
+                            )
+                            .await?;
+                        let Some(delta) = result.delta else {
+                            continue;
+                        };
+                        state.field_priorities.insert(
+                            json_payload.field_name.clone(),
+                            crate::collection::value::FieldOrder {
+                                priority: result.priority,
+                                raw_value: None,
+                            },
+                        );
+                        state.any_field_applied = true;
+                        state
+                            .json_deltas
+                            .insert(json_payload.field_name.clone(), delta);
+                        state
+                            .field_values
+                            .insert(json_payload.field_name.clone(), result.value);
+                    }
                     other => {
                         return Err(MergeError::UnsupportedDelta(format!(
                             "Unexpected delta type in linked block: {:?}",
@@ -412,6 +452,39 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         tracing::debug!(
                             error = %error,
                             "Cannot decrypt Text field block, skipping field (canRead=false)"
+                        );
+                        return Ok(EffectiveLinkedDelta::SkipField);
+                    }
+                }
+            }
+            CrdtDelta::Json(payload) if linked_block.encryption.is_some() => {
+                match self
+                    .decrypt_block_data(
+                        &payload.data,
+                        linked_block.encryption.as_ref(),
+                        Some(context.metadata),
+                    )
+                    .await
+                {
+                    Ok(decrypted) => {
+                        let mut decrypted_payload = payload.clone();
+                        decrypted_payload.data = decrypted;
+                        CrdtDelta::Json(decrypted_payload)
+                    }
+                    Err(error @ MergeError::Kms(kms::Error::AccessDenied { .. })) => {
+                        tracing::debug!(
+                            error = %error,
+                            "Cannot decrypt Json field block, skipping field (canRead=false)"
+                        );
+                        return Ok(EffectiveLinkedDelta::SkipField);
+                    }
+                    Err(error @ (MergeError::NeedsDecryptionKey(_) | MergeError::Kms(_))) => {
+                        return Err(error)
+                    }
+                    Err(error) => {
+                        tracing::debug!(
+                            error = %error,
+                            "Cannot decrypt Json field block, skipping field (canRead=false)"
                         );
                         return Ok(EffectiveLinkedDelta::SkipField);
                     }

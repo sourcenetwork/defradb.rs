@@ -41,6 +41,48 @@ fn field_value(
     StoredField::counter(field.name.clone(), kind, priority, value).map_err(Error::from)
 }
 
+/// The Json part a put stores: `base`, the part already stored, after the
+/// write's operand. A write without one (a create, or a fixture) stores its
+/// value as one root block over an absent field, the block a create builds.
+fn json_put(
+    field: &schema::FieldDescription,
+    doc: &Document,
+    priority: u64,
+    base: Option<&StoredField>,
+) -> Result<StoredField> {
+    use defra_core::json_crdt::{self, Frontier};
+    let mut frontier = match base.filter(|part| part.kind == ValueKind::Json) {
+        Some(part) => {
+            Frontier::decode(&part.value).map_err(|e| Error::InvalidDocument(e.to_string()))?
+        }
+        None => Frontier::default(),
+    };
+    let delta = match doc.json_delta(&field.name) {
+        Some(delta) => delta.clone(),
+        None if frontier.entries.is_empty() => {
+            let ops = doc.json_ops_or_value(&field.name);
+            let data =
+                json_crdt::encode_ops(&ops).map_err(|e| Error::InvalidDocument(e.to_string()))?;
+            frontier.local_delta(&ops, &json_crdt::block_id(priority, &[], &data), priority)
+        }
+        None => Frontier::default(),
+    };
+    frontier.compose(delta);
+    frontier.settle();
+    StoredField::json(field.name.clone(), priority, &frontier).map_err(Error::from)
+}
+
+/// The operand of a Json part: the one the write recorded.
+fn json_operand(
+    field: &schema::FieldDescription,
+    doc: &Document,
+    priority: u64,
+) -> Result<Option<StoredField>> {
+    doc.json_delta(&field.name)
+        .map(|delta| StoredField::json(field.name.clone(), priority, delta).map_err(Error::from))
+        .transpose()
+}
+
 impl Collection {
     pub(crate) async fn put_document_value(
         &self,
@@ -70,6 +112,16 @@ impl Collection {
                 .map_err(Error::InvalidDocument)?,
             )
         };
+        let previous = if !creating && self.def.fields.iter().any(|f| f.crdt_type.is_json()) {
+            datastore
+                .get_parts(&self.doc_key(doc_short_id), &[])
+                .await
+                .map_err(Error::Storage)?
+                .as_deref()
+                .and_then(StoredDocument::decode)
+        } else {
+            None
+        };
         let mut stored = StoredDocument::default();
         for field in &self.def.fields {
             let value = doc.get(&field.name).unwrap_or(&NormalValue::Null);
@@ -87,6 +139,15 @@ impl Collection {
                         .map(|heads| heads.field_max_priority(&field.name))
                         .unwrap_or(1)
                 });
+            if field.crdt_type.is_json() {
+                let base = previous
+                    .as_ref()
+                    .and_then(|previous| previous.fields.get(id));
+                stored
+                    .fields
+                    .insert(*id, json_put(field, doc, priority, base)?);
+                continue;
+            }
             let mut stored_field = field_value(field, value, priority)?;
             if stored_field.kind == ValueKind::Lww {
                 if let Some(raw) = priorities
@@ -151,7 +212,14 @@ impl Collection {
             };
             let old = stored.fields.get(id);
             let value = doc.get(&field.name).unwrap_or(&NormalValue::Null);
-            let mut resolved = field_value(field, value, order.priority)?;
+            let mut resolved = if field.crdt_type.is_json() {
+                match json_operand(field, doc, order.priority)? {
+                    Some(operand) => operand,
+                    None => continue,
+                }
+            } else {
+                field_value(field, value, order.priority)?
+            };
             if old.is_some_and(|old| old.name != resolved.name || old.kind != resolved.kind) {
                 return Ok(false);
             }
@@ -249,10 +317,26 @@ impl Collection {
             let id = ids.get(&field.name).ok_or_else(|| {
                 Error::InvalidDocument(format!("missing part ID for {}", field.name))
             })?;
-            parts.fields.insert(
-                *id,
-                field_value(field, value, priorities[&field.name].priority)?,
-            );
+            let priority = priorities[&field.name].priority;
+            let part = if field.crdt_type.is_json() {
+                match json_operand(field, doc, priority)? {
+                    Some(operand) => operand,
+                    None => {
+                        return self
+                            .put_document_value(
+                                datastore,
+                                doc_short_id,
+                                doc,
+                                false,
+                                Some(&priorities),
+                            )
+                            .await
+                    }
+                }
+            } else {
+                field_value(field, value, priority)?
+            };
+            parts.fields.insert(*id, part);
         }
         // An operand must name each part as the stored value does; a schema
         // transition is a put above, never an operand.
@@ -271,5 +355,38 @@ impl Collection {
                 .map_err(Error::Storage)?;
         }
         Ok(())
+    }
+}
+
+impl Collection {
+    /// The stored frontier of the Json field `field`, read without
+    /// validation, empty when the document has none. A writer's operand
+    /// removes only the entries this read returns, which are exactly the
+    /// ones under the heads it read in the same snapshot, so a concurrent
+    /// writer's entry survives and nothing needs validating.
+    pub(crate) async fn read_json_frontier(
+        &self,
+        datastore: &NamespaceView,
+        doc_short_id: u64,
+        field: &str,
+    ) -> Result<defra_core::json_crdt::Frontier> {
+        let bytes = datastore
+            .get_parts(&self.doc_key(doc_short_id), &[])
+            .await
+            .map_err(Error::Storage)?;
+        let part = bytes
+            .as_deref()
+            .and_then(StoredDocument::decode)
+            .and_then(|stored| {
+                stored
+                    .fields
+                    .into_values()
+                    .find(|part| part.name == field && part.kind == ValueKind::Json)
+            });
+        match part {
+            Some(part) => defra_core::json_crdt::Frontier::decode(&part.value)
+                .map_err(|error| Error::InvalidDocument(error.to_string())),
+            None => Ok(defra_core::json_crdt::Frontier::default()),
+        }
     }
 }

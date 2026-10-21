@@ -12,6 +12,7 @@ mod build;
 pub mod collection;
 mod compute;
 mod immutable;
+mod json;
 mod text;
 mod write;
 
@@ -199,7 +200,7 @@ pub fn compute_signature(
     // guaranteed by the signature on the parent composite block.
     let is_field = matches!(
         &block.delta,
-        CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Text(_)
+        CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Text(_) | CrdtDelta::Json(_)
     );
     if is_field && block.delta.priority() > 1 {
         return Ok(None);
@@ -300,7 +301,7 @@ fn compute_signature_prepared(
     }
     let is_field = matches!(
         &block.delta,
-        CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Text(_)
+        CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Text(_) | CrdtDelta::Json(_)
     );
     if is_field && block.delta.priority() > 1 {
         return Ok(None);

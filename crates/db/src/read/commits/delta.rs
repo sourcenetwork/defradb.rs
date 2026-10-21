@@ -15,6 +15,7 @@ impl<S: Store> CommitsFetcher<S> {
             CrdtDelta::Lww(d) => Some(d.field_name.clone()),
             CrdtDelta::Counter(d) => Some(d.field_name.clone()),
             CrdtDelta::Text(d) => Some(d.field_name.clone()),
+            CrdtDelta::Json(d) => Some(d.field_name.clone()),
             CrdtDelta::Composite(_) => Some("_C".to_string()),
             CrdtDelta::Immutable(_) => Some(defra_core::block::IMMUTABLE_LINK_NAME.to_string()),
             CrdtDelta::Collection(_) => None,
@@ -74,6 +75,7 @@ impl<S: Store> CommitsFetcher<S> {
                 }
             }
             CrdtDelta::Text(d) => Some(d.data.clone()),
+            CrdtDelta::Json(d) => Some(d.data.clone()),
             CrdtDelta::Composite(_) => None,
             CrdtDelta::Collection(_) => None,
             CrdtDelta::CollectionSet(_) => None,
@@ -89,6 +91,7 @@ impl<S: Store> CommitsFetcher<S> {
             CrdtDelta::Lww(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Counter(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Text(d) => Some(d.schema_version_id.clone()),
+            CrdtDelta::Json(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Composite(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Immutable(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Collection(d) => Some(d.schema_version_id.clone()),

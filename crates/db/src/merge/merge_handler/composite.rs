@@ -56,6 +56,8 @@ pub struct CompositeMergeState {
     pub(crate) field_block_priorities: RapidHashMap<Cid, u64>,
     pub(crate) field_priorities: RapidHashMap<String, crate::collection::value::FieldOrder>,
     pub(crate) field_values: RapidHashMap<String, NormalValue>,
+    /// The operand each merged Json block lands on its field's frontier.
+    pub(crate) json_deltas: RapidHashMap<String, defra_core::json_crdt::Frontier>,
     pub(crate) any_field_applied: bool,
     pub(crate) encrypted_policy_checked: bool,
     pub(crate) field_block_heads: RapidHashMap<String, Vec<Cid>>,

@@ -67,6 +67,15 @@ pub(crate) async fn write_local_update(
 ) -> query::error::Result<()> {
     set_incremented_counters(datastore, collection, doc, doc_short_id).await?;
     set_text_ops(datastore, collection, doc, doc_short_id, modified_fields).await?;
+    set_json_ops(
+        datastore,
+        collection,
+        doc,
+        doc_short_id,
+        modified_fields,
+        heads,
+    )
+    .await?;
     let generated = crate::search::embedding::set_embedding_from_inputs(
         &collection.schema().vector_embeddings,
         doc,
@@ -289,6 +298,66 @@ async fn set_text_ops(
         };
         doc.set_text_ops(field.clone(), ops);
         doc.set(field, NormalValue::String(new));
+    }
+    Ok(())
+}
+
+/// Turn each changed Json field into the edits its block carries and the
+/// operand it lands on the stored frontier: the edits the write named, or a
+/// diff of the stored value against the written one. The block's parents are
+/// the field's heads in `heads`, read in this snapshot with the frontier, so
+/// the operand removes exactly the entries in the block's past. The document
+/// then holds the value merging the block gives.
+async fn set_json_ops(
+    datastore: &NamespaceView,
+    collection: &Collection,
+    doc: &mut Document,
+    doc_short_id: u64,
+    modified_fields: &rapidhash::RapidHashSet<String>,
+    heads: &crate::block::builder::DocHeadsSnapshot,
+) -> query::error::Result<()> {
+    use defra_core::json_crdt;
+    let fields: Vec<String> = collection
+        .schema()
+        .fields
+        .iter()
+        .filter(|field| field.crdt_type.is_json() && modified_fields.contains(&field.name))
+        .map(|field| field.name.clone())
+        .collect();
+    let error = |e: String| query::error::QueryError::execution(e);
+    for field in fields {
+        let mut frontier = collection
+            .read_json_frontier(datastore, doc_short_id, &field)
+            .await
+            .map_err(|e| error(e.to_string()))?;
+        let ops = match doc.json_ops(&field) {
+            Some(ops) => ops.to_vec(),
+            None => json_crdt::diff(
+                frontier.materialize().as_ref(),
+                doc.get(&field).and_then(document::json_value).as_ref(),
+            ),
+        };
+        let priority = heads.field_max_priority(&field) + 1;
+        let parents: Vec<Vec<u8>> = heads
+            .field_heads(&field)
+            .iter()
+            .map(Cid::to_bytes)
+            .collect();
+        let data = json_crdt::encode_ops(&ops).map_err(|e| error(e.to_string()))?;
+        let delta = frontier.local_delta(
+            &ops,
+            &json_crdt::block_id(priority, &parents, &data),
+            priority,
+        );
+        frontier.compose(delta.clone());
+        doc.set_json_ops(field.clone(), ops);
+        doc.set_json_delta(field.clone(), delta);
+        doc.set(
+            field,
+            frontier
+                .materialize()
+                .map_or(NormalValue::Null, NormalValue::Json),
+        );
     }
     Ok(())
 }

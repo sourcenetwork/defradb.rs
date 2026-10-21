@@ -89,7 +89,8 @@ pub(crate) fn compute_document_blocks_with_inputs(
         }
 
         let is_text = text::is_text(schema, field_name);
-        if is_text && field_value.value().is_nil() {
+        let is_json = json::is_json(schema, field_name);
+        if (is_text || is_json) && field_value.value().is_nil() {
             continue;
         }
 
@@ -102,6 +103,8 @@ pub(crate) fn compute_document_blocks_with_inputs(
 
         let value_bytes = if is_text {
             text::ops_bytes(doc, field_name, field_value.value(), true)?
+        } else if is_json {
+            json::ops_bytes(doc, field_name)?
         } else {
             encode_value_as_cbor(cbor_value)?
         };
@@ -214,6 +217,8 @@ pub(crate) fn compute_document_blocks_with_inputs(
 
         let delta = if is_text {
             text::delta(field_name, priority, schema_version_id, value_bytes)
+        } else if is_json {
+            json::delta(field_name, priority, schema_version_id, value_bytes)
         } else if is_counter {
             CrdtDelta::Counter(CounterDeltaPayload {
                 field_name: field_name.clone(),

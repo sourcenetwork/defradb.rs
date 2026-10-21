@@ -605,10 +605,13 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 )
                 .await
             }
-            // A Text block edits its document's stored text and heads, which
-            // only its composite writes.
+            // A Text or Json block edits its document's stored value and
+            // heads, which only its composite writes.
             CrdtDelta::Text(_) => Ok(MergeOutcome::terminal_skip(
                 "text block merged via its composite",
+            )),
+            CrdtDelta::Json(_) => Ok(MergeOutcome::terminal_skip(
+                "json block merged via its composite",
             )),
             CrdtDelta::Lww(payload) => {
                 let Some((doc_id_str, doc_short_id)) =

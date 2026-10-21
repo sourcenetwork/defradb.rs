@@ -405,6 +405,7 @@ pub async fn resolve_block_doc_ids(
         defra_core::CrdtDelta::Lww(_)
             | defra_core::CrdtDelta::Counter(_)
             | defra_core::CrdtDelta::Text(_)
+            | defra_core::CrdtDelta::Json(_)
             | defra_core::CrdtDelta::Immutable(_)
             | defra_core::CrdtDelta::Composite(_)
     );

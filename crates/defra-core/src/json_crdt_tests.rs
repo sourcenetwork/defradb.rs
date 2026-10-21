@@ -274,3 +274,26 @@ fn a_block_id_depends_on_priority_parents_and_ops_but_not_parent_order() {
         block_id(2, &parents[..1], b"x")
     );
 }
+
+#[test]
+fn a_replay_of_the_whole_dag_matches_merging_it_block_by_block() {
+    let mut sim = Sim::new();
+    let root = create(&mut sim, json!({"a": {"b": 1}, "c": 1}));
+    let x = sim.write(&[root], vec![op(&["a"], JsonEdit::Delete)]);
+    let y = sim.write(&[root], vec![set(&["a", "b"], json!(2))]);
+    let z = sim.write(&[x, y], vec![set(&["c"], json!(3))]);
+    let cid = |b: usize| format!("cid{b}").into_bytes();
+    let replayed = replay(
+        [root, x, y, z]
+            .iter()
+            .map(|&b| ReplayBlock {
+                cid: cid(b),
+                parents: sim.blocks[b].1.iter().map(|&p| cid(p)).collect(),
+                priority: sim.blocks[b].2,
+                data: encode_ops(&sim.blocks[b].3).unwrap(),
+            })
+            .collect(),
+    )
+    .unwrap();
+    assert_eq!(view(&replayed).0, view(&sim.merge(&[root, y, x, z])).0);
+}

@@ -478,6 +478,43 @@ impl Frontier {
     }
 }
 
+/// One block of a Json field's DAG, for [`replay`]: its CID, its parents'
+/// CIDs, its priority and its plain ops `data`.
+pub struct ReplayBlock {
+    pub cid: Vec<u8>,
+    pub parents: Vec<Vec<u8>>,
+    pub priority: u64,
+    pub data: Vec<u8>,
+}
+
+/// The frontier of a whole Json DAG: every block merged after its parents,
+/// which a higher priority than each of them guarantees.
+pub fn replay(mut blocks: Vec<ReplayBlock>) -> Result<Frontier> {
+    blocks.sort_by(|a, b| (a.priority, &a.cid).cmp(&(b.priority, &b.cid)));
+    let mut pasts: BTreeMap<Vec<u8>, BTreeSet<Vec<u8>>> = BTreeMap::new();
+    let mut ids: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut frontier = Frontier::default();
+    for block in blocks {
+        let id = block_id(block.priority, &block.parents, &block.data);
+        let mut past = BTreeSet::new();
+        for parent in &block.parents {
+            if let Some(parent_id) = ids.get(parent) {
+                past.insert(parent_id.clone());
+            }
+            if let Some(parent_past) = pasts.get(parent) {
+                past.extend(parent_past.iter().cloned());
+            }
+        }
+        let ops = decode_ops(&block.data)?;
+        let delta = frontier.delta(&ops, &id, block.priority, |entry| past.contains(entry));
+        frontier.compose(delta);
+        frontier.settle();
+        ids.insert(block.cid.clone(), id);
+        pasts.insert(block.cid, past);
+    }
+    Ok(frontier)
+}
+
 #[cfg(test)]
 #[path = "json_crdt_tests.rs"]
 mod tests;

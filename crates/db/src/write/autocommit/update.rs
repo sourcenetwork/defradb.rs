@@ -294,6 +294,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             modified_fields.retain(|field| {
                 attempt.input.get_counter_delta(field).is_some()
                     || attempt.input.text_ops(field).is_some()
+                    || attempt.input.json_ops(field).is_some()
                     || (projected && !dependencies.contains(field))
                     || attempt.input.get(field) != current_doc.get(field)
             });
@@ -301,6 +302,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         for field in &modified_fields {
             if let Some(ops) = attempt.input.text_ops(field) {
                 current_doc.set_text_ops(field.clone(), ops.to_vec());
+            }
+            if let Some(ops) = attempt.input.json_ops(field) {
+                current_doc.set_json_ops(field.clone(), ops.to_vec());
             }
             if let Some(delta) = attempt.input.get_counter_delta(field).cloned() {
                 current_doc.set_counter_delta(field.clone(), delta);

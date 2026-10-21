@@ -82,6 +82,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         for (field_name, value) in &state.field_values {
             doc.set(field_name, value.clone());
         }
+        for (field_name, delta) in &state.json_deltas {
+            doc.set_json_delta(field_name.clone(), delta.clone());
+        }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection
             .schema()
