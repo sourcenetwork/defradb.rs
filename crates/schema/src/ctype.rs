@@ -84,7 +84,6 @@ impl<'de> Deserialize<'de> for CType {
                     5 => CType::PCounter,
                     6 => CType::Text,
                     7 => CType::Json,
-                    7 => CType::Json,
                     _ => CType::Unknown(kind), // Preserve unknown for validation
                 })
             }
