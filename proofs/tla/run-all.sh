@@ -34,6 +34,9 @@ RUNS=(
   "MC_DefraKeyClassifier_Green.cfg DefraKeyClassifier.tla GREEN"
   "MC_DefraKeyClassifier_Red_BroadBlockPrefix.cfg DefraKeyClassifier.tla RED"
   "MC_DefraKeyClassifier_Red_BlockConcurrency.cfg DefraKeyClassifier.tla RED"
+  "MC_RootSingleFlight_Green.cfg RootSingleFlight.tla GREEN" # #2079: one fetch per root however many peers reply, and a reply after a failed fetch starts the next
+  "MC_RootSingleFlight_Red_NoGuard.cfg RootSingleFlight.tla RED" # every reply fetches, as before (INV_OneFetchPerRoot)
+  "MC_RootSingleFlight_Red_Keep.cfg RootSingleFlight.tla RED" # a failed fetch keeps its claim: the next reply starts nothing (INV_NoReplyLost)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)

@@ -588,6 +588,8 @@ struct ProviderPull {
     elapsed: Duration,
     /// CAR bytes received from each provider, finished fetches and in-flight ones.
     bytes: Vec<u64>,
+    /// CAR fetches made to each provider.
+    fetches: Vec<u64>,
 }
 
 /// Pulls one document's history onto a fresh node connected to `providers` nodes that
@@ -645,12 +647,22 @@ async fn measure_pull_from_providers(providers: usize) -> ProviderPull {
             peer["bytes"].as_u64().unwrap_or(0) + peer["in_flight_bytes"].as_u64().unwrap_or(0)
         })
         .collect();
+    let fetches = status["peer_fetches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|peer| peer["fetches"].as_u64().unwrap_or(0))
+        .collect();
 
     receiver.shutdown().await;
     for node in &nodes {
         node.shutdown().await;
     }
-    ProviderPull { elapsed, bytes }
+    ProviderPull {
+        elapsed,
+        bytes,
+        fetches,
+    }
 }
 
 /// Measures whether pulling from more providers costs more bytes than the history is
@@ -663,8 +675,8 @@ async fn bench_pull_from_providers() {
         let pull = measure_pull_from_providers(providers).await;
         let total: u64 = pull.bytes.iter().sum();
         println!(
-            "providers={providers} elapsed={:>9.2?} total_bytes={total:>9} per_provider={:?}",
-            pull.elapsed, pull.bytes
+            "providers={providers} elapsed={:>9.2?} total_bytes={total:>9} bytes={:?} fetches={:?}",
+            pull.elapsed, pull.bytes, pull.fetches
         );
     }
 }

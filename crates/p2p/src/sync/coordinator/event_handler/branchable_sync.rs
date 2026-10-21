@@ -295,6 +295,10 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                     self.is_registered_replicator(peer_id.as_str(), &collection_id);
 
                 self.spawn_background_task("branchable_sync_reply_fetch_dag", async move {
+                    let Some(_claim) = limiter.claim_root(root_cid) else {
+                        tracing::debug!(cid = %root_cid, "Branchable DAG already being fetched");
+                        return;
+                    };
                     let alternate_providers =
                         super::super::dag_fetcher::connected_alternate_providers(
                             &transport, &root_cid,

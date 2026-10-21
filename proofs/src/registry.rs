@@ -248,7 +248,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "acquire_exclusive / join_acks_only_durable / join_processes_only_unowned: the CID guard is exclusive and a join acks only a safe block",
         axis: Lean,
-        anchor: "crates/p2p/src/sync/queue.rs ProcessQueue::try_acquire, release_sync; crates/p2p/src/sync/manager/process/pushlog.rs join_in_flight",
+        anchor: "crates/p2p/src/sync/queue.rs ProcessQueue::try_acquire, release_sync; crates/p2p/src/sync/manager/process/pushlog.rs join_in_flight; crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootClaim::drop",
         model_ref: "SingleFlight.Join (lake build)",
         tiers: &[Boundary],
     },
@@ -618,6 +618,14 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check; crates/p2p/src/iroh/records/task.rs Records::renew, Records::on_input",
         model_ref: "MC_ServiceRecords_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Reply-driven DAG fetch",
+        name: "INV_OneFetchPerRoot / INV_NoReplyLost",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootClaim; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply",
+        model_ref: "MC_RootSingleFlight_Green.cfg",
         tiers: &[Boundary],
     },
     Property {

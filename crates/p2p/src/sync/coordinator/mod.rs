@@ -268,6 +268,21 @@ pub(crate) struct DagFetchLimiter {
     global: Arc<Semaphore>,
     per_peer: Arc<HopscotchMap<String, Arc<Semaphore>, rapidhash::fast::RandomState>>,
     peer_limit: usize,
+    /// Roots a reply-driven fetch is running for.
+    roots: Arc<HopscotchMap<cid::Cid, (), rapidhash::fast::RandomState>>,
+}
+
+/// Held while one fetch of a root runs; dropping it lets the next reply fetch.
+/// Model: proofs/tla/RootSingleFlight.tla.
+pub(crate) struct RootClaim {
+    roots: Arc<HopscotchMap<cid::Cid, (), rapidhash::fast::RandomState>>,
+    root: cid::Cid,
+}
+
+impl Drop for RootClaim {
+    fn drop(&mut self) {
+        self.roots.remove(&self.root);
+    }
 }
 
 pub(crate) struct DagFetchPermits {
@@ -284,7 +299,23 @@ impl DagFetchLimiter {
                 rapidhash::fast::RandomState::default(),
             )),
             peer_limit: global_limit.saturating_sub(1).max(1),
+            roots: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
         }
+    }
+
+    /// Claims `root` for one fetch, or `None` while another fetch holds it.
+    /// That fetch already tries every connected peer, so a reply that finds
+    /// the root claimed has nothing to add.
+    pub(crate) fn claim_root(&self, root: cid::Cid) -> Option<RootClaim> {
+        self.roots
+            .insert_if_absent(root, ())
+            .is_none()
+            .then(|| RootClaim {
+                roots: Arc::clone(&self.roots),
+                root,
+            })
     }
 
     pub(crate) async fn acquire(&self, source_peer: &PeerId) -> Option<DagFetchPermits> {
@@ -1249,6 +1280,29 @@ mod dag_fetch_limiter_tests {
     use super::DagFetchLimiter;
     use crate::transport::PeerId;
     use std::time::Duration;
+
+    #[test]
+    fn a_root_is_claimed_by_one_fetch_until_it_ends() {
+        let limiter = DagFetchLimiter::new(4);
+        let root = cid::Cid::default();
+        let other = cid::Cid::new_v1(0x71, cid::multihash::Multihash::default());
+
+        let claim = limiter.claim_root(root).expect("first claim");
+        assert!(
+            limiter.claim_root(root).is_none(),
+            "a second reply must not fetch"
+        );
+        assert!(
+            limiter.claim_root(other).is_some(),
+            "other roots are independent"
+        );
+
+        drop(claim);
+        assert!(
+            limiter.claim_root(root).is_some(),
+            "the next reply fetches once the first fetch ends, failed or not"
+        );
+    }
 
     #[tokio::test]
     async fn single_peer_cannot_hold_every_global_permit() {
