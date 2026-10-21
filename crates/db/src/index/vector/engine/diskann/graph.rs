@@ -52,6 +52,33 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         Ok(Some(Record { code, neighbors }))
     }
 
+    /// Calls `visit` with each of a node's edges and its code, borrowed from
+    /// the record where the record carries codes. False when the node has no
+    /// record.
+    async fn each_edge<F>(&self, m: usize, id: NodeId, mut visit: F) -> Result<bool>
+    where
+        F: FnMut(NodeId, &[u8]),
+    {
+        if self.params.resident_codes {
+            let Some(record) = self.record(m, id).await? else {
+                return Ok(false);
+            };
+            for (id, code) in &record.neighbors {
+                visit(*id, code);
+            }
+            return Ok(true);
+        }
+        let key = codec::record_key(id);
+        let Some(bytes) = self.store().get_aux(codec::GRAPH, &key).await? else {
+            return Ok(false);
+        };
+        let edges = codec::record_edges(&bytes, m)?;
+        for (id, code) in edges {
+            visit(id, code);
+        }
+        Ok(true)
+    }
+
     /// Writes the record's edges. A resident-codes record holds only ids; the
     /// node's own code is written once, by [`link`](Self::link).
     pub(super) async fn put_record(&mut self, id: NodeId, record: &Record) -> Result<()> {
@@ -135,20 +162,35 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                 break;
             };
             expanded.insert(next.id);
-            // Absent when consolidation removed it after an edge was read.
-            let Some(record) = self.record(m, next.id).await? else {
-                continue;
-            };
-            visited.push(next);
-            for (id, code) in record.neighbors {
-                if seen.insert(id) {
-                    frontier.push(Visit {
-                        id,
-                        distance: pq.distance(table, &code),
-                        code,
+            // A neighbour ranked after the frontier's last place is cut by the
+            // truncate below, so its code is never copied.
+            let last = (l > 0 && frontier.len() >= l)
+                .then(|| (frontier[l - 1].distance, frontier[l - 1].id));
+            let mut added = Vec::new();
+            let found = self
+                .each_edge(m, next.id, |id, code| {
+                    if !seen.insert(id) {
+                        return;
+                    }
+                    let distance = pq.distance(table, code);
+                    let ranked = last.is_none_or(|(d, last)| {
+                        distance.total_cmp(&d).then_with(|| id.cmp(&last)).is_lt()
                     });
-                }
+                    if ranked {
+                        added.push(Visit {
+                            id,
+                            distance,
+                            code: code.to_vec(),
+                        });
+                    }
+                })
+                .await?;
+            // Absent when consolidation removed it after an edge was read.
+            if !found {
+                continue;
             }
+            visited.push(next);
+            frontier.append(&mut added);
             frontier.sort_by(by_distance);
             frontier.truncate(l);
         }
