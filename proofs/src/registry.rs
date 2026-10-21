@@ -562,6 +562,30 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The Text CRDT (#2127) is specified before it is written. Peers that
+        // merged the same blocks show the same text, a peer's text built one
+        // block at a time equals a replay from scratch, and every edit lands
+        // at its position in its own parent version. Bound as a boundary until
+        // crates/crdt/src/text.rs exists.
+        family: "Text CRDT convergence",
+        name: "INV_Converge / INV_MatchesReplay / INV_Intent / INV_PlacedAsIntended: Fugue text converges and keeps every edit where its author put it",
+        axis: Tla,
+        anchor: "planned: crates/crdt/src/text.rs (Fugue placement, CID sibling order, replay); crates/db/src/merge/merge_handler/text.rs (merge after parents)",
+        model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        // Fugue's rule puts an inserted character right after its left origin
+        // and moves nothing else; a delete hides only its character; two
+        // concurrent characters hung in either order give the same tree.
+        family: "Text CRDT convergence",
+        name: "place_visible / delete_visible / attach_comm: intention preservation and arrival-order independence of the Fugue tree",
+        axis: Lean,
+        anchor: "planned: crates/crdt/src/text.rs",
+        model_ref: "TextCrdt.Fugue (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,
