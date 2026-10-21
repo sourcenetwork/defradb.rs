@@ -21,6 +21,8 @@
 \*     If Alice had set "a" to 5 instead, "a" can't be both 5 and a map:
 \*     Alice's 5 and Bob's implied map race like any two edits to "a", and the
 \*     loser takes its children with it.
+\* Only a set below a path implies the path is a map. A delete never creates
+\* anything: if Bob had deleted "a.b" instead of setting it, "a" stays gone.
 \*
 \* Example: "a" and "a.b" are empty. Alice deletes "a"; Bob sets "a.b" to 1,
 \* neither having seen the other. Every peer ends with {"a": {"b": 1}}, and
@@ -35,6 +37,7 @@
 \*   * edits racing on one path end anywhere but at the highest priority,
 \*     then the highest CID;
 \*   * a concurrent delete above an edit removes it;
+\*   * a delete makes a path present with no set behind it;
 \*   * a type clash resolves other than by that same order;
 \*   * the conflicts query lists anything but the racing edits that lost.
 \*
@@ -57,6 +60,7 @@
 \*                 of the same path or of a path above has seen
 \*   win           json.rs: each path's current winner among its own edits
 \*   Beats         json.rs: priority, then CID
+\*   Implied       json.rs: the sets below a path, each making it a map
 \*   Winner, Doc   json.rs: reading the JSON from the frontiers
 \*   Conflicts     json.rs: the conflicts query
 \*   SpecDoc       the same JSON read straight from a set of blocks, with no
@@ -67,8 +71,9 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
   Peers,       \* the peers editing one JSON field
   MaxBlocks,   \* how many edit blocks may be written in all, so the model stays finite
-  UseCid,      \* TRUE: a priority tie is broken by the CID (the design)
-  DeleteWins   \* TRUE: a delete beats a concurrent edit below it (the RED)
+  UseCid,           \* TRUE: a priority tie is broken by the CID (the design)
+  DeleteWins,       \* TRUE: a delete beats a concurrent edit below it (a RED)
+  DeleteImpliesMap  \* TRUE: a delete below a path says the path is a map (a RED)
 
 VARIABLES
   blocks,   \* the blocks written so far; the index is the block ID
@@ -135,8 +140,15 @@ Best(s) == IF s = {} THEN 0 ELSE CHOOSE x \in s : \A y \in s : ~Beats(y, x)
 Max(s) == IF s = {} THEN 0 ELSE CHOOSE m \in s : \A n \in s : n <= m
 
 \* What block b says about path p: its own edit if it edits p, and "p is a
-\* map" if it edits a path below p.
+\* map" if it sets a path below p.
 KindAt(b, p) == IF PathOf(b) = p THEN KindOf(b) ELSE "map"
+
+\* The edits in frontiers f below path p that say "p is a map": the sets. A
+\* delete below says nothing about p, so it can't bring p back. In the RED,
+\* deletes below count too.
+Implied(f, p) ==
+  {b \in UNION {f[q] : q \in Below(p)} :                 \* every edit below p
+     DeleteImpliesMap \/ KindOf(b) # "delete"}           \* that sets something
 
 \* What a winning block makes path p read as.
 ValueOf(b, p) ==
@@ -146,15 +158,15 @@ ValueOf(b, p) ==
     [] KindAt(b, p) = "delete" -> Absent    \* gone
 
 \* The winner at path p, read from frontiers f and own-edit winners w. The
-\* edits below p each say "p is a map". When any exist, a delete of p can't
+\* sets below p each say "p is a map". When any exist, a delete of p can't
 \* win (an update beats a concurrent delete), so the race is between p's
-\* other edits and those implied maps. With no edits below, p's own winner
+\* other edits and those implied maps. With no sets below, p's own winner
 \* stands. In the RED, deletes stay in the race.
 Winner(f, w, p) ==
-  LET below == UNION {f[q] : q \in Below(p)}                  \* edits below p
+  LET below == Implied(f, p)                                  \* sets below p
       own == IF DeleteWins THEN f[p]                          \* RED: deletes race too
              ELSE {b \in f[p] : KindOf(b) # "delete"}         \* design: deletes sit out
-  IN IF below = {} THEN w[p]                                  \* nothing below: own winner
+  IN IF below = {} THEN w[p]                                  \* no sets below: own winner
      ELSE Best(own \cup below)                                \* else everything races
 
 \* What path p reads as on its own, before looking above it.
@@ -171,10 +183,11 @@ DocOf(f, w) ==
 
 \* The conflicts at path p: every edit in the race that lost to the winner
 \* without having been seen by it, except implied maps losing to a map (they
-\* agree, so nothing was dropped).
+\* agree, so nothing was dropped). The race is p's own edits and the sets
+\* below it; a delete below was never in it.
 ConflictsOf(f, w, p) ==
   LET b == Winner(f, w, p)                                   \* the winner
-      racers == f[p] \cup UNION {f[q] : q \in Below(p)}      \* p's edits and those below
+      racers == f[p] \cup Implied(f, p)                      \* p's edits and the sets below
   IN IF b = 0 THEN {}                                        \* no winner, no conflict
      ELSE {c \in racers :
              /\ Concurrent(c, b)                             \* it raced the winner
@@ -342,4 +355,20 @@ INV_ConflictsAreLosers ==
     /\ \A c \in front[n][p] :                                     \* every racing own edit
          (Concurrent(c, b) /\ ~(KindAt(c, p) = "map" /\ KindAt(b, p) = "map"))
            => c \in Conf(n)[p]
+
+\* A delete never creates anything: take away a delete that no other held
+\* block had seen, and any path it turns from absent to present is held up by
+\* a set the delete hadn't seen, at that path or below it. (A delete can
+\* uncover such a set: deleting a list at "a" uncovers a racing set of "a.b"
+\* that the list had beaten. It can never conjure a path with no set behind it.)
+INV_DeleteCreatesNothing ==
+  \A n \in Peers : \A d \in known[n] :
+    (/\ KindOf(d) = "delete"                          \* d is a delete
+     /\ \A y \in known[n] : d \notin Past(y))         \* nothing held came after it
+    => \A p \in Paths :
+         (SpecDoc(known[n] \ {d})[p] = Absent /\ Doc(n)[p] # Absent) \* d made p present
+         => \E s \in known[n] :                       \* then some edit s
+              /\ KindOf(s) # "delete"                 \* that sets something
+              /\ (PathOf(s) = p \/ Above(p, PathOf(s))) \* at p or below it
+              /\ s \notin Past(d)                     \* and that d hadn't seen
 ====

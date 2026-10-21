@@ -384,13 +384,14 @@ pub const PROPERTIES: &[Property] = &[
         // The JSON CRDT (#2129) is specified before it is written. Each path is
         // a register: racing edits resolve by priority, then CID; an edit wipes
         // only what it had seen below it, so an update beats a concurrent
-        // delete; the conflicts query lists exactly the racers that lost. Bound
-        // as a boundary until crates/crdt/src/json.rs exists.
+        // delete; only a set below a path makes it a map, so a delete creates
+        // nothing; the conflicts query lists exactly the racers that lost.
+        // Bound as a boundary until crates/crdt/src/json.rs exists.
         family: "JSON CRDT per-path merge",
-        name: "INV_Converge / INV_MatchesReplay / INV_DisjointKept / INV_SamePathLww / INV_UpdateWins / INV_TypeClash / INV_ConflictsAreLosers: per-path JSON merge converges and keeps every edit nothing saw",
+        name: "INV_Converge / INV_MatchesReplay / INV_DisjointKept / INV_SamePathLww / INV_UpdateWins / INV_TypeClash / INV_ConflictsAreLosers / INV_DeleteCreatesNothing: per-path JSON merge converges, keeps every edit nothing saw, and never lets a delete create a path",
         axis: Tla,
         anchor: "planned: crates/crdt/src/json.rs (per-path frontiers, winner, conflicts); crates/db/src/merge/merge_handler/json.rs (merge after parents)",
-        model_ref: "MC_JsonCrdt_{Green,Red_DeleteWins,Red_NoCid}.cfg",
+        model_ref: "MC_JsonCrdt_{Green,Red_DeleteWins,Red_NoCid,Red_DeleteImpliesMap}.cfg",
         tiers: &[Boundary],
     },
     Property {
