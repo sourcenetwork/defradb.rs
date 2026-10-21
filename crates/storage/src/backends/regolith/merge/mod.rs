@@ -175,7 +175,8 @@ impl MergeOperator for DefraMergeOperator {
             let mut left = document::stored::StoredDocument::decode(left)?;
             let right = document::stored::StoredDocument::decode(right)?;
             // A join of LWW fields is associative, including deletion markers,
-            // and wrapping integer counter sums are exact in any grouping.
+            // a Text replacement keeps the later one in any grouping, and
+            // wrapping integer counter sums are exact in any grouping.
             // Floating-point counter sums are not, so they keep their order.
             if left
                 .fields
@@ -184,7 +185,9 @@ impl MergeOperator for DefraMergeOperator {
                 .any(|field| {
                     !matches!(
                         field.kind,
-                        document::stored::ValueKind::Lww | document::stored::ValueKind::Int64
+                        document::stored::ValueKind::Lww
+                            | document::stored::ValueKind::Int64
+                            | document::stored::ValueKind::Text
                     )
                 })
             {

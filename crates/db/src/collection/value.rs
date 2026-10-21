@@ -29,6 +29,9 @@ fn field_value(
     value: &NormalValue,
     priority: u64,
 ) -> Result<StoredField> {
+    if field.crdt_type.is_text() {
+        return StoredField::text(field.name.clone(), priority, value).map_err(Error::from);
+    }
     if !field.crdt_type.is_counter() {
         return StoredField::lww(field.name.clone(), priority, value).map_err(Error::from);
     }

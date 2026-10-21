@@ -36,30 +36,47 @@
 \*     parent version, or a delete removes anything but its own character;
 \*   * a peer places a character somewhere other than where its author's
 \*     version put it.
+\*   * a character typed right after another lands apart from it: something
+\*     written without knowing the first character sits between the two, so
+\*     two runs typed at one spot at the same time interleave.
 \*
-\* Code this models (defradb.rs). The Text CRDT is not written yet: this model
-\* is its contract (issue #2127), and these are the files it will live in:
-\*   crates/crdt/src/text.rs                       the Text CRDT: Fugue
-\*                                                 placement, sibling order by
-\*                                                 CID, tombstones, replay
-\*   crates/db/src/merge/merge_handler/text.rs     applies a received Text block
-\*                                                 once its parents are merged
+\* Code this models (defradb.rs). A real block carries a list of edits, each
+\* an insert of a run of characters or a delete of a range. The model's blocks
+\* hold one character each; a real block is those one-character blocks in a
+\* row, each the parent of the next, so every character of a run is the right
+\* child of the one before it (crdt::text::Tree::apply).
 \*
-\* Correspondence table (model -> planned Rust):
-\*   Create         text.rs: a write diffs the new string against the current
-\*                  one and emits one block per edit, its parents the heads
-\*   Deliver        merge_handler/text.rs: a received block is merged once
-\*                  every parent block is local (the DAG sync's causal buffer)
-\*   Place          text.rs: Fugue placement against the block's parent version
-\*   SortBy/IdKey   text.rs: siblings ordered by the block CID
-\*   Canon          text.rs: replay of a block set from scratch; the stored
-\*                  value is the replayed text, the tree is thrown away
+\* Correspondence table (model -> Rust):
+\*   Create         crates/db/src/write/autocommit/helpers.rs set_text_ops: a
+\*                  write diffs the stored text against the new value (or
+\*                  takes the edits it was given), and
+\*                  crates/db/src/block/builder/text.rs ops_bytes writes them
+\*                  as one block, its parents the field's heads
+\*   Deliver        crates/db/src/merge/merge_handler/text.rs
+\*                  process_text_delta_in_txn: a received block is merged
+\*                  once every parent block is local (the DAG sync's causal
+\*                  buffer); a block whose parents are the field's heads is
+\*                  applied to the stored text as plain edits, which
+\*                  INV_Intent makes equal to the replay
+\*   Place          crates/crdt/src/text.rs Tree::apply, the insert arm:
+\*                  Fugue placement against the block's parent version
+\*   Target         crates/crdt/src/text.rs Tree::apply, the delete arm
+\*   SortBy/IdKey   crates/crdt/src/text.rs Tree::attach and Tree::cmp_id:
+\*                  siblings ordered by block CID, then offset in the block
+\*   Trav           crates/crdt/src/text.rs Tree::traverse
+\*   Restrict,      crates/crdt/src/text.rs Tree::present and Tree::dead: a
+\*   DeadIn         node or delete counts in a version when its block is in
+\*                  the version's Ancestry
+\*   Canon          crates/crdt/src/text.rs replay, from text_history in
+\*                  merge_handler/text.rs; the stored value is the replayed
+\*                  text, the tree is thrown away
+\*   PlaceRule      "fugue" is Tree::apply; "next" exists only for the RED
+\*                  configuration that breaks non-interleaving
 \*   blocks         the document's DAG blocks for one Text field
 \*   applied        the blocks a peer has merged
 \*   tree, dead     the replay state a peer holds while it merges
 \*   order          the order a peer merged blocks in, used only by the RED
 \*                  configuration that orders siblings by arrival
-
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS
@@ -67,8 +84,11 @@ CONSTANTS
   MaxBlocks,    \* how many edit blocks may be written in all, so the model stays finite
   SiblingKey,   \* "id": siblings ordered by block ID (the design); "arrival": by arrival order
   CausalBuffer, \* TRUE: a block is merged only after its parents (the design)
-  ResolveAt     \* "parent": positions read in the block's parent version (the design);
+  ResolveAt,    \* "parent": positions read in the block's parent version (the design);
                 \* "current": in the receiving peer's current text
+  PlaceRule     \* "fugue": a character whose left origin has no right child becomes
+                \* it (the design); "next": always the left child of the node after
+                \* its left origin
 
 VARIABLES
   blocks,   \* the blocks written so far, in the order they were written; the index is the block ID
@@ -135,8 +155,10 @@ Place(T, D, pos, k) ==
       p    == Min(pos, Len(vis))                        \* a position past the end means the end
       lo   == IF p = 0 THEN Root ELSE vis[p]            \* the left origin: the character before
       i    == IF lo = Root THEN 0 ELSE IndexOf(full, lo) \* where the left origin sits, all counted
-  IN IF Kids(T, lo, "R") = {}
+  IN IF PlaceRule = "fugue" /\ Kids(T, lo, "R") = {}
        THEN [parent |-> lo, side |-> "R"]               \* no right child: become it
+       ELSE IF i + 1 > Len(full)                         \* the RED rule, at the very end:
+       THEN [parent |-> lo, side |-> "R"]               \* there is no next node to hang under
        ELSE [parent |-> full[i + 1], side |-> "L"]      \* else the left child of the next node
 
 \* The character a delete at position pos of the text T and D show removes.
@@ -308,4 +330,24 @@ INV_PlacedAsIntended ==
   \A p \in Peers :
     /\ \A x \in tree[p] : x \in Canon(blocks[x.id].anc \cup {x.id}).tree \* same parent and side
     /\ \A d \in dead[p] : d \in Canon(blocks[d.by].anc \cup {d.by}).dead  \* same character removed
+
+\* Block b2 was typed right after block b1: both insert, b1 is before b2 in the
+\* DAG, and in the text b2's author made, b2 sits right after b1.
+TypedAfter(b1, b2) ==
+  /\ blocks[b1].kind = "ins"                               \* b1 inserts a character
+  /\ blocks[b2].kind = "ins"                               \* so does b2
+  /\ b1 \in blocks[b2].anc                                \* b2's author knew b1
+  /\ LET t == CanonText(blocks[b2].anc \cup {b2})        \* the text right after b2
+     IN \E i \in 1..(Len(t) - 1) : t[i] = b1 /\ t[i + 1] = b2 \* where b2 follows b1
+
+\* A character typed right after another is never split from it by one
+\* written without knowing the first: whatever sits between them in any
+\* peer's text was written by someone who had seen b1. So two runs typed at
+\* one spot at the same time each stay whole.
+INV_NoInterleave ==
+  \A p \in Peers : \A b1, b2 \in applied[p] :                \* on every peer, each pair
+    TypedAfter(b1, b2) =>                                     \* of typed-after characters
+      LET t == PeerText(p)                                    \* in the text it shows
+      IN \A i, j, m \in 1..Len(t) :                           \* any character between them
+           (t[i] = b1 /\ t[j] = b2 /\ i < m /\ m < j) => b1 \in blocks[t[m]].anc \* knew b1
 ====

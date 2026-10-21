@@ -52,7 +52,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Worker default pool | TLA+ & Lean | workers |
-| Text CRDT convergence | TLA+ & Lean | crdt, db-merge (specified before the code, #2127) |
+| Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

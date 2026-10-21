@@ -272,3 +272,17 @@ fn the_run_follows_the_reason_the_previous_attempt_lost() {
         assert_eq!(Run::after(Some(&lost(access))), Run::First);
     }
 }
+
+/// A Text field's edits count in its old text, so a run after a lost race
+/// still decides on it, and diffs against the text that won.
+#[test]
+fn a_run_after_a_lost_part_still_decides_a_text_field() {
+    let mut collection = tally();
+    collection
+        .fields
+        .push(FieldDescription::new("5", "body", FieldKind::string()).with_crdt_type(CType::Text));
+    assert_eq!(
+        Run::AfterLostPart.planned(&collection, &set(&["body", "note"]), None),
+        Some(set(&["body"]))
+    );
+}

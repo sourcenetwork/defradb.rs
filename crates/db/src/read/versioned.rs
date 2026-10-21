@@ -445,7 +445,12 @@ impl<S: Store> VersionedFetcher<S> {
     ) -> Result<()> {
         let mut cids: Vec<Cid> = blocks
             .values()
-            .filter(|block| matches!(block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_)))
+            .filter(|block| {
+                matches!(
+                    block.delta,
+                    CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Text(_)
+                )
+            })
             .filter_map(|block| block.encryption)
             .collect();
         if cids.is_empty() {
@@ -462,6 +467,7 @@ impl<S: Store> VersionedFetcher<S> {
             let payload = match &mut block.delta {
                 CrdtDelta::Lww(payload) => &mut payload.data,
                 CrdtDelta::Counter(payload) => &mut payload.data,
+                CrdtDelta::Text(payload) => &mut payload.data,
                 _ => continue,
             };
             let plaintext = keys
@@ -754,6 +760,28 @@ impl<S: Store> VersionedFetcher<S> {
                     // Collection and schema definition deltas are not relevant for document reconstruction
                 }
             }
+        }
+
+        // A Text field is the replay of all its blocks.
+        let mut texts: RapidHashMap<&str, Vec<crdt::TextBlock>> = RapidHashMap::new();
+        for (cid, block) in blocks {
+            if let CrdtDelta::Text(payload) = &block.delta {
+                let ops = defra_core::TextOp::decode_all(&payload.data)
+                    .map_err(|e| Error::Serialization(e.to_string()))?;
+                texts
+                    .entry(payload.field_name.as_str())
+                    .or_default()
+                    .push(crdt::TextBlock {
+                        id: cid.to_bytes(),
+                        parents: block.heads.iter().flatten().map(Cid::to_bytes).collect(),
+                        ops,
+                    });
+            }
+        }
+        for (field, history) in texts {
+            let text =
+                crdt::replay_text(&history).map_err(|e| Error::Serialization(e.to_string()))?;
+            field_values.insert(field.to_owned(), (0, NormalValue::String(text)));
         }
 
         // Build document from collected field values

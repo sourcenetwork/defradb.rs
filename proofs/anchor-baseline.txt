@@ -11,7 +11,6 @@
 # p2p_doc_pusher.rs                     -> proofs/survey/cli.md
 # push_docs_transport.rs                -> EncryptedLwwReplay slice
 # defradb.rs                            -> the repository name, not a source file
-# text.rs                               -> the Text CRDT (#2127), modeled before it is written
 claim.rs
 defradb.rs
 delegate.rs
@@ -22,4 +21,3 @@ subagent_request.rs
 subscription_source.rs
 transition.rs
 watcher.rs
-text.rs

@@ -422,7 +422,8 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 .field_heads(field_name)
         };
 
-        if should_create_block {
+        let is_text = text::is_text(schema, field_name);
+        if should_create_block && !(is_text && is_create && field_value.value().is_nil()) {
             let heads = field_head_entries.clone();
             let field_priority = if is_create {
                 1
@@ -440,7 +441,11 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 field_value.value()
             };
 
-            let value_bytes = encode_value_as_cbor(cbor_value)?;
+            let value_bytes = if is_text {
+                text::ops_bytes(doc, field_name, field_value.value(), is_create)?
+            } else {
+                encode_value_as_cbor(cbor_value)?
+            };
 
             let explicit = encryption_config.filter(|enc| enc.should_encrypt_field(field_name));
             let (value_bytes, encryption_cid) = if let Some(enc) = explicit {
@@ -536,7 +541,9 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 0
             };
 
-            let delta = if is_counter {
+            let delta = if is_text {
+                text::delta(field_name, field_priority, schema_version_id, value_bytes)
+            } else if is_counter {
                 CrdtDelta::Counter(CounterDeltaPayload {
                     field_name: field_name.clone(),
                     priority: field_priority,

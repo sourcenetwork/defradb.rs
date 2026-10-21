@@ -25,12 +25,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Err(MergeError::MergeFailed(_)) => return Ok(None),
                 Err(e) => return Err(e),
             },
-            CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Immutable(_) => {
-                match self.resolve_field_block_doc_id(cid).await? {
-                    Some(doc_id) => doc_id,
-                    None => return Ok(None),
-                }
-            }
+            CrdtDelta::Lww(_)
+            | CrdtDelta::Counter(_)
+            | CrdtDelta::Text(_)
+            | CrdtDelta::Immutable(_) => match self.resolve_field_block_doc_id(cid).await? {
+                Some(doc_id) => doc_id,
+                None => return Ok(None),
+            },
             _ => return Ok(None),
         };
         let Some(collection_id) = block.delta.schema_version_id().map(ToString::to_string) else {

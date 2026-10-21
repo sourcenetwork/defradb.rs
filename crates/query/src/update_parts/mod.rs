@@ -54,9 +54,9 @@ mod tests;
 /// field's last-writer-wins order exactly as every replica settles the two
 /// blocks. So a write loses a race on its fields at most once. A field whose
 /// old value a rule reads stays decided on every run: an index component, an
-/// embedding source, an immutable field, a field a filter compares, and every
-/// field of a downsampled collection, whose series claim moves with the old
-/// value.
+/// embedding source, an immutable field, a field a filter compares, a Text
+/// field, whose edits count in its old text, and every field of a
+/// downsampled collection, whose series claim moves with the old value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Run {
     /// The write's first run, or a run after it lost for another reason.
@@ -119,7 +119,8 @@ impl Run {
         let merged = |name: &str| {
             self == Self::AfterLostPart
                 && collection.downsample_source.is_none()
-                && field(collection, name).is_some_and(|field| !field.immutable)
+                && field(collection, name)
+                    .is_some_and(|field| !field.immutable && !field.crdt_type.is_text())
         };
         let mut parts: RapidHashSet<String> = modified
             .iter()

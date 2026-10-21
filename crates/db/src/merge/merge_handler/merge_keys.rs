@@ -37,7 +37,7 @@ where
     pub(crate) async fn merge_key_cids(&self, block: &Block) -> Vec<Cid> {
         let mut cids = Vec::new();
         let mut seen = RapidHashSet::default();
-        if let (Some(cid), CrdtDelta::Lww(_) | CrdtDelta::Counter(_)) =
+        if let (Some(cid), CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Text(_)) =
             (block.encryption, &block.delta)
         {
             if seen.insert(cid) {

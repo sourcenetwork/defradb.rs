@@ -169,6 +169,7 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
             let kind = match block.as_ref().map(|block| &block.delta) {
                 Some(CrdtDelta::Lww(_)) => "lww",
                 Some(CrdtDelta::Counter(_)) => "counter",
+                Some(CrdtDelta::Text(_)) => "text",
                 Some(CrdtDelta::Composite(_)) => "composite",
                 Some(CrdtDelta::Immutable(_)) => "immutable",
                 Some(CrdtDelta::Collection(_)) => "collection",
@@ -193,6 +194,7 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
                 let field = match &block.delta {
                     CrdtDelta::Lww(delta) => Some(delta.field_name.as_str()),
                     CrdtDelta::Counter(delta) => Some(delta.field_name.as_str()),
+                    CrdtDelta::Text(delta) => Some(delta.field_name.as_str()),
                     CrdtDelta::Immutable(_) => Some(defra_core::block::IMMUTABLE_LINK_NAME),
                     _ => None,
                 };

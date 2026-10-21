@@ -21,7 +21,11 @@ impl Collection {
         );
         let compared: RapidHashSet<String> = modified_fields
             .iter()
-            .filter(|field| doc.get_counter_delta(field).is_none() && dependencies.contains(*field))
+            .filter(|field| {
+                doc.get_counter_delta(field).is_none()
+                    && doc.text_ops(field).is_none()
+                    && dependencies.contains(*field)
+            })
             .cloned()
             .collect();
         if compared.is_empty() && !modified_fields.is_empty() {

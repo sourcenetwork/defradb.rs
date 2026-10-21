@@ -457,3 +457,63 @@ fn a_borrowed_part_writes_the_operand_of_its_document() {
     };
     assert_eq!(crate::merge::document_part(3, part), document_parts(&whole));
 }
+
+/// Parts 0 and 1 are Text fields, part 2 an LWW field. A Text operand
+/// replaces in commit order, so folds keep the later text in any grouping and
+/// a folded operand touches exactly the parts its operands touch.
+#[test]
+fn text_parts_replace_in_commit_order_and_obey_engine_contracts() {
+    use regolith::testing::proptest::prelude::*;
+    let part = (0u32..3, 1u64..4, "[a-c]{0,3}").prop_map(|(id, priority, text)| {
+        let value = NormalValue::String(text);
+        let field = if id < 2 {
+            StoredField::text(format!("text{id}"), priority, &value).unwrap()
+        } else {
+            StoredField::lww(format!("field{id}"), priority, &value).unwrap()
+        };
+        (id, field)
+    });
+    let documents =
+        regolith::testing::proptest::collection::vec(part, 1..3).prop_map(|parts| StoredDocument {
+            fields: parts.into_iter().collect(),
+        });
+    let operands = documents
+        .clone()
+        .prop_map(|value| document_parts(&value).unwrap());
+    let checked = regolith::testing::check_merge_operator(
+        &DefraMergeOperator,
+        Just(b"doc".to_vec()),
+        documents.prop_map(|value| value.encode().unwrap()),
+        operands.clone(),
+    )
+    .unwrap();
+    assert!(checked.folds > 0, "text operands must fold");
+    let checked = regolith::testing::check_touches(
+        &DefraMergeOperator,
+        Just(b"doc".to_vec()),
+        operands,
+        regolith::testing::proptest::collection::vec(0u32..4, 0..5),
+    )
+    .unwrap();
+    assert!(checked.folds > 0);
+
+    let text = |priority, value: &str| {
+        document_parts(&StoredDocument {
+            fields: [(
+                0,
+                StoredField::text("text0".into(), priority, &NormalValue::String(value.into()))
+                    .unwrap(),
+            )]
+            .into(),
+        })
+        .unwrap()
+    };
+    let merged = DefraMergeOperator
+        .full_merge(b"doc", None, &[&text(5, "zzz"), &text(2, "abc")])
+        .unwrap();
+    let stored = StoredDocument::decode(&merged).unwrap();
+    assert_eq!(
+        stored.fields[&0].materialize(),
+        Some(NormalValue::String("abc".into()))
+    );
+}

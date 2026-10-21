@@ -67,6 +67,12 @@ pub struct Document {
     #[serde(skip)]
     counter_deltas: RapidHashMap<String, NormalValue>,
 
+    /// Edits to Text fields for update operations, in order. Positions count in
+    /// the stored text the write reads; the block builder writes them as the
+    /// field's Text block.
+    #[serde(skip)]
+    text_ops: RapidHashMap<String, Vec<defra_core::TextOp>>,
+
     #[serde(skip)]
     write_preparation: Option<std::sync::Arc<crate::WritePreparation>>,
 }
@@ -98,6 +104,7 @@ impl Document {
             schema_version_id: None,
             deleted: false,
             counter_deltas: RapidHashMap::new(),
+            text_ops: RapidHashMap::new(),
             write_preparation: None,
         }
     }
@@ -115,6 +122,7 @@ impl Document {
             schema_version_id: Some(version_id),
             deleted: false,
             counter_deltas: RapidHashMap::new(),
+            text_ops: RapidHashMap::new(),
             write_preparation: None,
         }
     }
@@ -131,6 +139,7 @@ impl Document {
             schema_version_id: None,
             deleted: false,
             counter_deltas: RapidHashMap::new(),
+            text_ops: RapidHashMap::new(),
             write_preparation: None,
         }
     }
@@ -360,6 +369,58 @@ impl Document {
     /// Get the raw counter increment delta for a field (if any).
     pub fn get_counter_delta(&self, field: &str) -> Option<&NormalValue> {
         self.counter_deltas.get(field)
+    }
+
+    /// Insert `text` at character `pos` of the Text field `field`.
+    pub fn insert_text(&mut self, field: impl Into<String>, pos: u64, text: impl Into<String>) {
+        self.push_text_op(
+            field.into(),
+            defra_core::TextOp::Insert {
+                pos,
+                text: text.into(),
+            },
+        );
+    }
+
+    /// Delete `len` characters at character `pos` of the Text field `field`.
+    pub fn delete_text(&mut self, field: impl Into<String>, pos: u64, len: u64) {
+        self.push_text_op(field.into(), defra_core::TextOp::Delete { pos, len });
+    }
+
+    /// Replace `len` characters at character `pos` of the Text field `field`
+    /// with `text`.
+    pub fn replace_text(
+        &mut self,
+        field: impl Into<String>,
+        pos: u64,
+        len: u64,
+        text: impl Into<String>,
+    ) {
+        let field = field.into();
+        self.delete_text(field.clone(), pos, len);
+        self.insert_text(field, pos, text);
+    }
+
+    /// Append one edit to `field`'s Text ops, and apply it to the value this
+    /// document holds.
+    fn push_text_op(&mut self, field: String, op: defra_core::TextOp) {
+        let current = self
+            .get(&field)
+            .and_then(NormalValue::as_str)
+            .unwrap_or_default();
+        let edited = defra_core::TextOp::apply_all(current, std::slice::from_ref(&op));
+        self.set(field.clone(), NormalValue::String(edited));
+        self.text_ops.entry(field).or_default().push(op);
+    }
+
+    /// The edits to the Text field `field`, in order, if any.
+    pub fn text_ops(&self, field: &str) -> Option<&[defra_core::TextOp]> {
+        self.text_ops.get(field).map(Vec::as_slice)
+    }
+
+    /// Replace the edits to the Text field `field`.
+    pub fn set_text_ops(&mut self, field: impl Into<String>, ops: Vec<defra_core::TextOp>) {
+        self.text_ops.insert(field.into(), ops);
     }
 
     /// Get all dirty fields.

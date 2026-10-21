@@ -102,6 +102,14 @@ impl FieldValue {
             CType::LwwRegister | CType::None => {
                 // LWW Register and None accept any value
             }
+            CType::Text => {
+                if value.as_str().is_none() && !value.is_nil() {
+                    return Err(Error::IncompatibleCrdtType {
+                        crdt_type,
+                        value_type: Self::value_type_name(value),
+                    });
+                }
+            }
             CType::Unknown(_) | _ => {
                 return Err(Error::IncompatibleCrdtType {
                     crdt_type,

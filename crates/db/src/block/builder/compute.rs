@@ -88,6 +88,11 @@ pub(crate) fn compute_document_blocks_with_inputs(
             continue;
         }
 
+        let is_text = text::is_text(schema, field_name);
+        if is_text && field_value.value().is_nil() {
+            continue;
+        }
+
         // For counter fields during creates, use the raw delta if set
         let cbor_value = if let Some(delta) = doc.get_counter_delta(field_name) {
             delta
@@ -95,7 +100,11 @@ pub(crate) fn compute_document_blocks_with_inputs(
             field_value.value()
         };
 
-        let value_bytes = encode_value_as_cbor(cbor_value)?;
+        let value_bytes = if is_text {
+            text::ops_bytes(doc, field_name, field_value.value(), true)?
+        } else {
+            encode_value_as_cbor(cbor_value)?
+        };
 
         // Encrypt delta and create Encryption metadata block if configured
         let (value_bytes, encryption_cid) = if let Some(enc) = encryption_config {
@@ -203,7 +212,9 @@ pub(crate) fn compute_document_blocks_with_inputs(
         // For creates, heads are always empty -> nonce is always 0
         let nonce: i64 = 0;
 
-        let delta = if is_counter {
+        let delta = if is_text {
+            text::delta(field_name, priority, schema_version_id, value_bytes)
+        } else if is_counter {
             CrdtDelta::Counter(CounterDeltaPayload {
                 field_name: field_name.clone(),
                 priority,

@@ -1,6 +1,7 @@
 use super::*;
 use bytes::Bytes;
 use defra_core::cid_encoding::CidText;
+use document::NormalValue;
 
 use crate::block::builder::BlockResult;
 use crate::collection::Collection;
@@ -65,6 +66,7 @@ pub(crate) async fn write_local_update(
     prepared_inputs: &query::prepared::PreparedInputMemo,
 ) -> query::error::Result<()> {
     set_incremented_counters(datastore, collection, doc, doc_short_id).await?;
+    set_text_ops(datastore, collection, doc, doc_short_id, modified_fields).await?;
     let generated = crate::search::embedding::set_embedding_from_inputs(
         &collection.schema().vector_embeddings,
         doc,
@@ -237,6 +239,60 @@ pub(crate) async fn register_block_doc_id_mappings(
 /// whatever rests on the result validates its own dependency (an index on the
 /// counter reads its part with validation, a whole-document put is validated
 /// as a write).
+/// Turn each changed Text field into the edits its block carries, counted in
+/// the stored text: the edits the write named, or a diff of the stored text
+/// against the written value. The stored text decides the edits, so it is
+/// read validated; a concurrent edit of the field conflicts and the attempt
+/// runs again against the new text. The document then holds the edited text,
+/// which is what merging the block gives, and nil becomes the empty text.
+async fn set_text_ops(
+    datastore: &NamespaceView,
+    collection: &Collection,
+    doc: &mut Document,
+    doc_short_id: u64,
+    modified_fields: &rapidhash::RapidHashSet<String>,
+) -> query::error::Result<()> {
+    let fields: rapidhash::RapidHashSet<String> = collection
+        .schema()
+        .fields
+        .iter()
+        .filter(|field| field.crdt_type.is_text() && modified_fields.contains(&field.name))
+        .map(|field| field.name.clone())
+        .collect();
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let doc_id = doc
+        .id()
+        .cloned()
+        .ok_or_else(|| query::error::QueryError::execution("update without a DocID"))?;
+    let stored = collection
+        .get_with_datastore_fields(datastore, doc_short_id, &doc_id, &fields)
+        .await
+        .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+    for field in fields {
+        let old = stored
+            .as_ref()
+            .and_then(|stored| stored.get(&field))
+            .and_then(NormalValue::as_str)
+            .unwrap_or_default();
+        let (ops, new) = match doc.text_ops(&field) {
+            Some(ops) => (ops.to_vec(), defra_core::TextOp::apply_all(old, ops)),
+            None => {
+                let new = doc
+                    .get(&field)
+                    .and_then(NormalValue::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                (defra_core::TextOp::diff(old, &new), new)
+            }
+        };
+        doc.set_text_ops(field.clone(), ops);
+        doc.set(field, NormalValue::String(new));
+    }
+    Ok(())
+}
+
 async fn set_incremented_counters(
     datastore: &NamespaceView,
     collection: &Collection,

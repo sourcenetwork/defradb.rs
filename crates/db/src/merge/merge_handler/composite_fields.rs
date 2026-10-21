@@ -215,6 +215,41 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 .insert(counter_payload.field_name.clone(), value);
                         }
                     }
+                    CrdtDelta::Text(text_payload) => {
+                        state
+                            .field_block_priorities
+                            .insert(link_cid, text_payload.priority);
+                        let parents = state
+                            .field_block_heads
+                            .get(&text_payload.field_name)
+                            .cloned()
+                            .unwrap_or_default();
+                        let result = self
+                            .process_text_delta_in_txn(
+                                datastore,
+                                headstore,
+                                &link_cid,
+                                &parents,
+                                &text_payload,
+                                context.metadata.collection_id,
+                                context.doc_id_str,
+                                context.doc_short_id,
+                                context.metadata,
+                                &mut state.reads,
+                            )
+                            .await?;
+                        state.field_priorities.insert(
+                            text_payload.field_name.clone(),
+                            crate::collection::value::FieldOrder {
+                                priority: result.priority,
+                                raw_value: None,
+                            },
+                        );
+                        state.any_field_applied = true;
+                        state
+                            .field_values
+                            .insert(text_payload.field_name.clone(), result.value);
+                    }
                     other => {
                         return Err(MergeError::UnsupportedDelta(format!(
                             "Unexpected delta type in linked block: {:?}",
@@ -344,6 +379,39 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         tracing::debug!(
                             error = %error,
                             "Cannot decrypt Counter field block, skipping field (canRead=false)"
+                        );
+                        return Ok(EffectiveLinkedDelta::SkipField);
+                    }
+                }
+            }
+            CrdtDelta::Text(payload) if linked_block.encryption.is_some() => {
+                match self
+                    .decrypt_block_data(
+                        &payload.data,
+                        linked_block.encryption.as_ref(),
+                        Some(context.metadata),
+                    )
+                    .await
+                {
+                    Ok(decrypted) => {
+                        let mut decrypted_payload = payload.clone();
+                        decrypted_payload.data = decrypted;
+                        CrdtDelta::Text(decrypted_payload)
+                    }
+                    Err(error @ MergeError::Kms(kms::Error::AccessDenied { .. })) => {
+                        tracing::debug!(
+                            error = %error,
+                            "Cannot decrypt Text field block, skipping field (canRead=false)"
+                        );
+                        return Ok(EffectiveLinkedDelta::SkipField);
+                    }
+                    Err(error @ (MergeError::NeedsDecryptionKey(_) | MergeError::Kms(_))) => {
+                        return Err(error)
+                    }
+                    Err(error) => {
+                        tracing::debug!(
+                            error = %error,
+                            "Cannot decrypt Text field block, skipping field (canRead=false)"
                         );
                         return Ok(EffectiveLinkedDelta::SkipField);
                     }

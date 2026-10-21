@@ -42,8 +42,17 @@ pub async fn build_blocks_from_document<B: Blockstore>(
             continue;
         }
 
+        let is_text = text::is_text(schema, field_name);
+        if is_text && field_value.value().is_nil() {
+            continue;
+        }
+
         // Encode the field value as CBOR
-        let value_bytes = encode_value_as_cbor(field_value.value())?;
+        let value_bytes = if is_text {
+            text::ops_bytes(doc, field_name, field_value.value(), true)?
+        } else {
+            encode_value_as_cbor(field_value.value())?
+        };
 
         // Check if this field is a Counter type
         let is_counter = doc
@@ -53,7 +62,9 @@ pub async fn build_blocks_from_document<B: Blockstore>(
             .unwrap_or(false);
 
         // Create the appropriate delta based on CRDT type
-        let delta = if is_counter {
+        let delta = if is_text {
+            text::delta(field_name, 1, schema_version_id, value_bytes)
+        } else if is_counter {
             CrdtDelta::Counter(CounterDeltaPayload {
                 field_name: field_name.clone(),
                 priority: 1, // Initial priority for new documents

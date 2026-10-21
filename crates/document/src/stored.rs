@@ -16,6 +16,10 @@ pub enum ValueKind {
     Int64 = 1,
     Float32 = 2,
     Float64 = 3,
+    /// A Text field's materialized string, as CBOR like an LWW value. Every
+    /// writer of a Text part read it validated first, so an operand replaces
+    /// the stored text in commit order whatever its priority.
+    Text = 4,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +49,14 @@ pub fn stores_same_lww(left: Option<&NormalValue>, right: Option<&NormalValue>) 
 }
 
 impl StoredField {
+    /// A Text part: the field's whole string, or nothing for nil.
+    pub fn text(name: String, priority: u64, value: &NormalValue) -> Result<Self> {
+        Ok(Self {
+            kind: ValueKind::Text,
+            ..Self::lww(name, priority, value)?
+        })
+    }
+
     pub fn lww(name: String, priority: u64, value: &NormalValue) -> Result<Self> {
         let bytes = match lww_cbor(value)? {
             Some(cbor) => {
@@ -84,7 +96,7 @@ impl StoredField {
                 .or_else(|| value.as_float32().map(f64::from))
                 .or_else(|| value.as_int().map(|v| v as f64))
                 .map(|v| v.to_be_bytes().to_vec()),
-            ValueKind::Lww => None,
+            ValueKind::Lww | ValueKind::Text => None,
         };
         let Some(value) = bytes else {
             return Err(Error::InvalidFieldValue {
@@ -127,8 +139,8 @@ pub struct Part<'a> {
 
 fn materialize(kind: ValueKind, value: &[u8]) -> Option<NormalValue> {
     match kind {
-        ValueKind::Lww if value.is_empty() => Some(NormalValue::Null),
-        ValueKind::Lww => {
+        ValueKind::Lww | ValueKind::Text if value.is_empty() => Some(NormalValue::Null),
+        ValueKind::Lww | ValueKind::Text => {
             let mut reader = value;
             let value = ciborium::from_reader(&mut reader).ok()?;
             if !reader.is_empty() {
@@ -150,7 +162,7 @@ fn materialize(kind: ValueKind, value: &[u8]) -> Option<NormalValue> {
 /// reads it back, decided for a counter by its width alone.
 fn stores(kind: ValueKind, value: &[u8]) -> bool {
     match kind {
-        ValueKind::Lww => materialize(kind, value).is_some(),
+        ValueKind::Lww | ValueKind::Text => materialize(kind, value).is_some(),
         ValueKind::Int64 | ValueKind::Float64 => value.len() == 8,
         ValueKind::Float32 => value.len() == 4,
     }
@@ -247,6 +259,7 @@ impl StoredDocument {
                 1 => ValueKind::Int64,
                 2 => ValueKind::Float32,
                 3 => ValueKind::Float64,
+                4 => ValueKind::Text,
                 _ => return None,
             };
             let priority = u64::from_be_bytes(take(&mut input, 8)?.try_into().ok()?);
@@ -301,7 +314,7 @@ impl StoredDocument {
                 }
                 // A counter part the value lacks starts from zero, so the
                 // increment lands exactly as it would on a stored zero.
-                if incoming.kind != ValueKind::Lww {
+                if !matches!(incoming.kind, ValueKind::Lww | ValueKind::Text) {
                     let zero: &[u8] = if incoming.kind == ValueKind::Float32 {
                         &[0; 4]
                     } else {
@@ -322,6 +335,7 @@ impl StoredDocument {
                     }
                     incoming.value
                 }
+                ValueKind::Text => incoming.value,
                 kind => counter_sum(kind, &current.value, &incoming.value)?,
             };
             current.priority = current.priority.max(incoming.priority);
@@ -346,7 +360,7 @@ fn counter_sum(kind: ValueKind, current: &[u8], increment: &[u8]) -> Option<Vec<
             + f64::from_be_bytes(increment.try_into().ok()?))
         .to_be_bytes()
         .to_vec(),
-        ValueKind::Lww => return None,
+        ValueKind::Lww | ValueKind::Text => return None,
     })
 }
 
@@ -415,6 +429,43 @@ mod tests {
             document.get("name").and_then(NormalValue::as_str),
             Some("Ada")
         );
+    }
+
+    #[test]
+    fn a_text_operand_replaces_the_stored_text_whatever_its_priority() {
+        let text = |priority, value: &str| {
+            let mut doc = StoredDocument::default();
+            doc.fields.insert(
+                1,
+                StoredField::text(
+                    "body".to_owned(),
+                    priority,
+                    &NormalValue::String(value.to_owned()),
+                )
+                .unwrap(),
+            );
+            doc
+        };
+        let mut stored = text(5, "zzz");
+        stored.apply(text(3, "abc")).unwrap();
+        let body = &stored.fields[&1];
+        assert_eq!(
+            body.materialize().as_ref().and_then(NormalValue::as_str),
+            Some("abc")
+        );
+        assert_eq!(body.priority, 5);
+        let decoded = StoredDocument::decode(&stored.encode().unwrap()).unwrap();
+        assert_eq!(decoded.fields[&1].kind, ValueKind::Text);
+        assert!(text(1, "a").apply(lww_body()).is_none());
+    }
+
+    fn lww_body() -> StoredDocument {
+        let mut doc = StoredDocument::default();
+        doc.fields.insert(
+            1,
+            StoredField::lww("body".to_owned(), 9, &NormalValue::String("x".to_owned())).unwrap(),
+        );
+        doc
     }
 
     #[test]
