@@ -58,39 +58,45 @@ mod tests {
     use crate::backends::RegolithStore;
     use bytes::Bytes;
 
-    #[tokio::test]
-    async fn test_rootstore_basic() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let rootstore = RootStore::new(store);
+    #[test]
+    fn test_rootstore_basic() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let rootstore = RootStore::new(store);
 
-        // Write data
-        let mut txn = rootstore.new_txn(false).await.unwrap();
-        txn.set(b"key1", b"value1").await.unwrap();
-        txn.commit().await.unwrap();
+            // Write data
+            let mut txn = rootstore.new_txn(false).await.unwrap();
+            txn.set(b"key1", b"value1").await.unwrap();
+            txn.commit().await.unwrap();
 
-        // Read back
-        let txn = rootstore.new_txn(true).await.unwrap();
-        let value = txn.get(b"key1").await.unwrap();
-        assert_eq!(value, Some(Bytes::from_static(b"value1")));
+            // Read back
+            let txn = rootstore.new_txn(true).await.unwrap();
+            let value = txn.get(b"key1").await.unwrap();
+            assert_eq!(value, Some(Bytes::from_static(b"value1")));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_rootstore_no_namespace_prefix() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let rootstore = RootStore::new(store);
+    #[test]
+    fn test_rootstore_no_namespace_prefix() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let rootstore = RootStore::new(store);
 
-        // Write with explicit key
-        let mut txn = rootstore.new_txn(false).await.unwrap();
-        txn.set(b"d/key1", b"value1").await.unwrap();
-        txn.commit().await.unwrap();
+            // Write with explicit key
+            let mut txn = rootstore.new_txn(false).await.unwrap();
+            txn.set(b"d/key1", b"value1").await.unwrap();
+            txn.commit().await.unwrap();
 
-        // Read back with same key - no automatic prefixing
-        let txn = rootstore.new_txn(true).await.unwrap();
-        let value = txn.get(b"d/key1").await.unwrap();
-        assert_eq!(value, Some(Bytes::from_static(b"value1")));
+            // Read back with same key - no automatic prefixing
+            let txn = rootstore.new_txn(true).await.unwrap();
+            let value = txn.get(b"d/key1").await.unwrap();
+            assert_eq!(value, Some(Bytes::from_static(b"value1")));
 
-        // Different prefix is different key
-        let value = txn.get(b"b/key1").await.unwrap();
-        assert_eq!(value, None);
+            // Different prefix is different key
+            let value = txn.get(b"b/key1").await.unwrap();
+            assert_eq!(value, None);
+        })
+        .unwrap()
     }
 }

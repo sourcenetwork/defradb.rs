@@ -23,8 +23,7 @@ mod lww_properties {
             v1 in prop::collection::vec(0..255u8, 1..100),
             v2 in prop::collection::vec(0..255u8, 1..100)
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -68,7 +67,7 @@ mod lww_properties {
                 // Both should converge
                 assert_eq!(val1, val2);
                 assert_eq!(pri1, pri2);
-            });
+            }).unwrap();
         }
 
         #[test]
@@ -76,8 +75,7 @@ mod lww_properties {
             priority in 0..1000u64,
             value in prop::collection::vec(0..255u8, 1..100)
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -102,7 +100,7 @@ mod lww_properties {
                 }
 
                 assert!(results.iter().all(|r| r == &results[0]));
-            });
+            }).unwrap();
         }
 
         #[test]
@@ -110,8 +108,7 @@ mod lww_properties {
             priority in 0..1000u64,
             value in prop::collection::vec(0..255u8, 1..100)
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -146,13 +143,12 @@ mod lww_properties {
                 assert_eq!(val2, val3);
                 assert_eq!(pri1, pri2);
                 assert_eq!(pri2, pri3);
-            });
+            }).unwrap();
         }
 
         #[test]
         fn test_lww_priority_zero(value in prop::collection::vec(0..255u8, 1..100)) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -175,13 +171,12 @@ mod lww_properties {
                 let result = lww.value(&*txn).await;
                 assert!(result.is_ok());
                 assert_eq!(result.unwrap(), value);
-            });
+            }).unwrap();
         }
 
         #[test]
         fn test_lww_priority_max(value in prop::collection::vec(0..255u8, 1..100)) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -204,7 +199,7 @@ mod lww_properties {
                 let result = lww.value(&*txn).await;
                 assert!(result.is_ok());
                 assert_eq!(result.unwrap(), value);
-            });
+            }).unwrap();
         }
 
         #[test]
@@ -212,8 +207,7 @@ mod lww_properties {
             initial_value in prop::collection::vec(0..255u8, 1..100),
             final_value in prop::collection::vec(0..255u8, 1..100)
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -254,7 +248,7 @@ mod lww_properties {
                 let result = lww.value(&*txn).await;
                 assert!(result.is_ok());
                 assert_eq!(result.unwrap(), final_value);
-            });
+            }).unwrap();
         }
 
         #[test]
@@ -266,8 +260,7 @@ mod lww_properties {
             v2 in prop::collection::vec(0..255u8, 1..30),
             v3 in prop::collection::vec(0..255u8, 1..30)
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -321,115 +314,125 @@ mod lww_properties {
                 for i in 1..results.len() {
                     assert_eq!(results[0], results[i], "Permutation {} diverged", i);
                 }
-            });
+            }).unwrap();
         }
     }
 
-    #[tokio::test]
-    async fn test_lww_priority_ordering_exhaustive() {
-        let ctx = Context {
-            doc_id: DocId::new_unchecked("doc1"),
-            schema_version: "v1".to_string(),
-            is_create: false,
-        };
+    #[test]
+    fn test_lww_priority_ordering_exhaustive() {
+        workers::block_on(async {
+            let ctx = Context {
+                doc_id: DocId::new_unchecked("doc1"),
+                schema_version: "v1".to_string(),
+                is_create: false,
+            };
 
-        let store = RegolithStore::in_memory().unwrap();
-        let lww = Lww::new("v1".to_string(), b"doc1", "name".to_string()).unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+            let store = RegolithStore::in_memory().unwrap();
+            let lww = Lww::new("v1".to_string(), b"doc1", "name".to_string()).unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let low = LwwDelta::new(
-            b"doc1".to_vec(),
-            "name".to_string(),
-            10,
-            "v1".to_string(),
-            b"low".to_vec(),
-        )
-        .unwrap();
-        let high = LwwDelta::new(
-            b"doc1".to_vec(),
-            "name".to_string(),
-            20,
-            "v1".to_string(),
-            b"high".to_vec(),
-        )
-        .unwrap();
+            let low = LwwDelta::new(
+                b"doc1".to_vec(),
+                "name".to_string(),
+                10,
+                "v1".to_string(),
+                b"low".to_vec(),
+            )
+            .unwrap();
+            let high = LwwDelta::new(
+                b"doc1".to_vec(),
+                "name".to_string(),
+                20,
+                "v1".to_string(),
+                b"high".to_vec(),
+            )
+            .unwrap();
 
-        lww.merge(&mut *txn, &ctx, &low).await.unwrap();
-        assert_eq!(lww.value(&*txn).await.unwrap(), &b"low"[..]);
+            lww.merge(&mut *txn, &ctx, &low).await.unwrap();
+            assert_eq!(lww.value(&*txn).await.unwrap(), &b"low"[..]);
 
-        lww.merge(&mut *txn, &ctx, &high).await.unwrap();
-        assert_eq!(lww.value(&*txn).await.unwrap(), &b"high"[..]);
+            lww.merge(&mut *txn, &ctx, &high).await.unwrap();
+            assert_eq!(lww.value(&*txn).await.unwrap(), &b"high"[..]);
 
-        lww.merge(&mut *txn, &ctx, &low).await.unwrap();
-        assert_eq!(lww.value(&*txn).await.unwrap(), &b"high"[..]);
+            lww.merge(&mut *txn, &ctx, &low).await.unwrap();
+            assert_eq!(lww.value(&*txn).await.unwrap(), &b"high"[..]);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_lww_tie_breaking_lexicographic() {
-        let ctx = Context {
-            doc_id: DocId::new_unchecked("doc1"),
-            schema_version: "v1".to_string(),
-            is_create: false,
-        };
+    #[test]
+    fn test_lww_tie_breaking_lexicographic() {
+        workers::block_on(async {
+            let ctx = Context {
+                doc_id: DocId::new_unchecked("doc1"),
+                schema_version: "v1".to_string(),
+                is_create: false,
+            };
 
-        let store = RegolithStore::in_memory().unwrap();
-        let lww = Lww::new("v1".to_string(), b"doc1", "name".to_string()).unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+            let store = RegolithStore::in_memory().unwrap();
+            let lww = Lww::new("v1".to_string(), b"doc1", "name".to_string()).unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let alice = LwwDelta::new(
-            b"doc1".to_vec(),
-            "name".to_string(),
-            10,
-            "v1".to_string(),
-            b"Alice".to_vec(),
-        )
-        .unwrap();
-        let bob = LwwDelta::new(
-            b"doc1".to_vec(),
-            "name".to_string(),
-            10,
-            "v1".to_string(),
-            b"Bob".to_vec(),
-        )
-        .unwrap();
+            let alice = LwwDelta::new(
+                b"doc1".to_vec(),
+                "name".to_string(),
+                10,
+                "v1".to_string(),
+                b"Alice".to_vec(),
+            )
+            .unwrap();
+            let bob = LwwDelta::new(
+                b"doc1".to_vec(),
+                "name".to_string(),
+                10,
+                "v1".to_string(),
+                b"Bob".to_vec(),
+            )
+            .unwrap();
 
-        lww.merge(&mut *txn, &ctx, &alice).await.unwrap();
-        assert_eq!(lww.value(&*txn).await.unwrap(), &b"Alice"[..]);
+            lww.merge(&mut *txn, &ctx, &alice).await.unwrap();
+            assert_eq!(lww.value(&*txn).await.unwrap(), &b"Alice"[..]);
 
-        lww.merge(&mut *txn, &ctx, &bob).await.unwrap();
-        assert_eq!(lww.value(&*txn).await.unwrap(), &b"Bob"[..]);
+            lww.merge(&mut *txn, &ctx, &bob).await.unwrap();
+            assert_eq!(lww.value(&*txn).await.unwrap(), &b"Bob"[..]);
 
-        lww.merge(&mut *txn, &ctx, &alice).await.unwrap();
-        assert_eq!(lww.value(&*txn).await.unwrap(), &b"Bob"[..]);
+            lww.merge(&mut *txn, &ctx, &alice).await.unwrap();
+            assert_eq!(lww.value(&*txn).await.unwrap(), &b"Bob"[..]);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_lww_empty_value_handling() {
-        let ctx = Context {
-            doc_id: DocId::new_unchecked("doc1"),
-            schema_version: "v1".to_string(),
-            is_create: false,
-        };
+    #[test]
+    fn test_lww_empty_value_handling() {
+        workers::block_on(async {
+            let ctx = Context {
+                doc_id: DocId::new_unchecked("doc1"),
+                schema_version: "v1".to_string(),
+                is_create: false,
+            };
 
-        let store = RegolithStore::in_memory().unwrap();
-        let lww = Lww::new("v1".to_string(), b"doc1", "name".to_string()).unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
+            let store = RegolithStore::in_memory().unwrap();
+            let lww = Lww::new("v1".to_string(), b"doc1", "name".to_string()).unwrap();
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let delta1 = LwwDelta::new(
-            b"doc1".to_vec(),
-            "name".to_string(),
-            10,
-            "v1".to_string(),
-            b"value".to_vec(),
-        )
-        .unwrap();
-        lww.merge(&mut *txn, &ctx, &delta1).await.unwrap();
-        assert_eq!(lww.value(&*txn).await.unwrap(), &b"value"[..]);
+            let delta1 = LwwDelta::new(
+                b"doc1".to_vec(),
+                "name".to_string(),
+                10,
+                "v1".to_string(),
+                b"value".to_vec(),
+            )
+            .unwrap();
+            lww.merge(&mut *txn, &ctx, &delta1).await.unwrap();
+            assert_eq!(lww.value(&*txn).await.unwrap(), &b"value"[..]);
 
-        let delete =
-            LwwDelta::delete(b"doc1".to_vec(), "name".to_string(), 20, "v1".to_string()).unwrap();
-        lww.merge(&mut *txn, &ctx, &delete).await.unwrap();
-        assert!(lww.value(&*txn).await.is_err());
+            let delete =
+                LwwDelta::delete(b"doc1".to_vec(), "name".to_string(), 20, "v1".to_string())
+                    .unwrap();
+            lww.merge(&mut *txn, &ctx, &delete).await.unwrap();
+            assert!(lww.value(&*txn).await.is_err());
+        })
+        .unwrap()
     }
 }
 
@@ -450,8 +453,7 @@ mod counter_properties {
             nonce1 in 0..10000i64,
             nonce2 in 10000..20000i64
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -491,7 +493,7 @@ mod counter_properties {
                 let val2 = counter2.value(&*txn2).await.ok();
 
                 assert_eq!(val1, val2);
-            });
+            }).unwrap();
         }
 
         // Counter merge is unconditional — idempotency is the blockstore's
@@ -503,8 +505,7 @@ mod counter_properties {
             increment in -1000i64..1000i64,
             nonce in 0..10000i64
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -532,13 +533,12 @@ mod counter_properties {
 
                 assert_eq!(val1, Some(increment.wrapping_mul(1)));
                 assert_eq!(val2, Some(increment.wrapping_mul(2)));
-            });
+            }).unwrap();
         }
 
         #[test]
         fn test_counter_overflow_wrapping(base in i64::MAX-1000..i64::MAX, increment in 1i64..1000i64) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -573,13 +573,12 @@ mod counter_properties {
                 let value_bytes = counter.value(&*txn).await.unwrap();
                 let value = i64::from_be_bytes(value_bytes.as_ref().try_into().unwrap());
                 assert_eq!(value, base.wrapping_add(increment));
-            });
+            }).unwrap();
         }
 
         #[test]
         fn test_counter_underflow_wrapping(base in i64::MIN..i64::MIN+1000, decrement in 1i64..1000i64) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -614,7 +613,7 @@ mod counter_properties {
                 let value_bytes = counter.value(&*txn).await.unwrap();
                 let value = i64::from_be_bytes(value_bytes.as_ref().try_into().unwrap());
                 assert_eq!(value, base.wrapping_add(-decrement));
-            });
+            }).unwrap();
         }
 
         #[test]
@@ -626,8 +625,7 @@ mod counter_properties {
             nonce2 in 10000..20000i64,
             nonce3 in 20000..30000i64
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -684,7 +682,7 @@ mod counter_properties {
                 for i in 1..results.len() {
                     assert_eq!(results[0], results[i], "Permutation {} diverged", i);
                 }
-            });
+            }).unwrap();
         }
 
         #[test]
@@ -694,8 +692,7 @@ mod counter_properties {
             nonce1 in 0..10000i64,
             nonce2 in 10000..20000i64
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -735,7 +732,7 @@ mod counter_properties {
                 let val2 = counter2.value(&*txn2).await.ok();
 
                 assert_eq!(val1, val2);
-            });
+            }).unwrap();
         }
 
         #[test]
@@ -747,8 +744,7 @@ mod counter_properties {
             nonce2 in 10000..20000i64,
             nonce3 in 20000..30000i64
         ) {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -805,46 +801,49 @@ mod counter_properties {
                 for i in 1..results.len() {
                     assert_eq!(results[0], results[i], "PCounter permutation {} diverged", i);
                 }
-            });
+            }).unwrap();
         }
     }
 
-    #[tokio::test]
-    async fn test_counter_multiple_nonces() {
-        let ctx = Context {
-            doc_id: DocId::new_unchecked("doc1"),
-            schema_version: "v1".to_string(),
-            is_create: false,
-        };
+    #[test]
+    fn test_counter_multiple_nonces() {
+        workers::block_on(async {
+            let ctx = Context {
+                doc_id: DocId::new_unchecked("doc1"),
+                schema_version: "v1".to_string(),
+                is_create: false,
+            };
 
-        let store = RegolithStore::in_memory().unwrap();
-        let counter = Counter::new(
-            "v1".to_string(),
-            b"doc1".to_vec(),
-            0,
-            "count".to_string(),
-            true,
-            NumericKind::Int64,
-        )
-        .unwrap();
-        let mut txn = store.new_txn(false).await.unwrap();
-
-        for i in 0..10 {
-            let delta = CounterDelta::new_int64(
-                b"doc1".to_vec(),
-                "count".to_string(),
-                i as u64,
-                i,
+            let store = RegolithStore::in_memory().unwrap();
+            let counter = Counter::new(
                 "v1".to_string(),
-                5,
+                b"doc1".to_vec(),
+                0,
+                "count".to_string(),
+                true,
+                NumericKind::Int64,
             )
             .unwrap();
-            counter.merge(&mut *txn, &ctx, &delta).await.unwrap();
-        }
+            let mut txn = store.new_txn(false).await.unwrap();
 
-        let value_bytes = counter.value(&*txn).await.unwrap();
-        let value = i64::from_be_bytes(value_bytes.as_ref().try_into().unwrap());
-        assert_eq!(value, 50);
+            for i in 0..10 {
+                let delta = CounterDelta::new_int64(
+                    b"doc1".to_vec(),
+                    "count".to_string(),
+                    i as u64,
+                    i,
+                    "v1".to_string(),
+                    5,
+                )
+                .unwrap();
+                counter.merge(&mut *txn, &ctx, &delta).await.unwrap();
+            }
+
+            let value_bytes = counter.value(&*txn).await.unwrap();
+            let value = i64::from_be_bytes(value_bytes.as_ref().try_into().unwrap());
+            assert_eq!(value, 50);
+        })
+        .unwrap()
     }
 }
 
@@ -867,8 +866,7 @@ mod float64_counter_properties {
         ) {
             prop_assume!(inc1.is_finite() && inc2.is_finite());
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -908,7 +906,7 @@ mod float64_counter_properties {
                 let val2 = counter2.value(&*txn2).await.ok();
 
                 assert_eq!(val1, val2);
-            });
+            }).unwrap();
         }
 
         // Float64 variant of test_counter_double_apply_accumulates (#847).
@@ -920,8 +918,7 @@ mod float64_counter_properties {
         ) {
             prop_assume!(increment.is_finite());
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let (val1, val2) = rt.block_on(async {
+            let (val1, val2) = workers::block_on(async {
                 let ctx = Context {
                     doc_id: DocId::new_unchecked("doc1"),
                     schema_version: "v1".to_string(),
@@ -948,7 +945,7 @@ mod float64_counter_properties {
                 let val2 = counter.value(&*txn).await.ok().map(|b| f64::from_be_bytes(b.as_ref().try_into().unwrap()));
 
                 (val1, val2)
-            });
+            }).unwrap();
 
             prop_assert_eq!(val1, Some(increment));
             prop_assert_eq!(val2, Some(increment + increment));

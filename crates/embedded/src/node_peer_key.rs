@@ -119,7 +119,7 @@ async fn legacy_iroh_seed(path: Option<&Path>) -> Result<Option<Seed>> {
     let Some(path) = path else {
         return Ok(None);
     };
-    match tokio::fs::read(path).await {
+    match std::fs::read(path) {
         Ok(bytes) => seed_from_slice(&Zeroizing::new(bytes))
             .map_err(|source| Error::IrohKeyFileCorrupt {
                 path: path.to_path_buf(),
@@ -203,59 +203,74 @@ mod tests {
         Peerstore::new(Arc::new(storage::RegolithStore::in_memory().unwrap()))
     }
 
-    #[tokio::test]
-    async fn created_key_is_reused() {
-        let peerstore = peerstore();
+    #[test]
+    fn created_key_is_reused() {
+        workers::block_on(async {
+            let peerstore = peerstore();
 
-        let first = load_or_create(&peerstore, None).await.unwrap();
-        let second = load_or_create(&peerstore, None).await.unwrap();
+            let first = load_or_create(&peerstore, None).await.unwrap();
+            let second = load_or_create(&peerstore, None).await.unwrap();
 
-        assert_eq!(*first, *second);
+            assert_eq!(*first, *second);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn iroh_key_file_is_imported_once_and_left_untouched() {
-        let peerstore = peerstore();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("node.iroh.key");
-        std::fs::write(&path, [7u8; 32]).unwrap();
+    #[test]
+    fn iroh_key_file_is_imported_once_and_left_untouched() {
+        workers::block_on(async {
+            let peerstore = peerstore();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("node.iroh.key");
+            std::fs::write(&path, [7u8; 32]).unwrap();
 
-        let imported = load_or_create(&peerstore, Some(&path)).await.unwrap();
-        assert_eq!(*imported, [7u8; 32]);
-        assert_eq!(std::fs::read(&path).unwrap(), [7u8; 32]);
+            let imported = load_or_create(&peerstore, Some(&path)).await.unwrap();
+            assert_eq!(*imported, [7u8; 32]);
+            assert_eq!(std::fs::read(&path).unwrap(), [7u8; 32]);
 
-        std::fs::remove_file(&path).unwrap();
-        let reloaded = load_or_create(&peerstore, Some(&path)).await.unwrap();
-        assert_eq!(*reloaded, [7u8; 32]);
+            std::fs::remove_file(&path).unwrap();
+            let reloaded = load_or_create(&peerstore, Some(&path)).await.unwrap();
+            assert_eq!(*reloaded, [7u8; 32]);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn missing_iroh_key_file_is_not_created() {
-        let peerstore = peerstore();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("node.iroh.key");
+    #[test]
+    fn missing_iroh_key_file_is_not_created() {
+        workers::block_on(async {
+            let peerstore = peerstore();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("node.iroh.key");
 
-        load_or_create(&peerstore, Some(&path)).await.unwrap();
+            load_or_create(&peerstore, Some(&path)).await.unwrap();
 
-        assert!(!path.exists());
+            assert!(!path.exists());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn corrupt_stored_key_fails_instead_of_regenerating() {
-        let peerstore = peerstore();
-        peerstore.set_local_peer_key(b"short").await.unwrap();
+    #[test]
+    fn corrupt_stored_key_fails_instead_of_regenerating() {
+        workers::block_on(async {
+            let peerstore = peerstore();
+            peerstore.set_local_peer_key(b"short").await.unwrap();
 
-        assert!(load_or_create(&peerstore, None).await.is_err());
+            assert!(load_or_create(&peerstore, None).await.is_err());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn corrupt_iroh_key_file_fails() {
-        let peerstore = peerstore();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("node.iroh.key");
-        std::fs::write(&path, b"short").unwrap();
+    #[test]
+    fn corrupt_iroh_key_file_fails() {
+        workers::block_on(async {
+            let peerstore = peerstore();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("node.iroh.key");
+            std::fs::write(&path, b"short").unwrap();
 
-        assert!(load_or_create(&peerstore, Some(&path)).await.is_err());
+            assert!(load_or_create(&peerstore, Some(&path)).await.is_err());
+        })
+        .unwrap()
     }
 
     #[cfg(feature = "libp2p")]
@@ -267,61 +282,70 @@ mod tests {
     }
 
     #[cfg(feature = "libp2p")]
-    #[tokio::test]
-    async fn legacy_libp2p_key_is_imported_and_removed() {
-        let peerstore = peerstore();
-        peerstore
-            .create_replicator(LEGACY_LIBP2P_KEY_ID, &legacy_libp2p_key_bytes([9u8; 32]))
-            .await
-            .unwrap();
+    #[test]
+    fn legacy_libp2p_key_is_imported_and_removed() {
+        workers::block_on(async {
+            let peerstore = peerstore();
+            peerstore
+                .create_replicator(LEGACY_LIBP2P_KEY_ID, &legacy_libp2p_key_bytes([9u8; 32]))
+                .await
+                .unwrap();
 
-        let imported = load_or_create(&peerstore, None).await.unwrap();
+            let imported = load_or_create(&peerstore, None).await.unwrap();
 
-        assert_eq!(*imported, [9u8; 32]);
-        assert!(peerstore
-            .get_replicator(LEGACY_LIBP2P_KEY_ID)
-            .await
-            .unwrap()
-            .is_none());
+            assert_eq!(*imported, [9u8; 32]);
+            assert!(peerstore
+                .get_replicator(LEGACY_LIBP2P_KEY_ID)
+                .await
+                .unwrap()
+                .is_none());
+        })
+        .unwrap()
     }
 
     /// Only one of the two identities can win, but the loser is key material:
     /// it is left where it is rather than deleted along with the import.
     #[cfg(feature = "libp2p")]
-    #[tokio::test]
-    async fn iroh_key_file_wins_without_discarding_the_libp2p_identity() {
-        let peerstore = peerstore();
-        peerstore
-            .create_replicator(LEGACY_LIBP2P_KEY_ID, &legacy_libp2p_key_bytes([9u8; 32]))
-            .await
-            .unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("node.iroh.key");
-        std::fs::write(&path, [7u8; 32]).unwrap();
-
-        let imported = load_or_create(&peerstore, Some(&path)).await.unwrap();
-
-        assert_eq!(*imported, [7u8; 32]);
-        assert_eq!(
+    #[test]
+    fn iroh_key_file_wins_without_discarding_the_libp2p_identity() {
+        workers::block_on(async {
+            let peerstore = peerstore();
             peerstore
-                .get_replicator(LEGACY_LIBP2P_KEY_ID)
+                .create_replicator(LEGACY_LIBP2P_KEY_ID, &legacy_libp2p_key_bytes([9u8; 32]))
                 .await
-                .unwrap()
-                .as_deref(),
-            Some(legacy_libp2p_key_bytes([9u8; 32]).as_slice()),
-            "the identity that lost must still be recoverable"
-        );
+                .unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("node.iroh.key");
+            std::fs::write(&path, [7u8; 32]).unwrap();
+
+            let imported = load_or_create(&peerstore, Some(&path)).await.unwrap();
+
+            assert_eq!(*imported, [7u8; 32]);
+            assert_eq!(
+                peerstore
+                    .get_replicator(LEGACY_LIBP2P_KEY_ID)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some(legacy_libp2p_key_bytes([9u8; 32]).as_slice()),
+                "the identity that lost must still be recoverable"
+            );
+        })
+        .unwrap()
     }
 
     #[cfg(feature = "libp2p")]
-    #[tokio::test]
-    async fn corrupt_legacy_libp2p_key_fails() {
-        let peerstore = peerstore();
-        peerstore
-            .create_replicator(LEGACY_LIBP2P_KEY_ID, b"not a keypair")
-            .await
-            .unwrap();
+    #[test]
+    fn corrupt_legacy_libp2p_key_fails() {
+        workers::block_on(async {
+            let peerstore = peerstore();
+            peerstore
+                .create_replicator(LEGACY_LIBP2P_KEY_ID, b"not a keypair")
+                .await
+                .unwrap();
 
-        assert!(load_or_create(&peerstore, None).await.is_err());
+            assert!(load_or_create(&peerstore, None).await.is_err());
+        })
+        .unwrap()
     }
 }

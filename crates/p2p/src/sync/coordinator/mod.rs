@@ -389,8 +389,10 @@ impl SyncShutdownHandle {
             let shutdown = self.clone();
             // The drain owns the only sender, so cancellation or panic closes
             // the channel instead of leaving other shutdown callers parked.
+            // It runs on the coordinator's network edge: the caller may be a
+            // plain thread with no runtime.
             let sender = self.inner.shutdown_complete_tx.pop();
-            n0_future::task::spawn(async move {
+            self.network().spawn(async move {
                 shutdown
                     .drain_background_tasks(BACKGROUND_TASK_SHUTDOWN_TIMEOUT)
                     .await;

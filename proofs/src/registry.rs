@@ -585,4 +585,16 @@ pub const PROPERTIES: &[Property] = &[
         model_ref: "MC_IndexReconciliation_Green.cfg",
         tiers: &[Behavioral],
     },
+    Property {
+        // A node's shutdown aborts every task it holds and waits for each to
+        // let go of storage before the pool stops and regolith closes; the
+        // drain gives up at its deadline; a refused telemetry flush moves to
+        // a thread of its own instead of the caller.
+        family: "Node shutdown order",
+        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
+        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
+        tiers: &[Boundary],
+    },
 ];

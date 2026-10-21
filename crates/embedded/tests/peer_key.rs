@@ -8,30 +8,34 @@ mod outcome;
 use embedded::{EmbeddedNode, EmbeddedStore, IrohConfig, NodeBuilder};
 use outcome::Result;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn libp2p_and_iroh_share_the_node_key() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let data_path = dir.path().join("node");
+#[test]
+fn libp2p_and_iroh_share_the_node_key() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let dir = tempfile::tempdir()?;
+            let data_path = dir.path().join("node");
 
-    let libp2p_node = NodeBuilder::default()
-        .data_path(data_path.clone())
-        .with_libp2p("/ip4/127.0.0.1/tcp/0")
-        .build()
-        .await?;
-    let libp2p_id = local_peer_id(&libp2p_node).await?;
-    libp2p_node.shutdown().await;
-    drop(libp2p_node);
+            let libp2p_node = NodeBuilder::default()
+                .data_path(data_path.clone())
+                .with_libp2p("/ip4/127.0.0.1/tcp/0")
+                .build()
+                .await?;
+            let libp2p_id = local_peer_id(&libp2p_node).await?;
+            libp2p_node.shutdown().await;
+            drop(libp2p_node);
 
-    let iroh_node = NodeBuilder::default()
-        .data_path(data_path)
-        .with_iroh(iroh_config())
-        .build()
-        .await?;
-    let iroh_id = local_peer_id(&iroh_node).await?;
-    iroh_node.shutdown().await;
+            let iroh_node = NodeBuilder::default()
+                .data_path(data_path)
+                .with_iroh(iroh_config())
+                .build()
+                .await?;
+            let iroh_id = local_peer_id(&iroh_node).await?;
+            iroh_node.shutdown().await;
 
-    assert_eq!(iroh_id, hex::encode(libp2p_ed25519_public(&libp2p_id)?));
-    Ok(())
+            assert_eq!(iroh_id, hex::encode(libp2p_ed25519_public(&libp2p_id)?));
+            Ok(())
+        })
+        .unwrap()
 }
 
 async fn local_peer_id(node: &EmbeddedNode<EmbeddedStore>) -> Result<String> {

@@ -126,79 +126,97 @@ fn scan(fetcher: Arc<RecordingFetcher>) -> ScanNode {
 }
 
 /// The restriction must narrow the read, not filter after it.
-#[tokio::test]
-async fn a_restricted_scan_seeks_instead_of_scanning() {
-    let fetcher = Arc::new(RecordingFetcher::default());
-    let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![2, 5, 9]);
+#[test]
+fn a_restricted_scan_seeks_instead_of_scanning() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![2, 5, 9]);
 
-    assert_eq!(titles(&mut node).await, vec!["doc-2", "doc-5", "doc-9"]);
-    assert_eq!(fetcher.seeks.load(Ordering::Relaxed), 1, "must have sought");
-    assert_eq!(
-        fetcher.scans.load(Ordering::Relaxed),
-        0,
-        "a restricted scan must not read the collection"
-    );
-    assert_eq!(fetcher.sought.load_clone(), vec![2, 5, 9]);
+        assert_eq!(titles(&mut node).await, vec!["doc-2", "doc-5", "doc-9"]);
+        assert_eq!(fetcher.seeks.load(Ordering::Relaxed), 1, "must have sought");
+        assert_eq!(
+            fetcher.scans.load(Ordering::Relaxed),
+            0,
+            "a restricted scan must not read the collection"
+        );
+        assert_eq!(fetcher.sought.load_clone(), vec![2, 5, 9]);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_unrestricted_scan_still_scans() {
-    let fetcher = Arc::new(RecordingFetcher::default());
-    let mut node = scan(fetcher.clone());
+#[test]
+fn an_unrestricted_scan_still_scans() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone());
 
-    assert_eq!(titles(&mut node).await.len(), 10);
-    assert_eq!(fetcher.scans.load(Ordering::Relaxed), 1);
-    assert_eq!(fetcher.seeks.load(Ordering::Relaxed), 0);
+        assert_eq!(titles(&mut node).await.len(), 10);
+        assert_eq!(fetcher.scans.load(Ordering::Relaxed), 1);
+        assert_eq!(fetcher.seeks.load(Ordering::Relaxed), 0);
+    })
+    .unwrap()
 }
 
 /// An empty restriction means nothing matched, which is not the same as no
 /// restriction. Falling back to a full scan here would turn an empty vector
 /// search result into every document in the collection.
-#[tokio::test]
-async fn an_empty_restriction_yields_nothing() {
-    let fetcher = Arc::new(RecordingFetcher::default());
-    let mut node = scan(fetcher.clone()).with_doc_short_ids(Vec::new());
+#[test]
+fn an_empty_restriction_yields_nothing() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(Vec::new());
 
-    assert!(titles(&mut node).await.is_empty());
-    assert_eq!(fetcher.scans.load(Ordering::Relaxed), 0);
+        assert!(titles(&mut node).await.is_empty());
+        assert_eq!(fetcher.scans.load(Ordering::Relaxed), 0);
+    })
+    .unwrap()
 }
 
 /// A short id whose document is gone is skipped, not reported: an id from an
 /// index may be stale.
-#[tokio::test]
-async fn absent_ids_are_skipped() {
-    let fetcher = Arc::new(RecordingFetcher::default());
-    let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![3, 999, 7]);
+#[test]
+fn absent_ids_are_skipped() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![3, 999, 7]);
 
-    assert_eq!(titles(&mut node).await, vec!["doc-3", "doc-7"]);
+        assert_eq!(titles(&mut node).await, vec!["doc-3", "doc-7"]);
+    })
+    .unwrap()
 }
 
 /// The order asked for is the order returned, because the caller asked in
 /// nearest-first order and nothing below re-sorts.
-#[tokio::test]
-async fn the_requested_order_is_preserved() {
-    let fetcher = Arc::new(RecordingFetcher::default());
-    let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![8, 1, 4]);
+#[test]
+fn the_requested_order_is_preserved() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut node = scan(fetcher.clone()).with_doc_short_ids(vec![8, 1, 4]);
 
-    assert_eq!(titles(&mut node).await, vec!["doc-8", "doc-1", "doc-4"]);
+        assert_eq!(titles(&mut node).await, vec!["doc-8", "doc-1", "doc-4"]);
+    })
+    .unwrap()
 }
 
 /// A vector-routed scan reports one index fetch, which is how an explain shows
 /// the query routed. An unrouted one reports none.
-#[tokio::test]
-async fn a_vector_routed_scan_reports_an_index_fetch() {
-    let fetcher = Arc::new(RecordingFetcher::default());
-    let mut routed = scan(fetcher.clone())
-        .with_doc_short_ids(vec![1, 2])
-        .as_vector_indexed();
-    titles(&mut routed).await;
-    assert_eq!(routed.explain_execute_inner()["indexFetches"], 1);
+#[test]
+fn a_vector_routed_scan_reports_an_index_fetch() {
+    workers::block_on(async {
+        let fetcher = Arc::new(RecordingFetcher::default());
+        let mut routed = scan(fetcher.clone())
+            .with_doc_short_ids(vec![1, 2])
+            .as_vector_indexed();
+        titles(&mut routed).await;
+        assert_eq!(routed.explain_execute_inner()["indexFetches"], 1);
 
-    let mut unrouted = scan(fetcher).with_doc_short_ids(vec![1, 2]);
-    titles(&mut unrouted).await;
-    assert_eq!(
-        unrouted.explain_execute_inner()["indexFetches"],
-        0,
-        "a plain short-id restriction is not an index hit"
-    );
+        let mut unrouted = scan(fetcher).with_doc_short_ids(vec![1, 2]);
+        titles(&mut unrouted).await;
+        assert_eq!(
+            unrouted.explain_execute_inner()["indexFetches"],
+            0,
+            "a plain short-id restriction is not an index hit"
+        );
+    })
+    .unwrap()
 }

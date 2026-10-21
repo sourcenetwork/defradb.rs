@@ -50,8 +50,9 @@ async fn execute_ok(node: &EmbeddedNode<EmbeddedStore>, query: &str) -> Result<V
     Ok(response.data.expect("successful query returned no data"))
 }
 
-#[tokio::test]
-async fn migrates_populated_v015_store_and_reopens_idempotently() -> Result<()> {
+#[test]
+fn migrates_populated_v015_store_and_reopens_idempotently() -> Result<()> {
+    workers::block_on(async {
     let directory = tempfile::tempdir()?;
     let path = materialize_fixture(directory.path())?;
 
@@ -162,60 +163,65 @@ async fn migrates_populated_v015_store_and_reopens_idempotently() -> Result<()> 
     reopened.shutdown().await;
 
     Ok(())
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn malformed_v015_store_rolls_back_the_entire_migration() -> Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = materialize_fixture(directory.path())?;
+#[test]
+fn malformed_v015_store_rolls_back_the_entire_migration() -> Result<()> {
+    workers::block_on(async {
+        let directory = tempfile::tempdir()?;
+        let path = materialize_fixture(directory.path())?;
 
-    let store = Arc::new(storage::RegolithStore::open(
-        path.to_str().expect("fixture path contains non-UTF-8"),
-    )?);
-    {
-        let database = db::DB::from_arc(Arc::clone(&store))?;
-        let txn = database.new_txn(false).await?;
-        let cid = LAST_LEGACY_COMPOSITE_HEAD.parse::<Cid>()?;
-        txn.blockstore()?.delete(&cid.to_bytes()).await?;
-        txn.commit().await?;
-    }
-
-    let error = match db::DB::open_from_arc(Arc::clone(&store)).await {
-        Ok(database) => {
-            database.close().await?;
-            panic!("migration unexpectedly accepted a missing legacy block")
+        let store = Arc::new(storage::RegolithStore::open(
+            path.to_str().expect("fixture path contains non-UTF-8"),
+        )?);
+        {
+            let database = db::DB::from_arc(Arc::clone(&store))?;
+            let txn = database.new_txn(false).await?;
+            let cid = LAST_LEGACY_COMPOSITE_HEAD.parse::<Cid>()?;
+            txn.blockstore()?.delete(&cid.to_bytes()).await?;
+            txn.commit().await?;
         }
-        Err(error) => error,
-    };
-    assert!(
-        format!("{error:#}").contains("references missing block"),
-        "migration failed for an unexpected reason: {error:#}"
-    );
 
-    let database = db::DB::from_arc(store)?;
-    let txn = database.new_txn(true).await?;
-    {
-        let systemstore = txn.systemstore()?;
+        let error = match db::DB::open_from_arc(Arc::clone(&store)).await {
+            Ok(database) => {
+                database.close().await?;
+                panic!("migration unexpectedly accepted a missing legacy block")
+            }
+            Err(error) => error,
+        };
         assert!(
-            !systemstore.has(MIGRATION_MARKER).await?,
-            "failed migration published its completion marker"
+            format!("{error:#}").contains("references missing block"),
+            "migration failed for an unexpected reason: {error:#}"
         );
-        assert!(
-            !systemstore.has(b"/d/s/\x01").await?,
-            "failed migration leaked a short-ID mapping"
-        );
-        assert!(
-            !systemstore.has(b"/seq/doc").await?,
-            "failed migration advanced the short-ID sequence"
-        );
-        let legacy_key = format!("/d/{TASK_COLLECTION_ID}/{LAST_LEGACY_TASK_ID}");
-        assert!(
-            txn.datastore()?.has(legacy_key.as_bytes()).await?,
-            "failed migration deleted a legacy document"
-        );
-    }
-    txn.discard()?;
-    database.close().await?;
 
-    Ok(())
+        let database = db::DB::from_arc(store)?;
+        let txn = database.new_txn(true).await?;
+        {
+            let systemstore = txn.systemstore()?;
+            assert!(
+                !systemstore.has(MIGRATION_MARKER).await?,
+                "failed migration published its completion marker"
+            );
+            assert!(
+                !systemstore.has(b"/d/s/\x01").await?,
+                "failed migration leaked a short-ID mapping"
+            );
+            assert!(
+                !systemstore.has(b"/seq/doc").await?,
+                "failed migration advanced the short-ID sequence"
+            );
+            let legacy_key = format!("/d/{TASK_COLLECTION_ID}/{LAST_LEGACY_TASK_ID}");
+            assert!(
+                txn.datastore()?.has(legacy_key.as_bytes()).await?,
+                "failed migration deleted a legacy document"
+            );
+        }
+        txn.discard()?;
+        database.close().await?;
+
+        Ok(())
+    })
+    .unwrap()
 }

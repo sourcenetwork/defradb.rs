@@ -277,73 +277,83 @@ mod tests {
     use rapidhash::HashMapExt;
     use serde_json::json;
 
-    #[tokio::test]
-    async fn test_lens_passthrough_at_target() {
-        let store = Arc::new(MemoryTransformStore::new());
-        let history = RapidHashMap::new();
-        let mut lens = Lens::new(store, "v1", history);
+    #[test]
+    fn test_lens_passthrough_at_target() {
+        workers::block_on(async {
+            let store = Arc::new(MemoryTransformStore::new());
+            let history = RapidHashMap::new();
+            let mut lens = Lens::new(store, "v1", history);
 
-        let mut doc = LensDoc::new();
-        doc.insert("name".to_string(), json!("Alice"));
+            let mut doc = LensDoc::new();
+            doc.insert("name".to_string(), json!("Alice"));
 
-        lens.put("v1", doc.clone()).await.unwrap();
+            lens.put("v1", doc.clone()).await.unwrap();
 
-        let result = lens.next().await.unwrap().unwrap();
-        assert_eq!(result.get("name").unwrap(), &json!("Alice"));
+            let result = lens.next().await.unwrap().unwrap();
+            assert_eq!(result.get("name").unwrap(), &json!("Alice"));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_lens_needs_migration() {
-        let store = Arc::new(MemoryTransformStore::new());
-        let mut history = RapidHashMap::new();
+    #[test]
+    fn test_lens_needs_migration() {
+        workers::block_on(async {
+            let store = Arc::new(MemoryTransformStore::new());
+            let mut history = RapidHashMap::new();
 
-        history.insert(
-            "v1".to_string(),
-            TargetedHistoryLink::new("v1", "col_1").with_next("v2"),
-        );
-        history.insert(
-            "v2".to_string(),
-            TargetedHistoryLink::new("v2", "col_1")
-                .with_transform(Some("transform_1".to_string()))
-                .with_previous("v1"),
-        );
+            history.insert(
+                "v1".to_string(),
+                TargetedHistoryLink::new("v1", "col_1").with_next("v2"),
+            );
+            history.insert(
+                "v2".to_string(),
+                TargetedHistoryLink::new("v2", "col_1")
+                    .with_transform(Some("transform_1".to_string()))
+                    .with_previous("v1"),
+            );
 
-        let lens = Lens::new(store, "v2", history);
+            let lens = Lens::new(store, "v2", history);
 
-        assert!(lens.needs_migration("v1"));
-        assert!(!lens.needs_migration("v2"));
-        assert!(!lens.needs_migration("v_unknown"));
+            assert!(lens.needs_migration("v1"));
+            assert!(!lens.needs_migration("v2"));
+            assert!(!lens.needs_migration("v_unknown"));
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn test_lens_transform_with_registered_migration() {
-        let store = Arc::new(MemoryTransformStore::new());
+    #[test]
+    fn test_lens_transform_with_registered_migration() {
+        workers::block_on(async {
+            let store = Arc::new(MemoryTransformStore::new());
 
-        // Register a transform
-        let config = LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
-        let transform_id = store.add(config).await.unwrap();
+            // Register a transform
+            let config =
+                LensConfig::new("v1", "v2", LensModule::from_path("/path/to/transform.wasm"));
+            let transform_id = store.add(config).await.unwrap();
 
-        let mut history = RapidHashMap::new();
-        history.insert(
-            "v1".to_string(),
-            TargetedHistoryLink::new("v1", "col_1").with_next("v2"),
-        );
-        history.insert(
-            "v2".to_string(),
-            TargetedHistoryLink::new("v2", "col_1")
-                .with_transform(Some(transform_id.to_string()))
-                .with_previous("v1"),
-        );
+            let mut history = RapidHashMap::new();
+            history.insert(
+                "v1".to_string(),
+                TargetedHistoryLink::new("v1", "col_1").with_next("v2"),
+            );
+            history.insert(
+                "v2".to_string(),
+                TargetedHistoryLink::new("v2", "col_1")
+                    .with_transform(Some(transform_id.to_string()))
+                    .with_previous("v1"),
+            );
 
-        let mut lens = Lens::new(store, "v2", history);
+            let mut lens = Lens::new(store, "v2", history);
 
-        let mut doc = LensDoc::new();
-        doc.insert("name".to_string(), json!("Alice"));
+            let mut doc = LensDoc::new();
+            doc.insert("name".to_string(), json!("Alice"));
 
-        lens.put("v1", doc).await.unwrap();
+            lens.put("v1", doc).await.unwrap();
 
-        // MemoryTransformStore passes through unchanged
-        let result = lens.next().await.unwrap().unwrap();
-        assert_eq!(result.get("name").unwrap(), &json!("Alice"));
+            // MemoryTransformStore passes through unchanged
+            let result = lens.next().await.unwrap().unwrap();
+            assert_eq!(result.get("name").unwrap(), &json!("Alice"));
+        })
+        .unwrap()
     }
 }

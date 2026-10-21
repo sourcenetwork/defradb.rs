@@ -274,47 +274,53 @@ fn an_empty_write_has_no_operand_to_merge() {
 
 /// Two transactions that both read the set and merge into it commit: the
 /// merge is blind, and the live set is the union of what both added.
-#[tokio::test]
-async fn concurrent_writers_of_one_set_both_commit() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut seed = store.new_txn(false).await.unwrap();
-    seed.merge(b"h/hd/set", &adds(&[(b"p", 1)]).operand())
-        .await
-        .unwrap();
-    seed.commit().await.unwrap();
-    let mut first = store.new_txn(false).await.unwrap();
-    let mut second = store.new_txn(false).await.unwrap();
-    for (txn, head) in [(&mut first, b"x"), (&mut second, b"y")] {
-        let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
-        assert!(Set::read(&read).unwrap().is_live(b"p"));
-        txn.merge(b"h/hd/set", &block(&[b"p"], &[], (head, 2)).operand())
+#[test]
+fn concurrent_writers_of_one_set_both_commit() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut seed = store.new_txn(false).await.unwrap();
+        seed.merge(b"h/hd/set", &adds(&[(b"p", 1)]).operand())
             .await
             .unwrap();
-    }
-    first.commit().await.unwrap();
-    second.commit().await.unwrap();
-    let read = store.new_txn(true).await.unwrap();
-    let set = Set::read(&read.get(b"h/hd/set").await.unwrap().unwrap()).unwrap();
-    assert_eq!(
-        live(&set),
-        [(b"x".to_vec(), 2), (b"y".to_vec(), 2)],
-        "both heads are live and the parent is gone"
-    );
+        seed.commit().await.unwrap();
+        let mut first = store.new_txn(false).await.unwrap();
+        let mut second = store.new_txn(false).await.unwrap();
+        for (txn, head) in [(&mut first, b"x"), (&mut second, b"y")] {
+            let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
+            assert!(Set::read(&read).unwrap().is_live(b"p"));
+            txn.merge(b"h/hd/set", &block(&[b"p"], &[], (head, 2)).operand())
+                .await
+                .unwrap();
+        }
+        first.commit().await.unwrap();
+        second.commit().await.unwrap();
+        let read = store.new_txn(true).await.unwrap();
+        let set = Set::read(&read.get(b"h/hd/set").await.unwrap().unwrap()).unwrap();
+        assert_eq!(
+            live(&set),
+            [(b"x".to_vec(), 2), (b"y".to_vec(), 2)],
+            "both heads are live and the parent is gone"
+        );
+    })
+    .unwrap()
 }
 
 /// A transaction reads its own pending merges.
-#[tokio::test]
-async fn a_transaction_reads_the_set_it_merged_into() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
-    txn.merge(b"h/hd/set", &adds(&[(b"a", 1)]).operand())
-        .await
-        .unwrap();
-    txn.merge(b"h/hd/set", &block(&[b"a"], &[], (b"b", 2)).operand())
-        .await
-        .unwrap();
-    let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
-    assert_eq!(live(&Set::read(&read).unwrap()), [(b"b".to_vec(), 2)]);
+#[test]
+fn a_transaction_reads_the_set_it_merged_into() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        txn.merge(b"h/hd/set", &adds(&[(b"a", 1)]).operand())
+            .await
+            .unwrap();
+        txn.merge(b"h/hd/set", &block(&[b"a"], &[], (b"b", 2)).operand())
+            .await
+            .unwrap();
+        let read = txn.get_parts(b"h/hd/set", &[]).await.unwrap().unwrap();
+        assert_eq!(live(&Set::read(&read).unwrap()), [(b"b".to_vec(), 2)]);
+    })
+    .unwrap()
 }
 
 /// An operand touches the part of every name it holds and of no other name;
@@ -351,29 +357,32 @@ fn head_set_touches_by_name_obey_the_engine_contract() {
 
 /// A transaction that read one name's part commits past a merge that holds
 /// other names only, and is refused by one that holds its name.
-#[tokio::test]
-async fn a_read_of_one_names_part_meets_only_operands_that_hold_it() {
-    let theirs = [
-        (adds(&[(b"x", 1)]), false),
-        (adds(&[(b"p", 1)]), true),
-        (block(&[], &[b"p"], (b"y", 2)), true),
-    ];
-    for (write, refused) in theirs {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.merge(b"h/hd/set", &adds(&[(b"s", 1)]).operand())
-            .await
-            .unwrap();
-        seed.commit().await.unwrap();
-        let mut reader = store.new_txn(false).await.unwrap();
-        reader.get_parts(b"h/hd/set", &[part(b"p")]).await.unwrap();
-        reader
-            .merge(b"h/hd/set", &block(&[], &[b"p"], (b"c", 2)).operand())
-            .await
-            .unwrap();
-        let mut writer = store.new_txn(false).await.unwrap();
-        writer.merge(b"h/hd/set", &write.operand()).await.unwrap();
-        writer.commit().await.unwrap();
-        assert_eq!(reader.commit().await.is_err(), refused, "{write:?}");
-    }
+#[test]
+fn a_read_of_one_names_part_meets_only_operands_that_hold_it() {
+    workers::block_on(async {
+        let theirs = [
+            (adds(&[(b"x", 1)]), false),
+            (adds(&[(b"p", 1)]), true),
+            (block(&[], &[b"p"], (b"y", 2)), true),
+        ];
+        for (write, refused) in theirs {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.merge(b"h/hd/set", &adds(&[(b"s", 1)]).operand())
+                .await
+                .unwrap();
+            seed.commit().await.unwrap();
+            let mut reader = store.new_txn(false).await.unwrap();
+            reader.get_parts(b"h/hd/set", &[part(b"p")]).await.unwrap();
+            reader
+                .merge(b"h/hd/set", &block(&[], &[b"p"], (b"c", 2)).operand())
+                .await
+                .unwrap();
+            let mut writer = store.new_txn(false).await.unwrap();
+            writer.merge(b"h/hd/set", &write.operand()).await.unwrap();
+            writer.commit().await.unwrap();
+            assert_eq!(reader.commit().await.is_err(), refused, "{write:?}");
+        }
+    })
+    .unwrap()
 }

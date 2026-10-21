@@ -7,7 +7,9 @@ use serde_json::{Map, Value as JsonValue};
 use crate::error::{QueryError, Result};
 use crate::executor::GqlWarning;
 use crate::mapper::{Filter, Requestable, Select};
-use crate::planner::index_selection::{can_be_ordered_by_index, can_or_filter_use_index};
+use crate::planner::index_selection::{
+    can_be_ordered_by_filtered_index, can_be_ordered_by_index, can_or_filter_use_index,
+};
 use crate::txn::TransactionRegistry;
 
 use super::super::plan;
@@ -219,10 +221,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .order_by
                 .as_ref()
                 .map(|o| {
-                    collection
-                        .indexes
-                        .iter()
-                        .any(|idx| can_be_ordered_by_index(o, idx).0)
+                    collection.indexes.iter().any(|idx| {
+                        select.filter.as_ref().map_or_else(
+                            || can_be_ordered_by_index(o, idx).0,
+                            |filter| can_be_ordered_by_filtered_index(o, idx, filter).0,
+                        )
+                    })
                 })
                 .unwrap_or(false);
 

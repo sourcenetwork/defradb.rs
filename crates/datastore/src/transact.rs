@@ -82,45 +82,51 @@ mod tests {
 
     type RetryAttemptResult = Result<RetryAttemptValue, RetryAttemptError>;
 
-    #[tokio::test]
-    async fn the_body_commits_through_the_facade_and_returns_its_value() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let keys = vec![b"a".to_vec(), b"b".to_vec()];
+    #[test]
+    fn the_body_commits_through_the_facade_and_returns_its_value() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let keys = vec![b"a".to_vec(), b"b".to_vec()];
 
-        let first = keys.clone();
-        let marked: usize = transact(&*store, engine_retry_options(1), move |txn| {
-            Box::pin(count_marks(txn, first.clone()))
-        })
-        .await
-        .unwrap();
-        assert_eq!(marked, 2);
+            let first = keys.clone();
+            let marked: usize = transact(&*store, engine_retry_options(1), move |txn| {
+                Box::pin(count_marks(txn, first.clone()))
+            })
+            .await
+            .unwrap();
+            assert_eq!(marked, 2);
 
-        let again: usize = transact(&*store, engine_retry_options(1), move |txn| {
-            Box::pin(count_marks(txn, keys.clone()))
+            let again: usize = transact(&*store, engine_retry_options(1), move |txn| {
+                Box::pin(count_marks(txn, keys.clone()))
+            })
+            .await
+            .unwrap();
+            assert_eq!(again, 0, "the first transaction's writes committed");
         })
-        .await
-        .unwrap();
-        assert_eq!(again, 0, "the first transaction's writes committed");
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn an_error_from_the_body_ends_the_transaction_with_nothing_written() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let error = transact::<_, usize, _>(&*store, engine_retry_options(1), |txn| {
-            Box::pin(async move {
-                txn.systemstore().set(b"a", b"never").await?;
-                Err(RetryAttemptError::Abort(Box::new("refused")))
+    #[test]
+    fn an_error_from_the_body_ends_the_transaction_with_nothing_written() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let error = transact::<_, usize, _>(&*store, engine_retry_options(1), |txn| {
+                Box::pin(async move {
+                    txn.systemstore().set(b"a", b"never").await?;
+                    Err(RetryAttemptError::Abort(Box::new("refused")))
+                })
             })
-        })
-        .await
-        .unwrap_err();
-        assert!(matches!(error, RetryAttemptError::Abort(_)));
+            .await
+            .unwrap_err();
+            assert!(matches!(error, RetryAttemptError::Abort(_)));
 
-        let marked: usize = transact(&*store, engine_retry_options(1), |txn| {
-            Box::pin(count_marks(txn, vec![b"a".to_vec()]))
+            let marked: usize = transact(&*store, engine_retry_options(1), |txn| {
+                Box::pin(count_marks(txn, vec![b"a".to_vec()]))
+            })
+            .await
+            .unwrap();
+            assert_eq!(marked, 1, "the refused body wrote nothing");
         })
-        .await
-        .unwrap();
-        assert_eq!(marked, 1, "the refused body wrote nothing");
+        .unwrap()
     }
 }
