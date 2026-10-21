@@ -5,22 +5,20 @@ dir = "target/nextest"
 retries = 0
 slow-timeout = { period = "60s" }
 
-# Integration tests spawn real defra nodes, each with a worker per core.
-# Counting every such test as two threads halves how many run at once, the
-# same ceiling as the eight threads the suites once ran with on 16 cores.
-[[profile.default.overrides]]
-filter = "package(integration-test) | binary_id(=conformance::tla_conformance)"
-threads-required = 2
-
 # These tests start node clusters that race for ephemeral ports and wall
-# clock budgets, so each binary runs one test at a time.
+# clock budgets. The group runs each binary one test at a time, and taking
+# every thread keeps other suites' nodes off the machine while one runs, as
+# when CI ran them in steps of their own. Nextest applies the first override
+# that sets a value, so these come before the general integration cap.
 [[profile.default.overrides]]
 filter = "binary_id(=integration-test::p2p)"
 test-group = "p2p"
+threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
 filter = "binary_id(=integration-test::p2p_iroh)"
 test-group = "p2p-iroh"
+threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
 filter = """
@@ -29,15 +27,31 @@ binary_id(/^integration-test::p2p_admission/)
 | binary_id(=integration-test::issue1154_repro)
 """
 test-group = "p2p-admission"
+threads-required = "num-test-threads"
+
+# Each Vera test starts a devnet, and the tests use #[serial] to never start
+# two at once. #[serial] only orders threads inside one process, and nextest
+# runs a process per test, so the group does that job here.
+[[profile.default.overrides]]
+filter = "binary_id(=integration-test::vera) | binary_id(=integration-test::verars)"
+test-group = "vera"
+
+# Integration tests spawn real defra nodes, each with a worker per core.
+# Counting every such test as two threads halves how many run at once, the
+# same ceiling as the eight threads the suites once ran with on 16 cores.
+[[profile.default.overrides]]
+filter = "package(integration-test) | binary_id(=conformance::tla_conformance)"
+threads-required = 2
 
 [[profile.default.overrides]]
 filter = "binary_id(=conformance::tla_conformance)"
 test-group = "tla-conformance"
 
 # These tests flip process-wide state (the deterministic nonce flag, the
-# keyring secret env var) and use #[serial] so they never overlap. #[serial]
-# only orders threads inside one process, and nextest starts a process per
-# test, so the group is what keeps them one at a time here.
+# keyring secret env var) and use #[serial] so they never overlap. A process
+# per test already keeps that state apart under nextest. The group still runs
+# them one at a time, so they keep the same order guarantee they have under
+# cargo test and stay safe if they ever share state outside the process.
 [[profile.default.overrides]]
 filter = "binary_id(=crypto::go_compat_encryption) | (binary_id(=keyring) & test(/^tests::/))"
 test-group = "serial-env"
@@ -48,6 +62,7 @@ p2p-iroh = { max-threads = 1 }
 p2p-admission = { max-threads = 1 }
 tla-conformance = { max-threads = 1 }
 serial-env = { max-threads = 1 }
+vera = { max-threads = 1 }
 
 [profile.ci]
 fail-fast = false
