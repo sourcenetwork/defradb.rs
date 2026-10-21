@@ -17,9 +17,10 @@
 //! text, so [`TextOp::apply_all`] on it gives the same result. Any other
 //! block goes through [`merge_text`], which replays only the blocks after the
 //! field's last critical block (one every other block comes before or after),
-//! starting from placeholders for that block's text. The characters deleted
-//! before it are gone, yet the text equals a full replay
-//! (`INV_CriticalReplay`).
+//! starting from one span placeholder for that block's text. The span splits
+//! only where an edit lands, so the replay costs what the blocks after the
+//! critical one touch, not the text's length. The characters deleted before it
+//! are gone, yet the text equals a full replay (`INV_CriticalReplay`).
 //!
 //! The contract is `proofs/tla/TextCrdt.tla` and `proofs/lean/TextCrdt`:
 //! convergence, replay equality and intent preservation.
@@ -44,7 +45,7 @@ pub struct TextBlock {
 /// The tree's root: not a character, never shown.
 const ROOT: usize = 0;
 
-/// The block a placeholder character belongs to: the text of a critical block,
+/// The block a placeholder span belongs to: the text of a critical block,
 /// which every block replayed comes after, so every version holds it.
 const BASE: usize = usize::MAX - 1;
 
@@ -60,6 +61,10 @@ struct Node {
     /// Its offset among the characters its block inserts.
     offset: u32,
     ch: char,
+    /// The characters it holds: one, or a placeholder span's run, each the
+    /// right child of the one before. Left children hang on its first
+    /// character, right children on its last.
+    len: usize,
     /// The topological positions of the blocks that delete it.
     deleted_by: Vec<usize>,
     left: Vec<usize>,
@@ -110,12 +115,13 @@ struct Spot {
 /// Tests use tiny chunks so their small texts split them often.
 const CHUNK: usize = if cfg!(test) { 2 } else { 512 };
 
-/// Nodes in reading order, in chunks that count their visible nodes, so
+/// Nodes in reading order, in chunks that count their visible characters, so
 /// finding the character at a position walks the chunks and then one chunk,
-/// not the whole text.
+/// not the whole text. `weight` gives a node's visible characters: its length,
+/// or none when dead.
 struct Order {
     chunks: Vec<Chunk>,
-    /// The visible nodes in all chunks.
+    /// The visible characters in all chunks.
     visible: usize,
 }
 
@@ -125,14 +131,14 @@ struct Chunk {
 }
 
 impl Order {
-    fn new<F>(nodes: Vec<usize>, alive: F) -> Self
+    fn new<F>(nodes: Vec<usize>, weight: F) -> Self
     where
-        F: Fn(usize) -> bool,
+        F: Fn(usize) -> usize,
     {
         let mut chunks: Vec<Chunk> = nodes
             .chunks(CHUNK)
             .map(|nodes| Chunk {
-                visible: nodes.iter().filter(|&&node| alive(node)).count(),
+                visible: nodes.iter().map(|&node| weight(node)).sum(),
                 nodes: nodes.to_vec(),
             })
             .collect();
@@ -155,6 +161,21 @@ impl Order {
         self.chunks.get(spot.chunk)?.nodes.get(spot.index).copied()
     }
 
+    /// The spot right before `spot`, which is not the first.
+    fn before(&self, spot: Spot) -> Spot {
+        if spot.index > 0 {
+            Spot {
+                chunk: spot.chunk,
+                index: spot.index - 1,
+            }
+        } else {
+            Spot {
+                chunk: spot.chunk - 1,
+                index: self.chunks[spot.chunk - 1].nodes.len() - 1,
+            }
+        }
+    }
+
     /// The spot right after `spot`: the next node's, or the end.
     fn after(&self, spot: Spot) -> Spot {
         if spot.index + 1 < self.chunks[spot.chunk].nodes.len()
@@ -172,11 +193,12 @@ impl Order {
         }
     }
 
-    /// The spot of visible node number `k`, counting from 0; `k` is below
+    /// The spot of the node holding visible character number `k`, counting
+    /// from 0, and `k`'s index inside that node; `k` is below
     /// [`Order::visible`].
-    fn nth_visible<F>(&self, mut k: usize, alive: F) -> Spot
+    fn nth_visible<F>(&self, mut k: usize, weight: F) -> (Spot, usize)
     where
-        F: Fn(usize) -> bool,
+        F: Fn(usize) -> usize,
     {
         for (chunk, held) in self.chunks.iter().enumerate() {
             if k >= held.visible {
@@ -184,31 +206,31 @@ impl Order {
                 continue;
             }
             for (index, &node) in held.nodes.iter().enumerate() {
-                if alive(node) {
-                    if k == 0 {
-                        return Spot { chunk, index };
-                    }
-                    k -= 1;
+                let w = weight(node);
+                if k < w {
+                    return (Spot { chunk, index }, k);
                 }
+                k -= w;
             }
         }
-        unreachable!("visible node {k} past the end of the text")
+        unreachable!("visible character {k} past the end of the text")
     }
 
-    /// Put the new, visible `node` at `spot`, and return where it sits.
-    fn insert<F>(&mut self, spot: Spot, node: usize, alive: F) -> Spot
+    /// Put the new `node`, showing `w` characters, at `spot`, and return where
+    /// it sits.
+    fn insert<F>(&mut self, spot: Spot, node: usize, w: usize, weight: F) -> Spot
     where
-        F: Fn(usize) -> bool,
+        F: Fn(usize) -> usize,
     {
         let held = &mut self.chunks[spot.chunk];
         held.nodes.insert(spot.index, node);
-        held.visible += 1;
-        self.visible += 1;
+        held.visible += w;
+        self.visible += w;
         if held.nodes.len() <= 2 * CHUNK {
             return spot;
         }
         let tail = held.nodes.split_off(CHUNK);
-        let visible = tail.iter().filter(|&&node| alive(node)).count();
+        let visible = tail.iter().map(|&node| weight(node)).sum();
         held.visible -= visible;
         self.chunks.insert(
             spot.chunk + 1,
@@ -227,10 +249,11 @@ impl Order {
         }
     }
 
-    /// The node at `spot` was just deleted.
-    fn hide(&mut self, spot: Spot) {
-        self.chunks[spot.chunk].visible -= 1;
-        self.visible -= 1;
+    /// The node at `spot` stopped showing `w` characters: it was deleted, or
+    /// split and they moved to the node after it.
+    fn hide(&mut self, spot: Spot, w: usize) {
+        self.chunks[spot.chunk].visible -= w;
+        self.visible -= w;
     }
 
     fn into_nodes(self) -> Vec<usize> {
@@ -264,19 +287,20 @@ impl Version<'_> {
 }
 
 impl<'a> Tree<'a> {
-    /// A tree of `base` placeholder characters, each the right child of the
-    /// one before, for blocks whose IDs are `ids` in topological order.
+    /// A tree of one span of `base` placeholder characters under the root, for
+    /// blocks whose IDs are `ids` in topological order.
     fn with_placeholder(ids: Vec<&'a [u8]>, base: usize) -> Self {
-        let mut nodes = Vec::with_capacity(base + 1);
-        nodes.push(blank(usize::MAX));
-        for index in 1..=base {
-            nodes.push(blank(BASE));
-            nodes[index - 1].right.push(index);
+        let mut nodes = vec![blank(usize::MAX, 0)];
+        let mut order = Vec::new();
+        if base > 0 {
+            nodes.push(blank(BASE, base));
+            nodes[ROOT].right.push(1);
+            order.push(1);
         }
         Tree {
             ids,
             nodes,
-            order: Some(Order::new((1..=base).collect(), |_| true)),
+            order: Some(Order::new(order, |_| base)),
         }
     }
 
@@ -306,6 +330,69 @@ impl<'a> Tree<'a> {
             .deleted_by
             .iter()
             .any(|&block| version.has(block))
+    }
+
+    /// The characters `node` shows in the version: its length, or none.
+    fn weight(&self, node: usize, version: &Version<'_>) -> usize {
+        if self.dead(node, version) {
+            0
+        } else {
+            self.nodes[node].len
+        }
+    }
+
+    /// Split the span at `spot` after its first `k` characters, `0 < k <
+    /// len`. The rest becomes its own node, the first one's only right child,
+    /// taking over the right children of the run's last character, so the
+    /// reading order and every character's place in the tree stay the same.
+    /// Returns the spots of the first part and the rest, which a chunk split
+    /// may have moved.
+    fn split(
+        &mut self,
+        order: &mut Order,
+        spot: Spot,
+        k: usize,
+        version: &Version<'_>,
+    ) -> (Spot, Spot) {
+        let node = order.at(spot);
+        let head = &mut self.nodes[node];
+        let rest = Node {
+            block: head.block,
+            offset: head.offset,
+            ch: head.ch,
+            len: head.len - k,
+            deleted_by: head.deleted_by.clone(),
+            left: Vec::new(),
+            right: std::mem::take(&mut head.right),
+        };
+        head.len = k;
+        let index = self.nodes.len();
+        self.nodes.push(rest);
+        self.nodes[node].right.push(index);
+        let w = self.weight(index, version);
+        order.hide(spot, w);
+        let rest = order.insert(order.after(spot), index, w, |n| self.weight(n, version));
+        (order.before(rest), rest)
+    }
+
+    /// Make visible character `k` the last of its node, and return that
+    /// node's spot.
+    fn end_at(&mut self, order: &mut Order, k: usize, version: &Version<'_>) -> Spot {
+        let (spot, inner) = order.nth_visible(k, |n| self.weight(n, version));
+        if inner + 1 < self.nodes[order.at(spot)].len {
+            return self.split(order, spot, inner + 1, version).0;
+        }
+        spot
+    }
+
+    /// Make visible character `k` the first of its node, and return that
+    /// node's spot.
+    fn start_at(&mut self, order: &mut Order, k: usize, version: &Version<'_>) -> Spot {
+        let (spot, inner) = order.nth_visible(k, |n| self.weight(n, version));
+        if inner == 0 {
+            return spot;
+        }
+        self.split(order, spot, inner, version).1
     }
 
     /// Every node the version holds, deleted ones too, in reading order.
@@ -372,7 +459,7 @@ impl<'a> Tree<'a> {
             Some(order) if linear => order,
             _ => {
                 let full = self.traverse((!linear).then_some(&version));
-                Order::new(full, |node| !self.dead(node, &version))
+                Order::new(full, |node| self.weight(node, &version))
             }
         };
         match op {
@@ -383,7 +470,9 @@ impl<'a> Tree<'a> {
                     let (origin, mut at) = match p.checked_sub(1) {
                         None => (ROOT, Spot::default()),
                         Some(k) => {
-                            let spot = order.nth_visible(k, |node| !self.dead(node, &version));
+                            // The left origin is a character: it must end its
+                            // node, so whatever follows hangs on it alone.
+                            let spot = self.end_at(&mut order, k, &version);
                             (order.at(spot), order.after(spot))
                         }
                     };
@@ -400,12 +489,13 @@ impl<'a> Tree<'a> {
                     // of the leftmost node of the origin's right subtree.
                     let mut previous =
                         self.attach(self.node(block, next_offset, first), parent, side);
-                    at = order.insert(at, previous, |node| !self.dead(node, &version));
+                    at = order.insert(at, previous, 1, |node| self.weight(node, &version));
                     for ch in chars {
                         previous =
                             self.attach(self.node(block, next_offset, ch), previous, Side::Right);
-                        at = order
-                            .insert(order.after(at), previous, |node| !self.dead(node, &version));
+                        at = order.insert(order.after(at), previous, 1, |node| {
+                            self.weight(node, &version)
+                        });
                     }
                 }
             }
@@ -413,14 +503,18 @@ impl<'a> Tree<'a> {
                 let start = clamp(*pos, order.visible);
                 let end = clamp(pos.saturating_add(*len), order.visible);
                 if start < end {
-                    let mut spot = order.nth_visible(start, |node| !self.dead(node, &version));
+                    // The range starts and ends on node edges, so it deletes
+                    // whole nodes.
+                    self.end_at(&mut order, end - 1, &version);
+                    let mut spot = self.start_at(&mut order, start, &version);
                     let mut left = end - start;
                     while left > 0 {
                         let node = order.at(spot);
-                        if !self.dead(node, &version) {
+                        let w = self.weight(node, &version);
+                        if w > 0 {
                             self.nodes[node].deleted_by.push(block);
-                            order.hide(spot);
-                            left -= 1;
+                            order.hide(spot, w);
+                            left -= w;
                         }
                         spot = order.after(spot);
                     }
@@ -439,6 +533,7 @@ impl<'a> Tree<'a> {
             block,
             offset,
             ch,
+            len: 1,
             deleted_by: Vec::new(),
             left: Vec::new(),
             right: Vec::new(),
@@ -446,12 +541,14 @@ impl<'a> Tree<'a> {
     }
 }
 
-/// A node of `block` with no character of its own: the root or a placeholder.
-fn blank(block: usize) -> Node {
+/// A node of `block` with no character of its own: the root, or a placeholder
+/// span of `len` characters.
+fn blank(block: usize, len: usize) -> Node {
     Node {
         block,
         offset: 0,
         ch: '\0',
+        len,
         deleted_by: Vec::new(),
         left: Vec::new(),
         right: Vec::new(),
@@ -512,40 +609,43 @@ pub fn merge_text(
         ));
     };
     // Where the version without `new` shows a character, the stored text has
-    // it: that is where each placeholder learns its character.
-    let mut stored = current.chars();
-    let mut placeholders = vec!['\0'; base + 1];
+    // it: that is where each placeholder span learns its characters.
+    let mut stored = current;
+    let mut placeholders: Vec<&str> = vec![""; tree.nodes.len()];
     for &node in &full {
         let n = &tree.nodes[node];
         if n.block == new_step || n.deleted_by.iter().any(|&by| by != new_step) {
             continue;
         }
-        let Some(ch) = stored.next() else {
-            return Ok(None);
-        };
-        if n.block == BASE {
-            placeholders[node] = ch;
-        } else if n.ch != ch {
+        let mut chars = stored.char_indices();
+        if chars.nth(n.len - 1).is_none() {
             return Ok(None);
         }
+        let end = chars.next().map_or(stored.len(), |(at, _)| at);
+        let (held, rest) = stored.split_at(end);
+        if n.block == BASE {
+            placeholders[node] = held;
+        } else if !held.starts_with(n.ch) {
+            return Ok(None);
+        }
+        stored = rest;
     }
-    if stored.next().is_some() {
+    if !stored.is_empty() {
         return Ok(None);
     }
-    Ok(Some(
-        full.iter()
-            .filter_map(|&node| {
-                let n = &tree.nodes[node];
-                n.deleted_by.is_empty().then(|| {
-                    if n.block == BASE {
-                        placeholders[node]
-                    } else {
-                        n.ch
-                    }
-                })
-            })
-            .collect(),
-    ))
+    let mut text = String::with_capacity(current.len());
+    for &node in &full {
+        let n = &tree.nodes[node];
+        if !n.deleted_by.is_empty() {
+            continue;
+        }
+        if n.block == BASE {
+            text.push_str(placeholders[node]);
+        } else {
+            text.push(n.ch);
+        }
+    }
+    Ok(Some(text))
 }
 
 /// Every character `blocks` insert, in reading order.
