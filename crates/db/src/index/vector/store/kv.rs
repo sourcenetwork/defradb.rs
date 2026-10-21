@@ -4,6 +4,8 @@
 //! caller's transaction. Traversal is advisory, additions are operands, and
 //! structural replacements retain validated reads.
 
+use std::ops::ControlFlow;
+
 use bytes::Bytes;
 use defra_core::thread_bounds::MaybeSend;
 use storage::corekv::AppendLog;
@@ -12,7 +14,7 @@ use storage::keys::datastore::{
     vector_epoch_prefix, vector_pending_log, VectorAuxKey, VectorIndexKey,
 };
 
-use super::{Meta, Node, NodeId, PendingLog, VectorNodeStore};
+use super::{Meta, Node, NodeId, VectorNodeStore};
 use crate::index::error::Result;
 use crate::index::vector::codec::{decode_meta, decode_node, encode_meta, encode_node};
 
@@ -67,23 +69,11 @@ impl<'txn, T> KvNodeStore<'txn, T> {
         vector_pending_log(self.collection_short_id, self.index_id, self.epoch)
     }
 
-    /// Counts this build's pending writes beside the log. The log hides a
-    /// transaction's own appends until it commits; the count shows its own
-    /// merges at once, so the two differ exactly when it has pending writes
-    /// of its own.
-    fn pending_writes_key(&self) -> Vec<u8> {
-        self.aux_key(PENDING_WRITES, &[])
-    }
-
     /// Every key of this build: nodes, meta, and every aux kind beside them.
     fn epoch_prefix(&self) -> Vec<u8> {
         vector_epoch_prefix(self.collection_short_id, self.index_id, self.epoch)
     }
 }
-
-/// The aux kind the store keeps a build's pending write count under, beside
-/// the kinds its engine uses.
-const PENDING_WRITES: u8 = b'w';
 
 /// The iterator is reopened per batch because deleting through a live one is
 /// not defined for every backend.
@@ -198,12 +188,9 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
     /// Prefix rather than a per-kind sweep so a kind added later is covered
     /// without anyone remembering to add it here.
     ///
-    /// The pending write count stays, and the pending log keeps its head: both
-    /// count every pending write ever made, and a search tells its own writes
-    /// apart by the two being equal, so neither may restart. Only the log's
+    /// The pending log keeps its head, which regolith never rewinds; only its
     /// entries go.
     async fn clear(&mut self) -> Result<()> {
-        let writes = self.pending_writes_key();
         loop {
             let mut batch = Vec::new();
             {
@@ -212,9 +199,6 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
                     .iterator(IterOptions::default().with_prefix(self.epoch_prefix()))
                     .await?;
                 while let Some(pair) = iter.next().await? {
-                    if pair.key == writes {
-                        continue;
-                    }
                     batch.push(pair.key);
                     if batch.len() >= CLEAR_BATCH {
                         break;
@@ -228,10 +212,10 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
                 self.txn.delete(&key).await?;
             }
         }
-        if let (Some(log), Some(tail)) = (self.pending_log().await?, self.pending_log_tail().await?)
-        {
-            if tail <= log.head {
-                self.truncate_pending_log(tail, log.head).await?;
+        if let Some(tail) = self.pending_log_tail().await? {
+            let head = self.pending_log_head().await?;
+            if tail <= head {
+                self.truncate_pending_log(tail, head).await?;
             }
         }
         Ok(())
@@ -296,33 +280,22 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
         Ok(())
     }
 
-    /// The head is read like any log key, never validated. The count is a
-    /// hint read (`get_parts` with no parts), so a transaction that searches
-    /// and commits does not conflict with every concurrent write.
-    async fn pending_log(&self) -> Result<Option<PendingLog>> {
-        let head = self
-            .txn
+    /// The head is read like any log key, never validated.
+    async fn pending_log_head(&self) -> Result<u64> {
+        self.txn
             .get(self.pending_log_keys().head_key())
             .await?
-            .map_or(Ok(0), |bytes| be_u64(&bytes))?;
-        let writes = self
-            .txn
-            .get_parts(&self.pending_writes_key(), &[])
-            .await?
-            .map_or(Ok(0), |bytes| be_u64(&bytes))?;
-        Ok(Some(PendingLog {
-            head,
-            own_writes: writes != head,
-        }))
+            .map_or(Ok(0), |bytes| be_u64(&bytes))
     }
 
     async fn append_pending_log(&mut self, entry: &[u8]) -> Result<()> {
         let log = self.pending_log_keys();
         self.txn.append(&log, entry, None).await?;
-        self.txn
-            .merge(&self.pending_writes_key(), &storage::merge::counter_i64(1))
-            .await?;
         Ok(())
+    }
+
+    async fn own_pending_log(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(self.txn.appended(&self.pending_log_keys()).await?)
     }
 
     async fn pending_log_entry(&self, position: u64) -> Result<Option<Bytes>> {
@@ -332,32 +305,52 @@ impl<T: Reader + Writer + MaybeSend> VectorNodeStore for KvNodeStore<'_, T> {
             .await?)
     }
 
+    /// Entry keys sort by position (zero-padded decimal), so a prefix scan
+    /// visits the oldest entry held first.
+    async fn iterate_pending_log<F>(&self, mut visit: F) -> Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> Result<ControlFlow<()>> + MaybeSend,
+    {
+        let log = self.pending_log_keys();
+        let mut iter = self
+            .txn
+            .iterator(IterOptions::default().with_prefix(log.entry_prefix().to_vec()))
+            .await?;
+        while let Some(pair) = iter.next().await? {
+            let position = entry_position(&log, &pair.key)?;
+            if visit(position, &pair.value)?.is_break() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     async fn truncate_pending_log(&mut self, from: u64, through: u64) -> Result<()> {
         let log = self.pending_log_keys();
         self.txn.truncate_log(&log, from..=through).await?;
         Ok(())
     }
 
-    /// Entry keys sort by position (zero-padded decimal), so the first key
-    /// under the entry prefix is the oldest entry held.
     async fn pending_log_tail(&self) -> Result<Option<u64>> {
-        let log = self.pending_log_keys();
-        let mut iter = self
-            .txn
-            .iterator(IterOptions::default().with_prefix(log.entry_prefix().to_vec()))
-            .await?;
-        let Some(pair) = iter.next().await? else {
-            return Ok(None);
-        };
-        let digits = pair.key.get(log.entry_prefix().len()..).unwrap_or_default();
-        std::str::from_utf8(digits)
-            .ok()
-            .and_then(|digits| digits.parse().ok())
-            .map(Some)
-            .ok_or_else(|| {
-                crate::index::error::Error::Other("pending log entry key is not a position".into())
-            })
+        let mut tail = None;
+        self.iterate_pending_log(|position, _| {
+            tail = Some(position);
+            Ok(ControlFlow::Break(()))
+        })
+        .await?;
+        Ok(tail)
     }
+}
+
+/// The position an entry key names.
+fn entry_position(log: &AppendLog, key: &[u8]) -> Result<u64> {
+    let digits = key.get(log.entry_prefix().len()..).unwrap_or_default();
+    std::str::from_utf8(digits)
+        .ok()
+        .and_then(|digits| digits.parse().ok())
+        .ok_or_else(|| {
+            crate::index::error::Error::Other("pending log entry key is not a position".into())
+        })
 }
 
 /// A count or a log head: eight big-endian bytes.

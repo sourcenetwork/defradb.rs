@@ -10,21 +10,14 @@ pub mod memory;
 pub use kv::KvNodeStore;
 pub use memory::MemoryNodeStore;
 
+use std::ops::ControlFlow;
+
 use bytes::Bytes;
 use defra_core::thread_bounds::{MaybeSend, MaybeSendSync};
 
 use crate::index::error::Result;
 
 pub use storage::vector::{Meta, Node, NodeId};
-
-/// A pending log as one transaction sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PendingLog {
-    /// The newest committed position in the transaction's snapshot.
-    pub head: u64,
-    /// Whether the transaction has made pending writes of its own.
-    pub own_writes: bool,
-}
 
 /// Where a graph lives.
 ///
@@ -129,33 +122,33 @@ pub trait VectorNodeStore: MaybeSendSync {
     where
         F: FnMut(&[u8], &[u8]) -> Result<()> + MaybeSend;
 
-    /// The head of this build's pending log, and whether this transaction
-    /// has pending writes of its own, which the log shows only once they
-    /// commit. `None` for a store that keeps no log: its searches scan.
-    async fn pending_log(&self) -> Result<Option<PendingLog>> {
-        Ok(None)
-    }
+    /// The newest committed position of this build's pending log in the
+    /// transaction's snapshot; 0 before the first append.
+    async fn pending_log_head(&self) -> Result<u64>;
 
-    /// Records one pending put or delete: `entry` goes to the log at the
-    /// position its commit takes, and the write is counted. A store that
-    /// keeps no log ignores it.
-    async fn append_pending_log(&mut self, _entry: &[u8]) -> Result<()> {
-        Ok(())
+    /// Adds `entry` to the pending log, at the position its commit takes.
+    async fn append_pending_log(&mut self, entry: &[u8]) -> Result<()>;
+
+    /// The entries this transaction appended and has not committed, oldest
+    /// first. No log read shows them, since they take a position only at
+    /// commit.
+    async fn own_pending_log(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
     }
 
     /// The entry at `position`; `None` once truncated.
-    async fn pending_log_entry(&self, _position: u64) -> Result<Option<Bytes>> {
-        Ok(None)
-    }
+    async fn pending_log_entry(&self, position: u64) -> Result<Option<Bytes>>;
+
+    /// Visits every entry still held, oldest first, with its position, until
+    /// `visit` breaks.
+    async fn iterate_pending_log<F>(&self, visit: F) -> Result<()>
+    where
+        F: FnMut(u64, &[u8]) -> Result<ControlFlow<()>> + MaybeSend;
 
     /// Drops every entry from `from` through `through`, which a merge has
     /// absorbed. The head stays, so positions keep counting.
-    async fn truncate_pending_log(&mut self, _from: u64, _through: u64) -> Result<()> {
-        Ok(())
-    }
+    async fn truncate_pending_log(&mut self, from: u64, through: u64) -> Result<()>;
 
     /// The oldest entry still held, `None` when every entry was truncated.
-    async fn pending_log_tail(&self) -> Result<Option<u64>> {
-        Ok(None)
-    }
+    async fn pending_log_tail(&self) -> Result<Option<u64>>;
 }

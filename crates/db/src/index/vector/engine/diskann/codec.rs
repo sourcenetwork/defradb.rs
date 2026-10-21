@@ -4,17 +4,16 @@
 //! Trained  1 version  4 dimensions  4 m
 //! Graph    1 version  1 has entry  8 entry  8 live  8 generation
 //! Record   m own code  4 neighbor count  per neighbor: 8 id, m code
-//! Pending  m code of a vector inserted since the last merge
 //! Deleted  empty: a tombstone awaiting consolidation
 //! ```
 //!
-//! Every pending put and delete also appends one entry to the build's pending
-//! log (`keys::vector_pending_log`), so a search can catch an in-memory copy
-//! of the pending list up instead of scanning it:
+//! The vectors inserted since the last merge are the build's pending log
+//! (`keys::vector_pending_log`), one entry per insert. A delete appends
+//! nothing: its entry stays a candidate until a merge, which every search
+//! and merge drops by reading the vector.
 //!
 //! ```text
-//! Insert   1 tag (1)  8 id  m code
-//! Delete   1 tag (0)  8 id
+//! Pending  8 id  m code
 //! ```
 //!
 //! A record carries its neighbours' codes so one read ranks every edge out of
@@ -40,7 +39,6 @@ pub const GRAPH_STATE: u8 = b's';
 pub const CODEBOOK: u8 = b'b';
 pub const GRAPH: u8 = b'g';
 pub const DELETED: u8 = b'd';
-pub const PENDING: u8 = b'p';
 pub const CODE: u8 = b'c';
 
 const VERSION: u8 = 0x01;
@@ -251,43 +249,25 @@ pub fn neighbor_ids(bytes: &[u8], m: usize, resident_codes: bool) -> Result<Vec<
         .collect())
 }
 
-/// One entry of the pending log.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LogEntry {
-    /// A vector put on the pending list, with the code it was given.
-    Insert(NodeId, Vec<u8>),
-    /// A vector taken off it.
-    Delete(NodeId),
-}
-
-const LOG_DELETE: u8 = 0;
-const LOG_INSERT: u8 = 1;
-
-pub fn encode_log_entry(entry: &LogEntry) -> Vec<u8> {
-    let (tag, id, code) = match entry {
-        LogEntry::Insert(id, code) => (LOG_INSERT, id, code.as_slice()),
-        LogEntry::Delete(id) => (LOG_DELETE, id, [].as_slice()),
-    };
-    let mut buf = Vec::with_capacity(9 + code.len());
-    buf.push(tag);
+/// One entry of the pending log: a vector inserted, with the code it was
+/// given.
+pub fn encode_log_entry(id: NodeId, code: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(8 + code.len());
     buf.extend_from_slice(&id.0.to_le_bytes());
     buf.extend_from_slice(code);
     buf
 }
 
-pub fn decode_log_entry(bytes: &[u8]) -> Result<LogEntry> {
-    let Some((&tag, rest)) = bytes.split_first() else {
-        return Err(invalid("DISKANN pending log entry is empty"));
-    };
-    let Some((id, code)) = rest.split_first_chunk::<8>() else {
+/// The vector and code of a pending log entry, which must carry a code of
+/// `code_len` bytes.
+pub fn decode_log_entry(bytes: &[u8], code_len: usize) -> Result<(NodeId, &[u8])> {
+    let Some((id, code)) = bytes.split_first_chunk::<8>() else {
         return Err(invalid("DISKANN pending log entry is truncated"));
     };
-    let id = NodeId(u64::from_le_bytes(*id));
-    match tag {
-        LOG_INSERT => Ok(LogEntry::Insert(id, code.to_vec())),
-        LOG_DELETE if code.is_empty() => Ok(LogEntry::Delete(id)),
-        _ => Err(invalid("unsupported DISKANN pending log entry")),
+    if code.len() != code_len {
+        return Err(invalid("DISKANN pending log code has the wrong width"));
     }
+    Ok((NodeId(u64::from_le_bytes(*id)), code))
 }
 
 fn invalid(message: &str) -> Error {

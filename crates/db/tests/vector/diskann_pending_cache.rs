@@ -50,15 +50,11 @@ fn later_inserts_catch_the_copy_up_without_a_reload() {
         let first = insert(&store, &index, 60_001, 0x61).await;
         assert_eq!(nearest(&store, &index, &first).await, 60_001);
         let loaded = tag(&caches).expect("the first search loads the copy");
-        assert_eq!(loaded.position, loaded.loaded_at);
 
         let second = insert(&store, &index, 60_002, 0x62).await;
         assert_eq!(nearest(&store, &index, &second).await, 60_002);
         let caught_up = tag(&caches).unwrap();
-        assert_eq!(
-            caught_up.loaded_at, loaded.loaded_at,
-            "caught up, not reloaded"
-        );
+        assert_eq!(caught_up.generation, loaded.generation);
         assert_eq!(caught_up.position, loaded.position + 1);
         assert_eq!(nearest(&store, &index, &first).await, 60_001);
     })
@@ -82,7 +78,7 @@ fn a_transaction_finds_its_own_uncommitted_insert() {
         assert_eq!(
             tag(&caches),
             before,
-            "a scan for own writes publishes nothing"
+            "its own appends never reach the shared copy"
         );
     })
     .unwrap()
@@ -122,14 +118,13 @@ fn a_snapshot_from_before_a_delete_still_finds_the_vector() {
 #[test]
 fn a_snapshot_behind_the_copy_ignores_what_it_cannot_see() {
     workers::block_on(async {
-        let (store, index, caches) = cached_store().await;
+        let (store, index, _caches) = cached_store().await;
         let early = insert(&store, &index, 63_001, 0x91).await;
         nearest(&store, &index, &early).await;
         let mut old = store.new_txn(true).await.unwrap();
 
         let late = insert(&store, &index, 63_002, 0x92).await;
         assert_eq!(nearest(&store, &index, &late).await, 63_002);
-        assert!(tag(&caches).unwrap().position > tag(&caches).unwrap().loaded_at);
 
         let hits = index.search(&mut old, &late, 3, None).await.unwrap();
         assert!(
@@ -157,7 +152,7 @@ fn a_merge_starts_a_new_copy() {
         let after = tag(&caches).unwrap();
         assert_eq!(after.generation, before.generation + 1);
         assert!(
-            after.loaded_at > before.position,
+            after.position > before.position,
             "reloaded at the new generation"
         );
     })
@@ -202,7 +197,6 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
         }
         let tag = Tag {
             generation,
-            loaded_at: 0,
             position,
         };
         Arc::new(Copy::loaded(tag, segment))
@@ -231,7 +225,6 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
     big.push(NodeId(5), &vec![0; MAX_PENDING_CACHE_BYTES]);
     let tag = Tag {
         generation: 3,
-        loaded_at: 0,
         position: 0,
     };
     cache.publish(Arc::new(Copy::loaded(tag, big)));
@@ -244,18 +237,41 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
 }
 
 #[test]
+fn an_insert_during_a_merge_stays_pending() {
+    workers::block_on(async {
+        let (store, index, _caches) = cached_store().await;
+        insert(&store, &index, 66_001, 0xC1).await;
+        let mut snapshot = store.new_txn(true).await.unwrap();
+        let plan = index.merge_plan(&mut snapshot).await.unwrap().unwrap();
+        snapshot.discard();
+
+        let late = insert(&store, &index, 66_002, 0xC2).await;
+        let mut write = store.new_txn(false).await.unwrap();
+        index.merge(&mut write, plan).await.unwrap();
+        write.commit().await.unwrap();
+
+        assert_eq!(
+            nearest(&store, &index, &late).await,
+            66_002,
+            "the merge truncated only what its plan read"
+        );
+        assert!(merge_due(&store, &index).await, "it is still due a merge");
+        assert_eq!(nearest(&store, &index, &late).await, 66_002);
+    })
+    .unwrap()
+}
+
+#[test]
 fn log_entries_round_trip() {
-    for entry in [
-        codec::LogEntry::Insert(NodeId(7), vec![1, 2, 3]),
-        codec::LogEntry::Delete(NodeId(u64::MAX)),
-    ] {
-        let bytes = codec::encode_log_entry(&entry);
-        assert_eq!(codec::decode_log_entry(&bytes).unwrap(), entry);
-    }
-    assert!(codec::decode_log_entry(&[]).is_err());
-    assert!(codec::decode_log_entry(&[0, 1, 2]).is_err());
+    let bytes = codec::encode_log_entry(NodeId(7), &[1, 2, 3]);
+    assert_eq!(
+        codec::decode_log_entry(&bytes, 3).unwrap(),
+        (NodeId(7), [1u8, 2, 3].as_slice())
+    );
+    assert!(codec::decode_log_entry(&[], 0).is_err());
+    assert!(codec::decode_log_entry(&[0, 1, 2], 0).is_err());
     assert!(
-        codec::decode_log_entry(&[0; 10]).is_err(),
-        "a delete carries no code"
+        codec::decode_log_entry(&bytes, 4).is_err(),
+        "a code of the wrong width is refused"
     );
 }

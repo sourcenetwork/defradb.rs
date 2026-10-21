@@ -151,6 +151,9 @@ impl Writer for InterceptingRetryAttemptIO {
         (self.interceptor)(log.head_key(), None)?;
         self.inner.truncate_log_shared(log, positions).await
     }
+    async fn appended(&self, log: &AppendLog) -> Result<Vec<Vec<u8>>> {
+        self.inner.appended(log).await
+    }
     async fn set_shared(&self, key: &[u8], value: &[u8]) -> Result<()> {
         (self.interceptor)(key, Some(value))?;
         self.inner.set_shared(key, value).await

@@ -1,18 +1,19 @@
-//! An in-memory copy of a DiskANN index's pending list, shared by every
-//! search on the node, so a search does not scan the list from storage.
+//! An in-memory copy of a DiskANN index's pending log, shared by every search
+//! on the node, so a search does not scan the log from storage.
 //!
 //! Unlike resident codes, which only order a walk, a pending vector missing
 //! from the copy is one the search can never return. So the copy is used only
 //! where it provably holds every vector the search's snapshot has pending
 //! (`proofs/tla/PendingCache.tla`, `proofs/lean/PendingCache`): it is tagged
-//! with the graph generation it belongs to, the log head it was loaded at, and
-//! the head it has caught up to, and catching up only ever adds. Extra vectors
-//! cost a search nothing but a dropped candidate, since ranking reads each
-//! candidate's vector in the search's own snapshot.
+//! with the graph generation it belongs to and the head it has caught up to.
+//! Within a generation the log only grows and catching up only ever adds, so
+//! a copy holds everything an older snapshot of its generation has. Extra
+//! vectors cost a search nothing but a dropped candidate, since ranking reads
+//! each candidate's vector in the search's own snapshot.
 
 use std::sync::Arc;
 
-use kovan::Atom;
+use regolith::sync::Atom;
 
 use crate::index::vector::store::NodeId;
 
@@ -29,9 +30,6 @@ const MAX_SEGMENTS: usize = 32;
 pub struct Tag {
     /// The graph generation it belongs to: a merge starts a new one.
     pub generation: u64,
-    /// The log head of the scan it was loaded from. A snapshot older than
-    /// that may hold a vector the scan saw deleted.
-    pub loaded_at: u64,
     /// The newest log position it has caught up to.
     pub position: u64,
 }
