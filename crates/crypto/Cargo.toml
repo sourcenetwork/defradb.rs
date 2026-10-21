@@ -22,12 +22,12 @@ ed25519-dalek.workspace = true
 k256.workspace = true
 sha2.workspace = true
 aes-gcm.workspace = true
-p256 = "0.13"              # secp256r1 (P-256) support
+p256 = "0.14"              # secp256r1 (P-256) support
 
 # Additional crypto primitives
-x25519-dalek = { version = "2.0", features = ["static_secrets"] }     # X25519 ECDH for ECIES
-hkdf = "0.12"             # HKDF key derivation for ECIES
-hmac = "0.12"             # HMAC authentication for ECIES
+x25519-dalek = { version = "3.0", features = ["static_secrets"] }     # X25519 ECDH for ECIES
+hkdf = "0.13"             # HKDF key derivation for ECIES
+hmac = "0.13"             # HMAC authentication for ECIES
 rand.workspace = true     # Random number generation for keys and nonces
 subtle = "2.5"            # Constant-time operations for key comparison
 zeroize = "1.8"           # Secure memory zeroing for sensitive data
@@ -57,7 +57,7 @@ sha2 = { workspace = true, features = ["asm"] }
 [dev-dependencies]
 rapidhash.workspace = true
 serde_json.workspace = true
-serial_test = "3.0"
+serial_test = "4.0"
 multihash-codetable.workspace = true
 serde_ipld_dagcbor.workspace = true  # DAG-CBOR for Go interop serialization tests
 
