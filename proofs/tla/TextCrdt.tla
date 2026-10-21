@@ -82,10 +82,15 @@
 \*   Canon          crates/crdt/src/text.rs replay, from text_history in
 \*                  merge_handler/text.rs; the stored value is the replayed
 \*                  text, the tree is thrown away
-\*   PhReplay       crates/crdt/src/text.rs merge_text (Tree::with_placeholder
-\*                  builds the chain), called from merge_handler/text.rs
+\*   PhReplay       crates/crdt/src/text.rs merge_text, called from
+\*                  merge_handler/text.rs
 \*                  process_text_delta_in_txn once critical_block has found
 \*                  the block; its length is TextEdits::len of that block
+\*   Chain          crates/crdt/src/text.rs Tree::with_placeholder keeps the
+\*                  chain as one span node (Node::len), and Tree::split cuts
+\*                  it only where an edit lands (Tree::end_at, Tree::start_at);
+\*                  proofs/lean/TextCrdt/Span.lean split_run shows a cut span
+\*                  is the same tree as the chain of single characters
 \*   Critical       crates/db/src/merge/merge_handler/text.rs critical_block:
 \*                  the walk down from the heads and the new block that stops
 \*                  when one block is left and no root was passed

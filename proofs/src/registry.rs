@@ -370,12 +370,14 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // Fugue's rule puts an inserted character right after its left origin
         // and moves nothing else; a delete hides only its character; two
-        // concurrent characters hung in either order give the same tree.
+        // concurrent characters hung in either order give the same tree; a
+        // placeholder run kept as one span and cut where an edit lands is the
+        // same tree as its chain of characters.
         family: "Text CRDT convergence",
-        name: "place_visible / delete_visible / attach_comm: intention preservation and arrival-order independence of the Fugue tree",
+        name: "place_visible / delete_visible / attach_comm / split_run: intention preservation and arrival-order independence of the Fugue tree, and span cuts that change nothing",
         axis: Lean,
-        anchor: "crates/crdt/src/text.rs Tree::apply, Tree::attach, Tree::traverse",
-        model_ref: "TextCrdt.Fugue (lake build)",
+        anchor: "crates/crdt/src/text.rs Tree::apply, Tree::attach, Tree::traverse, Tree::split",
+        model_ref: "TextCrdt.{Fugue,Span} (lake build)",
         tiers: &[Contract],
     },
     Property {
