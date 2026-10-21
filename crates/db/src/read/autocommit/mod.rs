@@ -454,6 +454,7 @@ impl<S: Store + 'static> DocFetcher for AutoCommitFetcher<S> {
 /// `BasicTxn::discard` requires sole ownership of that Arc.
 pub struct AutoCommitDocStream<S: Store + 'static> {
     inner: Option<Box<dyn DocStream>>,
+    index_fetches: u64,
     txn: Option<DbTxn<S>>,
 }
 
@@ -462,6 +463,7 @@ impl<S: Store + 'static> AutoCommitDocStream<S> {
     pub fn new(inner: Box<dyn DocStream>, txn: DbTxn<S>) -> Self {
         Self {
             inner: Some(inner),
+            index_fetches: 0,
             txn: Some(txn),
         }
     }
@@ -470,6 +472,7 @@ impl<S: Store + 'static> AutoCommitDocStream<S> {
     pub fn without_txn(inner: Box<dyn DocStream>) -> Self {
         Self {
             inner: Some(inner),
+            index_fetches: 0,
             txn: None,
         }
     }
@@ -480,6 +483,9 @@ impl<S: Store + 'static> AutoCommitDocStream<S> {
     }
 
     fn release_read_txn(&mut self) {
+        if let Some(inner) = self.inner.as_ref() {
+            self.index_fetches = inner.index_fetches();
+        }
         self.inner = None;
         if let Some(txn) = self.txn.take() {
             if let Err(e) = txn.discard() {
@@ -495,7 +501,10 @@ impl<S: Store + 'static> AutoCommitDocStream<S> {
     /// swallowed cleanup error.
     async fn close_inner_then_release(&mut self) -> query::error::Result<()> {
         let closed = match self.inner.take() {
-            Some(mut inner) => inner.close().await,
+            Some(mut inner) => {
+                self.index_fetches = inner.index_fetches();
+                inner.close().await
+            }
             None => Ok(()),
         };
         self.release_read_txn();
@@ -512,6 +521,13 @@ impl<S: Store + 'static> Drop for AutoCommitDocStream<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocStream for AutoCommitDocStream<S> {
+    fn index_fetches(&self) -> u64 {
+        self.inner
+            .as_ref()
+            .map(|inner| inner.index_fetches())
+            .unwrap_or(self.index_fetches)
+    }
+
     async fn next(&mut self) -> query::error::Result<Option<(Document, bool)>> {
         let pulled = match self.inner.as_mut() {
             Some(inner) => inner.next().await?,

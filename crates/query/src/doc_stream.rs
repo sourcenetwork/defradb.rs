@@ -21,6 +21,11 @@ pub trait DocStream: MaybeSend {
     /// returning `Ok(None)`.
     async fn next(&mut self) -> Result<Option<(Document, bool)>>;
 
+    /// Number of index entries consumed by this stream, before filtering.
+    fn index_fetches(&self) -> u64 {
+        0
+    }
+
     /// Finish with the stream, whether or not it was exhausted.
     ///
     /// A consumer that stops pulling early (a satisfied `LimitNode` above a

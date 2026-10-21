@@ -6,8 +6,9 @@ use schema::{CollectionVersion, IndexDescription};
 
 use crate::mapper::{Filter, OrderBy, Select};
 use crate::planner::index_selection::{
-    can_be_ordered_by_index, filter_to_index_scan, or_filter_to_index_scan, select_best_index,
-    select_best_index_with_estimates, IndexEstimates, IndexScanParams, IndexScanType,
+    can_be_ordered_by_filtered_index, can_be_ordered_by_index, filter_to_index_scan,
+    or_filter_to_index_scan, select_best_index, select_best_index_with_estimates, IndexEstimates,
+    IndexScanParams, IndexScanType,
 };
 
 impl super::Planner {
@@ -57,7 +58,7 @@ impl super::Planner {
                     let provides_ordering = select
                         .order_by
                         .as_ref()
-                        .map(|o| can_be_ordered_by_index(o, best_index).0)
+                        .map(|o| can_be_ordered_by_filtered_index(o, best_index, filter).0)
                         .unwrap_or(false);
                     return Some((params, provides_ordering));
                 }
