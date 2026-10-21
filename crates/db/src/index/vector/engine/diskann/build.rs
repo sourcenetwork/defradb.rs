@@ -87,6 +87,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         let trained = Trained {
             dimensions: dimensions as u32,
             m: m as u32,
+            training: Some(rand::random()),
         };
         let mut graph = GraphState::default();
         for id in std::iter::once(medoid).chain(ids.into_iter().filter(|id| *id != medoid)) {

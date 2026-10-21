@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::support::Corpus;
+use db::index::vector::engine::diskann::CodeCaches;
 use db::index::vector::engine::diskann::TRAIN_THRESHOLD;
 use db::index::vector::index::VectorIndex;
 use document::NormalValue;
@@ -75,7 +76,9 @@ fn is_conflict(error: &Error) -> bool {
 /// A store whose index has trained, so every later insert is a pending one.
 async fn trained(dir: &std::path::Path, dimensions: usize) -> (RegolithStore, Arc<VectorIndex>) {
     let store = RegolithStore::open(dir).unwrap();
-    let index = Arc::new(VectorIndex::try_new(COLLECTION, description(dimensions)).unwrap());
+    let mut index = VectorIndex::try_new(COLLECTION, description(dimensions)).unwrap();
+    index.share_quantizer(&CodeCaches::default());
+    let index = Arc::new(index);
     let mut corpus = Corpus::new(0x7121);
     let mut txn = store.new_txn(false).await.unwrap();
     for id in 1..=TRAIN_THRESHOLD {
