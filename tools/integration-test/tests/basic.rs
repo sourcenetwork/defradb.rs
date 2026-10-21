@@ -4,6 +4,8 @@ mod batch_mutations;
 mod collection_delete_4657;
 #[path = "basic/collection_management.rs"]
 mod collection_management;
+#[path = "basic/crdt_input_ops.rs"]
+mod crdt_input_ops;
 #[path = "basic/cross_runtime_cids.rs"]
 mod cross_runtime_cids;
 #[path = "basic/cross_runtime_queries.rs"]
