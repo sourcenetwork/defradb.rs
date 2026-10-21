@@ -308,23 +308,42 @@ async fn set_text_ops(
 /// the field's heads in `heads`, read in this snapshot with the frontier, so
 /// the operand removes exactly the entries in the block's past. The document
 /// then holds the value merging the block gives.
+///
+/// A document stored at an older version was read through its lens, and this
+/// write moves it to the current one. A lens change to a Json field the write
+/// does not name reaches the frontier here, as ops in this block, since a
+/// frontier only changes through blocks every peer merges; such a field joins
+/// `modified_fields`.
 async fn set_json_ops(
     datastore: &NamespaceView,
     collection: &Collection,
     doc: &mut Document,
     doc_short_id: u64,
-    modified_fields: &rapidhash::RapidHashSet<String>,
+    modified_fields: &mut rapidhash::RapidHashSet<String>,
     heads: &crate::block::builder::DocHeadsSnapshot,
 ) -> query::error::Result<()> {
     use defra_core::json_crdt;
-    let fields: Vec<String> = collection
+    let error = |e: String| query::error::QueryError::execution(e);
+    let json_fields = collection
         .schema()
         .fields
         .iter()
-        .filter(|field| field.crdt_type.is_json() && modified_fields.contains(&field.name))
+        .filter(|field| field.crdt_type.is_json());
+    let migrating = json_fields
+        .clone()
+        .any(|field| !modified_fields.contains(&field.name))
+        && collection
+            .load_version(datastore, doc_short_id)
+            .await
+            .map_err(|e| error(e.to_string()))?
+            .as_deref()
+            != Some(collection.version_id());
+    let fields: Vec<String> = json_fields
+        .filter(|field| {
+            modified_fields.contains(&field.name) || (migrating && doc.get(&field.name).is_some())
+        })
         .map(|field| field.name.clone())
         .collect();
-    let error = |e: String| query::error::QueryError::execution(e);
     for field in fields {
         let mut frontier = collection
             .read_json_frontier(datastore, doc_short_id, &field)
@@ -337,6 +356,12 @@ async fn set_json_ops(
                 doc.get(&field).and_then(document::json_value).as_ref(),
             ),
         };
+        if !modified_fields.contains(&field) {
+            if ops.is_empty() {
+                continue;
+            }
+            modified_fields.insert(field.clone());
+        }
         let priority = heads.field_max_priority(&field) + 1;
         let parents: Vec<Vec<u8>> = heads
             .field_heads(&field)

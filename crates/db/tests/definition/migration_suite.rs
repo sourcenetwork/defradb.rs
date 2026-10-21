@@ -31,6 +31,7 @@ use storage::index::IndexIterator;
 use storage::RegolithStore;
 use tokio::sync::Notify;
 
+mod json_frontier;
 mod paged_reindex;
 mod unique_conflicts;
 

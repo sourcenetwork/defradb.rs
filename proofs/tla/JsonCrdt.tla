@@ -49,13 +49,21 @@
 \*                                                 once its parents are merged
 \*   crates/db/src/write/autocommit/helpers.rs     a local write's ops and
 \*                                                 operand (set_json_ops)
+\*   crates/db/src/definition/migration/helpers.rs a lens write-back leaves a
+\*                                                 Json field it changes to the
+\*                                                 next write (changes_json_frontier)
 \*
 \* Correspondence table (model -> Rust):
 \*   Create        json_crdt.rs diff, and update_ops.rs deep_set: a write turns
 \*                 a JSON value into ops at paths; set_json_ops gives its block
 \*                 the field's heads as parents. One block may carry ops at
 \*                 several distinct paths: they act as a chain of one-op blocks
-\*                 sharing one ID, which never race one another
+\*                 sharing one ID, which never race one another. A lens
+\*                 migration is a Create too: set_json_ops diffs a lensed
+\*                 Json field into ops on the write that moves its document
+\*                 to the new version, and the migration write-back
+\*                 (definition/migration/helpers.rs changes_json_frontier)
+\*                 never stores one, so every edit in a frontier is a block
 \*   Deliver       merge_handler/json.rs process_json_delta_in_txn: a received
 \*                 block is merged once every parent block is local
 \*   Apply         json_crdt.rs Frontier::delta, then Frontier::compose: drop

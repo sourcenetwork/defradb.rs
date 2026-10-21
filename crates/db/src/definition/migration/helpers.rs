@@ -227,6 +227,17 @@ pub(crate) async fn cache_migrated_document(
     {
         return Ok(false);
     }
+    if has_json_crdt(collection) {
+        if let Some(bytes) = datastore
+            .get(&collection.doc_key(doc_short_id))
+            .await
+            .map_err(Error::Storage)?
+        {
+            if changes_json_frontier(collection, &Document::from_storage_cbor(&bytes)?, doc) {
+                return Ok(false);
+            }
+        }
+    }
 
     collection
         .put_document_value(datastore, doc_short_id, doc, false, None)
@@ -234,6 +245,30 @@ pub(crate) async fn cache_migrated_document(
     collection.store_version(datastore, doc_short_id).await?;
 
     Ok(true)
+}
+
+fn has_json_crdt(collection: &Collection) -> bool {
+    collection
+        .schema()
+        .fields
+        .iter()
+        .any(|field| field.crdt_type.is_json())
+}
+
+/// Whether `migrated` reads a Json-CRDT field differently from `stored`. A
+/// frontier only changes through blocks every peer merges, so the write-back
+/// leaves such a document at its old version: reads keep running the lens,
+/// and the next write carries the change as ops in its block.
+fn changes_json_frontier(collection: &Collection, stored: &Document, migrated: &Document) -> bool {
+    collection
+        .schema()
+        .fields
+        .iter()
+        .filter(|field| field.crdt_type.is_json())
+        .any(|field| {
+            let json = |doc: &Document| doc.get(&field.name).and_then(document::json_value);
+            json(stored) != json(migrated)
+        })
 }
 
 /// Persist a lazily migrated document and update its secondary indexes in the
@@ -273,6 +308,9 @@ pub(crate) async fn cache_migrated_document_with_indexes(
     };
     let mut old_doc = Document::from_storage_cbor(&old_data)?;
     old_doc.set_id(doc_id.clone());
+    if changes_json_frontier(collection, &old_doc, doc) {
+        return Ok(false);
+    }
 
     collection
         .put_document_value(datastore, doc_short_id, doc, false, None)
