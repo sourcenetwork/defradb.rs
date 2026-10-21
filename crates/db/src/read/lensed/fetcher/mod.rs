@@ -324,6 +324,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
+    async fn get_json_conflicts(
+        &self,
+        options: &query::fetcher::JsonConflictOptions,
+    ) -> query::error::Result<Vec<query::fetcher::JsonConflict>> {
+        let txn = &*self.shared_txn()?;
+        crate::read::json_conflicts::read(txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+    }
+
     async fn get_commits(
         &self,
         options: &query::fetcher::CommitsQueryOptions,
