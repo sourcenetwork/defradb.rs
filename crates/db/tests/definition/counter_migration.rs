@@ -181,7 +181,12 @@ fn accumulators_move_into_their_documents_once() {
         // The documents now hold the counters: an increment lands once.
         let mut increment = Document::new(tally());
         increment.set_id(DocID::from_string(&ahead).unwrap());
-        increment.set_counter_delta("up".to_string(), NormalValue::Int(1));
+        increment
+            .edit(
+                "up".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(1)),
+            )
+            .unwrap();
         AutoCommitMutator::new(reopened.clone())
             .update(
                 "Tally",

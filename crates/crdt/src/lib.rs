@@ -17,12 +17,14 @@
 
 pub mod composite;
 pub mod counter;
+pub mod field;
 pub mod lww;
 pub mod priority;
 pub mod traits;
 
 pub use composite::{CompositeDAG, CompositeDelta, STATUS_ACTIVE, STATUS_DELETED};
 pub use counter::{Counter, CounterDelta, NumericKind};
+pub use field::{field_crdt, DeltaParts, FieldCrdt, FieldCrdtError};
 pub use lww::{Lww, LwwDelta};
 pub use priority::{decode_priority, encode_priority};
 pub use traits::{Delta, MergeResult, ReplicatedData};

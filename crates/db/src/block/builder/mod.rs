@@ -35,9 +35,8 @@ use cid::Cid;
 use crypto::PrivateKey;
 use datastore::NamespaceView;
 use defra_core::block::{
-    generate_cid_from_bytes, Block, CollectionDeltaPayload, CompositeDeltaPayload,
-    CounterDeltaPayload, CrdtDelta, DAGLink, Encryption, LwwDeltaPayload, Signature,
-    SignatureHeader,
+    generate_cid_from_bytes, Block, CollectionDeltaPayload, CompositeDeltaPayload, CrdtDelta,
+    DAGLink, Encryption, Signature, SignatureHeader,
 };
 use defra_core::cid_encoding::cid_bytes;
 use defra_core::encryption::EncryptionConfig;
@@ -358,6 +357,18 @@ pub struct BlockResult {
     /// CIDs of all Encryption blocks created (mapped to the owning DocID
     /// alongside composite + field blocks, mirroring Go's save()).
     pub encryption_cids: Vec<Cid>,
+}
+
+/// The CRDT type of a document field, which decides what its block carries.
+pub(crate) fn field_crdt_of(
+    doc: &Document,
+    field_name: &str,
+) -> Result<&'static dyn crdt::FieldCrdt, String> {
+    let ctype = doc
+        .crdt_type(field_name)
+        .ok_or_else(|| format!("field {field_name} is not in the collection definition"))?;
+    crdt::field_crdt(ctype)
+        .ok_or_else(|| format!("field {field_name} has no CRDT type that writes blocks ({ctype})"))
 }
 
 /// Encode a NormalValue as CBOR bytes.

@@ -88,14 +88,9 @@ pub(crate) fn compute_document_blocks_with_inputs(
             continue;
         }
 
-        // For counter fields during creates, use the raw delta if set
-        let cbor_value = if let Some(delta) = doc.get_counter_delta(field_name) {
-            delta
-        } else {
-            field_value.value()
-        };
-
-        let value_bytes = encode_value_as_cbor(cbor_value)?;
+        let crdt = field_crdt_of(doc, field_name)?;
+        let value_bytes =
+            encode_value_as_cbor(crdt.block_data(field_value.value(), doc.pending_op(field_name)))?;
 
         // Encrypt delta and create Encryption metadata block if configured
         let (value_bytes, encryption_cid) = if let Some(enc) = encryption_config {
@@ -193,28 +188,22 @@ pub(crate) fn compute_document_blocks_with_inputs(
             encryption_cids.push(enc_cid);
         }
 
-        let is_counter = doc.crdt_type(field_name).is_some_and(|t| t.is_counter())
-            || doc.get_counter_delta(field_name).is_some();
-
-        // For creates, heads are always empty -> nonce is always 0
-        let nonce: i64 = 0;
-
-        let delta = if is_counter {
-            CrdtDelta::Counter(CounterDeltaPayload {
-                field_name: field_name.clone(),
-                priority,
-                nonce,
-                collection_version_id: collection_version_id.to_string(),
-                data: value_bytes,
+        // For creates, heads are always empty
+        let nonce = crdt
+            .nonce(true, &mut || {
+                Err(crdt::FieldCrdtError::Nonce(
+                    "a create takes no random nonce".into(),
+                ))
             })
-        } else {
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: field_name.clone(),
-                priority,
-                collection_version_id: collection_version_id.to_string(),
-                data: value_bytes,
-            })
-        };
+            .map_err(|error| BuildError::Message(error.to_string()))?;
+
+        let delta = crdt.delta(crdt::DeltaParts {
+            field_name,
+            priority,
+            collection_version_id,
+            nonce,
+            data: value_bytes,
+        });
 
         // No prev heads for creates
         let mut field_block = Block::new_with_options(delta, vec![], vec![], encryption_cid, None);

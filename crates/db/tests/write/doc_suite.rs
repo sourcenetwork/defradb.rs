@@ -219,7 +219,11 @@ fn auto_commit_float32_counter_accumulates_with_float32_precision() {
                 .unwrap()
                 .unwrap();
             doc.set("points", NormalValue::Float32(value)).unwrap();
-            doc.set_counter_delta("points".into(), NormalValue::Float32(delta));
+            doc.edit(
+                "points",
+                document::FieldOp::Increment(NormalValue::Float32(delta)),
+            )
+            .unwrap();
             mutator
                 .update(
                     "FloatCounters",
@@ -356,7 +360,11 @@ fn explicit_txn_counter_increment_advances_the_counter() {
                             .expect("doc");
                     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
@@ -445,7 +453,11 @@ fn explicit_txn_pcounter_increment_no_double_apply() {
                             .expect("doc");
                     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
@@ -519,7 +531,11 @@ fn explicit_txn_multi_doc_counter_increments_advance_both() {
                     let mut up_a =
                         Document::from_json_str(r#"{"count": 11}"#, counter_collection()).unwrap();
                     up_a.set_id(document::DocID::from_string(&doc_a).unwrap());
-                    up_a.set_counter_delta("count".to_string(), document::NormalValue::Int(1));
+                    up_a.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(1)),
+                    )
+                    .unwrap();
                     let mut mod_a = rapidhash::RapidHashSet::new();
                     mod_a.insert("count".to_string());
                     mutator
@@ -530,7 +546,11 @@ fn explicit_txn_multi_doc_counter_increments_advance_both() {
                     let mut up_b =
                         Document::from_json_str(r#"{"count": 25}"#, counter_collection()).unwrap();
                     up_b.set_id(document::DocID::from_string(&doc_b).unwrap());
-                    up_b.set_counter_delta("count".to_string(), document::NormalValue::Int(5));
+                    up_b.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(5)),
+                    )
+                    .unwrap();
                     let mut mod_b = rapidhash::RapidHashSet::new();
                     mod_b.insert("count".to_string());
                     mutator
@@ -620,7 +640,12 @@ fn explicit_txn_pcounter_create_then_update_same_txn() {
                 let mut update_doc =
                     Document::from_json_str(r#"{"count": 8}"#, pcounter_collection()).unwrap();
                 update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
-                update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                update_doc
+                    .edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(3)),
+                    )
+                    .unwrap();
                 let mut modified = rapidhash::RapidHashSet::new();
                 modified.insert("count".to_string());
                 mutator
@@ -712,7 +737,11 @@ fn an_increment_lands_on_a_directly_written_counter_value() {
                             .expect("doc");
                     update_doc.set_id(document::DocID::from_string(&doc_id).expect("doc id"));
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
@@ -763,7 +792,12 @@ fn explicit_txn_pncounter_create_then_decrement_same_txn() {
                 let mut update_doc =
                     Document::from_json_str(r#"{"count": -2}"#, counter_collection()).unwrap();
                 update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
-                update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(-5));
+                update_doc
+                    .edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(-5)),
+                    )
+                    .unwrap();
                 let mut modified = rapidhash::RapidHashSet::new();
                 modified.insert("count".to_string());
                 mutator
@@ -814,7 +848,12 @@ fn explicit_txn_discard_drops_pending_counter_ops() {
                 let mut update_doc =
                     Document::from_json_str(r#"{"count": 9}"#, counter_collection()).unwrap();
                 update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
-                update_doc.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
+                update_doc
+                    .edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(2)),
+                    )
+                    .unwrap();
                 let mut modified = rapidhash::RapidHashSet::new();
                 modified.insert("count".to_string());
                 mutator
@@ -881,7 +920,11 @@ fn explicit_txn_multiple_updates_same_field_sum_once() {
                     let mut up1 =
                         Document::from_json_str(r#"{"count": 3}"#, counter_collection()).unwrap();
                     up1.set_id(document::DocID::from_string(&doc_id).unwrap());
-                    up1.set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                    up1.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(3)),
+                    )
+                    .unwrap();
                     let mut m1 = rapidhash::RapidHashSet::new();
                     m1.insert("count".to_string());
                     mutator.update("Counters", up1, m1).await.expect("update 1");
@@ -889,7 +932,11 @@ fn explicit_txn_multiple_updates_same_field_sum_once() {
                     let mut up2 =
                         Document::from_json_str(r#"{"count": 5}"#, counter_collection()).unwrap();
                     up2.set_id(document::DocID::from_string(&doc_id).unwrap());
-                    up2.set_counter_delta("count".to_string(), document::NormalValue::Int(2));
+                    up2.edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(document::NormalValue::Int(2)),
+                    )
+                    .unwrap();
                     let mut m2 = rapidhash::RapidHashSet::new();
                     m2.insert("count".to_string());
                     mutator.update("Counters", up2, m2).await.expect("update 2");
@@ -993,7 +1040,11 @@ fn explicit_txn_indexed_counter_index_reflects_the_incremented_value() {
                         Document::from_json_str(r#"{"count": 8}"#, col_version.clone()).unwrap();
                     update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
                     update_doc
-                        .set_counter_delta("count".to_string(), document::NormalValue::Int(3));
+                        .edit(
+                            "count".to_string(),
+                            document::FieldOp::Increment(document::NormalValue::Int(3)),
+                        )
+                        .unwrap();
                     let mut modified = rapidhash::RapidHashSet::new();
                     modified.insert("count".to_string());
                     mutator
