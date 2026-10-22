@@ -8,5 +8,5 @@
 pub mod kernel;
 pub mod metric;
 
-pub use kernel::{dot, squared_euclidean, Element, Tier, ALL_TIERS};
+pub use kernel::{dot, squared_euclidean, squared_euclidean_block, Element, Tier, ALL_TIERS};
 pub use metric::{norm, normalize, squared_norm, Metric, MAX_COSINE_DISTANCE, NORM_THRESHOLD};

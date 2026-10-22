@@ -39,6 +39,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "PQ distance four sums",
     "DiskANN pending cache",
     "DiskANN shared quantizer",
+    "RobustPrune blocked covered checks",
     "Commit-ordered document arrivals",
     "Retry input and marker fencing",
     "Collection schema-version OCC",
