@@ -91,13 +91,15 @@ impl UpdateInput {
                     doc.set_counter_delta(field_name.clone(), normal_value.clone());
                     let current = doc.get(field_name);
                     let new_value = increment_value(current, &normal_value)?;
-                    doc.set(field_name.clone(), new_value);
+                    doc.set(field_name.clone(), new_value)
+                        .map_err(|e| QueryError::execution(e.to_string()))?;
                     modified_count += 1;
                     continue;
                 }
             }
 
-            doc.set(field_name.clone(), normal_value);
+            doc.set(field_name.clone(), normal_value)
+                .map_err(|e| QueryError::execution(e.to_string()))?;
             modified_count += 1;
         }
 
@@ -523,7 +525,8 @@ impl PlanNode for UpdateNode {
                                     continue;
                                 };
                                 if dependencies_match && embedding.request == request {
-                                    doc.set(embedding.field.clone(), embedding.value.clone());
+                                    doc.set(embedding.field.clone(), embedding.value.clone())
+                                        .map_err(|e| QueryError::execution(e.to_string()))?;
                                     modified_fields.insert(embedding.field.clone());
                                     continue;
                                 }
@@ -547,7 +550,8 @@ impl PlanNode for UpdateNode {
                                 doc.set(
                                     embedding.field.clone(),
                                     document::NormalValue::Float64Array(vector),
-                                );
+                                )
+                                .map_err(|e| QueryError::execution(e.to_string()))?;
                                 modified_fields.insert(embedding.field.clone());
                             }
                         }
@@ -749,7 +753,7 @@ mod prepared_target_tests {
     }
 
     fn doc(seed: &str) -> Document {
-        let mut doc = Document::from_json_str(r#"{"value":"before"}"#).unwrap();
+        let mut doc = crate::test_utils::doc_from_json(r#"{"value":"before"}"#);
         doc.set_id(DocID::new_v0_from_seed(seed));
         doc
     }

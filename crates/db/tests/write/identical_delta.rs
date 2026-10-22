@@ -25,9 +25,24 @@ fn snap_collection() -> CollectionVersion {
         "v1",
         "col-snap",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "status", FieldKind::string()),
-            FieldDescription::new("3", "content", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "status",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "content",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -44,14 +59,16 @@ fn identical_field_writes_to_distinct_documents_do_not_conflict() {
         let first = auto
             .create(
                 "Snap",
-                Document::from_json_str(r#"{"status": "idle", "content": "a"}"#).expect("doc a"),
+                Document::from_json_str(r#"{"status": "idle", "content": "a"}"#, snap_collection())
+                    .expect("doc a"),
             )
             .await
             .expect("create a");
         let second = auto
             .create(
                 "Snap",
-                Document::from_json_str(r#"{"status": "idle", "content": "b"}"#).expect("doc b"),
+                Document::from_json_str(r#"{"status": "idle", "content": "b"}"#, snap_collection())
+                    .expect("doc b"),
             )
             .await
             .expect("create b");
@@ -73,7 +90,8 @@ fn identical_field_writes_to_distinct_documents_do_not_conflict() {
                 .expect("fetch")
                 .expect("document present");
             // The same field, the same value, in two different documents.
-            doc.set("status", NormalValue::String("streaming".to_string()));
+            doc.set("status", NormalValue::String("streaming".to_string()))
+                .unwrap();
             mutator
                 .update("Snap", doc, RapidHashSet::from_iter(["status".to_string()]))
                 .await

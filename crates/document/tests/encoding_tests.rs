@@ -1,5 +1,7 @@
 //! Integration tests for encoding utilities
 
+mod common;
+
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use document::encoding::{
     coerce_stored_value_for_kind, json_to_normal_value_for_array_kind,
@@ -16,63 +18,63 @@ use serde_json::json;
 #[test]
 fn test_json_number_i64() {
     // Test JSON parsing through Document
-    let doc = document::Document::from_json_str(r#"{"value": 42}"#).unwrap();
+    let doc = common::from_json(r#"{"value": 42}"#).unwrap();
     assert_eq!(doc.get("value").and_then(|v| v.as_int()), Some(42));
 }
 
 #[test]
 fn test_json_number_f64() {
-    let doc = document::Document::from_json_str(r#"{"value": 3.15}"#).unwrap();
+    let doc = common::from_json(r#"{"value": 3.15}"#).unwrap();
     assert_eq!(doc.get("value").and_then(|v| v.as_float64()), Some(3.15));
 }
 
 #[test]
 fn test_json_string() {
-    let doc = document::Document::from_json_str(r#"{"value": "hello"}"#).unwrap();
+    let doc = common::from_json(r#"{"value": "hello"}"#).unwrap();
     assert_eq!(doc.get("value").and_then(|v| v.as_str()), Some("hello"));
 }
 
 #[test]
 fn test_json_null() {
-    let doc = document::Document::from_json_str(r#"{"value": null}"#).unwrap();
+    let doc = common::from_json(r#"{"value": null}"#).unwrap();
     assert!(doc.get("value").map(|v| v.is_nil()).unwrap_or(false));
 }
 
 #[test]
 fn test_json_bool() {
-    let doc = document::Document::from_json_str(r#"{"value": true}"#).unwrap();
+    let doc = common::from_json(r#"{"value": true}"#).unwrap();
     assert_eq!(doc.get("value").and_then(|v| v.as_bool()), Some(true));
 }
 
 #[test]
 fn test_json_string_array() {
-    let doc = document::Document::from_json_str(r#"{"values": ["a", "b"]}"#).unwrap();
+    let doc = common::from_json(r#"{"values": ["a", "b"]}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
 
 #[test]
 fn test_json_empty_array() {
-    let doc = document::Document::from_json_str(r#"{"values": []}"#).unwrap();
+    let doc = common::from_json(r#"{"values": []}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
 
 #[test]
 fn test_cbor_roundtrip_simple() {
-    let mut doc = document::Document::new();
-    doc.set("value", 42i64);
+    let mut doc = common::doc(&["value"]);
+    doc.set("value", 42i64).unwrap();
     let cbor = doc.to_cbor().unwrap();
-    let decoded = document::Document::from_cbor(&cbor).unwrap();
+    let decoded = common::from_cbor(&cbor).unwrap();
     assert_eq!(decoded.get("value").and_then(|v| v.as_int()), Some(42));
 }
 
 #[test]
 fn test_cbor_roundtrip_string() {
-    let mut doc = document::Document::new();
-    doc.set("value", "hello");
+    let mut doc = common::doc(&["value"]);
+    doc.set("value", "hello").unwrap();
     let cbor = doc.to_cbor().unwrap();
-    let decoded = document::Document::from_cbor(&cbor).unwrap();
+    let decoded = common::from_cbor(&cbor).unwrap();
     assert_eq!(decoded.get("value").and_then(|v| v.as_str()), Some("hello"));
 }
 
@@ -81,7 +83,7 @@ fn test_cbor_roundtrip_string() {
 #[test]
 fn test_json_mixed_array_int_string_preserves_all() {
     // Mixed int+string array should preserve all elements
-    let doc = document::Document::from_json_str(r#"{"values": [1, "text", 3]}"#).unwrap();
+    let doc = common::from_json(r#"{"values": [1, "text", 3]}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
@@ -89,7 +91,7 @@ fn test_json_mixed_array_int_string_preserves_all() {
 #[test]
 fn test_json_mixed_array_bool_int_preserves_all() {
     // Mixed bool+int array should preserve all elements
-    let doc = document::Document::from_json_str(r#"{"values": [true, 42, false]}"#).unwrap();
+    let doc = common::from_json(r#"{"values": [true, 42, false]}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
@@ -97,7 +99,7 @@ fn test_json_mixed_array_bool_int_preserves_all() {
 #[test]
 fn test_json_mixed_array_string_null_preserves_all() {
     // Mixed string+null array should preserve all elements
-    let doc = document::Document::from_json_str(r#"{"values": ["a", null, "b"]}"#).unwrap();
+    let doc = common::from_json(r#"{"values": ["a", null, "b"]}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
@@ -105,7 +107,7 @@ fn test_json_mixed_array_string_null_preserves_all() {
 #[test]
 fn test_json_homogeneous_int_array() {
     // Pure int array should become IntArray
-    let doc = document::Document::from_json_str(r#"{"values": [1, 2, 3]}"#).unwrap();
+    let doc = common::from_json(r#"{"values": [1, 2, 3]}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
@@ -113,7 +115,7 @@ fn test_json_homogeneous_int_array() {
 #[test]
 fn test_json_homogeneous_string_array() {
     // Pure string array should become StringArray
-    let doc = document::Document::from_json_str(r#"{"values": ["a", "b", "c"]}"#).unwrap();
+    let doc = common::from_json(r#"{"values": ["a", "b", "c"]}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
@@ -121,7 +123,7 @@ fn test_json_homogeneous_string_array() {
 #[test]
 fn test_json_homogeneous_bool_array() {
     // Pure bool array should become BoolArray
-    let doc = document::Document::from_json_str(r#"{"values": [true, false, true]}"#).unwrap();
+    let doc = common::from_json(r#"{"values": [true, false, true]}"#).unwrap();
     let val = doc.get("values").unwrap();
     assert!(val.is_array());
 }
@@ -130,27 +132,28 @@ fn test_json_homogeneous_bool_array() {
 
 #[test]
 fn test_to_map_nan_error() {
-    let mut doc = document::Document::new();
-    doc.set("value", f64::NAN);
+    let mut doc = common::doc(&["value"]);
+    doc.set("value", f64::NAN).unwrap();
     let result = doc.to_map();
     assert!(result.is_err());
 }
 
 #[test]
 fn test_to_map_neg_infinity_error() {
-    let mut doc = document::Document::new();
-    doc.set("value", f64::NEG_INFINITY);
+    let mut doc = common::doc(&["value"]);
+    doc.set("value", f64::NEG_INFINITY).unwrap();
     let result = doc.to_map();
     assert!(result.is_err());
 }
 
 #[test]
 fn test_to_map_float_array_nan_error() {
-    let mut doc = document::Document::new();
+    let mut doc = common::doc(&["values"]);
     doc.set(
         "values",
         NormalValue::Float64Array(vec![1.0, f64::NAN, 3.0]),
-    );
+    )
+    .unwrap();
     let result = doc.to_map();
     assert!(result.is_err());
 }
@@ -158,8 +161,8 @@ fn test_to_map_float_array_nan_error() {
 #[test]
 fn test_to_map_finite_float_ok() {
     // Normal finite floats should work fine
-    let mut doc = document::Document::new();
-    doc.set("value", 3.15);
+    let mut doc = common::doc(&["value"]);
+    doc.set("value", 3.15).unwrap();
     let result = doc.to_map();
     assert!(result.is_ok());
 }
@@ -170,8 +173,9 @@ fn test_to_map_finite_float_ok() {
 fn test_time_to_json_rfc3339_format() {
     // Timestamp without fractional seconds
     let t = Utc.with_ymd_and_hms(2025, 1, 14, 12, 30, 45).unwrap();
-    let mut doc = document::Document::new();
-    doc.set("timestamp", NormalValue::Time(t.fixed_offset()));
+    let mut doc = common::doc(&["timestamp"]);
+    doc.set("timestamp", NormalValue::Time(t.fixed_offset()))
+        .unwrap();
 
     let map = doc.to_map().unwrap();
     let s = map.get("timestamp").unwrap().as_str().unwrap();
@@ -191,8 +195,9 @@ fn test_time_to_json_with_nanoseconds() {
         .unwrap()
         .with_nanosecond(123456789)
         .unwrap();
-    let mut doc = document::Document::new();
-    doc.set("timestamp", NormalValue::Time(t.fixed_offset()));
+    let mut doc = common::doc(&["timestamp"]);
+    doc.set("timestamp", NormalValue::Time(t.fixed_offset()))
+        .unwrap();
 
     let map = doc.to_map().unwrap();
     let s = map.get("timestamp").unwrap().as_str().unwrap();
@@ -213,8 +218,8 @@ fn test_time_format_matches_go_rfc3339_nano() {
     let t1 = Utc.with_ymd_and_hms(2017, 7, 23, 3, 46, 56).unwrap();
     let t1_fixed = t1.with_timezone(&chrono::FixedOffset::west_opt(5 * 3600).unwrap());
 
-    let mut doc1 = document::Document::new();
-    doc1.set("timestamp", NormalValue::Time(t1_fixed));
+    let mut doc1 = common::doc(&["timestamp"]);
+    doc1.set("timestamp", NormalValue::Time(t1_fixed)).unwrap();
     let map1 = doc1.to_map().unwrap();
     let s1 = map1.get("timestamp").unwrap().as_str().unwrap();
 
@@ -234,8 +239,8 @@ fn test_time_format_matches_go_rfc3339_nano() {
     let t2 = t1.with_nanosecond(123456789).unwrap();
     let t2_fixed = t2.with_timezone(&chrono::FixedOffset::west_opt(5 * 3600).unwrap());
 
-    let mut doc2 = document::Document::new();
-    doc2.set("timestamp", NormalValue::Time(t2_fixed));
+    let mut doc2 = common::doc(&["timestamp"]);
+    doc2.set("timestamp", NormalValue::Time(t2_fixed)).unwrap();
     let map2 = doc2.to_map().unwrap();
     let s2 = map2.get("timestamp").unwrap().as_str().unwrap();
 

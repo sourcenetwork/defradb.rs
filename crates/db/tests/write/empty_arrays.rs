@@ -14,22 +14,38 @@ use storage::RegolithStore;
 fn updating_a_document_that_holds_an_empty_string_array_succeeds() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(CollectionVersion::new(
+        let post = CollectionVersion::new(
             "Post",
             "v1",
             "col-post",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "title", FieldKind::string()),
-                FieldDescription::new("3", "tags", FieldKind::nillable_string_array()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "title",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "3",
+                    "tags",
+                    FieldKind::nillable_string_array(),
+                    schema::CType::LwwRegister,
+                ),
             ],
-        ))
-        .await
-        .unwrap();
+        );
+        db.create_collection(post.clone()).await.unwrap();
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
-        let mut doc = Document::new();
-        doc.set("title", NormalValue::String("first".to_string()));
-        doc.set("tags", NormalValue::NillableStringArray(Some(Vec::new())));
+        let mut doc = Document::new(post);
+        doc.set("title", NormalValue::String("first".to_string()))
+            .unwrap();
+        doc.set("tags", NormalValue::NillableStringArray(Some(Vec::new())))
+            .unwrap();
         let created = mutator.create("Post", doc).await.unwrap();
 
         // The plan's full read of the stored document, as an update that returns
@@ -40,7 +56,8 @@ fn updating_a_document_that_holds_an_empty_string_array_succeeds() {
             .unwrap()
             .unwrap();
         let mut doc = expected.clone();
-        doc.set("title", NormalValue::String("second".to_string()));
+        doc.set("title", NormalValue::String("second".to_string()))
+            .unwrap();
         mutator
             .update_if_unchanged(
                 "Post",
@@ -82,12 +99,18 @@ fn an_empty_array_read_from_storage_is_valid_for_every_array_kind() {
             "v1",
             "col-post",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "values", kind.clone()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "values", kind.clone(), schema::CType::LwwRegister),
             ],
         ));
-        let mut doc = Document::new();
-        doc.set("values", NormalValue::JsonArray(Vec::new()));
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("values", NormalValue::JsonArray(Vec::new()))
+            .unwrap();
         collection
             .validate_document(&doc)
             .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
@@ -101,30 +124,42 @@ async fn immutable_tags_update(
     tags: NormalValue,
 ) -> (AutoCommitMutator<RegolithStore>, document::DocID, Document) {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    db.create_collection(CollectionVersion::new(
+    let post = CollectionVersion::new(
         "Post",
         "v1",
         "col-post",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
-            FieldDescription::new("3", "tags", FieldKind::json()).as_immutable(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("3", "tags", FieldKind::json(), schema::CType::LwwRegister)
+                .as_immutable(),
         ],
-    ))
-    .await
-    .unwrap();
+    );
+    db.create_collection(post.clone()).await.unwrap();
     let mutator = AutoCommitMutator::new(Arc::clone(&db));
-    let mut doc = Document::new();
-    doc.set("title", NormalValue::String("first".to_string()));
-    doc.set("tags", NormalValue::JsonArray(Vec::new()));
+    let mut doc = Document::new(post);
+    doc.set("title", NormalValue::String("first".to_string()))
+        .unwrap();
+    doc.set("tags", NormalValue::JsonArray(Vec::new())).unwrap();
     let created = mutator.create("Post", doc).await.unwrap();
     let mut doc = mutator
         .get_for_update("Post", &created.doc_id)
         .await
         .unwrap()
         .unwrap();
-    doc.set("title", NormalValue::String("second".to_string()));
-    doc.set("tags", tags);
+    doc.set("title", NormalValue::String("second".to_string()))
+        .unwrap();
+    doc.set("tags", tags).unwrap();
     (mutator, created.doc_id, doc)
 }
 

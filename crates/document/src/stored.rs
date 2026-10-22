@@ -3,6 +3,9 @@
 //! This format is separate from the canonical CBOR used for blocks and DocIDs.
 //! Empty LWW bytes are a tombstone; their priority must survive materialization.
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use schema::CollectionVersion;
 
 use crate::encoding::{cbor_to_normal_value, normal_value_to_cbor};
 use crate::{Document, Error, NormalValue, Result};
@@ -275,12 +278,12 @@ impl StoredDocument {
         input.is_empty().then_some(Self { fields })
     }
 
-    pub fn materialize(&self) -> Option<Document> {
-        let mut doc = Document::new();
+    pub fn materialize(&self, collection: impl Into<Arc<CollectionVersion>>) -> Option<Document> {
+        let mut doc = Document::new(collection);
         for field in self.fields.values() {
             let value = field.materialize()?;
             if !value.is_nil() {
-                doc.set(&field.name, value);
+                doc.load(field.name.clone(), value);
             }
         }
         doc.clean();
@@ -386,13 +389,16 @@ fn take_sized<'a>(input: &mut &'a [u8]) -> Option<&'a [u8]> {
 
 impl Document {
     /// Decode a local stored value without changing the wire CBOR decoder.
-    pub fn from_storage_cbor(bytes: &[u8]) -> Result<Self> {
+    pub fn from_storage_cbor(
+        bytes: &[u8],
+        collection: impl Into<Arc<CollectionVersion>>,
+    ) -> Result<Self> {
         if bytes.starts_with(MAGIC) {
             StoredDocument::decode_inner(bytes, false)
-                .and_then(|value| value.materialize())
+                .and_then(|value| value.materialize(collection))
                 .ok_or_else(|| Error::CborDecode("invalid local document value".into()))
         } else {
-            Self::from_cbor(bytes)
+            Self::from_cbor(bytes, collection)
         }
     }
 }
@@ -400,6 +406,25 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use schema::{CType, CollectionBuilder, FieldDescription, FieldKind, ScalarKind};
+
+    fn test_collection() -> CollectionVersion {
+        ["name", "same", "count"]
+            .iter()
+            .enumerate()
+            .fold(
+                CollectionBuilder::new("Test", "bafytest"),
+                |builder, (i, name)| {
+                    builder.field(FieldDescription::new(
+                        i.to_string(),
+                        *name,
+                        FieldKind::Scalar(ScalarKind::None),
+                        CType::LwwRegister,
+                    ))
+                },
+            )
+            .build()
+    }
 
     #[test]
     fn from_storage_cbor_materializes_a_stored_document() {
@@ -410,7 +435,7 @@ mod tests {
         );
         let bytes = stored.encode().unwrap();
 
-        let document = Document::from_storage_cbor(&bytes).unwrap();
+        let document = Document::from_storage_cbor(&bytes, test_collection()).unwrap();
         assert_eq!(
             document.get("name").and_then(NormalValue::as_str),
             Some("Ada")
@@ -479,7 +504,7 @@ mod tests {
         bytes.push(0xff); // invalid CBOR
 
         assert!(StoredDocument::decode(&bytes).is_none());
-        assert!(Document::from_storage_cbor(&bytes).is_err());
+        assert!(Document::from_storage_cbor(&bytes, test_collection()).is_err());
     }
 
     #[test]

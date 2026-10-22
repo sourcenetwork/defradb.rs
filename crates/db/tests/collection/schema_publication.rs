@@ -38,8 +38,18 @@ fn schema_success_waits_for_its_ordered_cache_publication() {
                 "note-v1",
                 "note-id",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "text", FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "text",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             );
             let pending = db.create_collections_atomic(vec![schema]);

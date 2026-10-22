@@ -87,10 +87,7 @@ pub fn compute_document_cid(document_json: &str) -> std::result::Result<String, 
 }
 
 fn compute_cid_impl(document_json: &str) -> Result<String> {
-    let doc = document::Document::from_json_str(document_json)?;
-
-    // Get the document's computed CID
-    if let Some(id) = doc.id() {
+    if let Some(id) = document::DocID::from_json_str(document_json)? {
         Ok(id.to_string())
     } else {
         Err(WasmError::Document(

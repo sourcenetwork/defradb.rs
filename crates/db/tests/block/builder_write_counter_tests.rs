@@ -18,8 +18,22 @@ async fn first_counter_update() -> Cid {
     let headstore = NamespaceView::new(shared, Namespace::Headstore);
     let identity = DocStorageIdentity::new(1, 1);
 
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Alice".to_string()));
+    let mut doc = Document::new(schema::CollectionVersion::new(
+        "Test",
+        "schema-v1",
+        "col-test",
+        vec![
+            schema::FieldDescription::new(
+                "1",
+                "name",
+                schema::FieldKind::string(),
+                CType::LwwRegister,
+            ),
+            schema::FieldDescription::new("2", "count", schema::FieldKind::int(), CType::PnCounter),
+        ],
+    ));
+    doc.set("name", NormalValue::String("Alice".to_string()))
+        .unwrap();
     let created = write_document_blocks(
         &blockstore,
         &headstore,
@@ -35,8 +49,7 @@ async fn first_counter_update() -> Cid {
     .unwrap();
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
-    doc.set_with_crdt("count", CType::PnCounter, NormalValue::Int(1))
-        .unwrap();
+    doc.set("count", NormalValue::Int(1)).unwrap();
     doc.set_counter_delta("count".to_string(), NormalValue::Int(1));
     let modified = RapidHashSet::from_iter(["count".to_string()]);
 

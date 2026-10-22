@@ -8,6 +8,22 @@ use crate::corekv::Store;
 use crate::merge::{document_parts, DefraMergeOperator};
 use crate::RegolithStore;
 
+fn test_collection() -> schema::CollectionVersion {
+    (1..=20)
+        .fold(
+            schema::CollectionBuilder::new("Test", "bafytest"),
+            |builder, id| {
+                builder.field(schema::FieldDescription::new(
+                    id.to_string(),
+                    format!("field{id}"),
+                    schema::FieldKind::Scalar(schema::ScalarKind::None),
+                    schema::CType::LwwRegister,
+                ))
+            },
+        )
+        .build()
+}
+
 fn field(id: u32, priority: u64, value: NormalValue) -> StoredDocument {
     StoredDocument {
         fields: [(
@@ -38,7 +54,11 @@ fn priorities_ties_and_tombstones_survive_materialization() {
     let stored = StoredDocument::decode(&bytes).unwrap();
     assert_eq!(stored.fields[&1].priority, 3);
     assert!(stored.fields[&1].value.is_empty());
-    assert!(stored.materialize().unwrap().get("field1").is_none());
+    assert!(stored
+        .materialize(test_collection())
+        .unwrap()
+        .get("field1")
+        .is_none());
     let a = document_parts(&field(1, 4, NormalValue::String("a".into()))).unwrap();
     let b = document_parts(&field(1, 4, NormalValue::String("b".into()))).unwrap();
     assert_eq!(
@@ -255,7 +275,7 @@ fn disjoint_document_operands_commit_and_projected_reads_validate_only_named_fie
         assert!(stale.commit().await.is_err());
         let reader = store.new_txn(true).await.unwrap();
         let stored = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap()).unwrap();
-        let doc = stored.materialize().unwrap();
+        let doc = stored.materialize(test_collection()).unwrap();
         assert_eq!(doc.get("field1"), Some(&NormalValue::Int(12)));
         assert_eq!(doc.get("field2"), Some(&NormalValue::Int(22)));
     })
@@ -289,7 +309,7 @@ fn numeric_document_parts_add_without_adopting_a_stale_mirror() {
     assert_eq!(
         StoredDocument::decode(&bytes)
             .unwrap()
-            .materialize()
+            .materialize(test_collection())
             .unwrap()
             .get("count"),
         Some(&NormalValue::Int(18))
@@ -339,11 +359,11 @@ fn encrypted_document_operands_survive_reopen_and_schema_put_terminates_old_oper
         let bytes = txn.get(b"doc").await.unwrap().unwrap();
         let doc = StoredDocument::decode(&bytes)
             .unwrap()
-            .materialize()
+            .materialize(test_collection())
             .unwrap();
         assert_eq!(
             doc.to_cbor().unwrap(),
-            document::Document::from_json_str(r#"{"field1":20}"#)
+            document::Document::from_json_str(r#"{"field1":20}"#, test_collection())
                 .unwrap()
                 .to_cbor()
                 .unwrap()
@@ -362,7 +382,7 @@ fn encrypted_document_operands_survive_reopen_and_schema_put_terminates_old_oper
         let reader = store.new_txn(true).await.unwrap();
         let doc = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap())
             .unwrap()
-            .materialize()
+            .materialize(test_collection())
             .unwrap();
         assert_eq!(doc.get("field1"), None);
         assert_eq!(doc.get("field2"), Some(&NormalValue::Int(40)));

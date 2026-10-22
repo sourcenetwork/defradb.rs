@@ -16,8 +16,9 @@ const DOCUMENTS: usize = 64;
 fn documents() -> Vec<Document> {
     (0..DOCUMENTS)
         .map(|i| {
-            let mut doc = Document::new();
-            doc.set("name", NormalValue::String(format!("user-{i}")));
+            let mut doc = Document::new(test_schema());
+            doc.set("name", NormalValue::String(format!("user-{i}")))
+                .unwrap();
             doc
         })
         .collect()

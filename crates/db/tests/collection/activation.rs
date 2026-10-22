@@ -34,8 +34,18 @@ fn a_refused_deactivation_fails_the_version_switch() {
             "v1",
             "notes",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "title", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "title",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         ))
         .await

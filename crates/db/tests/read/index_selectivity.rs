@@ -48,10 +48,20 @@ fn schema() -> CollectionVersion {
         "events-v1",
         "events-collection",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "market", FieldKind::string()),
-            FieldDescription::new("3", "hour", FieldKind::string()),
-            FieldDescription::new("4", "seq", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "market",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("3", "hour", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("4", "seq", FieldKind::int(), schema::CType::LwwRegister),
         ],
     );
     version.is_materialized = true;
@@ -68,11 +78,13 @@ async fn seeded_db() -> Arc<DB<CountingStore<RegolithStore>>> {
     db.create_collection(schema()).await.unwrap();
     let docs = (0..COLLECTION_SIZE)
         .map(|i| {
-            let mut doc = Document::new();
-            doc.set("market", NormalValue::String("zcat".to_string()));
-            doc.set("hour", NormalValue::String(format!("h{:03}", i % HOURS)));
+            let mut doc = Document::new(schema());
+            doc.set("market", NormalValue::String("zcat".to_string()))
+                .unwrap();
+            doc.set("hour", NormalValue::String(format!("h{:03}", i % HOURS)))
+                .unwrap();
             // Document IDs are content-addressed; `seq` keeps each one distinct.
-            doc.set("seq", NormalValue::Int(i as i64));
+            doc.set("seq", NormalValue::Int(i as i64)).unwrap();
             doc
         })
         .collect();
@@ -184,6 +196,7 @@ fn estimation_skips_vector_indexes() {
             "5",
             "embedding",
             FieldKind::float64_array(),
+            schema::CType::LwwRegister,
         ));
         let mut vector = single_field_index(3, "embedding");
         vector.kind = Some(crate::common::schema::vector_kind());
@@ -357,10 +370,11 @@ fn ordered_composite_page_streams_only_matching_documents() {
         db.create_collection(version).await.unwrap();
         let docs = (0..COLLECTION_SIZE)
             .map(|seq| {
-                let mut doc = Document::new();
-                doc.set("market", NormalValue::String("zcat".into()));
-                doc.set("hour", NormalValue::String("h000".into()));
-                doc.set("seq", NormalValue::Int(seq as i64));
+                let mut doc = Document::new(schema());
+                doc.set("market", NormalValue::String("zcat".into()))
+                    .unwrap();
+                doc.set("hour", NormalValue::String("h000".into())).unwrap();
+                doc.set("seq", NormalValue::Int(seq as i64)).unwrap();
                 doc
             })
             .collect();

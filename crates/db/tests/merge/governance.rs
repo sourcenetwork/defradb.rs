@@ -153,8 +153,18 @@ impl Node {
                     id,
                     id,
                     vec![
-                        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                        FieldDescription::new("2", field, FieldKind::string()),
+                        FieldDescription::new(
+                            "1",
+                            "_docID",
+                            FieldKind::doc_id(),
+                            schema::CType::LwwRegister,
+                        ),
+                        FieldDescription::new(
+                            "2",
+                            field,
+                            FieldKind::string(),
+                            schema::CType::LwwRegister,
+                        ),
                     ],
                 ))
                 .await
@@ -174,16 +184,31 @@ impl Node {
                 .await
                 .unwrap(),
         );
-        let mut writer_field = FieldDescription::new("2", "writer", FieldKind::string());
+        let mut writer_field = FieldDescription::new(
+            "2",
+            "writer",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        );
         writer_field.immutable = true;
         db.create_collection(CollectionVersion::new(
             "Grants",
             "col-grants",
             "col-grants",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
                 writer_field,
-                FieldDescription::new("3", "label", FieldKind::string()),
+                FieldDescription::new(
+                    "3",
+                    "label",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         ))
         .await
@@ -193,8 +218,18 @@ impl Node {
             "col-notes",
             "col-notes",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "grant", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "grant",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         ))
         .await
@@ -247,8 +282,18 @@ impl Node {
                 id,
                 version,
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", field, FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        field,
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             ))
             .await
@@ -269,10 +314,16 @@ impl Node {
     /// Create a document the way a client mutation does, and return its
     /// composite's CID.
     async fn create_locally(&self, collection: &str, json: &str) -> Cid {
+        let schema = self
+            .db
+            .get_collection(collection)
+            .unwrap()
+            .unwrap()
+            .schema_arc();
         let txn = self.db.new_txn(false).await.unwrap();
         let mutator = BatchMutator::new(self.db.clone(), Arc::new(txn)).await;
         let created = mutator
-            .create(collection, Document::from_json_str(json).unwrap())
+            .create(collection, Document::from_json_str(json, schema).unwrap())
             .await
             .unwrap();
         mutator.commit().await.unwrap();

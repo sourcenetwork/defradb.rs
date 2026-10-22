@@ -72,9 +72,9 @@ mod tests {
     fn vec_stream_yields_all_pairs_in_order_then_none() {
         workers::block_on(async {
             let pairs = vec![
-                (Document::new(), false),
-                (Document::new(), true),
-                (Document::new(), false),
+                (crate::test_utils::test_doc(&[]), false),
+                (crate::test_utils::test_doc(&[]), true),
+                (crate::test_utils::test_doc(&[]), false),
             ];
             let mut stream = VecStream::new(pairs);
 

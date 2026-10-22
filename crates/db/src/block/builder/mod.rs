@@ -573,8 +573,8 @@ mod prepared_signature_tests {
     #[test]
     fn changed_kms_encryption_scope_requests_a_fresh_key() {
         let identity = DocStorageIdentity::new(1, 2);
-        let mut doc = Document::new();
-        doc.set("secret", "value");
+        let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+        doc.set("secret", "value").unwrap();
         let mut prepared = document::WritePreparation::new(1, 2);
         prepared.set_requires_kms_keys(true);
         prepared.insert_scoped_key("secret".into(), Cid::default(), [7; 32], None);

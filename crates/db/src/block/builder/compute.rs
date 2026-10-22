@@ -193,11 +193,7 @@ pub(crate) fn compute_document_blocks_with_inputs(
             encryption_cids.push(enc_cid);
         }
 
-        let is_counter = doc
-            .fields()
-            .get(field_name)
-            .map(|f| f.crdt_type().is_counter())
-            .unwrap_or(false)
+        let is_counter = doc.crdt_type(field_name).is_some_and(|t| t.is_counter())
             || doc.get_counter_delta(field_name).is_some();
 
         // For creates, heads are always empty -> nonce is always 0

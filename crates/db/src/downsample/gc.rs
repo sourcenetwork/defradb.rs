@@ -46,7 +46,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
     fn pruneable_source_heights(
         &self,
         plan: &DownsamplePlan,
-        commits: &[document::Document],
+        commits: &[document::CommitRow],
         cutoff_nanos: i64,
     ) -> Result<RapidHashSet<u64>> {
         let samples = self.build_source_samples(plan, commits.to_vec())?;

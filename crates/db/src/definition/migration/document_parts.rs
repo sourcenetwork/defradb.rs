@@ -260,7 +260,7 @@ async fn convert_page(collection: &Collection, txn: &mut BasicTxn) -> Result<Pag
         {
             continue;
         }
-        let before = Document::from_storage_cbor(&pair.value)
+        let before = Document::from_storage_cbor(&pair.value, collection.schema_arc())
             .map_err(|error| Error::document_at_key(&pair.key, error))?;
         match collection
             .put_document_value(&datastore, doc_short_id, &before, false, None)
@@ -280,7 +280,7 @@ async fn convert_page(collection: &Collection, txn: &mut BasicTxn) -> Result<Pag
             .await
             .map_err(Error::Storage)?
             .ok_or_else(|| Error::Other("a converted document disappeared".into()))?;
-        let after = Document::from_storage_cbor(&written)
+        let after = Document::from_storage_cbor(&written, collection.schema_arc())
             .map_err(|error| Error::document_at_key(&pair.key, error))?;
         if reads_equal(&before, &after) {
             page.converted += 1;

@@ -230,10 +230,9 @@ mod tests {
         let inner = MockFetcher::new();
         inner.add_doc(
             "Note",
-            Document::from_json_str(&format!(
+            crate::test_utils::doc_from_json(&format!(
                 r#"{{"_docID":"{NOTE_ID}","owner":"shared","status":"open"}}"#
-            ))
-            .unwrap(),
+            )),
         );
         let reads = Arc::new(AtomicUsize::new(0));
         let fetcher = PointOnlyFetcher {
@@ -245,9 +244,24 @@ mod tests {
             "v1",
             "notes",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "owner", FieldKind::string()),
-                FieldDescription::new("3", "status", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "owner",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "3",
+                    "status",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         );
         for (id, field) in (1..).zip(indexed) {

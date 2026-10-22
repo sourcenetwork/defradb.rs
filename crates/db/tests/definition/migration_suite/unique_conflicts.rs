@@ -95,7 +95,7 @@ async fn set_stored_value(
         .await
         .unwrap()
         .unwrap();
-    doc.set("verified", value);
+    doc.set("verified", value).unwrap();
     if current {
         doc.set_schema_version_id(collection.version_id());
     }

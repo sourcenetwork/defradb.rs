@@ -404,6 +404,7 @@ pub(super) fn generate_field_id(field_name: &str, kind: &FieldKind, crdt_type: C
         String::new(), // ID will be generated
         field_name.to_string(),
         kind.clone(),
+        schema::CType::LwwRegister,
     )
     .with_crdt_type(crdt_type);
 

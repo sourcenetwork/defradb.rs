@@ -15,9 +15,14 @@ fn make_test_collection() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -28,9 +33,14 @@ fn make_test_collection_with_index() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .with_index(IndexDescription {
@@ -63,10 +73,15 @@ fn make_test_collection_with_filter_and_order_indexes() -> CollectionVersion {
         "v1",
         "coll-1",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
-            FieldDescription::new("4", "score", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("4", "score", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .with_index(IndexDescription {
@@ -116,11 +131,21 @@ fn make_users_collection() -> CollectionVersion {
         "v1",
         "coll-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // One-to-many relation to posts (array)
-            FieldDescription::new("3", "posts", FieldKind::relation("posts", true))
-                .with_relation_name("author_posts"),
+            FieldDescription::new(
+                "3",
+                "posts",
+                FieldKind::relation("posts", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts"),
         ],
     )
 }
@@ -131,16 +156,36 @@ fn make_posts_collection() -> CollectionVersion {
         "v1",
         "coll-posts",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
             // Many-to-one relation to users (singular)
-            FieldDescription::new("3", "author", FieldKind::relation("users", false))
-                .with_relation_name("author_posts")
-                .as_primary(),
+            FieldDescription::new(
+                "3",
+                "author",
+                FieldKind::relation("users", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
             // Auto-generated FK field (Go naming: _{fieldname}ID)
-            FieldDescription::new("4", "_authorID", FieldKind::doc_id())
-                .with_relation_name("author_posts")
-                .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_authorID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("author_posts")
+            .as_primary(),
         ],
     )
 }
@@ -749,15 +794,30 @@ fn make_book_collection() -> CollectionVersion {
         "v1",
         "coll-book",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // Secondary relation to Author (no @primary)
-            FieldDescription::new("3", "author", FieldKind::relation("Author", false))
-                .with_relation_name("book_author"),
+            FieldDescription::new(
+                "3",
+                "author",
+                FieldKind::relation("Author", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author"),
             // Auto-generated _authorID field (added by add_relation_id_fields)
             // Even though this is secondary, the _authorID field exists for querying
-            FieldDescription::new("4", "_authorID", FieldKind::doc_id())
-                .with_relation_name("book_author"),
+            FieldDescription::new(
+                "4",
+                "_authorID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author"),
         ],
     )
 }
@@ -770,16 +830,31 @@ fn make_author_collection() -> CollectionVersion {
         "v1",
         "coll-author",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // Primary relation to Book (@primary - stores FK)
-            FieldDescription::new("3", "published", FieldKind::relation("Book", false))
-                .with_relation_name("book_author")
-                .as_primary(),
+            FieldDescription::new(
+                "3",
+                "published",
+                FieldKind::relation("Book", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author")
+            .as_primary(),
             // Auto-generated _publishedID field (primary side stores FK)
-            FieldDescription::new("4", "_publishedID", FieldKind::doc_id())
-                .with_relation_name("book_author")
-                .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_publishedID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("book_author")
+            .as_primary(),
         ],
     )
 }
@@ -840,11 +915,21 @@ fn make_user_with_name_index() -> CollectionVersion {
         "v1",
         "coll-user",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             // One-to-many relation to Device (array)
-            FieldDescription::new("3", "devices", FieldKind::relation("Device", true))
-                .with_relation_name("owner_devices"),
+            FieldDescription::new(
+                "3",
+                "devices",
+                FieldKind::relation("Device", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("owner_devices"),
         ],
     )
     .with_index(IndexDescription {
@@ -867,17 +952,42 @@ fn make_device_with_owner_index() -> CollectionVersion {
         "v1",
         "coll-device",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "model", FieldKind::string()),
-            FieldDescription::new("3", "manufacturer", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "model",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "manufacturer",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
             // Many-to-one relation to User
-            FieldDescription::new("4", "owner", FieldKind::relation("User", false))
-                .with_relation_name("owner_devices")
-                .as_primary(),
+            FieldDescription::new(
+                "4",
+                "owner",
+                FieldKind::relation("User", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("owner_devices")
+            .as_primary(),
             // Auto-generated FK field
-            FieldDescription::new("5", "_ownerID", FieldKind::doc_id())
-                .with_relation_name("owner_devices")
-                .as_primary(),
+            FieldDescription::new(
+                "5",
+                "_ownerID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("owner_devices")
+            .as_primary(),
         ],
     )
     // `owner: User @index` creates a non-unique index on _ownerID

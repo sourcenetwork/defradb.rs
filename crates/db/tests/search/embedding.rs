@@ -108,8 +108,8 @@ fn parse_embedding_vector_errors_on_non_numeric_value() {
 fn set_embedding_skips_when_effective_config_is_missing() {
     workers::block_on(async {
         let embeddings = vec![embedding_with_provider("unknown", "", "")];
-        let mut doc = Document::new();
-        doc.set("content", "hello");
+        let mut doc = Document::new(open_collection(&["content", "content_v"]));
+        doc.set("content", "hello").unwrap();
 
         let generated = set_embedding(
             &embeddings,
@@ -158,9 +158,14 @@ fn set_embedding_uses_each_field_provider_and_model() {
         ollama.field_name = "summary_v".to_string();
         ollama.fields = vec!["summary".to_string()];
 
-        let mut doc = Document::new();
-        doc.set("content", "hello");
-        doc.set("summary", "world");
+        let mut doc = Document::new(open_collection(&[
+            "content",
+            "summary",
+            "content_v",
+            "summary_v",
+        ]));
+        doc.set("content", "hello").unwrap();
+        doc.set("summary", "world").unwrap();
 
         let generated = set_embedding(
             &[openai, ollama],
@@ -206,4 +211,22 @@ fn set_embedding_uses_each_field_provider_and_model() {
         );
     })
     .unwrap()
+}
+
+fn open_collection(fields: &[&str]) -> schema::CollectionVersion {
+    fields
+        .iter()
+        .enumerate()
+        .fold(
+            schema::CollectionBuilder::new("Test", "bafytest"),
+            |builder, (i, name)| {
+                builder.field(schema::FieldDescription::new(
+                    i.to_string(),
+                    *name,
+                    schema::FieldKind::Scalar(schema::ScalarKind::None),
+                    schema::CType::LwwRegister,
+                ))
+            },
+        )
+        .build()
 }

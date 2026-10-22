@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, FixedOffset, Utc};
 use defra_core::RequestContext;
 use document::{DocID, Document};
-use schema::{CType, CollectionVersion};
+use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 use tracing;
 
@@ -74,7 +74,8 @@ impl UpsertInput {
             });
             let normal_value =
                 json_to_normal_value_with_kind_and_time(value, field_kind, Some(utc_now))?;
-            doc.set(field_name.clone(), normal_value);
+            doc.set(field_name.clone(), normal_value)
+                .map_err(|e| QueryError::execution(e.to_string()))?;
             modified_count += 1;
         }
 
@@ -334,36 +335,22 @@ impl UpsertNode {
             );
 
             // Create document with the specified ID, using schema-aware type coercion
-            let mut doc = Document::with_id(doc_id);
-            if let Some(ref collection) = self.collection {
-                doc.set_collection((**collection).clone());
-            }
+            let collection = self
+                .collection
+                .as_ref()
+                .ok_or_else(|| QueryError::execution("upsert has no collection definition"))?;
+            let mut doc = Document::with_id(doc_id, collection.clone());
             for (field_name, value) in &input.fields {
-                let field_kind = self.collection.as_ref().and_then(|c| {
-                    c.fields
-                        .iter()
-                        .find(|f| f.name == *field_name)
-                        .map(|f| &f.kind)
-                });
-                let crdt_type = self
-                    .collection
-                    .as_ref()
-                    .and_then(|c| {
-                        c.fields
-                            .iter()
-                            .find(|f| f.name == *field_name)
-                            .map(|f| f.crdt_type)
-                    })
-                    .unwrap_or(CType::LwwRegister);
+                let field_kind = collection
+                    .fields
+                    .iter()
+                    .find(|f| f.name == *field_name)
+                    .map(|f| &f.kind);
                 let normal_value =
                     json_to_normal_value_with_kind_and_time(value, field_kind, Some(utc_now))?;
-                doc.set_with_crdt(field_name.clone(), crdt_type, normal_value)
-                    .map_err(|e| {
-                        QueryError::execution(format!(
-                            "Failed to set field '{}' with CRDT type {:?}: {}",
-                            field_name, crdt_type, e
-                        ))
-                    })?;
+                doc.set(field_name.clone(), normal_value).map_err(|e| {
+                    QueryError::execution(format!("Failed to set field '{}': {}", field_name, e))
+                })?;
             }
 
             let doc = self.prepared_create(doc)?;
@@ -396,11 +383,11 @@ impl UpsertNode {
             let utc_offset = FixedOffset::east_opt(0).unwrap();
             Utc::now().with_timezone(&utc_offset)
         });
-        let doc = if let Some(ref collection) = self.collection {
-            create_input.to_document_with_schema_and_time(collection, Some(utc_now))?
-        } else {
-            create_input.to_document()?
-        };
+        let collection = self
+            .collection
+            .as_ref()
+            .ok_or_else(|| QueryError::execution("upsert has no collection definition"))?;
+        let doc = create_input.to_document_with_schema_and_time(collection, Some(utc_now))?;
 
         let doc = self.prepared_create(doc)?;
         let result = self

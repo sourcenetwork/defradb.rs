@@ -53,12 +53,18 @@ fn field_names(field_count: usize) -> Vec<String> {
 }
 
 fn collection_version(field_count: usize) -> CollectionVersion {
-    let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+    let mut fields = vec![FieldDescription::new(
+        "1",
+        "_docID",
+        FieldKind::doc_id(),
+        schema::CType::LwwRegister,
+    )];
     for (index, name) in field_names(field_count).iter().enumerate() {
         fields.push(FieldDescription::new(
             (index + 2).to_string(),
             name,
             FieldKind::string(),
+            schema::CType::LwwRegister,
         ));
     }
     CollectionVersion::new("Users", SCHEMA_VERSION_ID, COLLECTION_ID, fields)
@@ -76,9 +82,10 @@ async fn make_handler(field_count: usize) -> (BenchHandler, Arc<DefraBlockstore<
 }
 
 fn make_document(field_count: usize, revision: usize) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(collection_version(field_count));
     for name in field_names(field_count) {
-        doc.set(&name, NormalValue::String(format!("{name}-rev{revision}")));
+        doc.set(&name, NormalValue::String(format!("{name}-rev{revision}")))
+            .unwrap();
     }
     doc
 }

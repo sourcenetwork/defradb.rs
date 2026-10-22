@@ -28,10 +28,20 @@ fn test_relation_id_field_name() {
 #[test]
 fn test_add_relation_id_fields() {
     let fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "author", FieldKind::relation("users", false))
-            .with_relation_name("user_posts")
-            .as_primary(),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("user_posts")
+        .as_primary(),
     ];
     let mut coll = CollectionVersion::new("posts", "v1", "coll-posts", fields);
 
@@ -65,10 +75,20 @@ fn test_add_relation_id_fields() {
 #[test]
 fn test_add_relation_id_fields_skips_arrays() {
     let fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
         // Array relation (one-to-many from the "many" side) - no _id field needed
-        FieldDescription::new("2", "posts", FieldKind::relation("posts", true))
-            .with_relation_name("user_posts"),
+        FieldDescription::new(
+            "2",
+            "posts",
+            FieldKind::relation("posts", true),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("user_posts"),
     ];
     let mut coll = CollectionVersion::new("users", "v1", "coll-users", fields);
 
@@ -82,12 +102,27 @@ fn test_add_relation_id_fields_skips_arrays() {
 #[test]
 fn test_add_relation_id_fields_skips_existing() {
     let fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "author", FieldKind::relation("users", false))
-            .with_relation_name("user_posts"),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("user_posts"),
         // _id field already exists
-        FieldDescription::new("3", "_authorID", FieldKind::doc_id())
-            .with_relation_name("user_posts"),
+        FieldDescription::new(
+            "3",
+            "_authorID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("user_posts"),
     ];
     let mut coll = CollectionVersion::new("posts", "v1", "coll-posts", fields);
 
@@ -102,10 +137,20 @@ fn test_add_relation_id_fields_skips_existing() {
 #[test]
 fn test_doc_relation_does_not_replace_builtin_doc_id() {
     let fields = vec![
-        FieldDescription::new("0", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("1", "doc", FieldKind::relation("target", false))
-            .with_relation_name("___")
-            .as_primary(),
+        FieldDescription::new(
+            "0",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "1",
+            "doc",
+            FieldKind::relation("target", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("___")
+        .as_primary(),
     ];
     let mut coll = CollectionVersion::new("test", "v1", "coll-test", fields);
 
@@ -122,9 +167,24 @@ fn test_doc_relation_does_not_replace_builtin_doc_id() {
 #[test]
 fn test_has_relation_id_field() {
     let fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "author", FieldKind::relation("users", false)),
-        FieldDescription::new("3", "_authorID", FieldKind::doc_id()),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "3",
+            "_authorID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
     ];
     let coll = CollectionVersion::new("posts", "v1", "coll-posts", fields);
 
@@ -139,18 +199,43 @@ fn test_has_relation_id_field() {
 #[test]
 fn test_finalize_relations_adds_id_fields() {
     let users_fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "name", FieldKind::string()),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         // One-to-many (array) - no _id field needed
-        FieldDescription::new("3", "posts", FieldKind::relation("posts", true))
-            .with_relation_name("user_posts"),
+        FieldDescription::new(
+            "3",
+            "posts",
+            FieldKind::relation("posts", true),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("user_posts"),
     ];
     let posts_fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "title", FieldKind::string()),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "title",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        ),
         // Many-to-one (non-array) - _id field needed
-        FieldDescription::new("3", "author", FieldKind::relation("users", false))
-            .with_relation_name("user_posts"),
+        FieldDescription::new(
+            "3",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("user_posts"),
     ];
 
     let mut collections = BTreeMap::new();
@@ -203,9 +288,19 @@ fn test_finalize_relations_adds_id_fields() {
 #[test]
 fn test_add_relation_id_fields_rejects_duplicate_id() {
     let fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "author", FieldKind::relation("users", false))
-            .with_relation_name("user_posts"),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("user_posts"),
     ];
     let mut coll = CollectionVersion::new("posts", "v1", "coll-posts", fields);
 
@@ -231,9 +326,19 @@ fn test_finalize_relations_hashmap() {
             "v1",
             "coll-users",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "posts", FieldKind::relation("posts", true))
-                    .with_relation_name("user_posts"),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "posts",
+                    FieldKind::relation("posts", true),
+                    schema::CType::LwwRegister,
+                )
+                .with_relation_name("user_posts"),
             ],
         ),
     );
@@ -244,9 +349,19 @@ fn test_finalize_relations_hashmap() {
             "v1",
             "coll-posts",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "author", FieldKind::relation("users", false))
-                    .with_relation_name("user_posts"),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "author",
+                    FieldKind::relation("users", false),
+                    schema::CType::LwwRegister,
+                )
+                .with_relation_name("user_posts"),
             ],
         ),
     );

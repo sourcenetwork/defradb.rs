@@ -76,23 +76,40 @@ impl Drop for Fixture {
     }
 }
 
-pub(super) async fn fixture() -> Fixture {
-    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-    let kms = Arc::new(CountingKms::default());
-    db.set_kms(kms.clone());
-    db.create_collection(CollectionVersion::new(
+pub(super) fn secrets_collection() -> CollectionVersion {
+    CollectionVersion::new(
         "Secrets",
         "secrets-v1",
         "col-secrets",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::string()),
-            FieldDescription::new("3", "right", FieldKind::string()),
-            FieldDescription::new("4", "public", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "right",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "4",
+                "public",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
-    ))
-    .await
-    .unwrap();
+    )
+}
+
+pub(super) async fn fixture() -> Fixture {
+    let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+    let kms = Arc::new(CountingKms::default());
+    db.set_kms(kms.clone());
+    db.create_collection(secrets_collection()).await.unwrap();
     Fixture { db, kms }
 }
 
@@ -104,10 +121,10 @@ fn encrypt() {
 }
 
 fn document(value: &str) -> Document {
-    let mut doc = Document::new();
-    doc.set("left", value);
-    doc.set("right", value);
-    doc.set("public", value);
+    let mut doc = Document::new(secrets_collection());
+    doc.set("left", value).unwrap();
+    doc.set("right", value).unwrap();
+    doc.set("public", value).unwrap();
     doc
 }
 
@@ -309,13 +326,13 @@ fn batch_inherits_whole_document_encryption_for_a_new_field() {
         let created = batch
             .create(
                 "Secrets",
-                Document::from_json_str(r#"{"left":"one"}"#).unwrap(),
+                Document::from_json_str(r#"{"left":"one"}"#, secrets_collection()).unwrap(),
             )
             .await
             .unwrap();
         set_encryption_config(None);
         let mut doc = created.document;
-        doc.set("right", "two");
+        doc.set("right", "two").unwrap();
         batch
             .update("Secrets", doc, ["right".to_string()].into_iter().collect())
             .await
@@ -331,23 +348,29 @@ fn batch_inherits_whole_document_encryption_for_a_new_field() {
 fn signed_encrypted_counter_update_preserves_prepared_randomness() {
     workers::block_on(async {
         let fixture = fixture().await;
+        let counters = CollectionVersion::new(
+            "Counters",
+            "cv1",
+            "counters",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
+                    .with_crdt_type(schema::CType::PnCounter),
+            ],
+        );
         fixture
             .db
-            .create_collection(CollectionVersion::new(
-                "Counters",
-                "cv1",
-                "counters",
-                vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "count", FieldKind::int())
-                        .with_crdt_type(schema::CType::PnCounter),
-                ],
-            ))
+            .create_collection(counters.clone())
             .await
             .unwrap();
         let mutator = AutoCommitMutator::new(fixture.db.clone());
-        let mut initial = Document::new();
-        initial.set("count", document::NormalValue::Int(5));
+        let mut initial = Document::new(counters.clone());
+        initial.set("count", document::NormalValue::Int(5)).unwrap();
         let created = mutator.create("Counters", initial).await.unwrap();
         set_encryption_config(Some(EncryptionConfig {
             encrypt_doc: false,
@@ -369,8 +392,7 @@ fn signed_encrypted_counter_update_preserves_prepared_randomness() {
             remote_signer: Some(signer.clone()),
             signing_authorization: None,
         }));
-        let mut update = Document::new();
-        update.set_id(created.doc_id);
+        let mut update = Document::with_id(created.doc_id, counters);
         update.set_counter_delta("count".into(), document::NormalValue::Int(3));
         let result = mutator
             .update(
@@ -395,17 +417,26 @@ fn signed_encrypted_counter_update_preserves_prepared_randomness() {
 fn signed_document_encryption_without_kms_reuses_local_keys() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        db.create_collection(CollectionVersion::new(
+        let local = CollectionVersion::new(
             "Local",
             "local-v1",
             "local-root",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "value", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "value",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
-        ))
-        .await
-        .unwrap();
+        );
+        db.create_collection(local.clone()).await.unwrap();
         set_encryption_config(Some(EncryptionConfig {
             encrypt_doc: true,
             encrypt_fields: vec![],
@@ -426,8 +457,8 @@ fn signed_document_encryption_without_kms_reuses_local_keys() {
             remote_signer: Some(signer.clone()),
             signing_authorization: None,
         }));
-        let mut doc = Document::new();
-        doc.set("value", "encrypted");
+        let mut doc = Document::new(local);
+        doc.set("value", "encrypted").unwrap();
         let result = AutoCommitMutator::new(db).create("Local", doc).await;
         defra_core::signing::set_signing_config(None);
         set_encryption_config(None);

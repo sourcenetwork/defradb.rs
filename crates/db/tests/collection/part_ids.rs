@@ -24,9 +24,14 @@ fn collection() -> CollectionVersion {
         "parted-v1",
         "col-parted",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::int()),
-            FieldDescription::new("3", "right", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -37,7 +42,7 @@ async fn seeded() -> (CountingDb, DocID) {
     let created = AutoCommitMutator::new(Arc::clone(&db))
         .create(
             "Parted",
-            Document::from_json_str(r#"{"left": 0, "right": 0}"#).unwrap(),
+            Document::from_json_str(r#"{"left": 0, "right": 0}"#, collection()).unwrap(),
         )
         .await
         .unwrap();
@@ -51,7 +56,7 @@ async fn update_in_explicit_txn(db: &CountingDb, doc_id: &DocID, field: &str, va
         .await
         .unwrap()
         .unwrap();
-    doc.set(field, NormalValue::Int(value));
+    doc.set(field, NormalValue::Int(value)).unwrap();
     mutator
         .update("Parted", doc, RapidHashSet::from_iter([field.to_string()]))
         .await

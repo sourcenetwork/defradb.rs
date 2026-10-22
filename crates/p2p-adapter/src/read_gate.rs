@@ -239,8 +239,13 @@ mod tests {
             "version-1",
             "collection-1",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         )
         .with_policy(PolicyDescription::new("policy1", "users"))
@@ -319,7 +324,12 @@ mod tests {
                 "Other",
                 "version-2",
                 "collection-2",
-                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+                vec![FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                )],
             )
             .with_policy(PolicyDescription::new("policy2", "others")),
         )

@@ -10,7 +10,12 @@ fn test_collection() -> Collection {
         "Users",
         "v1",
         "col-users",
-        vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+        vec![FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        )],
     ))
 }
 

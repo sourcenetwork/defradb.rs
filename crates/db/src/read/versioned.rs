@@ -9,6 +9,7 @@ use cid::Cid;
 use defra_core::block::{Block, CrdtDelta, Encryption};
 use document::{Document, NormalValue};
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
+use schema::CollectionVersion;
 use std::collections::VecDeque;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -75,9 +76,10 @@ impl<S: Store> VersionedFetcher<S> {
         &self,
         cid_str: &str,
         expected_doc_id: Option<&str>,
+        collection: Arc<CollectionVersion>,
     ) -> Result<Document> {
         let docs = self
-            .get_documents_at_cid(cid_str, expected_doc_id, None)
+            .get_documents_at_cid(cid_str, expected_doc_id, None, collection)
             .await?;
         docs.into_iter().next().ok_or_else(|| {
             Error::Serialization("cid either does not exist or belong to document".to_string())
@@ -97,6 +99,7 @@ impl<S: Store> VersionedFetcher<S> {
         cid_str: &str,
         expected_doc_id: Option<&str>,
         collection_short_id: Option<u32>,
+        collection: Arc<CollectionVersion>,
     ) -> Result<Vec<Document>> {
         let txn = self.txn.as_deref().ok_or(Error::TxnNotActive)?;
 
@@ -119,6 +122,7 @@ impl<S: Store> VersionedFetcher<S> {
                     &target_block,
                     collection_short_id,
                     expected,
+                    collection,
                 )
                 .await;
         }
@@ -166,10 +170,11 @@ impl<S: Store> VersionedFetcher<S> {
         let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
         sorted_blocks.sort_by_key(|(_, block)| block.delta.priority());
 
-        members
-            .into_iter()
-            .map(|doc_id| self.replay_deltas(&sorted_blocks, &doc_id))
-            .collect()
+        let mut documents = Vec::with_capacity(members.len());
+        for doc_id in members {
+            documents.push(self.replay_deltas(&collection, &sorted_blocks, &doc_id)?);
+        }
+        Ok(documents)
     }
 
     /// Whether `doc_id` belongs to `collection_short_id` (`None` skips the gate).
@@ -202,6 +207,7 @@ impl<S: Store> VersionedFetcher<S> {
         start_block: &Block,
         collection_short_id: Option<u32>,
         expected_doc_id: Option<String>,
+        collection: Arc<CollectionVersion>,
     ) -> Result<Vec<Document>> {
         // Walk the collection DAG backwards to find all document composite CIDs.
         // Each collection block links to one document composite block.
@@ -287,7 +293,7 @@ impl<S: Store> VersionedFetcher<S> {
             let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
             sorted_blocks.sort_by_key(|(_, block)| block.delta.priority());
 
-            let document = self.replay_deltas(&sorted_blocks, &doc_id)?;
+            let document = self.replay_deltas(&collection, &sorted_blocks, &doc_id)?;
             documents.push(document);
         }
 
@@ -630,7 +636,12 @@ impl<S: Store> VersionedFetcher<S> {
     /// Replay CRDT deltas to reconstruct document state.
     ///
     /// Blocks should be sorted by priority (ascending) before calling this method.
-    fn replay_deltas(&self, blocks: &[(Cid, Block)], doc_id: &str) -> Result<Document> {
+    fn replay_deltas(
+        &self,
+        collection: &Arc<CollectionVersion>,
+        blocks: &[(Cid, Block)],
+        doc_id: &str,
+    ) -> Result<Document> {
         let mut field_values: RapidHashMap<String, (u64, NormalValue)> = RapidHashMap::new();
         let mut is_deleted = false;
         let mut max_composite_priority: u64 = 0;
@@ -757,9 +768,9 @@ impl<S: Store> VersionedFetcher<S> {
         }
 
         // Build document from collected field values
-        let mut document = Document::new();
+        let mut document = Document::new(collection.clone());
         for (field_name, (_priority, value)) in field_values {
-            document.set(&field_name, value);
+            document.set_unchecked(field_name, value);
         }
 
         // Set document ID

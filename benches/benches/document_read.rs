@@ -36,9 +36,14 @@ fn collection_version() -> CollectionVersion {
         "bafkdocread",
         "docread",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "city", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "city", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -57,9 +62,11 @@ async fn fixture(count: usize) -> (Fetcher, Vec<String>) {
     let mutator = db::write::autocommit::AutoCommitMutator::new(db.clone());
     let mut ids = Vec::with_capacity(count);
     for seq in 0..count {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String(format!("person-{seq}")));
-        doc.set("city", NormalValue::String(format!("city-{}", seq % 10)));
+        let mut doc = Document::new(collection_version());
+        doc.set("name", NormalValue::String(format!("person-{seq}")))
+            .unwrap();
+        doc.set("city", NormalValue::String(format!("city-{}", seq % 10)))
+            .unwrap();
         let created = mutator
             .create(COLLECTION, doc)
             .await

@@ -28,10 +28,11 @@ async fn node(sdl: &str) -> (Arc<DB<RegolithStore>>, Arc<RefusingStore>) {
         .await
         .unwrap();
     let db = Arc::new(db);
+    let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
     db::AutoCommitMutator::new(db.clone())
         .create(
             "Users",
-            Document::from_json_str(r#"{"name": "Ada"}"#).unwrap(),
+            Document::from_json_str(r#"{"name": "Ada"}"#, users).unwrap(),
         )
         .await
         .unwrap();
@@ -117,10 +118,11 @@ fn while_a_reindex_is_owed_no_index_answers_queries_and_writers_keep_them() {
             1
         );
 
+        let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
         db::AutoCommitMutator::new(db.clone())
             .create(
                 "Users",
-                Document::from_json_str(r#"{"name": "Grace"}"#).unwrap(),
+                Document::from_json_str(r#"{"name": "Grace"}"#, users).unwrap(),
             )
             .await
             .expect("an owed reindex changes nothing for writers");

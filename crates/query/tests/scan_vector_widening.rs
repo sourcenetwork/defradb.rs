@@ -63,15 +63,17 @@ impl Default for WideningFetcher {
 
 impl WideningFetcher {
     fn document(short_id: u64) -> document::Document {
-        let mut doc = document::Document::new();
+        let mut doc = document::Document::new(definition(&["_docID", "title"]));
         doc.set(
             "_docID",
             document::NormalValue::String(format!("bae-{short_id}")),
-        );
+        )
+        .unwrap();
         doc.set(
             "title",
             document::NormalValue::String(format!("doc-{short_id}")),
-        );
+        )
+        .unwrap();
         doc
     }
 }
@@ -159,8 +161,18 @@ fn collection() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     version.indexes = vec![schema::IndexDescription::new("by_embedding")];
@@ -330,4 +342,22 @@ fn an_exhausted_index_falls_back_to_the_collection() {
         );
     })
     .unwrap()
+}
+
+fn definition(fields: &[&str]) -> schema::CollectionVersion {
+    fields
+        .iter()
+        .enumerate()
+        .fold(
+            schema::CollectionBuilder::new("Test", "bafytest"),
+            |builder, (i, name)| {
+                builder.field(schema::FieldDescription::new(
+                    i.to_string(),
+                    *name,
+                    schema::FieldKind::Scalar(schema::ScalarKind::None),
+                    schema::CType::LwwRegister,
+                ))
+            },
+        )
+        .build()
 }

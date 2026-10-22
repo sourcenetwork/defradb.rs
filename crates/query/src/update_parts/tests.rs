@@ -10,10 +10,21 @@ fn tally() -> CollectionVersion {
         "tally-v1",
         "col-tally",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "count", FieldKind::int()).with_crdt_type(CType::PnCounter),
-            FieldDescription::new("3", "label", FieldKind::string()),
-            FieldDescription::new("4", "note", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "count", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PnCounter),
+            FieldDescription::new(
+                "3",
+                "label",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("4", "note", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -74,6 +85,7 @@ fn a_written_embedding_source_brings_the_embedding() {
         "5",
         "vector",
         FieldKind::float64_array(),
+        schema::CType::LwwRegister,
     ));
     collection
         .vector_embeddings
@@ -212,6 +224,7 @@ fn a_run_after_a_lost_part_still_decides_what_a_rule_reads() {
         "5",
         "vector",
         FieldKind::float64_array(),
+        schema::CType::LwwRegister,
     ));
     embedded.vector_embeddings.push(VectorEmbeddingDescription {
         field_name: "vector".to_string(),
