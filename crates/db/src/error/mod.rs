@@ -22,6 +22,12 @@ pub enum Error {
         source: document::Error,
     },
 
+    #[error(
+        "this store holds values of the custom CRDT type `{crdt}`, which this node does not \
+         register: register it with `NodeBuilder::with_crdt` before opening the store"
+    )]
+    UnregisteredStoredCrdt { crdt: String },
+
     #[error("collection '{0}' not found")]
     CollectionNotFound(String),
 

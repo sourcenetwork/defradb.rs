@@ -1074,22 +1074,6 @@ pub struct NodeBuilder {
     crdts: Vec<crdt::Registration>,
 }
 
-/// The background replay of the blocks of custom CRDT types this node has
-/// that an earlier build, without them, parked; `None` with no custom type.
-/// Only P2P parks blocks, so only a P2P build merges them.
-#[cfg(all(feature = "p2p", not(target_arch = "wasm32")))]
-fn parked_crdt_replay<S>(database: &Arc<db::DB<S>>, store: &Arc<S>) -> Option<workers::Background>
-where
-    S: storage::corekv::Store + 'static,
-{
-    database.crdts().custom_names().next()?;
-    let blockstore = blockstore::DefraBlockstore::new(store.clone(), true)
-        .with_max_txn_retries(database.options().max_txn_retries())
-        .placed_on(database.pool());
-    let handler = db::merge::create_merge_handler(database.clone(), Arc::new(blockstore));
-    Some(handler.start_parked_replay())
-}
-
 /// Durability is a separate builder setting, so it is applied over the
 /// caller's options rather than being one of the values they replace.
 fn resolve_regolith_options(
@@ -1932,8 +1916,8 @@ impl NodeBuilder {
             database.clone().start_vector_rebuild_task(),
             database.clone().start_downsample_task(),
         ]);
-        #[cfg(all(feature = "p2p", not(target_arch = "wasm32")))]
-        if let Some(replay) = parked_crdt_replay(&database, &store) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(replay) = database.clone().start_parked_replay() {
             background_tasks.0.push(replay);
         }
         #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]

@@ -532,12 +532,44 @@ impl Key for P2PQuarantinedDagKey {
     }
 }
 
+/// StoredCrdtTypeKey: a custom CRDT type some document part in this store was
+/// written by. A node opens the store only if it registers every such type.
+///
+/// Structure: /crdt/stored/[CrdtName]
+/// Example: /crdt/stored/maxreg
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredCrdtTypeKey {
+    /// The custom CRDT type's name.
+    pub crdt: String,
+}
+
+impl StoredCrdtTypeKey {
+    pub const PREFIX: &'static str = "/crdt/stored/";
+
+    pub fn new(crdt: impl Into<String>) -> Self {
+        Self { crdt: crdt.into() }
+    }
+}
+
+impl Key for StoredCrdtTypeKey {
+    fn bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
+
+    fn to_string(&self) -> String {
+        format!("{}{}", Self::PREFIX, self.crdt)
+    }
+}
+
 /// ParkedCrdtBlockKey: a field block of a custom CRDT type this node does not
 /// have, kept until a build of the node registers the type and merges it. One
-/// key per collection, document, field and block, so parking is a blind put.
+/// key per collection, document, field and block, so parking is a blind put;
+/// the block's priority, fixed-width, orders a field's blocks oldest first.
+/// A parked block that cannot merge moves under [`Self::FAILED_PREFIX`], with
+/// the rest of its key unchanged.
 ///
-/// Structure: /crdt/parked/[CrdtName]/[CollectionID]/[DocShortID]/[Field]/[CID]
-/// Example: /crdt/parked/maxreg/col-1/7/best/bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqrsgxbyqx54
+/// Structure: /crdt/parked/[CrdtName]/[CollectionID]/[DocShortID]/[Field]/[Priority]/[CID]
+/// Example: /crdt/parked/maxreg/col-1/7/best/00000000000000000003/bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqrsgxbyqx54
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParkedCrdtBlockKey {
     /// The custom CRDT type the block was written by.
@@ -548,16 +580,22 @@ pub struct ParkedCrdtBlockKey {
     pub doc_short_id: u64,
     /// The field the block writes.
     pub field: String,
+    /// The block's priority (its height in the field's DAG).
+    pub priority: u64,
     /// CID of the field block (canonical string form).
     pub cid: String,
 }
 
 impl ParkedCrdtBlockKey {
+    pub const PREFIX: &'static str = "/crdt/parked/";
+    pub const FAILED_PREFIX: &'static str = "/crdt/failed/";
+
     pub fn new(
         crdt: impl Into<String>,
         collection: impl Into<String>,
         doc_short_id: u64,
         field: impl Into<String>,
+        priority: u64,
         cid: impl Into<String>,
     ) -> Self {
         Self {
@@ -565,13 +603,20 @@ impl ParkedCrdtBlockKey {
             collection: collection.into(),
             doc_short_id,
             field: field.into(),
+            priority,
             cid: cid.into(),
         }
     }
 
     /// The prefix of every parked block of the type `crdt`.
     pub fn crdt_prefix(crdt: &str) -> Vec<u8> {
-        format!("/crdt/parked/{crdt}/").into_bytes()
+        format!("{}{crdt}/", Self::PREFIX).into_bytes()
+    }
+
+    /// Where the parked block at `key` moves when it cannot merge.
+    pub fn failed(key: &[u8]) -> Option<Vec<u8>> {
+        let rest = key.strip_prefix(Self::PREFIX.as_bytes())?;
+        Some([Self::FAILED_PREFIX.as_bytes(), rest].concat())
     }
 }
 
@@ -582,8 +627,14 @@ impl Key for ParkedCrdtBlockKey {
 
     fn to_string(&self) -> String {
         format!(
-            "/crdt/parked/{}/{}/{}/{}/{}",
-            self.crdt, self.collection, self.doc_short_id, self.field, self.cid
+            "{}{}/{}/{}/{}/{:020}/{}",
+            Self::PREFIX,
+            self.crdt,
+            self.collection,
+            self.doc_short_id,
+            self.field,
+            self.priority,
+            self.cid
         )
     }
 }

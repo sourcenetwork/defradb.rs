@@ -5,10 +5,14 @@
 //! parked blocks in a background task, a page at a time, each in the
 //! transaction that removes its record, so a replay that stops and runs again
 //! merges each block exactly once. Until a block merges, its field reads as
-//! the blocks merged so far give it (unset when none has).
+//! the blocks merged so far give it (unset when none has). A block that
+//! cannot merge moves, with the reason, to a failed record of its own, so it
+//! never holds up the others; one whose key this node does not hold stays
+//! parked, and the replay never asks a peer for it.
 use super::*;
 use datastore::BasicTxn;
 use schema::CrdtName;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use storage::corekv::{IterOptions, RetryAttemptError, RetryAttemptValue};
 use storage::keys::headstore::HeadstoreDocKey;
 use storage::keys::ParkedCrdtBlockKey;
@@ -29,6 +33,7 @@ pub(super) struct Place<'a> {
 }
 
 /// A parked block read and decrypted outside the transaction that merges it.
+#[derive(Clone)]
 struct Ready {
     key: Vec<u8>,
     cid: Cid,
@@ -45,6 +50,15 @@ struct Parked {
     doc_short_id: u64,
     collection_id: Option<String>,
     priority: u64,
+    /// Why the block could not merge, on a failed record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Whether an error is the block's own, so the block fails and the replay
+/// goes on, or the store's, so the replay stops until the next build.
+fn the_blocks(error: &MergeError) -> bool {
+    !matches!(error, MergeError::Storage(_))
 }
 
 impl<S, B> DbMergeHandler<S, B>
@@ -68,6 +82,7 @@ where
             doc_short_id: place.doc_short_id,
             collection_id: place.collection_id.map(str::to_owned),
             priority: place.priority,
+            error: None,
         };
         let value = serde_json::to_vec(&record)
             .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
@@ -76,6 +91,7 @@ where
             place.collection,
             place.doc_short_id,
             place.field,
+            place.priority,
             record.cid.clone(),
         )
         .bytes();
@@ -103,7 +119,7 @@ where
     /// Merge the parked blocks of the node's custom types in the background,
     /// on the database's pool.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn start_parked_replay(self) -> workers::Background {
+    fn start_parked_replay(self) -> workers::Background {
         let pool = self.db.pool().cloned();
         workers::spawn_background(
             pool.as_ref(),
@@ -121,22 +137,33 @@ where
     }
 
     /// Merge every parked block of a type the node has, a page at a time,
-    /// each page in one transaction, and return how many merged. A block
-    /// that cannot merge yet (its decryption key is not local) stays parked
-    /// for the next build.
+    /// each page in one transaction, and return how many merged. Within a
+    /// field, blocks merge oldest first. A block that cannot merge fails on
+    /// its own; one whose decryption key is not local stays parked for the
+    /// next build.
     pub async fn replay_parked(&self) -> std::result::Result<usize, MergeError> {
         let mut merged = 0;
         for crdt in self.db.crdts().custom_names() {
             let mut after = None;
             loop {
-                let mut page = self.parked(crdt, after.take()).await?;
+                let page = self.parked(crdt, after.take()).await?;
                 let full = page.len() == PAGE;
                 after = page.last().map(|(key, _)| key.clone());
-                page.sort_by_key(|(_, record)| record.priority);
                 let mut ready = Vec::with_capacity(page.len());
                 for (key, record) in page {
-                    if let Some(block) = self.ready(crdt, key, record).await? {
-                        ready.push(block);
+                    match self.ready(crdt, &record).await {
+                        Ok(Some((cid, delta, parents))) => ready.push(Ready {
+                            key,
+                            cid,
+                            delta,
+                            parents,
+                            record,
+                        }),
+                        Ok(None) => {}
+                        Err(error) if the_blocks(&error) => {
+                            self.fail(&key, record, &error).await?;
+                        }
+                        Err(error) => return Err(error),
                     }
                 }
                 merged += self.replay_page(ready).await?;
@@ -181,14 +208,13 @@ where
         Ok(parked)
     }
 
-    /// A parked block read and decrypted, ready to merge; `None` when it
-    /// stays parked.
+    /// A parked block's CID, decrypted delta and parents, read outside the
+    /// transaction that merges it; `None` when it stays parked.
     async fn ready(
         &self,
         crdt: CrdtName,
-        key: Vec<u8>,
-        record: Parked,
-    ) -> std::result::Result<Option<Ready>, MergeError> {
+        record: &Parked,
+    ) -> std::result::Result<Option<(Cid, CrdtDelta, Vec<Cid>)>, MergeError> {
         let cid = Cid::try_from(record.cid.as_str())
             .map_err(|error| MergeError::BlockDecode(error.to_string()))?;
         let Some(bytes) = self
@@ -206,7 +232,7 @@ where
         if block.encryption.is_some() {
             if let Some(data) = delta.field_data_mut() {
                 match self
-                    .decrypt_block_data(data, block.encryption.as_ref(), None)
+                    .decrypt_block_data_locally(data, block.encryption.as_ref())
                     .await
                 {
                     Ok(decrypted) => *data = decrypted,
@@ -217,32 +243,52 @@ where
                 }
             }
         }
-        Ok(Some(Ready {
-            key,
-            cid,
-            delta,
-            parents: block.heads.clone().unwrap_or_default(),
-            record,
-        }))
+        Ok(Some((cid, delta, block.heads.clone().unwrap_or_default())))
     }
 
-    /// Merge a page of ready blocks in one transaction; returns how many
-    /// merged.
-    async fn replay_page(&self, page: Vec<Ready>) -> std::result::Result<usize, MergeError> {
-        if page.is_empty() {
-            return Ok(0);
+    /// Merge a page of ready blocks in one transaction and return how many
+    /// merged. A block that cannot merge fails, and the rest merge without it.
+    async fn replay_page(&self, mut page: Vec<Ready>) -> std::result::Result<usize, MergeError> {
+        loop {
+            if page.is_empty() {
+                return Ok(0);
+            }
+            let failed = Arc::new(AtomicUsize::new(usize::MAX));
+            match self.merge_page(&page, &failed).await {
+                Ok(merged) => {
+                    self.best_effort_finalize_linked_field_blocks(&merged).await;
+                    return Ok(merged.len());
+                }
+                Err(error) => match failed.load(Ordering::Acquire) {
+                    usize::MAX => return Err(error),
+                    index => {
+                        let block = page.remove(index);
+                        self.fail(&block.key, block.record, &error).await?;
+                    }
+                },
+            }
         }
+    }
+
+    /// One transaction merging `page`; on a block's own error, `failed`
+    /// names it.
+    async fn merge_page(
+        &self,
+        page: &[Ready],
+        failed: &Arc<AtomicUsize>,
+    ) -> std::result::Result<Vec<Cid>, MergeError> {
         let handler = self.clone();
-        let page = Arc::new(page);
-        let attempt = Arc::clone(&page);
-        let merged = datastore::transact(
+        let page: Arc<[Ready]> = page.iter().map(Ready::clone).collect();
+        let failed = Arc::clone(failed);
+        datastore::transact(
             self.db.store().as_ref(),
             self.db.options().retry_options(),
             move |txn| {
-                let (handler, page) = (handler.clone(), Arc::clone(&attempt));
+                let (handler, page, failed) =
+                    (handler.clone(), Arc::clone(&page), Arc::clone(&failed));
                 Box::pin(async move {
                     let mut merged = Vec::with_capacity(page.len());
-                    for block in page.iter() {
+                    for (index, block) in page.iter().enumerate() {
                         let replayed = handler
                             .replay_in_txn(
                                 txn,
@@ -253,7 +299,12 @@ where
                                 &block.record,
                             )
                             .await
-                            .map_err(|error| RetryAttemptError::Abort(Box::new(error)))?;
+                            .map_err(|error| {
+                                if the_blocks(&error) {
+                                    failed.store(index, Ordering::Release);
+                                }
+                                RetryAttemptError::Abort(Box::new(error))
+                            })?;
                         if replayed {
                             merged.push(block.cid);
                         }
@@ -263,10 +314,46 @@ where
             },
         )
         .await
-        .map_err(|error| MergeError::MergeFailed(format!("{error:?}")))?;
-        let merged: Vec<Cid> = merged;
-        self.best_effort_finalize_linked_field_blocks(&merged).await;
-        Ok(merged.len())
+        .map_err(|error| MergeError::MergeFailed(format!("{error:?}")))
+    }
+
+    /// Move the parked record at `key` to its failed record, with the reason,
+    /// in one transaction.
+    async fn fail(
+        &self,
+        key: &[u8],
+        mut record: Parked,
+        error: &MergeError,
+    ) -> std::result::Result<(), MergeError> {
+        tracing::error!(cid = record.cid, %error, "a parked block cannot merge and is set aside");
+        let Some(failed) = ParkedCrdtBlockKey::failed(key) else {
+            return Ok(());
+        };
+        record.error = Some(error.to_string());
+        let value = serde_json::to_vec(&record)
+            .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+        let key = key.to_vec();
+        datastore::transact(
+            self.db.store().as_ref(),
+            self.db.options().retry_options(),
+            move |txn| {
+                let (key, failed, value) = (key.clone(), failed.clone(), value.clone());
+                Box::pin(async move {
+                    let systemstore = txn.systemstore();
+                    let abort = |error: storage::corekv::Error| {
+                        RetryAttemptError::Abort(Box::new(MergeError::Storage(error.to_string())))
+                    };
+                    if systemstore.get(&key).await.map_err(abort)?.is_some() {
+                        systemstore.delete(&key).await.map_err(abort)?;
+                        systemstore.set(&failed, &value).await.map_err(abort)?;
+                    }
+                    Ok(Box::new(()) as RetryAttemptValue)
+                })
+            },
+        )
+        .await
+        .map(|_: ()| ())
+        .map_err(|error| MergeError::Storage(format!("{error:?}")))
     }
 
     /// The parked block merged as its composite would have merged it: the
@@ -384,5 +471,22 @@ where
         }
         systemstore.delete(key).await.map_err(storage)?;
         Ok(true)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<S> crate::DB<S>
+where
+    S: Store + 'static,
+{
+    /// Merge, in the background, the blocks of the node's custom types that
+    /// a build without them parked in this store; `None` with no custom
+    /// type. Every build replays them, P2P or not.
+    pub fn start_parked_replay(self: Arc<Self>) -> Option<workers::Background> {
+        self.crdts().custom_names().next()?;
+        let blockstore = blockstore::DefraBlockstore::new(Arc::clone(self.store()), true)
+            .with_max_txn_retries(self.options().max_txn_retries())
+            .placed_on(self.pool());
+        Some(crate::merge::create_merge_handler(self, Arc::new(blockstore)).start_parked_replay())
     }
 }

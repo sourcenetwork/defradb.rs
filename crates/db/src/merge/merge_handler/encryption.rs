@@ -73,6 +73,28 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         encryption_cid: Option<&Cid>,
         metadata: Option<&BlockMetadata<'_>>,
     ) -> std::result::Result<Vec<u8>, MergeError> {
+        self.decrypt_block_data_from(data, encryption_cid, metadata, false)
+            .await
+    }
+
+    /// [`decrypt_block_data`](Self::decrypt_block_data) with keys this node
+    /// holds only: a key held elsewhere is unavailable, and no peer is asked.
+    pub(super) async fn decrypt_block_data_locally(
+        &self,
+        data: &[u8],
+        encryption_cid: Option<&Cid>,
+    ) -> std::result::Result<Vec<u8>, MergeError> {
+        self.decrypt_block_data_from(data, encryption_cid, None, true)
+            .await
+    }
+
+    async fn decrypt_block_data_from(
+        &self,
+        data: &[u8],
+        encryption_cid: Option<&Cid>,
+        metadata: Option<&BlockMetadata<'_>>,
+        local_only: bool,
+    ) -> std::result::Result<Vec<u8>, MergeError> {
         let enc_cid = match encryption_cid {
             Some(cid) => cid,
             None => return Ok(data.to_vec()),
@@ -92,6 +114,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 return decrypt_with_key(data, key.as_slice());
             }
             let ctx = Self::kms_request_context(metadata);
+            if local_only {
+                let mut answers = kms
+                    .get_local_keys_each(&ctx, std::slice::from_ref(enc_cid))
+                    .await?;
+                let answer = answers.pop().unwrap_or(Err(kms::Error::KeyUnavailable));
+                return decrypt_with_key(data, &answer?);
+            }
             let results = kms.get_keys(&ctx, std::slice::from_ref(enc_cid)).await?;
             let mut receiver = results.into_receiver();
             let mut denied = None;
