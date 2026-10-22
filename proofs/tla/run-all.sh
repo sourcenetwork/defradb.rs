@@ -160,6 +160,11 @@ RUNS=(
   "MC_TextCrdt_Red_NextNode.cfg TextCrdt.tla RED" # always left child of the next node: a concurrent run splits a typed run (INV_NoInterleave)
   "MC_TextCrdt_Red_CommonAncestor.cfg TextCrdt.tla RED" # concurrent merge replayed from a block merely under every head: text differs from a full replay (INV_CriticalReplay)
   "MC_TextCrdt_Red_NullLast.cfg TextCrdt.tla RED" # null flag taken from the block merged last: a peer reads null beside a concurrent insert (INV_NullMatchesReplay)
+  "MC_JsonCrdt_Green_FirstValueOrMap.cfg JsonCrdt.tla GREEN" # JSON CRDT, first block sets a value or {}: same blocks same JSON, incremental equals replay, update beats delete, LWW per path
+  "MC_JsonCrdt_Green_FirstListOrDelete.cfg JsonCrdt.tla GREEN" # JSON CRDT, first block sets [] or deletes: the other half of the same state space
+  "MC_JsonCrdt_Red_DeleteWins.cfg JsonCrdt.tla RED" # a delete beats a concurrent edit below it: the edit vanishes (INV_UpdateWins)
+  "MC_JsonCrdt_Red_NoCid.cfg JsonCrdt.tla RED" # priority ties kept by arrival: peers with the same blocks differ (INV_Converge)
+  "MC_JsonCrdt_Red_DeleteImpliesMap.cfg JsonCrdt.tla RED" # a delete below a path implies a map: the path comes back with no set behind it (INV_DeleteCreatesNothing)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)
