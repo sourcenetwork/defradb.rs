@@ -89,8 +89,12 @@ pub(crate) fn compute_document_blocks_with_inputs(
         }
 
         let crdt = field_crdt_of(doc, field_name)?;
-        let value_bytes =
-            encode_value_as_cbor(crdt.block_data(field_value.value(), doc.pending_op(field_name)))?;
+        let value_bytes = crdt
+            .encode(
+                crdt.write(field_value.value(), doc.pending_op(field_name))
+                    .data,
+            )
+            .map_err(|error| error.to_string())?;
 
         // Encrypt delta and create Encryption metadata block if configured
         let (value_bytes, encryption_cid) = if let Some(enc) = encryption_config {
@@ -188,20 +192,12 @@ pub(crate) fn compute_document_blocks_with_inputs(
             encryption_cids.push(enc_cid);
         }
 
-        // For creates, heads are always empty
-        let nonce = crdt
-            .nonce(true, &mut || {
-                Err(crdt::FieldCrdtError::Nonce(
-                    "a create takes no random nonce".into(),
-                ))
-            })
-            .map_err(|error| BuildError::Message(error.to_string()))?;
-
+        // A create's blocks take no nonce, so its first blocks are reproducible.
         let delta = crdt.delta(crdt::DeltaParts {
             field_name,
             priority,
             schema_version_id,
-            nonce,
+            nonce: 0,
             data: value_bytes,
         });
 

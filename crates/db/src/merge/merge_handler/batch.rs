@@ -476,7 +476,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         // that before paying for a (possibly cross-network) KMS fetch whose
         // result would just be discarded by the dispatch below.
         if block.encryption.is_some()
-            && matches!(block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_))
+            && block.delta.field().is_some()
             && self
                 .resolve_field_block_identity(systemstore, cid)
                 .await?
@@ -495,75 +495,32 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
         }
 
         // Decrypt delta data if the block has encryption
-        let decrypted_block;
-        let effective_block = if block.encryption.is_some() {
-            match &block.delta {
-                CrdtDelta::Lww(payload) => {
-                    match self
-                        .decrypt_block_data(
-                            &payload.data,
-                            block.encryption.as_ref(),
-                            Some(&metadata),
-                        )
-                        .await
-                    {
-                        Ok(decrypted_data) => {
-                            let mut new_payload = payload.clone();
-                            new_payload.data = decrypted_data;
-                            decrypted_block = Block {
-                                delta: CrdtDelta::Lww(new_payload),
-                                heads: block.heads.clone(),
-                                links: block.links.clone(),
-                                encryption: block.encryption,
-                                signature: block.signature,
-                            };
-                            &decrypted_block
+        let mut decrypted_block;
+        let effective_block = match block.delta.field() {
+            Some(delta) if block.encryption.is_some() => {
+                match self
+                    .decrypt_block_data(delta.data, block.encryption.as_ref(), Some(&metadata))
+                    .await
+                {
+                    Ok(decrypted_data) => {
+                        decrypted_block = block.clone();
+                        if let Some(data) = decrypted_block.delta.field_data_mut() {
+                            *data = decrypted_data;
                         }
-                        Err(MergeError::Kms(kms::Error::AccessDenied { .. })) => {
-                            return Ok(MergeOutcome::terminal_skip(
-                                "encryption key unavailable for standalone field block",
-                            ));
-                        }
-                        Err(error @ MergeError::NeedsDecryptionKey(_)) => return Err(error),
-                        Err(error @ MergeError::Kms(_)) => return Err(error),
-                        Err(_) => &block,
+                        &decrypted_block
                     }
-                }
-                CrdtDelta::Counter(payload) => {
-                    match self
-                        .decrypt_block_data(
-                            &payload.data,
-                            block.encryption.as_ref(),
-                            Some(&metadata),
-                        )
-                        .await
-                    {
-                        Ok(decrypted_data) => {
-                            let mut new_payload = payload.clone();
-                            new_payload.data = decrypted_data;
-                            decrypted_block = Block {
-                                delta: CrdtDelta::Counter(new_payload),
-                                heads: block.heads.clone(),
-                                links: block.links.clone(),
-                                encryption: block.encryption,
-                                signature: block.signature,
-                            };
-                            &decrypted_block
-                        }
-                        Err(MergeError::Kms(kms::Error::AccessDenied { .. })) => {
-                            return Ok(MergeOutcome::terminal_skip(
-                                "encryption key unavailable for standalone field block",
-                            ));
-                        }
-                        Err(error @ MergeError::NeedsDecryptionKey(_)) => return Err(error),
-                        Err(error @ MergeError::Kms(_)) => return Err(error),
-                        Err(_) => &block,
+                    Err(MergeError::Kms(kms::Error::AccessDenied { .. })) => {
+                        return Ok(MergeOutcome::terminal_skip(
+                            "encryption key unavailable for standalone field block",
+                        ));
                     }
+                    Err(error @ (MergeError::NeedsDecryptionKey(_) | MergeError::Kms(_))) => {
+                        return Err(error)
+                    }
+                    Err(_) => &block,
                 }
-                _ => &block,
             }
-        } else {
-            &block
+            _ => &block,
         };
 
         // Dispatch based on delta type
@@ -605,7 +562,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 )
                 .await
             }
-            CrdtDelta::Lww(payload) => {
+            delta if delta.field().is_some() => {
                 let Some((doc_id_str, doc_short_id)) =
                     self.resolve_field_block_identity(systemstore, cid).await?
                 else {
@@ -615,56 +572,25 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 };
                 let mut ds = datastore.clone();
                 let result = self
-                    .process_lww_delta_in_txn(
+                    .merge_field_in_txn(
                         &mut ds,
                         headstore,
                         cid,
-                        payload,
-                        metadata.collection_id,
-                        &doc_id_str,
-                        doc_short_id,
-                        &mut super::block_reads::BlockReads::default(),
-                    )
-                    .await;
-                match result {
-                    Ok(r) if r.applied => Ok(MergeOutcome::Merged),
-                    Ok(_) => Ok(MergeOutcome::terminal_skip("rejected by CRDT")),
-                    Err(e) => Err(e),
-                }
-            }
-            CrdtDelta::Counter(payload) => {
-                let Some((doc_id_str, doc_short_id)) =
-                    self.resolve_field_block_identity(systemstore, cid).await?
-                else {
-                    return Ok(MergeOutcome::terminal_skip(
-                        "field block has no unambiguous owner; merged via its composite",
-                    ));
-                };
-                let mut ds = datastore.clone();
-                let result = self
-                    .process_counter_delta_in_txn(
-                        &mut ds,
-                        headstore,
-                        cid,
-                        payload,
+                        delta,
                         metadata.collection_id,
                         &doc_id_str,
                         doc_short_id,
                     )
-                    .await;
-                match result {
-                    Ok(r) if r.applied => {
-                        pending_field_block_finalizations
-                            .push(PendingFieldBlockFinalization { cids: vec![*cid] });
-                        Ok(MergeOutcome::Merged)
-                    }
-                    Ok(_) => {
-                        pending_field_block_finalizations
-                            .push(PendingFieldBlockFinalization { cids: vec![*cid] });
-                        Ok(MergeOutcome::terminal_skip("rejected by CRDT"))
-                    }
-                    Err(e) => Err(e),
+                    .await?;
+                if result.replicated_op() {
+                    pending_field_block_finalizations
+                        .push(PendingFieldBlockFinalization { cids: vec![*cid] });
                 }
+                Ok(if result.applied {
+                    MergeOutcome::Merged
+                } else {
+                    MergeOutcome::terminal_skip("rejected by CRDT")
+                })
             }
             CrdtDelta::FieldDefinition(_) => Ok(MergeOutcome::terminal_skip(
                 "field definition processed with collection",

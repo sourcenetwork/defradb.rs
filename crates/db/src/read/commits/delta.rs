@@ -11,9 +11,10 @@ use super::CommitsFetcher;
 impl<S: Store> CommitsFetcher<S> {
     /// Get field name from delta
     pub(super) fn get_field_name(&self, delta: &CrdtDelta) -> Option<String> {
+        if let Some(field) = delta.field() {
+            return Some(field.field_name.to_owned());
+        }
         match delta {
-            CrdtDelta::Lww(d) => Some(d.field_name.clone()),
-            CrdtDelta::Counter(d) => Some(d.field_name.clone()),
             CrdtDelta::Composite(_) => Some("_C".to_string()),
             CrdtDelta::Immutable(_) => Some(defra_core::block::IMMUTABLE_LINK_NAME.to_string()),
             CrdtDelta::Collection(_) => None,
@@ -57,35 +58,18 @@ impl<S: Store> CommitsFetcher<S> {
 
     /// Get delta data from delta
     pub(super) fn get_delta_data(&self, delta: &CrdtDelta) -> Option<Vec<u8>> {
-        match delta {
-            CrdtDelta::Lww(d) => {
-                if d.data.is_empty() {
-                    None
-                } else {
-                    Some(d.data.clone())
-                }
-            }
-            CrdtDelta::Counter(d) => {
-                if d.data.is_empty() {
-                    None
-                } else {
-                    Some(d.data.clone())
-                }
-            }
-            CrdtDelta::Composite(_) => None,
-            CrdtDelta::Collection(_) => None,
-            CrdtDelta::CollectionSet(_) => None,
-            CrdtDelta::FieldDefinition(_) => None,
-            CrdtDelta::CollectionDefinition(_) => None,
-            _ => None,
-        }
+        delta
+            .field()
+            .filter(|field| !field.data.is_empty())
+            .map(|field| field.data.to_vec())
     }
 
     /// Get schema version ID from delta
     pub(super) fn get_schema_version_id(&self, delta: &CrdtDelta) -> Option<String> {
+        if let Some(field) = delta.field() {
+            return Some(field.schema_version_id.to_owned());
+        }
         match delta {
-            CrdtDelta::Lww(d) => Some(d.schema_version_id.clone()),
-            CrdtDelta::Counter(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Composite(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Immutable(d) => Some(d.schema_version_id.clone()),
             CrdtDelta::Collection(d) => Some(d.schema_version_id.clone()),

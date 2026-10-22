@@ -2,7 +2,6 @@
 
 use cid::Cid;
 use defra_core::merge::MergeErrorDisposition;
-use document::NormalValue;
 
 /// Error type for database merge operations.
 #[derive(Debug, thiserror::Error)]
@@ -114,38 +113,6 @@ impl MergeError {
             | Self::NeedsDecryptionKey(_)
             | Self::NeedsBatchDecryptionKey { .. } => MergeErrorDisposition::Retryable,
         }
-    }
-}
-
-/// Result of processing an LWW delta, including whether it was applied
-/// and the value to use for document reconstruction.
-pub(crate) struct LwwMergeResult {
-    pub(crate) raw_value: Vec<u8>,
-    pub(crate) priority: u64,
-    /// Whether the merge was applied (vs rejected/skipped)
-    pub(crate) applied: bool,
-    /// The winning value for document reconstruction (if applied, use incoming; else read from store)
-    pub(crate) value: Option<NormalValue>,
-}
-
-/// Result of processing a Counter delta, including whether it was applied
-/// and the accumulated value for document reconstruction.
-pub struct CounterMergeResult {
-    /// Whether the merge was applied (vs skipped as already applied)
-    pub(crate) applied: bool,
-    /// The counter value after the merge
-    pub(crate) value: Option<NormalValue>,
-}
-
-impl CounterMergeResult {
-    /// True when the delta was applied rather than skipped as already applied.
-    pub fn applied(&self) -> bool {
-        self.applied
-    }
-
-    /// The counter's value after the merge, as the merging transaction sees it.
-    pub fn value(&self) -> Option<&NormalValue> {
-        self.value.as_ref()
     }
 }
 

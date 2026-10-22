@@ -2,10 +2,6 @@ use async_trait::async_trait;
 use blockstore::Blockstore as _;
 use blockstore::DefraBlockstore;
 use cid::Cid;
-use crdt::traits::Context;
-use crdt::traits::ReplicatedData;
-use crdt::Lww;
-use crdt::LwwDelta;
 use crypto::PrivateKey as _;
 use db::collection::Collection;
 use db::database::DB;
@@ -32,7 +28,6 @@ use defra_core::merge::MergeBlock;
 use defra_core::merge::MergeErrorDisposition;
 use defra_core::merge::MergeHandler;
 use defra_core::merge::MergeOutcome;
-use defra_core::types::DocId;
 use document::DocID;
 use document::Document;
 use document::NormalValue;
@@ -1057,73 +1052,8 @@ fn synced_collection_definition_persists_short_id_mapping() {
     .unwrap()
 }
 
-/// A standalone counter block for a document whose value does not exist yet
-/// is left to its composite: applying it alone would write a value holding
-/// one part. The composite applies it once and marks it merged.
-#[test]
-fn counter_merge_of_an_unmaterialized_document_waits_for_its_composite() {
-    workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_counter_schema().await;
-        let doc_id = DocID::new_v0(
-            "bafyreihgg6a5auqhikq4nvw6fj3kbreovdbazlisbs5kerkahoqwwiz75i"
-                .parse()
-                .unwrap(),
-        )
-        .to_string();
-
-        let mut delta_data = Vec::new();
-        ciborium::into_writer(&5_i64, &mut delta_data).unwrap();
-
-        let payload = CounterDeltaPayload {
-            field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
-            priority: 1,
-            data: delta_data,
-            nonce: 4242,
-        };
-        let block = Block {
-            delta: CrdtDelta::Counter(payload.clone()),
-            heads: None,
-            links: None,
-            encryption: None,
-            signature: None,
-        };
-        let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
-        blockstore.put(&cid, &block_data).await.unwrap();
-        register_test_block_owner(&handler, 1, &doc_id, &cid).await;
-
-        let metadata = BlockMetadata::normal(
-            &doc_id,
-            "col-counters",
-            "did:key:z6MkrCounterMergeTest",
-            None,
-            false,
-        );
-
-        let outcome = handler
-            .process_counter_delta(&cid, &payload, &metadata)
-            .await
-            .unwrap();
-        assert!(outcome.is_terminal_skip(), "{outcome:?}");
-        assert!(!blockstore.is_merged(&cid).await.unwrap());
-        let collection = handler.db().get_collection("Counters").unwrap().unwrap();
-        let txn = handler.db().new_txn(true).await.unwrap();
-        let stored = collection
-            .get_by_doc_id(
-                &txn.datastore().unwrap(),
-                &txn.systemstore().unwrap(),
-                &DocID::from_string(&doc_id).unwrap(),
-            )
-            .await
-            .unwrap();
-        assert!(stored.is_none(), "no partial document value was written");
-    })
-    .unwrap()
-}
-
-/// The counter block a standalone merge left to its composite is applied by
-/// that composite, once, and marked merged: the document holds its value.
+/// A counter block is applied by the composite that links it, once, and
+/// marked merged: the document holds its value.
 #[test]
 fn counter_merge_marks_cid_merged() {
     workers::block_on(async {
@@ -1141,11 +1071,6 @@ fn counter_merge_marks_cid_merged() {
         let [counter_cid] = built.field_cids[..] else {
             panic!("one counter field block, got {:?}", built.field_cids);
         };
-        let counter_block =
-            Block::from_dag_cbor(&blockstore.get(&counter_cid).await.unwrap().unwrap()).unwrap();
-        let CrdtDelta::Counter(payload) = counter_block.delta else {
-            panic!("the counter field block carries a counter delta");
-        };
         let collection_short_id = handler
             .db()
             .get_collection("Counters")
@@ -1160,13 +1085,6 @@ fn counter_merge_marks_cid_merged() {
             None,
             false,
         );
-
-        let outcome = handler
-            .process_counter_delta(&counter_cid, &payload, &metadata)
-            .await
-            .unwrap();
-        assert!(outcome.is_terminal_skip(), "{outcome:?}");
-        assert!(!blockstore.is_merged(&counter_cid).await.unwrap());
 
         let outcome = handler
             .handle_block(&built.cid, &built.block, metadata)
@@ -1203,8 +1121,7 @@ async fn read_counter_value(db: &Arc<DB<RegolithStore>>, doc_id: &str, field: &s
 
 /// Build + store a standalone counter delta block for `doc_id`/`score` with the
 /// given integer increment, returning its CID and the metadata to merge it.
-/// The block is persisted in the blockstore so `process_counter_delta` can find
-/// and mark it merged.
+/// The block is persisted in the blockstore.
 async fn put_counter_delta_block(
     blockstore: &Arc<DefraBlockstore<RegolithStore>>,
     _doc_id: &str,
@@ -1306,11 +1223,26 @@ fn interactive_counter_increment_and_concurrent_same_doc_merge_both_commit() {
             None,
             false,
         );
-        let merge_outcome = handler
-            .process_counter_delta(&merge_cid, &merge_payload, &metadata)
+        let merge_txn = db.new_txn(false).await.unwrap();
+        let doc_short_id = db::docid::map::get_doc_ref(&merge_txn.systemstore().unwrap(), &doc_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .doc_short_id;
+        let merged = handler
+            .merge_field_in_txn(
+                &mut merge_txn.datastore().unwrap(),
+                &merge_txn.headstore().unwrap(),
+                &merge_cid,
+                &CrdtDelta::Counter(merge_payload),
+                metadata.collection_id,
+                &doc_id,
+                doc_short_id,
+            )
             .await
             .expect("merge handler must apply the +5 delta");
-        assert_eq!(merge_outcome, MergeOutcome::Merged);
+        assert!(merged.applied());
+        merge_txn.force_commit().await.unwrap();
         assert_eq!(
             read_counter_value(&db, &doc_id, "score").await,
             15,
@@ -1343,76 +1275,6 @@ fn interactive_counter_increment_and_concurrent_same_doc_merge_both_commit() {
             doc.get("score"),
             Some(&NormalValue::Int(18)),
             "the document value includes the replicated and the local increment"
-        );
-    })
-    .unwrap()
-}
-
-#[test]
-fn counter_standalone_skips_already_merged_block() {
-    workers::block_on(async {
-        let (handler, blockstore) = make_handler_with_counter_schema().await;
-        let collection = handler
-            .db()
-            .find_collection_by_id("col-counters")
-            .unwrap()
-            .expect("counter collection should exist");
-        let doc_id = DocID::new_v0(
-            "bafyreie7rtdexuf47f633477mfieshkeh5rwnjeommkgqrzl22n6g4bfmm"
-                .parse()
-                .unwrap(),
-        );
-        let doc_id_str = doc_id.to_string();
-
-        let mut delta_data = Vec::new();
-        ciborium::into_writer(&5_i64, &mut delta_data).unwrap();
-
-        let payload = CounterDeltaPayload {
-            field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
-            priority: 1,
-            data: delta_data,
-            nonce: 999,
-        };
-        let block = Block {
-            delta: CrdtDelta::Counter(payload.clone()),
-            heads: None,
-            links: None,
-            encryption: None,
-            signature: None,
-        };
-        let cid = block.generate_cid().unwrap();
-        let block_data = block.to_dag_cbor().unwrap();
-        blockstore.put(&cid, &block_data).await.unwrap();
-        blockstore.mark_as_merged(&cid).await.unwrap();
-        register_test_block_owner(&handler, 1, &doc_id_str, &cid).await;
-
-        let metadata = BlockMetadata::normal(
-            &doc_id_str,
-            "col-counters",
-            "did:key:z6MkrCounterReplayTest",
-            None,
-            false,
-        );
-        let outcome = handler
-            .process_counter_delta(&cid, &payload, &metadata)
-            .await
-            .unwrap();
-        assert!(outcome.is_terminal_skip());
-
-        let txn = handler.db().new_txn(true).await.unwrap();
-        let stored = {
-            let datastore = txn.datastore().unwrap();
-            let systemstore = txn.systemstore().unwrap();
-            collection
-                .get_by_doc_id(&datastore, &systemstore, &doc_id)
-                .await
-                .unwrap()
-        };
-        txn.force_discard().unwrap();
-        assert!(
-            stored.is_none(),
-            "standalone re-delivery must not materialize an already-merged counter block"
         );
     })
     .unwrap()
@@ -1471,11 +1333,11 @@ fn shared_counter_block_is_applied_once_per_document() {
                 let headstore = txn.headstore().unwrap();
                 for attempt in 0..2 {
                     let result = handler
-                        .process_counter_delta_in_txn(
+                        .merge_field_in_txn(
                             &mut datastore,
                             &headstore,
                             &cid,
-                            &payload,
+                            &CrdtDelta::Counter(payload.clone()),
                             Some("col-counters"),
                             doc_id,
                             doc_short_id,
@@ -1548,11 +1410,11 @@ fn a_shared_counter_block_lands_once_on_each_stored_document() {
                 let headstore = txn.headstore().unwrap();
                 for attempt in 0..2 {
                     let result = handler
-                        .process_counter_delta_in_txn(
+                        .merge_field_in_txn(
                             &mut datastore,
                             &headstore,
                             &cid,
-                            &payload,
+                            &CrdtDelta::Counter(payload.clone()),
                             Some("col-counters"),
                             doc_id,
                             doc_short_id,
@@ -2400,32 +2262,26 @@ fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
             txn.force_commit().await.unwrap();
         }
 
-        let lww = Lww::new("v1", doc_id_str.as_bytes(), "age").unwrap();
         let mut stale_value = Vec::new();
         ciborium::into_writer(&NormalValue::Int(30), &mut stale_value).unwrap();
-        let stale_delta = LwwDelta::new(
-            doc_id_str.as_bytes().to_vec(),
-            "age".to_string(),
-            2,
-            "v1".to_string(),
-            stale_value.clone(),
-        )
-        .unwrap();
         {
+            // A stale register: value 30 at priority 2 (varint `2`).
+            let register = storage::keys::CRDTValueKey::new(
+                "v1".to_string(),
+                doc_id_str.as_bytes().to_vec(),
+                "age".to_string(),
+            );
             let txn = handler.db().new_txn(false).await.unwrap();
             {
-                let mut datastore = txn.datastore().unwrap();
-                lww.merge(
-                    &mut datastore,
-                    &Context {
-                        doc_id: DocId::new(&doc_id_str).unwrap(),
-                        schema_version: "v1".to_string(),
-                        is_create: false,
-                    },
-                    &stale_delta,
-                )
-                .await
-                .unwrap();
+                let datastore = txn.datastore().unwrap();
+                datastore
+                    .set(&register.bytes(), &stale_value)
+                    .await
+                    .unwrap();
+                datastore
+                    .set(&register.priority_key().bytes(), &[2])
+                    .await
+                    .unwrap();
             }
             txn.force_commit().await.unwrap();
         }
@@ -4345,7 +4201,7 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
             .await
             .unwrap()
             .unwrap();
-        let stored = document::stored::StoredDocument::decode(&bytes).unwrap();
+        let stored = crdt::stored::StoredDocument::decode(&bytes).unwrap();
         let body = stored
             .fields
             .values()

@@ -66,7 +66,7 @@ pub async fn read_document_for_se<S: storage::corekv::Store>(
     let Some(doc_bytes) = doc_bytes else {
         return Ok(None);
     };
-    let mut document = Document::from_storage_cbor(&doc_bytes, collection.schema_arc())
+    let mut document = crdt::stored::document_from_storage(&doc_bytes, collection.schema_arc())
         .map_err(|e| format!("failed to decode document: {e}"))?;
     document.set_id(canonical_doc_id);
     if let Some(version_bytes) = version_bytes {

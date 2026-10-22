@@ -16,9 +16,9 @@
 
 use rapidhash::RapidHashMap;
 
+use crdt::stored::{StoredDocument, StoredField, ValueKind};
 use datastore::NamespaceView;
-use document::stored::{StoredDocument, StoredField, ValueKind};
-use document::{Document, NormalValue};
+use document::NormalValue;
 use storage::corekv::{IterOptions, Store};
 
 use crate::collection::Collection;
@@ -222,14 +222,15 @@ async fn plan_move(
             let priority = stored.fields.get(&part).map_or(1, |part| part.priority);
             stored.fields.insert(
                 part,
-                StoredField::counter(field_name.to_owned(), kind, priority, &target)?,
+                crdt::field::CounterField::stored(field_name.to_owned(), kind, priority, &target)
+                    .map_err(|error| Error::InvalidDocument(error.to_string()))?,
             );
             stored
                 .encode()
                 .ok_or_else(|| Error::InvalidDocument("invalid local document value".into()))?
         }
         None => {
-            let mut doc = Document::from_storage_cbor(&bytes, collection.schema_arc())?;
+            let mut doc = crdt::stored::document_from_storage(&bytes, collection.schema_arc())?;
             let target = settle(increment_only, accumulated, doc.get(field_name));
             if doc.get(field_name) == Some(&target) {
                 return Ok(Some(Move::Drop));

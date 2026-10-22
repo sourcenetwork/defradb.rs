@@ -71,16 +71,16 @@ Safety invariants:
 Lean lives under `proofs/lean/` and models local merge/apply behavior:
 
 - LWW is a join over a resolved total-order key derived from decoded priority and
-  deterministic value/tombstone tie-break (`crates/crdt/src/lww.rs:187`,
-  `lww.rs:200`, `lww.rs:218`).
+  deterministic value/tombstone tie-break (`crates/crdt/src/field/lww.rs`
+  `LwwField::merge`).
 - Int64 counter accumulation is wrapping addition, so it is commutative and
   associative, but raw counter merge is not idempotent
-  (`crates/crdt/src/counter.rs:410`, `counter.rs:447`).
+  (`crates/crdt/src/field/counter.rs` `CounterField::merge`).
 - Counter idempotency is modeled at the durable merged-CID/applied-set layer, which
   is the contract documented above the merge handler
-  (`crates/db/src/merge/merge_handler/counter.rs:422`).
-- Composite merge is componentwise over field-local state
-  (`crates/crdt/src/composite.rs:512`).
+  (`crates/db/src/merge/merge_handler/field_ops.rs` `apply_field_op_once`).
+- A document value merges componentwise over field-local state
+  (`crates/crdt/src/stored.rs` `StoredDocument::apply`).
 
 The Lean README records `#print axioms` status. No theorem uses `sorry` or custom
 axioms. Float32/Float64 counter laws are intentionally not claimed because IEEE-754

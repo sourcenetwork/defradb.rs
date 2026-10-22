@@ -1,4 +1,4 @@
-use document::stored::StoredDocument;
+use crdt::stored::StoredDocument;
 use storage::keys::doc_id_index::decode_doc_short_id;
 
 use super::*;
@@ -87,7 +87,7 @@ impl Collection {
             .await?;
         let key = self.doc_key(doc_short_id);
         let whole = |data: Option<bytes::Bytes>| {
-            data.map(|data| Document::from_storage_cbor(&data, self.schema_arc()))
+            data.map(|data| crdt::stored::document_from_storage(&data, self.schema_arc()))
                 .transpose()
         };
         // No fields is a read no decision rests on, never validated.
@@ -238,7 +238,7 @@ impl Collection {
 
         match data {
             Some(bytes) => {
-                let mut doc = Document::from_storage_cbor(&bytes, self.schema_arc())?;
+                let mut doc = crdt::stored::document_from_storage(&bytes, self.schema_arc())?;
                 // The blob stores values only; identity lives in the mapping.
                 doc.set_id(doc_id.clone());
 
@@ -359,7 +359,7 @@ impl Collection {
                 continue;
             };
 
-            let doc = Document::from_storage_cbor(&pair.value, self.schema_arc())
+            let doc = crdt::stored::document_from_storage(&pair.value, self.schema_arc())
                 .map_err(|e| Error::document_at_key(&pair.key, e))?;
             entries.push((doc_short_id, doc));
         }
@@ -404,7 +404,7 @@ impl Collection {
             else {
                 continue;
             };
-            let doc = Document::from_storage_cbor(&bytes, self.schema_arc())
+            let doc = crdt::stored::document_from_storage(&bytes, self.schema_arc())
                 .map_err(|e| Error::document_at_key(&self.doc_key(doc_short_id), e))?;
             if let Some(hydrated) = self
                 .hydrate(datastore, systemstore, doc_short_id, doc, show_deleted)
@@ -502,7 +502,7 @@ impl Collection {
         }
         let old_doc = match self.read_document_blob(datastore, doc_short_id).await? {
             Some(bytes) => {
-                let mut d = Document::from_storage_cbor(&bytes, self.schema_arc())?;
+                let mut d = crdt::stored::document_from_storage(&bytes, self.schema_arc())?;
                 d.set_id(doc_id.clone());
                 d
             }
