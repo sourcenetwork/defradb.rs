@@ -36,6 +36,14 @@ pub enum FieldCrdtError {
     Encode(String),
     #[error(transparent)]
     Stored(#[from] document::Error),
+    #[error("field '{field}' is declared {declared}, but its block is of type {block}")]
+    MismatchedBlock {
+        field: String,
+        declared: CType,
+        block: &'static str,
+    },
+    #[error("not a field block")]
+    NotAFieldBlock,
 }
 
 /// What a field block carries besides the data.
@@ -170,13 +178,29 @@ pub fn field_crdt(ctype: CType) -> Option<&'static dyn FieldCrdt> {
 
 /// The CRDT type that wrote a field block, by its wire variant; a counter
 /// block takes the field's declared counter, positive unless it allows
-/// decrements. `None` for a block that is not a field block.
-pub fn delta_crdt(delta: &CrdtDelta, declared: CType) -> Option<&'static dyn FieldCrdt> {
-    match delta {
-        CrdtDelta::Lww(_) => Some(&LWW),
-        CrdtDelta::Counter(_) if declared == CType::PnCounter => Some(&PN_COUNTER),
-        CrdtDelta::Counter(_) => Some(&P_COUNTER),
-        _ => None,
+/// decrements. A block of another family than the declared type is refused,
+/// as Go refuses it: merging it would sum into a register or overwrite a
+/// counter. `CType::None` declares nothing, so any field block is read as its
+/// variant says.
+pub fn delta_crdt(
+    delta: &CrdtDelta,
+    declared: CType,
+) -> Result<&'static dyn FieldCrdt, FieldCrdtError> {
+    let mismatched = |block: &'static str| FieldCrdtError::MismatchedBlock {
+        field: delta
+            .field()
+            .map(|field| field.field_name.to_owned())
+            .unwrap_or_default(),
+        declared,
+        block,
+    };
+    match (delta, declared) {
+        (CrdtDelta::Lww(_), CType::PCounter | CType::PnCounter) => Err(mismatched("LWW")),
+        (CrdtDelta::Lww(_), _) => Ok(&LWW),
+        (CrdtDelta::Counter(_), CType::LwwRegister) => Err(mismatched("counter")),
+        (CrdtDelta::Counter(_), CType::PnCounter) => Ok(&PN_COUNTER),
+        (CrdtDelta::Counter(_), _) => Ok(&P_COUNTER),
+        _ => Err(FieldCrdtError::NotAFieldBlock),
     }
 }
 

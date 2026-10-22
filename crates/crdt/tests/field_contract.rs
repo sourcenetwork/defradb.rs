@@ -128,10 +128,47 @@ fn a_block_finds_the_crdt_that_wrote_it() {
         schema_version_id: "v".into(),
         data: Vec::new(),
     });
-    let ctype = |delta, declared| delta_crdt(delta, declared).map(|crdt| crdt.ctype());
-    assert_eq!(ctype(&lww, CType::PnCounter), Some(CType::LwwRegister));
+    let ctype = |delta, declared| delta_crdt(delta, declared).ok().map(|crdt| crdt.ctype());
+    assert_eq!(ctype(&lww, CType::LwwRegister), Some(CType::LwwRegister));
+    assert_eq!(ctype(&lww, CType::None), Some(CType::LwwRegister));
     assert_eq!(ctype(&counter, CType::PnCounter), Some(CType::PnCounter));
     assert_eq!(ctype(&counter, CType::PCounter), Some(CType::PCounter));
+    assert_eq!(ctype(&counter, CType::None), Some(CType::PCounter));
+}
+
+/// A block of another family than its field's declared type is refused both
+/// ways, naming the field, the declared type and the block's.
+#[test]
+fn a_block_of_another_family_is_refused() {
+    let lww = CrdtDelta::Lww(LwwDeltaPayload {
+        field_name: "value".into(),
+        priority: 1,
+        schema_version_id: "v".into(),
+        data: Vec::new(),
+    });
+    let counter = CrdtDelta::Counter(CounterDeltaPayload {
+        field_name: "value".into(),
+        priority: 1,
+        nonce: 0,
+        schema_version_id: "v".into(),
+        data: Vec::new(),
+    });
+    let refusal = |delta, declared| match delta_crdt(delta, declared) {
+        Err(error) => error.to_string(),
+        Ok(crdt) => panic!("{declared} accepted a {} block", crdt.ctype()),
+    };
+    assert_eq!(
+        refusal(&counter, CType::LwwRegister),
+        "field 'value' is declared LwwRegister, but its block is of type counter"
+    );
+    assert_eq!(
+        refusal(&lww, CType::PnCounter),
+        "field 'value' is declared PnCounter, but its block is of type LWW"
+    );
+    assert_eq!(
+        refusal(&lww, CType::PCounter),
+        "field 'value' is declared PCounter, but its block is of type LWW"
+    );
 }
 
 fn lww_value() -> impl Strategy<Value = NormalValue> {

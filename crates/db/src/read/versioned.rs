@@ -710,9 +710,13 @@ fn replay_field(
 ) {
     let name = field_delta.field_name;
     let declared = collection.field_by_name(name);
-    let Some(crdt) = crdt::delta_crdt(delta, declared.map_or(CType::None, |field| field.crdt_type))
-    else {
-        return;
+    let crdt = match crdt::delta_crdt(delta, declared.map_or(CType::None, |field| field.crdt_type))
+    {
+        Ok(crdt) => crdt,
+        Err(error) => {
+            tracing::warn!(field_name = %name, %error, "Refused field block during replay");
+            return;
+        }
     };
     let undeclared;
     let field = match declared {

@@ -442,6 +442,20 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Behavioral, Boundary],
     },
     Property {
+        // A counter block that arrives on its own before its document has a
+        // value on the block's schema version is a terminal skip: no applied
+        // key, no value, no merged mark. The composite that writes the value
+        // applies it once. The db merge tests
+        // `counter_merge_of_an_unmaterialized_document_waits_for_its_composite`
+        // and `counter_merge_marks_cid_merged` check both arrival orders.
+        family: "Transaction & merge-queue concurrency",
+        name: "INV_NoLoss: a standalone counter block that arrives before its document's value is applied once, by its composite",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/db/src/merge/merge_handler/batch.rs process_block_in_txn; crates/db/src/merge/merge_handler/composite_fields.rs; crates/db/tests/merge/merge_handler_tests.rs",
+        model_ref: "MC_TwoStoreCounter_{Green,Red_LostDeferral}.cfg",
+        tiers: &[Contract],
+    },
+    Property {
         // A commit begins when it is handed to its transaction's owner, or,
         // if a request is running the transaction then, when the owner takes
         // it; a caller that stops waiting before that abandons it. One that

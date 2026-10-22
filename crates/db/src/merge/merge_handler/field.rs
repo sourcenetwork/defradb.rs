@@ -14,6 +14,9 @@ pub struct FieldMergeResult {
     /// they are; `None` for an operation, which reached the document value as
     /// its own operand.
     pub(crate) order: Option<FieldOrder>,
+    /// A standalone operation that found no stored value it can be an operand
+    /// on: it changed nothing, and its composite applies it.
+    pub(crate) deferred: bool,
 }
 
 impl FieldMergeResult {
@@ -30,7 +33,7 @@ impl FieldMergeResult {
     /// Whether the block carried an operation, which the blockstore must
     /// record as merged so no ingest path applies it again.
     pub(crate) fn replicated_op(&self) -> bool {
-        self.order.is_none()
+        self.order.is_none() && !self.deferred
     }
 }
 
@@ -40,9 +43,14 @@ fn undeclared(name: &str, ctype: CType) -> FieldDescription {
     FieldDescription::new("", name, FieldKind::Scalar(ScalarKind::None), ctype)
 }
 
-impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+impl<S, B> DbMergeHandler<S, B>
+where
+    S: Store,
+    B: blockstore::Blockstore,
+{
     /// Merge one standalone field block within the caller's transaction,
-    /// through the CRDT that wrote it.
+    /// through the CRDT that wrote it. An operation on a document with no
+    /// value on the block's schema version is deferred to its composite.
     #[allow(clippy::too_many_arguments)]
     pub async fn merge_field_in_txn(
         &self,
@@ -63,12 +71,13 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             doc_id_str,
             doc_short_id,
             &mut super::block_reads::BlockReads::default(),
+            true,
         )
         .await
     }
 
-    /// [`merge_field_in_txn`](Self::merge_field_in_txn) for a block of a
-    /// composite merge, sharing its block reads.
+    /// [`merge_field_in_txn`](Self::merge_field_in_txn), or with `standalone`
+    /// false, for a block of a composite merge, sharing its block reads.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn merge_field_delta_in_txn(
         &self,
@@ -80,6 +89,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc_id_str: &str,
         doc_short_id: u64,
         reads: &mut super::block_reads::BlockReads,
+        standalone: bool,
     ) -> std::result::Result<FieldMergeResult, MergeError> {
         let Some(field_delta) = delta.field() else {
             return Err(MergeError::UnsupportedDelta(format!(
@@ -100,9 +110,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .as_ref()
             .and_then(|collection| collection.schema().field_by_name(field_delta.field_name));
         let crdt = crdt::delta_crdt(delta, declared.map_or(CType::None, |field| field.crdt_type))
-            .ok_or_else(|| {
-            MergeError::UnsupportedDelta("no CRDT wrote this field block".into())
-        })?;
+            .map_err(|error| MergeError::UnsupportedDelta(error.to_string()))?;
 
         if !crdt.replicates_ops() {
             let undeclared_field;
@@ -150,6 +158,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             field,
             &field_delta,
             doc_short_id,
+            standalone,
         )
         .await
     }

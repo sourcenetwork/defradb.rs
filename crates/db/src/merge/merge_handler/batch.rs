@@ -586,7 +586,11 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                     pending_field_block_finalizations
                         .push(PendingFieldBlockFinalization { cids: vec![*cid] });
                 }
-                Ok(if result.applied {
+                Ok(if result.deferred {
+                    MergeOutcome::terminal_skip(
+                        "merged via its composite: no document value on its schema version",
+                    )
+                } else if result.applied {
                     MergeOutcome::Merged
                 } else {
                     MergeOutcome::terminal_skip("rejected by CRDT")

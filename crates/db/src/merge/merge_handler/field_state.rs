@@ -83,7 +83,11 @@ impl Register {
     }
 }
 
-impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+impl<S, B> DbMergeHandler<S, B>
+where
+    S: Store,
+    B: blockstore::Blockstore,
+{
     /// Join the state of the document value into `state` when the headstore
     /// is ahead of the register.
     ///
@@ -214,6 +218,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 priority: state.priority,
                 raw_value: Some(state.value),
             }),
+            deferred: false,
         })
     }
 }

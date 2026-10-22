@@ -69,3 +69,41 @@ fn a_float32_counter_replay_reads_as_the_stored_value() {
         NormalValue::Float64(f64::from(sum))
     );
 }
+
+/// A counter block on a field declared LWW is skipped, as a live merge refuses
+/// it: the field keeps its LWW value, or stays absent without one.
+#[test]
+fn a_counter_block_on_an_lww_field_is_skipped_in_a_replay() {
+    let collection = Arc::new(CollectionVersion::new(
+        "Counters",
+        "v1",
+        "col-counters",
+        vec![FieldDescription::new(
+            "1",
+            "score",
+            FieldKind::int(),
+            CType::LwwRegister,
+        )],
+    ));
+    let mut data = Vec::new();
+    ciborium::into_writer(&7_i64, &mut data).unwrap();
+    let set = Block::new(
+        CrdtDelta::Lww(defra_core::block_delta::LwwDeltaPayload {
+            field_name: "score".into(),
+            priority: 1,
+            schema_version_id: "v1".into(),
+            data,
+        }),
+        Vec::new(),
+        Vec::new(),
+    );
+    let set = (set.generate_cid().unwrap(), set);
+    let increment = increments(&[5_i64]).remove(0);
+
+    let alone = replay_deltas(&collection, std::slice::from_ref(&increment), "bae-0000").unwrap();
+    assert_eq!(alone.get("score"), None);
+    assert_eq!(
+        replayed(&collection, &[set, increment]),
+        NormalValue::Int(7)
+    );
+}
