@@ -40,3 +40,5 @@ mod rest_transactions;
 
 #[path = "basic/transaction_ownership.rs"]
 mod transaction_ownership;
+#[path = "basic/upsert_counter.rs"]
+mod upsert_counter;
