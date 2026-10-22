@@ -90,9 +90,10 @@ fn collection_version(field_count: usize) -> CollectionVersion {
 }
 
 fn document(field_count: usize, seq: usize) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(collection_version(field_count));
     for name in field_names(field_count) {
-        doc.set(&name, NormalValue::String(format!("{name}-{seq}")));
+        doc.set(&name, NormalValue::String(format!("{name}-{seq}")))
+            .expect("the field is in the definition");
     }
     doc
 }
