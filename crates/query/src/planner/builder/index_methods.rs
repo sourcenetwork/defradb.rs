@@ -7,8 +7,8 @@ use schema::{CollectionVersion, IndexDescription};
 use crate::mapper::{Filter, OrderBy, Select};
 use crate::planner::index_selection::{
     can_be_ordered_by_filtered_index, can_be_ordered_by_index, filter_to_index_scan,
-    or_filter_to_index_scan, select_best_index, select_best_index_with_estimates, IndexEstimates,
-    IndexScanParams, IndexScanType,
+    filtered_index_order_prefix, or_filter_to_index_scan, select_best_index,
+    select_best_index_with_estimates, IndexEstimates, IndexScanParams, IndexScanType,
 };
 
 impl super::Planner {
@@ -17,12 +17,14 @@ impl super::Planner {
     /// Returns `Some((IndexScanParams, index_provides_ordering))` if an index
     /// can be used, `None` otherwise. Tries filter-based selection first,
     /// then falls back to ordering-based selection (matching Go behavior).
+    /// Ordinary indexes drop logically deleted entries, so a select that
+    /// includes deleted documents cannot use them as its source.
     pub(in crate::planner) fn try_select_index(
         &self,
         select: &Select,
         collection: &CollectionVersion,
     ) -> Option<(IndexScanParams, bool)> {
-        if collection.indexes.is_empty() {
+        if select.show_deleted || collection.indexes.is_empty() {
             return None;
         }
 
@@ -47,6 +49,36 @@ impl super::Planner {
             if let Some(best_index) =
                 select_best_index_with_estimates(filter, &collection.indexes, estimates)
             {
+                let best_index = if let Some(order) = select.order_by.as_ref() {
+                    collection
+                        .indexes
+                        .iter()
+                        .filter(|index| {
+                            index.fields.len() >= best_index.fields.len()
+                                && index
+                                    .fields
+                                    .iter()
+                                    .zip(&best_index.fields)
+                                    .all(|(candidate, selected)| candidate == selected)
+                                && filter_to_index_scan(
+                                    filter,
+                                    index,
+                                    Some(order),
+                                    &collection.fields,
+                                    None,
+                                    0,
+                                )
+                                .is_some()
+                        })
+                        .max_by_key(|index| filtered_index_order_prefix(order, index, filter).0)
+                        .filter(|index| {
+                            filtered_index_order_prefix(order, index, filter).0
+                                > filtered_index_order_prefix(order, best_index, filter).0
+                        })
+                        .unwrap_or(best_index)
+                } else {
+                    best_index
+                };
                 if let Some(params) = filter_to_index_scan(
                     filter,
                     best_index,

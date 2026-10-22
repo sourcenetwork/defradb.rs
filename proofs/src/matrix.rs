@@ -8,7 +8,7 @@ use crate::registry::{Property, Tier, PROPERTIES};
 
 /// The Modeled families from `proofs/README.md`. Kept here so the assertion is
 /// self-contained; if the README grows a family, this list and `PROPERTIES`
-/// must both grow or the test fails.
+/// must both grow or the tests fail, and the README must list exactly these.
 pub const MODELED_FAMILIES: &[&str] = &[
     "B3 filtered replication",
     "DAG convergence (partition / eviction / restart)",
@@ -37,11 +37,19 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Commit-ordered document arrivals",
     "Retry input and marker fencing",
     "Collection schema-version OCC",
+    "Schema publication completion",
+    "Peer connection observation",
     "Explicit transaction statement atomicity",
     "Engine ticker export",
     "Worker pool CPU ledger",
     "Worker default pool",
     "Node shutdown order",
+    "Inbound stream admission",
+    "Peer fetch stats",
+    "Gossip connection ownership",
+    "Iroh service records",
+    "Iroh solicited replies",
+    "Reply-driven DAG fetch",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {
@@ -86,6 +94,43 @@ mod tests {
             untiered.is_empty(),
             "properties with no tier: {:?}",
             untiered.iter().map(|p| p.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn readme_lists_exactly_the_modeled_families() {
+        let section = include_str!("../README.md")
+            .split("### Modeled: ")
+            .nth(1)
+            .and_then(|rest| rest.split("\n###").next())
+            .expect("README has a Modeled section");
+        let claimed: usize = section
+            .split(' ')
+            .next()
+            .and_then(|n| n.parse().ok())
+            .expect("the Modeled heading starts with a family count");
+        let rows: Vec<&str> = section
+            .lines()
+            .filter_map(|line| line.strip_prefix("| "))
+            .filter_map(|line| line.split(" |").next())
+            .filter(|&family| family != "Family")
+            .collect();
+        let missing: Vec<_> = MODELED_FAMILIES
+            .iter()
+            .filter(|&&family| !rows.contains(&family))
+            .collect();
+        let extra: Vec<_> = rows
+            .iter()
+            .filter(|&&family| !MODELED_FAMILIES.contains(&family))
+            .collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "README Modeled table: missing {missing:?}, not in MODELED_FAMILIES {extra:?}"
+        );
+        assert_eq!(
+            claimed,
+            MODELED_FAMILIES.len(),
+            "README Modeled heading count"
         );
     }
 

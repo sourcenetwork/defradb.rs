@@ -165,13 +165,17 @@ where
                     }
                     return;
                 }
-                p2p::TransportEvent::SEQueryRequest { peer_id, request } => {
+                p2p::TransportEvent::SEQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                     let transport = p2p::Libp2pTransport::new(handle.clone());
                     db::merge::se::serve::handle_query_request(
                         store.as_ref(),
                         &transport,
                         peer_id,
-                        request,
+                        request, token,
                     )
                     .await;
                     return;
@@ -180,11 +184,15 @@ where
                     se_correlator.deliver(reply);
                     return;
                 }
-                p2p::TransportEvent::ManageRequest { peer_id, request } => {
+                p2p::TransportEvent::ManageRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                     if let Some(hooks) = manage_hooks.get() {
                         let transport = p2p::Libp2pTransport::new(handle.clone());
                         defra_p2p_adapter::manage::serve::serve_manage_request(
-                            hooks, &transport, &peer_id, request,
+                            hooks, &transport, &peer_id, request, token,
                         )
                         .await;
                     } else {
@@ -192,11 +200,15 @@ where
                     }
                     return;
                 }
-                p2p::TransportEvent::ManageQueryRequest { peer_id, request } => {
+                p2p::TransportEvent::ManageQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                     if let Some(hooks) = manage_hooks.get() {
                         let transport = p2p::Libp2pTransport::new(handle.clone());
                         defra_p2p_adapter::manage::serve::serve_manage_query_request(
-                            hooks, &transport, &peer_id, request,
+                            hooks, &transport, &peer_id, request, token,
                         )
                         .await;
                     } else {

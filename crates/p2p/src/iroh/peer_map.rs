@@ -122,11 +122,6 @@ impl PeerMap {
             .filter_map(|info| info.remote_addr.map(|a: SocketAddr| a.to_string()))
             .collect()
     }
-
-    /// Return all connected endpoint IDs.
-    pub fn endpoint_ids(&self) -> Vec<EndpointId> {
-        self.connections.keys().copied().collect()
-    }
 }
 
 /// The peer map shared by every endpoint task, replaced as one unit on each
@@ -178,9 +173,5 @@ impl SharedPeerMap {
 
     pub fn peer_addresses(&self) -> Vec<String> {
         self.0.peek(PeerMap::peer_addresses)
-    }
-
-    pub fn endpoint_ids(&self) -> Vec<EndpointId> {
-        self.0.peek(PeerMap::endpoint_ids)
     }
 }

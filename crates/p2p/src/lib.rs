@@ -136,7 +136,7 @@ pub use signing::{sign_message, sign_message_cloned, verify_message};
 pub use topics::{DefraTopic, DOC_SYNC_TOPIC, ENCRYPTION_TOPIC, SYNC_BRANCHABLE_TOPIC};
 
 // Re-export transport types
-pub use transport::{P2PTransport, TransportEvent};
+pub use transport::{InboundClassSnapshot, P2PTransport, PeerFetchStats, TransportEvent};
 
 // Re-export sync types
 #[cfg(feature = "iroh-transport")]

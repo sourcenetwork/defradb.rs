@@ -352,6 +352,20 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
         ))
     }
 
+    /// Whether each selected document's current composite heads were acknowledged.
+    /// Unlike collection replication, a selective push never acknowledges the
+    /// other documents or heads of a branchable collection.
+    async fn document_heads_acknowledged(
+        &self,
+        _peer_id: &str,
+        _collection_name: &str,
+        _doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        Err(P2PError::unsupported(
+            "document head acknowledgement is unavailable",
+        ))
+    }
+
     /// Sync a branchable collection from connected peers.
     async fn sync_branchable_collection(&self, collection_id: &str) -> P2PResult<()>;
 

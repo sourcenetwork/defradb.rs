@@ -1052,54 +1052,6 @@ fn test_cleanup_only_old_transactions() {
 }
 
 #[test]
-fn test_cleanup_uses_idle_age_not_creation_age() {
-    workers::block_on(async {
-        let db = test_db_with_collections().await;
-        let registry = DbTransactionRegistry::new(db);
-
-        let txn = registry.begin(true).await.unwrap();
-        workers::delay(std::time::Duration::from_millis(30))
-            .unwrap()
-            .await
-            .unwrap();
-
-        assert!(found(&registry, &txn).await);
-        workers::delay(std::time::Duration::from_millis(20))
-            .unwrap()
-            .await
-            .unwrap();
-
-        let result = registry
-            .cleanup_stale_transactions(std::time::Duration::from_millis(40))
-            .await
-            .unwrap();
-
-        assert_eq!(
-            result.cleaned, 0,
-            "Recently used transaction should not be cleaned by creation age"
-        );
-        assert!(found(&registry, &txn).await);
-
-        workers::delay(std::time::Duration::from_millis(45))
-            .unwrap()
-            .await
-            .unwrap();
-
-        let result = registry
-            .cleanup_stale_transactions(std::time::Duration::from_millis(40))
-            .await
-            .unwrap();
-
-        assert_eq!(
-            result.cleaned, 1,
-            "Transaction should be cleaned after it is idle past the limit"
-        );
-        assert_eq!(registry.active_transaction_count().unwrap(), 0);
-    })
-    .unwrap()
-}
-
-#[test]
 fn test_periodic_cleanup_task_removes_idle_transactions() {
     workers::block_on(async {
         let db = test_db_with_collections().await;

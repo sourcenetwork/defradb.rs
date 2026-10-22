@@ -7,7 +7,6 @@ use iroh::{EndpointId, SecretKey};
 use kovan_map::HopscotchMap;
 
 use super::config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
-use super::gossip_heal::GossipHealConfig;
 
 // iroh 1.0 silently ignores custom values below its internal default plus one.
 const MIN_CONCURRENT_MULTIPATH_PATHS: u32 = 9;
@@ -32,8 +31,6 @@ pub struct IrohEndpointConfig {
     /// Maximum QUIC paths that may be open concurrently for one connection.
     /// `None` keeps iroh's default; custom values must be at least 9.
     pub max_concurrent_multipath_paths: Option<u32>,
-    /// Gossip send-path healing (#1092).
-    pub gossip_heal: GossipHealConfig,
     /// Inbound-connection authorization. Defaults to accepting every peer,
     /// matching the transport's behavior before this allowlist existed.
     pub allowlist: IrohAllowlistConfig,
@@ -49,7 +46,6 @@ impl Default for IrohEndpointConfig {
             bind_port: None,
             bind_addr: None,
             max_concurrent_multipath_paths: None,
-            gossip_heal: GossipHealConfig::default(),
             allowlist: IrohAllowlistConfig::default(),
         }
     }
@@ -311,12 +307,30 @@ pub(super) fn allowlist_state_from_config(
     }
 }
 
-pub(super) fn apply_multipath_config(
+/// Bidirectional streams a peer may have open at once on one connection.
+const MAX_CONCURRENT_BIDI_STREAMS: u32 = 64;
+
+/// Gossip is the only uni stream, one per direction; a few more cover a
+/// stream being replaced.
+const MAX_CONCURRENT_UNI_STREAMS: u32 = 4;
+
+/// Bytes QUIC buffers for one connection before we read them. The inbound
+/// budget only counts bodies we have read, so this bounds the rest; the
+/// default is unlimited.
+const CONNECTION_RECEIVE_WINDOW: u32 = 16 * 1024 * 1024;
+
+/// Configure QUIC: the stream and receive-window bounds, and the optional
+/// multipath path limit.
+pub(super) fn apply_transport_config(
     builder: iroh::endpoint::Builder,
     max_concurrent: Option<u32>,
 ) -> crate::error::Result<iroh::endpoint::Builder> {
+    let transport_config = iroh::endpoint::QuicTransportConfig::builder()
+        .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into())
+        .max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into())
+        .receive_window(CONNECTION_RECEIVE_WINDOW.into());
     let Some(max_concurrent) = max_concurrent else {
-        return Ok(builder);
+        return Ok(builder.transport_config(transport_config.build()));
     };
 
     if max_concurrent < MIN_CONCURRENT_MULTIPATH_PATHS {
@@ -326,7 +340,7 @@ pub(super) fn apply_multipath_config(
         )));
     }
 
-    let transport_config = iroh::endpoint::QuicTransportConfig::builder()
+    let transport_config = transport_config
         .max_concurrent_multipath_paths(max_concurrent)
         .build();
     tracing::info!(max_concurrent, "configured iroh multipath path limit");
@@ -486,7 +500,7 @@ mod tests {
     fn multipath_limit_rejects_values_iroh_would_ignore() {
         let builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal);
         let result =
-            apply_multipath_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS - 1));
+            apply_transport_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS - 1));
 
         assert!(matches!(
             result,
@@ -500,7 +514,7 @@ mod tests {
         let builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal);
 
         assert!(
-            apply_multipath_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS),).is_ok()
+            apply_transport_config(builder, Some(super::MIN_CONCURRENT_MULTIPATH_PATHS),).is_ok()
         );
     }
 

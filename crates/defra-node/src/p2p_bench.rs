@@ -425,10 +425,24 @@ async fn measure_catch_up(update_count: usize) -> Duration {
     connect_and_replicate(&sender, &receiver).await;
     await_user_age(&receiver, update_count as i64).await;
     let elapsed = start.elapsed();
+    print_peer_fetches(&receiver).await;
 
     shutdown_nodes(&sender, &receiver).await;
 
     elapsed
+}
+
+/// Prints what the node measured about its fetches from each peer.
+async fn print_peer_fetches(node: &EmbeddedNode) {
+    let status = node
+        .p2p()
+        .expect("p2p")
+        .sync_status()
+        .await
+        .expect("sync status");
+    for peer in status["peer_fetches"].as_array().into_iter().flatten() {
+        println!("  peer_fetches {peer}");
+    }
 }
 
 /// Polls the node until its single `User` document reports `expected` as its age.
@@ -574,4 +588,112 @@ fn bench_pull_by_document_count() {
     }
 })
     .unwrap()
+}
+
+/// Provider counts [`bench_pull_from_providers`] is run against.
+const PROVIDER_COUNTS: &[usize] = &[1, 2, 4];
+
+/// Updates in the history every provider holds.
+const PROVIDER_HISTORY_DEPTH: usize = 200;
+
+/// What one pull from several providers cost.
+struct ProviderPull {
+    elapsed: Duration,
+    /// CAR bytes received from each provider, finished fetches and in-flight ones.
+    bytes: Vec<u64>,
+    /// CAR fetches made to each provider.
+    fetches: Vec<u64>,
+}
+
+/// Pulls one document's history onto a fresh node connected to `providers` nodes that
+/// all hold it, and records the bytes each provider sent.
+async fn measure_pull_from_providers(providers: usize) -> ProviderPull {
+    let origin = build_bench_node().await;
+    let response = origin
+        .execute(r#"mutation { add_User(input: {name: "Shared", age: 0}) { _docID } }"#)
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let doc_id = created_doc_id(&response);
+    for age in 1..=PROVIDER_HISTORY_DEPTH {
+        let response = origin
+            .execute(&format!(
+                r#"mutation {{ update_User(docID: "{doc_id}", input: {{age: {age}}}) {{ _docID }} }}"#
+            ))
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+    }
+
+    let mut nodes = vec![origin];
+    for _ in 1..providers {
+        let replica = build_bench_node().await;
+        connect_and_replicate(&nodes[0], &replica).await;
+        await_user_age(&replica, PROVIDER_HISTORY_DEPTH as i64).await;
+        nodes.push(replica);
+    }
+
+    let receiver = build_bench_node().await;
+    for provider in &nodes {
+        connect_only(provider, &receiver).await;
+    }
+
+    let start = Instant::now();
+    receiver
+        .p2p()
+        .expect("receiver P2P should be enabled")
+        .sync_documents("User", vec![doc_id], None)
+        .await
+        .expect("sync_documents");
+    await_user_age(&receiver, PROVIDER_HISTORY_DEPTH as i64).await;
+    let elapsed = start.elapsed();
+
+    let status = receiver
+        .p2p()
+        .expect("p2p")
+        .sync_status()
+        .await
+        .expect("sync status");
+    let bytes = status["peer_fetches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|peer| {
+            peer["bytes"].as_u64().unwrap_or(0) + peer["in_flight_bytes"].as_u64().unwrap_or(0)
+        })
+        .collect();
+    let fetches = status["peer_fetches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|peer| peer["fetches"].as_u64().unwrap_or(0))
+        .collect();
+
+    receiver.shutdown().await;
+    for node in &nodes {
+        node.shutdown().await;
+    }
+    ProviderPull {
+        elapsed,
+        bytes,
+        fetches,
+    }
+}
+
+/// Measures whether pulling from more providers costs more bytes than the history is
+/// worth: each block sync asks every provider for the same CAR and keeps the first.
+#[test]
+#[ignore = "benchmark: spins up several networked nodes per provider count"]
+fn bench_pull_from_providers() {
+    edge::testing::edge()
+        .block_on(async {
+            println!("pull of a {PROVIDER_HISTORY_DEPTH}-update history from N providers");
+            for &providers in PROVIDER_COUNTS {
+                let pull = measure_pull_from_providers(providers).await;
+                let total: u64 = pull.bytes.iter().sum();
+                println!(
+                    "providers={providers} elapsed={:>9.2?} total_bytes={total:>9} bytes={:?} fetches={:?}",
+                    pull.elapsed, pull.bytes, pull.fetches
+                );
+            }
+        })
+        .unwrap()
 }

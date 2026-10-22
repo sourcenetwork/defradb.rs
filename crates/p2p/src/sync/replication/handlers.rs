@@ -130,10 +130,17 @@ where
         let limiter = coordinator.dag_fetch_limiter();
         let diagnostics = coordinator.manager().diagnostics();
         let source_peer = crate::transport::PeerId::new(source_peer);
-        let alternate_providers: Vec<crate::transport::PeerId> = providers
+        let mut alternate_providers: Vec<crate::transport::PeerId> = providers
             .into_iter()
             .map(crate::transport::PeerId::new)
             .collect();
+        crate::sync::coordinator::dag_fetcher::add_collection_providers(
+            &transport,
+            &collection_id,
+            &source_peer,
+            &mut alternate_providers,
+        )
+        .await;
         let context = DagFetchContext::new(doc_id, collection_id, creator, source_peer)
             .with_alternate_providers(alternate_providers)
             .with_explicit_replicator(is_explicit_replicator)

@@ -17,18 +17,27 @@ mod config;
 mod endpoint;
 mod endpoint_commands;
 mod endpoint_config;
+mod endpoint_records;
 mod endpoint_rpc;
 mod endpoint_streams;
-mod gossip_heal;
+mod fetch_stats;
+mod gossip;
+#[cfg(test)]
+mod inbound_admission_tests;
+mod inbound_budget;
+mod mailbox;
 #[cfg(test)]
 mod mux_tests;
 mod peer_map;
 mod protocols;
+mod records;
 #[cfg(feature = "iroh-relay-server")]
 mod relay_server;
 #[cfg(all(test, feature = "iroh-relay-server"))]
 mod relay_server_tests;
 mod secret_key;
+mod services;
+mod solicited;
 mod task_registry;
 mod transport;
 #[cfg(test)]
@@ -42,9 +51,9 @@ pub use addr::{
 pub use config::{IrohAllowlistConfig, IrohDiscoveryConfig, IrohRelayModeConfig};
 pub use endpoint::spawn_endpoint;
 pub use endpoint_config::{AdmissionAuthority, IrohEndpointConfig};
-pub use gossip_heal::GossipHealConfig;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use iroh::SecretKey;
+pub use records::{CollectionKey, NetworkSecret, Role, Service, ServiceProfile, ServiceRecord};
 #[cfg(feature = "iroh-relay-server")]
 pub use relay_server::{IrohRelayServer, IrohRelayServerConfig, IrohRelayTlsConfig};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]

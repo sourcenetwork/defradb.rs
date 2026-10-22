@@ -58,7 +58,6 @@ pub(super) async fn setup_p2p<S: storage::corekv::Store + 'static>(
             bind_port: Some(config.port),
             bind_addr: config.bind_addr,
             max_concurrent_multipath_paths: config.max_concurrent_multipath_paths,
-            gossip_heal: p2p::iroh::GossipHealConfig::from_env(),
             allowlist: config.allowlist.clone(),
         },
         document_acp,

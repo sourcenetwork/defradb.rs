@@ -90,7 +90,7 @@ impl<S: Store> crate::database::DB<S> {
             Ok(()) => {
                 let collections = std::sync::Arc::clone(&self.collections);
                 let name = name.to_owned();
-                txn.on_commit(OnCommit::Ordered(Box::new(move || {
+                txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                     collections.rcu(|old| {
                         let mut cache = old.clone();
                         cache.remove(&name);

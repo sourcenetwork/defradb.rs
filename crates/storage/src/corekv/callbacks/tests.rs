@@ -123,6 +123,10 @@ fn a_read_only_registry_refuses_only_ordered_work() {
         callbacks.on_commit(OnCommit::OrderedAsync(seen.hook("hook"))),
         Err(Error::ReadOnlyTxn)
     ));
+    assert!(matches!(
+        callbacks.on_commit(OnCommit::OrderedAndWait(seen.sync("publication"))),
+        Err(Error::ReadOnlyTxn)
+    ));
     callbacks
         .on_commit(OnCommit::Sync(seen.sync("sync")))
         .unwrap();
@@ -236,4 +240,44 @@ fn a_failing_before_commit_stops_the_pass_with_its_error() {
     let error = callbacks.run_before_commit().unwrap_err();
     assert!(error.to_string().contains("refused"), "{error}");
     assert_eq!(seen.take(), ["first"]);
+}
+
+#[test]
+fn a_publication_waits_for_its_ordered_event() {
+    workers::block_on(async {
+        let seen = Seen::default();
+        let mut callbacks = TxnCallbacks::new(false);
+        callbacks
+            .on_commit(OnCommit::OrderedAndWait(seen.sync("publication")))
+            .unwrap();
+        let (mut committed, _) = callbacks.into_ends();
+        let wait = committed.then.run();
+        futures::pin_mut!(wait);
+        assert!(futures::poll!(&mut wait).is_pending());
+        assert!(seen.take().is_empty());
+        committed.events.pop().unwrap()();
+        wait.await;
+        assert_eq!(seen.take(), ["publication"]);
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_panicking_publication_releases_its_waiter() {
+    workers::block_on(async {
+        let mut callbacks = TxnCallbacks::new(false);
+        callbacks
+            .on_commit(OnCommit::OrderedAndWait(Box::new(|| {
+                panic!("publication failed")
+            })))
+            .unwrap();
+        let (mut committed, _) = callbacks.into_ends();
+        let wait = committed.then.run();
+        futures::pin_mut!(wait);
+        assert!(futures::poll!(&mut wait).is_pending());
+        let event = committed.events.pop().unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(event)).is_err());
+        wait.await;
+    })
+    .unwrap();
 }

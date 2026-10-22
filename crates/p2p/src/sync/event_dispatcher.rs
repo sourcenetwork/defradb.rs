@@ -1,18 +1,19 @@
 //! One bounded scheduling policy for every transport entrypoint.
 //!
-//! The transport channel is the sole resident queue. The dispatcher classifies
+//! The transport queue is the sole resident queue. The dispatcher classifies
 //! events into fixed admission, recovery-serving, and completion worker sets;
 //! lightweight state transitions drain inline. Excess requests are rejected
 //! in place instead of waiting for a slot and hiding ownership progress behind
-//! unrelated work.
+//! unrelated work. An event's lease is held until its handler returns.
 
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use n0_future::task::{JoinError, JoinSet};
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::Semaphore;
 
+use super::dispatch_queue::{DispatchSource, Queued};
 use crate::transport::TransportEvent;
 
 /// Whether a bounded request was admitted to a worker.
@@ -210,12 +211,13 @@ impl Drop for DispatchActivity {
 }
 
 /// Drain transport events without ever waiting for a request-worker slot.
-pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
-    mut events: mpsc::Receiver<E>,
+pub(crate) async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
+    mut events: Source,
     diagnostics: Arc<DispatchDiagnostics>,
     handler: Handler,
 ) where
     E: DispatchEvent + defra_core::thread_bounds::MaybeSend + 'static,
+    Source: DispatchSource<E>,
     Handler: Fn(E, DispatchAdmission) -> HandlerFuture
         + Clone
         + defra_core::thread_bounds::MaybeSend
@@ -235,16 +237,16 @@ pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
             result = std::future::poll_fn(|cx| tasks.poll_join_next(cx)), if !tasks.is_empty() => {
                 report_join_result(result.expect("dispatcher task set was non-empty"));
             }
-            event = events.recv() => {
-                let Some(event) = event else {
+            queued = events.next(completion_slots.available_permits() > 0) => {
+                let Some(Queued { event, lease }) = queued else {
                     break;
                 };
                 let class = event.dispatch_class();
                 if class == DispatchClass::Completion {
-                    // Completion producers are themselves bounded (receiver
-                    // fetches, protocol replies). If the fixed completion set
-                    // is full, wait for one owner to finish before retaining
-                    // more work outside the transport channel.
+                    // A per-class source only yields a completion when a slot
+                    // is free. A single-queue source can hand one over while
+                    // the set is full; then wait for an owner to finish before
+                    // retaining more work outside the transport queue.
                     let permit = Arc::clone(&completion_slots)
                         .acquire_owned()
                         .await
@@ -254,10 +256,12 @@ pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
                     tasks.spawn(async move {
                         let _permit = permit;
                         let _activity = activity;
+                        let _lease = lease;
                         completion_handler(event, DispatchAdmission::Admitted).await;
                     });
                 } else if class == DispatchClass::Inline {
                     handler.clone()(event, DispatchAdmission::Admitted).await;
+                    drop(lease);
                 } else {
                     let (slots, activity_kind) = match class {
                         DispatchClass::Admission => (
@@ -276,6 +280,7 @@ pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
                         tasks.spawn(async move {
                             let _permit = permit;
                             let _activity = activity;
+                            let _lease = lease;
                             task_handler(event, DispatchAdmission::Admitted).await;
                         });
                     } else {
@@ -296,6 +301,7 @@ pub(crate) async fn run_event_dispatcher<E, Handler, HandlerFuture>(
                             tasks.spawn(async move {
                                 let _permit = permit;
                                 let _activity = activity;
+                                let _lease = lease;
                                 rejection_handler(event, DispatchAdmission::Saturated).await;
                             });
                         } else {
@@ -705,5 +711,102 @@ mod tests {
         drop(tx);
         dispatcher.await.unwrap();
         assert_eq!(diagnostics.snapshot().active_completions, 0);
+    }
+
+    #[tokio::test]
+    async fn full_completion_workers_do_not_block_requests_on_a_per_class_queue() {
+        let (tx, rx) = crate::sync::dispatch_queue(64);
+        let completions_started = Arc::new(regolith::sync::Semaphore::new(0));
+        let release_completions = Arc::new(regolith::sync::Semaphore::new(0));
+        let request_observed = Arc::new(regolith::sync::Semaphore::new(0));
+
+        let dispatcher = {
+            let completions_started = Arc::clone(&completions_started);
+            let release_completions = Arc::clone(&release_completions);
+            let request_observed = Arc::clone(&request_observed);
+            n0_future::task::spawn(run_event_dispatcher(
+                rx,
+                Arc::new(DispatchDiagnostics::default()),
+                move |event, _admission| {
+                    let completions_started = Arc::clone(&completions_started);
+                    let release_completions = Arc::clone(&release_completions);
+                    let request_observed = Arc::clone(&request_observed);
+                    async move {
+                        match event {
+                            TestEvent::Completion => {
+                                completions_started.add_permits(1);
+                                let _permit = release_completions.acquire(1).await;
+                            }
+                            TestEvent::Request(_) => request_observed.add_permits(1),
+                            TestEvent::Recovery(_) => {}
+                        }
+                    }
+                },
+            ))
+        };
+
+        for _ in 0..MAX_ACTIVE_COMPLETIONS {
+            tx.send(TestEvent::Completion).await.unwrap();
+        }
+        completions_started
+            .acquire(MAX_ACTIVE_COMPLETIONS)
+            .await
+            .forget();
+        tx.send(TestEvent::Completion).await.unwrap();
+        tx.send(TestEvent::Request(0)).await.unwrap();
+
+        n0_future::time::timeout(Duration::from_secs(1), request_observed.acquire(1))
+            .await
+            .expect("busy completion workers must not hold up a request")
+            .forget();
+
+        release_completions.add_permits(MAX_ACTIVE_COMPLETIONS + 1);
+        drop(tx);
+        dispatcher.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_lease_is_held_until_its_handler_returns() {
+        struct Flag(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let (tx, rx) = crate::sync::dispatch_queue(4);
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let released_during_handler = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let handled = Arc::new(regolith::sync::Semaphore::new(0));
+        let dispatcher = {
+            let handled = Arc::clone(&handled);
+            let released = Arc::clone(&released);
+            let released_during_handler = Arc::clone(&released_during_handler);
+            n0_future::task::spawn(run_event_dispatcher(
+                rx,
+                Arc::new(DispatchDiagnostics::default()),
+                move |_event: TestEvent, _admission| {
+                    let released = Arc::clone(&released);
+                    let released_during_handler = Arc::clone(&released_during_handler);
+                    let handled = Arc::clone(&handled);
+                    async move {
+                        tokio::task::yield_now().await;
+                        released_during_handler
+                            .store(released.load(Ordering::SeqCst), Ordering::SeqCst);
+                        handled.add_permits(1);
+                    }
+                },
+            ))
+        };
+
+        tx.send_leased(TestEvent::Request(0), Box::new(Flag(Arc::clone(&released))))
+            .await
+            .unwrap();
+        handled.acquire(1).await.forget();
+        drop(tx);
+        dispatcher.await.unwrap();
+
+        assert!(!released_during_handler.load(Ordering::SeqCst));
+        assert!(released.load(Ordering::SeqCst));
     }
 }

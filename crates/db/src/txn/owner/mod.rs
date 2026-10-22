@@ -20,6 +20,7 @@
 
 mod actor;
 mod id;
+mod idle;
 mod table;
 #[cfg(test)]
 mod tests;

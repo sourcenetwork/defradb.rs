@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 31 families (bounded model claims)
+### Modeled: 40 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
 | B3 filtered replication | TLA+ | p2p, db-merge |
@@ -49,11 +49,20 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |
 | Retry input and marker fencing | TLA+ | db, query, storage |
 | Collection schema-version OCC | TLA+ | db |
+| Schema publication completion | TLA+ / Lean | storage, db |
+| Peer connection observation | TLA+ / Lean | p2p |
 | Explicit transaction statement atomicity | TLA+ | query, db, storage |
 | Engine ticker export | TLA+ & Lean | telemetry, storage |
 | Worker pool CPU ledger | TLA+ & Lean | workers |
 | Worker default pool | TLA+ & Lean | workers |
 | Node shutdown order | TLA+ | defra-node, embedded, edge, acp |
+| Inbound stream admission | TLA+, Lean | p2p |
+| Vector index link maintenance | TLA+ | storage, db-index |
+| Peer fetch stats | Lean | p2p |
+| Gossip connection ownership | TLA+, Lean | p2p |
+| Iroh service records | TLA+, Lean | p2p |
+| Iroh solicited replies | TLA+ | p2p |
+| Reply-driven DAG fetch | TLA+ | p2p |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

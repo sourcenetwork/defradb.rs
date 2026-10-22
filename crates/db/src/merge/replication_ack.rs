@@ -21,6 +21,49 @@ pub async fn replication_acknowledged<S: Store + 'static>(
     collection_name: &str,
     doc_ids: &[String],
 ) -> Result<Vec<bool>, String> {
+    acknowledged_heads(
+        db,
+        peer_id,
+        collection_name,
+        doc_ids,
+        AcknowledgmentScope::Pushed,
+    )
+    .await
+}
+
+/// Checks only the selected documents' current composite heads, including in
+/// branchable collections. Selective replay does not acknowledge unrelated
+/// collection heads.
+pub async fn document_heads_acknowledged<S: Store + 'static>(
+    db: &DB<S>,
+    peer_id: &str,
+    collection_name: &str,
+    doc_ids: &[String],
+) -> Result<Vec<bool>, String> {
+    acknowledged_heads(
+        db,
+        peer_id,
+        collection_name,
+        doc_ids,
+        AcknowledgmentScope::Document,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum AcknowledgmentScope {
+    /// The scope the replicator is pushed at.
+    Pushed,
+    Document,
+}
+
+async fn acknowledged_heads<S: Store + 'static>(
+    db: &DB<S>,
+    peer_id: &str,
+    collection_name: &str,
+    doc_ids: &[String],
+    scope: AcknowledgmentScope,
+) -> Result<Vec<bool>, String> {
     let collection = db
         .get_collection(collection_name)
         .map_err(|error| error.to_string())?
@@ -33,15 +76,18 @@ pub async fn replication_acknowledged<S: Store + 'static>(
     let blockstore = txn.blockstore().map_err(|error| error.to_string())?;
 
     let branchable = collection.schema().is_branchable;
-    let scope = match peerstore
-        .get_replicator(peer_id)
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        Some(bytes) => p2p::ReplicatorInfo::from_bytes(&bytes)
+    let scope = match scope {
+        AcknowledgmentScope::Document => p2p::AckScope::Document,
+        AcknowledgmentScope::Pushed => match peerstore
+            .get_replicator(peer_id)
+            .await
             .map_err(|error| error.to_string())?
-            .ack_scope(&collection_id, branchable),
-        None => p2p::AckScope::new(false, branchable),
+        {
+            Some(bytes) => p2p::ReplicatorInfo::from_bytes(&bytes)
+                .map_err(|error| error.to_string())?
+                .ack_scope(&collection_id, branchable),
+            None => p2p::AckScope::new(false, branchable),
+        },
     };
     let collection_acknowledged = if scope == p2p::AckScope::Collection {
         let short_id =

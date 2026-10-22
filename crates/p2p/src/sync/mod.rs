@@ -16,6 +16,7 @@ mod car_authorization;
 mod collection_store;
 mod coordinator;
 mod dag_sync;
+mod dispatch_queue;
 mod event_dispatcher;
 mod head_provider;
 mod head_scope;
@@ -41,6 +42,9 @@ pub use coordinator::{
     PushFailure, PushFailureReceiver, SyncCoordinator, SyncShutdownHandle, SyncStatus,
 };
 pub use dag_sync::{DagSync, DagSyncConfig, DagSyncState, NeedsFetchData, SyncPlan};
+pub use dispatch_queue::{
+    dispatch_queue, DispatchReceiver, DispatchSender, DispatchSource, Lease, Queued,
+};
 pub(crate) use event_dispatcher::classify_p2p_event;
 pub(crate) use event_dispatcher::DispatchDiagnostics;
 pub use event_dispatcher::{DispatchAdmission, DispatchClass, DispatchEvent, DispatchSnapshot};

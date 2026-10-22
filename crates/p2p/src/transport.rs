@@ -215,6 +215,8 @@ pub enum TransportEvent<ResponseToken> {
     SEQueryRequest {
         peer_id: PeerId,
         request: QuerySEArtifactsRequest,
+        /// The request's stream, when the reply goes back on it.
+        token: Option<ResponseToken>,
     },
     SEQueryReply {
         peer_id: PeerId,
@@ -223,6 +225,8 @@ pub enum TransportEvent<ResponseToken> {
     ManageRequest {
         peer_id: PeerId,
         request: ManageRequest,
+        /// The request's stream, when the reply goes back on it.
+        token: Option<ResponseToken>,
     },
     ManageReply {
         peer_id: PeerId,
@@ -231,6 +235,8 @@ pub enum TransportEvent<ResponseToken> {
     ManageQueryRequest {
         peer_id: PeerId,
         request: ManageQueryRequest,
+        /// The request's stream, when the reply goes back on it.
+        token: Option<ResponseToken>,
     },
     ManageQueryReply {
         peer_id: PeerId,
@@ -275,6 +281,39 @@ impl<ResponseToken> TransportEvent<ResponseToken> {
     pub fn dispatch_class(&self) -> crate::sync::DispatchClass {
         crate::sync::classify_p2p_event!(self, TransportEvent)
     }
+}
+
+/// Point-in-time inbound byte budget use for one class.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct InboundClassSnapshot {
+    pub class: &'static str,
+    pub capacity_bytes: usize,
+    pub held_bytes: usize,
+    pub held_bytes_high_water: usize,
+    /// Streams reset because no room was free before the deadline.
+    pub busy_resets: u64,
+    /// Streams reset because their message exceeded the tag's limit.
+    pub oversized_resets: u64,
+}
+
+/// Point-in-time measurements of the CAR fetches we made to one peer.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PeerFetchStats {
+    pub peer: String,
+    pub fetches: u64,
+    pub bytes: u64,
+    /// Rolling rate from the first to the last byte of a response.
+    pub delivery_rate_bytes_per_sec: u64,
+    /// Lowest round-trip time seen on the connection.
+    pub min_rtt_micros: Option<u64>,
+    /// Rolling shares of fetches that succeeded, timed out or came back
+    /// partial, in parts per million.
+    pub success_ppm: u64,
+    pub timeout_ppm: u64,
+    pub partial_ppm: u64,
+    pub in_flight: u64,
+    /// Response bytes received so far by fetches still in flight.
+    pub in_flight_bytes: u64,
 }
 
 /// Trait abstracting the P2P transport layer.
@@ -323,6 +362,23 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
     async fn listen(&self, addr: PeerAddr) -> Result<()>;
 
     async fn connected_peers(&self) -> Result<Vec<PeerId>>;
+
+    /// Peers that say they hold `collection_id`, connected or not, best
+    /// first, for transports that read service records.
+    async fn collection_providers(&self, _collection_id: &str) -> Result<Vec<PeerId>> {
+        Ok(Vec::new())
+    }
+
+    /// Inbound byte budget use per class, for transports that admit message
+    /// bodies against one.
+    async fn inbound_budget(&self) -> Result<Vec<InboundClassSnapshot>> {
+        Ok(Vec::new())
+    }
+
+    /// Per-peer measurements of our CAR fetches, for transports that keep them.
+    async fn fetch_stats(&self) -> Result<Vec<PeerFetchStats>> {
+        Ok(Vec::new())
+    }
 
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>>;
 
@@ -444,9 +500,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
+    /// Replies on the request's stream when its event carried one, otherwise
+    /// on a stream of its own.
     async fn send_se_query_response(
         &self,
         _peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
         _reply: QuerySEArtifactsReply,
     ) -> Result<()> {
         Err(crate::error::Error::Transport(
@@ -460,7 +519,14 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
-    async fn send_manage_response(&self, _peer_id: &PeerId, _reply: ManageReply) -> Result<()> {
+    /// Replies on the request's stream when its event carried one, otherwise
+    /// on a stream of its own.
+    async fn send_manage_response(
+        &self,
+        _peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
+        _reply: ManageReply,
+    ) -> Result<()> {
         Err(crate::error::Error::Transport(
             "send_manage_response is not supported on this transport".to_string(),
         ))
@@ -476,9 +542,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
         ))
     }
 
+    /// Replies on the request's stream when its event carried one, otherwise
+    /// on a stream of its own.
     async fn send_manage_query_response(
         &self,
         _peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
         _reply: ManageQueryReply,
     ) -> Result<()> {
         Err(crate::error::Error::Transport(

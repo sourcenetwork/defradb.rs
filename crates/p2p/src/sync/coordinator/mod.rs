@@ -160,6 +160,10 @@ pub struct SyncStatus {
     /// Current/high-water occupancy and terminal overload counters for the
     /// one shared inbound request scheduler.
     pub request_dispatch: crate::sync::DispatchSnapshot,
+    /// Inbound byte budget use per class; empty for transports without one.
+    pub inbound_budget: Vec<crate::transport::InboundClassSnapshot>,
+    /// Per-peer measurements of our CAR fetches; empty for transports without them.
+    pub peer_fetches: Vec<crate::transport::PeerFetchStats>,
     /// Current/high-water occupancy of bounded non-authoritative mutation
     /// gossip/artifact work. Durable head markers are installed before this
     /// pool is entered, so shedding here cannot lose a sync obligation.
@@ -264,6 +268,26 @@ pub(crate) struct DagFetchLimiter {
     global: Arc<Semaphore>,
     per_peer: Arc<HopscotchMap<String, Arc<Semaphore>, rapidhash::fast::RandomState>>,
     peer_limit: usize,
+    /// Roots a reply-driven fetch is running for, with the trust it merges under.
+    roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
+}
+
+/// A root and the collections its fetch merges as an explicit replicator.
+/// A fetch merges with its replier's trust, so a reply waits only behind a
+/// fetch that carries the same trust.
+type RootKey = (cid::Cid, Vec<String>);
+
+/// Held while one fetch of a root runs; dropping it lets the next reply fetch.
+/// Model: proofs/tla/RootSingleFlight.tla.
+pub(crate) struct RootClaim {
+    roots: Arc<HopscotchMap<RootKey, (), rapidhash::fast::RandomState>>,
+    key: RootKey,
+}
+
+impl Drop for RootClaim {
+    fn drop(&mut self) {
+        self.roots.remove(&self.key);
+    }
 }
 
 pub(crate) struct DagFetchPermits {
@@ -280,7 +304,31 @@ impl DagFetchLimiter {
                 rapidhash::fast::RandomState::default(),
             )),
             peer_limit: global_limit.saturating_sub(1).max(1),
+            roots: Arc::new(HopscotchMap::with_hasher(
+                rapidhash::fast::RandomState::default(),
+            )),
         }
+    }
+
+    /// Claims `root` for one fetch trusted as an explicit replicator of
+    /// `trusted_collections`, or `None` while another fetch with that trust
+    /// holds it. That fetch already tries every connected peer, so a reply
+    /// that finds the claim held has nothing to add.
+    pub(crate) fn claim_root(
+        &self,
+        root: cid::Cid,
+        mut trusted_collections: Vec<String>,
+    ) -> Option<RootClaim> {
+        trusted_collections.sort_unstable();
+        trusted_collections.dedup();
+        let key = (root, trusted_collections);
+        self.roots
+            .insert_if_absent(key.clone(), ())
+            .is_none()
+            .then(|| RootClaim {
+                roots: Arc::clone(&self.roots),
+                key,
+            })
     }
 
     pub(crate) async fn acquire(&self, source_peer: &PeerId) -> Option<DagFetchPermits> {
@@ -811,12 +859,13 @@ pub struct SyncCoordinator<B: Blockstore, T: P2PTransport> {
 
 impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
     /// Drain one transport event stream through the shared bounded scheduler.
-    pub async fn run_event_dispatcher<E, Handler, HandlerFuture>(
+    pub async fn run_event_dispatcher<E, Source, Handler, HandlerFuture>(
         &self,
-        events: tokio::sync::mpsc::Receiver<E>,
+        events: Source,
         handler: Handler,
     ) where
         E: crate::sync::DispatchEvent + defra_core::thread_bounds::MaybeSend + 'static,
+        Source: crate::sync::DispatchSource<E>,
         Handler: Fn(E, crate::sync::DispatchAdmission) -> HandlerFuture
             + Clone
             + defra_core::thread_bounds::MaybeSend
@@ -848,6 +897,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             non_authoritative_broadcast_rejected_total,
         ) = self.runtime.shutdown.non_authoritative_broadcast_stats();
         let push_backlog = self.runtime.push_backlog.snapshot().await;
+        let inbound_budget = self.transport().inbound_budget().await.unwrap_or_default();
+        let peer_fetches = self.transport().fetch_stats().await.unwrap_or_default();
         let push_updates_coalesced_total = push_backlog.coalesced_total;
         SyncStatus {
             push_backlog,
@@ -866,6 +917,8 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             pending_resync_in_flight: self.manager.pending_resync_in_flight(),
             retained_background_tasks: self.runtime.shutdown.retained_task_count(),
             request_dispatch: self.runtime.dispatch_diagnostics.snapshot(),
+            inbound_budget,
+            peer_fetches,
             non_authoritative_broadcast_tasks,
             non_authoritative_broadcast_high_water,
             non_authoritative_broadcast_rejected_total,
@@ -1242,6 +1295,54 @@ mod dag_fetch_limiter_tests {
     use super::DagFetchLimiter;
     use crate::transport::PeerId;
     use std::time::Duration;
+
+    #[test]
+    fn a_root_is_claimed_by_one_fetch_until_it_ends() {
+        let limiter = DagFetchLimiter::new(4);
+        let root = cid::Cid::default();
+        let other = cid::Cid::new_v1(0x71, cid::multihash::Multihash::default());
+
+        let claim = limiter.claim_root(root, Vec::new()).expect("first claim");
+        assert!(
+            limiter.claim_root(root, Vec::new()).is_none(),
+            "a second reply must not fetch"
+        );
+        assert!(
+            limiter.claim_root(other, Vec::new()).is_some(),
+            "other roots are independent"
+        );
+
+        drop(claim);
+        assert!(
+            limiter.claim_root(root, Vec::new()).is_some(),
+            "the next reply fetches once the first fetch ends, failed or not"
+        );
+    }
+
+    #[test]
+    fn a_trusted_reply_never_waits_behind_a_fetch_without_its_trust() {
+        let limiter = DagFetchLimiter::new(4);
+        let root = cid::Cid::default();
+        let trusted = || vec!["users".to_string(), "posts".to_string()];
+
+        let _plain = limiter.claim_root(root, Vec::new()).expect("plain claim");
+        let replicator = limiter
+            .claim_root(root, trusted())
+            .expect("a replicator's reply must fetch under its own trust");
+        assert!(
+            limiter
+                .claim_root(root, vec!["posts".into(), "users".into()])
+                .is_none(),
+            "a reply with the same trust waits behind the running fetch"
+        );
+        assert!(
+            limiter.claim_root(root, vec!["users".into()]).is_some(),
+            "a reply trusted for other collections fetches under that trust"
+        );
+
+        drop(replicator);
+        assert!(limiter.claim_root(root, trusted()).is_some());
+    }
 
     #[tokio::test]
     async fn single_peer_cannot_hold_every_global_permit() {

@@ -2200,10 +2200,18 @@ fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
             let p2p_b = node_b.p2p().expect("node_b p2p");
             let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
 
-            p2p_a
-                .connect_peer(&addr_b)
-                .await
-                .expect("dial reaches node_b");
+            // node_b's refusal closes the connection after the handshake, so
+            // the dial either completes or times out; any other error means it
+            // never reached node_b's allowlist.
+            if let Err(error) = p2p_a.connect_peer(&addr_b).await {
+                let message = error.to_string();
+                assert!(
+                    message.contains("timeout")
+                        || message.contains("timed out")
+                        || message.contains("not authorized"),
+                    "refused dial failed before reaching node_b: {message}"
+                );
+            }
 
             let deadline = Instant::now() + Duration::from_millis(500);
             while Instant::now() < deadline {
@@ -2335,187 +2343,4 @@ fn deny_p2p_peer_revokes_an_already_connected_peer() {
         .unwrap()
 }
 
-async fn wait_for_acknowledged(
-    sender: &EmbeddedNode,
-    peer_id: &str,
-    collection: &str,
-    doc_id: &str,
-) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let acknowledged = sender
-            .p2p()
-            .expect("sender p2p")
-            .replication_acknowledged(peer_id, collection, &[doc_id.to_string()])
-            .await
-            .expect("replication_acknowledged");
-        if acknowledged == [true] {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{collection} {doc_id} was never acknowledged by {peer_id}"
-        );
-        edge::testing::edge()
-            .sleep(Duration::from_millis(100))
-            .await;
-    }
-}
-
-async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: &str) {
-    let node0 = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node0");
-    let node1 = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node1");
-    node0.add_schema(schema).await.expect("schema on node0");
-    node1.add_schema(schema).await.expect("schema on node1");
-    install_one_way_replicator(&node0, &node1, &[collection]).await;
-    let peer1 = node1
-        .p2p()
-        .expect("node1 p2p")
-        .local_peer_id()
-        .await
-        .expect("node1 peer id");
-
-    let response = node0
-        .execute(&format!(
-            r#"mutation {{ add_{collection}(input: {{body: "first"}}) {{ _docID }} }}"#
-        ))
-        .await;
-    assert!(response.errors.is_empty(), "{:?}", response.errors);
-    let doc_id = response.data.expect("data")[format!("add_{collection}")][0]["_docID"]
-        .as_str()
-        .expect("doc id")
-        .to_string();
-    wait_for_acknowledged(&node0, &peer1, collection, &doc_id).await;
-
-    let unknown = node0
-        .p2p()
-        .expect("node0 p2p")
-        .replication_acknowledged(
-            "not-a-replicator",
-            collection,
-            std::slice::from_ref(&doc_id),
-        )
-        .await
-        .expect("query unknown peer");
-    assert_eq!(unknown, [false]);
-
-    let response = node0
-        .execute(&format!(
-            r#"mutation {{ update_{collection}(docID: "{doc_id}", input: {{body: "second"}}) {{ _docID }} }}"#
-        ))
-        .await;
-    assert!(response.errors.is_empty(), "{:?}", response.errors);
-    wait_for_acknowledged(&node0, &peer1, collection, &doc_id).await;
-    let on_peer = node1
-        .execute(&format!(
-            r#"{{ {collection}(docID: "{doc_id}") {{ body }} }}"#
-        ))
-        .await;
-    assert_eq!(
-        on_peer.data.expect("data")[collection][0]["body"],
-        "second",
-        "acknowledged before the peer stored the current heads"
-    );
-
-    node0.shutdown().await;
-    node1.shutdown().await;
-}
-
-#[test]
-fn replicator_acknowledges_current_document_heads() {
-    edge::testing::edge()
-        .block_on(async {
-            init_tracing();
-            assert_replicator_acknowledges_current_heads("type Note { body: String }", "Note")
-                .await;
-        })
-        .unwrap()
-}
-
-#[test]
-fn filtered_replicator_acknowledges_branchable_document_heads() {
-    edge::testing::edge()
-        .block_on(async {
-            init_tracing();
-            let schema = "type AgentDoc @branchable { agent_did: String @immutable  body: String }";
-            let node0 = EmbeddedNode::builder()
-                .with_p2p(test_p2p_config())
-                .build()
-                .await
-                .expect("build node0");
-            let node1 = EmbeddedNode::builder()
-                .with_p2p(test_p2p_config())
-                .build()
-                .await
-                .expect("build node1");
-            node0.add_schema(schema).await.expect("schema on node0");
-            node1.add_schema(schema).await.expect("schema on node1");
-            install_filtered_one_way_replicator(
-                &node0,
-                &node1,
-                &["AgentDoc"],
-                agent_did_in_filter(&["did:key:alice"]),
-            )
-            .await;
-            let peer1 = node1
-                .p2p()
-                .expect("node1 p2p")
-                .local_peer_id()
-                .await
-                .expect("node1 peer id");
-
-            let mut doc_ids = Vec::new();
-            for agent_did in ["did:key:alice", "did:key:bob"] {
-                let response = node0
-                    .execute(&format!(
-                        r#"mutation {{ add_AgentDoc(input: {{agent_did: "{agent_did}", body: "first"}}) {{ _docID }} }}"#
-                    ))
-                    .await;
-                assert!(response.errors.is_empty(), "{:?}", response.errors);
-                doc_ids.push(
-                    response.data.expect("data")["add_AgentDoc"][0]["_docID"]
-                        .as_str()
-                        .expect("doc id")
-                        .to_string(),
-                );
-            }
-            wait_for_acknowledged(&node0, &peer1, "AgentDoc", &doc_ids[0]).await;
-            let filtered_out = node0
-                .p2p()
-                .expect("node0 p2p")
-                .replication_acknowledged(&peer1, "AgentDoc", std::slice::from_ref(&doc_ids[1]))
-                .await
-                .expect("query filtered-out document");
-            assert_eq!(
-                filtered_out,
-                [false],
-                "the peer never received this document"
-            );
-
-            node0.shutdown().await;
-            node1.shutdown().await;
-        })
-        .unwrap()
-}
-
-#[test]
-fn replicator_acknowledges_current_branchable_collection_heads() {
-    edge::testing::edge()
-        .block_on(async {
-            init_tracing();
-            assert_replicator_acknowledges_current_heads(
-                "type Note @branchable { body: String }",
-                "Note",
-            )
-            .await;
-        })
-        .unwrap()
-}
+mod acknowledgment;

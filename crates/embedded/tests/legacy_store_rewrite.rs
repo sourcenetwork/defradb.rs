@@ -5,7 +5,7 @@
 //! with the same collections and documents. Opening the wrapped one rewrites
 //! it once into a store the engine seals; opening either gives every
 //! collection part IDs and puts its documents in the field format. Every
-//! query must answer exactly as main answered it.
+//! query follows the current document visibility contract.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,7 +41,9 @@ fn materialize(directory: &Path, fixture: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Every query main ran on the fixture, with main's answer.
+/// The original stores remain unchanged. Expected reads follow current
+/// visibility: `showDeleted` includes Notes even though the previous writer's
+/// live-only index query omitted that retained row.
 fn expected() -> Result<Vec<(String, Value)>> {
     let answers: Value = serde_json::from_str(include_str!("fixtures/legacy_expected.json"))?;
     answers
@@ -57,13 +59,13 @@ fn expected() -> Result<Vec<(String, Value)>> {
         .collect()
 }
 
-async fn assert_reads_as_main_read(node: &EmbeddedNode<EmbeddedStore>) -> Result<()> {
+async fn assert_expected_reads(node: &EmbeddedNode<EmbeddedStore>) -> Result<()> {
     for (query, data) in expected()? {
         let response = node.execute(&query).await;
         assert!(response.errors.is_empty(), "{query}: {:?}", response.errors);
         assert!(
             response.data.as_ref() == Some(&data),
-            "{query} answered {:?}, main answered {data}",
+            "{query} answered {:?}, expected {data}",
             response.data
         );
     }
@@ -150,7 +152,7 @@ fn a_wrapped_store_of_the_previous_release_is_rewritten_and_reads_the_same() -> 
     let path = materialize(directory.path(), "wrapped")?;
 
     let node = open(&path, Some(KEY)).await?;
-    assert_reads_as_main_read(&node).await?;
+    assert_expected_reads(&node).await?;
     let created = node
         .execute(r#"mutation { add_Book(input: {title: "Rust", pages: 560}) { title } }"#)
         .await;
@@ -215,7 +217,7 @@ fn previous_release_documents_get_part_ids_and_field_operands() -> Result<()> {
         for (fixture, key) in [("plain", None), ("wrapped", Some(KEY))] {
             let path = materialize(directory.path(), fixture)?;
             let node = open(&path, key).await?;
-            assert_reads_as_main_read(&node).await?;
+            assert_expected_reads(&node).await?;
             node.shutdown().await;
             drop(node);
             let entries = raw_entries(&path, key).await?;
@@ -228,7 +230,7 @@ fn previous_release_documents_get_part_ids_and_field_operands() -> Result<()> {
             );
             // Opening again changes nothing and reads the same.
             let node = open(&path, key).await?;
-            assert_reads_as_main_read(&node).await?;
+            assert_expected_reads(&node).await?;
             node.shutdown().await;
             drop(node);
             assert!(
@@ -261,7 +263,7 @@ fn a_wrapped_store_opened_without_its_key_is_refused_not_served() -> Result<()> 
         }
         // The refusals left the store as it was: its own key still opens it.
         let node = open(&path, Some(KEY)).await?;
-        assert_reads_as_main_read(&node).await?;
+        assert_expected_reads(&node).await?;
         node.shutdown().await;
         Ok(())
     })

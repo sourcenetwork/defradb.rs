@@ -256,7 +256,7 @@ impl<S: Store> crate::database::DB<S> {
         if let Ok(cid) = cid::Cid::try_from(version_id.as_str()) {
             let schema_heads = std::sync::Arc::clone(&self.schema_heads);
             let head_name = name.clone();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 schema_heads.insert(head_name.clone(), (vec![cid], 1));
             })))?;
         }
@@ -359,7 +359,7 @@ impl<S: Store> crate::database::DB<S> {
         let collection =
             Collection::load_index_actions(finalized_schema.clone(), &txn.systemstore()?).await?;
         let cache = std::sync::Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 cache.put(collection.clone());
@@ -534,7 +534,7 @@ impl<S: Store> crate::database::DB<S> {
                 .push(Collection::load_index_actions(schema.clone(), &txn.systemstore()?).await?);
         }
         let cache = std::sync::Arc::clone(&self.collections);
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 for collection in &collections {

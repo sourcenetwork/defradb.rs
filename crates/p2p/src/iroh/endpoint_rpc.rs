@@ -5,30 +5,37 @@ use std::sync::Arc;
 
 use iroh::{Endpoint, EndpointAddr};
 use kovan_map::HopscotchMap;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
 use crate::message::{CarFetchRequest, PushLogReply};
+use crate::sync::DispatchSender;
 use crate::transport::{PeerId, TransportEvent};
 use crate::QueryId;
 
 use super::endpoint_config::PeerAdmission;
+use super::fetch_stats::{selected_path_rtt, FetchOutcome, FetchStats, FetchTimer};
+use super::gossip::GossipHandle;
 use super::peer_map::{parse_endpoint_id, SharedPeerMap};
 use super::protocols;
+use super::services;
 
 /// One shared connection per peer, keyed by endpoint alone: every protocol is
 /// multiplexed over [`protocols::ALPN_MUX`], so identity is the whole key.
 pub(super) struct ConnectionCacheState {
     connections: HopscotchMap<iroh::EndpointId, iroh::endpoint::Connection, RandomState>,
     dial_guards: HopscotchMap<iroh::EndpointId, Arc<regolith::sync::Mutex<()>>, RandomState>,
+    /// Every connection we dial carries gossip too, so gossip hears of it.
+    gossip: GossipHandle,
 }
 
 pub(super) type ConnectionCache = Arc<ConnectionCacheState>;
 
-pub(super) fn new_connection_cache() -> ConnectionCache {
+pub(super) fn new_connection_cache(gossip: GossipHandle) -> ConnectionCache {
     Arc::new(ConnectionCacheState {
         connections: HopscotchMap::with_hasher(RandomState::default()),
         dial_guards: HopscotchMap::with_hasher(RandomState::default()),
+        gossip,
     })
 }
 
@@ -57,6 +64,7 @@ enum CarFetchOutcome {
     OpenBiFailed(String),
     WriteFailed(String),
     ReadFailed(String),
+    ResponseTimedOut,
     EmptyResponse,
     HeaderOnlyCar,
     EventChannelClosed,
@@ -65,6 +73,15 @@ enum CarFetchOutcome {
 impl CarFetchOutcome {
     fn is_success(&self) -> bool {
         matches!(self, Self::Success)
+    }
+
+    fn fetch_outcome(&self) -> FetchOutcome {
+        match self {
+            Self::Success => FetchOutcome::Success,
+            Self::SizeLimited => FetchOutcome::Partial,
+            Self::ResponseTimedOut => FetchOutcome::TimedOut,
+            _ => FetchOutcome::Failed,
+        }
     }
 
     fn label(&self) -> &'static str {
@@ -76,6 +93,7 @@ impl CarFetchOutcome {
             Self::OpenBiFailed(_) => "open_bi_failed",
             Self::WriteFailed(_) => "write_failed",
             Self::ReadFailed(_) => "read_failed",
+            Self::ResponseTimedOut => "response_timed_out",
             Self::EmptyResponse => "empty_response",
             Self::HeaderOnlyCar => "header_only_car",
             Self::EventChannelClosed => "event_channel_closed",
@@ -91,6 +109,7 @@ impl CarFetchOutcome {
             | Self::ReadFailed(detail) => Some(detail),
             Self::Success
             | Self::SizeLimited
+            | Self::ResponseTimedOut
             | Self::EmptyResponse
             | Self::HeaderOnlyCar
             | Self::EventChannelClosed => None,
@@ -149,18 +168,33 @@ fn endpoint_addr(
 async fn connect_once(
     endpoint: &Endpoint,
     endpoint_id: iroh::EndpointId,
-    alpn: &[u8],
     direct_addr: Option<std::net::SocketAddr>,
 ) -> crate::error::Result<iroh::endpoint::Connection> {
     n0_future::time::timeout(
         CONNECT_TIMEOUT,
-        endpoint.connect(endpoint_addr(endpoint_id, direct_addr), alpn),
+        connect_mux(endpoint, endpoint_addr(endpoint_id, direct_addr)),
     )
     .await
     .map_err(|_| {
         crate::error::Error::Dial(format!("timed out after {}s", CONNECT_TIMEOUT.as_secs()))
     })?
-    .map_err(|e| crate::error::Error::Dial(e.to_string()))
+}
+
+/// Dials the mux, offering the version before gossip moved onto it so older
+/// peers still connect.
+pub(super) async fn connect_mux(
+    endpoint: &Endpoint,
+    addr: iroh::EndpointAddr,
+) -> crate::error::Result<iroh::endpoint::Connection> {
+    let options = iroh::endpoint::ConnectOptions::new()
+        .with_additional_alpns(vec![protocols::ALPN_MUX_V1.to_vec()]);
+    let connecting = endpoint
+        .connect_with_opts(addr, protocols::ALPN_MUX, options)
+        .await
+        .map_err(|e| crate::error::Error::Dial(e.to_string()))?;
+    connecting
+        .await
+        .map_err(|e| crate::error::Error::Dial(e.to_string()))
 }
 
 /// Open a stream for `tag` on the peer's shared connection and announce which
@@ -345,14 +379,7 @@ async fn connect_with_cache(
         return Ok(connection);
     }
 
-    let connection = match connect_with_direct_addr_fallback(
-        endpoint,
-        peer_id,
-        protocols::ALPN_MUX,
-        direct_addr,
-    )
-    .await
-    {
+    let connection = match connect_with_direct_addr_fallback(endpoint, peer_id, direct_addr).await {
         Ok(connection) => connection,
         Err(error) => {
             cache.dial_guards.remove(&endpoint_id);
@@ -376,30 +403,26 @@ async fn connect_with_cache(
         )));
     }
 
+    cache.gossip.connected(endpoint_id, &connection);
     Ok(connection)
 }
 
-/// Dial `alpn`, preferring a known direct address before falling back to
+/// Dial the mux, preferring a known direct address before falling back to
 /// discovery.
-///
-/// Gossip healing is the one caller that passes an ALPN other than
-/// [`protocols::ALPN_MUX`], because iroh-gossip owns its own handshake.
-pub(super) async fn connect_with_direct_addr_fallback(
+async fn connect_with_direct_addr_fallback(
     endpoint: &Endpoint,
     peer_id: &PeerId,
-    alpn: &[u8],
     direct_addr: Option<std::net::SocketAddr>,
 ) -> crate::error::Result<iroh::endpoint::Connection> {
     let endpoint_id = parse_endpoint_id(peer_id)?;
 
     if let Some(sa) = direct_addr {
-        match connect_once(endpoint, endpoint_id, alpn, Some(sa)).await {
+        match connect_once(endpoint, endpoint_id, Some(sa)).await {
             Ok(connection) => return Ok(connection),
             Err(error) => {
                 debug!(
                     peer_id = %peer_id,
                     direct_addr = %sa,
-                    alpn = %String::from_utf8_lossy(alpn),
                     error = %error,
                     "Direct iroh dial failed, retrying without cached direct address"
                 );
@@ -407,7 +430,7 @@ pub(super) async fn connect_with_direct_addr_fallback(
         }
     }
 
-    connect_once(endpoint, endpoint_id, alpn, None).await
+    connect_once(endpoint, endpoint_id, None).await
 }
 
 /// Send a request and wait for a response (bidirectional stream).
@@ -470,20 +493,13 @@ where
     Ok(response)
 }
 
-/// Send a two-stream PushLog request and accept either response shape.
-///
-/// A peer normally replies on this request's receive stream. One that does not
-/// advertise same-stream reply support answers on a separate
-/// `STREAM_TWOSTREAM_RESP` stream instead, delivered through `legacy_reply`. A
-/// failure on either path is therefore not terminal while the other path can
-/// still produce the ACK.
+/// Send a two-stream PushLog request and read its reply from the same stream.
 pub(super) async fn handle_two_stream_request(
     endpoint: &Endpoint,
     peer_id: &PeerId,
     request: &crate::message::PushLogRequest,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
-    legacy_reply: oneshot::Receiver<PushLogReply>,
     admission: &PeerAdmission,
 ) -> crate::error::Result<PushLogReply> {
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
@@ -509,29 +525,11 @@ pub(super) async fn handle_two_stream_request(
         return Err(error);
     }
 
-    let wait_for_reply = async {
-        let same_stream_reply = protocols::read_message(&mut recv, protocols::MAX_MESSAGE_SIZE);
-        tokio::pin!(same_stream_reply);
-        tokio::pin!(legacy_reply);
+    let wait_for_reply = protocols::read_message(&mut recv, protocols::MAX_MESSAGE_SIZE);
 
-        tokio::select! {
-            result = &mut same_stream_reply => match result {
-                Ok(reply) => Ok(reply),
-                Err(same_stream_error) => match legacy_reply.await {
-                    Ok(reply) => Ok(reply),
-                    Err(_) => Err(same_stream_error),
-                },
-            },
-            result = &mut legacy_reply => match result {
-                Ok(reply) => Ok(reply),
-                Err(_) => same_stream_reply.await,
-            },
-        }
-    };
-
-    // A stream reset can still receive a legacy reverse-stream reply. A closed
-    // connection must release this attempt so durable retry and newer heads do
-    // not wait behind dead requests occupying every per-peer sender slot.
+    // A closed connection must release this attempt so durable retry and newer
+    // heads do not wait behind dead requests occupying every per-peer sender
+    // slot.
     let wait_for_reply_or_disconnect = async {
         tokio::select! {
             biased;
@@ -547,7 +545,7 @@ pub(super) async fn handle_two_stream_request(
             warn!(
                 peer_id = %peer_id,
                 timeout_secs = REQUEST_RESPONSE_TIMEOUT.as_secs(),
-                "two-stream request timed out waiting for same-stream or legacy reply"
+                "two-stream request timed out waiting for its reply"
             );
             retire_timed_out_connection(cache, peer_id, &connection);
             crate::error::Error::ResponseTimeout
@@ -557,7 +555,9 @@ pub(super) async fn handle_two_stream_request(
         })
 }
 
-async fn send_one_way_message<T: serde::Serialize>(
+/// Open a stream for `tag`, write `msg` and finish our side. Returns the
+/// connection and the stream's receive side.
+async fn send_on_new_stream<T>(
     endpoint: &Endpoint,
     peer_id: &PeerId,
     tag: &[u8],
@@ -565,10 +565,13 @@ async fn send_one_way_message<T: serde::Serialize>(
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
     admission: &PeerAdmission,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<(iroh::endpoint::Connection, iroh::endpoint::RecvStream)>
+where
+    T: serde::Serialize,
+{
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
-    let (mut send, mut recv) = match open_tagged_stream(&connection, peer_id, tag).await {
+    let (mut send, recv) = match open_tagged_stream(&connection, peer_id, tag).await {
         Ok(streams) => streams,
         Err(error) => {
             evict_if_closed(cache, peer_id, &connection);
@@ -587,6 +590,20 @@ async fn send_one_way_message<T: serde::Serialize>(
         evict_if_closed(cache, peer_id, &connection);
         return Err(error);
     }
+    Ok((connection, recv))
+}
+
+async fn send_one_way_message<T: serde::Serialize>(
+    endpoint: &Endpoint,
+    peer_id: &PeerId,
+    tag: &[u8],
+    msg: &T,
+    direct_addr: Option<std::net::SocketAddr>,
+    cache: &ConnectionCache,
+    admission: &PeerAdmission,
+) -> crate::error::Result<()> {
+    let (_, mut recv) =
+        send_on_new_stream(endpoint, peer_id, tag, msg, direct_addr, cache, admission).await?;
 
     // Wait for peer to close their side of the stream (via RESET_STREAM or FIN).
     // This ensures the connection stays open long enough for the peer's accept_bi()
@@ -594,6 +611,121 @@ async fn send_one_way_message<T: serde::Serialize>(
     let _ = n0_future::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
 
     Ok(())
+}
+
+/// Send a request whose reply is emitted as a transport event, and report on
+/// `sent` once the request is written. On mux 0.2 the reply comes back on the
+/// request's stream and is read here, within `reply_tag`'s size limit; an
+/// older peer opens a `reply_tag` stream of its own, which admission checks
+/// against the expected replies.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn handle_reply_on_stream<Req, Reply, ToEvent>(
+    endpoint: &Endpoint,
+    peer_id: PeerId,
+    tag: &[u8],
+    reply_tag: &[u8],
+    request: &Req,
+    direct_addr: Option<std::net::SocketAddr>,
+    cache: &ConnectionCache,
+    admission: &PeerAdmission,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    sent: oneshot::Sender<crate::error::Result<()>>,
+    to_event: ToEvent,
+) where
+    Req: serde::Serialize,
+    Reply: crate::message::Message + serde::Serialize + serde::de::DeserializeOwned + Clone,
+    ToEvent: FnOnce(PeerId, Reply) -> TransportEvent<iroh::endpoint::SendStream>,
+{
+    let (connection, mut recv) = match send_on_new_stream(
+        endpoint,
+        &peer_id,
+        tag,
+        request,
+        direct_addr,
+        cache,
+        admission,
+    )
+    .await
+    {
+        Ok(sent_on) => {
+            let _ = sent.send(Ok(()));
+            sent_on
+        }
+        Err(error) => {
+            let _ = sent.send(Err(error));
+            return;
+        }
+    };
+    if connection.alpn() != protocols::ALPN_MUX {
+        let _ =
+            n0_future::time::timeout(std::time::Duration::from_secs(5), recv.read_to_end(16)).await;
+        return;
+    }
+
+    let max_message = services::lookup(reply_tag)
+        .expect("every reply tag is a service")
+        .max_message;
+    let reply = n0_future::time::timeout(
+        REQUEST_RESPONSE_TIMEOUT,
+        read_reply::<Reply>(&mut recv, max_message),
+    )
+    .await
+    .map_err(|_| crate::error::Error::ResponseTimeout)
+    .and_then(|read| read)
+    .and_then(|reply| {
+        super::endpoint_streams::verify_iroh_message(&reply)?;
+        super::endpoint_streams::ensure_iroh_signed_sender(&peer_id, reply.sender_id())?;
+        Ok(reply)
+    });
+    match reply {
+        Ok(reply) => {
+            if event_tx.send(to_event(peer_id, reply)).await.is_err() {
+                debug!("Event channel closed, cannot emit a reply");
+            }
+        }
+        Err(error) => {
+            debug!(peer_id = %peer_id, stream_tag = %String::from_utf8_lossy(tag), error = %error, "No reply on the request stream");
+        }
+    }
+}
+
+/// Write an encoded reply on its request's stream and finish it. A requester
+/// that stops reading gets the stream reset once `deadline` passes, so the
+/// serving task does not wait on it for the connection's life.
+pub(super) async fn reply_on_stream(
+    mut send_stream: iroh::endpoint::SendStream,
+    payload: &[u8],
+    deadline: std::time::Duration,
+) -> crate::error::Result<()> {
+    let written = n0_future::time::timeout(
+        deadline,
+        protocols::write_payload(&mut send_stream, payload),
+    )
+    .await;
+    let Ok(written) = written else {
+        let _ = send_stream.reset(super::endpoint_streams::RESET_STALLED.into());
+        return Err(crate::error::Error::ResponseTimeout);
+    };
+    written?;
+    send_stream
+        .finish()
+        .map_err(|e| crate::error::Error::Transport(format!("failed to finish stream: {e}")))
+}
+
+/// Read a reply on its request's stream, stopping the stream when its length
+/// exceeds `max_message`, as admission does for a reply stream of its own.
+async fn read_reply<T: serde::de::DeserializeOwned>(
+    recv: &mut iroh::endpoint::RecvStream,
+    max_message: usize,
+) -> crate::error::Result<T> {
+    let len = protocols::read_length(recv).await?;
+    if len > max_message {
+        let _ = recv.stop(super::endpoint_streams::RESET_MESSAGE_TOO_LARGE.into());
+        return Err(crate::error::Error::Codec(format!(
+            "reply too large: {len} bytes exceeds limit of {max_message} bytes"
+        )));
+    }
+    protocols::decode(protocols::read_body(recv, len).await?)
 }
 
 /// Send a message without expecting a response.
@@ -612,39 +744,53 @@ pub(super) async fn handle_fire_and_forget<T: serde::Serialize>(
     send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache, admission).await
 }
 
-/// Send a one-way message, then keep the bidirectional stream alive briefly so
-/// the peer can finish reading it.
-///
-/// This remains used for messages that do not carry an application reply on
-/// their request stream, including the legacy reverse-stream PushLog response.
-/// Waiting for the peer to close their side avoids dropping the bidi stream
-/// while the remote reader is still consuming the frame.
-pub(super) async fn handle_send_only<T: serde::Serialize>(
-    endpoint: &Endpoint,
-    peer_id: &PeerId,
-    tag: &[u8],
-    msg: &T,
-    direct_addr: Option<std::net::SocketAddr>,
-    cache: &ConnectionCache,
-    admission: &PeerAdmission,
-) -> crate::error::Result<()> {
-    send_one_way_message(endpoint, peer_id, tag, msg, direct_addr, cache, admission).await
-}
-
 /// Send a CAR request and emit the response as a transport event.
 ///
 /// Unlike generic fire-and-forget messages, CAR requests expect the peer to
 /// stream raw CAR bytes back on the same bidirectional stream. We must consume
 /// that response here; otherwise the remote writer sees a broken stream and the
 /// caller never receives a `CarFetchResponse`.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_car_request_response(
     endpoint: &Endpoint,
     peer_id: &PeerId,
     root_cid: cid::Cid,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: &PeerAdmission,
+    fetch_stats: &FetchStats,
+) -> crate::error::Result<()> {
+    let mut timer = fetch_stats.start(peer_id);
+    let result = request_car_response(
+        endpoint,
+        peer_id,
+        root_cid,
+        direct_addr,
+        cache,
+        event_tx,
+        admission,
+        &mut timer,
+    )
+    .await;
+    timer.finish(match &result {
+        Ok(()) => FetchOutcome::Success,
+        Err(crate::error::Error::ResponseTimeout) => FetchOutcome::TimedOut,
+        Err(_) => FetchOutcome::Failed,
+    });
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn request_car_response(
+    endpoint: &Endpoint,
+    peer_id: &PeerId,
+    root_cid: cid::Cid,
+    direct_addr: Option<std::net::SocketAddr>,
+    cache: &ConnectionCache,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
+    admission: &PeerAdmission,
+    timer: &mut FetchTimer,
 ) -> crate::error::Result<()> {
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
@@ -670,19 +816,22 @@ pub(super) async fn handle_car_request_response(
         return Err(error);
     }
 
-    let car_data = n0_future::time::timeout(
-        REQUEST_RESPONSE_TIMEOUT,
-        recv.read_to_end(protocols::MAX_CAR_SIZE),
-    )
-    .await
-    .map_err(|_| {
-        retire_timed_out_connection(cache, peer_id, &connection);
-        crate::error::Error::ResponseTimeout
-    })?
-    .map_err(|e| {
-        evict_if_closed(cache, peer_id, &connection);
-        crate::error::Error::Transport(e.to_string())
-    })?;
+    let response = protocols::read_to_end_observed(&mut recv, protocols::MAX_CAR_SIZE, |len| {
+        timer.received(len)
+    });
+    let read = n0_future::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
+    timer.saw_rtt(selected_path_rtt(&connection));
+    let car_data = match read {
+        Ok(Ok(car_data)) => car_data,
+        Ok(Err(error)) => {
+            evict_if_closed(cache, peer_id, &connection);
+            return Err(error);
+        }
+        Err(_) => {
+            retire_timed_out_connection(cache, peer_id, &connection);
+            return Err(crate::error::Error::ResponseTimeout);
+        }
+    };
 
     if event_tx
         .send(TransportEvent::CarFetchResponse {
@@ -711,8 +860,9 @@ async fn try_fetch_from_provider(
     request: CarFetchRequest,
     direct_addr: Option<std::net::SocketAddr>,
     cache: &ConnectionCache,
-    event_tx: &mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: &PeerAdmission,
+    timer: &mut FetchTimer,
 ) -> CarFetchAttempt {
     // Per-provider CAR failures log at debug — the caller aggregates per-DAG
     // outcomes into a single WARN via BitswapComplete (see issue #858).
@@ -800,12 +950,11 @@ async fn try_fetch_from_provider(
         "CAR fetch: request sent, waiting for response"
     );
 
-    let car_data = match n0_future::time::timeout(
-        REQUEST_RESPONSE_TIMEOUT,
-        recv.read_to_end(64 * 1024 * 1024),
-    )
-    .await
-    {
+    let response =
+        protocols::read_to_end_observed(&mut recv, 64 * 1024 * 1024, |len| timer.received(len));
+    let read = n0_future::time::timeout(REQUEST_RESPONSE_TIMEOUT, response).await;
+    timer.saw_rtt(selected_path_rtt(&connection));
+    let car_data = match read {
         Ok(Ok(data)) => data,
         Ok(Err(e)) => {
             evict_if_closed(cache, provider, &connection);
@@ -832,10 +981,7 @@ async fn try_fetch_from_provider(
             );
             return CarFetchAttempt {
                 provider: provider.clone(),
-                outcome: CarFetchOutcome::ReadFailed(format!(
-                    "timed out after {}s",
-                    REQUEST_RESPONSE_TIMEOUT.as_secs()
-                )),
+                outcome: CarFetchOutcome::ResponseTimedOut,
             };
         }
     };
@@ -916,8 +1062,9 @@ pub(super) struct BlockSyncResources {
     endpoint: Endpoint,
     peer_map: Arc<SharedPeerMap>,
     connection_cache: ConnectionCache,
-    event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+    event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: Arc<PeerAdmission>,
+    fetch_stats: Arc<FetchStats>,
 }
 
 impl BlockSyncResources {
@@ -925,8 +1072,9 @@ impl BlockSyncResources {
         endpoint: Endpoint,
         peer_map: Arc<SharedPeerMap>,
         connection_cache: ConnectionCache,
-        event_tx: mpsc::Sender<TransportEvent<iroh::endpoint::SendStream>>,
+        event_tx: DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
         admission: Arc<PeerAdmission>,
+        fetch_stats: Arc<FetchStats>,
     ) -> Self {
         Self {
             endpoint,
@@ -934,6 +1082,7 @@ impl BlockSyncResources {
             connection_cache,
             event_tx,
             admission,
+            fetch_stats,
         }
     }
 }
@@ -976,6 +1125,7 @@ pub(super) async fn handle_block_sync(
         connection_cache,
         event_tx,
         admission,
+        fetch_stats,
     } = resources;
 
     for provider in &providers {
@@ -986,9 +1136,10 @@ pub(super) async fn handle_block_sync(
         let admission = Arc::clone(&admission);
         let provider = provider.clone();
         let request = request.clone();
+        let mut timer = fetch_stats.start(&provider);
         tasks.spawn(async move {
             let direct_addr = super::endpoint::peer_direct_addr(&peer_map, &provider);
-            try_fetch_from_provider(
+            let attempt = try_fetch_from_provider(
                 &endpoint,
                 query_id,
                 &provider,
@@ -997,8 +1148,11 @@ pub(super) async fn handle_block_sync(
                 &connection_cache,
                 &event_tx,
                 &admission,
+                &mut timer,
             )
-            .await
+            .await;
+            timer.finish(attempt.outcome.fetch_outcome());
+            attempt
         });
     }
 
@@ -1125,6 +1279,44 @@ mod tests {
         assert!(summary.contains("+1 more"));
     }
 
+    #[tokio::test]
+    async fn a_reply_the_requester_never_reads_is_reset_at_its_deadline() {
+        let requester = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+        let replier = localhost_endpoint(vec![protocols::ALPN_MUX.to_vec()]).await;
+        let replier_addr = replier.addr();
+        let accepted = n0_future::task::spawn({
+            let replier = replier.clone();
+            async move {
+                let connection = replier.accept().await.unwrap().await.unwrap();
+                let (send, mut recv) = connection.accept_bi().await.unwrap();
+                recv.read_exact(&mut [0u8]).await.unwrap();
+                (connection, send)
+            }
+        });
+        let connection = requester
+            .connect(replier_addr, protocols::ALPN_MUX)
+            .await
+            .unwrap();
+        let (mut request, mut reply) = connection.open_bi().await.unwrap();
+        request.write_all(&[0]).await.unwrap();
+        let (_replier_connection, send) = accepted.await.unwrap();
+
+        // Larger than any stream window, so the write waits on the requester.
+        let payload = vec![0u8; 2 * protocols::MAX_MESSAGE_SIZE];
+        let result = reply_on_stream(send, &payload, std::time::Duration::from_millis(200)).await;
+
+        assert!(matches!(result, Err(crate::error::Error::ResponseTimeout)));
+        let code =
+            n0_future::time::timeout(std::time::Duration::from_secs(5), reply.received_reset())
+                .await
+                .expect("reset reaches the requester")
+                .unwrap();
+        assert_eq!(
+            code.map(|code| code.into_inner()),
+            Some(u64::from(super::super::endpoint_streams::RESET_STALLED))
+        );
+    }
+
     pub(super) async fn localhost_endpoint(alpns: Vec<Vec<u8>>) -> iroh::Endpoint {
         iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
             .relay_mode(iroh::RelayMode::Disabled)
@@ -1167,7 +1359,7 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         remember_connection(&cache, &peer, &connection).expect("cache connection");
 
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
@@ -1214,7 +1406,7 @@ mod tests {
         let conn_b = dial_ep.connect(addr, b"test/b").await.expect("connect b");
 
         let peer_map = Arc::new(SharedPeerMap::new());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         let id = accept_ep.id();
         peer_map.increment_connections(id, None, conn_a.clone());
         peer_map.increment_connections(id, None, conn_b.clone());
@@ -1254,7 +1446,7 @@ mod tests {
             .await
             .expect("connect");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         remember_connection(&cache, &peer, &connection).expect("cache connection");
 
         retire_timed_out_connection(&cache, &peer, &connection);
@@ -1298,7 +1490,7 @@ mod tests {
             .await
             .expect("connect new");
         let peer = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         remember_connection(&cache, &peer, &old).expect("cache old");
         remember_connection(&cache, &peer, &newer).expect("cache new");
 
@@ -1327,7 +1519,7 @@ mod tests {
             .copied()
             .expect("listener direct address");
         let peer_id = PeerId::new(accept_ep.id().to_string());
-        let cache = new_connection_cache();
+        let cache = new_connection_cache(GossipHandle::new());
         let admission = Arc::new(PeerAdmission::new(AllowlistState::AcceptAll));
         let barrier = Arc::new(regolith::sync::Barrier::new(CALLERS));
         let (accepted_tx, mut accepted_rx) = tokio::sync::mpsc::unbounded_channel();

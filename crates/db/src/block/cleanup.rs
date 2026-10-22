@@ -14,7 +14,7 @@ async fn remove_owner(systemstore: &NamespaceView, cid: &Cid, doc_id: &str) -> R
     )
 }
 
-async fn load_block(blockstore: &NamespaceView, cid: &Cid) -> Result<Option<Block>> {
+pub(crate) async fn load_block(blockstore: &NamespaceView, cid: &Cid) -> Result<Option<Block>> {
     let Some(bytes) = blockstore
         .get(&cid.to_bytes())
         .await
@@ -31,11 +31,15 @@ async fn remove_leaf_owner(
     cid: &Cid,
     doc_id: &str,
     can_delete: bool,
+    retained: &RapidHashSet<Cid>,
 ) -> Result<()> {
     let block = load_block(blockstore, cid).await?;
     let unowned = remove_owner(systemstore, cid, doc_id).await?;
     if let Some(block) = block {
-        if let Some(encryption_cid) = block.encryption {
+        if let Some(encryption_cid) = block
+            .encryption
+            .filter(|encryption_cid| !retained.contains(encryption_cid))
+        {
             let encryption_unowned = remove_owner(systemstore, &encryption_cid, doc_id).await?;
             if can_delete && unowned && encryption_unowned {
                 blockstore
@@ -79,25 +83,62 @@ async fn remove_encryption_owner(
     Ok(())
 }
 
+/// The blocks `commits` still need: the commits, the field blocks they link
+/// and the encryption blocks either references.
+pub async fn referenced_blocks(
+    blockstore: &NamespaceView,
+    commits: impl IntoIterator<Item = Cid>,
+) -> Result<RapidHashSet<Cid>> {
+    let mut stack: Vec<Cid> = commits.into_iter().collect();
+    let mut referenced = RapidHashSet::new();
+    while let Some(cid) = stack.pop() {
+        if !referenced.insert(cid) {
+            continue;
+        }
+        let Some(block) = load_block(blockstore, &cid).await? else {
+            continue;
+        };
+        referenced.extend(block.encryption);
+        stack.extend(block.links.iter().flatten().map(|link| link.link));
+    }
+    Ok(referenced)
+}
+
 /// Remove one document's ownership of a commit and its direct field blocks.
 /// History parents are deliberately retained; the caller chooses which
-/// priorities to prune.
+/// commits to prune. Blocks in `retained` are still referenced by the
+/// document's remaining commits, so they keep their owner and their bytes.
+/// Encryption blocks are inherited across commits while ownership is recorded
+/// once per document, so a pruned commit cannot tell on its own whether
+/// another commit still links its encryption block.
 pub async fn delete_owned_commit(
     blockstore: &NamespaceView,
     systemstore: &NamespaceView,
     cid: &Cid,
     doc_id: &str,
+    retained: &RapidHashSet<Cid>,
 ) -> Result<()> {
     let block = load_block(blockstore, cid).await?;
     let unowned = remove_owner(systemstore, cid, doc_id).await?;
 
     if let Some(block) = block {
         if let Some(links) = block.links {
-            for link in links {
-                remove_leaf_owner(blockstore, systemstore, &link.link, doc_id, unowned).await?;
+            for link in links.iter().filter(|link| !retained.contains(&link.link)) {
+                remove_leaf_owner(
+                    blockstore,
+                    systemstore,
+                    &link.link,
+                    doc_id,
+                    unowned,
+                    retained,
+                )
+                .await?;
             }
         }
-        if let Some(encryption_cid) = block.encryption {
+        if let Some(encryption_cid) = block
+            .encryption
+            .filter(|encryption_cid| !retained.contains(encryption_cid))
+        {
             remove_encryption_owner(blockstore, systemstore, &encryption_cid, doc_id, unowned)
                 .await?;
         }

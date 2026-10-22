@@ -161,7 +161,7 @@ impl<S: Store> crate::database::DB<S> {
             Collection::load_index_actions(target_schema.clone(), &txn.systemstore()?).await?;
         let cache = std::sync::Arc::clone(&self.collections);
         let registered_name = name.clone();
-        txn.on_commit(OnCommit::Ordered(Box::new(move || {
+        txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
             cache.rcu(|old| {
                 let mut cache = old.clone();
                 cache.put_named(registered_name.as_str(), collection.clone());
@@ -406,7 +406,7 @@ impl<S: Store> crate::database::DB<S> {
         if target_schema.is_active {
             let cache = std::sync::Arc::clone(&self.collections);
             let name_for_cache = name.clone();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 cache.rcu(|old| {
                     let mut cache = old.clone();
                     cache.remove(&name_for_cache);

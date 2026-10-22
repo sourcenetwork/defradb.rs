@@ -5,13 +5,16 @@ use iroh::endpoint::SendStream;
 use tokio::sync::oneshot;
 
 use crate::message::{
-    BranchableSyncReply, BranchableSyncRequest, DocSyncReply, DocSyncRequest, ManageQueryReply,
-    ManageQueryRequest, ManageReply, ManageRequest, PushLogBroadcast, PushLogReply, PushLogRequest,
-    PushSEArtifactsRequest, QuerySEArtifactsReply, QuerySEArtifactsRequest,
+    BranchableSyncRequest, DocSyncRequest, ManageQueryReply, ManageQueryRequest, ManageReply,
+    ManageRequest, PushLogBroadcast, PushLogReply, PushLogRequest, PushSEArtifactsRequest,
+    QuerySEArtifactsReply, QuerySEArtifactsRequest,
 };
 use crate::replicator::ReplicatorInfo;
 use crate::transport::{MessageId, PeerAddr, PeerId};
 use crate::QueryId;
+
+/// Where the endpoint answers a command.
+pub type Reply<T> = oneshot::Sender<crate::error::Result<T>>;
 
 /// Commands from the transport facade to the background endpoint.
 #[non_exhaustive]
@@ -61,6 +64,12 @@ pub enum IrohCommand {
     ConnectedPeers {
         reply: oneshot::Sender<crate::error::Result<Vec<PeerId>>>,
     },
+    InboundBudget {
+        reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::InboundClassSnapshot>>>,
+    },
+    FetchStats {
+        reply: oneshot::Sender<crate::error::Result<Vec<crate::transport::PeerFetchStats>>>,
+    },
     ListenAddresses {
         reply: oneshot::Sender<crate::error::Result<Vec<PeerAddr>>>,
     },
@@ -74,6 +83,30 @@ pub enum IrohCommand {
         peer_id: PeerId,
         request: crate::message::IdentityRequest,
         reply: oneshot::Sender<crate::error::Result<crate::message::IdentityResponse>>,
+    },
+
+    /// What this node advertises in its service record.
+    SetServiceProfile {
+        profile: super::records::ServiceProfile,
+        reply: oneshot::Sender<crate::error::Result<()>>,
+    },
+
+    /// The live service record we hold for a peer, or our own.
+    ServiceRecord {
+        peer_id: PeerId,
+        reply: Reply<Option<super::records::ServiceRecord>>,
+    },
+
+    /// Nodes whose service record holds a collection, best first.
+    CollectionProviders {
+        collection_id: String,
+        reply: oneshot::Sender<crate::error::Result<Vec<iroh::EndpointId>>>,
+    },
+
+    /// Nodes whose service record offers to be a replicator.
+    ReplicatorOffers {
+        collection_id: Option<String>,
+        reply: oneshot::Sender<crate::error::Result<Vec<iroh::EndpointId>>>,
     },
 
     // PubSub
@@ -119,9 +152,10 @@ pub enum IrohCommand {
     },
 
     // Messaging
-    SendPushLogResponse {
+    /// Write an encoded reply on its request's stream and finish it.
+    ReplyOnStream {
         send_stream: SendStream,
-        reply_msg: PushLogReply,
+        payload: Vec<u8>,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
     SendTwoStreamRequest {
@@ -129,24 +163,9 @@ pub enum IrohCommand {
         request: PushLogRequest,
         reply: oneshot::Sender<crate::error::Result<PushLogReply>>,
     },
-    SendTwoStreamResponse {
-        peer_id: PeerId,
-        reply_msg: PushLogReply,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
     SendDocSyncRequest {
         peer_id: PeerId,
         request: DocSyncRequest,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
-    SendDocSyncResponse {
-        peer_id: PeerId,
-        reply_msg: DocSyncReply,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
-    SendDocSyncResponseToken {
-        send_stream: SendStream,
-        reply_msg: DocSyncReply,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
     SendBranchableSyncRequest {
@@ -154,24 +173,9 @@ pub enum IrohCommand {
         request: BranchableSyncRequest,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
-    SendBranchableSyncResponse {
-        peer_id: PeerId,
-        reply_msg: BranchableSyncReply,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
-    SendBranchableSyncResponseToken {
-        send_stream: SendStream,
-        reply_msg: BranchableSyncReply,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
     SendCarRequest {
         peer_id: PeerId,
         root_cid: Cid,
-        reply: oneshot::Sender<crate::error::Result<()>>,
-    },
-    SendCarResponse {
-        peer_id: PeerId,
-        car_data: Vec<u8>,
         reply: oneshot::Sender<crate::error::Result<()>>,
     },
     SendSEArtifacts {
