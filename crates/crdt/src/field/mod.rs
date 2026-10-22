@@ -36,6 +36,8 @@ pub enum FieldCrdtError {
     NonNumericIncrement(String),
     #[error("{crdt} fields do not support {op}")]
     UnsupportedOp { crdt: CType, op: &'static str },
+    #[error("{crdt} fields merge increments and cannot be set; use `increment`")]
+    SetOnCounter { crdt: CType },
     #[error("unsupported counter field {0}")]
     UnsupportedKind(String),
     #[error("cannot decode the data of field {field}: {message}")]
@@ -110,6 +112,18 @@ pub trait FieldCrdt: Send + Sync {
     /// The operation an input expresses, refused when the type cannot take
     /// it. `creating` is true when the operation is the field's first write.
     fn op(&self, input: NormalValue, creating: bool) -> Result<FieldOp, FieldCrdtError>;
+
+    /// The operation a client names, refused when the type cannot take it.
+    /// A named set restates the value; by default it is the only one taken.
+    fn named_op(&self, op: FieldOp) -> Result<FieldOp, FieldCrdtError> {
+        match op {
+            FieldOp::Set(value) => Ok(FieldOp::Set(value)),
+            op => Err(FieldCrdtError::UnsupportedOp {
+                crdt: self.ctype(),
+                op: op.name(),
+            }),
+        }
+    }
 
     /// The value `current` takes once `op` is applied to it.
     fn apply(

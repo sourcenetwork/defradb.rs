@@ -599,6 +599,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 doc_ids: &request.doc_ids,
                 create_input: &request.create_input,
                 update_input: &request.update_input,
+                update_ops: &request.update_ops,
             })
             .await
             .map_err(crate::error::QueryError::execution)?;

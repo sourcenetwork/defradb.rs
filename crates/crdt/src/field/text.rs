@@ -93,6 +93,16 @@ impl FieldCrdt for TextField {
         Ok(FieldOp::Set(input))
     }
 
+    fn named_op(&self, op: FieldOp) -> Result<FieldOp, FieldCrdtError> {
+        match op {
+            FieldOp::Increment(_) => Err(FieldCrdtError::UnsupportedOp {
+                crdt: CType::Text,
+                op: "increment",
+            }),
+            op => Ok(op),
+        }
+    }
+
     fn apply(
         &self,
         _field: &FieldDescription,

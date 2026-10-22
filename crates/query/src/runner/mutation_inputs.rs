@@ -62,19 +62,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let mut normalized = RapidHashMap::with_capacity(input.len());
 
         for (field_name, value) in input {
-            let mapped_name = collection
-                .field_by_name(field_name)
-                .filter(|field| field.kind.is_object() && !field.kind.is_array())
-                .and_then(|field| {
-                    let fk_field_name =
-                        schema::CollectionVersion::relation_id_field_name(&field.name);
-                    collection
-                        .field_by_name(&fk_field_name)
-                        .map(|_| fk_field_name)
-                })
-                .unwrap_or_else(|| field_name.clone());
-
-            normalized.insert(mapped_name, value.clone());
+            normalized.insert(input_field_name(collection, field_name), value.clone());
         }
 
         normalized
@@ -107,13 +95,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // Get all documents from the collection. An update reads them for the
         // parts its filter and writes decide on, so the documents it then
         // writes are not validated over their other fields.
-        let decided_on = (mutation.mutation_type == crate::mapper::MutationType::Update)
-            .then(|| {
-                let patch: rapidhash::RapidHashSet<String> =
-                    mutation.update_input.keys().cloned().collect();
-                crate::update_parts::planned(&collection, &patch, Some(filter))
-            })
-            .flatten();
+        let decided_on = if mutation.mutation_type == crate::mapper::MutationType::Update {
+            let patch = mutation.update_fields(&collection)?;
+            crate::update_parts::planned(&collection, &patch, Some(filter))
+        } else {
+            None
+        };
         let all_docs = match &decided_on {
             Some(fields) => {
                 fetcher
@@ -209,9 +196,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
     ) -> Result<UpdateInput> {
         let mut update_input = UpdateInput::new();
 
-        let normalized = self.normalize_mutation_input_fields(collection, &mutation.update_input);
+        let (fields, ops) = mutation.split_update(collection)?;
+        let normalized = self.normalize_mutation_input_fields(collection, &fields);
         for (field_name, value) in &normalized {
             update_input = update_input.with_field(field_name.clone(), value.clone());
+        }
+        for (field_name, op) in ops {
+            let field_name = input_field_name(collection, &field_name);
+            if normalized.contains_key(&field_name) || update_input.ops.contains_key(&field_name) {
+                return Err(crate::mapper::two_ops(&field_name));
+            }
+            update_input.ops.insert(field_name, op);
         }
 
         Ok(update_input)
@@ -232,4 +227,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
 
         Ok(upsert_input)
     }
+}
+
+/// The field an input key writes: a one-sided relation's object field writes
+/// its `_id` field.
+fn input_field_name(collection: &schema::CollectionVersion, field_name: &str) -> String {
+    collection
+        .field_by_name(field_name)
+        .filter(|field| field.kind.is_object() && !field.kind.is_array())
+        .and_then(|field| {
+            let fk_field_name = schema::CollectionVersion::relation_id_field_name(&field.name);
+            collection
+                .field_by_name(&fk_field_name)
+                .map(|_| fk_field_name)
+        })
+        .unwrap_or_else(|| field_name.to_string())
 }

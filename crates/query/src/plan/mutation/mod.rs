@@ -4,6 +4,7 @@ mod add;
 mod create_conversions;
 mod delete;
 mod update;
+mod update_ops;
 mod upsert;
 
 pub use add::{AddInput, AddNode};

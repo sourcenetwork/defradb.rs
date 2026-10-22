@@ -138,6 +138,19 @@ impl FieldCrdt for CounterField {
         Ok(FieldOp::Increment(input))
     }
 
+    /// Two peers setting a counter at once would each add their own gap, so
+    /// a client names increments only.
+    fn named_op(&self, op: FieldOp) -> Result<FieldOp, FieldCrdtError> {
+        match op {
+            FieldOp::Increment(by) => self.op(by, false),
+            FieldOp::Set(_) => Err(FieldCrdtError::SetOnCounter { crdt: self.ctype }),
+            op => Err(FieldCrdtError::UnsupportedOp {
+                crdt: self.ctype,
+                op: op.name(),
+            }),
+        }
+    }
+
     fn apply(
         &self,
         field: &FieldDescription,

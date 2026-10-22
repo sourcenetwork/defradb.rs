@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use chrono::{FixedOffset, Utc};
 use identity::Did;
-use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::error::{QueryError, Result};
 use crate::executor::QueryRequest;
@@ -219,8 +219,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     && collection.vector_embeddings.is_empty()
                     && mutator.supports_projected_updates()
                 {
-                    let patch_fields: RapidHashSet<String> =
-                        mutation.update_input.keys().cloned().collect();
+                    let patch_fields = mutation.update_fields(collection)?;
                     crate::update_parts::planned(collection, &patch_fields, None)
                 } else {
                     None
@@ -268,7 +267,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                         {
                             let input = self.build_update_input(mutation, collection)?;
                             input.apply_to_with_time(doc, Some(collection), Some(request_time))?;
-                            input.fields.keys().cloned().collect()
+                            input.field_names()
                         } else {
                             let input = self
                                 .build_upsert_input_from_map(collection, &mutation.update_input)?;

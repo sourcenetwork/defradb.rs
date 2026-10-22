@@ -66,6 +66,7 @@ impl UpsertInput {
     ) -> Result<usize> {
         let update = UpdateInput {
             fields: self.fields.clone(),
+            ops: RapidHashMap::new(),
         };
         update.apply_to_with_time(doc, collection, Some(utc_now))
     }
