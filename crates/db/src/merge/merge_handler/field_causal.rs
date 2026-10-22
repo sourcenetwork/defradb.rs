@@ -1,9 +1,14 @@
 //! A causal field's merge ([`crdt::CausalCrdt`]): a block's operation counts
 //! in its parent version, so it applies to the stored value only when its
-//! parents are the field's heads, and otherwise the field's history replays.
-//! The replay walks the whole history, not just back to a common ancestor: a
-//! sequence places an element next to deleted ones, which the stored value no
-//! longer holds.
+//! parents are the field's heads. Any other block is concurrent with one
+//! already merged: the merge walks down from the heads and the block to the
+//! field's last critical block (one every other block comes before or after)
+//! and merges only the blocks above it ([`CausalCrdt::merge_from`]). When the
+//! walk reaches a root first, or the type cannot merge from there, the whole
+//! history replays, not just back to a common ancestor: a sequence places an
+//! element next to deleted ones, which the stored value no longer holds.
+use std::collections::BTreeSet;
+
 use super::*;
 use crate::collection::value::FieldOrder;
 use crdt::{CausalBlock, CausalCrdt, FieldCrdt};
@@ -71,16 +76,31 @@ where
                 None => self.stored_block(cid).await?.heads.unwrap_or_default(),
             };
             parents.sort_unstable();
-            if parents == heads {
+            let value = if parents == heads {
                 let op = causal.block_op(field, delta.data).map_err(failed)?;
                 crdt.apply(field, current.as_ref(), &op).map_err(failed)?
             } else {
-                heads.push(*cid);
-                let history = self
-                    .causal_history(&heads, cid, causal, field, delta.data, metadata)
-                    .await?;
-                causal.replay(field, &history).map_err(failed)?
+                let mut tips = heads.clone();
+                tips.push(*cid);
+                self.concurrent_value(
+                    current.as_ref(),
+                    &tips,
+                    cid,
+                    causal,
+                    field,
+                    delta.data,
+                    metadata,
+                )
+                .await?
+            };
+            // With every merged block among its parents, the result is the
+            // block's own version, which what the block records has to fit.
+            if heads.iter().all(|head| parents.binary_search(head).is_ok()) {
+                causal
+                    .check_version(field, delta.data, &value)
+                    .map_err(failed)?;
             }
+            value
         } else {
             current.unwrap_or(NormalValue::Null)
         };
@@ -159,6 +179,99 @@ where
         Block::from_dag_cbor(&bytes).map_err(|e| MergeError::BlockDecode(e.to_string()))
     }
 
+    /// The value after merging the block `cid`, carrying `data`, into
+    /// `current`, the value of every other block under `tips` (the field's
+    /// heads and `cid`): from the field's last critical block when the type
+    /// can, from its whole history otherwise.
+    #[allow(clippy::too_many_arguments)]
+    async fn concurrent_value(
+        &self,
+        current: Option<&NormalValue>,
+        tips: &[Cid],
+        cid: &Cid,
+        causal: &dyn CausalCrdt,
+        field: &FieldDescription,
+        data: &[u8],
+        metadata: Option<&BlockMetadata<'_>>,
+    ) -> std::result::Result<NormalValue, MergeError> {
+        let failed = |error: crdt::FieldCrdtError| MergeError::MergeFailed(error.to_string());
+        if let Some((critical, after)) = self
+            .critical_block(tips, cid, causal, field, data, metadata)
+            .await?
+        {
+            let merged = causal
+                .merge_from(field, current, &critical, &after, &cid.to_bytes())
+                .map_err(failed)?;
+            if let Some(value) = merged {
+                return Ok(value);
+            }
+        }
+        let history = self
+            .causal_history(tips, cid, causal, field, data, metadata)
+            .await?;
+        causal.replay(field, &history).map_err(failed)
+    }
+
+    /// The field's last critical block below `tips`: one every other block
+    /// under them comes before or after. The walk goes down from `tips`,
+    /// highest priority first, and stops when one block is left to visit and
+    /// none visited was a root. Then every block visited sits above that one,
+    /// and every block not visited below it, whatever the priorities say;
+    /// they only decide how soon the walk gets there.
+    ///
+    /// Returns that block's data, decrypted, and the blocks visited, or `None`
+    /// when the walk reaches a root first.
+    async fn critical_block(
+        &self,
+        tips: &[Cid],
+        cid: &Cid,
+        causal: &dyn CausalCrdt,
+        field: &FieldDescription,
+        data: &[u8],
+        metadata: Option<&BlockMetadata<'_>>,
+    ) -> std::result::Result<Option<(Vec<u8>, Vec<CausalBlock>)>, MergeError> {
+        let mut seen: RapidHashSet<Cid> = RapidHashSet::default();
+        let mut waiting: RapidHashMap<Cid, Block> = RapidHashMap::default();
+        let mut frontier: BTreeSet<(u64, Cid)> = BTreeSet::new();
+        for tip in tips {
+            if seen.insert(*tip) {
+                let block = self.stored_block(tip).await?;
+                frontier.insert((block.delta.priority(), *tip));
+                waiting.insert(*tip, block);
+            }
+        }
+        let mut after = Vec::new();
+        while let Some(&(_, next)) = frontier.last() {
+            if frontier.len() == 1 && !after.is_empty() {
+                if next == *cid {
+                    return Ok(None);
+                }
+                let critical = self.block_data(&waiting[&next], metadata).await?;
+                return Ok(Some((critical, after)));
+            }
+            frontier.pop_last();
+            let block = waiting.remove(&next).ok_or_else(|| {
+                MergeError::MergeFailed(format!("causal block {next} visited twice"))
+            })?;
+            let parents = block.heads.clone().unwrap_or_default();
+            if parents.is_empty() {
+                return Ok(None);
+            }
+            for parent in &parents {
+                if seen.insert(*parent) {
+                    let parent_block = self.stored_block(parent).await?;
+                    frontier.insert((parent_block.delta.priority(), *parent));
+                    waiting.insert(*parent, parent_block);
+                }
+            }
+            after.push(
+                self.causal_block(next, &block, cid, causal, field, data, metadata)
+                    .await?,
+            );
+        }
+        Ok(None)
+    }
+
     /// Every block of a causal field's history under `tips`, each with the
     /// operation it makes. The block `cid` being merged carries `data`,
     /// already decrypted; the others are read from the blockstore, which holds
@@ -172,38 +285,65 @@ where
         data: &[u8],
         metadata: Option<&BlockMetadata<'_>>,
     ) -> std::result::Result<Vec<CausalBlock>, MergeError> {
-        let failed = |error: crdt::FieldCrdtError| MergeError::BlockDecode(error.to_string());
         let mut seen: RapidHashSet<Cid> = tips.iter().copied().collect();
         let mut stack = tips.to_vec();
         let mut history = Vec::new();
         while let Some(next) = stack.pop() {
             let block = self.stored_block(&next).await?;
-            let parents = block.heads.clone().unwrap_or_default();
-            let op = if next == *cid {
-                causal.block_op(field, data).map_err(failed)?
-            } else {
-                let writer = crdt::delta_crdt(&block.delta, field.crdt_type)
-                    .map_err(|error| MergeError::UnsupportedDelta(error.to_string()))?;
-                let stored = block
-                    .delta
-                    .field()
-                    .ok_or_else(|| MergeError::UnsupportedDelta("not a field delta".into()))?;
-                let data = self
-                    .decrypt_block_data(stored.data, block.encryption.as_ref(), metadata)
-                    .await?;
-                crdt::history_op(writer, field, &data).map_err(failed)?
-            };
-            for parent in &parents {
+            for parent in block.heads.iter().flatten() {
                 if seen.insert(*parent) {
                     stack.push(*parent);
                 }
             }
-            history.push(CausalBlock {
-                id: next.to_bytes(),
-                parents: parents.iter().map(Cid::to_bytes).collect(),
-                op,
-            });
+            history.push(
+                self.causal_block(next, &block, cid, causal, field, data, metadata)
+                    .await?,
+            );
         }
         Ok(history)
+    }
+
+    /// The stored block `id` of a causal field's history, with the operation
+    /// it makes. The block `cid` being merged carries `data`, already
+    /// decrypted.
+    #[allow(clippy::too_many_arguments)]
+    async fn causal_block(
+        &self,
+        id: Cid,
+        block: &Block,
+        cid: &Cid,
+        causal: &dyn CausalCrdt,
+        field: &FieldDescription,
+        data: &[u8],
+        metadata: Option<&BlockMetadata<'_>>,
+    ) -> std::result::Result<CausalBlock, MergeError> {
+        let failed = |error: crdt::FieldCrdtError| MergeError::BlockDecode(error.to_string());
+        let op = if id == *cid {
+            causal.block_op(field, data).map_err(failed)?
+        } else {
+            let writer = crdt::delta_crdt(&block.delta, field.crdt_type)
+                .map_err(|error| MergeError::UnsupportedDelta(error.to_string()))?;
+            crdt::history_op(writer, field, &self.block_data(block, metadata).await?)
+                .map_err(failed)?
+        };
+        Ok(CausalBlock {
+            id: id.to_bytes(),
+            parents: block.heads.iter().flatten().map(Cid::to_bytes).collect(),
+            op,
+        })
+    }
+
+    /// A stored field block's data, decrypted.
+    async fn block_data(
+        &self,
+        block: &Block,
+        metadata: Option<&BlockMetadata<'_>>,
+    ) -> std::result::Result<Vec<u8>, MergeError> {
+        let stored = block
+            .delta
+            .field()
+            .ok_or_else(|| MergeError::UnsupportedDelta("not a field delta".into()))?;
+        self.decrypt_block_data(stored.data, block.encryption.as_ref(), metadata)
+            .await
     }
 }

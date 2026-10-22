@@ -58,7 +58,7 @@ pub use lens_block::{
 };
 pub use request_context::RequestContext;
 pub use signing::SigningKeyType;
-pub use text_op::TextOp;
+pub use text_op::{TextEdits, TextOp};
 
 /// Version information for DefraDB
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

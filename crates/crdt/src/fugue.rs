@@ -14,7 +14,12 @@
 //! [`replay`] rebuilds a field's text from all its blocks; the tree is thrown
 //! away after, and the stored value is the text. A block whose parents are the
 //! field's current heads needs no replay: its parent version is the stored
-//! text, so [`TextOp::apply_all`] on it gives the same result.
+//! text, so [`TextOp::apply_all`] on it gives the same result. Any other
+//! block goes through [`merge_text`], which replays only the blocks after the
+//! field's last critical block (one every other block comes before or after),
+//! starting from placeholders for that block's text. The characters deleted
+//! before it are gone, yet the text equals a full replay
+//! (`INV_CriticalReplay`).
 //!
 //! The contract is `proofs/tla/TextCrdt.tla` and `proofs/lean/TextCrdt`:
 //! convergence, replay equality and intent preservation.
@@ -38,6 +43,10 @@ pub struct TextBlock {
 
 /// The tree's root: not a character, never shown.
 const ROOT: usize = 0;
+
+/// The block a placeholder character belongs to: the text of a critical block,
+/// which every block replayed comes after, so every version holds it.
+const BASE: usize = usize::MAX - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Side {
@@ -250,15 +259,41 @@ struct Version<'v> {
 
 impl Version<'_> {
     fn has(&self, block: usize) -> bool {
-        block == self.block || self.ancestry.contains(block)
+        block == self.block || block == BASE || self.ancestry.contains(block)
     }
 }
 
 impl<'history> Tree<'history> {
+    /// A tree of `base` placeholder characters, each the right child of the
+    /// one before, for blocks whose IDs are `ids` in topological order.
+    fn with_placeholder(ids: Vec<&'history [u8]>, base: usize) -> Self {
+        let mut nodes = Vec::with_capacity(base + 1);
+        nodes.push(blank(usize::MAX));
+        for index in 1..=base {
+            nodes.push(blank(BASE));
+            nodes[index - 1].right.push(index);
+        }
+        Tree {
+            ids,
+            nodes,
+            order: Some(Order::new((1..=base).collect(), |_| true)),
+        }
+    }
+
+    /// A block's ID. Placeholders sort first, though they never share a
+    /// parent and side with another node.
+    fn id(&self, block: usize) -> &[u8] {
+        if block == BASE {
+            &[]
+        } else {
+            self.ids[block]
+        }
+    }
+
     fn cmp_id(&self, a: usize, b: usize) -> Ordering {
         let (a, b) = (&self.nodes[a], &self.nodes[b]);
-        self.ids[a.block]
-            .cmp(self.ids[b.block])
+        self.id(a.block)
+            .cmp(self.id(b.block))
             .then(a.offset.cmp(&b.offset))
     }
 
@@ -411,6 +446,18 @@ impl<'history> Tree<'history> {
     }
 }
 
+/// A node of `block` with no character of its own: the root or a placeholder.
+fn blank(block: usize) -> Node {
+    Node {
+        block,
+        offset: 0,
+        ch: '\0',
+        deleted_by: Vec::new(),
+        left: Vec::new(),
+        right: Vec::new(),
+    }
+}
+
 /// `pos` as an index into `len` characters, the end when past it.
 fn clamp(pos: u64, len: usize) -> usize {
     usize::try_from(pos).map_or(len, |pos| pos.min(len))
@@ -436,58 +483,78 @@ struct Character<'history> {
     deleted: bool,
 }
 
+/// The text after merging the block `new` into a Text field, replayed from a
+/// critical block: one that every other block of the field comes before or
+/// after. `blocks` are the blocks after it, `new` among them; a parent they
+/// name outside `blocks` is the critical block or one before it. `base` is the
+/// length of the critical block's text, and `current`, the stored text, is the
+/// text of every block but `new`, which supplies the characters the
+/// placeholders stand for.
+///
+/// Returns `None` when `current` is not the text the other blocks leave, or a
+/// block already builds on `new`; the caller then replays the whole history.
+pub fn merge_text(
+    current: &str,
+    base: usize,
+    blocks: &[TextBlock],
+    new: &[u8],
+) -> Result<Option<String>> {
+    if blocks
+        .iter()
+        .any(|block| block.parents.iter().any(|p| p == new))
+    {
+        return Ok(None);
+    }
+    let (tree, full) = build(blocks, Some(base))?;
+    let Some(new_step) = tree.ids.iter().position(|id| *id == new) else {
+        return Err(Error::MergeError(
+            "the merged Text block is not among the blocks replayed".into(),
+        ));
+    };
+    // Where the version without `new` shows a character, the stored text has
+    // it: that is where each placeholder learns its character.
+    let mut stored = current.chars();
+    let mut placeholders = vec!['\0'; base + 1];
+    for &node in &full {
+        let n = &tree.nodes[node];
+        if n.block == new_step || n.deleted_by.iter().any(|&by| by != new_step) {
+            continue;
+        }
+        let Some(ch) = stored.next() else {
+            return Ok(None);
+        };
+        if n.block == BASE {
+            placeholders[node] = ch;
+        } else if n.ch != ch {
+            return Ok(None);
+        }
+    }
+    if stored.next().is_some() {
+        return Ok(None);
+    }
+    Ok(Some(
+        full.iter()
+            .filter_map(|&node| {
+                let n = &tree.nodes[node];
+                n.deleted_by.is_empty().then(|| {
+                    if n.block == BASE {
+                        placeholders[node]
+                    } else {
+                        n.ch
+                    }
+                })
+            })
+            .collect(),
+    ))
+}
+
 /// Every character `blocks` insert, in reading order.
 fn characters(blocks: &[TextBlock]) -> Result<Vec<Character<'_>>> {
-    let order = topological(blocks)?;
-    let position: RapidHashMap<&[u8], usize> = order
-        .iter()
-        .enumerate()
-        .map(|(position, &index)| (blocks[index].id.as_slice(), position))
-        .collect();
-    let mut tree = Tree {
-        ids: order
-            .iter()
-            .map(|&index| blocks[index].id.as_slice())
-            .collect(),
-        nodes: vec![Node {
-            block: usize::MAX,
-            offset: 0,
-            ch: '\0',
-            deleted_by: Vec::new(),
-            left: Vec::new(),
-            right: Vec::new(),
-        }],
-        order: Some(Order::new(Vec::new(), |_| true)),
-    };
-    let mut ancestry: Vec<Ancestry> = Vec::with_capacity(order.len());
-    for (step, &index) in order.iter().enumerate() {
-        let block = &blocks[index];
-        let parents: Vec<usize> = block
-            .parents
-            .iter()
-            .map(|parent| position[parent.as_slice()])
-            .collect();
-        let before = ancestry_of(&parents, &ancestry, step);
-        let mut next_offset = 0;
-        for op in &block.ops {
-            tree.apply(op, step, &before, &mut next_offset);
-        }
-        ancestry.push(before);
-    }
-    let all = Ancestry::Prefix(order.len());
+    let (tree, full) = build(blocks, None)?;
+    let all = Ancestry::Prefix(tree.ids.len());
     let version = Version {
         ancestry: &all,
         block: usize::MAX,
-    };
-    let full = match tree.order.take() {
-        Some(order) => {
-            let order = order.into_nodes();
-            // The kept order stands in for the tree; the tests hold it to it.
-            #[cfg(test)]
-            assert_eq!(order, tree.traverse(None), "kept order left the tree");
-            order
-        }
-        None => tree.traverse(None),
     };
     Ok(full
         .into_iter()
@@ -501,6 +568,52 @@ fn characters(blocks: &[TextBlock]) -> Result<Vec<Character<'_>>> {
             }
         })
         .collect())
+}
+
+/// The tree `blocks` build, and every node of it in reading order, deleted ones
+/// too. With `base`, the tree starts from that many placeholder characters,
+/// and a parent outside `blocks` stands for them; without it, every parent is
+/// in `blocks`.
+fn build(blocks: &[TextBlock], base: Option<usize>) -> Result<(Tree<'_>, Vec<usize>)> {
+    let order = topological(blocks, base.is_some())?;
+    let position: RapidHashMap<&[u8], usize> = order
+        .iter()
+        .enumerate()
+        .map(|(position, &index)| (blocks[index].id.as_slice(), position))
+        .collect();
+    let mut tree = Tree::with_placeholder(
+        order
+            .iter()
+            .map(|&index| blocks[index].id.as_slice())
+            .collect(),
+        base.unwrap_or(0),
+    );
+    let mut ancestry: Vec<Ancestry> = Vec::with_capacity(order.len());
+    for (step, &index) in order.iter().enumerate() {
+        let block = &blocks[index];
+        let parents: Vec<usize> = block
+            .parents
+            .iter()
+            .filter_map(|parent| position.get(parent.as_slice()).copied())
+            .collect();
+        let before = ancestry_of(&parents, &ancestry, step);
+        let mut next_offset = 0;
+        for op in &block.ops {
+            tree.apply(op, step, &before, &mut next_offset);
+        }
+        ancestry.push(before);
+    }
+    let full = match tree.order.take() {
+        Some(order) => {
+            let order = order.into_nodes();
+            // The kept order stands in for the tree; the tests hold it to it.
+            #[cfg(test)]
+            assert_eq!(order, tree.traverse(None), "kept order left the tree");
+            order
+        }
+        None => tree.traverse(None),
+    };
+    Ok((tree, full))
 }
 
 /// The blocks before the block at topological position `step`, whose parents
@@ -531,8 +644,9 @@ fn ancestry_of(parents: &[usize], ancestry: &[Ancestry], step: usize) -> Ancestr
 }
 
 /// `blocks` in an order where every block follows its parents, ties broken by
-/// ID so the order is the same on every peer.
-fn topological(blocks: &[TextBlock]) -> Result<Vec<usize>> {
+/// ID so the order is the same on every peer. With `outside`, a parent missing
+/// from `blocks` comes before all of them; without it, that is an error.
+fn topological(blocks: &[TextBlock], outside: bool) -> Result<Vec<usize>> {
     let mut index: RapidHashMap<&[u8], usize> = RapidHashMap::with_capacity(blocks.len());
     for (i, block) in blocks.iter().enumerate() {
         if index.insert(block.id.as_slice(), i).is_some() {
@@ -546,6 +660,9 @@ fn topological(blocks: &[TextBlock]) -> Result<Vec<usize>> {
     for (i, block) in blocks.iter().enumerate() {
         for parent in &block.parents {
             let Some(&p) = index.get(parent.as_slice()) else {
+                if outside {
+                    continue;
+                }
                 return Err(Error::MergeError(
                     "a Text field's history is missing a parent block".into(),
                 ));

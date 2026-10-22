@@ -90,17 +90,34 @@ impl TextOp {
         }
         chars.into_iter().collect()
     }
+}
 
-    /// The CBOR a Text block's `data` holds for `ops`.
-    pub fn encode_all(ops: &[TextOp]) -> Result<Vec<u8>> {
+/// What a Text block's `data` holds: its ops, and the length of the text they
+/// leave in the block's own version.
+///
+/// The length lets a concurrent merge replay from a critical block instead of
+/// the whole history: it is how many placeholder characters stand for that
+/// block's text. It sits inside `data`, so an encrypted field keeps it
+/// encrypted, and a merge checks it whenever the merged text is the block's
+/// own version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextEdits {
+    pub ops: Vec<TextOp>,
+    /// Characters, counted as Unicode scalar values.
+    pub len: u64,
+}
+
+impl TextEdits {
+    /// The CBOR a Text block's `data` holds.
+    pub fn encode(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
-        ciborium::into_writer(ops, &mut bytes)
+        ciborium::into_writer(self, &mut bytes)
             .map_err(|error| Error::Serialization(format!("text ops: {error}")))?;
         Ok(bytes)
     }
 
-    /// The ops a Text block's `data` holds.
-    pub fn decode_all(bytes: &[u8]) -> Result<Vec<TextOp>> {
+    /// The edits a Text block's `data` holds.
+    pub fn decode(bytes: &[u8]) -> Result<TextEdits> {
         ciborium::from_reader(bytes)
             .map_err(|error| Error::Serialization(format!("text ops: {error}")))
     }
@@ -160,16 +177,19 @@ mod tests {
     }
 
     #[test]
-    fn ops_round_trip_through_their_encoding() {
-        let ops = vec![
-            TextOp::Insert {
-                pos: 3,
-                text: "héllo".into(),
-            },
-            TextOp::Delete { pos: 1, len: 2 },
-        ];
-        let bytes = TextOp::encode_all(&ops).unwrap();
-        assert_eq!(TextOp::decode_all(&bytes).unwrap(), ops);
+    fn edits_round_trip_through_their_encoding() {
+        let edits = TextEdits {
+            ops: vec![
+                TextOp::Insert {
+                    pos: 3,
+                    text: "héllo".into(),
+                },
+                TextOp::Delete { pos: 1, len: 2 },
+            ],
+            len: 6,
+        };
+        let bytes = edits.encode().unwrap();
+        assert_eq!(TextEdits::decode(&bytes).unwrap(), edits);
     }
 
     #[test]
@@ -192,6 +212,6 @@ mod tests {
 
     #[test]
     fn garbage_is_an_error() {
-        assert!(TextOp::decode_all(&[0xff, 0x00]).is_err());
+        assert!(TextEdits::decode(&[0xff, 0x00]).is_err());
     }
 }

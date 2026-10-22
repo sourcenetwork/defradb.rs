@@ -269,6 +269,54 @@ fn a_text_update_beside_another_field_keeps_both() {
     .unwrap()
 }
 
+/// Several edits, deletes among them, reach both nodes before they edit at
+/// once: the merge replays from the last block both had, over placeholders
+/// for its text, and both nodes end at the same text with both edits kept.
+#[test]
+fn concurrent_edits_after_a_synced_history_with_deletes_converge() {
+    workers::block_on(async {
+        let alice = Node::open().await;
+        let bob = Node::open().await;
+        let doc_id = alice.create("the quick brown fox").await;
+        for head in alice.heads(&doc_id).await {
+            bob.receive(&alice, &doc_id, &head).await;
+        }
+        for (at, len, with) in [(4, 6, ""), (0, 3, "A"), (7, 0, " lazy"), (1, 1, "")] {
+            let mut ops = vec![del(at, len)];
+            if !with.is_empty() {
+                ops.push(ins(at, with));
+            }
+            let mut step = edit(&alice, &doc_id);
+            step.edit("body", FieldOp::Edit(ops)).unwrap();
+            let block = alice.update(step, &["body"]).await;
+            bob.receive(&alice, &doc_id, &block).await;
+        }
+        let synced = alice.body().await;
+        assert_eq!(bob.body().await, synced);
+        let synced = synced.as_str().unwrap().to_owned();
+
+        let mut front = edit(&alice, &doc_id);
+        front
+            .edit("body", FieldOp::Edit(vec![ins(0, "<<")]))
+            .unwrap();
+        let from_alice = alice.update(front, &["body"]).await;
+        let mut back = edit(&bob, &doc_id);
+        back.edit(
+            "body",
+            FieldOp::Edit(vec![ins(synced.chars().count() as u64, ">>"), del(0, 1)]),
+        )
+        .unwrap();
+        let from_bob = bob.update(back, &["body"]).await;
+
+        alice.receive(&bob, &doc_id, &from_bob).await;
+        bob.receive(&alice, &doc_id, &from_alice).await;
+        let expected = format!("<<{}>>", &synced[1..]);
+        assert_eq!(alice.body().await, text(&expected));
+        assert_eq!(bob.body().await, text(&expected));
+    })
+    .unwrap()
+}
+
 /// An update to null reads null on every node, as a create with null does,
 /// and its block restates the text in the smallest form, CBOR null. An edit
 /// concurrent with it keeps its characters; two concurrent nulls stay null;

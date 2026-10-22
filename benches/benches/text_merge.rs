@@ -5,14 +5,15 @@
 //! ```
 //!
 //! A block whose parents are the field's heads applies to the stored text as
-//! plain edits (the fast path). Any other block replays the field's whole
-//! history. Swept by history depth: one writer's edits, each a five-character
-//! insert or a three-character delete at a random spot, then one block
-//! concurrent with the last edit.
+//! plain edits (the fast path). Any other block replays from the field's last
+//! critical block (`critical`); `replay` is the whole history, which a merge
+//! falls back to. Swept by history depth: one writer's edits, each a
+//! five-character insert or a three-character delete at a random spot, then
+//! one block concurrent with the last edit.
 
 use std::hint::black_box;
 
-use crdt::fugue::{replay, TextBlock};
+use crdt::fugue::{merge_text, replay, TextBlock};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use defra_core::TextOp;
 
@@ -84,6 +85,23 @@ fn merge(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("replay", depth), &blocks, |b, blocks| {
             b.iter(|| black_box(replay(black_box(blocks)).expect("a whole history")))
+        });
+        // The new block's parent is the last critical block: the replay runs
+        // the edit it is concurrent with, and itself.
+        let base = replay(&blocks[..depth - 1])
+            .expect("a whole history")
+            .chars()
+            .count();
+        let after = blocks[depth - 1..].to_vec();
+        let new = id(depth + 1);
+        group.bench_with_input(BenchmarkId::new("critical", depth), &after, |b, after| {
+            b.iter(|| {
+                black_box(
+                    merge_text(black_box(&text), base, black_box(after), &new)
+                        .expect("blocks after a critical block")
+                        .expect("the stored text fits them"),
+                )
+            })
         });
     }
     group.finish();
