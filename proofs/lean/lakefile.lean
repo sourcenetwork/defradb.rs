@@ -98,3 +98,6 @@ lean_lib SharedQuantizer where
 
 @[default_target]
 lean_lib RobustPruneBlocks where
+
+@[default_target]
+lean_lib BackEdgesInPlace where

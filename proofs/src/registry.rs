@@ -272,6 +272,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "DiskANN back-edges in place",
+        name: "in_place_eq_decoded — adding back-edges to an encoded record in place leaves the entries and count that decoding, adding and encoding would",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/codec.rs add_edges; crates/db/src/index/vector/engine/diskann/graph.rs add_back_edges",
+        model_ref: "BackEdgesInPlace.in_place_eq_decoded / stale_search_duplicates_an_edge",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Vector index link maintenance",
         name: "INV_NoLostLinks — blind additions preserve links and stale structural pruning aborts",
         axis: Tla,
