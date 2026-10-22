@@ -132,6 +132,7 @@ where
             value: Some(value),
             order,
             deferred: false,
+            op: None,
         })
     }
 
@@ -169,7 +170,7 @@ where
         Ok(true)
     }
 
-    async fn stored_block(&self, cid: &Cid) -> std::result::Result<Block, MergeError> {
+    pub(super) async fn stored_block(&self, cid: &Cid) -> std::result::Result<Block, MergeError> {
         let bytes = self
             .blockstore
             .get(cid)
@@ -334,7 +335,7 @@ where
     }
 
     /// A stored field block's data, decrypted.
-    async fn block_data(
+    pub(super) async fn block_data(
         &self,
         block: &Block,
         metadata: Option<&BlockMetadata<'_>>,

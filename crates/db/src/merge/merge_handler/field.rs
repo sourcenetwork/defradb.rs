@@ -2,7 +2,8 @@
 //! joins the field's register ([`field_state`](super::field_state)); an
 //! operation applies to the document value exactly once
 //! ([`field_ops`](super::field_ops)), or, for a causal type, in its parent
-//! version ([`field_causal`](super::field_causal)).
+//! version ([`field_causal`](super::field_causal)), or, for a tagged type, to
+//! the operations its block had seen ([`field_tagged`](super::field_tagged)).
 use super::*;
 use crate::collection::value::FieldOrder;
 
@@ -18,6 +19,10 @@ pub struct FieldMergeResult {
     /// A standalone operation that found no stored value it can be an operand
     /// on: it changed nothing, and its composite applies it.
     pub(crate) deferred: bool,
+    /// An operand the composite's whole put of the document value lands, for
+    /// a tagged type merged onto a value on another schema version: its state
+    /// is not a function of its value.
+    pub(crate) op: Option<document::FieldOp>,
 }
 
 impl FieldMergeResult {
@@ -155,6 +160,24 @@ where
                 field_delta.field_name
             ))
         })?;
+        if let Some(tagged) = crdt.tagged() {
+            debug_assert!(!standalone, "a tagged field block merges via its composite");
+            return self
+                .merge_field_tagged(
+                    datastore,
+                    headstore,
+                    cid,
+                    tagged,
+                    collection,
+                    field,
+                    &field_delta,
+                    doc_short_id,
+                    parents,
+                    metadata,
+                    reads,
+                )
+                .await;
+        }
         if let Some(causal) = crdt.causal() {
             return self
                 .merge_field_causal(

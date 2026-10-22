@@ -12,5 +12,5 @@ pub mod stored;
 
 pub use field::{
     delta_crdt, field_crdt, history_op, part_crdt, CausalBlock, CausalCrdt, DeltaParts, FieldCrdt,
-    FieldCrdtError, FieldWrite, MergeResult,
+    FieldCrdtError, FieldWrite, JsonField, MergeResult, TaggedBlock, TaggedCrdt,
 };

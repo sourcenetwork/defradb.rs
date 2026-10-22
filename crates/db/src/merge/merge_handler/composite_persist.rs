@@ -82,6 +82,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         for (field_name, value) in &state.field_values {
             doc.set_unchecked(field_name.clone(), value.clone());
         }
+        for (field_name, op) in &state.field_ops {
+            doc.edit(field_name.clone(), op.clone())
+                .map_err(|e| MergeError::MergeFailed(e.to_string()))?;
+        }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection
             .schema()

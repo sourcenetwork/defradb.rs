@@ -4,7 +4,8 @@
 use document::{FieldOp, NormalValue};
 use schema::FieldDescription;
 
-use super::{CausalBlock, CausalCrdt, DeltaParts, FieldCrdt};
+use super::tagged::{decode_operand, encode_operand, fold_history, land, local_write, LocalWrite};
+use super::{CausalBlock, CausalCrdt, DeltaParts, FieldCrdt, TaggedBlock, TaggedCrdt};
 use crate::stored::{StoredDocument, StoredField};
 use defra_core::block::CrdtDelta;
 
@@ -56,7 +57,10 @@ fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 ///
 /// A causal type ([`FieldCrdt::causal`]) stores a value that every writer
 /// read validated, so its part merges replace in commit order instead, and
-/// its replay obeys [`check_causal`] on histories built from `inputs`.
+/// its replay obeys [`check_causal`] on histories built from `inputs`. A
+/// tagged type ([`FieldCrdt::tagged`]) writes against its stored state, so
+/// its local writes are checked by [`check_tagged`] on histories built from
+/// `inputs`. A type is at most one of the two.
 ///
 /// Panics on the first law that fails.
 pub fn check_field_crdt(
@@ -102,9 +106,13 @@ pub fn check_field_crdt(
         assert_eq!(carried.data, bytes.as_slice(), "delta data round trip");
         match &delta {
             CrdtDelta::Counter(counter) => assert_eq!(counter.nonce, 42, "delta nonce"),
-            // A causal op is told apart by the parents it counts in, so only
-            // a blind op needs a nonce to repeat.
-            _ => assert!(!crdt.blind_op(), "a blind operation delta carries a nonce"),
+            // A causal op is told apart by the parents it counts in, and a
+            // tagged op by its ID, so only another blind op needs a nonce to
+            // repeat.
+            _ => assert!(
+                !crdt.blind_op() || crdt.tagged().is_some(),
+                "a blind operation delta carries a nonce"
+            ),
         }
 
         for priority in [1, 2] {
@@ -124,6 +132,16 @@ pub fn check_field_crdt(
             let written = crdt
                 .apply(field, Some(stored), &op)
                 .expect("a sample op applies");
+            if let Some(tagged) = crdt.tagged() {
+                let base = crdt.state(field, 1, stored).expect("stored value");
+                let write = local_write(tagged, field, Some(&base), &op, 2, &[vec![0]], 0)
+                    .expect("a local write prepares");
+                assert_eq!(
+                    write.value, written,
+                    "write {op:?} on {stored:?}: the prepared write against apply"
+                );
+                continue;
+            }
             let write = crdt.write(&written, Some(&op));
             assert!(write.merges, "a local write of {op:?} merges as an operand");
             let base = crdt.state(field, 1, stored).expect("stored value");
@@ -137,12 +155,165 @@ pub fn check_field_crdt(
         }
     }
 
-    match crdt.causal() {
-        Some(causal) => {
+    match (crdt.causal(), crdt.tagged()) {
+        (Some(_), Some(_)) => panic!("a type is at most one of causal and tagged"),
+        (Some(causal), None) => {
             check_replacements(crdt, &block_states);
             check_causal(crdt, causal, field, inputs);
         }
-        None => check_merges(crdt, &block_states),
+        (None, Some(tagged)) => {
+            check_merges(crdt, &block_states);
+            check_tagged(tagged, field, inputs);
+        }
+        (None, None) => check_merges(crdt, &block_states),
+    }
+}
+
+/// Check a tagged type on histories of `values`, each the value a write
+/// sets; nil values are skipped. For a first write `base`, and writes `a` and
+/// `b` made concurrently on top of it, then a write on their merge:
+///
+/// - a first write's state is the state of its value, and the replay of its
+///   block;
+/// - a write prepared against a state gives the value it sets, and its
+///   operand landed is the replay of the history with its block: a local
+///   write has every recorded operation in its past, as a block whose
+///   parents are the tips;
+/// - an operand round trips through [`FieldOp::Operand`];
+/// - concurrent operands land in either order to the same state, and fold
+///   into one before their base exactly;
+/// - the history replays to the same state in any order, equal to its
+///   operands folded one by one, and its value is the value the operands
+///   land on;
+/// - every tag a replayed state records is the ID of one of its blocks.
+///
+/// Panics on the first law that fails.
+pub fn check_tagged(tagged: &dyn TaggedCrdt, field: &FieldDescription, values: &[NormalValue]) {
+    assert!(
+        tagged.causal().is_none(),
+        "a type is at most one of causal and tagged"
+    );
+    let write = |state: Option<&StoredField>, value: &NormalValue, priority, parents: &[u8]| {
+        let parents: Vec<Vec<u8>> = parents.iter().map(|&parent| vec![parent]).collect();
+        local_write(
+            tagged,
+            field,
+            state,
+            &FieldOp::Set(value.clone()),
+            priority,
+            &parents,
+            0,
+        )
+        .expect("a local write prepares")
+    };
+    let block = |cid: u8, parents: &[u8], priority, write: &LocalWrite| TaggedBlock {
+        cid: vec![cid],
+        parents: parents.iter().map(|&parent| vec![parent]).collect(),
+        priority,
+        data: write.data.clone(),
+    };
+    let landed = |state: Option<&StoredField>, write: &LocalWrite| {
+        land(tagged, state, write.operand.clone()).expect("an operand lands")
+    };
+    let replay = |history: &[TaggedBlock]| {
+        let state = tagged
+            .replay(field, history)
+            .expect("history replays")
+            .expect("a history of blocks has a state");
+        assert_eq!(
+            fold_history(tagged, field, history)
+                .expect("history folds")
+                .as_ref(),
+            Some(&state),
+            "the replay of {history:?} against its operands folded"
+        );
+        let ids: Vec<Vec<u8>> = history
+            .iter()
+            .map(|block| tagged.op_id(block.priority, &block.parents, &block.data))
+            .collect();
+        for tag in tagged.tags(field, state.part()).expect("tags read") {
+            assert!(
+                ids.contains(&tag.id),
+                "{tag:?} names a block of the history"
+            );
+        }
+        state
+    };
+    let value = |state: &StoredField| tagged.materialize(state.part()).expect("state reads");
+    let values: Vec<&NormalValue> = values.iter().filter(|value| !value.is_nil()).collect();
+    for &base in &values {
+        let first = write(None, base, 1, &[]);
+        assert_eq!(&first.value, base, "first write {base:?}");
+        let root = landed(None, &first);
+        assert_eq!(
+            value(&root),
+            value(&tagged.state(field, 1, base).expect("stored value")),
+            "first write {base:?} against its state"
+        );
+        let first_block = block(0, &[], 1, &first);
+        assert_eq!(
+            replay(std::slice::from_ref(&first_block)),
+            root,
+            "first write {base:?} replayed"
+        );
+        for &a in &values {
+            let left = write(Some(&root), a, 2, &[0]);
+            assert_eq!(&left.value, a, "{a:?} written on {base:?}");
+            let operand = encode_operand(&left.operand).expect("operand encodes");
+            assert_eq!(
+                decode_operand(&operand).as_ref(),
+                Some(&left.operand),
+                "operand of {a:?} round trips"
+            );
+            let left_state = landed(Some(&root), &left);
+            let left_block = block(1, &[0], 2, &left);
+            assert_eq!(
+                replay(&[first_block.clone(), left_block.clone()]),
+                left_state,
+                "{a:?} on {base:?}: the local write against the replay"
+            );
+            for &b in &values {
+                let right = write(Some(&root), b, 2, &[0]);
+                let both = landed(Some(&left_state), &right);
+                assert_eq!(
+                    both,
+                    landed(Some(&landed(Some(&root), &right)), &left),
+                    "{a:?} and {b:?} land in either order"
+                );
+                let mut pair = StoredDocument::default();
+                pair.fields.insert(0, left.operand.clone());
+                let mut later = StoredDocument::default();
+                later.fields.insert(0, right.operand.clone());
+                pair.fold(later).expect("operands fold");
+                let mut folded = StoredDocument::default();
+                folded.fields.insert(0, root.clone());
+                folded.apply(pair).expect("a folded operand lands");
+                assert_eq!(folded.fields[&0], both, "{a:?} and {b:?} folded first");
+                let history = [
+                    first_block.clone(),
+                    left_block.clone(),
+                    block(2, &[0], 2, &right),
+                ];
+                let merged = replay(&history);
+                for order in permutations(&history) {
+                    assert_eq!(replay(&order), merged, "merge order {order:?}");
+                }
+                assert_eq!(
+                    value(&merged),
+                    value(&both),
+                    "{a:?} and {b:?}: the replay against the operands"
+                );
+                let next = write(Some(&merged), base, 3, &[1, 2]);
+                assert_eq!(&next.value, base, "{base:?} written on the merge");
+                let mut after = history.to_vec();
+                after.push(block(3, &[1, 2], 3, &next));
+                assert_eq!(
+                    value(&replay(&after)),
+                    *base,
+                    "a write on the merge of {a:?} and {b:?} replayed"
+                );
+            }
+        }
     }
 }
 

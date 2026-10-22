@@ -75,6 +75,22 @@ impl<S: Store + 'static> DocFetcher for LensedAutoCommitFetcher<S> {
         result
     }
 
+    async fn get_json_conflicts(
+        &self,
+        options: &query::fetcher::JsonConflictOptions,
+    ) -> query::error::Result<Vec<query::fetcher::JsonConflict>> {
+        let txn = self
+            .db
+            .new_txn(true)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        let result = crate::read::json_conflicts::read(&txn, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()));
+        let _ = txn.discard();
+        result
+    }
+
     async fn get_all(&self, collection_name: &str) -> query::error::Result<Vec<Document>> {
         self.get_all_impl(collection_name).await
     }

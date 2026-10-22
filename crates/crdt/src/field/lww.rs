@@ -58,13 +58,9 @@ impl FieldCrdt for LwwField {
     ) -> Result<NormalValue, FieldCrdtError> {
         match op {
             FieldOp::Set(value) => Ok(value.clone()),
-            FieldOp::Increment(_) => Err(FieldCrdtError::UnsupportedOp {
+            op => Err(FieldCrdtError::UnsupportedOp {
                 crdt: CType::LwwRegister,
-                op: "increment",
-            }),
-            FieldOp::Edit(_) => Err(FieldCrdtError::UnsupportedOp {
-                crdt: CType::LwwRegister,
-                op: "edit",
+                op: op.name(),
             }),
         }
     }

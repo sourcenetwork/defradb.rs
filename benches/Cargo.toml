@@ -112,6 +112,10 @@ name = "text_merge"
 harness = false
 
 [[bench]]
+name = "json_merge"
+harness = false
+
+[[bench]]
 name = "document_read"
 harness = false
 

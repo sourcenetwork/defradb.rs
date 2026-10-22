@@ -20,7 +20,7 @@ pub use collection::write_collection_block;
 pub(crate) use collection::write_collection_block_with_inputs;
 pub(crate) use compute::compute_document_blocks_with_inputs;
 pub use compute::{compute_document_blocks, insert_computed_blocks, ComputedBlocks};
-pub(crate) use write::inherited_encryption_policy;
+pub(crate) use write::{fresh_nonce, inherited_encryption_policy};
 pub use write::{write_delete_block, write_document_blocks};
 pub(crate) use write::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
 

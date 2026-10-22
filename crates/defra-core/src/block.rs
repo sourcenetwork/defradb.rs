@@ -15,7 +15,7 @@ use crate::{Error, Result};
 pub use crate::block_delta::{
     CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CollectionSetDeltaPayload,
     CompositeDeltaPayload, CounterDeltaPayload, FieldDefinitionDeltaPayload, ImmutableDeltaPayload,
-    LwwDeltaPayload, TextDeltaPayload, IMMUTABLE_LINK_NAME,
+    JsonDeltaPayload, LwwDeltaPayload, TextDeltaPayload, IMMUTABLE_LINK_NAME,
 };
 
 // Re-export signature/encryption types
@@ -272,6 +272,10 @@ pub enum CrdtDelta {
     #[serde(rename = "text")]
     Text(TextDeltaPayload),
 
+    /// JSON delta (Rust-only)
+    #[serde(rename = "json")]
+    Json(JsonDeltaPayload),
+
     /// Collection delta
     #[serde(rename = "collection")]
     Collection(CollectionDeltaPayload),
@@ -306,6 +310,7 @@ impl CrdtDelta {
             CrdtDelta::Lww(d) => (&d.field_name, d.priority, &d.schema_version_id, &d.data),
             CrdtDelta::Counter(d) => (&d.field_name, d.priority, &d.schema_version_id, &d.data),
             CrdtDelta::Text(d) => (&d.field_name, d.priority, &d.schema_version_id, &d.data),
+            CrdtDelta::Json(d) => (&d.field_name, d.priority, &d.schema_version_id, &d.data),
             _ => return None,
         };
         Some(FieldDelta {
@@ -322,6 +327,7 @@ impl CrdtDelta {
             CrdtDelta::Lww(d) => Some(&mut d.data),
             CrdtDelta::Counter(d) => Some(&mut d.data),
             CrdtDelta::Text(d) => Some(&mut d.data),
+            CrdtDelta::Json(d) => Some(&mut d.data),
             _ => None,
         }
     }
@@ -334,6 +340,7 @@ impl CrdtDelta {
             CrdtDelta::Composite(d) => d.priority,
             CrdtDelta::Immutable(d) => d.priority,
             CrdtDelta::Text(d) => d.priority,
+            CrdtDelta::Json(d) => d.priority,
             CrdtDelta::Collection(d) => d.priority,
             CrdtDelta::CollectionSet(d) => d.priority,
             CrdtDelta::FieldDefinition(d) => d.priority,
@@ -349,6 +356,7 @@ impl CrdtDelta {
             CrdtDelta::Composite(d) => d.priority = priority,
             CrdtDelta::Immutable(d) => d.priority = priority,
             CrdtDelta::Text(d) => d.priority = priority,
+            CrdtDelta::Json(d) => d.priority = priority,
             CrdtDelta::Collection(d) => d.priority = priority,
             CrdtDelta::CollectionSet(d) => d.priority = priority,
             CrdtDelta::FieldDefinition(d) => d.priority = priority,
@@ -367,6 +375,7 @@ impl CrdtDelta {
             CrdtDelta::Composite(d) => Some(&d.schema_version_id),
             CrdtDelta::Immutable(d) => Some(&d.schema_version_id),
             CrdtDelta::Text(d) => Some(&d.schema_version_id),
+            CrdtDelta::Json(d) => Some(&d.schema_version_id),
             CrdtDelta::Collection(d) => Some(&d.schema_version_id),
             CrdtDelta::CollectionSet(_) => None,
             CrdtDelta::FieldDefinition(_) => None,
