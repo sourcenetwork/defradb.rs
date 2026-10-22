@@ -170,3 +170,91 @@ fn a_text_block_merges_into_a_document_stored_at_an_older_version() {
     })
     .unwrap()
 }
+
+/// Alice and Bob hold "hello". Alice adds a version whose lens rewrites the
+/// text and materializes her documents; Bob appends " world" on top of the
+/// one block both hold. On Alice, Bob's block lands on her heads, so it takes
+/// the fast path over her stored text, which has to be the text its blocks
+/// make: the merge must neither fail nor apply Bob's edit to the lensed text.
+/// Alice's next write moves the document to the new version and carries the
+/// lens change as edits in its block.
+#[test]
+fn a_text_edit_on_the_fast_path_lands_on_the_text_its_blocks_make() {
+    workers::block_on(async {
+        let alice = Node::open(true).await;
+        let bob = Node::open(false).await;
+        let v1 = alice
+            .db
+            .get_collection("Users")
+            .unwrap()
+            .unwrap()
+            .version_id()
+            .to_owned();
+        let mut doc = alice.document();
+        doc.set("verified", NormalValue::String("hello".into()))
+            .unwrap();
+        let doc_id = AutoCommitMutator::new(alice.db.clone())
+            .create("Users", doc)
+            .await
+            .unwrap()
+            .doc_id;
+        for head in alice.heads(&doc_id).await {
+            bob.receive(&alice, &doc_id, &head).await;
+        }
+
+        let v2 = add_placeholder_version(&alice.db, "note").await;
+        alice
+            .db
+            .set_migration(
+                LensConfig::new(
+                    &v1,
+                    &v2,
+                    LensModule::from_bytes(b"\0asm\x01\0\0\0".to_vec()),
+                ),
+                None,
+            )
+            .await
+            .unwrap();
+        alice.db.materialize_collection("Users").await.unwrap();
+
+        let block = bob.append(&doc_id).await;
+        alice.receive(&bob, &doc_id, &block).await;
+
+        assert_eq!(
+            bob.stored_text(&doc_id).await,
+            Some(NormalValue::String("hello world".into()))
+        );
+        assert_eq!(
+            alice.stored_text(&doc_id).await,
+            Some(NormalValue::String("hello world".into())),
+            "the stored text is the text the field's blocks make"
+        );
+
+        let mut rename = alice.document();
+        rename.set_id(doc_id.clone());
+        rename
+            .set("name", NormalValue::String("Alice".into()))
+            .unwrap();
+        let moved = AutoCommitMutator::new(alice.db.clone())
+            .update(
+                "Users",
+                rename,
+                RapidHashSet::from_iter(["name".to_string()]),
+            )
+            .await
+            .unwrap();
+        let links = Block::from_dag_cbor(&moved.commit_block.unwrap())
+            .unwrap()
+            .links
+            .unwrap_or_default();
+        assert!(
+            links.iter().any(|link| link.name == "verified"),
+            "the write that moves the document carries the lens change as a block"
+        );
+        assert_eq!(
+            alice.stored_text(&doc_id).await,
+            Some(NormalValue::String("LENSED".into()))
+        );
+    })
+    .unwrap()
+}

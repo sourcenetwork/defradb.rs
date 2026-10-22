@@ -31,6 +31,7 @@ use storage::corekv::IterOptions;
 use storage::index::IndexIterator;
 use storage::RegolithStore;
 
+mod json_frontier;
 mod paged_reindex;
 mod text_lens;
 mod unique_conflicts;
