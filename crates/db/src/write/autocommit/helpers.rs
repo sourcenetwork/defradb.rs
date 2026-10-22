@@ -253,17 +253,24 @@ pub(crate) async fn register_block_doc_id_mappings(
 /// read validated: a concurrent write of the field conflicts, and the attempt
 /// runs again against the value that won. A write that sets such a field is
 /// expressed as the operation from the stored value to the new one.
+///
+/// A document stored at an older version was read through its lens, and this
+/// write moves it to the current one. A causal value is the replay of its
+/// blocks, so a lens change to a causal field the write does not name reaches
+/// the stored value here, as the edits from the stored value in this write's
+/// block; such a field joins `modified_fields`.
 async fn apply_field_ops(
     datastore: &NamespaceView,
     collection: &Collection,
     doc: &mut Document,
     doc_short_id: u64,
-    modified_fields: &rapidhash::RapidHashSet<String>,
+    modified_fields: &mut rapidhash::RapidHashSet<String>,
 ) -> query::error::Result<()> {
     let execution =
         |error: &dyn std::fmt::Display| query::error::QueryError::execution(error.to_string());
     let mut blind = Vec::new();
     let mut causal = Vec::new();
+    let mut unnamed = Vec::new();
     for field in &collection.schema().fields {
         let Some(crdt) = crdt::field_crdt(field.crdt_type).filter(|crdt| crdt.tagged().is_none())
         else {
@@ -272,11 +279,24 @@ async fn apply_field_ops(
         let op = doc.pending_op(&field.name).cloned();
         match crdt.causal() {
             Some(replay) if op.is_some() || modified_fields.contains(&field.name) => {
-                causal.push((field, crdt, replay, op))
+                causal.push((field, crdt, replay, op, true))
             }
             None => blind.extend(op.map(|op| (field, crdt, op))),
+            Some(replay) if doc.get(&field.name).is_some() => {
+                unnamed.push((field, crdt, replay, None, false))
+            }
             Some(_) => {}
         }
+    }
+    if !unnamed.is_empty()
+        && collection
+            .load_version(datastore, doc_short_id)
+            .await
+            .map_err(|e| execution(&e))?
+            .as_deref()
+            != Some(collection.version_id())
+    {
+        causal.extend(unnamed);
     }
     if !blind.is_empty() {
         let stored = collection
@@ -312,8 +332,14 @@ async fn apply_field_ops(
         .get_with_datastore_fields(datastore, doc_short_id, &doc_id, &names)
         .await
         .map_err(|e| execution(&e))?;
-    for (field, crdt, replay, op) in causal {
+    for (field, crdt, replay, op, named) in causal {
         let current = stored.as_ref().and_then(|stored| stored.get(&field.name));
+        if !named {
+            if current == doc.get(&field.name) {
+                continue;
+            }
+            modified_fields.insert(field.name.clone());
+        }
         // A write of a whole value keeps that value, null included, and is
         // expressed as the edits that make it from the stored one.
         let (value, op) = match op {
@@ -345,6 +371,12 @@ async fn apply_field_ops(
 /// one priority above them. The document then holds the value the write
 /// leaves and the prepared write ([`FieldOp::Operand`]).
 ///
+/// A document stored at an older version was read through its lens, and this
+/// write moves it to the current one. A lens change to a tagged field the
+/// write does not name reaches the stored state here, as a set in this
+/// write's block, since a tagged state only changes through blocks every peer
+/// merges; such a field joins `modified_fields`.
+///
 /// Each write's data carries a nonce, drawn once per document, field and
 /// heads and memoized in `prepared_inputs`, so an attempt that runs again
 /// writes the same block, and two peers' equal writes stay two operations.
@@ -353,27 +385,48 @@ async fn prepare_tagged_writes(
     collection: &Collection,
     doc: &mut Document,
     doc_short_id: u64,
-    modified_fields: &rapidhash::RapidHashSet<String>,
+    modified_fields: &mut rapidhash::RapidHashSet<String>,
     heads: &crate::block::builder::DocHeadsSnapshot,
     prepared_inputs: &query::prepared::PreparedInputMemo,
 ) -> query::error::Result<()> {
     let execution =
         |error: &dyn std::fmt::Display| query::error::QueryError::execution(error.to_string());
-    for field in &collection.schema().fields {
-        let Some(tagged) = crdt::field_crdt(field.crdt_type).and_then(|crdt| crdt.tagged()) else {
+    let tagged_fields = collection.schema().fields.iter().filter_map(|field| {
+        Some((
+            field,
+            crdt::field_crdt(field.crdt_type).and_then(|crdt| crdt.tagged())?,
+        ))
+    });
+    let migrating = tagged_fields.clone().any(|(field, _)| {
+        doc.pending_op(&field.name).is_none() && !modified_fields.contains(&field.name)
+    }) && collection
+        .load_version(datastore, doc_short_id)
+        .await
+        .map_err(|e| execution(&e))?
+        .as_deref()
+        != Some(collection.version_id());
+    for (field, tagged) in tagged_fields {
+        let named = doc.pending_op(&field.name).is_some() || modified_fields.contains(&field.name);
+        if !named && !(migrating && doc.get(&field.name).is_some()) {
             continue;
-        };
-        let op = match doc.pending_op(&field.name) {
-            Some(op) => op.clone(),
-            None if modified_fields.contains(&field.name) => {
-                FieldOp::Set(doc.get(&field.name).cloned().unwrap_or(NormalValue::Null))
-            }
-            None => continue,
-        };
+        }
         let state = collection
             .read_part_unvalidated(datastore, doc_short_id, &field.name)
             .await
             .map_err(|e| execution(&e))?;
+        let op = match doc.pending_op(&field.name) {
+            Some(op) => op.clone(),
+            None => FieldOp::Set(doc.get(&field.name).cloned().unwrap_or(NormalValue::Null)),
+        };
+        if !named {
+            let stored = state
+                .as_ref()
+                .and_then(|state| tagged.materialize(state.part()));
+            if stored.as_ref() == doc.get(&field.name) {
+                continue;
+            }
+            modified_fields.insert(field.name.clone());
+        }
         let parents: Vec<Vec<u8>> = heads
             .field_heads(&field.name)
             .iter()

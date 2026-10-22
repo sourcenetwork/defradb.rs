@@ -72,13 +72,22 @@
 \*   crates/db/src/write/autocommit/helpers.rs     a local write's ops and
 \*                                                 operand
 \*                                                 (prepare_tagged_writes)
+\*   crates/db/src/definition/migration/helpers.rs a lens write-back leaves a
+\*                                                 tagged field it changes to
+\*                                                 the next write
+\*                                                 (changes_block_state)
 \*
 \* Correspondence table (model -> Rust):
 \*   Create        json.rs write_data (block_ops, deep_set; json_crdt.rs diff):
 \*                 a write turns a JSON value into ops at paths;
 \*                 prepare_tagged_writes gives its block the field's heads as
 \*                 parents. With MultiPath a model block edits several paths,
-\*                 at most one edit each, as a Rust block does
+\*                 at most one edit each, as a Rust block does. A lens
+\*                 migration is a Create too: prepare_tagged_writes writes a
+\*                 lensed tagged field as a set on the write that moves its
+\*                 document to the new version, and the migration write-back
+\*                 (definition/migration/helpers.rs changes_block_state)
+\*                 never stores one, so every edit in a frontier is a block
 \*   Settled       json.rs settle_earlier: the shape a block's ops have once
 \*                 block_ops has settled them; Settle = FALSE is the RED that
 \*                 skips it

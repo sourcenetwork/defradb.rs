@@ -75,7 +75,14 @@
 \*                  given, and TextField::block_data writes them as one
 \*                  block, its parents the field's heads; a write of null
 \*                  keeps the null value and its block is the "nil" kind,
-\*                  data CBOR null (TextField's NIL)
+\*                  data CBOR null (TextField's NIL). A lens migration is a
+\*                  Create too: apply_field_ops writes a lensed Text field
+\*                  the write does not name as the edits from the stored
+\*                  text, on the write that moves its document to the new
+\*                  version, and the migration write-back
+\*                  (crates/db/src/definition/migration/helpers.rs
+\*                  changes_block_state) never stores one, so the stored
+\*                  text is always the replay of its blocks
 \*   Deliver        crates/db/src/merge/merge_handler/field_causal.rs
 \*                  merge_field_causal: a received block is merged once every
 \*                  parent block is local (the DAG sync's causal buffer); a
