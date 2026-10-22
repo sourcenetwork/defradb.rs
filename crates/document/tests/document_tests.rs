@@ -533,3 +533,16 @@ fn set_takes_the_crdt_type_from_the_definition() {
     );
     assert_eq!(doc.crdt_type("missing"), None);
 }
+
+#[test]
+fn setting_a_field_drops_its_pending_op() {
+    let mut doc = common::doc(&["hits"]);
+    doc.edit("hits", document::FieldOp::Increment(NormalValue::Int(3)))
+        .unwrap();
+    assert!(doc.pending_op("hits").is_some());
+
+    doc.edit("hits", document::FieldOp::Set(NormalValue::Int(10)))
+        .unwrap();
+    assert!(doc.pending_op("hits").is_none());
+    assert_eq!(doc.get("hits"), Some(&NormalValue::Int(10)));
+}
