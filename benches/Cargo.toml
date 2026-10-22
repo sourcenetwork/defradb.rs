@@ -56,12 +56,12 @@ defra-perf = { path = "../tools/perf" }
 # Crates the coverage sweep reaches that the older benches never linked.
 acp = { path = "../crates/acp" }
 cursor = { path = "../crates/cursor" }
-libp2p-identity = { version = "0.2", features = ["ed25519", "peerid"] }
+libp2p-identity = { version = "0.3", features = ["ed25519", "peerid"] }
 p2p = { path = "../crates/p2p" }
 replication-filter = { path = "../crates/replication-filter" }
 events = { path = "../crates/events", features = ["channel"] }
 identity = { path = "../crates/identity" }
-x25519-dalek = "2"
+x25519-dalek = "3"
 
 # The process allocator of every bench, the one the defra binaries ship with.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
