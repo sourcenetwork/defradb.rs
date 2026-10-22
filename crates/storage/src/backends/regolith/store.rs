@@ -229,6 +229,10 @@ impl crate::corekv::private::Sealed for RegolithStore {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Store for RegolithStore {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.inner.options.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.ensure_open()?;
         let db = self.inner.db.db();

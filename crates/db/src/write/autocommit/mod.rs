@@ -228,6 +228,10 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocMutator for AutoCommitMutator<S> {
+    fn crdts(&self) -> crdt::Crdts {
+        self.db.crdts().clone()
+    }
+
     fn engine_retries_batches(&self) -> bool {
         true
     }

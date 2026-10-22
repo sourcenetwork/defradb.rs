@@ -13,7 +13,10 @@ use storage::RegolithStore;
 fn update_keeps_doc_id_without_composite_heads() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
-        let shared = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let shared = SharedTxn::new(
+            store.new_txn(false).await.unwrap(),
+            storage::Crdts::default(),
+        );
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared, Namespace::Headstore);
         let identity = DocRef::new(1, 1);

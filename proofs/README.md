@@ -69,6 +69,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Reply-driven DAG fetch | TLA+ | p2p |
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
+| Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

@@ -37,6 +37,10 @@ fn drain<T: 'static>(queue: &SegQueue<T>) -> Vec<T> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DocMutator for ContextMutator {
+    fn crdts(&self) -> crdt::Crdts {
+        crdt::Crdts::default()
+    }
+
     async fn create(&self, collection_name: &str, doc: Document) -> Result<CreateResult> {
         self.create_as(&RequestContext::ambient(), collection_name, doc)
             .await

@@ -14,6 +14,7 @@ impl Collection {
         run: Run,
     ) -> Result<bool> {
         let dependencies = run.written(
+            &self.crdts,
             self.schema(),
             self.write_indexes(),
             modified_fields,

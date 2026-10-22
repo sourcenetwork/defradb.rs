@@ -171,6 +171,10 @@ RUNS=(
   "MC_JsonCrdt_Red_NoSettle.cfg JsonCrdt.tla RED" # a block goes out with a value above a set it carries: its own value wins (INV_WriteLandsAsRead)
   "MC_JsonCrdt_Red_DeleteMakesParent.cfg JsonCrdt.tla RED" # the writer reads a delete through a missing path as making a map (INV_WriteLandsAsRead)
   "MC_JsonCrdt_Red_MapKeepsBelow.cfg JsonCrdt.tla RED" # the writer reads {} over a map as keeping what is below (INV_WriteLandsAsRead)
+  "MC_UnknownCrdt_Green.cfg UnknownCrdt.tla GREEN" # #2183: a node without a custom type parks its blocks, merges the rest, and merges each parked block once when built with the type
+  "MC_UnknownCrdt_Red_DropDeferral.cfg UnknownCrdt.tla RED" # a custom block acked with no record: never merged after registering (INV_ConvergeWhenDone)
+  "MC_UnknownCrdt_Red_DoubleReplay.cfg UnknownCrdt.tla RED" # a parked record kept after its merge: merged again (INV_MergeOnce)
+  "MC_UnknownCrdt_Red_Lww.cfg UnknownCrdt.tla RED" # the unknown type taken as LWW: replicas differ for good (INV_ConvergeWhenDone)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)

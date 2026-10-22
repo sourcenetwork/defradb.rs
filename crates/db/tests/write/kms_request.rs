@@ -20,6 +20,10 @@ struct ConflictOnce {
 
 #[async_trait]
 impl DocMutator for ConflictOnce {
+    fn crdts(&self) -> storage::Crdts {
+        self.inner.crdts()
+    }
+
     fn requires_write_preparation(&self) -> bool {
         true
     }

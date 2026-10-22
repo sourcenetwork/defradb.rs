@@ -10,7 +10,7 @@ use crate::{RegolithStore, RegolithStoreOptions};
 fn integer_operand_folding_obeys_the_engine_contract() {
     use regolith::testing::proptest::prelude::*;
     let result = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"d/data/counter".to_vec()),
         any::<i64>().prop_map(|value| value.to_be_bytes().to_vec()),
         any::<i64>().prop_map(counter_i64),
@@ -23,12 +23,12 @@ fn integer_operand_folding_obeys_the_engine_contract() {
 fn floating_point_operands_are_not_folded() {
     let left = crate::merge::counter_f64(1e20);
     let right = crate::merge::counter_f64(-1e20);
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .partial_merge(b"counter", &left, &right)
         .is_none());
     let base = 1.0f64.to_be_bytes();
     assert_eq!(
-        DefraMergeOperator
+        DefraMergeOperator::default()
             .full_merge(b"counter", Some(&base), &[&left, &right])
             .unwrap(),
         0.0f64.to_be_bytes()
@@ -65,7 +65,7 @@ fn non_folding_operators_obey_the_engine_contract() {
     use regolith::testing::proptest::prelude::*;
     for single in [true, false] {
         regolith::testing::check_merge_operator(
-            &DefraMergeOperator,
+            &DefraMergeOperator::default(),
             Just(b"counter".to_vec()),
             any::<i32>().prop_map(move |value| {
                 if single {
@@ -85,7 +85,7 @@ fn non_folding_operators_obey_the_engine_contract() {
         .unwrap();
     }
     regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"fulltext/stats".to_vec()),
         (any::<i32>(), any::<i32>()).prop_map(|(documents, length)| {
             [
@@ -105,15 +105,15 @@ fn non_folding_operators_obey_the_engine_contract() {
 fn malformed_operands_and_stats_overflow_are_rejected() {
     let integer = counter_i64(1);
     let float = crate::merge::counter_f64(1.0);
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"key", None, &[&integer, &float])
         .is_none());
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"key", None, &[b"DM\x01\x01"])
         .is_none());
     let stats = [i128::MAX.to_be_bytes(), 0i128.to_be_bytes()].concat();
     let delta = crate::merge::stats_delta(1, 0);
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"key", Some(&stats), &[&delta])
         .is_none());
 }
@@ -129,7 +129,7 @@ fn whole_value_operands_touch_every_part_through_folds() {
 
     let parts = || vec(0u32..4, 0..4);
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"d/data/counter".to_vec()),
         any::<i64>().prop_map(counter_i64),
         parts(),
@@ -151,7 +151,7 @@ fn whole_value_operands_touch_every_part_through_folds() {
     ];
     for operands in unfolded {
         let checked = regolith::testing::check_touches(
-            &DefraMergeOperator,
+            &DefraMergeOperator::default(),
             Just(b"counter".to_vec()),
             operands,
             parts(),
@@ -166,7 +166,7 @@ fn whole_value_operands_touch_every_part_through_folds() {
         crate::merge::stats_delta(1, 1),
     ] {
         for parts in [&[][..], &[0], &[1, 7]] {
-            assert!(DefraMergeOperator.touches(b"counter", &operand, parts));
+            assert!(DefraMergeOperator::default().touches(b"counter", &operand, parts));
         }
     }
 }

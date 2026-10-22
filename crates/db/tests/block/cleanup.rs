@@ -13,7 +13,10 @@ use storage::RegolithStore;
 
 async fn stores() -> (NamespaceView, NamespaceView) {
     let store = RegolithStore::in_memory().unwrap();
-    let txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+    let txn = SharedTxn::new(
+        store.new_txn(false).await.unwrap(),
+        storage::Crdts::default(),
+    );
     (
         NamespaceView::new(txn.clone(), Namespace::Blockstore),
         NamespaceView::new(txn, Namespace::Systemstore),

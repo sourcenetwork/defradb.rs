@@ -230,6 +230,10 @@ impl<S: Store + 'static> DbDocMutator<S> {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
+    fn crdts(&self) -> crdt::Crdts {
+        self.db.crdts().clone()
+    }
+
     fn supports_projected_updates(&self) -> bool {
         true
     }

@@ -96,8 +96,13 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         // parts its filter and writes decide on, so the documents it then
         // writes are not validated over their other fields.
         let decided_on = if mutation.mutation_type == crate::mapper::MutationType::Update {
+            let crdts = self
+                .mutator
+                .as_ref()
+                .map(|mutator| mutator.crdts())
+                .unwrap_or_default();
             let patch = mutation.update_fields(&collection)?;
-            crate::update_parts::planned(&collection, &patch, Some(filter))
+            crate::update_parts::planned(&crdts, &collection, &patch, Some(filter))
         } else {
             None
         };

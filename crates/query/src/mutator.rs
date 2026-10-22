@@ -466,6 +466,10 @@ impl MutationBatch {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait DocMutator: MaybeSendSync {
+    /// The CRDT types of the node whose documents this mutator writes: each
+    /// field's write goes through its type.
+    fn crdts(&self) -> crdt::Crdts;
+
     /// Whether conflicts from mutation batches returned by this mutator are
     /// retried by the storage attempt driver.
     fn engine_retries_batches(&self) -> bool {

@@ -206,7 +206,7 @@ impl<S: Store> crate::database::DB<S> {
         Ok(all_versions
             .into_iter()
             .find(|v| v.version_id == version_id)
-            .map(Collection::new))
+            .map(|schema| Collection::new(schema, self.crdts().clone())))
     }
 
     /// Get the active collection versions, from the in-memory cache.

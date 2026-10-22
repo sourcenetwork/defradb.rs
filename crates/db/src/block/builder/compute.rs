@@ -27,6 +27,7 @@ pub struct ComputedBlocks {
 /// `block_result.doc_id`; the caller persists the short-ID mappings.
 /// Accumulates all (key, value) pairs instead of writing to storage.
 pub fn compute_document_blocks(
+    crdts: &crdt::Crdts,
     doc: &Document,
     schema: &CollectionVersion,
     identity: DocRef,
@@ -34,6 +35,7 @@ pub fn compute_document_blocks(
     signing_config: Option<&SigningConfig>,
 ) -> Result<ComputedBlocks, String> {
     compute_document_blocks_with_inputs(
+        crdts,
         doc,
         schema,
         identity,
@@ -45,6 +47,7 @@ pub fn compute_document_blocks(
 }
 
 pub(crate) fn compute_document_blocks_with_inputs(
+    crdts: &crdt::Crdts,
     doc: &Document,
     schema: &CollectionVersion,
     identity: DocRef,
@@ -88,7 +91,7 @@ pub(crate) fn compute_document_blocks_with_inputs(
             continue;
         }
 
-        let crdt = field_crdt_of(doc, field_name)?;
+        let crdt = field_crdt_of(crdts, doc, field_name)?;
         let Some(value_bytes) = crdt
             .block_data(field_value.value(), doc.pending_op(field_name))
             .map_err(|error| error.to_string())?

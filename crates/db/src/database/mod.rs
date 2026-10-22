@@ -770,6 +770,11 @@ impl<S: Store> DB<S> {
         &self.replication_runtime
     }
 
+    /// The CRDT types of this database's node, as its store merges by them.
+    pub fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
+    }
+
     /// Get the database options.
     pub fn options(&self) -> &DbOptions {
         &self.options

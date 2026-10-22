@@ -40,7 +40,7 @@ where
 
 fn replayed(collection: &Arc<CollectionVersion>, blocks: &[(Cid, Block)]) -> NormalValue {
     let doc_id = "bae-0000";
-    replay_deltas(collection, blocks, doc_id)
+    replay_deltas(&crdt::Crdts::default(), collection, blocks, doc_id)
         .unwrap()
         .get("score")
         .cloned()
@@ -100,7 +100,13 @@ fn a_counter_block_on_an_lww_field_is_skipped_in_a_replay() {
     let set = (set.generate_cid().unwrap(), set);
     let increment = increments(&[5_i64]).remove(0);
 
-    let alone = replay_deltas(&collection, std::slice::from_ref(&increment), "bae-0000").unwrap();
+    let alone = replay_deltas(
+        &crdt::Crdts::default(),
+        &collection,
+        std::slice::from_ref(&increment),
+        "bae-0000",
+    )
+    .unwrap();
     assert_eq!(alone.get("score"), None);
     assert_eq!(
         replayed(&collection, &[set, increment]),
@@ -143,9 +149,14 @@ fn an_undecodable_text_block_fails_the_replay_with_its_error() {
     };
     let child = text(2, edits.encode().unwrap(), vec![broken.0]);
 
-    let error = replay_deltas(&collection, &[broken.clone(), child], "bae-0000")
-        .unwrap_err()
-        .to_string();
+    let error = replay_deltas(
+        &crdt::Crdts::default(),
+        &collection,
+        &[broken.clone(), child],
+        "bae-0000",
+    )
+    .unwrap_err()
+    .to_string();
     assert!(error.contains(&broken.0.to_string()), "{error}");
     assert!(error.contains("text ops"), "{error}");
 }

@@ -87,8 +87,10 @@ impl Collection {
             .await?;
         let key = self.doc_key(doc_short_id);
         let whole = |data: Option<bytes::Bytes>| {
-            data.map(|data| crdt::stored::document_from_storage(&data, self.schema_arc()))
-                .transpose()
+            data.map(|data| {
+                crdt::stored::document_from_storage(&data, self.schema_arc(), &self.crdts)
+            })
+            .transpose()
         };
         // No fields is a read no decision rests on, never validated.
         let doc = match (version.as_deref() == Some(self.version_id()), parts) {
@@ -103,7 +105,7 @@ impl Collection {
                 // materializes.
                 match projected {
                     Some(bytes) => match StoredDocument::decode(&bytes)
-                        .and_then(|stored| stored.materialize(self.schema_arc()))
+                        .and_then(|stored| stored.materialize(self.schema_arc(), &self.crdts))
                     {
                         Some(doc) => Some(doc),
                         None => whole(datastore.get(&key).await.map_err(Error::Storage)?)?,
@@ -238,7 +240,8 @@ impl Collection {
 
         match data {
             Some(bytes) => {
-                let mut doc = crdt::stored::document_from_storage(&bytes, self.schema_arc())?;
+                let mut doc =
+                    crdt::stored::document_from_storage(&bytes, self.schema_arc(), &self.crdts)?;
                 // The blob stores values only; identity lives in the mapping.
                 doc.set_id(doc_id.clone());
 
@@ -359,8 +362,9 @@ impl Collection {
                 continue;
             };
 
-            let doc = crdt::stored::document_from_storage(&pair.value, self.schema_arc())
-                .map_err(|e| Error::document_at_key(&pair.key, e))?;
+            let doc =
+                crdt::stored::document_from_storage(&pair.value, self.schema_arc(), &self.crdts)
+                    .map_err(|e| Error::document_at_key(&pair.key, e))?;
             entries.push((doc_short_id, doc));
         }
         iter.close().await.map_err(Error::Storage)?;
@@ -404,7 +408,7 @@ impl Collection {
             else {
                 continue;
             };
-            let doc = crdt::stored::document_from_storage(&bytes, self.schema_arc())
+            let doc = crdt::stored::document_from_storage(&bytes, self.schema_arc(), &self.crdts)
                 .map_err(|e| Error::document_at_key(&self.doc_key(doc_short_id), e))?;
             if let Some(hydrated) = self
                 .hydrate(datastore, systemstore, doc_short_id, doc, show_deleted)
@@ -502,7 +506,8 @@ impl Collection {
         }
         let old_doc = match self.read_document_blob(datastore, doc_short_id).await? {
             Some(bytes) => {
-                let mut d = crdt::stored::document_from_storage(&bytes, self.schema_arc())?;
+                let mut d =
+                    crdt::stored::document_from_storage(&bytes, self.schema_arc(), &self.crdts)?;
                 d.set_id(doc_id.clone());
                 d
             }
@@ -626,7 +631,7 @@ impl Collection {
             let system = datastore.sibling(storage::namespace::Namespace::Systemstore);
             crate::definition::loader::get_collection_by_version_id(&system, version)
                 .await?
-                .map(Collection::new)
+                .map(|schema| Collection::new(schema, datastore.crdts().clone()))
         } else {
             None
         };

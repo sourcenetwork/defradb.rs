@@ -385,6 +385,7 @@ pub(super) async fn build_merge_block(
     doc.set("age", NormalValue::Int(age)).unwrap();
 
     let result = db::block::builder::build_blocks_from_document(
+        &storage::Crdts::default(),
         &doc,
         &crate::common::schema::version("v1"),
         blockstore,
@@ -1063,6 +1064,7 @@ fn counter_merge_marks_cid_merged() {
         doc.set("score", NormalValue::Int(5)).unwrap();
         doc.set_collection_version_id("v1");
         let built = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("v1"),
             &blockstore,
@@ -2276,6 +2278,7 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             .set("body", NormalValue::String("sibling".to_string()))
             .unwrap();
         let sibling_result = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &sibling,
             &crate::common::schema::version("v1"),
             &blockstore,
@@ -3436,6 +3439,7 @@ fn unique_index_twin_conflict_publishes_the_pick() {
             doc.set("session_id", NormalValue::String("dup-session".to_string()))
                 .unwrap();
             let built = db::block::builder::build_blocks_from_document(
+                &storage::Crdts::default(),
                 &doc,
                 &crate::common::schema::version("v1"),
                 &blockstore,
@@ -3498,6 +3502,7 @@ fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canonical_p
             .set("session_id", NormalValue::String("dup-session".to_string()))
             .unwrap();
         let result_a = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc_a,
             &crate::common::schema::version("v1"),
             &blockstore,
@@ -3530,6 +3535,7 @@ fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canonical_p
             .set("session_id", NormalValue::String("dup-session".to_string()))
             .unwrap();
         let result_b = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc_b,
             &crate::common::schema::version("v1"),
             &blockstore,
@@ -3634,6 +3640,7 @@ fn remote_composite_merge_with_corrupted_unique_index_entry_is_rejected() {
         doc.set("session_id", NormalValue::String("dup-session".to_string()))
             .unwrap();
         let result = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("v1"),
             &blockstore,
@@ -3687,6 +3694,7 @@ async fn build_session_merge_block(
     doc.set("session_id", NormalValue::String(session_id.to_string()))
         .unwrap();
     let result = db::block::builder::build_blocks_from_document(
+        &storage::Crdts::default(),
         &doc,
         &crate::common::schema::version("v1"),
         blockstore,
@@ -4357,7 +4365,7 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
         assert_eq!(body.priority, 2);
         assert!(body.value.is_empty());
         assert!(stored
-            .materialize(collection.schema_arc())
+            .materialize(collection.schema_arc(), collection.crdts())
             .unwrap()
             .get("body")
             .is_none());

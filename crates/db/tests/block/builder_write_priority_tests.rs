@@ -24,7 +24,7 @@ fn field_priority_is_independent_of_sibling_updates() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared, Namespace::Headstore);
         let identity = DocRef::new(1, 1);

@@ -1,5 +1,5 @@
 use crdt::field::testing::check_field_crdt;
-use crdt::{delta_crdt, field_crdt, FieldCrdt};
+use crdt::{Crdts, FieldCrdt, FieldCrdtError};
 use defra_core::block::CrdtDelta;
 use defra_core::block_delta::{CounterDeltaPayload, LwwDeltaPayload, TextDeltaPayload};
 use document::{FieldOp, NormalValue};
@@ -11,7 +11,7 @@ fn field(kind: FieldKind, ctype: CType) -> FieldDescription {
 }
 
 fn crdt(ctype: CType) -> &'static dyn FieldCrdt {
-    field_crdt(ctype).unwrap()
+    crdt::field::native(ctype).unwrap()
 }
 
 #[test]
@@ -125,9 +125,9 @@ fn a_float32_counter_adds_at_f32_precision() {
 
 #[test]
 fn types_without_field_blocks_have_no_crdt() {
-    assert!(field_crdt(CType::None).is_none());
-    assert!(field_crdt(CType::Composite).is_none());
-    assert!(field_crdt(CType::Unknown(9)).is_none());
+    assert!(crdt::field::native(CType::None).is_none());
+    assert!(crdt::field::native(CType::Composite).is_none());
+    assert!(crdt::field::native(CType::Unknown(9)).is_none());
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn a_block_finds_the_crdt_that_wrote_it() {
         data: Vec::new(),
     });
     let text = text();
-    let ctype = |delta, declared| delta_crdt(delta, declared).ok().map(|crdt| crdt.ctype());
+    let ctype = |delta, declared| delta_crdt(delta, declared).ok();
     assert_eq!(ctype(&lww, CType::LwwRegister), Some(CType::LwwRegister));
     assert_eq!(ctype(&lww, CType::None), Some(CType::LwwRegister));
     assert_eq!(ctype(&text, CType::Text), Some(CType::Text));
@@ -176,7 +176,7 @@ fn a_block_of_another_family_is_refused() {
     let text = text();
     let refusal = |delta, declared| match delta_crdt(delta, declared) {
         Err(error) => error.to_string(),
-        Ok(crdt) => panic!("{declared} accepted a {} block", crdt.ctype()),
+        Ok(ctype) => panic!("{declared} accepted a {} block", ctype),
     };
     assert_eq!(
         refusal(&counter, CType::LwwRegister),
@@ -330,7 +330,7 @@ fn a_named_op_is_taken_only_by_a_type_that_takes_it() {
     let increment = |by| FieldOp::Increment(NormalValue::Int(by));
     let edit = || FieldOp::Edit(Vec::new());
     let named = |ctype, op| {
-        field_crdt(ctype)
+        crdt::field::native(ctype)
             .expect("a field type")
             .named_op(op)
             .map_err(|error| error.to_string())
@@ -399,4 +399,11 @@ fn a_text_history_whose_heads_write_null_replays_to_null() {
         replay(&[first, block(2, &[1], &nil), block(3, &[2], &typed)]),
         NormalValue::String("ab".into())
     );
+}
+
+/// The type a native node reads a field block as.
+fn delta_crdt(delta: &CrdtDelta, declared: CType) -> Result<CType, FieldCrdtError> {
+    Crdts::default()
+        .delta(delta, declared)
+        .map(|crdt| crdt.ctype())
 }

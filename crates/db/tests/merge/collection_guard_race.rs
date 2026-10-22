@@ -56,6 +56,7 @@ where
     let mut doc = Document::new(guard_race);
     doc.set("body", "hello".to_string()).unwrap();
     let built = db::block::builder::build_blocks_from_document(
+        &storage::Crdts::default(),
         &doc,
         &crate::common::schema::version(version_id),
         &blockstore,

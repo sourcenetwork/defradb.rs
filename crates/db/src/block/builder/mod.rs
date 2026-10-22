@@ -360,14 +360,16 @@ pub struct BlockResult {
 }
 
 /// The CRDT type of a document field, which decides what its block carries.
-pub(crate) fn field_crdt_of(
+pub(crate) fn field_crdt_of<'crdts>(
+    crdts: &'crdts crdt::Crdts,
     doc: &Document,
     field_name: &str,
-) -> Result<&'static dyn crdt::FieldCrdt, String> {
+) -> Result<crdt::CrdtRef<'crdts>, String> {
     let ctype = doc
         .crdt_type(field_name)
         .ok_or_else(|| format!("field {field_name} is not in the collection definition"))?;
-    crdt::field_crdt(ctype)
+    crdts
+        .field(ctype)
         .ok_or_else(|| format!("field {field_name} has no CRDT type that writes blocks ({ctype})"))
 }
 
@@ -575,6 +577,7 @@ mod prepared_signature_tests {
         let memo = query::prepared::PreparedInputMemo::default();
         let schema = CollectionVersion::new("Users", "schema-v1", "users", vec![]);
         let error = compute_document_blocks_with_inputs(
+            &crdt::Crdts::default(),
             &doc,
             &schema,
             identity,

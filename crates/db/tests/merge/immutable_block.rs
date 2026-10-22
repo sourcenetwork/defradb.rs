@@ -234,6 +234,7 @@ fn remote_genesis_applies_immutable_block_fields() {
         let (local, local_blocks, local_collection) = make_handler().await;
         let doc = record(&local_collection);
         let built = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             local_collection.schema(),
             &local_blocks,
@@ -486,6 +487,7 @@ fn batch_and_single_create_build_the_same_genesis() {
         let identity = db::block::builder::DocRef::new(collection.resolved_root_id(), 7);
 
         let computed = db::block::builder::compute_document_blocks(
+            &storage::Crdts::default(),
             &doc,
             collection.schema(),
             identity,

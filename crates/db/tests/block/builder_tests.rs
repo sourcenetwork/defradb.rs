@@ -31,6 +31,7 @@ fn test_build_blocks_creates_proper_structure() {
         let collection_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version(collection_version_id),
             &blockstore,
@@ -64,6 +65,7 @@ fn test_build_blocks_derives_doc_id_from_genesis_cid() {
         let blockstore = make_test_blockstore();
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("schema-v1"),
             &blockstore,
@@ -87,6 +89,7 @@ fn test_field_block_contains_lww_delta() {
         let collection_version_id = "schema-v1";
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version(collection_version_id),
             &blockstore,
@@ -123,6 +126,7 @@ fn test_composite_block_has_field_links() {
         let blockstore = make_test_blockstore();
 
         let result = build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("schema-v1"),
             &blockstore,
@@ -167,6 +171,7 @@ fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries
     };
 
     let computed = compute_document_blocks(
+        &storage::Crdts::default(),
         &doc,
         &crate::common::schema::version("schema-v1"),
         DocRef::new(1, 1),

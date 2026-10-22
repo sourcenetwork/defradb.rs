@@ -199,7 +199,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let io = retry
             .begin_attempt_io()
             .map_err(|error| crate::error::commit_query_error(error.into()))?;
-        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone());
         let txn = self.db.new_db_txn(basic_txn);
         let collection = txn
             .load_collection_for_write_attempt(&attempt.collection_name, &attempt.collection)
@@ -427,7 +427,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let io = retry
             .begin_attempt_io()
             .map_err(|error| crate::error::commit_query_error(error.into()))?;
-        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone());
         let txn = self.db.new_db_txn(basic_txn);
         let collection = txn
             .load_collection_for_write_attempt(&attempt.collection_name, &attempt.collection)

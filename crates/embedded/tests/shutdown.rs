@@ -234,6 +234,10 @@ impl storage::corekv::private::Sealed for SlowCloseStore {}
 
 #[async_trait]
 impl storage::Store for SlowCloseStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }

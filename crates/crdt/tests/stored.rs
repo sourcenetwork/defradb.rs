@@ -1,5 +1,6 @@
 use crdt::field::{CounterField, LwwField, TextField};
 use crdt::stored::{document_from_storage, encode_parts, Part, StoredDocument, ValueKind};
+use crdt::Crdts;
 use document::NormalValue;
 use schema::CollectionVersion;
 
@@ -47,7 +48,7 @@ fn document_from_storage_materializes_a_stored_document() {
     );
     let bytes = stored.encode().unwrap();
 
-    let document = document_from_storage(&bytes, test_collection()).unwrap();
+    let document = document_from_storage(&bytes, test_collection(), &Crdts::default()).unwrap();
     assert_eq!(
         document.get("name").and_then(NormalValue::as_str),
         Some("Ada")
@@ -108,7 +109,7 @@ fn document_from_storage_rejects_invalid_field_values() {
     let mut bytes = MAGIC.to_vec();
     bytes.extend_from_slice(&1_u32.to_be_bytes()); // field count
     bytes.extend_from_slice(&1_u32.to_be_bytes()); // field ID
-    bytes.push(ValueKind::Lww as u8);
+    bytes.push(0); // LWW tag
     bytes.extend_from_slice(&1_u64.to_be_bytes()); // priority
     bytes.extend_from_slice(&4_u32.to_be_bytes());
     bytes.extend_from_slice(b"name");
@@ -116,7 +117,7 @@ fn document_from_storage_rejects_invalid_field_values() {
     bytes.push(0xff); // invalid CBOR
 
     assert!(StoredDocument::decode(&bytes).is_none());
-    assert!(document_from_storage(&bytes, test_collection()).is_err());
+    assert!(document_from_storage(&bytes, test_collection(), &Crdts::default()).is_err());
 }
 
 #[test]
@@ -134,7 +135,7 @@ fn stored_document_rejects_duplicate_field_names() {
     bytes.extend_from_slice(&2_u32.to_be_bytes()); // field count
     for id in [1_u32, 2] {
         bytes.extend_from_slice(&id.to_be_bytes());
-        bytes.push(ValueKind::Lww as u8);
+        bytes.push(0); // LWW tag
         bytes.extend_from_slice(&1_u64.to_be_bytes()); // priority
         bytes.extend_from_slice(&4_u32.to_be_bytes());
         bytes.extend_from_slice(b"same");
@@ -211,10 +212,12 @@ fn a_text_operand_replaces_the_stored_text_whatever_its_priority() {
         doc
     };
     let mut stored = text(5, "zzz");
-    stored.apply(text(3, "abc")).unwrap();
+    stored.apply(text(3, "abc"), &Crdts::default()).unwrap();
     let body = &stored.fields[&1];
     assert_eq!(
-        body.materialize().as_ref().and_then(NormalValue::as_str),
+        body.materialize(&Crdts::default())
+            .as_ref()
+            .and_then(NormalValue::as_str),
         Some("abc")
     );
     assert_eq!(body.priority, 5);
@@ -225,5 +228,5 @@ fn a_text_operand_replaces_the_stored_text_whatever_its_priority() {
         1,
         LwwField::stored("body".to_owned(), 9, &NormalValue::String("x".to_owned())).unwrap(),
     );
-    assert!(text(1, "a").apply(lww).is_none());
+    assert!(text(1, "a").apply(lww, &Crdts::default()).is_none());
 }

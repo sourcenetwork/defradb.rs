@@ -254,7 +254,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
             let io = retry
                 .begin_attempt_io()
                 .map_err(storage::corekv::RetryAttemptError::Storage)?;
-            let basic_txn = BasicTxn::from_retry_attempt_io(io, 0);
+            let basic_txn = BasicTxn::from_retry_attempt_io(io, 0, self.db.crdts().clone());
             let txn: LentTxn<S> = Arc::new(self.db.new_db_txn(basic_txn));
             let acp_registration_projection = txn.acp_registration_projection();
             let fetcher = Arc::new(
@@ -307,6 +307,10 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<S: Store + 'static> DocMutator for BatchMutator<S> {
+    fn crdts(&self) -> crdt::Crdts {
+        self.db.crdts().clone()
+    }
+
     fn supports_projected_updates(&self) -> bool {
         true
     }

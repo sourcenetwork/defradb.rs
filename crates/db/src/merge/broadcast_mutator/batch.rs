@@ -288,6 +288,10 @@ impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport + 'static>
 impl<S: Store + 'static, B: Blockstore + 'static, T: P2PTransport> DocMutator
     for BroadcastBatchMutator<S, B, T>
 {
+    fn crdts(&self) -> crdt::Crdts {
+        self.db.crdts().clone()
+    }
+
     fn engine_retries_batches(&self) -> bool {
         self.inner.engine_retries_batches()
     }

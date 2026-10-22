@@ -88,4 +88,4 @@ lean_lib TextCrdt where
 lean_lib JsonCrdt where
 
 @[default_target]
-lean_lib PendingCache where
+lean_lib CustomCrdtCode where

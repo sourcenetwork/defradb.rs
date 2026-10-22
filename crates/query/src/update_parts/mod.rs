@@ -33,6 +33,7 @@
 //! the autocommit attempt and the explicit transaction, asks here, so they
 //! cannot disagree.
 
+use crdt::Crdts;
 use rapidhash::RapidHashSet;
 use schema::{CollectionVersion, FieldDescription, FieldKind, IndexDescription};
 use storage::corekv::TransactionConflict;
@@ -79,6 +80,7 @@ impl Run {
     /// [`planned`] for this run.
     pub fn planned(
         self,
+        crdts: &Crdts,
         collection: &CollectionVersion,
         patch: &RapidHashSet<String>,
         filter: Option<&Filter>,
@@ -95,9 +97,9 @@ impl Run {
         if !patch.iter().all(scalar) {
             return None;
         }
-        let mut parts = self.written(collection, &collection.indexes, patch, |name| {
+        let mut parts = self.written(crdts, collection, &collection.indexes, patch, |name| {
             field(collection, name)
-                .and_then(|field| crdt::field_crdt(field.crdt_type))
+                .and_then(|field| crdts.field(field.crdt_type))
                 .is_some_and(|crdt| crdt.blind_op())
         });
         if let Some(filter) = filter {
@@ -109,6 +111,7 @@ impl Run {
     /// [`written`] for this run.
     pub fn written<'a, I, F>(
         self,
+        crdts: &Crdts,
         collection: &CollectionVersion,
         indexes: I,
         modified: &RapidHashSet<String>,
@@ -123,7 +126,8 @@ impl Run {
                 && collection.downsample_source.is_none()
                 && field(collection, name).is_some_and(|field| {
                     !field.immutable
-                        && crdt::field_crdt(field.crdt_type)
+                        && crdts
+                            .field(field.crdt_type)
                             .is_none_or(|crdt| crdt.causal().is_none())
                 })
         };
@@ -161,17 +165,19 @@ impl Run {
 /// non-scalar field, or a filter that reaches past the document (through a
 /// relation or an alias).
 pub fn planned(
+    crdts: &Crdts,
     collection: &CollectionVersion,
     patch: &RapidHashSet<String>,
     filter: Option<&Filter>,
 ) -> Option<RapidHashSet<String>> {
-    Run::First.planned(collection, patch, filter)
+    Run::First.planned(crdts, collection, patch, filter)
 }
 
 /// The parts a write applying `modified` decides on in its first run, given
 /// the indexes it maintains. `is_increment` says which modified fields are
 /// counter increments.
 pub fn written<'a, I, F>(
+    crdts: &Crdts,
     collection: &CollectionVersion,
     indexes: I,
     modified: &RapidHashSet<String>,
@@ -181,7 +187,7 @@ where
     I: IntoIterator<Item = &'a IndexDescription>,
     F: Fn(&str) -> bool,
 {
-    Run::First.written(collection, indexes, modified, is_increment)
+    Run::First.written(crdts, collection, indexes, modified, is_increment)
 }
 
 /// The stored fields `filter` compares, or `None` when it reaches past the

@@ -1071,6 +1071,23 @@ pub struct NodeBuilder {
     p2p_config: Option<P2PConfig>,
     #[cfg(feature = "otel")]
     telemetry_handle: Option<TelemetryHandle>,
+    crdts: Vec<crdt::Registration>,
+}
+
+/// The background replay of the blocks of custom CRDT types this node has
+/// that an earlier build, without them, parked; `None` with no custom type.
+/// Only P2P parks blocks, so only a P2P build merges them.
+#[cfg(all(feature = "p2p", not(target_arch = "wasm32")))]
+fn parked_crdt_replay<S>(database: &Arc<db::DB<S>>, store: &Arc<S>) -> Option<workers::Background>
+where
+    S: storage::corekv::Store + 'static,
+{
+    database.crdts().custom_names().next()?;
+    let blockstore = blockstore::DefraBlockstore::new(store.clone(), true)
+        .with_max_txn_retries(database.options().max_txn_retries())
+        .placed_on(database.pool());
+    let handler = db::merge::create_merge_handler(database.clone(), Arc::new(blockstore));
+    Some(handler.start_parked_replay())
 }
 
 /// Durability is a separate builder setting, so it is applied over the
@@ -1330,8 +1347,27 @@ impl NodeBuilder {
         self
     }
 
+    /// A custom CRDT type, which a field takes with `@crdt(custom: "<name>")`;
+    /// `crdt.ctype()` is `CType::Custom` of that name. The type implements
+    /// [`crdt::FieldCrdt`] and passes `crdt::field::testing::check_field_crdt`.
+    ///
+    /// The type belongs to this node alone: another node in the process has
+    /// only the types its own builder registers. A node without the type
+    /// keeps and replicates definitions naming it, leaves the field out of
+    /// its queries, and parks the field's replicated blocks; a later build
+    /// with the type merges them. Registering two types under one name fails
+    /// [`build`](Self::build).
+    pub fn with_crdt<T>(mut self, crdt: T) -> Self
+    where
+        T: crdt::FieldCrdt + 'static,
+    {
+        self.crdts.push(crdt::Registration::new(crdt));
+        self
+    }
+
     /// Build and start the embedded DefraDB node.
-    pub async fn build(self) -> Result<EmbeddedNode> {
+    pub async fn build(mut self) -> Result<EmbeddedNode> {
+        let crdts = crdt::Crdts::new(std::mem::take(&mut self.crdts))?;
         let node_identity_did = self.node_identity_did.clone();
         let node_identity_config = node_identity_did
             .as_deref()
@@ -1458,7 +1494,8 @@ impl NodeBuilder {
             );
             let opts = with_at_rest_keys(
                 resolve_regolith_options(self.regolith_options.clone(), self.storage_durability)
-                    .placed_on(&pool),
+                    .placed_on(&pool)
+                    .with_crdts(crdts),
                 self.at_rest_encryption_key,
                 &self.previous_at_rest_encryption_keys,
             )?;
@@ -1475,7 +1512,9 @@ impl NodeBuilder {
                 storage::RegolithStore::open_with_options(
                     "memory",
                     with_at_rest_keys(
-                        storage::RegolithStoreOptions::memory().placed_on(&pool),
+                        storage::RegolithStoreOptions::memory()
+                            .placed_on(&pool)
+                            .with_crdts(crdts),
                         self.at_rest_encryption_key,
                         &self.previous_at_rest_encryption_keys,
                     )?,
@@ -1893,6 +1932,10 @@ impl NodeBuilder {
             database.clone().start_vector_rebuild_task(),
             database.clone().start_downsample_task(),
         ]);
+        #[cfg(all(feature = "p2p", not(target_arch = "wasm32")))]
+        if let Some(replay) = parked_crdt_replay(&database, &store) {
+            background_tasks.0.push(replay);
+        }
         #[cfg(all(feature = "vera", not(target_arch = "wasm32")))]
         if let Some(start_redrive) = redrive {
             background_tasks.0.push(start_redrive(database.pool()));

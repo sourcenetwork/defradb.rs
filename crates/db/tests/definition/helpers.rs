@@ -105,17 +105,20 @@ fn scalar_fields_reindex_to_native_values() {
 
 #[test]
 fn blob_field_remains_hex_text_after_lens_materialization() {
-    let collection = Collection::new(CollectionVersion::new(
-        "Files",
-        "v2",
-        "files",
-        vec![FieldDescription::new(
-            "1",
-            "data",
-            FieldKind::blob(),
-            schema::CType::LwwRegister,
-        )],
-    ));
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "Files",
+            "v2",
+            "files",
+            vec![FieldDescription::new(
+                "1",
+                "data",
+                FieldKind::blob(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    );
     let mut lens_doc = LensDoc::new();
     lens_doc.insert("data".to_string(), serde_json::json!("00ff"));
 
@@ -139,20 +142,23 @@ fn blob_field_remains_hex_text_after_lens_materialization() {
 
 #[test]
 fn lens_removed_field_is_returned_as_explicit_null() {
-    let collection = Collection::new(CollectionVersion::new(
-        "Users",
-        "v2",
-        "users",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    ));
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "Users",
+            "v2",
+            "users",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        ),
+        crdt::Crdts::default(),
+    );
     let mut original = Document::new(collection.schema_arc());
     original
         .set("name", document::NormalValue::String("Alice".to_string()))

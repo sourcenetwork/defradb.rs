@@ -51,6 +51,7 @@ bench = false
 [dependencies]
 rapidhash.workspace = true
 kovan-queue.workspace = true
+crdt = { path = "../crdt" }
 db = { path = "../db", default-features = false }
 storage = { path = "../storage" }
 query = { path = "../query" }
@@ -98,6 +99,7 @@ telemetry = { path = "../telemetry", default-features = false }
 mimalloc.workspace = true
 
 [dev-dependencies]
+document = { path = "../document" }
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 axum.workspace = true

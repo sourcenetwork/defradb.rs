@@ -27,6 +27,8 @@ pub struct SharedTxn {
     /// `None` only once [`into_txn`](Self::into_txn) has taken it.
     txn: Option<Box<dyn Txn>>,
     queued: QueuedCallbacks,
+    /// The CRDT types of the node whose store the transaction runs on.
+    crdts: storage::Crdts,
 }
 
 impl SharedTxn {
@@ -119,11 +121,17 @@ impl SharedTxn {
     // single-threaded browser runtime, and the return type has to stay `Arc`
     // for native callers that share it across threads.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-    pub fn new(txn: Box<dyn Txn>) -> Arc<Self> {
+    pub fn new(txn: Box<dyn Txn>, crdts: storage::Crdts) -> Arc<Self> {
         Arc::new(Self {
             queued: QueuedCallbacks::new(txn.is_readonly()),
             txn: Some(txn),
+            crdts,
         })
+    }
+
+    /// The CRDT types of the node whose store the transaction runs on.
+    pub fn crdts(&self) -> &storage::Crdts {
+        &self.crdts
     }
 
     /// Get a value with namespace prefix.
@@ -283,6 +291,11 @@ impl NamespaceView {
     /// Create a new namespace view.
     pub fn new(txn: Arc<SharedTxn>, namespace: Namespace) -> Self {
         Self { txn, namespace }
+    }
+
+    /// The CRDT types of the node whose store the transaction runs on.
+    pub fn crdts(&self) -> &storage::Crdts {
+        self.txn.crdts()
     }
 
     /// View a different namespace of the same transaction.
@@ -537,7 +550,7 @@ mod tests {
         workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let txn = store.new_txn(false).await.unwrap();
-            let shared = SharedTxn::new(txn);
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
             // Write to datastore namespace
             shared
@@ -569,7 +582,7 @@ mod tests {
         workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let txn = store.new_txn(false).await.unwrap();
-            let shared = SharedTxn::new(txn);
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
             let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
             let ss = NamespaceView::new(shared.clone(), Namespace::Systemstore);
@@ -596,7 +609,7 @@ mod tests {
         workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let txn = store.new_txn(false).await.unwrap();
-            let shared = SharedTxn::new(txn);
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
             let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
             let root = RootView::new(shared.clone());
@@ -616,7 +629,7 @@ mod tests {
         workers::block_on(async {
             let store = RegolithStore::in_memory().unwrap();
             let txn = store.new_txn(false).await.unwrap();
-            let shared = SharedTxn::new(txn);
+            let shared = SharedTxn::new(txn, storage::Crdts::default());
 
             let ds = NamespaceView::new(shared.clone(), Namespace::Datastore);
 

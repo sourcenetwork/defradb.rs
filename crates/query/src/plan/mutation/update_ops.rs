@@ -2,6 +2,7 @@
 //! CRDT type.
 
 use chrono::{DateTime, FixedOffset};
+use crdt::Crdts;
 use document::{Document, FieldOp, NormalValue};
 use schema::FieldDescription;
 
@@ -13,10 +14,11 @@ use defra_core::json_crdt::{JsonEdit, JsonOp};
 /// The op an implicit `field: value` input makes: the one the field's type
 /// reads a written value as.
 pub(super) fn implicit_op(
+    crdts: &Crdts,
     field_def: Option<&FieldDescription>,
     value: NormalValue,
 ) -> Result<FieldOp> {
-    match field_def.and_then(|field| crdt::field_crdt(field.crdt_type)) {
+    match field_def.and_then(|field| crdts.field(field.crdt_type)) {
         Some(crdt) => crdt
             .op(value, false)
             .map_err(|error| QueryError::execution(error.to_string())),
@@ -27,6 +29,7 @@ pub(super) fn implicit_op(
 /// The op an explicit input op names, refused when the field's type cannot
 /// take it.
 pub(super) fn named_op(
+    crdts: &Crdts,
     field: &str,
     field_def: Option<&FieldDescription>,
     op: &InputOp,
@@ -49,7 +52,7 @@ pub(super) fn named_op(
                 .collect(),
         ),
     };
-    match field_def.and_then(|field| crdt::field_crdt(field.crdt_type)) {
+    match field_def.and_then(|field| crdts.field(field.crdt_type)) {
         Some(crdt) => crdt
             .named_op(op)
             .map_err(|error| QueryError::execution(format!("`{field}`: {error}"))),
@@ -64,6 +67,7 @@ pub(super) fn named_op(
 /// Apply `op` to `field` of `doc`, whose current values it holds, and keep it
 /// as the field's pending op for the write's block.
 pub(super) fn write_op(
+    crdts: &Crdts,
     doc: &mut Document,
     field: &str,
     field_def: Option<&FieldDescription>,
@@ -71,7 +75,7 @@ pub(super) fn write_op(
 ) -> Result<()> {
     let execution = |error: &dyn std::fmt::Display| QueryError::execution(error.to_string());
     if let Some((field_def, crdt)) =
-        field_def.and_then(|fd| crdt::field_crdt(fd.crdt_type).map(|crdt| (fd, crdt)))
+        field_def.and_then(|fd| crdts.field(fd.crdt_type).map(|crdt| (fd, crdt)))
     {
         let value = crdt
             .apply(field_def, doc.get(field), &op)

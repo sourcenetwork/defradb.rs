@@ -617,6 +617,31 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        // Custom CRDT types (#2183). A node without a registered type merges
+        // the rest of each block, keeps the custom block and a record of it,
+        // and acknowledges it; built again with the type, it merges each
+        // parked block once, removing its record in the same transaction. The
+        // defra-node custom_crdt tests run the same story between real nodes.
+        family: "Custom CRDT types",
+        name: "INV_NoBlindMerge / INV_MergeOnce / INV_OtherFieldsExact / INV_ConvergeWhenDone / LIVE_Converge: an unregistered type is never merged, a parked block merges exactly once, other fields stay exact, and replicas converge once the type is registered",
+        axis: Tla,
+        anchor: "crates/crdt/src/field/registry.rs Crdts::delta, Crdts::field, Crdts::part; crates/db/src/merge/merge_handler/field.rs merge_field_delta_in_txn; crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks; crates/db/src/merge/merge_handler/parked.rs park, replay_parked, replay_in_txn; crates/defra-node/src/lib.rs parked_crdt_replay; crates/db/src/merge/merge_handler/parked.rs start_parked_replay; crates/defra-node/tests/custom_crdt/replication.rs",
+        model_ref: "MC_UnknownCrdt_{Green,Red_DropDeferral,Red_DoubleReplay,Red_Lww}.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        // Every existing type keeps its definition bytes (code, no name), so
+        // definition CIDs do not move; a custom type is code 8 plus its name;
+        // reading back what a type writes gives that type. The defra-node
+        // definition_cids golden test pins the CIDs themselves.
+        family: "Custom CRDT types",
+        name: "native_unchanged / custom_not_native / decode_encode / encode_injective / old_codes_read_back: custom types leave native definitions byte-identical and round-trip",
+        axis: Lean,
+        anchor: "crates/schema/src/ctype.rs CType::to_u8, CType::custom_name, CType::from_definition; crates/schema/src/cid.rs field_to_delta_with_priority; crates/defra-core/src/block_delta.rs FieldDefinitionDeltaPayload; crates/defra-node/tests/definition_cids.rs",
+        model_ref: "CustomCrdtCode (lake build)",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Storage transaction validation",
         name: "Validated point reads reject crossing writes",
         axis: Tla,

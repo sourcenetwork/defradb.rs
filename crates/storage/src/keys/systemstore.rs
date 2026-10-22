@@ -532,6 +532,62 @@ impl Key for P2PQuarantinedDagKey {
     }
 }
 
+/// ParkedCrdtBlockKey: a field block of a custom CRDT type this node does not
+/// have, kept until a build of the node registers the type and merges it. One
+/// key per collection, document, field and block, so parking is a blind put.
+///
+/// Structure: /crdt/parked/[CrdtName]/[CollectionID]/[DocShortID]/[Field]/[CID]
+/// Example: /crdt/parked/maxreg/col-1/7/best/bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqrsgxbyqx54
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParkedCrdtBlockKey {
+    /// The custom CRDT type the block was written by.
+    pub crdt: String,
+    /// The collection the document belongs to.
+    pub collection: String,
+    /// The document's node-local short ID.
+    pub doc_short_id: u64,
+    /// The field the block writes.
+    pub field: String,
+    /// CID of the field block (canonical string form).
+    pub cid: String,
+}
+
+impl ParkedCrdtBlockKey {
+    pub fn new(
+        crdt: impl Into<String>,
+        collection: impl Into<String>,
+        doc_short_id: u64,
+        field: impl Into<String>,
+        cid: impl Into<String>,
+    ) -> Self {
+        Self {
+            crdt: crdt.into(),
+            collection: collection.into(),
+            doc_short_id,
+            field: field.into(),
+            cid: cid.into(),
+        }
+    }
+
+    /// The prefix of every parked block of the type `crdt`.
+    pub fn crdt_prefix(crdt: &str) -> Vec<u8> {
+        format!("/crdt/parked/{crdt}/").into_bytes()
+    }
+}
+
+impl Key for ParkedCrdtBlockKey {
+    fn bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
+
+    fn to_string(&self) -> String {
+        format!(
+            "/crdt/parked/{}/{}/{}/{}/{}",
+            self.crdt, self.collection, self.doc_short_id, self.field, self.cid
+        )
+    }
+}
+
 /// LensConfigKey: Stores a serialized LensConfig for persistence across restarts.
 ///
 /// Structure: /lens/config/[TransformID]

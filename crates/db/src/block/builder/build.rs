@@ -19,6 +19,7 @@ use std::sync::Arc;
 ///
 /// Returns `BlockResult` containing the composite block and metadata.
 pub async fn build_blocks_from_document<B: Blockstore>(
+    crdts: &crdt::Crdts,
     doc: &Document,
     schema: &CollectionVersion,
     blockstore: &Arc<B>,
@@ -42,7 +43,7 @@ pub async fn build_blocks_from_document<B: Blockstore>(
             continue;
         }
 
-        let crdt = field_crdt_of(doc, field_name)?;
+        let crdt = field_crdt_of(crdts, doc, field_name)?;
         let Some(value_bytes) = crdt
             .block_data(field_value.value(), None)
             .map_err(|error| error.to_string())?

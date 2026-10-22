@@ -41,10 +41,10 @@ pub mod wasm_task_local;
 pub use action::{Action, ActionExecution, ActionStatus};
 pub use block::{
     Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CollectionSetDeltaPayload,
-    CompositeDeltaPayload, CounterDeltaPayload, CrdtDelta, DAGLink, DocumentStatus, Encryption,
-    FieldDefinitionDeltaPayload, ImmutableDeltaPayload, JsonDeltaPayload, LwwDeltaPayload,
-    Signature, SignatureHeader, SignatureType, TextDeltaPayload, DAG_CBOR_CODEC,
-    IMMUTABLE_LINK_NAME, SHA2_256_CODE,
+    CompositeDeltaPayload, CounterDeltaPayload, CrdtDelta, CustomDeltaPayload, DAGLink,
+    DocumentStatus, Encryption, FieldDefinitionDeltaPayload, ImmutableDeltaPayload,
+    JsonDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType, TextDeltaPayload,
+    DAG_CBOR_CODEC, IMMUTABLE_LINK_NAME, SHA2_256_CODE,
 };
 pub use collection::collection_short_id;
 pub use encryption::EncryptionKey;

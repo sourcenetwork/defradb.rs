@@ -406,6 +406,9 @@ fn field_to_delta_with_priority(
         .with_name(&field.name)
         .with_crdt(field.crdt_type.to_u8())
         .with_immutable(governed && field.immutable);
+    if let Some(name) = field.crdt_type.custom_name() {
+        delta = delta.with_custom_crdt(name.as_str());
+    }
 
     match &field.kind {
         FieldKind::Scalar(k) => {

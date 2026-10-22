@@ -32,7 +32,10 @@ async fn commit(shared: Arc<SharedTxn>) {
 }
 
 async fn collection_heads(store: &RegolithStore, collection_id: u32) -> Vec<Cid> {
-    let shared = SharedTxn::new(store.new_txn(true).await.unwrap());
+    let shared = SharedTxn::new(
+        store.new_txn(true).await.unwrap(),
+        storage::Crdts::default(),
+    );
     let (_, headstore) = views(&shared);
     let mut heads = live_collection_heads(&headstore, collection_id)
         .await
@@ -48,7 +51,10 @@ fn concurrent_collection_transitions_preserve_and_merge_sibling_heads() {
         const COLLECTION_ID: u32 = 7;
 
         let store = RegolithStore::in_memory().unwrap();
-        let seed_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let seed_txn = SharedTxn::new(
+            store.new_txn(false).await.unwrap(),
+            storage::Crdts::default(),
+        );
         let (seed_blocks, seed_heads) = views(&seed_txn);
         write_collection_block(
             &seed_blocks,
@@ -63,8 +69,14 @@ fn concurrent_collection_transitions_preserve_and_merge_sibling_heads() {
         drop((seed_blocks, seed_heads));
         commit(seed_txn).await;
 
-        let first_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
-        let second_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let first_txn = SharedTxn::new(
+            store.new_txn(false).await.unwrap(),
+            storage::Crdts::default(),
+        );
+        let second_txn = SharedTxn::new(
+            store.new_txn(false).await.unwrap(),
+            storage::Crdts::default(),
+        );
         let (first_blocks, first_heads) = views(&first_txn);
         let (second_blocks, second_heads) = views(&second_txn);
 
@@ -100,7 +112,10 @@ fn concurrent_collection_transitions_preserve_and_merge_sibling_heads() {
             expected_siblings
         );
 
-        let merge_txn = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let merge_txn = SharedTxn::new(
+            store.new_txn(false).await.unwrap(),
+            storage::Crdts::default(),
+        );
         let (merge_blocks, merge_heads) = views(&merge_txn);
         let (merged_cid, merged_bytes) = write_collection_block(
             &merge_blocks,

@@ -7,27 +7,30 @@ use schema::FieldKind;
 use schema::ScalarKind;
 
 fn filtered_collection() -> Collection {
-    Collection::new(CollectionVersion::new(
-        "AgentDoc",
-        "agent_doc_version",
-        "agent_doc_collection",
-        vec![
-            FieldDescription::new(
-                "1",
-                "_docID",
-                FieldKind::doc_id(),
-                schema::CType::LwwRegister,
-            ),
-            FieldDescription::new(
-                "2",
-                "agent_did",
-                FieldKind::string(),
-                schema::CType::LwwRegister,
-            )
-            .as_immutable(),
-            FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
-        ],
-    ))
+    Collection::new(
+        CollectionVersion::new(
+            "AgentDoc",
+            "agent_doc_version",
+            "agent_doc_collection",
+            vec![
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "agent_did",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                )
+                .as_immutable(),
+                FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
+            ],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 #[test]
@@ -71,17 +74,20 @@ fn immutable_field_validation_rejects_key_changes() {
 
 #[test]
 fn non_nillable_field_rejects_null_and_missing_values() {
-    let collection = Collection::new(CollectionVersion::new(
-        "Event",
-        "event_version",
-        "event_collection",
-        vec![FieldDescription::new(
-            "1",
-            "createdAt",
-            FieldKind::Scalar(ScalarKind::DateTime),
-            schema::CType::LwwRegister,
-        )],
-    ));
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "Event",
+            "event_version",
+            "event_collection",
+            vec![FieldDescription::new(
+                "1",
+                "createdAt",
+                FieldKind::Scalar(ScalarKind::DateTime),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    );
 
     let valid = Document::from_json_str(
         r#"{"createdAt":"2024-01-01T00:00:00Z"}"#,
@@ -181,17 +187,20 @@ fn creation_accepts_supported_scalar_defaults() {
 #[test]
 fn json_validation_preserves_non_json_and_nonfinite_rejection() {
     use document::NormalValue;
-    let collection = Collection::new(CollectionVersion::new(
-        "JsonDoc",
-        "json_doc_version",
-        "json_doc_collection",
-        vec![FieldDescription::new(
-            "1",
-            "payload",
-            FieldKind::json(),
-            schema::CType::LwwRegister,
-        )],
-    ));
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "JsonDoc",
+            "json_doc_version",
+            "json_doc_collection",
+            vec![FieldDescription::new(
+                "1",
+                "payload",
+                FieldKind::json(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    );
     for value in [
         NormalValue::Bytes(vec![1, 2]),
         NormalValue::BytesArray(vec![vec![1]]),
@@ -216,17 +225,20 @@ fn json_validation_preserves_non_json_and_nonfinite_rejection() {
 #[test]
 fn retained_json_scalar_values_do_not_relax_other_field_kinds() {
     use document::NormalValue;
-    let collection = Collection::new(CollectionVersion::new(
-        "StrictDoc",
-        "strict_doc_version",
-        "strict_doc_collection",
-        vec![FieldDescription::new(
-            "1",
-            "payload",
-            FieldKind::string(),
-            schema::CType::LwwRegister,
-        )],
-    ));
+    let collection = Collection::new(
+        CollectionVersion::new(
+            "StrictDoc",
+            "strict_doc_version",
+            "strict_doc_collection",
+            vec![FieldDescription::new(
+                "1",
+                "payload",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    );
     for value in [
         NormalValue::Bool(true),
         NormalValue::Int(1),

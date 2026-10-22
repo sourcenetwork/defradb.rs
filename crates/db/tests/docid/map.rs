@@ -15,7 +15,10 @@ use storage::RegolithStore;
 async fn systemstore() -> NamespaceView {
     let store = RegolithStore::in_memory().unwrap();
     let txn = store.new_txn(false).await.unwrap();
-    NamespaceView::new(SharedTxn::new(txn), Namespace::Systemstore)
+    NamespaceView::new(
+        SharedTxn::new(txn, storage::Crdts::default()),
+        Namespace::Systemstore,
+    )
 }
 
 async fn persisted_sequence(store: Arc<RegolithStore>) -> u64 {

@@ -33,6 +33,9 @@ pub enum Error {
     /// A transaction operation failed.
     #[error(transparent)]
     Transaction(#[from] query::TransactionError),
+    /// A custom CRDT type could not be registered.
+    #[error(transparent)]
+    CustomCrdt(#[from] crdt::RegistryError),
 
     /// An access-control check or policy operation failed.
     #[error(transparent)]

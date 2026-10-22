@@ -60,6 +60,7 @@ impl UpsertInput {
     /// The `utc_now` parameter is used for `UTC_NOW` values to ensure consistent timestamps.
     pub fn apply_to(
         &self,
+        crdts: &crdt::Crdts,
         doc: &mut Document,
         collection: Option<&CollectionVersion>,
         utc_now: DateTime<FixedOffset>,
@@ -68,7 +69,7 @@ impl UpsertInput {
             fields: self.fields.clone(),
             ops: RapidHashMap::new(),
         };
-        update.apply_to_with_time(doc, collection, Some(utc_now))
+        update.apply_to_with_time(crdts, doc, collection, Some(utc_now))
     }
 }
 
@@ -291,7 +292,7 @@ impl UpsertNode {
             );
 
             let collection_ref = self.collection.as_deref();
-            input.apply_to(&mut doc, collection_ref, utc_now)?;
+            input.apply_to(&self.mutator.crdts(), &mut doc, collection_ref, utc_now)?;
 
             // Collect the modified field names for block creation
             let modified_fields: RapidHashSet<String> = input.fields.keys().cloned().collect();

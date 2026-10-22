@@ -1,22 +1,55 @@
 //! Contract checks for a [`FieldCrdt`](super::FieldCrdt), for the built-in
-//! types and for any type added later.
+//! types and for a custom type a third party registers.
 
 use document::{FieldOp, NormalValue};
 use schema::FieldDescription;
 
 use super::tagged::{decode_operand, encode_operand, fold_history, land, local_write, LocalWrite};
-use super::{CausalBlock, CausalCrdt, DeltaParts, FieldCrdt, TaggedBlock, TaggedCrdt};
-use crate::stored::{StoredDocument, StoredField};
+use super::{CausalBlock, CausalCrdt, CrdtRef, Crdts, DeltaParts, FieldCrdt, PartCrdts};
+use super::{TaggedBlock, TaggedCrdt};
+use crate::stored::{StoredDocument, StoredField, ValueKind};
 use defra_core::block::CrdtDelta;
+use schema::CType;
+
+/// The type under check, for parts of its own custom kind, and the native
+/// types for every other part.
+struct Checked<'crdt> {
+    crdt: &'crdt dyn FieldCrdt,
+    natives: Crdts,
+}
+
+impl<'crdt> Checked<'crdt> {
+    fn new(crdt: &'crdt dyn FieldCrdt) -> Self {
+        Self {
+            crdt,
+            natives: Crdts::default(),
+        }
+    }
+}
+
+impl PartCrdts for Checked<'_> {
+    fn part_crdt(&self, kind: ValueKind) -> CrdtRef<'_> {
+        match kind {
+            ValueKind::Custom(name) if self.crdt.ctype() == CType::Custom(name) => {
+                CrdtRef::known(self.crdt)
+            }
+            kind => self.natives.part(kind),
+        }
+    }
+}
 
 /// `states` merged in order into the starting state, as the document value
 /// folds operands.
-fn fold<'state>(states: impl IntoIterator<Item = &'state StoredField>) -> StoredDocument {
+fn fold<'state>(
+    crdt: &dyn FieldCrdt,
+    states: impl IntoIterator<Item = &'state StoredField>,
+) -> StoredDocument {
+    let crdts = Checked::new(crdt);
     let mut document = StoredDocument::default();
     for state in states {
         let mut operand = StoredDocument::default();
         operand.fields.insert(0, state.clone());
-        document.apply(operand).expect("a state merges");
+        document.apply(operand, &crdts).expect("a state merges");
     }
     document
 }
@@ -65,6 +98,9 @@ where
 /// its local writes are checked by [`check_tagged`] on histories built from
 /// `inputs`. A type is at most one of the two.
 ///
+/// A custom type writes custom deltas that name it, and stores parts of its
+/// own kind.
+///
 /// Panics on the first law that fails.
 pub fn check_field_crdt(
     crdt: &dyn FieldCrdt,
@@ -72,8 +108,19 @@ pub fn check_field_crdt(
     stored: &[NormalValue],
     inputs: &[NormalValue],
 ) {
+    let custom = match crdt.ctype() {
+        CType::Custom(name) => Some(name),
+        _ => None,
+    };
     for value in stored {
         let state = crdt.state(field, 1, value).expect("stored value");
+        if let Some(name) = custom {
+            assert_eq!(
+                state.kind,
+                ValueKind::Custom(name),
+                "a custom type stores parts of its own kind"
+            );
+        }
         assert_eq!(
             crdt.materialize(state.part()).as_ref(),
             Some(value),
@@ -109,6 +156,20 @@ pub fn check_field_crdt(
         assert_eq!(carried.data, bytes.as_slice(), "delta data round trip");
         match &delta {
             CrdtDelta::Counter(counter) => assert_eq!(counter.nonce, 42, "delta nonce"),
+            CrdtDelta::Custom(delta) => {
+                assert_eq!(
+                    Some(delta.crdt.as_str()),
+                    custom.as_ref().map(|name| name.as_str()),
+                    "a custom delta names its type"
+                );
+                if crdt.blind_op() && crdt.tagged().is_none() {
+                    assert_eq!(
+                        delta.nonce,
+                        Some(42),
+                        "a blind operation delta carries a nonce"
+                    );
+                }
+            }
             // A causal op is told apart by the parents it counts in, and a
             // tagged op by its ID, so only another blind op needs a nonce to
             // repeat.
@@ -149,7 +210,7 @@ pub fn check_field_crdt(
             assert!(write.merges, "a local write of {op:?} merges as an operand");
             let base = crdt.state(field, 1, stored).expect("stored value");
             let operand = crdt.state(field, 2, write.data).expect("stored operand");
-            let merged = fold([&base, &operand]);
+            let merged = fold(crdt, [&base, &operand]);
             let merged = crdt.materialize(merged.fields[&0].part());
             assert!(
                 merged.as_ref() == Some(&written),
@@ -287,10 +348,12 @@ pub fn check_tagged(tagged: &dyn TaggedCrdt, field: &FieldDescription, values: &
                 pair.fields.insert(0, left.operand.clone());
                 let mut later = StoredDocument::default();
                 later.fields.insert(0, right.operand.clone());
-                pair.fold(later).expect("operands fold");
+                pair.fold(later, &Crdts::default()).expect("operands fold");
                 let mut folded = StoredDocument::default();
                 folded.fields.insert(0, root.clone());
-                folded.apply(pair).expect("a folded operand lands");
+                folded
+                    .apply(pair, &Crdts::default())
+                    .expect("a folded operand lands");
                 assert_eq!(folded.fields[&0], both, "{a:?} and {b:?} folded first");
                 let history = [
                     first_block.clone(),
@@ -326,7 +389,7 @@ fn check_replacements(crdt: &dyn FieldCrdt, states: &[StoredField]) {
     for left in states {
         for right in states {
             assert_eq!(
-                fold([left, right]).fields[&0].materialize(),
+                fold(crdt, [left, right]).fields[&0].materialize(&Checked::new(crdt)),
                 crdt.materialize(right.part()),
                 "{right:?} replaces {left:?}"
             );
@@ -334,8 +397,8 @@ fn check_replacements(crdt: &dyn FieldCrdt, states: &[StoredField]) {
             crdt.merge(&mut pair, right.clone()).expect("states fold");
             for base in states {
                 assert_eq!(
-                    fold([base, &pair]),
-                    fold([base, left, right]),
+                    fold(crdt, [base, &pair]),
+                    fold(crdt, [base, left, right]),
                     "partial merge of {left:?} and {right:?} onto {base:?}"
                 );
             }
@@ -459,14 +522,14 @@ fn check_merges(crdt: &dyn FieldCrdt, states: &[StoredField]) {
     for left in states {
         for right in states {
             assert_eq!(
-                fold([left, right]),
-                fold([right, left]),
+                fold(crdt, [left, right]),
+                fold(crdt, [right, left]),
                 "merge of {left:?} and {right:?} commutes"
             );
             if !crdt.replicates_ops() {
                 assert_eq!(
-                    fold([left, right, right]),
-                    fold([left, right]),
+                    fold(crdt, [left, right, right]),
+                    fold(crdt, [left, right]),
                     "merging {right:?} twice changes nothing"
                 );
             }
@@ -478,17 +541,17 @@ fn check_merges(crdt: &dyn FieldCrdt, states: &[StoredField]) {
             crdt.merge(&mut pair, right.clone()).expect("operands fold");
             for base in states {
                 assert_eq!(
-                    fold([base, &pair]),
-                    fold([base, left, right]),
+                    fold(crdt, [base, &pair]),
+                    fold(crdt, [base, left, right]),
                     "partial merge of {left:?} and {right:?} onto {base:?}"
                 );
             }
         }
     }
     if states.iter().all(|state| crdt.folds_exactly(state.part())) {
-        let expected = fold(states);
+        let expected = fold(crdt, states);
         for order in permutations(states) {
-            assert_eq!(fold(&order), expected, "merge order {order:?}");
+            assert_eq!(fold(crdt, &order), expected, "merge order {order:?}");
         }
     }
 }
