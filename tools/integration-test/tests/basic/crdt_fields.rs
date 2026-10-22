@@ -21,13 +21,18 @@ async fn single_node() -> TestCluster {
     cluster
 }
 
-fn tally(node: &DefraClient) -> Value {
+fn try_tally(node: &DefraClient) -> Option<Value> {
     let data = node
         .query("query { Tally { _docID name hits balance } }")
-        .expect("query Tally");
-    let rows = data["Tally"].as_array().expect("Tally rows");
-    assert_eq!(rows.len(), 1, "one Tally document: {data}");
-    rows[0].clone()
+        .ok()?;
+    match data["Tally"].as_array()?.as_slice() {
+        [row] => Some(row.clone()),
+        _ => None,
+    }
+}
+
+fn tally(node: &DefraClient) -> Value {
+    try_tally(node).expect("exactly one Tally document")
 }
 
 fn doc_id(node: &DefraClient) -> String {
@@ -81,6 +86,66 @@ async fn graphql_rejects_a_negative_pcounter_increment() {
         .expect("negative increment error");
     assert!(error.contains("value cannot be negative"), "{error}");
     assert_tally(&tally(&node), "first", 2, 1.5);
+}
+
+#[tokio::test]
+async fn http_rejects_a_negative_pcounter_increment() {
+    let cluster = single_node().await;
+    let node = cluster.client(0);
+    node.query(
+        r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
+    )
+    .expect("add_Tally");
+    let id = doc_id(&node);
+
+    let response = reqwest::Client::new()
+        .patch(format!(
+            "{}/api/v0/collections/Tally/document/{id}",
+            cluster.api_url(0)
+        ))
+        .json(&serde_json::json!({"hits": -1}))
+        .send()
+        .await
+        .expect("PATCH document");
+    assert!(!response.status().is_success(), "{}", response.status());
+    let body = response.text().await.expect("error body");
+    assert!(body.contains("value cannot be negative"), "{body}");
+    assert_tally(&tally(&node), "first", 2, 1.5);
+}
+
+#[tokio::test]
+async fn cli_rejects_a_negative_pcounter_increment() {
+    let cluster = single_node().await;
+    let node = cluster.client(0);
+    node.collection_create("Tally", START)
+        .expect("document add");
+    let id = doc_id(&node);
+
+    let error = node
+        .collection_update("Tally", &id, r#"{"hits": -1}"#)
+        .expect_err("negative increment");
+    assert!(
+        error.to_string().contains("value cannot be negative"),
+        "{error}"
+    );
+    assert_tally(&tally(&node), "first", 2, 1.5);
+}
+
+#[tokio::test]
+async fn float_counters_add_in_f64() {
+    let cluster = single_node().await;
+    let node = cluster.client(0);
+    node.query(r#"mutation { add_Tally(input: {name: "first", hits: 0, balance: 0}) { _docID } }"#)
+        .expect("add_Tally");
+    let id = doc_id(&node);
+
+    update_gql(&node, &id, "{balance: 0.1}");
+    update_gql(&node, &id, "{balance: 0.2}");
+    assert_eq!(
+        tally(&node)["balance"].as_f64(),
+        Some(0.30000000000000004),
+        "f64 sum"
+    );
 }
 
 #[tokio::test]
@@ -185,10 +250,22 @@ async fn concurrent_updates_on_two_nodes_converge() {
     let node1 = cluster.client(1);
     let addr0 = extract_p2p_addr(&cluster, 0);
     let addr1 = extract_p2p_addr(&cluster, 1);
+
+    // The same content gives the same docID, so both nodes start from one
+    // document and edit it with no link between them.
     for node in [&node0, &node1] {
         node.schema_add(SDL).expect("schema add");
         node.p2p_collection_add(&["Tally"]).expect("collection add");
+        node.query(
+            r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
+        )
+        .expect("add_Tally");
     }
+    let id = doc_id(&node0);
+    assert_eq!(id, doc_id(&node1), "same content, same docID");
+    update_gql(&node0, &id, r#"{name: "zero", hits: 3, balance: -4}"#);
+    update_gql(&node1, &id, r#"{name: "one", hits: 10, balance: 0.5}"#);
+
     node0.p2p_connect(&[&addr1]).expect("connect");
     node0
         .p2p_replicator_set(&["Tally"], &addr1)
@@ -197,40 +274,18 @@ async fn concurrent_updates_on_two_nodes_converge() {
         .p2p_replicator_set(&["Tally"], &addr0)
         .expect("replicator 1 to 0");
 
-    node0
-        .query(
-            r#"mutation { add_Tally(input: {name: "first", hits: 2, balance: 1.5}) { _docID } }"#,
-        )
-        .expect("add_Tally");
-    let id = doc_id(&node0);
     poll_until(
-        || {
-            node1
-                .query("query { Tally { _docID } }")
-                .unwrap_or_default()["Tally"]
-                .as_array()
-                .is_some_and(|rows| rows.len() == 1)
-        },
-        P2P_TIMEOUT,
-        Duration::from_millis(200),
-        "document did not replicate to node1",
-    )
-    .await;
-
-    update_gql(&node0, &id, r#"{name: "zero", hits: 3, balance: -4}"#);
-    update_gql(&node1, &id, r#"{name: "one", hits: 10, balance: 0.5}"#);
-
-    poll_until(
-        || {
-            let (a, b) = (tally(&node0), tally(&node1));
-            a == b && a["hits"].as_i64() == Some(15)
+        || match (try_tally(&node0), try_tally(&node1)) {
+            (Some(a), Some(b)) => a == b && a["hits"].as_i64() == Some(15),
+            _ => false,
         },
         P2P_TIMEOUT,
         Duration::from_millis(200),
         "nodes did not converge",
     )
     .await;
-    let row = tally(&node0);
-    assert_eq!(row["balance"].as_f64(), Some(-2.0), "{row}");
-    assert!(row["name"] == "zero" || row["name"] == "one", "{row}");
+    // Equal heights: the greater CBOR bytes win, and "zero" (0x64 header)
+    // beats "one" (0x63).
+    assert_tally(&tally(&node0), "zero", 15, -2.0);
+    assert_tally(&tally(&node1), "zero", 15, -2.0);
 }
