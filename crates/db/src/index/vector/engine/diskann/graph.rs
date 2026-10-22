@@ -268,18 +268,34 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         target: NodeId,
         edges: Vec<(NodeId, Vec<u8>)>,
     ) -> Result<()> {
-        let Some(mut record) = self.record(pq.code_len(), target).await? else {
-            return Ok(());
+        let m = pq.code_len();
+        let mut record = if self.params.resident_codes {
+            let Some(mut record) = self.record(m, target).await? else {
+                return Ok(());
+            };
+            for (id, code) in edges {
+                if id == target {
+                    continue;
+                }
+                match record.neighbors.iter_mut().find(|(n, _)| *n == id) {
+                    Some(edge) => edge.1 = code,
+                    None => record.neighbors.push((id, code)),
+                }
+            }
+            record
+        } else {
+            // Most back-edges leave the record under its slack, and decoding
+            // it to add one edge copies every neighbour's code.
+            let key = codec::record_key(target);
+            let Some(bytes) = self.store().get_aux(codec::GRAPH, &key).await? else {
+                return Ok(());
+            };
+            let mut bytes = bytes.to_vec();
+            if codec::add_edges(&mut bytes, m, target, &edges)? <= self.params.slack_limit() {
+                return self.store_mut().put_aux(codec::GRAPH, &key, &bytes).await;
+            }
+            codec::decode_record(&bytes, m)?
         };
-        for (id, code) in edges {
-            if id == target {
-                continue;
-            }
-            match record.neighbors.iter_mut().find(|(n, _)| *n == id) {
-                Some(edge) => edge.1 = code,
-                None => record.neighbors.push((id, code)),
-            }
-        }
         if record.neighbors.len() > self.params.slack_limit() {
             let base = decode(pq, &record.code);
             record.neighbors = self.prune(pq, &base, std::mem::take(&mut record.neighbors));

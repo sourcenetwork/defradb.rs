@@ -180,6 +180,20 @@ pub fn encode_record(record: &Record) -> Vec<u8> {
     buf
 }
 
+/// A record's neighbour count. Every length is checked before it is used, so
+/// a corrupt record is an error rather than a panic or a huge allocation.
+fn record_count(bytes: &[u8], m: usize) -> Result<usize> {
+    let header = m + 4;
+    if bytes.len() < header {
+        return Err(invalid("DISKANN record is truncated"));
+    }
+    let count = u32::from_le_bytes(bytes[m..header].try_into().unwrap()) as usize;
+    if bytes.len() != header + count.saturating_mul(8 + m) {
+        return Err(invalid("DISKANN record length disagrees with its count"));
+    }
+    Ok(count)
+}
+
 /// A record's own code and its edges, borrowed from the record's bytes.
 pub struct RecordEdges<'bytes> {
     pub code: &'bytes [u8],
@@ -204,21 +218,11 @@ impl<'bytes> Iterator for RecordEdges<'bytes> {
 
 impl ExactSizeIterator for RecordEdges<'_> {}
 
-/// Every length is checked before it is used, so a corrupt record is an error
-/// rather than a panic or a huge allocation.
 pub fn record_edges(bytes: &[u8], m: usize) -> Result<RecordEdges<'_>> {
-    let header = m + 4;
-    if bytes.len() < header {
-        return Err(invalid("DISKANN record is truncated"));
-    }
-    let count = u32::from_le_bytes(bytes[m..header].try_into().unwrap()) as usize;
-    let entry = 8 + m;
-    if bytes.len() != header + count.saturating_mul(entry) {
-        return Err(invalid("DISKANN record length disagrees with its count"));
-    }
+    record_count(bytes, m)?;
     Ok(RecordEdges {
         code: &bytes[..m],
-        edges: bytes[header..].chunks_exact(entry),
+        edges: bytes[m + 4..].chunks_exact(8 + m),
     })
 }
 
@@ -228,6 +232,48 @@ pub fn decode_record(bytes: &[u8], m: usize) -> Result<Record> {
         code: edges.code.to_vec(),
         neighbors: edges.map(|(id, code)| (id, code.to_vec())).collect(),
     })
+}
+
+/// Adds edges to an encoded record in place, writing the bytes that decoding,
+/// adding each edge and encoding again would: an edge already there takes the
+/// new code, a new one goes on the end, and an edge to `target` is skipped.
+/// Returns the record's neighbour count.
+pub fn add_edges(
+    bytes: &mut Vec<u8>,
+    m: usize,
+    target: NodeId,
+    edges: &[(NodeId, Vec<u8>)],
+) -> Result<usize> {
+    let header = m + 4;
+    let entry = 8 + m;
+    let mut count = record_count(bytes, m)?;
+    for (id, code) in edges {
+        if *id == target {
+            continue;
+        }
+        if code.len() != m {
+            return Err(invalid(
+                "DISKANN edge code length disagrees with the record",
+            ));
+        }
+        let key = id.0.to_le_bytes();
+        match bytes[header..]
+            .chunks_exact(entry)
+            .position(|e| e[..8] == key)
+        {
+            Some(at) => {
+                let start = header + at * entry + 8;
+                bytes[start..start + m].copy_from_slice(code);
+            }
+            None => {
+                bytes.extend_from_slice(&key);
+                bytes.extend_from_slice(code);
+                count += 1;
+            }
+        }
+    }
+    bytes[m..header].copy_from_slice(&(count as u32).to_le_bytes());
+    Ok(count)
 }
 
 /// A resident-codes record: the neighbours' ids, their codes left behind.
