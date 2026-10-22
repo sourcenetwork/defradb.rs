@@ -42,29 +42,15 @@ pub async fn build_blocks_from_document<B: Blockstore>(
             continue;
         }
 
-        // Encode the field value as CBOR
-        let value_bytes = encode_value_as_cbor(field_value.value())?;
-
-        // Check if this field is a Counter type
-        let is_counter = doc.crdt_type(field_name).is_some_and(|t| t.is_counter());
-
-        // Create the appropriate delta based on CRDT type
-        let delta = if is_counter {
-            CrdtDelta::Counter(CounterDeltaPayload {
-                field_name: field_name.clone(),
-                priority: 1, // Initial priority for new documents
-                nonce: 0,    // Go uses nonce=0 for initial creation (deterministic CID)
-                schema_version_id: schema_version_id.to_string(),
-                data: value_bytes,
-            })
-        } else {
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: field_name.clone(),
-                priority: 1, // Initial priority for new documents
-                schema_version_id: schema_version_id.to_string(),
-                data: value_bytes,
-            })
-        };
+        let crdt = field_crdt_of(doc, field_name)?;
+        let value_bytes = encode_value_as_cbor(crdt.block_data(field_value.value(), None))?;
+        let delta = crdt.delta(crdt::DeltaParts {
+            field_name,
+            priority: 1, // Initial priority for new documents
+            schema_version_id,
+            nonce: 0, // Go uses nonce=0 for initial creation (deterministic CID)
+            data: value_bytes,
+        });
 
         // Create the field block
         let field_block = Block::new(delta, vec![], vec![]);
@@ -85,7 +71,7 @@ pub async fn build_blocks_from_document<B: Blockstore>(
         tracing::debug!(
             field_name = %field_name,
             cid = %field_cid,
-            is_counter = is_counter,
+            crdt = %crdt.ctype(),
             "Stored field block"
         );
 

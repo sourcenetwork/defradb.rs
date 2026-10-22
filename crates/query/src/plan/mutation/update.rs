@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use defra_core::RequestContext;
-use document::{DocID, Document, NormalValue};
-use schema::{CType, CollectionVersion};
+use document::{DocID, Document};
+use schema::CollectionVersion;
 use serde_json::Value as JsonValue;
 use tracing;
 
@@ -80,22 +80,21 @@ impl UpdateInput {
             let normal_value =
                 json_to_normal_value_with_kind_and_time(value, field_kind, request_time)?;
 
-            // Counter CRDT fields use increment semantics
-            if let Some(fd) = field_def {
-                if fd.crdt_type.is_counter() {
-                    // PCounter rejects negative increments
-                    if fd.crdt_type == CType::PCounter {
-                        validate_pcounter_increment(&normal_value)?;
-                    }
-                    // Store the raw increment for block builder (delta encoding)
-                    doc.set_counter_delta(field_name.clone(), normal_value.clone());
-                    let current = doc.get(field_name);
-                    let new_value = increment_value(current, &normal_value)?;
-                    doc.set(field_name.clone(), new_value)
-                        .map_err(|e| QueryError::execution(e.to_string()))?;
-                    modified_count += 1;
-                    continue;
-                }
+            if let Some((fd, crdt)) =
+                field_def.and_then(|fd| crdt::field_crdt(fd.crdt_type).map(|crdt| (fd, crdt)))
+            {
+                let op = crdt.input_op(normal_value);
+                crdt.check(&op, false)
+                    .map_err(|e| QueryError::execution(e.to_string()))?;
+                let value = crdt
+                    .apply(fd, doc.get(field_name), &op)
+                    .map_err(|e| QueryError::execution(e.to_string()))?;
+                doc.set(field_name.clone(), value)
+                    .map_err(|e| QueryError::execution(e.to_string()))?;
+                doc.edit(field_name.clone(), op)
+                    .map_err(|e| QueryError::execution(e.to_string()))?;
+                modified_count += 1;
+                continue;
             }
 
             doc.set(field_name.clone(), normal_value)
@@ -110,58 +109,6 @@ impl UpdateInput {
 impl Default for UpdateInput {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Validate that a PCounter increment is non-negative.
-fn validate_pcounter_increment(value: &NormalValue) -> Result<()> {
-    let is_negative = match value {
-        NormalValue::Int(v) => *v < 0,
-        NormalValue::Float64(v) => *v < 0.0,
-        NormalValue::Float32(v) => *v < 0.0,
-        _ => false,
-    };
-    if is_negative {
-        return Err(QueryError::execution("value cannot be negative"));
-    }
-    Ok(())
-}
-
-/// Increment a counter value by an increment amount.
-/// For counter CRDTs, updates add to the current value rather than replacing it.
-/// Uses wrapping arithmetic to match Go DefraDB overflow behavior.
-fn increment_value(current: Option<&NormalValue>, increment: &NormalValue) -> Result<NormalValue> {
-    match increment {
-        NormalValue::Int(inc) => {
-            let cur = match current {
-                Some(NormalValue::Int(v)) => *v,
-                None | Some(NormalValue::Null) => 0,
-                _ => 0,
-            };
-            Ok(NormalValue::Int(cur.wrapping_add(*inc)))
-        }
-        NormalValue::Float64(inc) => {
-            let cur = match current {
-                Some(NormalValue::Float64(v)) => *v,
-                Some(NormalValue::Float32(v)) => *v as f64,
-                None | Some(NormalValue::Null) => 0.0,
-                _ => 0.0,
-            };
-            Ok(NormalValue::Float64(cur + inc))
-        }
-        NormalValue::Float32(inc) => {
-            let cur = match current {
-                Some(NormalValue::Float32(v)) => *v,
-                Some(NormalValue::Float64(v)) => *v as f32,
-                None | Some(NormalValue::Null) => 0.0,
-                _ => 0.0,
-            };
-            Ok(NormalValue::Float32(cur + inc))
-        }
-        _ => Err(QueryError::execution(format!(
-            "Counter fields only support numeric increments, got: {:?}",
-            increment
-        ))),
     }
 }
 

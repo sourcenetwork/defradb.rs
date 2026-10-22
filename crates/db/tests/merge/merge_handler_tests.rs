@@ -1274,7 +1274,12 @@ fn interactive_counter_increment_and_concurrent_same_doc_merge_both_commit() {
         let mut update_doc =
             Document::from_json_str(r#"{"score": 13}"#, counters_collection()).unwrap();
         update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
-        update_doc.set_counter_delta("score".to_string(), NormalValue::Int(3));
+        update_doc
+            .edit(
+                "score".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(3)),
+            )
+            .unwrap();
         let mut modified = rapidhash::RapidHashSet::new();
         modified.insert("score".to_string());
         crate::common::owned::in_txn(&registry, &handle, |ctx| {

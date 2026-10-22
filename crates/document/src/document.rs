@@ -13,7 +13,7 @@ use crate::encoding::{
 };
 use crate::error::{Error, Result};
 use crate::field::special::DOC_ID;
-use crate::{DocID, FieldValue, NormalValue};
+use crate::{DocID, FieldOp, FieldValue, NormalValue};
 
 /// A document in DefraDB.
 ///
@@ -60,11 +60,11 @@ pub struct Document {
     #[serde(skip)]
     deleted: bool,
 
-    /// Raw counter increment deltas for update operations.
-    /// For counter CRDT fields, the block builder needs the raw increment
-    /// (not the accumulated value). Populated during UpdateInput::apply_to.
+    /// Operations a write applies on top of the field's stored state, keyed by
+    /// field. The block builder needs the operation itself (a counter's
+    /// increment), not the value it materializes to.
     #[serde(skip)]
-    counter_deltas: RapidHashMap<String, NormalValue>,
+    pending_ops: RapidHashMap<String, FieldOp>,
 
     #[serde(skip)]
     write_preparation: Option<std::sync::Arc<crate::WritePreparation>>,
@@ -95,7 +95,7 @@ impl Document {
             collection: collection.into(),
             schema_version_id: None,
             deleted: false,
-            counter_deltas: RapidHashMap::new(),
+            pending_ops: RapidHashMap::new(),
             write_preparation: None,
         }
     }
@@ -307,14 +307,29 @@ impl Document {
         &self.values
     }
 
-    /// Store a raw counter increment delta for a field.
-    pub fn set_counter_delta(&mut self, field: String, value: NormalValue) {
-        self.counter_deltas.insert(field, value);
+    /// Express an operation on a field. The field must exist in the collection
+    /// definition. `Set` writes the value, as [`Document::set`] does. Any other
+    /// operation is kept as the field's pending operation and leaves its value
+    /// alone: the caller holds the type's arithmetic and sets the value the
+    /// operation materializes to.
+    pub fn edit(&mut self, field: impl Into<String>, op: FieldOp) -> Result<()> {
+        let field = field.into();
+        match op {
+            FieldOp::Set(value) => self.set(field, value),
+            op => {
+                if self.crdt_type(&field).is_none() {
+                    return Err(Error::FieldNotExist(field));
+                }
+                self.pending_ops.insert(field, op);
+                self.is_dirty = true;
+                Ok(())
+            }
+        }
     }
 
-    /// Get the raw counter increment delta for a field (if any).
-    pub fn get_counter_delta(&self, field: &str) -> Option<&NormalValue> {
-        self.counter_deltas.get(field)
+    /// The operation this write applies to a field on top of its stored state.
+    pub fn pending_op(&self, field: &str) -> Option<&FieldOp> {
+        self.pending_ops.get(field)
     }
 
     /// Get all dirty fields.

@@ -248,12 +248,8 @@ async fn set_incremented_counters(
         .fields
         .iter()
         .filter_map(|field| {
-            let kind = crate::collection::value::counter_kind(field)?;
-            Some((
-                field.name.as_str(),
-                kind,
-                doc.get_counter_delta(&field.name)?.clone(),
-            ))
+            let crdt = crdt::field_crdt(field.crdt_type)?;
+            Some((field, crdt, doc.pending_op(&field.name)?.clone()))
         })
         .collect();
     if increments.is_empty() {
@@ -263,15 +259,15 @@ async fn set_incremented_counters(
         .read_document_unvalidated(datastore, doc_short_id)
         .await
         .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-    for (name, kind, delta) in increments {
-        let value = document::stored::add_counter(
-            name,
-            kind,
-            stored.as_ref().and_then(|stored| stored.get(name)),
-            &delta,
-        )
-        .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        doc.set(name.to_owned(), value)
+    for (field, crdt, op) in increments {
+        let value = crdt
+            .apply(
+                field,
+                stored.as_ref().and_then(|stored| stored.get(&field.name)),
+                &op,
+            )
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        doc.set(field.name.clone(), value)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
     }
     Ok(())

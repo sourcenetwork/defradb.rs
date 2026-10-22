@@ -232,7 +232,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             collection.schema(),
             collection.write_indexes(),
             &attempt.modified_fields,
-            |field| attempt.input.get_counter_delta(field).is_some(),
+            |field| attempt.input.pending_op(field).is_some(),
         );
         dependencies.extend(attempt.expected_fields.iter().flatten().cloned());
         let projected = attempt.expected.is_none() || attempt.expected_fields.is_some();
@@ -292,14 +292,16 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let unchanged_skips = attempt.context.encryption().is_none() && !downsample_source;
         if unchanged_skips {
             modified_fields.retain(|field| {
-                attempt.input.get_counter_delta(field).is_some()
+                attempt.input.pending_op(field).is_some()
                     || (projected && !dependencies.contains(field))
                     || attempt.input.get(field) != current_doc.get(field)
             });
         }
         for field in &modified_fields {
-            if let Some(delta) = attempt.input.get_counter_delta(field).cloned() {
-                current_doc.set_counter_delta(field.clone(), delta);
+            if let Some(op) = attempt.input.pending_op(field).cloned() {
+                current_doc
+                    .edit(field.clone(), op)
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
             } else if let Some(value) = attempt.input.get(field).cloned() {
                 current_doc
                     .set(field.clone(), value)

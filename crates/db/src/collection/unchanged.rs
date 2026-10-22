@@ -17,11 +17,11 @@ impl Collection {
             self.schema(),
             self.write_indexes(),
             modified_fields,
-            |field| doc.get_counter_delta(field).is_some(),
+            |field| doc.pending_op(field).is_some(),
         );
         let compared: RapidHashSet<String> = modified_fields
             .iter()
-            .filter(|field| doc.get_counter_delta(field).is_none() && dependencies.contains(*field))
+            .filter(|field| doc.pending_op(field).is_none() && dependencies.contains(*field))
             .cloned()
             .collect();
         if compared.is_empty() && !modified_fields.is_empty() {

@@ -175,7 +175,7 @@ async fn plan_move(
     let Some(field) = collection.schema().field_by_name(field_name) else {
         return Ok(None);
     };
-    let Some(kind) = crate::collection::value::counter_kind(field) else {
+    let Some(kind) = crdt::field::counter_kind(field) else {
         return Ok(None);
     };
     let accumulated = datastore

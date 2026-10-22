@@ -393,7 +393,12 @@ fn signed_encrypted_counter_update_preserves_prepared_randomness() {
             signing_authorization: None,
         }));
         let mut update = Document::with_id(created.doc_id, counters);
-        update.set_counter_delta("count".into(), document::NormalValue::Int(3));
+        update
+            .edit(
+                "count",
+                document::FieldOp::Increment(document::NormalValue::Int(3)),
+            )
+            .unwrap();
         let result = mutator
             .update(
                 "Counters",

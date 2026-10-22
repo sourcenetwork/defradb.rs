@@ -434,13 +434,10 @@ pub(crate) async fn write_document_blocks_with_inputs(
                     + 1
             };
 
-            let cbor_value = if let Some(delta) = doc.get_counter_delta(field_name) {
-                delta
-            } else {
-                field_value.value()
-            };
-
-            let value_bytes = encode_value_as_cbor(cbor_value)?;
+            let crdt = field_crdt_of(doc, field_name)?;
+            let value_bytes = encode_value_as_cbor(
+                crdt.block_data(field_value.value(), doc.pending_op(field_name)),
+            )?;
 
             let explicit = encryption_config.filter(|enc| enc.should_encrypt_field(field_name));
             let (value_bytes, encryption_cid) = if let Some(enc) = explicit {
@@ -496,58 +493,52 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 (value_bytes, None)
             };
 
-            let is_counter = doc.crdt_type(field_name).is_some_and(|t| t.is_counter())
-                || doc.get_counter_delta(field_name).is_some();
-
-            let nonce: i64 = if is_counter && !is_create {
-                if let Some(inputs) = prepared_inputs {
-                    let exact = serde_json::to_vec(&(
-                        "counter-nonce-v1",
-                        &doc_ref_bytes,
-                        field_name,
-                        field_priority,
-                        &heads,
-                        &value_bytes,
-                    ))
-                    .map_err(|error| BuildError::Message(error.to_string()))?;
-                    let request = query::prepared::PreparedInputRequest::new(
-                        query::prepared::PreparedInputKind::Encryption,
-                        exact,
-                    );
-                    let nonce = match inputs.get(&request) {
-                        Some(nonce) => nonce,
-                        None => {
-                            let nonce: i64 = rand::random();
-                            inputs
-                                .insert(request, std::sync::Arc::<[u8]>::from(nonce.to_be_bytes()))
-                        }
-                    };
-                    i64::from_be_bytes(nonce.as_ref().try_into().map_err(|_| {
-                        BuildError::Message("invalid prepared counter nonce".into())
-                    })?)
-                } else {
-                    rand::random()
-                }
-            } else {
-                0
-            };
-
-            let delta = if is_counter {
-                CrdtDelta::Counter(CounterDeltaPayload {
-                    field_name: field_name.clone(),
-                    priority: field_priority,
-                    nonce,
-                    schema_version_id: schema_version_id.to_string(),
-                    data: value_bytes,
+            let nonce = crdt
+                .nonce(is_create, &mut || {
+                    if let Some(inputs) = prepared_inputs {
+                        let exact = serde_json::to_vec(&(
+                            "counter-nonce-v1",
+                            &doc_ref_bytes,
+                            field_name,
+                            field_priority,
+                            &heads,
+                            &value_bytes,
+                        ))
+                        .map_err(|error| crdt::FieldCrdtError::Nonce(error.to_string()))?;
+                        let request = query::prepared::PreparedInputRequest::new(
+                            query::prepared::PreparedInputKind::Encryption,
+                            exact,
+                        );
+                        let nonce = match inputs.get(&request) {
+                            Some(nonce) => nonce,
+                            None => {
+                                let nonce: i64 = rand::random();
+                                inputs.insert(
+                                    request,
+                                    std::sync::Arc::<[u8]>::from(nonce.to_be_bytes()),
+                                )
+                            }
+                        };
+                        nonce
+                            .as_ref()
+                            .try_into()
+                            .map(i64::from_be_bytes)
+                            .map_err(|_| {
+                                crdt::FieldCrdtError::Nonce("invalid prepared counter nonce".into())
+                            })
+                    } else {
+                        Ok(rand::random())
+                    }
                 })
-            } else {
-                CrdtDelta::Lww(LwwDeltaPayload {
-                    field_name: field_name.clone(),
-                    priority: field_priority,
-                    schema_version_id: schema_version_id.to_string(),
-                    data: value_bytes,
-                })
-            };
+                .map_err(|error| BuildError::Message(error.to_string()))?;
+
+            let delta = crdt.delta(crdt::DeltaParts {
+                field_name,
+                priority: field_priority,
+                schema_version_id,
+                nonce,
+                data: value_bytes,
+            });
 
             let mut field_block =
                 Block::new_with_options(delta, heads.clone(), vec![], encryption_cid, None);
@@ -618,7 +609,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
             tracing::debug!(
                 field_name = %field_name,
                 cid = %field_cid,
-                is_counter = is_counter,
+                crdt = %crdt.ctype(),
                 has_prev_head = !heads.is_empty(),
                 "Stored field block and head"
             );

@@ -142,7 +142,12 @@ fn update_embeds_the_applied_counter_value() {
         let created = mutator.create("Texts", doc).await.unwrap();
         let mut concurrent = created.document.clone();
         concurrent.set("text", 6_i64).unwrap();
-        concurrent.set_counter_delta("text".to_string(), NormalValue::Int(1));
+        concurrent
+            .edit(
+                "text".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(1)),
+            )
+            .unwrap();
         mutator
             .update(
                 "Texts",
@@ -153,7 +158,12 @@ fn update_embeds_the_applied_counter_value() {
             .unwrap();
         let mut stale = created.document;
         stale.set("text", 7_i64).unwrap();
-        stale.set_counter_delta("text".to_string(), NormalValue::Int(2));
+        stale
+            .edit(
+                "text".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(2)),
+            )
+            .unwrap();
         let updated = mutator
             .update("Texts", stale, ["text".to_string()].into_iter().collect())
             .await

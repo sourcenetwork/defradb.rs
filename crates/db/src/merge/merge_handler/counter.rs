@@ -226,7 +226,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             .await
             .map_err(MergeError::Database)?;
         let stored = stored.as_ref().and_then(|doc| doc.get(&payload.field_name));
-        let kind = crate::collection::value::counter_kind(field).ok_or_else(|| {
+        let kind = crdt::field::counter_kind(field).ok_or_else(|| {
             MergeError::UnsupportedDelta(format!(
                 "Counter field '{}' has no counter kind",
                 field.name
