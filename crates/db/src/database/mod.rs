@@ -22,6 +22,7 @@ pub mod action;
 pub(crate) mod dump;
 pub(crate) mod spawn;
 pub mod storage_stats;
+pub(crate) mod stored_crdts;
 
 pub use storage::corekv::DEFAULT_MAX_TXN_RETRIES;
 
@@ -381,6 +382,7 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
+        self.check_stored_crdts().await?;
         self.load_collections().await?;
         self.initialize_migrations().await?;
         self.migrate_document_parts().await?;

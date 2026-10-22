@@ -12,9 +12,11 @@ use schema::{CType, CrdtName, FieldDescription};
 pub const NAME: &str = "maxreg";
 
 /// `Tag` makes another Rust type of the same register, and `ctype` lets one
-/// claim another type's name, for the registry's refusals.
+/// claim another type's name, for the registry's refusals. `rejects` is a
+/// value this build's `decode` refuses, for a block that cannot merge.
 pub struct MaxRegister<Tag = ()> {
     ctype: CType,
+    rejects: Option<i64>,
     tag: PhantomData<fn() -> Tag>,
 }
 
@@ -22,12 +24,21 @@ impl MaxRegister {
     pub fn new() -> Self {
         Self::claiming(CType::Custom(name()))
     }
+
+    #[cfg(feature = "p2p")]
+    pub fn rejecting(value: i64) -> Self {
+        Self {
+            rejects: Some(value),
+            ..Self::new()
+        }
+    }
 }
 
 impl<Tag> MaxRegister<Tag> {
     pub fn claiming(ctype: CType) -> Self {
         Self {
             ctype,
+            rejects: None,
             tag: PhantomData,
         }
     }
@@ -116,10 +127,19 @@ where
     }
 
     fn decode(&self, field: &FieldDescription, data: &[u8]) -> Result<NormalValue, FieldCrdtError> {
-        value(data).ok_or_else(|| FieldCrdtError::Decode {
+        let decoded = value(data).ok_or_else(|| FieldCrdtError::Decode {
             field: field.name.clone(),
             message: format!("{} bytes are not a max register", data.len()),
-        })
+        })?;
+        match (&decoded, self.rejects) {
+            (NormalValue::Int(value), Some(rejected)) if *value == rejected => {
+                Err(FieldCrdtError::Decode {
+                    field: field.name.clone(),
+                    message: format!("this build refuses {value}"),
+                })
+            }
+            _ => Ok(decoded),
+        }
     }
 
     fn delta(&self, parts: DeltaParts<'_>) -> CrdtDelta {

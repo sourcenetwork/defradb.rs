@@ -114,6 +114,12 @@ where
                     storage::merge::document_part(part, operand.part()).ok_or_else(|| {
                         MergeError::MergeFailed(format!("invalid operand on '{}'", field.name))
                     })?;
+                crate::database::stored_crdts::record(
+                    datastore,
+                    crate::database::stored_crdts::custom([operand.kind]),
+                )
+                .await
+                .map_err(|e| MergeError::Storage(e.to_string()))?;
                 datastore
                     .merge(&collection.doc_key(doc_short_id), &bytes)
                     .await

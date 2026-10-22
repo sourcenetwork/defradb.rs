@@ -148,3 +148,44 @@ fn a_name_registered_twice_fails_the_build() {
 
 /// Another Rust type under the max register's name.
 struct Impostor;
+
+#[test]
+fn a_store_holding_custom_values_opens_only_with_their_type() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let open = |with_type: bool| {
+            let builder = EmbeddedNode::builder().data_path(dir.path());
+            let builder = if with_type {
+                builder.with_crdt(MaxRegister::new())
+            } else {
+                builder
+            };
+            builder.build()
+        };
+        let node = open(true).await.unwrap();
+        node.add_schema(SDL).await.unwrap();
+        let created = node
+            .execute(r#"mutation { add_Score(input: {player: "ann", best: 5}) { _docID } }"#)
+            .await;
+        assert!(!created.has_errors(), "{:?}", created.errors);
+        node.shutdown().await;
+        drop(node);
+
+        match open(false).await {
+            Err(defra_node::Error::DatabaseOpen(db::Error::UnregisteredStoredCrdt { crdt })) => {
+                assert_eq!(crdt, max_register::NAME)
+            }
+            Err(other) => panic!("refused for the wrong reason: {other}"),
+            Ok(_) => panic!("a node without the type opened a store holding its values"),
+        }
+
+        let node = open(true).await.unwrap();
+        let read = node.execute("{ Score { player best } }").await;
+        assert_eq!(
+            read.data.unwrap()["Score"],
+            serde_json::json!([{"player": "ann", "best": 5}])
+        );
+        node.shutdown().await;
+    })
+    .unwrap()
+}

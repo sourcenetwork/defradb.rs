@@ -171,6 +171,11 @@ impl Collection {
         let bytes = stored
             .encode()
             .ok_or_else(|| Error::InvalidDocument("invalid local document value".into()))?;
+        let crdts =
+            crate::database::stored_crdts::custom(stored.fields.values().map(|field| field.kind));
+        crate::database::stored_crdts::record(datastore, crdts)
+            .await
+            .map_err(Error::Storage)?;
         datastore
             .set(&self.doc_key(doc_short_id), &bytes)
             .await
@@ -243,6 +248,12 @@ impl Collection {
             let operand = storage::merge::document_parts(&parts).ok_or_else(|| {
                 Error::InvalidDocument("invalid resolved document operand".into())
             })?;
+            let crdts = crate::database::stored_crdts::custom(
+                parts.fields.values().map(|field| field.kind),
+            );
+            crate::database::stored_crdts::record(datastore, crdts)
+                .await
+                .map_err(Error::Storage)?;
             datastore
                 .merge(&key, &operand)
                 .await
@@ -370,6 +381,12 @@ impl Collection {
         if !parts.fields.is_empty() {
             let operand = storage::merge::document_parts(&parts)
                 .ok_or_else(|| Error::InvalidDocument("invalid document operand".into()))?;
+            let crdts = crate::database::stored_crdts::custom(
+                parts.fields.values().map(|field| field.kind),
+            );
+            crate::database::stored_crdts::record(datastore, crdts)
+                .await
+                .map_err(Error::Storage)?;
             datastore
                 .merge(&key, &operand)
                 .await

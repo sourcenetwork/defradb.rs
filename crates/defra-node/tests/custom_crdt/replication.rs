@@ -242,3 +242,55 @@ fn a_node_without_the_type_parks_its_blocks_until_it_has_the_type() {
         })
         .unwrap()
 }
+
+#[test]
+fn a_parked_block_that_cannot_merge_does_not_hold_up_the_others() {
+    edge::testing::edge()
+        .block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let a = node(true, None).await;
+            let c = node(false, Some(dir.path())).await;
+            let c_address = address(&c).await;
+            replicate(&a, &c_address, |sender| authorize(&c, sender)).await;
+
+            run(
+                &a,
+                r#"mutation { add_Score(input: {player: "ann", best: 5}) { _docID } }"#,
+            )
+            .await;
+            for best in [9, 12] {
+                run(
+                    &a,
+                    &format!(r#"mutation {{ update_Score(input: {{best: {best}}}) {{ best }} }}"#),
+                )
+                .await;
+            }
+            run(
+                &a,
+                r#"mutation { add_Note(input: {text: "last"}) { _docID } }"#,
+            )
+            .await;
+            eventually("c has every block", || async {
+                run(&c, "{ Note { text } }").await["Note"] == serde_json::json!([{"text": "last"}])
+            })
+            .await;
+
+            a.shutdown().await;
+            c.shutdown().await;
+            drop(c);
+            // This build's register refuses 12, the newest parked block: it
+            // fails on its own and the older blocks merge without it.
+            let c = EmbeddedNode::builder()
+                .data_path(dir.path())
+                .with_crdt(MaxRegister::rejecting(12))
+                .build()
+                .await
+                .unwrap();
+            eventually("the other parked blocks merge", || async {
+                best(&c).await == 9
+            })
+            .await;
+            c.shutdown().await;
+        })
+        .unwrap()
+}

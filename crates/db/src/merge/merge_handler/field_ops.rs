@@ -63,6 +63,12 @@ where
                                 field.name
                             ))
                         })?;
+                    crate::database::stored_crdts::record(
+                        datastore,
+                        crate::database::stored_crdts::custom([state.kind]),
+                    )
+                    .await
+                    .map_err(storage)?;
                     datastore.merge(&doc_key, &operand).await.map_err(storage)?;
                 }
                 // The read is never validated: no decision rests on it.
