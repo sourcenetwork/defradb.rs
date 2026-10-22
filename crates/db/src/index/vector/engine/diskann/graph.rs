@@ -1,5 +1,6 @@
 //! The walk, linking a node in, and the pruning they share.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
@@ -57,14 +58,14 @@ impl<S: VectorNodeStore> DiskAnn<S> {
     /// record.
     async fn each_edge<F>(&self, m: usize, id: NodeId, mut visit: F) -> Result<bool>
     where
-        F: FnMut(NodeId, &[u8]),
+        F: FnMut(NodeId, Cow<'_, [u8]>),
     {
         if self.params.resident_codes {
             let Some(record) = self.record(m, id).await? else {
                 return Ok(false);
             };
-            for (id, code) in &record.neighbors {
-                visit(*id, code);
+            for (id, code) in record.neighbors {
+                visit(id, Cow::Owned(code));
             }
             return Ok(true);
         }
@@ -74,7 +75,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         };
         let edges = codec::record_edges(&bytes, m)?;
         for (id, code) in edges {
-            visit(id, code);
+            visit(id, Cow::Borrowed(code));
         }
         Ok(true)
     }
@@ -172,7 +173,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                     if !seen.insert(id) {
                         return;
                     }
-                    let distance = pq.distance(table, code);
+                    let distance = pq.distance(table, &code);
                     let ranked = last.is_none_or(|(d, last)| {
                         distance.total_cmp(&d).then_with(|| id.cmp(&last)).is_lt()
                     });
@@ -180,7 +181,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                         added.push(Visit {
                             id,
                             distance,
-                            code: code.to_vec(),
+                            code: code.into_owned(),
                         });
                     }
                 })
