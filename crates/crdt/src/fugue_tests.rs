@@ -340,9 +340,10 @@ fn a_long_history_replays_to_its_edits() {
 /// Asking for a visible node the chunks don't hold is an error, not a panic.
 #[test]
 fn a_visible_node_past_the_end_is_an_error() {
-    let order = Order::new(vec![1, 2, 3], |node| node != 2);
-    assert!(order.nth_visible(1, |node| node != 2).is_ok());
-    assert!(order.nth_visible(2, |node| node != 2).is_err());
+    let weight = |node: usize| usize::from(node != 2);
+    let order = Order::new(vec![1, 2, 3], weight);
+    assert!(order.nth_visible(1, weight).is_ok());
+    assert!(order.nth_visible(2, weight).is_err());
 }
 
 /// Whether every block of `blocks` comes before `x` or after it.
@@ -410,4 +411,57 @@ fn a_merge_that_does_not_fit_the_stored_text_asks_for_a_full_replay() {
     ];
     assert_eq!(merge_text("yaxb", 2, &built_on, &[2]).unwrap(), None);
     assert!(merge_text("ab", 2, &after, &[9]).is_err());
+}
+
+/// Edits inside the critical block's text, and deletes across its edges,
+/// split the placeholder span without losing or moving a character.
+#[test]
+fn edits_inside_and_across_the_span_match_a_full_replay() {
+    let blocks = vec![
+        block(1, &[], vec![ins(0, "abcdefghij")]),
+        block(2, &[1], vec![ins(3, "X"), del(5, 3), ins(0, "<")]),
+        block(3, &[1], vec![del(1, 2), ins(7, "Y"), del(0, 1)]),
+        block(4, &[2], vec![del(2, 4), ins(4, "Z"), ins(9, "!")]),
+    ];
+    let all: Vec<usize> = (0..blocks.len()).collect();
+    let want = replay(&blocks).unwrap();
+    for new in heads(&blocks, &all) {
+        let rest: Vec<usize> = all.iter().copied().filter(|&b| b != new).collect();
+        let got = merge_text(&version(&blocks, &rest), 10, &blocks[1..], &blocks[new].id).unwrap();
+        assert_eq!(got.as_deref(), Some(want.as_str()), "new {new}");
+    }
+}
+
+/// A concurrent merge over a long text builds a handful of nodes, one span
+/// piece per edge an edit lands on, not one per character.
+#[test]
+fn a_merge_over_a_long_text_splits_its_span_only_where_edits_land() {
+    let base = 1_000_000;
+    let letter = |i: usize| char::from(b'a' + (i % 26) as u8);
+    let after = [
+        block(2, &[1], vec![ins(500_000, "x"), del(10, 5)]),
+        block(3, &[1], vec![ins(999_999, "y"), del(0, 1)]),
+    ];
+    let (tree, _) = build(&after, Some(base)).unwrap();
+    assert!(tree.nodes.len() <= 12, "{} nodes", tree.nodes.len());
+
+    let mut current = String::new();
+    let mut want = String::new();
+    for i in 0..base {
+        if !(10..15).contains(&i) {
+            current.push(letter(i));
+            if i != 0 {
+                want.push(letter(i));
+            }
+        }
+        if i == 499_999 {
+            current.push('x');
+            want.push('x');
+        }
+        if i == 999_998 {
+            want.push('y');
+        }
+    }
+    let got = merge_text(&current, base, &after, &[3]).unwrap();
+    assert!(got.as_deref() == Some(want.as_str()), "merged text differs");
 }
