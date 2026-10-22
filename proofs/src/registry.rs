@@ -215,6 +215,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract, Behavioral],
     },
     Property {
+        family: "CRDT merge laws",
+        name: "PCounterGuard: the positive counter's op accepts only non-negative values, so its value never decreases under any run of accepted or refused writes",
+        axis: Lean,
+        anchor: "crates/crdt/src/field/counter.rs CounterField::op; crates/crdt/tests/field_contract.rs only_the_positive_counter_refuses_a_negative_value",
+        model_ref: "DefraConvergence.PCounterGuard.run_ge (lake build)",
+        tiers: &[Contract],
+    },
+    Property {
         // Two behavioral legs: backfill (a write that pre-dates the replicator is
         // delivered) and full resume across a real disconnect (node1 restarted —
         // its state survives on disk and a post-disconnect write arrives after
