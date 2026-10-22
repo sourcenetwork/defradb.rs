@@ -58,11 +58,14 @@ fn counters_meet_the_contract() {
 }
 
 #[test]
-fn only_the_positive_counter_refuses_a_negative_update() {
+fn only_the_positive_counter_refuses_a_negative_value() {
     let negative = |ctype, creating| crdt(ctype).op(NormalValue::Int(-1), creating);
     assert!(negative(CType::PCounter, false).is_err());
     assert!(negative(CType::PnCounter, false).is_ok());
-    assert!(negative(CType::PCounter, true).is_ok());
+    assert!(negative(CType::PCounter, true).is_err());
+    assert!(negative(CType::PnCounter, true).is_ok());
+    let message = negative(CType::PCounter, true).unwrap_err().to_string();
+    assert!(message.contains("value cannot be negative"), "{message}");
 }
 
 /// Go's `validateAndIncrement` adds with Go's `+`, which wraps on overflow.

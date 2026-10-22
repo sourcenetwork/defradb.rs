@@ -435,6 +435,10 @@ pub(crate) async fn write_document_blocks_with_inputs(
             };
 
             let crdt = field_crdt_of(doc, field_name)?;
+            if is_create {
+                crdt.op(field_value.value().clone(), true)
+                    .map_err(|error| error.to_string())?;
+            }
             let value_bytes = crdt
                 .encode(
                     crdt.write(field_value.value(), doc.pending_op(field_name))

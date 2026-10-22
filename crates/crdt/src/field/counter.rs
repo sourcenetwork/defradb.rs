@@ -68,7 +68,7 @@ fn sum(kind: ValueKind, current: &[u8], increment: &[u8]) -> Option<Vec<u8>> {
 
 /// Counters: a write is an increment, blocks carry increments, and a state is
 /// the sum of every increment merged into it. The positive counter refuses
-/// negative increments on update.
+/// negative values, on create and on update.
 ///
 /// Float sums are not associative (`(0.1 + 0.2) + 0.3 != 0.1 + (0.2 + 0.3)`,
 /// proven as `float_add_not_assoc`), so replicas that merge the same float
@@ -131,8 +131,8 @@ impl FieldCrdt for CounterField {
         true
     }
 
-    fn op(&self, input: NormalValue, creating: bool) -> Result<FieldOp, FieldCrdtError> {
-        if !creating && !self.ctype.allows_decrement() && is_negative(&input) {
+    fn op(&self, input: NormalValue, _creating: bool) -> Result<FieldOp, FieldCrdtError> {
+        if !self.ctype.allows_decrement() && is_negative(&input) {
             return Err(FieldCrdtError::NegativeIncrement);
         }
         Ok(FieldOp::Increment(input))
