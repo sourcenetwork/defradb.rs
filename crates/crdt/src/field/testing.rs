@@ -8,16 +8,9 @@ use super::{DeltaParts, FieldCrdt};
 use crate::stored::{StoredDocument, StoredField};
 use defra_core::block::CrdtDelta;
 
-fn delta_data(delta: &CrdtDelta) -> &[u8] {
-    delta
-        .field()
-        .unwrap_or_else(|| panic!("field delta expected, got {delta:?}"))
-        .data
-}
-
 /// `states` merged in order into the starting state, as the document value
 /// folds operands.
-fn fold<'a>(states: impl IntoIterator<Item = &'a StoredField>) -> StoredDocument {
+fn fold<'state>(states: impl IntoIterator<Item = &'state StoredField>) -> StoredDocument {
     let mut document = StoredDocument::default();
     for state in states {
         let mut operand = StoredDocument::default();
@@ -93,14 +86,20 @@ pub fn check_field_crdt(
             field_name: &field.name,
             priority: 7,
             collection_version_id: "version",
-            nonce: 0,
+            nonce: 42,
             data: bytes.clone(),
         });
-        assert_eq!(
-            delta_data(&delta),
-            bytes.as_slice(),
-            "delta data round trip"
-        );
+        let carried = delta
+            .field()
+            .unwrap_or_else(|| panic!("field delta expected, got {delta:?}"));
+        assert_eq!(carried.field_name, field.name, "delta field name");
+        assert_eq!(carried.priority, 7, "delta priority");
+        assert_eq!(carried.collection_version_id, "version", "delta version id");
+        assert_eq!(carried.data, bytes.as_slice(), "delta data round trip");
+        match &delta {
+            CrdtDelta::Counter(counter) => assert_eq!(counter.nonce, 42, "delta nonce"),
+            _ => assert!(!crdt.replicates_ops(), "an operation delta carries a nonce"),
+        }
 
         for priority in [1, 2] {
             let block = crdt
