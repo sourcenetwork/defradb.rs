@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use integration_test::{extract_p2p_addr, poll_until, DefraClient, TestCluster, P2P_TIMEOUT};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 const SDL: &str = "type Tally {
     name: String
