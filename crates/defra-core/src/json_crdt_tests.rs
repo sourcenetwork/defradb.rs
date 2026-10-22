@@ -337,6 +337,188 @@ fn a_replay_of_the_whole_dag_matches_merging_it_block_by_block() {
     assert_eq!(view(&replayed).0, view(&sim.merge(&[root, y, x, z])).0);
 }
 
+/// `Frontier::delta` as one scan of the whole frontier per op: the
+/// definition the indexed delta must match.
+fn delta_per_op<F>(
+    frontier: &Frontier,
+    ops: &[JsonOp],
+    block: &[u8],
+    priority: u64,
+    in_past: F,
+) -> Frontier
+where
+    F: Fn(&[u8]) -> bool,
+{
+    let mut removes = Removes::new();
+    let mut entries = Vec::new();
+    for op in ops {
+        let mut seen = BTreeSet::new();
+        for entry in &frontier.entries {
+            if !in_past(&entry.block) {
+                continue;
+            }
+            if entry.path.starts_with(&op.path) {
+                removes.insert(
+                    (encode_path(&entry.path), entry.block.clone()),
+                    (entry.path.clone(), entry.block.clone()),
+                );
+            } else if op.path.starts_with(&entry.path) {
+                seen.insert(entry.block.clone());
+            }
+        }
+        entries.push(Entry {
+            path: op.path.clone(),
+            block: block.to_vec(),
+            priority,
+            edit: op.edit.clone(),
+            seen: seen.into_iter().collect(),
+        });
+    }
+    Frontier {
+        removes: removes.into_values().collect(),
+        entries,
+    }
+}
+
+/// `Frontier::compose` as a rebuild of both lists: the definition the
+/// in-place compose must match.
+fn compose_by_rebuild(mut frontier: Frontier, later: Frontier) -> Frontier {
+    let key = |path: &[String], block: &[u8]| (encode_path(path), block.to_vec());
+    let removed: BTreeSet<EntryKey> = later
+        .removes
+        .iter()
+        .map(|(path, block)| key(path, block))
+        .collect();
+    let mut entries: BTreeMap<EntryKey, Entry> = std::mem::take(&mut frontier.entries)
+        .into_iter()
+        .map(|entry| (key(&entry.path, &entry.block), entry))
+        .filter(|(k, _)| !removed.contains(k))
+        .collect();
+    for entry in later.entries {
+        entries.insert(key(&entry.path, &entry.block), entry);
+    }
+    let removes: Removes = std::mem::take(&mut frontier.removes)
+        .into_iter()
+        .chain(later.removes)
+        .map(|(path, block)| (key(&path, &block), (path, block)))
+        .collect();
+    Frontier {
+        removes: removes.into_values().collect(),
+        entries: entries.into_values().collect(),
+    }
+}
+
+#[test]
+fn an_indexed_merge_matches_one_scan_per_op_and_a_full_rebuild() {
+    let mut sim = Sim::new();
+    let root = create(
+        &mut sim,
+        json!({"a": {"b": {"c": 1}, "bb": 2}, "a\u{0}": 3, "ab": 4, "z": [1]}),
+    );
+    let left = sim.write(&[root], vec![set(&["a", "b", "d"], json!(5))]);
+    let right = sim.write(
+        &[root],
+        vec![op(&["a"], JsonEdit::Map), set(&["q"], json!(6))],
+    );
+    let frontier = sim.merge(&[root, left, right]);
+    let ops = vec![
+        set(&["a", "b"], json!(7)),
+        op(&["a"], JsonEdit::Delete),
+        set(&["a", "b", "c", "e"], json!(8)),
+        set(&["a", "b"], json!(9)),
+        set(&["ab"], json!(10)),
+        op(&[], JsonEdit::Map),
+        set(&["missing", "deep"], json!(11)),
+    ];
+    let left_past = sim.past(left);
+    let left_id = sim.blocks[left].id.clone();
+    check_merge(&frontier, &ops, |_: &[u8]| true);
+    check_merge(&frontier, &ops, |_: &[u8]| false);
+    check_merge(&frontier, &ops, |id: &[u8]| {
+        left_past.contains(id) || id == left_id.as_slice()
+    });
+}
+
+/// Every prefix of `ops`, merged onto `frontier`, gives the same frontier
+/// both ways, and so does composing the two operands one after the other.
+fn check_merge<F>(frontier: &Frontier, ops: &[JsonOp], in_past: F)
+where
+    F: Fn(&[u8]) -> bool + Copy,
+{
+    for count in 0..=ops.len() {
+        let ops = &ops[..count];
+        let indexed = frontier.delta(ops, b"new", 9, in_past);
+        let scanned = delta_per_op(frontier, ops, b"new", 9, in_past);
+        let mut merged = frontier.clone();
+        merged.compose(indexed.clone());
+        assert_eq!(
+            merged,
+            compose_by_rebuild(frontier.clone(), scanned.clone()),
+            "{count} ops"
+        );
+        let mut both = indexed.clone();
+        both.compose(merged.delta(ops, b"next", 10, in_past));
+        assert_eq!(
+            both,
+            compose_by_rebuild(scanned, delta_per_op(&merged, ops, b"next", 10, in_past)),
+            "{count} ops, composed"
+        );
+    }
+}
+
+#[test]
+fn decoding_puts_entries_in_path_order_with_the_last_repeat_winning() {
+    let entry = |path: &[&str], block: &[u8], value: i64| Entry {
+        path: path.iter().map(|s| (*s).to_owned()).collect(),
+        block: block.to_vec(),
+        priority: 1,
+        edit: JsonEdit::Set(json!(value)),
+        seen: Vec::new(),
+    };
+    let unsorted = Frontier {
+        removes: vec![
+            (vec!["b".into()], b"x".to_vec()),
+            (vec!["a".into()], b"x".to_vec()),
+        ],
+        entries: vec![
+            entry(&["b"], b"x", 1),
+            entry(&["a", "c"], b"x", 2),
+            entry(&["a"], b"y", 3),
+            entry(&["b"], b"x", 4),
+        ],
+    };
+    let decoded = Frontier::decode(&unsorted.encode().unwrap()).unwrap();
+    assert_eq!(decoded, compose_by_rebuild(Frontier::default(), unsorted));
+    assert_eq!(decoded.entries.len(), 3);
+}
+
+#[test]
+fn streamed_path_keys_match_built_ones() {
+    let paths: Vec<Path> = [
+        vec![],
+        vec!["a"],
+        vec!["a", "b"],
+        vec!["a\u{0}"],
+        vec!["a", ""],
+        vec!["ab"],
+        vec!["\u{0}\u{1}"],
+    ]
+    .into_iter()
+    .map(|path| path.into_iter().map(str::to_owned).collect())
+    .collect();
+    for path in &paths {
+        assert_eq!(key_bytes(path).collect::<Vec<u8>>(), encode_path(path));
+        for other in &paths {
+            let key = encode_path(other);
+            assert_eq!(cmp_key(path, &key), encode_path(path).cmp(&key));
+            assert_eq!(
+                key_starts_with(path, &key),
+                encode_path(path).starts_with(&key)
+            );
+        }
+    }
+}
+
 #[test]
 fn an_update_carries_its_nonce_so_equal_edits_take_different_ids() {
     let ops = diff(None, Some(&json!({"a": {"b": 1}})));

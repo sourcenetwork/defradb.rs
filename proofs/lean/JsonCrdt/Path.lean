@@ -17,6 +17,11 @@ What must never happen:
 And going the other way, a path above another has a key the other's key
 starts with (`prefix_encode`), so the scan misses nothing under it.
 
+The frontier keeps its edits sorted by key, so the scan is one stretch of
+that sorted list: every key between two keys that start with `a`'s key also
+starts with it (`prefix_convex`). Reading from the first such key until one
+does not start with it reads them all.
+
 Bytes are modeled as numbers; only `0`, `1` and `255` are special.
 
 Rust anchors: `encode_path` and `decode_path` in
@@ -206,5 +211,50 @@ theorem prefix_encode {p q : List (List Nat)} (h : p <+: q) : encode p <+: encod
   obtain ⟨t, rfl⟩ := h
   -- The extra segments' key is what follows.
   exact ⟨encode t, (encode_append p t).symm⟩
+
+-- Byte order: a smaller byte is smaller, and a byte is never smaller than
+-- itself. Lean needs both spelled out to compare lists of bytes one by one.
+local instance : Std.Irrefl (fun a b : Nat => a < b) := ⟨Nat.lt_irrefl⟩
+-- And two bytes are never each smaller than the other.
+local instance : Std.Asymm (fun a b : Nat => a < b) := ⟨fun _ _ h => Nat.lt_asymm h⟩
+
+/-- In sorted order, a key that sits between two keys starting with `k`
+starts with `k` too: the keys under a path are one unbroken stretch. -/
+theorem prefix_convex : ∀ {k a b c : List Nat},
+    k <+: a → a ≤ b → b ≤ c → k <+: c → k <+: b
+  -- Every key starts with the empty key.
+  | [], _, _, _, _, _, _, _ => List.nil_prefix
+  -- `k` starts with byte `x`, so `a` and `c` do too.
+  | x :: k, a, b, c, ⟨ta, ha⟩, hab, hbc, ⟨tc, hc⟩ => by
+      -- Write `a` and `c` as `k` followed by their tails.
+      subst ha; subst hc
+      -- Look at `b`'s first byte.
+      match b with
+      -- An empty `b` would sort before `a`, which is not empty.
+      | [] =>
+          -- So `a ≤ b` is impossible.
+          exact absurd hab (by simp [List.not_le, List.nil_lt_cons])
+      -- `b` starts with some byte `y`.
+      | y :: b =>
+          -- `a ≤ b`: `x` is below `y`, or equal with the rest in order.
+          have h1 := (List.cons_le_cons_iff).1 hab
+          -- `b ≤ c`: `y` is below `x`, or equal with the rest in order.
+          have h2 := (List.cons_le_cons_iff).1 hbc
+          -- Neither can be strictly below the other, so `y` is `x`.
+          have hxy : x = y := by omega
+          -- Use `x` for both.
+          subst hxy
+          -- The rest of `a` sorts no later than the rest of `b`.
+          have hab' : k ++ ta ≤ b := by
+            -- The strict case would need `x < x`.
+            rcases h1 with h | ⟨_, h⟩ <;> first | omega | exact h
+          -- The rest of `b` sorts no later than the rest of `c`.
+          have hbc' : b ≤ k ++ tc := by
+            -- The same: `x < x` is impossible.
+            rcases h2 with h | ⟨_, h⟩ <;> first | omega | exact h
+          -- By induction, the rest of `b` starts with the rest of `k`.
+          obtain ⟨t, ht⟩ := prefix_convex ⟨ta, rfl⟩ hab' hbc' ⟨tc, rfl⟩
+          -- Put `x` back on the front.
+          exact ⟨t, by simp [ht]⟩
 
 end JsonCrdt
