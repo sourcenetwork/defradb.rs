@@ -9,7 +9,12 @@ fn test_collection(name: &str) -> Collection {
         name,
         "v1",
         format!("col-{}", name.to_lowercase()),
-        vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+        vec![FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        )],
     ))
 }
 

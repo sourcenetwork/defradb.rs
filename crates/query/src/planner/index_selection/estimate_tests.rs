@@ -81,10 +81,20 @@ fn fixture() -> (CollectionVersion, Filter) {
         "v1",
         "headers",
         vec![
-            FieldDescription::new("1", "node", FieldKind::string()),
-            FieldDescription::new("2", "session", FieldKind::string()),
-            FieldDescription::new("3", "sequence", FieldKind::int()),
-            FieldDescription::new("4", "key", FieldKind::string()),
+            FieldDescription::new("1", "node", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "2",
+                "session",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "sequence",
+                FieldKind::int(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("4", "key", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
     let index = |id, name: &str, fields: &[&str]| IndexDescription {

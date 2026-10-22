@@ -1370,7 +1370,12 @@ mod tests {
                 "User",
                 "v1",
                 "coll-user",
-                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+                vec![FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                )],
             );
             let truncator = Arc::new(CapturingTruncator::default());
             let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
@@ -1398,7 +1403,12 @@ mod tests {
                 "User",
                 "v1",
                 "coll-user",
-                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+                vec![FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                )],
             );
             let mutator = Arc::new(CapturingMutator::new());
             let runner = QueryRunner::new(MockFetcher::new(), vec![collection])
@@ -1497,12 +1507,12 @@ mod tests {
             "v1",
             "coll-user",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         );
         let fetcher = MockFetcher::new();
-        let mut existing = Document::from_json_str(r#"{"name":"before"}"#).unwrap();
+        let mut existing = crate::test_utils::doc_from_json(r#"{"name":"before"}"#);
         existing.set_id(DocID::new_v0_from_seed("preparation-existing"));
         let existing_id = existing.id().unwrap().to_string();
         let missing_id = "missing-before-preparation";
@@ -1535,8 +1545,18 @@ mod tests {
                 "v1",
                 "coll-user",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             );
             let mutator = Arc::new(CapturingMutator::new());
@@ -1642,10 +1662,25 @@ mod tests {
                 "v1",
                 "coll-company",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
-                    FieldDescription::new("3", "employees", FieldKind::relation("Employee", true))
-                        .with_relation_name("employee_company"),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "3",
+                        "employees",
+                        FieldKind::relation("Employee", true),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("employee_company"),
                 ],
             );
 
@@ -1654,14 +1689,34 @@ mod tests {
                 "v1",
                 "coll-employee",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
-                    FieldDescription::new("3", "company", FieldKind::relation("Company", false))
-                        .with_relation_name("employee_company")
-                        .as_primary(),
-                    FieldDescription::new("4", "_companyID", FieldKind::doc_id())
-                        .with_relation_name("employee_company")
-                        .as_primary(),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "3",
+                        "company",
+                        FieldKind::relation("Company", false),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("employee_company")
+                    .as_primary(),
+                    FieldDescription::new(
+                        "4",
+                        "_companyID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_relation_name("employee_company")
+                    .as_primary(),
                 ],
             );
 

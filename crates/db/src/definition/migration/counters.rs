@@ -229,12 +229,12 @@ async fn plan_move(
                 .ok_or_else(|| Error::InvalidDocument("invalid local document value".into()))?
         }
         None => {
-            let mut doc = Document::from_storage_cbor(&bytes)?;
+            let mut doc = Document::from_storage_cbor(&bytes, collection.schema_arc())?;
             let target = settle(increment_only, accumulated, doc.get(field_name));
             if doc.get(field_name) == Some(&target) {
                 return Ok(Some(Move::Drop));
             }
-            doc.set(field_name.to_owned(), target);
+            doc.set_unchecked(field_name.to_owned(), target);
             doc.to_cbor()?
         }
     };

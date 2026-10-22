@@ -89,8 +89,18 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "embedding", FieldKind::float64_array()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "embedding",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -106,11 +116,12 @@ fn wide(vector: &[f32]) -> Vec<NormalValue> {
 }
 
 fn document(vector: &[f32]) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(schema());
     doc.set(
         "embedding",
         NormalValue::Float64Array(vector.iter().map(|x| *x as f64).collect()),
-    );
+    )
+    .unwrap();
     doc
 }
 

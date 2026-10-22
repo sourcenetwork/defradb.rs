@@ -181,7 +181,9 @@ impl Collection {
             .get_parts(&self.doc_key(doc_short_id), &[])
             .await
             .map_err(Error::Storage)?
-            .map(|bytes| Document::from_storage_cbor(&bytes).map_err(Error::from))
+            .map(|bytes| {
+                Document::from_storage_cbor(&bytes, self.schema_arc()).map_err(Error::from)
+            })
             .transpose()
     }
 

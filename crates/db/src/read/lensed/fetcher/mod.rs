@@ -337,7 +337,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
     async fn get_commits(
         &self,
         options: &query::fetcher::CommitsQueryOptions,
-    ) -> query::error::Result<Vec<Document>> {
+    ) -> query::error::Result<Vec<document::CommitRow>> {
         use crate::read::commits::{CommitsFetcher, CommitsQueryOptions as DbCommitsOptions};
 
         let db_options = DbCommitsOptions {
@@ -472,6 +472,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Document> {
         use crate::read::versioned::VersionedFetcher;
@@ -483,7 +484,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         )
         .with_prepared_inputs(self.prepared_inputs.clone());
         versioned_fetcher
-            .get_document_at_cid(cid, expected_doc_id)
+            .get_document_at_cid(cid, expected_doc_id, collection.clone())
             .await
             .map_err(|error| match error {
                 crate::error::Error::Query(error) => error,
@@ -493,7 +494,7 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
 
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         caller_identity: Option<&identity::Did>,
@@ -507,7 +508,12 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
         )
         .with_prepared_inputs(self.prepared_inputs.clone());
         versioned_fetcher
-            .get_documents_at_cid(cid, expected_doc_id, Some(collection_short_id))
+            .get_documents_at_cid(
+                cid,
+                expected_doc_id,
+                Some(collection.resolved_root_id()),
+                collection.clone(),
+            )
             .await
             .map_err(|error| match error {
                 crate::error::Error::Query(error) => error,

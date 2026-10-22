@@ -20,9 +20,14 @@ fn test_collection() -> CollectionVersion {
         "v1",
         "col-patch",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::int()),
-            FieldDescription::new("3", "right", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -44,8 +49,8 @@ fn stale_disjoint_field_update_without_precondition_preserves_committed_fields()
         .expect("schema");
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
 
-        let initial =
-            Document::from_json_str(r#"{"left": 0, "right": 0}"#).expect("initial document");
+        let initial = Document::from_json_str(r#"{"left": 0, "right": 0}"#, test_collection())
+            .expect("initial document");
         let created = mutator.create("Patch", initial).await.expect("create");
 
         let mut stale_left = mutator
@@ -55,7 +60,7 @@ fn stale_disjoint_field_update_without_precondition_preserves_committed_fields()
             .expect("left copy");
         let mut stale_right = stale_left.clone();
 
-        stale_left.set("left", NormalValue::Int(1));
+        stale_left.set("left", NormalValue::Int(1)).unwrap();
         mutator
             .update(
                 "Patch",
@@ -65,7 +70,7 @@ fn stale_disjoint_field_update_without_precondition_preserves_committed_fields()
             .await
             .expect("update left");
 
-        stale_right.set("right", NormalValue::Int(1));
+        stale_right.set("right", NormalValue::Int(1)).unwrap();
         mutator
             .update(
                 "Patch",
@@ -103,7 +108,7 @@ fn explicit_disjoint_field_updates_on_one_document_both_commit() {
         let created = auto
             .create(
                 "Patch",
-                Document::from_json_str(r#"{"left": 0, "right": 0}"#).unwrap(),
+                Document::from_json_str(r#"{"left": 0, "right": 0}"#, test_collection()).unwrap(),
             )
             .await
             .expect("create document");
@@ -116,13 +121,13 @@ fn explicit_disjoint_field_updates_on_one_document_both_commit() {
         let first = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
         let second = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
         let mut left = snapshot.clone();
-        left.set("left", NormalValue::Int(1));
+        left.set("left", NormalValue::Int(1)).unwrap();
         first
             .update("Patch", left, RapidHashSet::from_iter(["left".to_string()]))
             .await
             .expect("write left");
         let mut right = snapshot;
-        right.set("right", NormalValue::Int(1));
+        right.set("right", NormalValue::Int(1)).unwrap();
         second
             .update(
                 "Patch",
@@ -175,7 +180,7 @@ fn stale_update_uses_fresh_unmodified_composite_index_component() {
         let created = mutator
             .create(
                 "Patch",
-                Document::from_json_str(r#"{"left": 0, "right": 0}"#).unwrap(),
+                Document::from_json_str(r#"{"left": 0, "right": 0}"#, test_collection()).unwrap(),
             )
             .await
             .expect("create document");
@@ -186,7 +191,7 @@ fn stale_update_uses_fresh_unmodified_composite_index_component() {
             .unwrap();
 
         let mut right_update = stale.clone();
-        right_update.set("right", NormalValue::Int(1));
+        right_update.set("right", NormalValue::Int(1)).unwrap();
         mutator
             .update(
                 "Patch",
@@ -197,7 +202,7 @@ fn stale_update_uses_fresh_unmodified_composite_index_component() {
             .unwrap();
 
         let mut left_update = stale;
-        left_update.set("left", NormalValue::Int(2));
+        left_update.set("left", NormalValue::Int(2)).unwrap();
         let explicit = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
         explicit
             .update(
@@ -246,7 +251,7 @@ fn explicit_same_indexed_field_updates_conflict_on_the_old_index_entry() {
         let created = auto
             .create(
                 "Patch",
-                Document::from_json_str(r#"{"left": 0, "right": 0}"#).unwrap(),
+                Document::from_json_str(r#"{"left": 0, "right": 0}"#, test_collection()).unwrap(),
             )
             .await
             .expect("create document");
@@ -258,7 +263,7 @@ fn explicit_same_indexed_field_updates_conflict_on_the_old_index_entry() {
         let first = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
         let second = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.unwrap());
         let mut first_doc = snapshot.clone();
-        first_doc.set("left", NormalValue::Int(1));
+        first_doc.set("left", NormalValue::Int(1)).unwrap();
         first
             .update(
                 "Patch",
@@ -268,7 +273,7 @@ fn explicit_same_indexed_field_updates_conflict_on_the_old_index_entry() {
             .await
             .unwrap();
         let mut second_doc = snapshot;
-        second_doc.set("left", NormalValue::Int(2));
+        second_doc.set("left", NormalValue::Int(2)).unwrap();
         second
             .update(
                 "Patch",
@@ -296,8 +301,8 @@ fn stale_conditional_update_returns_conflict() {
             .expect("schema");
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
 
-        let initial =
-            Document::from_json_str(r#"{"left": 0, "right": 0}"#).expect("initial document");
+        let initial = Document::from_json_str(r#"{"left": 0, "right": 0}"#, test_collection())
+            .expect("initial document");
         let created = mutator.create("Patch", initial).await.expect("create");
 
         let mut first = mutator
@@ -308,7 +313,7 @@ fn stale_conditional_update_returns_conflict() {
         let expected_second = first.clone();
         let mut second = first.clone();
 
-        first.set("left", NormalValue::Int(1));
+        first.set("left", NormalValue::Int(1)).unwrap();
         mutator
             .update(
                 "Patch",
@@ -318,7 +323,7 @@ fn stale_conditional_update_returns_conflict() {
             .await
             .expect("update left");
 
-        second.set("right", NormalValue::Int(1));
+        second.set("right", NormalValue::Int(1)).unwrap();
         let error = mutator
             .update_if_unchanged(
                 "Patch",
@@ -358,8 +363,8 @@ fn conditional_update_of_concurrently_deleted_document_returns_conflict() {
             .expect("schema");
         let mutator = AutoCommitMutator::new(Arc::clone(&db));
 
-        let initial =
-            Document::from_json_str(r#"{"left": 0, "right": 0}"#).expect("initial document");
+        let initial = Document::from_json_str(r#"{"left": 0, "right": 0}"#, test_collection())
+            .expect("initial document");
         let created = mutator.create("Patch", initial).await.expect("create");
 
         let expected = mutator
@@ -368,7 +373,7 @@ fn conditional_update_of_concurrently_deleted_document_returns_conflict() {
             .expect("fetch snapshot")
             .expect("snapshot");
         let mut patched = expected.clone();
-        patched.set("right", NormalValue::Int(1));
+        patched.set("right", NormalValue::Int(1)).unwrap();
 
         mutator
             .delete("Patch", &created.doc_id)
@@ -459,7 +464,7 @@ fn update_reads_fresh_values_in_the_transaction_that_writes_them() {
         let created = mutator
             .create(
                 "Patch",
-                Document::from_json_str(r#"{"left":0,"right":0}"#).unwrap(),
+                Document::from_json_str(r#"{"left":0,"right":0}"#, test_collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -474,10 +479,10 @@ fn update_reads_fresh_values_in_the_transaction_that_writes_them() {
         let mut key = vec![b'd'];
         key.extend(collection.doc_key(short_id));
         let mut external = created.document.clone();
-        external.set("left", 7_i64);
+        external.set("left", 7_i64).unwrap();
         store.pending.store_some((key, external.to_cbor().unwrap()));
         let mut patch = created.document;
-        patch.set("right", 9_i64);
+        patch.set("right", 9_i64).unwrap();
         mutator
             .update("Patch", patch, ["right".to_string()].into_iter().collect())
             .await

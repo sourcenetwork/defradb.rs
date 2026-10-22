@@ -16,8 +16,13 @@ fn test_collection_with_policy() -> CollectionVersion {
         "v1",
         "col-test-doc",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "x", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "x", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .with_policy(PolicyDescription::new("policy-abc", "users"))
@@ -33,7 +38,8 @@ fn resolves_collection_for_known_doc() {
 
         let txn = db.new_txn(false).await.expect("new_txn");
         let mutator = DbDocMutator::new(Arc::clone(&db), txn);
-        let doc = Document::from_json_str(r#"{"x": 1}"#).expect("doc");
+        let doc =
+            Document::from_json_str(r#"{"x": 1}"#, test_collection_with_policy()).expect("doc");
         let result = mutator.create("TestDoc", doc).await.expect("create");
         let txn = mutator.take_txn().await.expect("take txn");
         txn.commit().await.expect("commit");

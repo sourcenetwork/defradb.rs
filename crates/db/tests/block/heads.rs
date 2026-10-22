@@ -207,24 +207,31 @@ fn appends_through_the_db_store_only_the_live_head() {
         const APPENDS: usize = 64;
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(db::DB::from_arc(store.clone()).unwrap());
-        db.create_collection(
-            schema::CollectionVersion::new(
-                "Segment",
-                "v1",
-                "col-segment",
-                vec![
-                    schema::FieldDescription::new("1", "_docID", schema::FieldKind::doc_id()),
-                    schema::FieldDescription::new("2", "body", schema::FieldKind::string()),
-                ],
-            )
-            .as_branchable(),
+        let segment = schema::CollectionVersion::new(
+            "Segment",
+            "v1",
+            "col-segment",
+            vec![
+                schema::FieldDescription::new(
+                    "1",
+                    "_docID",
+                    schema::FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                schema::FieldDescription::new(
+                    "2",
+                    "body",
+                    schema::FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
+            ],
         )
-        .await
-        .unwrap();
+        .as_branchable();
+        db.create_collection(segment.clone()).await.unwrap();
         let mutator = db::AutoCommitMutator::new(db.clone());
         for index in 0..APPENDS {
-            let mut doc = document::Document::new();
-            doc.set("body", format!("segment {index}"));
+            let mut doc = document::Document::new(segment.clone());
+            doc.set("body", format!("segment {index}")).unwrap();
             query::mutator::DocMutator::create(&mutator, "Segment", doc)
                 .await
                 .unwrap();

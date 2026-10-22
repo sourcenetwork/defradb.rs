@@ -271,7 +271,8 @@ async fn set_incremented_counters(
             &delta,
         )
         .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-        doc.set(name.to_owned(), value);
+        doc.set(name.to_owned(), value)
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
     }
     Ok(())
 }

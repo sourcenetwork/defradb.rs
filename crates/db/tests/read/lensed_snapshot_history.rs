@@ -95,8 +95,9 @@ async fn verified_collection<S: Store + 'static>(store: S) -> (Arc<DB<S>>, Strin
         .unwrap()
         .version_id()
         .to_owned();
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("Ada".to_string()));
+    let mut doc = Document::new(db.get_collection("Probe").unwrap().unwrap().schema_arc());
+    doc.set("name", NormalValue::String("Ada".to_string()))
+        .unwrap();
     db::AutoCommitMutator::new(db.clone())
         .create_many("Probe", vec![doc])
         .await

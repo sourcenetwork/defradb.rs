@@ -104,7 +104,12 @@ impl Node {
 
     /// Define `Grants` locally, with a policy and an `@immutable` `writer`.
     async fn define_grants(&self) {
-        let mut writer = FieldDescription::new("2", "writer", FieldKind::string());
+        let mut writer = FieldDescription::new(
+            "2",
+            "writer",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        );
         writer.immutable = true;
         self.db
             .create_collection(
@@ -113,7 +118,12 @@ impl Node {
                     "col-grants",
                     "col-grants",
                     vec![
-                        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                        FieldDescription::new(
+                            "1",
+                            "_docID",
+                            FieldKind::doc_id(),
+                            schema::CType::LwwRegister,
+                        ),
                         writer,
                     ],
                 )
@@ -127,14 +137,24 @@ impl Node {
     /// `writer` and no policy. An ungoverned identity commits to none of it,
     /// so no delta carries any of it either.
     async fn define_ungoverned_grants(&self) {
-        let mut writer = FieldDescription::new("2", "writer", FieldKind::string());
+        let mut writer = FieldDescription::new(
+            "2",
+            "writer",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        );
         writer.immutable = true;
         let mut version = CollectionVersion::new(
             "Grants",
             "col-grants",
             "col-grants",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
                 writer,
             ],
         );

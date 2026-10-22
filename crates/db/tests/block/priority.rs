@@ -99,9 +99,11 @@ fn test_backfill_commit_priority_index_rebuilds_field_and_composite_history() {
                 let systemstore = write_txn.systemstore().unwrap();
 
                 let identity = db::block::builder::DocRef::new(1, 1);
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String("Alice".to_string()));
-                doc.set("age", NormalValue::Int(30));
+                let mut doc =
+                    Document::new(crate::common::schema::open_collection(&["name", "age"]));
+                doc.set("name", NormalValue::String("Alice".to_string()))
+                    .unwrap();
+                doc.set("age", NormalValue::Int(30)).unwrap();
 
                 let result = write_document_blocks(
                     &blockstore,
@@ -122,7 +124,7 @@ fn test_backfill_commit_priority_index_rebuilds_field_and_composite_history() {
                     .await
                     .unwrap();
 
-                doc.set("age", NormalValue::Int(31));
+                doc.set("age", NormalValue::Int(31)).unwrap();
                 let age_only = std::iter::once("age".to_string()).collect();
                 write_document_blocks(
                     &blockstore,
@@ -138,7 +140,8 @@ fn test_backfill_commit_priority_index_rebuilds_field_and_composite_history() {
                 .await
                 .unwrap();
 
-                doc.set("name", NormalValue::String("Alicia".to_string()));
+                doc.set("name", NormalValue::String("Alicia".to_string()))
+                    .unwrap();
                 let name_only = std::iter::once("name".to_string()).collect();
                 write_document_blocks(
                     &blockstore,
@@ -252,9 +255,11 @@ fn test_backfill_commit_priority_index_repairs_partial_index_without_marker() {
                 let headstore = write_txn.headstore().unwrap();
 
                 let identity = db::block::builder::DocRef::new(1, 1);
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String("Alice".to_string()));
-                doc.set("age", NormalValue::Int(30));
+                let mut doc =
+                    Document::new(crate::common::schema::open_collection(&["name", "age"]));
+                doc.set("name", NormalValue::String("Alice".to_string()))
+                    .unwrap();
+                doc.set("age", NormalValue::Int(30)).unwrap();
 
                 let result = write_document_blocks(
                     &blockstore,
@@ -271,7 +276,7 @@ fn test_backfill_commit_priority_index_repairs_partial_index_without_marker() {
                 .unwrap();
                 doc.set_id(document::DocID::from_string(&result.doc_id).unwrap());
 
-                doc.set("age", NormalValue::Int(31));
+                doc.set("age", NormalValue::Int(31)).unwrap();
                 let age_only = std::iter::once("age".to_string()).collect();
                 write_document_blocks(
                     &blockstore,

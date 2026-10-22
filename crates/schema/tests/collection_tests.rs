@@ -19,9 +19,14 @@ use schema::{
 
 fn sample_fields() -> Vec<FieldDescription> {
     vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "name", FieldKind::string()),
-        FieldDescription::new("3", "age", FieldKind::int()),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+        FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
     ]
 }
 
@@ -60,9 +65,19 @@ fn test_field_by_id() {
 #[test]
 fn test_field_by_relation_name() {
     let fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "author", FieldKind::relation("users", false))
-            .with_relation_name("post_author"),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("post_author"),
     ];
     let coll = CollectionVersion::new("posts", "v1", "coll-1", fields);
 
@@ -75,17 +90,37 @@ fn test_field_by_relation_name() {
 fn test_field_by_relation() {
     // Create posts collection with author field
     let posts_fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "author", FieldKind::relation("users", false))
-            .with_relation_name("author_posts"),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("author_posts"),
     ];
     let posts = CollectionVersion::new("posts", "v1", "coll-posts", posts_fields);
 
     // Create users collection with posts field
     let users_fields = vec![
-        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-        FieldDescription::new("2", "posts", FieldKind::relation("posts", true))
-            .with_relation_name("author_posts"),
+        FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        ),
+        FieldDescription::new(
+            "2",
+            "posts",
+            FieldKind::relation("posts", true),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("author_posts"),
     ];
     let users = CollectionVersion::new("users", "v1", "coll-users", users_fields);
 
@@ -116,8 +151,8 @@ fn test_field_by_relation() {
 #[test]
 fn test_validate_duplicate_names_fails() {
     let fields = vec![
-        FieldDescription::new("1", "name", FieldKind::string()),
-        FieldDescription::new("2", "name", FieldKind::string()),
+        FieldDescription::new("1", "name", FieldKind::string(), schema::CType::LwwRegister),
+        FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
     ];
     let coll = CollectionVersion::new("users", "v1", "coll-1", fields);
 
@@ -131,9 +166,13 @@ fn test_validate_duplicate_names_fails() {
 
 #[test]
 fn test_validate_invalid_crdt_fails() {
-    let fields =
-        vec![FieldDescription::new("1", "title", FieldKind::string())
-            .with_crdt_type(CType::PnCounter)];
+    let fields = vec![FieldDescription::new(
+        "1",
+        "title",
+        FieldKind::string(),
+        schema::CType::LwwRegister,
+    )
+    .with_crdt_type(CType::PnCounter)];
     let coll = CollectionVersion::new("posts", "v1", "coll-1", fields);
 
     let result = coll.validate();
@@ -185,9 +224,19 @@ fn test_validate_encrypted_index_field_is_unique() {
 #[test]
 fn test_validate_relation_id_field_kind() {
     let fields = vec![
-        FieldDescription::new("1", "author", FieldKind::relation("users", false))
-            .with_relation_name("post_author"),
-        FieldDescription::new("2", "_authorID", FieldKind::string()),
+        FieldDescription::new(
+            "1",
+            "author",
+            FieldKind::relation("users", false),
+            schema::CType::LwwRegister,
+        )
+        .with_relation_name("post_author"),
+        FieldDescription::new(
+            "2",
+            "_authorID",
+            FieldKind::string(),
+            schema::CType::LwwRegister,
+        ),
     ];
     let coll = CollectionVersion::new("posts", "v1", "coll-1", fields);
 
@@ -270,7 +319,8 @@ fn test_builder() {
         .scalar("1", "_docID", FieldKind::doc_id())
         .scalar("2", "name", FieldKind::string())
         .field(
-            FieldDescription::new("3", "score", FieldKind::int()).with_crdt_type(CType::PnCounter),
+            FieldDescription::new("3", "score", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PnCounter),
         )
         .build();
 
@@ -285,8 +335,13 @@ fn test_builder() {
 
 #[test]
 fn test_relation_validation() {
-    let author_field = FieldDescription::new("1", "author", FieldKind::relation("users", false))
-        .with_relation_name("post_author");
+    let author_field = FieldDescription::new(
+        "1",
+        "author",
+        FieldKind::relation("users", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("post_author");
 
     let posts = CollectionVersion::new("posts", "v1", "coll-posts", vec![author_field]);
 
@@ -297,7 +352,12 @@ fn test_relation_validation() {
             "users",
             "v1",
             "coll-users",
-            vec![FieldDescription::new("1", "name", FieldKind::string())],
+            vec![FieldDescription::new(
+                "1",
+                "name",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            )],
         ),
     );
 
@@ -306,8 +366,13 @@ fn test_relation_validation() {
 
 #[test]
 fn test_relation_to_unknown_collection_fails() {
-    let author_field = FieldDescription::new("1", "author", FieldKind::relation("unknown", false))
-        .with_relation_name("post_author");
+    let author_field = FieldDescription::new(
+        "1",
+        "author",
+        FieldKind::relation("unknown", false),
+        schema::CType::LwwRegister,
+    )
+    .with_relation_name("post_author");
 
     let posts = CollectionVersion::new("posts", "v1", "coll-posts", vec![author_field]);
 

@@ -223,6 +223,76 @@ fn make_handler() -> (
     (handler, blockstore)
 }
 
+pub(super) fn users_collection() -> CollectionVersion {
+    CollectionVersion::new(
+        "Users",
+        "v1",
+        "col-users",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+        ],
+    )
+}
+
+pub(super) fn counters_collection() -> CollectionVersion {
+    CollectionVersion::new(
+        "Counters",
+        "v1",
+        "col-counters",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "score", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PnCounter),
+        ],
+    )
+}
+
+pub(super) fn sessions_collection() -> CollectionVersion {
+    CollectionVersion::new(
+        "Sessions",
+        "v1",
+        "col-sessions",
+        vec![
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "session_id",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+        ],
+    )
+    .with_index(schema::IndexDescription {
+        name: "idx_session_id_unique".to_string(),
+        id: 1,
+        fields: vec![schema::IndexedFieldDescription {
+            name: "session_id".to_string(),
+            descending: false,
+        }],
+        unique: true,
+        kind: None,
+        auto_generated: false,
+    })
+}
+
 pub(super) async fn make_handler_with_schema_and_bus() -> (
     DbMergeHandler<RegolithStore, DefraBlockstore<RegolithStore>>,
     Arc<DefraBlockstore<RegolithStore>>,
@@ -235,18 +305,7 @@ pub(super) async fn make_handler_with_schema_and_bus() -> (
     db.set_event_bus(bus.clone());
     let db = Arc::new(db);
 
-    db.create_collection(CollectionVersion::new(
-        "Users",
-        "v1",
-        "col-users",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
-        ],
-    ))
-    .await
-    .unwrap();
+    db.create_collection(users_collection()).await.unwrap();
 
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db, blockstore.clone());
@@ -264,7 +323,12 @@ async fn make_counting_handler_with_schema() -> (
         "Users",
         "v1",
         "col-users",
-        vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+        vec![FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        )],
     ))
     .await
     .unwrap();
@@ -282,17 +346,7 @@ async fn make_handler_with_counter_schema() -> (
     let store = Arc::new(RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store.clone()).unwrap());
 
-    db.create_collection(CollectionVersion::new(
-        "Counters",
-        "v1",
-        "col-counters",
-        vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "score", FieldKind::int()).with_crdt_type(CType::PnCounter),
-        ],
-    ))
-    .await
-    .unwrap();
+    db.create_collection(counters_collection()).await.unwrap();
 
     let blockstore = Arc::new(DefraBlockstore::new(store, true));
     let handler = DbMergeHandler::new(db, blockstore.clone());
@@ -329,9 +383,10 @@ pub(super) async fn build_merge_block(
     name: &str,
     age: i64,
 ) -> MergeBlock {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String(name.to_string()));
-    doc.set("age", NormalValue::Int(age));
+    let mut doc = Document::new(users_collection());
+    doc.set("name", NormalValue::String(name.to_string()))
+        .unwrap();
+    doc.set("age", NormalValue::Int(age)).unwrap();
 
     let result = db::block::builder::build_blocks_from_document(
         &doc,
@@ -1072,9 +1127,8 @@ fn counter_merge_of_an_unmaterialized_document_waits_for_its_composite() {
 fn counter_merge_marks_cid_merged() {
     workers::block_on(async {
         let (handler, blockstore) = make_handler_with_counter_schema().await;
-        let mut doc = Document::new();
-        doc.set_with_crdt("score", CType::PnCounter, NormalValue::Int(5))
-            .unwrap();
+        let mut doc = Document::new(counters_collection());
+        doc.set("score", NormalValue::Int(5)).unwrap();
         doc.set_collection_version_id("v1");
         let built = db::block::builder::build_blocks_from_document(
             &doc,
@@ -1198,7 +1252,7 @@ fn interactive_counter_increment_and_concurrent_same_doc_merge_both_commit() {
                 mutator
                     .create(
                         "Counters",
-                        Document::from_json_str(r#"{"score": 10}"#).unwrap(),
+                        Document::from_json_str(r#"{"score": 10}"#, counters_collection()).unwrap(),
                     )
                     .await
                     .expect("create seed")
@@ -1216,7 +1270,8 @@ fn interactive_counter_increment_and_concurrent_same_doc_merge_both_commit() {
         // (2) Begin an EXPLICIT txn and increment +3 through the interactive
         // mutator. Its operand and document update belong to the open snapshot.
         let handle = registry.begin(false).await.expect("begin interactive");
-        let mut update_doc = Document::from_json_str(r#"{"score": 13}"#).unwrap();
+        let mut update_doc =
+            Document::from_json_str(r#"{"score": 13}"#, counters_collection()).unwrap();
         update_doc.set_id(document::DocID::from_string(&doc_id).unwrap());
         update_doc.set_counter_delta("score".to_string(), NormalValue::Int(3));
         let mut modified = rapidhash::RapidHashSet::new();
@@ -1456,7 +1511,11 @@ fn a_shared_counter_block_lands_once_on_each_stored_document() {
                     mutator
                         .create(
                             "Counters",
-                            Document::from_json_str(&format!(r#"{{"score": {seed}}}"#)).unwrap(),
+                            Document::from_json_str(
+                                &format!(r#"{{"score": {seed}}}"#),
+                                counters_collection(),
+                            )
+                            .unwrap(),
                         )
                         .await
                         .expect("create seed")
@@ -1520,9 +1579,8 @@ fn composite_merge_skips_locally_merged_counter_parent() {
             .unwrap()
             .expect("counter collection should exist");
 
-        let mut doc = Document::new();
-        doc.set_with_crdt("score", CType::PnCounter, NormalValue::Int(10))
-            .unwrap();
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("score", NormalValue::Int(10)).unwrap();
         doc.set_collection_version_id("v1");
         let (doc_id, _doc_short_id, local_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
@@ -1621,9 +1679,20 @@ async fn make_handler_with_immutable_schema() -> (
         "v1",
         "col-agentdocs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "agent_did", FieldKind::string()).as_immutable(),
-            FieldDescription::new("3", "body", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "agent_did",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            )
+            .as_immutable(),
+            FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
         ],
     ))
     .await
@@ -1653,12 +1722,14 @@ fn remote_composite_merge_rejects_immutable_field_change() {
             .unwrap()
             .expect("agentdocs collection should exist");
 
-        let mut doc = Document::new();
+        let mut doc = Document::new(collection.schema_arc());
         doc.set(
             "agent_did",
             NormalValue::String("did:key:alice".to_string()),
-        );
-        doc.set("body", NormalValue::String("v1".to_string()));
+        )
+        .unwrap();
+        doc.set("body", NormalValue::String("v1".to_string()))
+            .unwrap();
         doc.set_collection_version_id("v1");
 
         // Persist the initial document locally (agent_did = alice).
@@ -1774,12 +1845,14 @@ fn remote_composite_merge_rejects_immutable_field_clear() {
             .unwrap()
             .expect("agentdocs collection should exist");
 
-        let mut doc = Document::new();
+        let mut doc = Document::new(collection.schema_arc());
         doc.set(
             "agent_did",
             NormalValue::String("did:key:alice".to_string()),
-        );
-        doc.set("body", NormalValue::String("v1".to_string()));
+        )
+        .unwrap();
+        doc.set("body", NormalValue::String("v1".to_string()))
+            .unwrap();
         doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
@@ -1857,12 +1930,12 @@ fn remote_merge_rejects_immutable_change_after_delete() {
         .unwrap()
         .expect("agentdocs collection should exist");
 
-    let mut doc = Document::new();
+    let mut doc = Document::new(collection.schema_arc());
     doc.set(
         "agent_did",
         NormalValue::String("did:key:alice".to_string()),
-    );
-    doc.set("body", NormalValue::String("v1".to_string()));
+    ).unwrap();
+    doc.set("body", NormalValue::String("v1".to_string())).unwrap();
     doc.set_collection_version_id("v1");
 
     let (doc_id, _doc_short_id, create_blocks) =
@@ -1986,12 +2059,14 @@ fn remote_merge_allows_partial_update_to_deleted_doc() {
             .unwrap()
             .expect("agentdocs collection should exist");
 
-        let mut doc = Document::new();
+        let mut doc = Document::new(collection.schema_arc());
         doc.set(
             "agent_did",
             NormalValue::String("did:key:alice".to_string()),
-        );
-        doc.set("body", NormalValue::String("v1".to_string()));
+        )
+        .unwrap();
+        doc.set("body", NormalValue::String("v1".to_string()))
+            .unwrap();
         doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
@@ -2104,12 +2179,14 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             .unwrap()
             .expect("agentdocs collection should exist");
 
-        let mut doc = Document::new();
+        let mut doc = Document::new(collection.schema_arc());
         doc.set(
             "agent_did",
             NormalValue::String("did:key:alice".to_string()),
-        );
-        doc.set("body", NormalValue::String("v1".to_string()));
+        )
+        .unwrap();
+        doc.set("body", NormalValue::String("v1".to_string()))
+            .unwrap();
         doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
@@ -2183,12 +2260,16 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
         };
 
         // Valid sibling: a fresh document in the same batch.
-        let mut sibling = Document::new();
-        sibling.set(
-            "agent_did",
-            NormalValue::String("did:key:carol".to_string()),
-        );
-        sibling.set("body", NormalValue::String("sibling".to_string()));
+        let mut sibling = Document::new(collection.schema_arc());
+        sibling
+            .set(
+                "agent_did",
+                NormalValue::String("did:key:carol".to_string()),
+            )
+            .unwrap();
+        sibling
+            .set("body", NormalValue::String("sibling".to_string()))
+            .unwrap();
         let sibling_result = db::block::builder::build_blocks_from_document(
             &sibling,
             &crate::common::schema::version("v1"),
@@ -2272,15 +2353,15 @@ fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
             .unwrap()
             .expect("users collection should exist");
 
-        let mut doc = Document::new();
-        doc.set("age", NormalValue::Int(21));
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("age", NormalValue::Int(21)).unwrap();
         doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
         let doc_id_str = doc_id.to_string();
 
-        doc.set("age", NormalValue::Int(60));
+        doc.set("age", NormalValue::Int(60)).unwrap();
         let mut modified_fields = RapidHashSet::new();
         modified_fields.insert("age".to_string());
         {
@@ -2424,8 +2505,9 @@ fn composite_parent_replay_updates_headstore_for_merged_parent() {
             .unwrap()
             .expect("users collection should exist");
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("John".to_string()));
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("name", NormalValue::String("John".to_string()))
+            .unwrap();
         doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, local_blocks) =
@@ -2565,8 +2647,9 @@ fn deep_composite_parent_chain_merges_on_worker_stack() {
             .unwrap()
             .expect("users collection should exist");
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("initial".to_string()));
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("name", NormalValue::String("initial".to_string()))
+            .unwrap();
         doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, local_blocks) =
@@ -3328,31 +3411,7 @@ async fn make_handler_with_unique_index_schema_and_bus() -> (
     db.set_event_bus(bus.clone());
     let db = Arc::new(db);
 
-    db.create_collection(
-        CollectionVersion::new(
-            "Sessions",
-            "v1",
-            "col-sessions",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
-                FieldDescription::new("3", "session_id", FieldKind::string()),
-            ],
-        )
-        .with_index(schema::IndexDescription {
-            name: "idx_session_id_unique".to_string(),
-            id: 1,
-            fields: vec![schema::IndexedFieldDescription {
-                name: "session_id".to_string(),
-                descending: false,
-            }],
-            unique: true,
-            kind: None,
-            auto_generated: false,
-        }),
-    )
-    .await
-    .unwrap();
+    db.create_collection(sessions_collection()).await.unwrap();
 
     let blockstore = Arc::new(DefraBlockstore::new(store, false));
     let handler = DbMergeHandler::new(db, blockstore.clone());
@@ -3372,9 +3431,11 @@ fn unique_index_twin_conflict_publishes_the_pick() {
             ("Alice", "did:key:z6MkrSessionA"),
             ("Bob", "did:key:z6MkrSessionB"),
         ] {
-            let mut doc = Document::new();
-            doc.set("name", NormalValue::String(name.to_string()));
-            doc.set("session_id", NormalValue::String("dup-session".to_string()));
+            let mut doc = Document::new(sessions_collection());
+            doc.set("name", NormalValue::String(name.to_string()))
+                .unwrap();
+            doc.set("session_id", NormalValue::String("dup-session".to_string()))
+                .unwrap();
             let built = db::block::builder::build_blocks_from_document(
                 &doc,
                 &crate::common::schema::version("v1"),
@@ -3430,9 +3491,13 @@ fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canonical_p
             .expect("sessions collection should exist");
 
         // Doc A: first writer of session_id="dup-session" — merges cleanly.
-        let mut doc_a = Document::new();
-        doc_a.set("name", NormalValue::String("Alice".to_string()));
-        doc_a.set("session_id", NormalValue::String("dup-session".to_string()));
+        let mut doc_a = Document::new(collection.schema_arc());
+        doc_a
+            .set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
+        doc_a
+            .set("session_id", NormalValue::String("dup-session".to_string()))
+            .unwrap();
         let result_a = db::block::builder::build_blocks_from_document(
             &doc_a,
             &crate::common::schema::version("v1"),
@@ -3458,9 +3523,13 @@ fn remote_composite_merge_with_unique_index_twin_conflict_merges_via_canonical_p
         // and CID), but the SAME session_id — a genuine cross-document live
         // unique conflict, exactly what a replicated push can carry. #1126
         // converges this instead of rejecting it.
-        let mut doc_b = Document::new();
-        doc_b.set("name", NormalValue::String("Bob".to_string()));
-        doc_b.set("session_id", NormalValue::String("dup-session".to_string()));
+        let mut doc_b = Document::new(collection.schema_arc());
+        doc_b
+            .set("name", NormalValue::String("Bob".to_string()))
+            .unwrap();
+        doc_b
+            .set("session_id", NormalValue::String("dup-session".to_string()))
+            .unwrap();
         let result_b = db::block::builder::build_blocks_from_document(
             &doc_b,
             &crate::common::schema::version("v1"),
@@ -3560,9 +3629,11 @@ fn remote_composite_merge_with_corrupted_unique_index_entry_is_rejected() {
 
         corrupt_unique_index_entry(&handler, &collection, "dup-session").await;
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
-        doc.set("session_id", NormalValue::String("dup-session".to_string()));
+        let mut doc = Document::new(collection.schema_arc());
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
+        doc.set("session_id", NormalValue::String("dup-session".to_string()))
+            .unwrap();
         let result = db::block::builder::build_blocks_from_document(
             &doc,
             &crate::common::schema::version("v1"),
@@ -3611,9 +3682,11 @@ async fn build_session_merge_block(
     name: &str,
     session_id: &str,
 ) -> (MergeBlock, DocID) {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String(name.to_string()));
-    doc.set("session_id", NormalValue::String(session_id.to_string()));
+    let mut doc = Document::new(sessions_collection());
+    doc.set("name", NormalValue::String(name.to_string()))
+        .unwrap();
+    doc.set("session_id", NormalValue::String(session_id.to_string()))
+        .unwrap();
     let result = db::block::builder::build_blocks_from_document(
         &doc,
         &crate::common::schema::version("v1"),
@@ -4161,8 +4234,8 @@ fn first_materialization_and_local_create_arrive_in_commit_order() {
             handler.db().clone(),
             handler.db().new_txn(false).await.unwrap(),
         );
-        let mut document = document::Document::new();
-        document.set("name", "local");
+        let mut document = document::Document::new(users_collection());
+        document.set("name", "local").unwrap();
         let local_id = local
             .create("Users", document)
             .await
@@ -4205,8 +4278,11 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
             .find_collection_by_id("col-agentdocs")
             .unwrap()
             .unwrap();
-        let mut doc =
-            Document::from_json_str(r#"{"agent_did":"did:key:alice","body":"before"}"#).unwrap();
+        let mut doc = Document::from_json_str(
+            r#"{"agent_did":"did:key:alice","body":"before"}"#,
+            collection.schema_arc(),
+        )
+        .unwrap();
         doc.set_collection_version_id("v1");
         let (doc_id, short_id, created) = create_doc_locally(&handler, &collection, &mut doc).await;
         let field = Block::new(
@@ -4281,7 +4357,11 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
         );
         assert_eq!(body.priority, 2);
         assert!(body.value.is_empty());
-        assert!(stored.materialize().unwrap().get("body").is_none());
+        assert!(stored
+            .materialize(collection.schema_arc())
+            .unwrap()
+            .get("body")
+            .is_none());
     })
     .unwrap()
 }

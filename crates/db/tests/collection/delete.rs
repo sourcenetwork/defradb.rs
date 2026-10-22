@@ -12,8 +12,13 @@ fn user_schema() -> CollectionVersion {
         "v-users-1",
         "col-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -24,8 +29,18 @@ fn book_schema() -> CollectionVersion {
         "v-books-1",
         "col-books",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -37,9 +52,19 @@ fn related_schemas() -> Vec<CollectionVersion> {
             "v-users-1",
             "col-users",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "books", FieldKind::relation("col-books", true))
-                    .with_relation_name("user_books"),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "books",
+                    FieldKind::relation("col-books", true),
+                    schema::CType::LwwRegister,
+                )
+                .with_relation_name("user_books"),
             ],
         ),
         CollectionVersion::new(
@@ -47,10 +72,20 @@ fn related_schemas() -> Vec<CollectionVersion> {
             "v-books-1",
             "col-books",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "owner", FieldKind::relation("col-users", false))
-                    .with_relation_name("user_books")
-                    .as_primary(),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "owner",
+                    FieldKind::relation("col-users", false),
+                    schema::CType::LwwRegister,
+                )
+                .with_relation_name("user_books")
+                .as_primary(),
             ],
         ),
     ]

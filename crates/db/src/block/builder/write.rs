@@ -496,11 +496,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 (value_bytes, None)
             };
 
-            let is_counter = doc
-                .fields()
-                .get(field_name)
-                .map(|f| f.crdt_type().is_counter())
-                .unwrap_or(false)
+            let is_counter = doc.crdt_type(field_name).is_some_and(|t| t.is_counter())
                 || doc.get_counter_delta(field_name).is_some();
 
             let nonce: i64 = if is_counter && !is_create {

@@ -97,9 +97,19 @@ fn a_batch_of_hundreds_of_embedded_encrypted_creates_commits() {
             "texts-v1",
             "col-texts",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "text", FieldKind::string()),
-                FieldDescription::new("3", "vector", FieldKind::float64_array()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "text", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new(
+                    "3",
+                    "vector",
+                    FieldKind::float64_array(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         );
         collection

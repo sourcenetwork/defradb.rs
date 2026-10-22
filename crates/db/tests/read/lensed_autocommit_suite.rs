@@ -17,6 +17,7 @@ fn unknown_document_version_passes_through() {
                 "1",
                 "name",
                 schema::FieldKind::string(),
+                schema::CType::LwwRegister,
             )],
         ));
         let history = Some(RapidHashMap::from_iter([
@@ -32,8 +33,8 @@ fn unknown_document_version_passes_through() {
             ),
         ]));
 
-        let mut doc = document::Document::new();
-        doc.set("name", "Alice");
+        let mut doc = document::Document::new(collection.schema_arc());
+        doc.set("name", "Alice").unwrap();
         doc.set_collection_version_id("foreign-v3");
 
         let returned = fetcher
@@ -47,10 +48,7 @@ fn unknown_document_version_passes_through() {
                 .and_then(|value| value.as_str()),
             Some("Alice")
         );
-        assert_eq!(
-            returned.document.collection_version_id(),
-            Some("foreign-v3")
-        );
+        assert_eq!(returned.document.collection_version_id(), Some("foreign-v3"));
         assert!(returned.source_document.is_none());
     })
     .unwrap()

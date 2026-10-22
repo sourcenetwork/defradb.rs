@@ -145,6 +145,7 @@ fn a_commit_while_a_reader_is_still_open_is_refused_and_writes_nothing() {
     let db = users_db().await;
     let registry = DbTransactionRegistry::new(Arc::clone(&db));
     let handle = registry.begin(false).await.unwrap();
+    let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
 
     let reader = in_txn(&registry, &handle, |ctx| {
         Box::pin(async move {
@@ -152,7 +153,7 @@ fn a_commit_while_a_reader_is_still_open_is_refused_and_writes_nothing() {
             mutator
                 .create(
                     "Users",
-                    Document::from_json_str(r#"{"name": "kept-out"}"#).unwrap(),
+                    Document::from_json_str(r#"{"name": "kept-out"}"#, users.clone()).unwrap(),
                 )
                 .await
                 .expect("create");

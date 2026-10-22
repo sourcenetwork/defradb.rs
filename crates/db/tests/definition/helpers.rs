@@ -15,7 +15,12 @@ use storage::field_value::encode_field_value;
 /// breaking index-seek pagination after a reindex.
 #[test]
 fn datetime_field_converts_to_time_not_string() {
-    let field = FieldDescription::new("1", "created_at", FieldKind::datetime());
+    let field = FieldDescription::new(
+        "1",
+        "created_at",
+        FieldKind::datetime(),
+        schema::CType::LwwRegister,
+    );
     let coll = CollectionVersion::new("test", "v1", "coll_test_001", vec![field]);
 
     let json = serde_json::Value::String("2026-05-29T13:06:28Z".to_string());
@@ -36,7 +41,12 @@ fn datetime_field_converts_to_time_not_string() {
 /// magnitude bytes, landing cursor seeks at the wrong end of the index.)
 #[test]
 fn datetime_reindex_encodes_to_same_index_bytes_as_write_path() {
-    let field = FieldDescription::new("1", "created_at", FieldKind::datetime());
+    let field = FieldDescription::new(
+        "1",
+        "created_at",
+        FieldKind::datetime(),
+        schema::CType::LwwRegister,
+    );
     let coll = CollectionVersion::new("test", "v1", "coll_test_001", vec![field]);
 
     let rfc3339 = "2026-05-29T13:06:28Z";
@@ -68,9 +78,14 @@ fn scalar_fields_reindex_to_native_values() {
         "v1",
         "coll_test_001",
         vec![
-            FieldDescription::new("1", "count", FieldKind::int()),
-            FieldDescription::new("2", "ratio", FieldKind::float32()),
-            FieldDescription::new("3", "name", FieldKind::string()),
+            FieldDescription::new("1", "count", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "2",
+                "ratio",
+                FieldKind::float32(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("3", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
 
@@ -94,18 +109,28 @@ fn blob_field_remains_hex_text_after_lens_materialization() {
         "Files",
         "v2",
         "files",
-        vec![FieldDescription::new("1", "data", FieldKind::blob())],
+        vec![FieldDescription::new(
+            "1",
+            "data",
+            FieldKind::blob(),
+            schema::CType::LwwRegister,
+        )],
     ));
     let mut lens_doc = LensDoc::new();
     lens_doc.insert("data".to_string(), serde_json::json!("00ff"));
 
-    let migrated = lens_doc_to_document(lens_doc, &Document::new(), &collection);
+    let migrated = lens_doc_to_document(
+        lens_doc,
+        &Document::new(collection.schema_arc()),
+        &collection,
+    );
     assert_eq!(
         migrated.get("data"),
         Some(&document::NormalValue::String("00ff".to_string()))
     );
 
-    let persisted = Document::from_cbor(&migrated.to_cbor().unwrap()).unwrap();
+    let persisted =
+        Document::from_cbor(&migrated.to_cbor().unwrap(), collection.schema_arc()).unwrap();
     assert_eq!(
         persisted.get("data"),
         Some(&document::NormalValue::String("00ff".to_string()))
@@ -119,12 +144,19 @@ fn lens_removed_field_is_returned_as_explicit_null() {
         "v2",
         "users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     ));
-    let mut original = Document::new();
-    original.set("name", document::NormalValue::String("Alice".to_string()));
+    let mut original = Document::new(collection.schema_arc());
+    original
+        .set("name", document::NormalValue::String("Alice".to_string()))
+        .unwrap();
 
     let migrated = lens_doc_to_document(LensDoc::new(), &original, &collection);
 
@@ -134,7 +166,7 @@ fn lens_removed_field_is_returned_as_explicit_null() {
         "a lens omission must be observable as a clear in the current query"
     );
     assert_eq!(
-        Document::from_cbor(&migrated.to_cbor().unwrap())
+        Document::from_cbor(&migrated.to_cbor().unwrap(), collection.schema_arc())
             .unwrap()
             .get("name"),
         None,
@@ -149,16 +181,66 @@ fn scalar_arrays_reindex_to_native_values() {
         "v1",
         "coll_test_001",
         vec![
-            FieldDescription::new("1", "bools", FieldKind::bool_array()),
-            FieldDescription::new("2", "ints", FieldKind::int_array()),
-            FieldDescription::new("3", "float64s", FieldKind::float64_array()),
-            FieldDescription::new("4", "float32s", FieldKind::float32_array()),
-            FieldDescription::new("5", "strings", FieldKind::string_array()),
-            FieldDescription::new("6", "maybe_bools", FieldKind::nillable_bool_array()),
-            FieldDescription::new("7", "maybe_ints", FieldKind::nillable_int_array()),
-            FieldDescription::new("8", "maybe_float64s", FieldKind::nillable_float64_array()),
-            FieldDescription::new("9", "maybe_float32s", FieldKind::nillable_float32_array()),
-            FieldDescription::new("10", "maybe_strings", FieldKind::nillable_string_array()),
+            FieldDescription::new(
+                "1",
+                "bools",
+                FieldKind::bool_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "ints",
+                FieldKind::int_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "float64s",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "4",
+                "float32s",
+                FieldKind::float32_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "5",
+                "strings",
+                FieldKind::string_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "6",
+                "maybe_bools",
+                FieldKind::nillable_bool_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "7",
+                "maybe_ints",
+                FieldKind::nillable_int_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "8",
+                "maybe_float64s",
+                FieldKind::nillable_float64_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "9",
+                "maybe_float32s",
+                FieldKind::nillable_float32_array(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "10",
+                "maybe_strings",
+                FieldKind::nillable_string_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
 

@@ -132,7 +132,7 @@ async fn collect_legacy_documents(
                 .get(&legacy_deleted_key(collection.collection_id(), old_doc_id))
                 .await
                 .map_err(Error::Storage)?;
-            Document::from_storage_cbor(&pair.value)
+            Document::from_storage_cbor(&pair.value, collection.schema_arc())
                 .map_err(|error| Error::document_at_key(&pair.key, error))?;
 
             result.push(LegacyDocument {

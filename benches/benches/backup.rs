@@ -35,10 +35,15 @@ fn collection_version() -> CollectionVersion {
         "bafkbackup",
         "backup",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "city", FieldKind::string()),
-            FieldDescription::new("4", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "city", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("4", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -57,10 +62,13 @@ async fn fixture(count: usize) -> Fixture {
 
     let mutator = Arc::new(db::write::autocommit::AutoCommitMutator::new(db.clone()));
     for seq in 0..count {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String(format!("person-{seq}")));
-        doc.set("city", NormalValue::String(format!("city-{}", seq % 10)));
-        doc.set("age", NormalValue::Int((seq % 80) as i64 + 18));
+        let mut doc = Document::new(collection_version());
+        doc.set("name", NormalValue::String(format!("person-{seq}")))
+            .unwrap();
+        doc.set("city", NormalValue::String(format!("city-{}", seq % 10)))
+            .unwrap();
+        doc.set("age", NormalValue::Int((seq % 80) as i64 + 18))
+            .unwrap();
         mutator
             .create(COLLECTION, doc)
             .await

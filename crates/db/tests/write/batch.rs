@@ -16,8 +16,13 @@ fn branchable_test_collection() -> CollectionVersion {
         "v1",
         "col-test-branchable",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "x", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "x", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .as_branchable()
@@ -36,7 +41,7 @@ fn batch_create_publishes_event_on_commit() {
         let txn = db.new_txn(false).await.expect("new_txn");
         let mutator = BatchMutator::new(Arc::clone(&db), Arc::new(txn)).await;
 
-        let doc = Document::from_json_str(r#"{"x": 1}"#).expect("doc");
+        let doc = Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc");
         let result = mutator.create("TestDoc", doc).await.expect("create");
 
         // Before commit: no event should have fired
@@ -87,7 +92,7 @@ fn batch_create_registers_external_acp_before_ordered_event() {
             Some(owner.to_string()),
             mutator.create(
                 "TestDoc",
-                Document::from_json_str(r#"{"x": 1}"#).expect("doc"),
+                Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc"),
             ),
         )
         .await
@@ -166,7 +171,7 @@ fn batch_delete_branchable_surfaces_collection_block_for_broadcast() {
         let txn = db.new_txn(false).await.expect("new_txn");
         let mutator = BatchMutator::new(Arc::clone(&db), Arc::new(txn)).await;
 
-        let doc = Document::from_json_str(r#"{"x": 1}"#).expect("doc");
+        let doc = Document::from_json_str(r#"{"x": 1}"#, test_collection()).expect("doc");
         let create_result = mutator.create("TestBranchable", doc).await.expect("create");
         let doc_id = create_result.doc_id.clone();
 

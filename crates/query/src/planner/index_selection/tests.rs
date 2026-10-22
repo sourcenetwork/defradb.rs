@@ -560,6 +560,7 @@ fn test_filter_to_scan_top_level_json_lte_null_uses_index() {
         "custom",
         "custom",
         FieldKind::Scalar(ScalarKind::NillableJson),
+        schema::CType::LwwRegister,
     )];
 
     let params = filter_to_index_scan(&filter, &index, None, &fields, None, 0).unwrap();

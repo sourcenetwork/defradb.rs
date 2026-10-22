@@ -7,7 +7,7 @@ mod conversion;
 mod delta;
 
 use cid::Cid;
-use document::Document;
+use document::CommitRow;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashSet};
 use std::str::FromStr;
 use storage::corekv::{IterOptions, Store};
@@ -52,7 +52,7 @@ impl<S: Store> CommitsFetcher<S> {
     }
 
     /// Fetch all commits matching the given options
-    pub async fn fetch_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<Document>> {
+    pub async fn fetch_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<CommitRow>> {
         let txn = self.txn.as_deref().ok_or(Error::TxnNotActive)?;
 
         if let Some(ref cid_str) = options.cid {
@@ -75,7 +75,7 @@ impl<S: Store> CommitsFetcher<S> {
         txn: &DbTxn<S>,
         cid_str: &str,
         options: &CommitsQueryOptions,
-    ) -> Result<Vec<Document>> {
+    ) -> Result<Vec<CommitRow>> {
         tracing::debug!(cid = %cid_str, "Fetching commit by CID");
         let cid = Cid::from_str(cid_str).map_err(|e| {
             tracing::error!(cid = %cid_str, error = %e, "Invalid CID format");
@@ -139,7 +139,7 @@ impl<S: Store> CommitsFetcher<S> {
         &self,
         txn: &DbTxn<S>,
         options: &CommitsQueryOptions,
-    ) -> Result<Vec<Document>> {
+    ) -> Result<Vec<CommitRow>> {
         let head_cids = self.get_head_cids(txn, options).await?;
 
         let mut commits = Vec::new();
@@ -200,7 +200,7 @@ impl<S: Store> CommitsFetcher<S> {
         &self,
         txn: &DbTxn<S>,
         options: &CommitsQueryOptions,
-    ) -> Result<Vec<Document>> {
+    ) -> Result<Vec<CommitRow>> {
         let doc_id = options.doc_id.as_ref().ok_or_else(|| {
             Error::Serialization("doc_id is required for height range scans".to_string())
         })?;
@@ -273,7 +273,7 @@ impl<S: Store> CommitsFetcher<S> {
     /// 1. Group by docID first (documents in order they were created/discovered)
     /// 2. Within each document, sort by field ID: regular fields first (by name),
     ///    composite field (_C) last
-    pub fn sort_commits_go_order(&self, commits: &mut [Document]) {
+    pub fn sort_commits_go_order(&self, commits: &mut [CommitRow]) {
         let mut doc_order = rapidhash::RapidHashMap::new();
         for commit in commits.iter() {
             let doc_id = commit
@@ -309,7 +309,7 @@ impl<S: Store> CommitsFetcher<S> {
         txn: &DbTxn<S>,
         block: &defra_core::block::Block,
         remaining_depth: u64,
-        commits: &mut Vec<Document>,
+        commits: &mut Vec<CommitRow>,
         options: &CommitsQueryOptions,
         doc_id: Option<&str>,
     ) -> Result<()> {

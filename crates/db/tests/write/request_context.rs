@@ -21,7 +21,7 @@ fn creates_updates_and_deletes_collect_into_their_requests_session() {
             .create_as(
                 &context,
                 "TestDoc",
-                Document::from_json_str(r#"{"x":1}"#).unwrap(),
+                Document::from_json_str(r#"{"x":1}"#, test_collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -31,7 +31,7 @@ fn creates_updates_and_deletes_collect_into_their_requests_session() {
 
         batch_signing::batch_start(session);
         let mut doc = created.document;
-        doc.set("x", NormalValue::Int(2));
+        doc.set("x", NormalValue::Int(2)).unwrap();
         let updated = mutator
             .update_as(
                 &context,
@@ -59,7 +59,7 @@ fn creates_updates_and_deletes_collect_into_their_requests_session() {
             .create_as(
                 &RequestContext::default(),
                 "TestDoc",
-                Document::from_json_str(r#"{"x":3}"#).unwrap(),
+                Document::from_json_str(r#"{"x":3}"#, test_collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -175,7 +175,7 @@ fn a_create_registers_with_the_external_acp_using_its_requests_bearer() {
         let (db, _) = make_test_db_with_bus().await;
         let mut schema = test_collection();
         schema.policy = Some(schema::PolicyDescription::new("bearer-policy", "TestDoc"));
-        db.create_collection(schema).await.unwrap();
+        db.create_collection(schema.clone()).await.unwrap();
         let observer = std::sync::Arc::new(BoundObserver::default());
         db.set_document_acp(std::sync::Arc::new(acp::ExternalDocumentAcp::new(
             observer.clone(),
@@ -190,7 +190,7 @@ fn a_create_registers_with_the_external_acp_using_its_requests_bearer() {
             .create_as(
                 &context,
                 "TestDoc",
-                Document::from_json_str(r#"{"x":1}"#).unwrap(),
+                Document::from_json_str(r#"{"x":1}"#, schema).unwrap(),
             )
             .await
             .unwrap();

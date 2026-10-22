@@ -273,9 +273,19 @@ mod tests {
             "author-version",
             "author-id",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
-                FieldDescription::new("3", "published", FieldKind::relation("Book", true)),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new(
+                    "3",
+                    "published",
+                    FieldKind::relation("Book", true),
+                    schema::CType::LwwRegister,
+                ),
             ],
         );
         let mut select = Select::new("Author");

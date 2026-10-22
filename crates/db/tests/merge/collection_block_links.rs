@@ -39,8 +39,13 @@ async fn node() -> (
             COLLECTION_ID,
             COLLECTION_ID,
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "body", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
             ],
         )
         .as_branchable(),

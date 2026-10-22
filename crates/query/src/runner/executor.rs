@@ -736,9 +736,9 @@ mod tests {
         }
 
         fn make_doc(&self, name: String) -> Document {
-            let mut doc = Document::new();
+            let mut doc = crate::test_utils::test_doc(&["name"]);
             doc.set_id(document::DocID::new_v0_from_seed(&name));
-            doc.set("name", serde_json::Value::String(name));
+            doc.set("name", serde_json::Value::String(name)).unwrap();
             doc
         }
     }
@@ -803,9 +803,10 @@ mod tests {
     }
 
     fn make_users_doc(name: &str) -> Document {
-        let mut doc = Document::new();
+        let mut doc = crate::test_utils::test_doc(&["name"]);
         doc.set_id(document::DocID::new_v0_from_seed(name));
-        doc.set("name", serde_json::Value::String(name.to_string()));
+        doc.set("name", serde_json::Value::String(name.to_string()))
+            .unwrap();
         doc
     }
 

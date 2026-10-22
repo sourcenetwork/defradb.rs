@@ -568,7 +568,12 @@ impl CollectionBuilder {
         name: impl Into<String>,
         kind: FieldKind,
     ) -> Self {
-        self.fields.push(FieldDescription::new(id, name, kind));
+        self.fields.push(FieldDescription::new(
+            id,
+            name,
+            kind,
+            crate::CType::LwwRegister,
+        ));
         self
     }
 

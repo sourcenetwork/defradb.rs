@@ -15,13 +15,12 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 /// Which CRDT to use for a field
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum CType {
     /// No CRDT (for relations and special fields)
     None,
-    /// Last-Write-Wins Register (default for most fields)
-    #[default]
+    /// Last-Write-Wins Register
     LwwRegister,
     /// Object CRDT (for embedded objects)
     Object,
@@ -87,8 +86,8 @@ impl<'de> Deserialize<'de> for CType {
                 "PCounter" | "pcounter" | "P_COUNTER" => Ok(CType::PCounter),
                 _ => Err(de::Error::custom("unknown crdt string representation")),
             },
-            // Null defaults to LwwRegister
-            serde_json::Value::Null => Ok(CType::LwwRegister),
+            // Null decodes as Go's zero value
+            serde_json::Value::Null => Ok(CType::None),
             _ => Err(de::Error::custom("CType must be a number or string")),
         }
     }
@@ -165,11 +164,6 @@ impl fmt::Display for CType {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_default() {
-        assert_eq!(CType::default(), CType::LwwRegister);
-    }
 
     #[test]
     fn test_counter_compatibility() {

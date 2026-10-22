@@ -34,8 +34,18 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -50,8 +60,9 @@ async fn populate(db: &DB<RegolithStore>, count: usize) -> Vec<(u64, String)> {
         let collection = collection();
         for i in 0..count {
             let title = format!("doc-{i}");
-            let mut doc = Document::new();
-            doc.set("title", NormalValue::String(title.clone()));
+            let mut doc = Document::new(collection.schema_arc());
+            doc.set("title", NormalValue::String(title.clone()))
+                .unwrap();
             // `create_with_datastore` expects the document to carry its id
             // already; a fixed uuid per index keeps the corpus reproducible.
             doc.set_id(doc_id(i));

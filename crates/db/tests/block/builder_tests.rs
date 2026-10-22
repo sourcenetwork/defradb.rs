@@ -22,9 +22,10 @@ fn make_test_blockstore() -> Arc<DefraBlockstore<RegolithStore>> {
 #[test]
 fn test_build_blocks_creates_proper_structure() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
-        doc.set("age", NormalValue::Int(30));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "age"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(30)).unwrap();
 
         let blockstore = make_test_blockstore();
         let collection_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
@@ -57,8 +58,9 @@ fn test_build_blocks_creates_proper_structure() {
 #[test]
 fn test_build_blocks_derives_doc_id_from_genesis_cid() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Dana".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Dana".to_string()))
+            .unwrap();
         let blockstore = make_test_blockstore();
 
         let result = build_blocks_from_document(
@@ -77,8 +79,9 @@ fn test_build_blocks_derives_doc_id_from_genesis_cid() {
 #[test]
 fn test_field_block_contains_lww_delta() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Bob".to_string()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Bob".to_string()))
+            .unwrap();
 
         let blockstore = make_test_blockstore();
         let collection_version_id = "schema-v1";
@@ -112,9 +115,10 @@ fn test_field_block_contains_lww_delta() {
 #[test]
 fn test_composite_block_has_field_links() {
     workers::block_on(async {
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Charlie".to_string()));
-        doc.set("age", NormalValue::Int(25));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "age"]));
+        doc.set("name", NormalValue::String("Charlie".to_string()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(25)).unwrap();
 
         let blockstore = make_test_blockstore();
 
@@ -153,8 +157,9 @@ fn test_composite_block_has_field_links() {
 
 #[test]
 fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries() {
-    let mut doc = Document::new();
-    doc.set("secret", NormalValue::String("classified".to_string()));
+    let mut doc = Document::new(crate::common::schema::open_collection(&["secret"]));
+    doc.set("secret", NormalValue::String("classified".to_string()))
+        .unwrap();
 
     let enc = EncryptionConfig {
         encrypt_doc: false,

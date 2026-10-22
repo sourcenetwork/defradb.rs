@@ -23,12 +23,12 @@ pub struct PushExistingDocsSeOptions<'a> {
 
 async fn document_matches_filter<R: Reader + ?Sized>(
     datastore: &R,
-    collection_id: &str,
+    collection: &crate::collection::Collection,
     doc_short_id: u64,
     filter: &p2p::ReplicationFilter,
     matcher: &dyn p2p::replicator::ReplicationFilterMatcher,
 ) -> Result<bool, String> {
-    let mut doc_key = format!("/d/{}/", collection_id).into_bytes();
+    let mut doc_key = format!("/d/{}/", collection.collection_id()).into_bytes();
     doc_key.extend_from_slice(&storage::keys::doc_id_index::encode_doc_short_id(
         doc_short_id,
     ));
@@ -40,7 +40,7 @@ async fn document_matches_filter<R: Reader + ?Sized>(
         return Ok(false);
     };
 
-    let doc = document::Document::from_storage_cbor(&doc_data)
+    let doc = document::Document::from_storage_cbor(&doc_data, collection.schema_arc())
         .map_err(|e| format!("failed to decode document for replication filter: {}", e))?;
     let document_json = serde_json::Value::Object(
         doc.to_map()
@@ -296,14 +296,8 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
             }
 
             if let Some(filter) = filters.get(collection.collection_id()) {
-                if !document_matches_filter(
-                    &datastore,
-                    collection.collection_id(),
-                    *doc_short_id,
-                    filter,
-                    matcher,
-                )
-                .await?
+                if !document_matches_filter(&datastore, &collection, *doc_short_id, filter, matcher)
+                    .await?
                 {
                     continue;
                 }
@@ -595,7 +589,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 if let Some(filter) = filters.get(collection.collection_id()) {
                     if !document_matches_filter(
                         &datastore,
-                        collection.collection_id(),
+                        &collection,
                         *doc_short_id,
                         filter,
                         matcher,
@@ -612,7 +606,10 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     _ => continue,
                 };
 
-                let doc = match document::Document::from_storage_cbor(&doc_data) {
+                let doc = match document::Document::from_storage_cbor(
+                    &doc_data,
+                    collection.schema_arc(),
+                ) {
                     Ok(d) => d,
                     Err(e) => {
                         tracing::warn!(doc_id = %doc_id, error = %e, "SE: failed to deserialize document");
@@ -739,9 +736,7 @@ pub async fn retry_doc<S: Store + 'static, T: P2PTransport>(
         let datastore = txn
             .datastore()
             .map_err(|e| format!("failed to get datastore: {}", e))?;
-        if !document_matches_filter(&datastore, collection_id, doc_short_id, filter, matcher)
-            .await?
-        {
+        if !document_matches_filter(&datastore, &collection, doc_short_id, filter, matcher).await? {
             peerstore
                 .complete_retry_scope(
                     peer_id.as_str(),

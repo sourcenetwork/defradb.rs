@@ -110,7 +110,7 @@ pub fn lens_doc_to_document(
     original_doc: &Document,
     collection: &Collection,
 ) -> Document {
-    let mut doc = Document::new();
+    let mut doc = Document::new(collection.schema_arc());
 
     if let Some(id) = original_doc.id() {
         doc.set_id(id.clone());
@@ -121,8 +121,8 @@ pub fn lens_doc_to_document(
             continue;
         }
         if let Some(value) = lens_doc.remove(&field.name) {
-            doc.set(
-                &field.name,
+            doc.set_unchecked(
+                field.name.clone(),
                 json_to_native_value(&value, &field.name, collection.schema()),
             );
         } else if original_doc.get(&field.name).is_some() {
@@ -130,7 +130,7 @@ pub fn lens_doc_to_document(
             // explicit nil assignment. Rust omits nils from CBOR storage, but
             // retaining Null in the returned in-memory document preserves the
             // same clear semantics for the query that performed the migration.
-            doc.set(&field.name, document::NormalValue::Null);
+            doc.set_unchecked(field.name.clone(), document::NormalValue::Null);
         }
     }
 
@@ -271,7 +271,7 @@ pub(crate) async fn cache_migrated_document_with_indexes(
     let Some(old_data) = datastore.get(&key).await.map_err(Error::Storage)? else {
         return Ok(false);
     };
-    let mut old_doc = Document::from_storage_cbor(&old_data)?;
+    let mut old_doc = Document::from_storage_cbor(&old_data, collection.schema_arc())?;
     old_doc.set_id(doc_id.clone());
 
     collection

@@ -27,7 +27,8 @@ async fn make_handler_with_flags(
     immutable_flags: bool,
 ) -> (Handler, Arc<DefraBlockstore<RegolithStore>>, Collection) {
     let field = |id: &str, name: &str| {
-        let field = FieldDescription::new(id, name, FieldKind::string());
+        let field =
+            FieldDescription::new(id, name, FieldKind::string(), schema::CType::LwwRegister);
         if immutable_flags {
             field.as_immutable()
         } else {
@@ -41,9 +42,14 @@ async fn make_handler_with_flags(
         "v1",
         COLLECTION_ID,
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
             field("2", "author"),
-            FieldDescription::new("3", "body", FieldKind::string()),
+            FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
             field("4", "kind"),
         ],
     ))
@@ -61,11 +67,13 @@ async fn make_handler_with_flags(
     )
 }
 
-fn record() -> Document {
-    let mut doc = Document::new();
-    doc.set("author", NormalValue::String("did:key:alice".into()));
-    doc.set("body", NormalValue::String("hello".into()));
-    doc.set("kind", NormalValue::String("note".into()));
+fn record(collection: &Collection) -> Document {
+    let mut doc = Document::new(collection.schema_arc());
+    doc.set("author", NormalValue::String("did:key:alice".into()))
+        .unwrap();
+    doc.set("body", NormalValue::String("hello".into()))
+        .unwrap();
+    doc.set("kind", NormalValue::String("note".into())).unwrap();
     doc.set_collection_version_id("v1");
     doc
 }
@@ -141,7 +149,7 @@ async fn put_genesis(
 fn create_writes_immutable_fields_in_one_block() {
     workers::block_on(async {
         let (handler, blockstore, collection) = make_handler().await;
-        let mut doc = record();
+        let mut doc = record(&collection);
 
         let (_, _, result) =
             super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
@@ -183,11 +191,12 @@ fn create_writes_immutable_fields_in_one_block() {
 fn update_writes_no_block_for_unchanged_immutable_field() {
     workers::block_on(async {
         let (handler, blockstore, collection) = make_handler().await;
-        let mut doc = record();
+        let mut doc = record(&collection);
         let (_, short_id, created) =
             super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
 
-        doc.set("body", NormalValue::String("edited".into()));
+        doc.set("body", NormalValue::String("edited".into()))
+            .unwrap();
         let modified: rapidhash::RapidHashSet<String> =
             ["author", "body"].into_iter().map(String::from).collect();
         let txn = handler.db().new_txn(false).await.unwrap();
@@ -223,7 +232,7 @@ fn update_writes_no_block_for_unchanged_immutable_field() {
 fn remote_genesis_applies_immutable_block_fields() {
     workers::block_on(async {
         let (local, local_blocks, local_collection) = make_handler().await;
-        let doc = record();
+        let doc = record(&local_collection);
         let built = db::block::builder::build_blocks_from_document(
             &doc,
             local_collection.schema(),
@@ -342,9 +351,11 @@ fn peer_without_immutable_flags_merges_and_chains_its_updates() {
                 .unwrap()
                 .expect("merged document has a short id")
                 .doc_short_id;
-            let mut update = Document::new();
+            let mut update = Document::new(collection.schema_arc());
             update.set_id(doc_id.clone());
-            update.set("author", NormalValue::String(author.into()));
+            update
+                .set("author", NormalValue::String(author.into()))
+                .unwrap();
             let modified: rapidhash::RapidHashSet<String> =
                 ["author".to_string()].into_iter().collect();
             let result = db::block::builder::write_document_blocks(
@@ -410,7 +421,7 @@ fn peer_without_immutable_flags_merges_and_chains_its_updates() {
 fn later_immutable_block_cannot_change_a_value() {
     workers::block_on(async {
         let (handler, blockstore, collection) = make_handler().await;
-        let mut doc = record();
+        let mut doc = record(&collection);
         let (doc_id, _, created) =
             super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
 
@@ -471,8 +482,9 @@ fn later_immutable_block_cannot_change_a_value() {
 fn batch_and_single_create_build_the_same_genesis() {
     workers::block_on(async {
         let (handler, _, collection) = make_handler().await;
-        let doc = record();
-        let identity = db::block::builder::DocRef::new(collection.resolved_root_id(), 7);
+        let doc = record(&collection);
+        let identity =
+            db::block::builder::DocRef::new(collection.resolved_root_id(), 7);
 
         let computed = db::block::builder::compute_document_blocks(
             &doc,
@@ -514,8 +526,18 @@ fn a_field_named_like_the_immutable_link_is_rejected() {
                 "v1",
                 "col-clash",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", IMMUTABLE_LINK_NAME, FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        IMMUTABLE_LINK_NAME,
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             ))
             .await;
@@ -528,13 +550,13 @@ fn a_field_named_like_the_immutable_link_is_rejected() {
 async fn commits(
     handler: &Handler,
     options: db::read::commits::CommitsQueryOptions,
-) -> Vec<Document> {
+) -> Vec<document::CommitRow> {
     let txn = handler.db().new_txn(true).await.unwrap();
     let fetcher = db::read::commits::CommitsFetcher::new(Arc::new(txn));
     fetcher.fetch_commits(&options).await.unwrap()
 }
 
-fn commit_row(commit: &Document) -> (String, String, Option<String>) {
+fn commit_row(commit: &document::CommitRow) -> (String, String, Option<String>) {
     let text = |key: &str| commit.get(key).and_then(|v| v.as_str()).map(str::to_string);
     (
         text("cid").unwrap(),
@@ -552,7 +574,7 @@ fn base64_cbor(value: &str) -> String {
 fn commits_for_an_immutable_field_return_the_immutable_block() {
     workers::block_on(async {
         let (handler, blockstore, collection) = make_handler().await;
-        let mut doc = record();
+        let mut doc = record(&collection);
         let (doc_id, _, created) =
             super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
         let immutable_cid = load(&blockstore, &created.cid)
@@ -591,7 +613,7 @@ fn commits_for_an_immutable_field_return_the_immutable_block() {
 fn height_one_commits_carry_every_immutable_field_value() {
     workers::block_on(async {
         let (handler, _, collection) = make_handler().await;
-        let mut doc = record();
+        let mut doc = record(&collection);
         let (doc_id, _, _) =
             super::merge_handler_tests::create_doc_locally(&handler, &collection, &mut doc).await;
 

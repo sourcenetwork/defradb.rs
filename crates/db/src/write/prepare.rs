@@ -528,7 +528,8 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                 {
                     fields.insert(embedding.field_name.clone());
                     if doc.get(&embedding.field_name).is_none() {
-                        doc.set(&embedding.field_name, document::NormalValue::Null);
+                        doc.set(&embedding.field_name, document::NormalValue::Null)
+                            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
                     }
                 }
             }

@@ -35,13 +35,16 @@ async fn delete_index_removes_its_entries() {
     .await
     .unwrap();
     let mutator = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
+    let note = db.get_collection("Note").unwrap().unwrap().schema_arc();
     for i in 0..5 {
-        let mut doc = Document::new();
-        doc.set("title", NormalValue::String(format!("n{i}")));
+        let mut doc = Document::new(note.clone());
+        doc.set("title", NormalValue::String(format!("n{i}")))
+            .unwrap();
         doc.set(
             "embedding",
             NormalValue::Float32Array(vec![i as f32, 1.0, 0.0]),
-        );
+        )
+        .unwrap();
         mutator.create("Note", doc).await.unwrap();
     }
     mutator.take_txn().await.unwrap().commit().await.unwrap();

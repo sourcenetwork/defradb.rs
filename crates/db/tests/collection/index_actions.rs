@@ -17,8 +17,18 @@ fn recaching_and_activation_preserve_pending_index_restrictions() {
                 "v1",
                 "notes",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "title", FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "title",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             )
             .with_index(IndexDescription::new("by_title").with_field("title", false)),

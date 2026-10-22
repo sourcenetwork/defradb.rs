@@ -133,8 +133,9 @@ mod tests {
     fn documents(count: usize) -> Vec<(Document, DocRef)> {
         (0..count)
             .map(|at| {
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String(format!("user-{at}")));
+                let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+                doc.set("name", NormalValue::String(format!("user-{at}")))
+                    .unwrap();
                 (doc, DocRef::new(1, at as u64 + 1))
             })
             .collect()

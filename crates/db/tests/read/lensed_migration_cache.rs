@@ -18,6 +18,7 @@ fn users(version_id: &str) -> Collection {
             "1",
             "name",
             schema::FieldKind::string(),
+            schema::CType::LwwRegister,
         )],
     ))
 }

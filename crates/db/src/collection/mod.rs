@@ -328,6 +328,11 @@ impl Collection {
         &self.def
     }
 
+    /// The collection definition, shared without copying.
+    pub fn schema_arc(&self) -> Arc<CollectionVersion> {
+        self.def.clone()
+    }
+
     pub(crate) fn definition_wire(&self) -> Option<&[u8]> {
         self.definition_wire.as_deref()
     }

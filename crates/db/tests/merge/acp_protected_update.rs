@@ -65,21 +65,33 @@ impl Fixture {
                 "v1",
                 "col-users",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             )
             .with_policy(PolicyDescription::new("policy-1", "users")),
         )
         .await
         .unwrap();
+        let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let acp = Arc::new(LocalDocumentACP::new(Arc::new(MemoryAcpStore::new())));
         let handler = AcpMergeHandler::new(Arc::new(DbMergeHandler::new(db, blockstore.clone())))
             .with_document_acp(acp.clone());
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
+        let mut doc = Document::new(users);
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
         let genesis = db::block::builder::build_blocks_from_document(
             &doc,
             &crate::common::schema::version("v1"),

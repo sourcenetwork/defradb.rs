@@ -483,11 +483,21 @@ mod tests {
             "v1",
             "coll-1",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
-                FieldDescription::new("3", "age", FieldKind::int()),
-                FieldDescription::new("4", "active", FieldKind::bool()),
-                FieldDescription::new("5", "tags", FieldKind::string_array()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+                FieldDescription::new("4", "active", FieldKind::bool(), schema::CType::LwwRegister),
+                FieldDescription::new(
+                    "5",
+                    "tags",
+                    FieldKind::string_array(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         )
     }
@@ -551,8 +561,18 @@ mod tests {
             "v1",
             "coll-1",
             vec![
-                FieldDescription::new("1", "name", FieldKind::Scalar(ScalarKind::String)),
-                FieldDescription::new("2", "tags", FieldKind::string_array()),
+                FieldDescription::new(
+                    "1",
+                    "name",
+                    FieldKind::Scalar(ScalarKind::String),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "tags",
+                    FieldKind::string_array(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         );
         let schema = generate_schema(&collection, &[&collection]).unwrap();
@@ -762,7 +782,12 @@ mod tests {
             "User",
             "v1",
             "coll-users",
-            vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
         );
 
         let collections: Vec<&CollectionVersion> = vec![&user_collection];

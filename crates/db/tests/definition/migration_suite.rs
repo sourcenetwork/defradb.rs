@@ -280,9 +280,19 @@ fn indexed_users_schema() -> CollectionVersion {
         "users-v1",
         "users-collection",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "verified", FieldKind::bool()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "verified",
+                FieldKind::bool(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     schema.indexes =
@@ -292,8 +302,10 @@ fn indexed_users_schema() -> CollectionVersion {
 }
 
 async fn seed_user(db: &Arc<DB<RegolithStore>>) -> document::DocID {
-    let mut doc = document::Document::new();
-    doc.set("name", document::NormalValue::String("Alice".to_string()));
+    let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
+    let mut doc = document::Document::new(users);
+    doc.set("name", document::NormalValue::String("Alice".to_string()))
+        .unwrap();
     AutoCommitMutator::new(db.clone())
         .create("Users", doc)
         .await
@@ -336,11 +348,12 @@ async fn seed_old_user(
         collection.schema(),
     )
     .unwrap();
-    let mut doc = document::Document::new();
+    let mut doc = document::Document::new(collection.schema_arc());
     let seed = format!("late-{name}");
     let doc_id = document::DocID::new_v0_from_seed(&seed);
     doc.set_id(doc_id.clone());
-    doc.set("name", document::NormalValue::String(name.to_string()));
+    doc.set("name", document::NormalValue::String(name.to_string()))
+        .unwrap();
     doc.set_collection_version_id(version_id);
 
     let txn = db.new_txn(false).await.unwrap();
@@ -545,10 +558,15 @@ fn eager_materialize_restamps_transformless_paths() {
         );
         assert_eq!(db.materialize_collection("Users").await.unwrap(), 0);
         assert_eq!(namespace_counts(&db).await, before_counts);
-        let mut update = document::Document::new();
+        let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
+        let mut update = document::Document::new(users);
         update.set_id(doc_id.clone());
-        update.set("name", document::NormalValue::String("Bob".into()));
-        update.set("verified", document::NormalValue::Bool(true));
+        update
+            .set("name", document::NormalValue::String("Bob".into()))
+            .unwrap();
+        update
+            .set("verified", document::NormalValue::Bool(true))
+            .unwrap();
         AutoCommitMutator::new(db.clone())
             .update(
                 "Users",
@@ -1068,9 +1086,12 @@ fn concurrent_update_wins_over_stale_lazy_write_back() {
         .await
         .expect("lensed read reached the transform");
 
-        let mut update = document::Document::new();
+        let users = db.get_collection("Users").unwrap().unwrap().schema_arc();
+        let mut update = document::Document::new(users);
         update.set_id(doc_id.clone());
-        update.set("name", document::NormalValue::String("Bob".to_string()));
+        update
+            .set("name", document::NormalValue::String("Bob".to_string()))
+            .unwrap();
         AutoCommitMutator::new(db.clone())
             .update(
                 "Users",
@@ -1382,7 +1403,8 @@ fn eager_materialization_retries_from_the_concurrent_document() {
                         .await
                         .unwrap()
                         .unwrap();
-                    doc.set("name", document::NormalValue::String("Concurrent".into()));
+                    doc.set("name", document::NormalValue::String("Concurrent".into()))
+                        .unwrap();
                     collection
                         .save_with_datastore(&data, &doc, short)
                         .await

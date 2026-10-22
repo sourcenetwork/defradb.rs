@@ -21,9 +21,14 @@ fn test_schema() -> Vec<CollectionVersion> {
         "v1",
         "col-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )]
 }
@@ -46,10 +51,11 @@ async fn seed_user_in_txn(
     age: Option<i64>,
 ) -> (db::txn::DbTxn<RegolithStore>, document::DocID) {
     let mutator = db::write::doc::DbDocMutator::new(db.clone(), txn);
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String(name.to_string()));
+    let mut doc = Document::new(test_schema().remove(0));
+    doc.set("name", NormalValue::String(name.to_string()))
+        .unwrap();
     if let Some(age) = age {
-        doc.set("age", NormalValue::Int(age));
+        doc.set("age", NormalValue::Int(age)).unwrap();
     }
     let result = mutator.create("Users", doc).await.unwrap();
     let txn = mutator.take_txn().await.unwrap();
@@ -1164,7 +1170,12 @@ fn test_new_transaction_sees_recently_created_collection() {
             "NewCollection",
             "v1",
             "col-new",
-            vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
         ))
         .await
         .unwrap();
@@ -1265,7 +1276,12 @@ fn test_collections_snapshot_is_isolated_from_modifications() {
             "Posts",
             "v1",
             "col-posts",
-            vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
         ))
         .await
         .unwrap();

@@ -17,8 +17,9 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         .find_collection_by_id("col-users")
         .unwrap()
         .unwrap();
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String("initial".to_string()));
+    let mut doc = Document::new(collection.schema_arc());
+    doc.set("name", NormalValue::String("initial".to_string()))
+        .unwrap();
     doc.set_collection_version_id("v1");
     let (doc_id, _, initial) = create_doc_locally(&handler, &collection, &mut doc).await;
     let mut field_heads = initial.field_cids;

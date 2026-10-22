@@ -301,7 +301,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             if let Some(delta) = attempt.input.get_counter_delta(field).cloned() {
                 current_doc.set_counter_delta(field.clone(), delta);
             } else if let Some(value) = attempt.input.get(field).cloned() {
-                current_doc.set(field.clone(), value);
+                current_doc
+                    .set(field.clone(), value)
+                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
             }
         }
         if let Some(prepared) = attempt.input.write_preparation().cloned() {

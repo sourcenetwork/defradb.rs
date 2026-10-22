@@ -131,6 +131,12 @@ pub use schema::CollectionVersion;
 mod worker_io;
 
 #[cfg(test)]
+#[path = "../tests/common/schema.rs"]
+#[allow(dead_code)]
+mod test_schemas;
+
+#[cfg(test)]
 mod common {
+    pub(crate) use super::test_schemas as schema;
     pub(crate) use super::worker_io;
 }

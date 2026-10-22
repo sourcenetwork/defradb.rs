@@ -30,9 +30,24 @@ fn schema() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
-            FieldDescription::new("3", "embedding", FieldKind::float64_array()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "embedding",
+                FieldKind::float64_array(),
+                schema::CType::LwwRegister,
+            ),
         ],
     );
     version.indexes = vec![IndexDescription {
@@ -83,9 +98,11 @@ async fn populated() -> (Arc<DB<RegolithStore>>, u32) {
     let txn = db.new_txn(false).await.unwrap();
     let mutator = DbDocMutator::new(db.clone(), txn);
     for i in 0..DOCUMENTS {
-        let mut doc = Document::new();
-        doc.set("title", NormalValue::String(format!("doc-{i}")));
-        doc.set("embedding", NormalValue::Float64Array(vector_at(i)));
+        let mut doc = Document::new(schema());
+        doc.set("title", NormalValue::String(format!("doc-{i}")))
+            .unwrap();
+        doc.set("embedding", NormalValue::Float64Array(vector_at(i)))
+            .unwrap();
         mutator
             .create(COLLECTION, doc)
             .await

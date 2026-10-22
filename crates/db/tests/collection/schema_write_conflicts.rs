@@ -15,8 +15,18 @@ fn schema(name: &str, version: &str, id: &str) -> CollectionVersion {
         version,
         id,
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "value", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "value",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -30,8 +40,12 @@ fn is_txn_conflict(error: db::Error) -> bool {
 
 async fn stage_create(db: &Arc<DB<RegolithStore>>, collection: &str) -> db::DbTxn<RegolithStore> {
     let mutator = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-    let mut doc = Document::new();
-    doc.set("value", "staged");
+    let mut doc = Document::new(schema(
+        collection,
+        &format!("{collection}-v1"),
+        &format!("{collection}-id"),
+    ));
+    doc.set("value", "staged").unwrap();
     mutator.create(collection, doc).await.unwrap();
     mutator.take_txn().await.unwrap()
 }

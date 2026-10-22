@@ -21,9 +21,24 @@ fn status_collection() -> CollectionVersion {
         "v1",
         "col-status",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "state", FieldKind::string()),
-            FieldDescription::new("3", "detail", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "state",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "3",
+                "detail",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -50,7 +65,11 @@ async fn setup() -> (Arc<DB<RegolithStore>>, document::DocID) {
     let created = AutoCommitMutator::new(Arc::clone(&db))
         .create(
             "Status",
-            Document::from_json_str(r#"{"state": "idle", "detail": "boot"}"#).unwrap(),
+            Document::from_json_str(
+                r#"{"state": "idle", "detail": "boot"}"#,
+                status_collection(),
+            )
+            .unwrap(),
         )
         .await
         .unwrap();
@@ -93,7 +112,8 @@ fn autocommit_update_writes_only_the_changed_field() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("state", NormalValue::String("busy".to_string()));
+        doc.set("state", NormalValue::String("busy".to_string()))
+            .unwrap();
         let result = auto
             .update("Status", doc, fields(&["state", "detail"]))
             .await
@@ -146,7 +166,8 @@ fn transaction_update_writes_only_the_changed_field() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("state", NormalValue::String("busy".to_string()));
+        doc.set("state", NormalValue::String("busy".to_string()))
+            .unwrap();
         let result = mutator
             .update("Status", doc, fields(&["state", "detail"]))
             .await
@@ -204,7 +225,8 @@ fn batch_update_writes_only_the_changed_field() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("state", NormalValue::String("busy".into()));
+        doc.set("state", NormalValue::String("busy".into()))
+            .unwrap();
         let result = mutator
             .update("Status", doc, fields(&["state", "detail"]))
             .await

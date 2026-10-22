@@ -5,19 +5,19 @@ use schema::CType;
 
 #[test]
 fn test_new_is_dirty() {
-    let fv = FieldValue::new_lww(NormalValue::Int(42));
+    let fv = FieldValue::new(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     assert!(fv.is_dirty());
 }
 
 #[test]
 fn test_new_clean_is_not_dirty() {
-    let fv = FieldValue::new_clean_lww(NormalValue::Int(42));
+    let fv = FieldValue::new_clean(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     assert!(!fv.is_dirty());
 }
 
 #[test]
 fn test_clean() {
-    let mut fv = FieldValue::new_lww(NormalValue::Int(42));
+    let mut fv = FieldValue::new(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     assert!(fv.is_dirty());
     fv.clean();
     assert!(!fv.is_dirty());
@@ -25,7 +25,7 @@ fn test_clean() {
 
 #[test]
 fn test_value_mut_marks_dirty() {
-    let mut fv = FieldValue::new_clean_lww(NormalValue::Int(42));
+    let mut fv = FieldValue::new_clean(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     assert!(!fv.is_dirty());
     let _ = fv.value_mut();
     assert!(fv.is_dirty());
@@ -33,7 +33,7 @@ fn test_value_mut_marks_dirty() {
 
 #[test]
 fn test_set_value_marks_dirty() {
-    let mut fv = FieldValue::new_clean_lww(NormalValue::Int(42));
+    let mut fv = FieldValue::new_clean(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     assert!(!fv.is_dirty());
     fv.set_value(NormalValue::Int(100));
     assert!(fv.is_dirty());
@@ -48,13 +48,13 @@ fn test_crdt_type() {
 
 #[test]
 fn test_is_document() {
-    let fv = FieldValue::new_lww(NormalValue::Int(42));
+    let fv = FieldValue::new(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     assert!(!fv.is_document());
 }
 
 #[test]
 fn test_cbor_roundtrip() {
-    let fv = FieldValue::new_lww(NormalValue::String("hello".into()));
+    let fv = FieldValue::new(CType::LwwRegister, NormalValue::String("hello".into())).unwrap();
     let bytes = fv.to_cbor().unwrap();
     let decoded = FieldValue::from_cbor(CType::LwwRegister, &bytes).unwrap();
     assert_eq!(fv.value(), decoded.value());
@@ -63,8 +63,8 @@ fn test_cbor_roundtrip() {
 
 #[test]
 fn test_equality_ignores_dirty() {
-    let fv1 = FieldValue::new_lww(NormalValue::Int(42));
-    let fv2 = FieldValue::new_clean_lww(NormalValue::Int(42));
+    let fv1 = FieldValue::new(CType::LwwRegister, NormalValue::Int(42)).unwrap();
+    let fv2 = FieldValue::new_clean(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     assert_eq!(fv1, fv2); // dirty flag should not affect equality
 }
 
@@ -117,14 +117,14 @@ fn test_new_lww_accepts_any() {
 
 #[test]
 fn test_set_crdt_type_validated_fails_incompatible() {
-    let mut fv = FieldValue::new_lww(NormalValue::String("hello".into()));
+    let mut fv = FieldValue::new(CType::LwwRegister, NormalValue::String("hello".into())).unwrap();
     let result = fv.set_crdt_type_validated(CType::PnCounter);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_set_crdt_type_validated_succeeds_compatible() {
-    let mut fv = FieldValue::new_lww(NormalValue::Int(42));
+    let mut fv = FieldValue::new(CType::LwwRegister, NormalValue::Int(42)).unwrap();
     let result = fv.set_crdt_type_validated(CType::PnCounter);
     assert!(result.is_ok());
     assert_eq!(fv.crdt_type(), CType::PnCounter);

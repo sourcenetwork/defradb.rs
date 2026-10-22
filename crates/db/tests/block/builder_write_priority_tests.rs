@@ -29,9 +29,9 @@ fn field_priority_is_independent_of_sibling_updates() {
         let headstore = NamespaceView::new(shared, Namespace::Headstore);
         let identity = DocRef::new(1, 1);
 
-        let mut doc = Document::new();
-        doc.set("a", NormalValue::Int(1));
-        doc.set("b", NormalValue::Int(1));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["a", "b"]));
+        doc.set("a", NormalValue::Int(1)).unwrap();
+        doc.set("b", NormalValue::Int(1)).unwrap();
         let created = write_document_blocks(
             &blockstore,
             &headstore,
@@ -47,7 +47,7 @@ fn field_priority_is_independent_of_sibling_updates() {
         .unwrap();
         doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
 
-        doc.set("a", NormalValue::Int(2));
+        doc.set("a", NormalValue::Int(2)).unwrap();
         write_document_blocks(
             &blockstore,
             &headstore,
@@ -62,7 +62,7 @@ fn field_priority_is_independent_of_sibling_updates() {
         .await
         .unwrap();
 
-        doc.set("b", NormalValue::Int(2));
+        doc.set("b", NormalValue::Int(2)).unwrap();
         let updated = write_document_blocks(
             &blockstore,
             &headstore,

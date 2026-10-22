@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use document::Document;
+use document::{CommitRow, Document};
 use identity::Did;
 use rapidhash::{HashMapExt, RapidHashMap};
 use storage::corekv::MaybeSendSync;
@@ -318,7 +318,7 @@ pub trait DocFetcher: MaybeSendSync {
     ///
     /// Commit documents with fields: cid, height, fieldName, docID, delta,
     /// collectionVersionId, links, heads, signature.
-    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<Document>> {
+    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<CommitRow>> {
         let _ = options;
         Err(crate::error::QueryError::execution(
             "_commits queries are not supported by this fetcher".to_string(),
@@ -447,9 +447,10 @@ pub trait DocFetcher: MaybeSendSync {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         caller_identity: Option<&Did>,
     ) -> Result<Document> {
-        let _ = (cid, expected_doc_id, caller_identity);
+        let _ = (cid, expected_doc_id, collection, caller_identity);
         Err(crate::error::QueryError::execution(
             "CID-based time-travel queries are not supported by this fetcher".to_string(),
         ))
@@ -461,23 +462,23 @@ pub trait DocFetcher: MaybeSendSync {
     /// For collection-level CIDs (branchable collections), returns all
     /// documents visible at that collection state.
     ///
-    /// `collection_short_id` is the queried collection: documents belonging to
+    /// `collection` is the queried collection: documents belonging to
     /// another collection are excluded, so a foreign collection's commit CID
     /// yields an empty result (Go parity).
     ///
     /// Defaulted to an error rather than to a delegation to
     /// [`get_document_at_cid`](Self::get_document_at_cid): that method takes no
-    /// collection, so delegating would return a document the caller then
+    /// scoping, so delegating would return a document the caller then
     /// ACP-checks against the wrong collection. A fetcher supporting CID-based
     /// queries must scope them itself.
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         caller_identity: Option<&Did>,
     ) -> Result<Vec<Document>> {
-        let _ = (collection_short_id, cid, expected_doc_id, caller_identity);
+        let _ = (collection, cid, expected_doc_id, caller_identity);
         Err(crate::error::QueryError::execution(
             "CID-based time-travel queries are not supported by this fetcher".to_string(),
         ))
@@ -593,9 +594,10 @@ mod tests {
             &self,
             _cid: &str,
             _expected_doc_id: Option<&str>,
+            _collection: &std::sync::Arc<schema::CollectionVersion>,
             _caller_identity: Option<&Did>,
         ) -> Result<Document> {
-            Ok(Document::new())
+            Ok(crate::test_utils::test_doc(&[]))
         }
     }
 
@@ -606,7 +608,12 @@ mod tests {
     fn defaulted_documents_at_cid_does_not_return_unscoped_documents() {
         workers::block_on(async {
             let result = SingleDocOnlyFetcher
-                .get_documents_at_cid(1, "bafy", None, None)
+                .get_documents_at_cid(
+                    &std::sync::Arc::new(crate::test_utils::test_collection(&[])),
+                    "bafy",
+                    None,
+                    None,
+                )
                 .await;
 
             assert!(result.is_err(), "expected refusal, got {result:?}");

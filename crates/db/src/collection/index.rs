@@ -117,7 +117,7 @@ impl Collection {
                     if changed.contains(&field.name) {
                         continue;
                     }
-                    indexed_new_doc.set(
+                    indexed_new_doc.set_unchecked(
                         field.name.clone(),
                         old_doc
                             .get(&field.name)
@@ -203,7 +203,7 @@ impl Collection {
         // Get the document for index cleanup
         let doc = match datastore.get(&key).await.map_err(Error::Storage)? {
             Some(bytes) => {
-                let mut d = Document::from_storage_cbor(&bytes)?;
+                let mut d = Document::from_storage_cbor(&bytes, self.schema_arc())?;
                 d.set_id(doc_id.clone());
                 d
             }
