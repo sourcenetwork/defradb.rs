@@ -12,6 +12,7 @@
 //! opens, and its contract is checked beside it with regolith's
 //! `check_merge_operator` and `check_touches`.
 use crdt::stored::{Part, StoredDocument, StoredField, ValueKind};
+use crdt::Crdts;
 use regolith::MergeOperator;
 
 const MAGIC: &[u8] = b"DM\x01";
@@ -91,20 +92,32 @@ fn add_legacy(kind: ValueKind, value: Vec<u8>, delta: &[u8]) -> Option<Vec<u8>> 
         value,
     };
     let mut sum = state(value);
-    crdt::part_crdt(kind).merge(&mut sum, state(delta.to_vec()))?;
+    // A standalone counter adds as a counter part of its kind, which may go down.
+    crdt::field::native(schema::CType::PnCounter)?.merge(&mut sum, state(delta.to_vec()))?;
     Some(sum.value)
 }
 
 /// Whether every part of `left` and `right` folds exactly, so the two
 /// operands may merge into one before their base is known.
-fn fold_exactly(left: &StoredDocument, right: &StoredDocument) -> bool {
+fn fold_exactly(crdts: &Crdts, left: &StoredDocument, right: &StoredDocument) -> bool {
     left.fields
         .values()
         .chain(right.fields.values())
-        .all(|field| crdt::part_crdt(field.kind).folds_exactly(field.part()))
+        .all(|field| crdts.part(field.kind).folds_exactly(field.part()))
 }
 
-pub struct DefraMergeOperator;
+/// The operator, with the CRDT types of the node whose store it folds: a
+/// document part merges by its kind's type.
+#[derive(Clone, Default)]
+pub struct DefraMergeOperator {
+    crdts: Crdts,
+}
+
+impl DefraMergeOperator {
+    pub fn new(crdts: Crdts) -> Self {
+        Self { crdts }
+    }
+}
 
 impl MergeOperator for DefraMergeOperator {
     fn name(&self) -> &'static str {
@@ -131,7 +144,7 @@ impl MergeOperator for DefraMergeOperator {
                 let (DOCUMENT, bytes) = decode(operand)? else {
                     return None;
                 };
-                document.apply(StoredDocument::decode(bytes)?)?;
+                document.apply(StoredDocument::decode(bytes)?, &self.crdts)?;
             }
             return document.encode();
         }
@@ -196,10 +209,10 @@ impl MergeOperator for DefraMergeOperator {
         if let (Some((DOCUMENT, left)), Some((DOCUMENT, right))) = (decode(left), decode(right)) {
             let mut left = StoredDocument::decode(left)?;
             let right = StoredDocument::decode(right)?;
-            if !fold_exactly(&left, &right) {
+            if !fold_exactly(&self.crdts, &left, &right) {
                 return None;
             }
-            left.fold(right)?;
+            left.fold(right, &self.crdts)?;
             return document_parts(&left);
         }
         let (INT64, left) = decode(left)? else {

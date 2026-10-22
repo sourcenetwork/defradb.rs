@@ -23,6 +23,9 @@ pub struct FieldMergeResult {
     /// a tagged type merged onto a value on another schema version: its state
     /// is not a function of its value.
     pub(crate) op: Option<document::FieldOp>,
+    /// The custom CRDT type of a block this node lacks: the block changed
+    /// nothing, and its composite parks it.
+    pub(crate) parked: Option<schema::CrdtName>,
 }
 
 impl FieldMergeResult {
@@ -120,8 +123,24 @@ where
         let declared = collection
             .as_ref()
             .and_then(|collection| collection.schema().field_by_name(field_delta.field_name));
-        let crdt = crdt::delta_crdt(delta, declared.map_or(CType::None, |field| field.crdt_type))
-            .map_err(|error| MergeError::UnsupportedDelta(error.to_string()))?;
+        let crdt = match self
+            .db
+            .crdts()
+            .delta(delta, declared.map_or(CType::None, |field| field.crdt_type))
+        {
+            Ok(crdt) => crdt,
+            Err(crdt::FieldCrdtError::Unregistered { crdt }) => {
+                return Ok(FieldMergeResult {
+                    applied: false,
+                    value: None,
+                    order: None,
+                    deferred: true,
+                    op: None,
+                    parked: Some(crdt),
+                })
+            }
+            Err(error) => return Err(MergeError::UnsupportedDelta(error.to_string())),
+        };
 
         if !crdt.replicates_ops() {
             let undeclared_field;

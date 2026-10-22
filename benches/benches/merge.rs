@@ -2,8 +2,9 @@
 //! `FieldCrdt` every merge path dispatches to, and a document value's parts
 //! merging as the storage merge operator merges them.
 
+use crdt::field::native as field_crdt;
 use crdt::stored::{StoredDocument, StoredField};
-use crdt::{field_crdt, FieldCrdt};
+use crdt::FieldCrdt;
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use document::NormalValue;
 use schema::{CType, FieldDescription, FieldKind};
@@ -111,7 +112,7 @@ fn bench_document_merges(c: &mut Criterion) {
             b.iter_batched(
                 || (base.clone(), incoming.clone()),
                 |(mut base, incoming)| {
-                    black_box(base.apply(incoming));
+                    black_box(base.apply(incoming, &crdt::Crdts::default()));
                     base
                 },
                 BatchSize::SmallInput,

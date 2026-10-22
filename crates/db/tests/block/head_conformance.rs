@@ -216,7 +216,13 @@ fn head_queries_match_executable_lean() {
             for a in actions {
                 match a.op {
                     "begin" => {
-                        txns.insert(a.txn, SharedTxn::new(store.new_txn(false).await.unwrap()));
+                        txns.insert(
+                            a.txn,
+                            SharedTxn::new(
+                                store.new_txn(false).await.unwrap(),
+                                storage::Crdts::default(),
+                            ),
+                        );
                     }
                     "commit" | "abort" => {
                         let txn = Arc::try_unwrap(txns.remove(&a.txn).unwrap())

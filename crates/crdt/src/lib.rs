@@ -11,6 +11,7 @@ pub mod fugue;
 pub mod stored;
 
 pub use field::{
-    delta_crdt, field_crdt, history_op, part_crdt, CausalBlock, CausalCrdt, DeltaParts, FieldCrdt,
-    FieldCrdtError, FieldWrite, JsonField, MergeResult, TaggedBlock, TaggedCrdt,
+    history_op, CausalBlock, CausalCrdt, CrdtRef, Crdts, DeltaParts, FieldCrdt, FieldCrdtError,
+    FieldWrite, JsonField, MergeResult, PartCrdts, Registration, RegistryError, TaggedBlock,
+    TaggedCrdt,
 };

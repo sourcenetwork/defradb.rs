@@ -34,6 +34,10 @@ impl Sealed for FailingWriteStore {}
 
 #[async_trait]
 impl Store for FailingWriteStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }

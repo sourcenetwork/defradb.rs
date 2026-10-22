@@ -44,13 +44,19 @@ async fn publish_in(shared: &Arc<SharedTxn>, cid: Cid, priority: u64, parents: &
 }
 
 async fn publish(store: &RegolithStore, cid: Cid, priority: u64, parents: &[Cid]) {
-    let shared = SharedTxn::new(store.new_txn(false).await.unwrap());
+    let shared = SharedTxn::new(
+        store.new_txn(false).await.unwrap(),
+        storage::Crdts::default(),
+    );
     publish_in(&shared, cid, priority, parents).await;
     commit(shared).await;
 }
 
 async fn live(store: &RegolithStore) -> (Vec<Cid>, usize) {
-    let shared = SharedTxn::new(store.new_txn(true).await.unwrap());
+    let shared = SharedTxn::new(
+        store.new_txn(true).await.unwrap(),
+        storage::Crdts::default(),
+    );
     let view = headstore(&shared);
     let mut cids = live_collection_heads(&view, COLLECTION).await.unwrap().live;
     cids.sort_by_cached_key(Cid::to_string);
@@ -179,7 +185,10 @@ fn overlapping_appends_both_commit() {
 
         let mut appends = Vec::new();
         for name in [b"first".as_slice(), b"second"] {
-            let shared = SharedTxn::new(store.new_txn(false).await.unwrap());
+            let shared = SharedTxn::new(
+                store.new_txn(false).await.unwrap(),
+                storage::Crdts::default(),
+            );
             let found = live_collection_heads(&headstore(&shared), COLLECTION)
                 .await
                 .unwrap();
@@ -247,7 +256,10 @@ fn appends_through_the_db_store_only_the_live_head() {
             txn.discard().unwrap();
             id
         };
-        let shared = SharedTxn::new(store.new_txn(true).await.unwrap());
+        let shared = SharedTxn::new(
+            store.new_txn(true).await.unwrap(),
+            storage::Crdts::default(),
+        );
         let set = collection_set(&headstore(&shared), collection_id)
             .await
             .unwrap();

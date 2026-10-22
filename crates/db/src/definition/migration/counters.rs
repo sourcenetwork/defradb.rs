@@ -166,7 +166,7 @@ async fn plan_move(
         let collection =
             crate::definition::loader::get_collection_by_version_id(systemstore, version)
                 .await?
-                .map(Collection::new);
+                .map(|schema| Collection::new(schema, systemstore.crdts().clone()));
         versions.insert(version.to_owned(), collection);
     }
     let Some(collection) = versions.get(version).and_then(Option::as_ref) else {
@@ -214,7 +214,10 @@ async fn plan_move(
                 .ok_or_else(|| {
                     Error::InvalidDocument(format!("missing part ID for counter {field_name}"))
                 })?;
-            let current = stored.fields.get(&part).and_then(StoredField::materialize);
+            let current = stored
+                .fields
+                .get(&part)
+                .and_then(|field| field.materialize(systemstore.crdts()));
             let target = settle(increment_only, accumulated, current.as_ref());
             if current.as_ref() == Some(&target) {
                 return Ok(Some(Move::Drop));
@@ -230,7 +233,11 @@ async fn plan_move(
                 .ok_or_else(|| Error::InvalidDocument("invalid local document value".into()))?
         }
         None => {
-            let mut doc = crdt::stored::document_from_storage(&bytes, collection.schema_arc())?;
+            let mut doc = crdt::stored::document_from_storage(
+                &bytes,
+                collection.schema_arc(),
+                collection.crdts(),
+            )?;
             let target = settle(increment_only, accumulated, doc.get(field_name));
             if doc.get(field_name) == Some(&target) {
                 return Ok(Some(Move::Drop));
@@ -277,7 +284,7 @@ fn decode(kind: ValueKind, bytes: &[u8]) -> Option<NormalValue> {
         priority: 0,
         value: bytes.to_vec(),
     }
-    .materialize()
+    .materialize(&crdt::Crdts::default())
 }
 
 /// `(version, doc ID, field)` of `/data/{version}/{doc}/{field}`; `None` for any

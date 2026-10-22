@@ -210,7 +210,10 @@ impl<S: Store> crate::database::DB<S> {
                         .get(&schema.collection_id)
                         .cloned()
                         .unwrap_or_default();
-                    (name, Collection::with_index_actions(schema, &actions))
+                    (
+                        name,
+                        Collection::with_index_actions(schema, &actions, self.crdts().clone()),
+                    )
                 })
                 .collect();
 

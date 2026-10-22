@@ -36,13 +36,21 @@ where
     T: Any,
     F: for<'t> FnMut(&'t mut BasicTxn) -> RetryAttemptFuture<'t> + MaybeSend + 'static,
 {
-    storage::corekv::transact(store, options, None, Box::new(FacadeAttempt { body })).await
+    let crdts = store.crdts().clone();
+    storage::corekv::transact(
+        store,
+        options,
+        None,
+        Box::new(FacadeAttempt { body, crdts }),
+    )
+    .await
 }
 
 /// One attempt: the body over a facade of the attempt's transaction, whose
 /// writes and callbacks go back to the store for its commit.
 struct FacadeAttempt<F> {
     body: F,
+    crdts: storage::Crdts,
 }
 
 impl<F> RetryAttemptFn for FacadeAttempt<F>
@@ -52,7 +60,7 @@ where
     fn run<'a>(&'a mut self, retry: &'a mut dyn RetryTxn) -> RetryAttemptFuture<'a> {
         Box::pin(async move {
             let io = retry.begin_attempt_io()?;
-            let mut txn = BasicTxn::from_retry_attempt_io(io, 0);
+            let mut txn = BasicTxn::from_retry_attempt_io(io, 0, self.crdts.clone());
             let value = (self.body)(&mut txn).await?;
             let (io, callbacks) = txn.into_retry_attempt()?;
             retry.finish_attempt_io(io, callbacks)?;

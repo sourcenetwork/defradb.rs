@@ -265,7 +265,11 @@ async fn load_collection_from_systemstore_impl(
                     ))
                 })?;
 
-            Ok(Some(Collection::with_index_actions(schema, &statuses)))
+            Ok(Some(Collection::with_index_actions(
+                schema,
+                &statuses,
+                systemstore.crdts().clone(),
+            )))
         }
         None => {
             // version_id found but schema missing - inconsistent state
@@ -380,7 +384,7 @@ mod tests {
     fn exact_definition_fast_path_requires_schema_and_runtime_root_match() {
         let mut schema = CollectionVersion::new("users", "version", "collection", vec![]);
         schema.root_id = 17;
-        let expected = Collection::new(schema.clone());
+        let expected = Collection::new(schema.clone(), crdt::Crdts::default());
         let wire = serde_json::to_vec(&schema).unwrap();
 
         assert!(exact_schema_wire_matches(

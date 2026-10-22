@@ -8,6 +8,7 @@
 
 mod cid;
 mod collection;
+mod crdt_name;
 mod ctype;
 mod embedding;
 mod error;
@@ -33,6 +34,7 @@ pub use cid::{
 pub use collection::{
     legacy_collection_short_id, CollectionBuilder, CollectionVersion, ORPHAN_COLLECTION_ID,
 };
+pub use crdt_name::CrdtName;
 pub use ctype::CType;
 pub use embedding::VectorEmbeddingDescription;
 pub use error::{Result, SchemaError};

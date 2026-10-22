@@ -21,6 +21,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         let Some(mutator) = self.mutator.as_ref() else {
             return Ok(None);
         };
+        let crdts = mutator.crdts();
         // Only an operation spelled with the `mutation` keyword is a mutation,
         // so a request without it is left to execution to parse, once.
         if !request.query.contains("mutation") {
@@ -220,7 +221,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                     && mutator.supports_projected_updates()
                 {
                     let patch_fields = mutation.update_fields(collection)?;
-                    crate::update_parts::planned(collection, &patch_fields, None)
+                    crate::update_parts::planned(&crdts, collection, &patch_fields, None)
                 } else {
                     None
                 };
@@ -266,12 +267,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                             == MutationType::Update
                         {
                             let input = self.build_update_input(mutation, collection)?;
-                            input.apply_to_with_time(doc, Some(collection), Some(request_time))?;
+                            input.apply_to_with_time(
+                                &crdts,
+                                doc,
+                                Some(collection),
+                                Some(request_time),
+                            )?;
                             input.field_names()
                         } else {
                             let input = self
                                 .build_upsert_input_from_map(collection, &mutation.update_input)?;
-                            input.apply_to(doc, Some(collection), request_time)?;
+                            input.apply_to(&crdts, doc, Some(collection), request_time)?;
                             input.fields.keys().cloned().collect()
                         };
                         let doc = mutator

@@ -45,6 +45,7 @@ where
                 order: None,
                 deferred: true,
                 op: None,
+                parked: None,
             });
         }
         let applied_key =
@@ -71,7 +72,7 @@ where
                     .map_err(storage)?
                     .as_deref()
                     .and_then(StoredDocument::decode)
-                    .and_then(|stored| stored.fields.get(&part)?.materialize())
+                    .and_then(|stored| stored.fields.get(&part)?.materialize(self.db.crdts()))
             }
             None => {
                 // A value on another schema version (or predating part IDs) is
@@ -101,6 +102,7 @@ where
             order: None,
             deferred: false,
             op: None,
+            parked: None,
         })
     }
 

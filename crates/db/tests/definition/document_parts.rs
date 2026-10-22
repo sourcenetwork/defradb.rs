@@ -104,7 +104,9 @@ async fn legacy_store(path: &Path) -> (Vec<DocID>, Reads) {
         txn.delete(&key).await.unwrap();
     }
     for (key, value) in raw(&store, b"d/d/").await {
-        let doc = crdt::stored::document_from_storage(&value, users.clone()).unwrap();
+        let doc =
+            crdt::stored::document_from_storage(&value, users.clone(), &crdt::Crdts::default())
+                .unwrap();
         txn.set(&key, &doc.to_cbor().unwrap()).await.unwrap();
     }
     txn.delete(&[b"s", DOCUMENT_FORMAT_KEY].concat())
@@ -171,6 +173,10 @@ impl Sealed for CutAfter {}
 
 #[async_trait]
 impl Store for CutAfter {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -280,7 +286,8 @@ fn a_document_that_would_read_differently_stays_whole() {
             .unwrap()
             .unwrap()
             .schema_arc();
-        let mut doc = crdt::stored::document_from_storage(&value, users).unwrap();
+        let mut doc =
+            crdt::stored::document_from_storage(&value, users, &crdt::Crdts::default()).unwrap();
         doc.set_unchecked("retired".to_string(), NormalValue::String("kept".into()));
         let whole = doc.to_cbor().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();

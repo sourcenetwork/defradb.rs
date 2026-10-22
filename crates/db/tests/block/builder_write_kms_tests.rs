@@ -82,7 +82,7 @@ fn kms_write_path_links_field_block_to_kms_encryption_cid() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
 
@@ -139,7 +139,7 @@ fn inheritance_resolves_the_key_through_the_kms() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
         let identity = DocStorageIdentity::new(1, 1);
@@ -215,7 +215,7 @@ fn document_policy_fallback_mints_through_the_kms() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let txn = store.new_txn(false).await.unwrap();
-        let shared = SharedTxn::new(txn);
+        let shared = SharedTxn::new(txn, storage::Crdts::default());
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
         let identity = DocStorageIdentity::new(2, 2);

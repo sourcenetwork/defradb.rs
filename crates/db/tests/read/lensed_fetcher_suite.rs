@@ -28,17 +28,20 @@ fn unknown_document_version_passes_through() {
         let datastore = txn.datastore().unwrap();
         let fetcher = LensedDocFetcher::new(db, txn, Arc::new(lens::MemoryTransformStore::new()));
 
-        let collection = db::Collection::new(schema::CollectionVersion::new(
-            "Users",
-            "v2",
-            "users-collection",
-            vec![schema::FieldDescription::new(
-                "1",
-                "name",
-                schema::FieldKind::string(),
-                schema::CType::LwwRegister,
-            )],
-        ));
+        let collection = db::Collection::new(
+            schema::CollectionVersion::new(
+                "Users",
+                "v2",
+                "users-collection",
+                vec![schema::FieldDescription::new(
+                    "1",
+                    "name",
+                    schema::FieldKind::string(),
+                    schema::CType::LwwRegister,
+                )],
+            ),
+            crdt::Crdts::default(),
+        );
         let history = RapidHashMap::from_iter([
             (
                 "v1".to_string(),

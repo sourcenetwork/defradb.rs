@@ -1454,6 +1454,10 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl crate::mutator::DocMutator for CapturingMutator {
+        fn crdts(&self) -> crdt::Crdts {
+            crdt::Crdts::default()
+        }
+
         async fn prepare_write(
             &self,
             _collection_name: &str,

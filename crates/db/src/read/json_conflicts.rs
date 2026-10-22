@@ -107,7 +107,9 @@ async fn block_cids(
         }
         let block = load(next).await?;
         let parents = block.heads.clone().unwrap_or_default();
-        let tagged = crdt::delta_crdt(&block.delta, field.crdt_type)
+        let tagged = blockstore
+            .crdts()
+            .delta(&block.delta, field.crdt_type)
             .ok()
             .and_then(|writer| writer.tagged());
         if let (Some(tagged), Some(delta), None) = (tagged, block.delta.field(), &block.encryption)

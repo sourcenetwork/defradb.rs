@@ -11,8 +11,10 @@
 //! - 5 = PCounter
 //! - 6 = Text (Rust-only)
 //! - 7 = Json (Rust-only)
+//! - 8 = Custom (Rust-only): a CRDT type registered on the node, named by the
+//!   field definition's `customCrdt` key and by `{"custom": "<name>"}` in JSON
 
-use crate::{FieldKind, ScalarKind};
+use crate::{CrdtName, FieldKind, ScalarKind};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
@@ -36,6 +38,10 @@ pub enum CType {
     Text,
     /// JSON with a register per path, merged path by path (Rust-only)
     Json,
+    /// A CRDT type registered on the node by name (Rust-only). A node that
+    /// does not have it keeps the definition and refuses the field's writes
+    /// and merges.
+    Custom(CrdtName),
     /// Unknown CRDT type (preserves raw value for validation errors)
     Unknown(u8),
 }
@@ -45,18 +51,13 @@ impl Serialize for CType {
     where
         S: Serializer,
     {
-        let value = match self {
-            CType::None => 0u8,
-            CType::LwwRegister => 1,
-            CType::Object => 2,
-            CType::Composite => 3,
-            CType::PnCounter => 4,
-            CType::PCounter => 5,
-            CType::Text => 6,
-            CType::Json => 7,
-            CType::Unknown(v) => *v,
-        };
-        serializer.serialize_u8(value)
+        if let CType::Custom(name) = self {
+            use serde::ser::SerializeMap;
+            let mut map = serializer.serialize_map(Some(1))?;
+            map.serialize_entry("custom", name.as_str())?;
+            return map.end();
+        }
+        serializer.serialize_u8(self.to_u8())
     }
 }
 
@@ -98,6 +99,14 @@ impl<'de> Deserialize<'de> for CType {
                 "Json" | "json" | "JSON" => Ok(CType::Json),
                 _ => Err(de::Error::custom("unknown crdt string representation")),
             },
+            serde_json::Value::Object(map) => match (map.len(), map.get("custom")) {
+                (1, Some(serde_json::Value::String(name))) => CrdtName::new(name)
+                    .map(CType::Custom)
+                    .map_err(de::Error::custom),
+                _ => Err(de::Error::custom(
+                    "a custom CRDT type is {\"custom\": \"<name>\"}",
+                )),
+            },
             // Null decodes as Go's zero value
             serde_json::Value::Null => Ok(CType::None),
             _ => Err(de::Error::custom("CType must be a number or string")),
@@ -106,6 +115,9 @@ impl<'de> Deserialize<'de> for CType {
 }
 
 impl CType {
+    /// The code of every custom type; the definition names which one.
+    pub const CUSTOM_CODE: u8 = 8;
+
     /// Convert to u8 representation for CID generation
     pub fn to_u8(self) -> u8 {
         match self {
@@ -117,7 +129,30 @@ impl CType {
             CType::PCounter => 5,
             CType::Text => 6,
             CType::Json => 7,
+            CType::Custom(_) => Self::CUSTOM_CODE,
             CType::Unknown(v) => v,
+        }
+    }
+
+    /// The custom type's name a field definition carries beside its code.
+    pub fn custom_name(self) -> Option<CrdtName> {
+        match self {
+            CType::Custom(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The type a field definition's code and custom name declare: the inverse
+    /// of [`to_u8`](Self::to_u8) with [`custom_name`](Self::custom_name). A
+    /// custom code without a valid name, or a name beside another code, is
+    /// unknown.
+    pub fn from_definition(code: u8, custom: Option<&str>) -> Self {
+        match (code, custom) {
+            (Self::CUSTOM_CODE, Some(name)) => {
+                CrdtName::new(name).map_or(CType::Unknown(code), CType::Custom)
+            }
+            (_, Some(_)) => CType::Unknown(code),
+            (code, None) => Self::from_u8(code),
         }
     }
 
@@ -152,6 +187,9 @@ impl CType {
             CType::Json => kind
                 .as_scalar()
                 .is_some_and(|scalar| scalar.base_kind() == ScalarKind::Json),
+            // A custom type takes any scalar value; its operations refuse
+            // the ones it cannot hold.
+            CType::Custom(_) => kind.is_scalar(),
             CType::Unknown(_) => false,
         }
     }
@@ -191,6 +229,7 @@ impl fmt::Display for CType {
             CType::PCounter => write!(f, "PCounter"),
             CType::Text => write!(f, "Text"),
             CType::Json => write!(f, "Json"),
+            CType::Custom(name) => write!(f, "{name}"),
             CType::Unknown(v) => write!(f, "Unknown({})", v),
         }
     }
@@ -244,6 +283,36 @@ mod tests {
         );
         assert_eq!(CType::from_u8(7), CType::Json);
         assert_eq!(CType::Json.to_string(), "Json");
+    }
+
+    #[test]
+    fn a_custom_type_carries_its_name_beside_code_eight() {
+        let custom = CType::Custom(CrdtName::new("maxreg").unwrap());
+        assert_eq!(custom.to_u8(), 8);
+        assert_eq!(custom.custom_name().unwrap().as_str(), "maxreg");
+        assert_eq!(CType::from_definition(8, Some("maxreg")), custom);
+        assert_eq!(CType::from_definition(8, None), CType::Unknown(8));
+        assert_eq!(CType::from_definition(8, Some("lww")), CType::Unknown(8));
+        assert_eq!(CType::from_definition(1, Some("maxreg")), CType::Unknown(1));
+        assert_eq!(custom.to_string(), "maxreg");
+        assert!(custom.is_compatible_with(&FieldKind::int()));
+        assert!(!custom.is_compatible_with(&FieldKind::relation("users", false)));
+
+        let json = serde_json::to_string(&custom).unwrap();
+        assert_eq!(json, r#"{"custom":"maxreg"}"#);
+        assert_eq!(serde_json::from_str::<CType>(&json).unwrap(), custom);
+        assert!(serde_json::from_str::<CType>(r#"{"custom":"Max"}"#).is_err());
+        assert!(serde_json::from_str::<CType>(r#"{"other":"maxreg"}"#).is_err());
+    }
+
+    #[test]
+    fn every_native_code_reads_back_without_a_name() {
+        for code in 0..=8 {
+            let ctype = CType::from_definition(code, None);
+            assert_eq!(ctype, CType::from_u8(code));
+            assert_eq!(ctype.to_u8(), code);
+            assert_eq!(ctype.custom_name(), None);
+        }
     }
 
     #[test]

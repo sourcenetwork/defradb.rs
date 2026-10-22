@@ -36,6 +36,7 @@ pub(super) type Computed = (Document, Result<ComputedBlocks, BuildError>);
 /// without a pool.
 pub(super) async fn compute_blocks(
     pool: Option<&workers::Pool>,
+    crdts: &crdt::Crdts,
     docs: Vec<(Document, DocStorageIdentity)>,
     schema: &Arc<CollectionVersion>,
     context: &RequestContext,
@@ -61,8 +62,13 @@ pub(super) async fn compute_blocks(
             here.push(run);
             continue;
         }
-        let (schema, context, memo) = (Arc::clone(schema), context.clone(), memo.cloned());
-        let job = move || async move { compute_run(run, &schema, &context, memo.as_ref()) };
+        let (crdts, schema, context, memo) = (
+            crdts.clone(),
+            Arc::clone(schema),
+            context.clone(),
+            memo.cloned(),
+        );
+        let job = move || async move { compute_run(&crdts, run, &schema, &context, memo.as_ref()) };
         there.push((workers::Target::Worker(lane - 1), job));
     }
     let pending = match pool {
@@ -80,7 +86,7 @@ pub(super) async fn compute_blocks(
         let run = if is_here {
             let run = here
                 .next()
-                .map(|run| compute_run(run, schema, context, memo));
+                .map(|run| compute_run(crdts, run, schema, context, memo));
             if index < last {
                 // One run per poll: the other tasks of this core run between.
                 workers::yield_now().await;
@@ -104,6 +110,7 @@ pub(super) async fn compute_blocks(
 }
 
 fn compute_run(
+    crdts: &crdt::Crdts,
     run: Vec<(Document, DocStorageIdentity)>,
     schema: &CollectionVersion,
     context: &RequestContext,
@@ -112,6 +119,7 @@ fn compute_run(
     run.into_iter()
         .map(|(doc, identity)| {
             let blocks = compute_document_blocks_with_inputs(
+                crdts,
                 &doc,
                 schema,
                 identity,
@@ -156,9 +164,16 @@ mod tests {
         let context = RequestContext::ambient();
         let before = tasks(pool);
         let schema = Arc::new(CollectionVersion::new("Users", "schema", "users", vec![]));
-        let computed = compute_blocks(Some(pool), documents(count), &schema, &context, None)
-            .await
-            .unwrap();
+        let computed = compute_blocks(
+            Some(pool),
+            &crdt::Crdts::default(),
+            documents(count),
+            &schema,
+            &context,
+            None,
+        )
+        .await
+        .unwrap();
         let ran = tasks(pool)
             .iter()
             .zip(&before)
@@ -167,6 +182,7 @@ mod tests {
         assert_eq!(computed.len(), count);
         for ((doc, blocks), (expected_doc, identity)) in computed.iter().zip(documents(count)) {
             let expected = compute_document_blocks_with_inputs(
+                &crdt::Crdts::default(),
                 &expected_doc,
                 &schema,
                 identity,

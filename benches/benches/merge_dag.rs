@@ -106,7 +106,7 @@ async fn build_dag(depth: usize, field_count: usize) -> SyntheticDag {
         .new_txn(false)
         .await
         .unwrap();
-    let shared = SharedTxn::new(txn);
+    let shared = SharedTxn::new(txn, storage::Crdts::default());
     let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
     let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
     let identity = db::block::builder::DocStorageIdentity::new(1, 1);

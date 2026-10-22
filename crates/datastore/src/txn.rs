@@ -166,13 +166,14 @@ impl BasicTxn {
         readonly: bool,
     ) -> storage::corekv::Result<Self> {
         let txn = store.new_txn(readonly).await?;
-        Ok(Self::from_txn(txn, id, readonly))
+        Ok(Self::from_txn(txn, id, readonly, store.crdts().clone()))
     }
 
-    /// Create a BasicTxn from an existing corekv transaction.
-    pub fn from_txn(txn: Box<dyn Txn>, id: u64, readonly: bool) -> Self {
+    /// Create a BasicTxn from an existing corekv transaction of a store whose
+    /// node has `crdts`.
+    pub fn from_txn(txn: Box<dyn Txn>, id: u64, readonly: bool, crdts: storage::Crdts) -> Self {
         Self {
-            shared_txn: SharedTxn::new(txn),
+            shared_txn: SharedTxn::new(txn, crdts),
             id,
             readonly,
             state: TxnState::Active,
@@ -227,8 +228,17 @@ impl BasicTxn {
     }
 
     /// Create the namespace-capable facade for one engine-owned retry attempt.
-    pub fn from_retry_attempt_io(io: Box<dyn RetryAttemptIO>, id: u64) -> Self {
-        Self::from_txn(Box::new(AttemptScopedTxn::new(io)), id, false)
+    pub fn from_retry_attempt_io(
+        io: Box<dyn RetryAttemptIO>,
+        id: u64,
+        crdts: storage::Crdts,
+    ) -> Self {
+        Self::from_txn(Box::new(AttemptScopedTxn::new(io)), id, false, crdts)
+    }
+
+    /// The CRDT types of the node whose store the transaction runs on.
+    pub fn crdts(&self) -> &storage::Crdts {
+        self.shared_txn.crdts()
     }
 
     /// Drop all namespace views and recover the restricted IO capability plus

@@ -132,8 +132,12 @@ async fn collect_legacy_documents(
                 .get(&legacy_deleted_key(collection.collection_id(), old_doc_id))
                 .await
                 .map_err(Error::Storage)?;
-            crdt::stored::document_from_storage(&pair.value, collection.schema_arc())
-                .map_err(|error| Error::document_at_key(&pair.key, error))?;
+            crdt::stored::document_from_storage(
+                &pair.value,
+                collection.schema_arc(),
+                collection.crdts(),
+            )
+            .map_err(|error| Error::document_at_key(&pair.key, error))?;
 
             result.push(LegacyDocument {
                 collection: collection.clone(),

@@ -133,6 +133,7 @@ where
             order,
             deferred: false,
             op: None,
+            parked: None,
         })
     }
 
@@ -322,7 +323,10 @@ where
         let op = if id == *cid {
             causal.block_op(field, data).map_err(failed)?
         } else {
-            let writer = crdt::delta_crdt(&block.delta, field.crdt_type)
+            let writer = self
+                .db
+                .crdts()
+                .delta(&block.delta, field.crdt_type)
                 .map_err(|error| MergeError::UnsupportedDelta(error.to_string()))?;
             crdt::history_op(writer, field, &self.block_data(block, metadata).await?)
                 .map_err(failed)?

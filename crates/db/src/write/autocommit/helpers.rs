@@ -272,7 +272,10 @@ async fn apply_field_ops(
     let mut causal = Vec::new();
     let mut unnamed = Vec::new();
     for field in &collection.schema().fields {
-        let Some(crdt) = crdt::field_crdt(field.crdt_type).filter(|crdt| crdt.tagged().is_none())
+        let Some(crdt) = collection
+            .crdts()
+            .field(field.crdt_type)
+            .filter(|crdt| crdt.tagged().is_none())
         else {
             continue;
         };
@@ -394,7 +397,10 @@ async fn prepare_tagged_writes(
     let tagged_fields = collection.schema().fields.iter().filter_map(|field| {
         Some((
             field,
-            crdt::field_crdt(field.crdt_type).and_then(|crdt| crdt.tagged())?,
+            collection
+                .crdts()
+                .field(field.crdt_type)
+                .and_then(|crdt| crdt.tagged())?,
         ))
     });
     let migrating = tagged_fields.clone().any(|(field, _)| {

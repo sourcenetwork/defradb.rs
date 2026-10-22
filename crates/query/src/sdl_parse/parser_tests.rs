@@ -902,6 +902,33 @@ fn test_crdt_directive_unknown_type_returns_error() {
 }
 
 #[test]
+fn a_custom_crdt_is_named_by_its_own_argument() {
+    let collections = parse_sdl(r#"type Score { best: Int @crdt(custom: "maxreg") }"#).unwrap();
+    assert_eq!(
+        collections[0].field_by_name("best").unwrap().crdt_type,
+        CType::Custom(schema::CrdtName::new("maxreg").unwrap())
+    );
+
+    for (sdl, expected) in [
+        (
+            r#"type Score { best: Int @crdt(custom: "lww") }"#,
+            "native CRDT type",
+        ),
+        (
+            r#"type Score { best: Int @crdt(custom: "Max-Reg") }"#,
+            "lowercase letters",
+        ),
+        (
+            r#"type Score { best: Int @crdt(type: "lww", custom: "maxreg") }"#,
+            "either 'type' or 'custom'",
+        ),
+    ] {
+        let error = parse_sdl(sdl).unwrap_err().to_string();
+        assert!(error.contains(expected), "{sdl}: {error}");
+    }
+}
+
+#[test]
 fn test_crdt_directive_missing_type_argument_returns_error() {
     let sdl = r#"
         type Counter {

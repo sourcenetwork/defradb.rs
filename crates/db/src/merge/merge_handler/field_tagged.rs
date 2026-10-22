@@ -90,6 +90,7 @@ where
                 order: None,
                 deferred: false,
                 op: None,
+                parked: None,
             });
         }
         let part = state.as_ref().map(|state| state.part());
@@ -132,6 +133,7 @@ where
             order: None,
             deferred: false,
             op,
+            parked: None,
         })
     }
 
@@ -168,7 +170,7 @@ where
             let writer = block
                 .delta
                 .field()
-                .and_then(|_| crdt::delta_crdt(&block.delta, field.crdt_type).ok());
+                .and_then(|_| self.db.crdts().delta(&block.delta, field.crdt_type).ok());
             if writer.is_some_and(|writer| writer.tagged().is_some()) {
                 let data = self.block_data(&block, metadata).await?;
                 let parent_ids: Vec<Vec<u8>> = block_parents.iter().map(Cid::to_bytes).collect();

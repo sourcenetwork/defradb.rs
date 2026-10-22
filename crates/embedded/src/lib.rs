@@ -321,6 +321,12 @@ impl storage::corekv::private::Sealed for EmbeddedStore {}
 
 #[async_trait]
 impl storage::Store for EmbeddedStore {
+    fn crdts(&self) -> &storage::Crdts {
+        match self {
+            Self::Regolith(store) => storage::Store::crdts(store),
+        }
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> storage::Result<std::ops::Range<u64>> {
         match self {
             Self::Regolith(store) => store.allocate(key, count).await,

@@ -33,7 +33,7 @@
 /// let txn = db.new_txn(false).await?;
 ///
 /// // Create a collection
-/// let col = Collection::new(schema);
+/// let col = Collection::new(schema, db.crdts().clone());
 ///
 /// // Documents are written through the mutator APIs, which allocate the
 /// // node-local short ID and derive the public DocID from the genesis

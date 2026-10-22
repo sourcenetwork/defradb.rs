@@ -94,20 +94,23 @@ fn an_empty_array_read_from_storage_is_valid_for_every_array_kind() {
         FieldKind::ScalarArray(schema::ScalarArrayKind::NillableIntArray),
         FieldKind::ScalarArray(schema::ScalarArrayKind::BoolArray),
     ] {
-        let collection = db::Collection::new(CollectionVersion::new(
-            "Post",
-            "v1",
-            "col-post",
-            vec![
-                FieldDescription::new(
-                    "1",
-                    "_docID",
-                    FieldKind::doc_id(),
-                    schema::CType::LwwRegister,
-                ),
-                FieldDescription::new("2", "values", kind.clone(), schema::CType::LwwRegister),
-            ],
-        ));
+        let collection = db::Collection::new(
+            CollectionVersion::new(
+                "Post",
+                "v1",
+                "col-post",
+                vec![
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new("2", "values", kind.clone(), schema::CType::LwwRegister),
+                ],
+            ),
+            crdt::Crdts::default(),
+        );
         let mut doc = Document::new(collection.schema_arc());
         doc.set("values", NormalValue::JsonArray(Vec::new()))
             .unwrap();

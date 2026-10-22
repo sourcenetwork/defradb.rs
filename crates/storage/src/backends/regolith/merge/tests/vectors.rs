@@ -12,7 +12,7 @@ fn links_preserve_structure_and_counts_preserve_routing() {
     let a = vector::links(0, 4);
     let b = vector::links(0, 9);
     let self_link = vector::links(0, 7);
-    let result = DefraMergeOperator
+    let result = DefraMergeOperator::default()
         .full_merge(b"node", Some(&base), &[&a, &b, &a, &self_link])
         .unwrap();
     let stored = decode_node(&result).unwrap();
@@ -20,8 +20,8 @@ fn links_preserve_structure_and_counts_preserve_routing() {
     assert_eq!(stored.layers, vec![vec![NodeId(4), NodeId(9)], vec![]]);
     assert_eq!(stored.id, node.id);
     assert!(!stored.deleted);
-    assert!(!DefraMergeOperator.touches(b"node", &a, &[0]));
-    assert!(DefraMergeOperator.touches(b"node", &a, &[1]));
+    assert!(!DefraMergeOperator::default().touches(b"node", &a, &[0]));
+    assert!(DefraMergeOperator::default().touches(b"node", &a, &[1]));
     let meta = Meta {
         entry_point: NodeId(7),
         top_layer: 1,
@@ -31,7 +31,7 @@ fn links_preserve_structure_and_counts_preserve_routing() {
     };
     let added = vector::counts(5, 2);
     let removed = vector::counts(-1, 1);
-    let result = DefraMergeOperator
+    let result = DefraMergeOperator::default()
         .full_merge(b"meta", Some(&encode_meta(&meta)), &[&added, &removed])
         .unwrap();
     assert_eq!(
@@ -42,7 +42,7 @@ fn links_preserve_structure_and_counts_preserve_routing() {
             ..meta
         }
     );
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .partial_merge(b"meta", &added, &removed)
         .is_none());
 }
@@ -52,14 +52,14 @@ fn malformed_vector_operands_fail_without_allocating_from_unchecked_lengths() {
     let base = encode_node(&Node::new(NodeId(0), vec![1.0], 0));
     let valid = vector::links(0, 1);
     for end in 0..valid.len() {
-        assert!(DefraMergeOperator
+        assert!(DefraMergeOperator::default()
             .full_merge(b"node", Some(&base), &[&valid[..end]])
             .is_none());
     }
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"node", Some(&base), &[&vector::links(u32::MAX, 1)])
         .is_none());
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"node", None, &[&valid])
         .is_none());
     let mut corrupt = base.clone();
@@ -73,7 +73,7 @@ fn vector_operator_folding_and_touches_obey_engine_contracts() {
     let operands = (0u32..4, any::<u64>()).prop_map(|(layer, id)| vector::links(layer, id));
     let bases = any::<u64>().prop_map(|id| encode_node(&Node::new(NodeId(id), vec![1.0, 0.0], 3)));
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"node".to_vec()),
         bases,
         operands.clone(),
@@ -81,7 +81,7 @@ fn vector_operator_folding_and_touches_obey_engine_contracts() {
     .unwrap();
     assert!(checked.folds > 0);
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"node".to_vec()),
         operands,
         regolith::testing::proptest::collection::vec(0u32..3, 0..4),
@@ -157,7 +157,7 @@ fn counts_obey_the_engine_contract_and_leave_routing_alone() {
         });
     let counts = (any::<i64>(), any::<u64>()).prop_map(|(live, waste)| vector::counts(live, waste));
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"meta".to_vec()),
         metas.clone().prop_map(|meta| encode_meta(&meta)),
         counts.clone(),
@@ -165,7 +165,7 @@ fn counts_obey_the_engine_contract_and_leave_routing_alone() {
     .unwrap();
     assert_eq!(checked.folds, 0, "saturating counts never fold early");
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"meta".to_vec()),
         counts.clone(),
         vec(0u32..3, 0..4),
@@ -180,7 +180,7 @@ fn counts_obey_the_engine_contract_and_leave_routing_alone() {
     runner
         .run(&(metas, vec(counts, 1..8)), |(meta, operands)| {
             let refs: Vec<&[u8]> = operands.iter().map(Vec::as_slice).collect();
-            let merged = DefraMergeOperator
+            let merged = DefraMergeOperator::default()
                 .full_merge(b"meta", Some(&encode_meta(&meta)), &refs)
                 .ok_or_else(|| TestCaseError::fail("counts onto a meta must merge"))?;
             let merged =
@@ -194,7 +194,7 @@ fn counts_obey_the_engine_contract_and_leave_routing_alone() {
             }
             if refs
                 .iter()
-                .any(|operand| DefraMergeOperator.touches(b"meta", operand, &[0]))
+                .any(|operand| DefraMergeOperator::default().touches(b"meta", operand, &[0]))
             {
                 return Err(TestCaseError::fail("a count touches the routing part"));
             }
@@ -237,7 +237,7 @@ fn links_leave_the_structural_part_alone() {
                     .map(|(layer, neighbor)| vector::links(*layer, *neighbor))
                     .collect();
                 let refs: Vec<&[u8]> = operands.iter().map(Vec::as_slice).collect();
-                let merged = DefraMergeOperator
+                let merged = DefraMergeOperator::default()
                     .full_merge(b"node", Some(&encode_node(&base)), &refs)
                     .ok_or_else(|| TestCaseError::fail("links within its layers must merge"))?;
                 let merged =
@@ -255,7 +255,7 @@ fn links_leave_the_structural_part_alone() {
                 }
                 if refs
                     .iter()
-                    .any(|operand| DefraMergeOperator.touches(b"node", operand, &[0]))
+                    .any(|operand| DefraMergeOperator::default().touches(b"node", operand, &[0]))
                 {
                     return Err(TestCaseError::fail("a link touches the structural part"));
                 }

@@ -45,7 +45,7 @@ fn priorities_ties_and_tombstones_survive_materialization() {
         .into_iter()
         .map(|value| document_parts(value).unwrap())
         .collect();
-    let bytes = DefraMergeOperator
+    let bytes = DefraMergeOperator::default()
         .full_merge(
             b"doc",
             Some(&base.encode().unwrap()),
@@ -56,15 +56,15 @@ fn priorities_ties_and_tombstones_survive_materialization() {
     assert_eq!(stored.fields[&1].priority, 3);
     assert!(stored.fields[&1].value.is_empty());
     assert!(stored
-        .materialize(test_collection())
+        .materialize(test_collection(), &crdt::Crdts::default())
         .unwrap()
         .get("field1")
         .is_none());
     let a = document_parts(&field(1, 4, NormalValue::String("a".into()))).unwrap();
     let b = document_parts(&field(1, 4, NormalValue::String("b".into()))).unwrap();
     assert_eq!(
-        DefraMergeOperator.full_merge(b"doc", Some(&bytes), &[&a, &b]),
-        DefraMergeOperator.full_merge(b"doc", Some(&bytes), &[&b, &a])
+        DefraMergeOperator::default().full_merge(b"doc", Some(&bytes), &[&a, &b]),
+        DefraMergeOperator::default().full_merge(b"doc", Some(&bytes), &[&b, &a])
     );
 }
 
@@ -77,7 +77,7 @@ fn document_folds_and_touches_obey_engine_contracts() {
         .clone()
         .prop_map(|value| document_parts(&value).unwrap());
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"doc".to_vec()),
         values.prop_map(|value| value.encode().unwrap()),
         operands.clone(),
@@ -85,7 +85,7 @@ fn document_folds_and_touches_obey_engine_contracts() {
     .unwrap();
     assert!(checked.folds > 0);
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"doc".to_vec()),
         operands,
         regolith::testing::proptest::collection::vec(0u32..5, 0..6),
@@ -131,7 +131,7 @@ fn integer_counter_parts_fold_exactly_and_touch_only_their_parts() {
             .prop_map(|value| document_parts(&value).unwrap())
     };
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         regolith::testing::proptest::prelude::Just(b"doc".to_vec()),
         {
             use regolith::testing::proptest::prelude::*;
@@ -158,12 +158,12 @@ fn integer_counter_parts_fold_exactly_and_touch_only_their_parts() {
         .unwrap()
     };
     assert_eq!(
-        DefraMergeOperator.partial_merge(b"doc", &count(i64::MAX), &count(2)),
+        DefraMergeOperator::default().partial_merge(b"doc", &count(i64::MAX), &count(2)),
         Some(count(i64::MIN + 1)),
         "two increments of one counter fold into their wrapping sum"
     );
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         regolith::testing::proptest::prelude::Just(b"doc".to_vec()),
         operands,
         regolith::testing::proptest::collection::vec(0u32..5, 0..6),
@@ -180,7 +180,7 @@ fn float_counter_parts_are_not_folded_early() {
     for kind in [ValueKind::Float32, ValueKind::Float64] {
         let documents = mixed_parts(kind);
         regolith::testing::check_merge_operator(
-            &DefraMergeOperator,
+            &DefraMergeOperator::default(),
             Just(b"doc".to_vec()),
             documents.clone().prop_map(|value| value.encode().unwrap()),
             documents.prop_map(|value| document_parts(&value).unwrap()),
@@ -203,7 +203,7 @@ fn float_counter_parts_are_not_folded_early() {
         })
         .unwrap()
     };
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .partial_merge(b"doc", &float(1e20), &float(-1e20))
         .is_none());
 }
@@ -226,7 +226,7 @@ fn an_absent_counter_part_starts_from_zero() {
         .into(),
     })
     .unwrap();
-    let bytes = DefraMergeOperator
+    let bytes = DefraMergeOperator::default()
         .full_merge(b"doc", None, &[&increment])
         .unwrap();
     let stored = StoredDocument::decode(&bytes).unwrap();
@@ -276,7 +276,9 @@ fn disjoint_document_operands_commit_and_projected_reads_validate_only_named_fie
         assert!(stale.commit().await.is_err());
         let reader = store.new_txn(true).await.unwrap();
         let stored = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap()).unwrap();
-        let doc = stored.materialize(test_collection()).unwrap();
+        let doc = stored
+            .materialize(test_collection(), &crdt::Crdts::default())
+            .unwrap();
         assert_eq!(doc.get("field1"), Some(&NormalValue::Int(12)));
         assert_eq!(doc.get("field2"), Some(&NormalValue::Int(22)));
     })
@@ -297,7 +299,7 @@ fn numeric_document_parts_add_without_adopting_a_stale_mirror() {
         )]
         .into(),
     };
-    let bytes = DefraMergeOperator
+    let bytes = DefraMergeOperator::default()
         .full_merge(
             b"doc",
             Some(&counter(10).encode().unwrap()),
@@ -310,7 +312,7 @@ fn numeric_document_parts_add_without_adopting_a_stale_mirror() {
     assert_eq!(
         StoredDocument::decode(&bytes)
             .unwrap()
-            .materialize(test_collection())
+            .materialize(test_collection(), &crdt::Crdts::default())
             .unwrap()
             .get("count"),
         Some(&NormalValue::Int(18))
@@ -329,7 +331,7 @@ fn corrupt_encodings_are_refused_without_trusting_lengths() {
     let mut huge = bytes;
     huge[4..8].copy_from_slice(&u32::MAX.to_be_bytes());
     assert!(StoredDocument::decode(&huge).is_none());
-    assert!(DefraMergeOperator.touches(b"doc", b"DM\x01\x05broken", &[1]));
+    assert!(DefraMergeOperator::default().touches(b"doc", b"DM\x01\x05broken", &[1]));
 }
 
 #[test]
@@ -360,7 +362,7 @@ fn encrypted_document_operands_survive_reopen_and_schema_put_terminates_old_oper
         let bytes = txn.get(b"doc").await.unwrap().unwrap();
         let doc = StoredDocument::decode(&bytes)
             .unwrap()
-            .materialize(test_collection())
+            .materialize(test_collection(), &crdt::Crdts::default())
             .unwrap();
         assert_eq!(
             doc.to_cbor().unwrap(),
@@ -383,7 +385,7 @@ fn encrypted_document_operands_survive_reopen_and_schema_put_terminates_old_oper
         let reader = store.new_txn(true).await.unwrap();
         let doc = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap())
             .unwrap()
-            .materialize(test_collection())
+            .materialize(test_collection(), &crdt::Crdts::default())
             .unwrap();
         assert_eq!(doc.get("field1"), None);
         assert_eq!(doc.get("field2"), Some(&NormalValue::Int(40)));
@@ -398,7 +400,7 @@ fn float_counter_parts_keep_touches_through_folds() {
     use regolith::testing::proptest::prelude::*;
     for kind in [ValueKind::Float32, ValueKind::Float64] {
         regolith::testing::check_touches(
-            &DefraMergeOperator,
+            &DefraMergeOperator::default(),
             Just(b"doc".to_vec()),
             mixed_parts(kind).prop_map(|value| document_parts(&value).unwrap()),
             regolith::testing::proptest::collection::vec(0u32..5, 0..6),
@@ -429,7 +431,7 @@ fn a_part_no_operand_touches_keeps_its_bytes() {
                         .map(|operand| document_parts(operand).unwrap())
                         .collect();
                     let refs: Vec<&[u8]> = encoded.iter().map(Vec::as_slice).collect();
-                    let merged = DefraMergeOperator
+                    let merged = DefraMergeOperator::default()
                         .full_merge(b"doc", Some(&base.encode().unwrap()), &refs)
                         .ok_or_else(|| TestCaseError::fail("the operands must merge"))?;
                     let merged = StoredDocument::decode(&merged)
@@ -441,10 +443,9 @@ fn a_part_no_operand_touches_keeps_its_bytes() {
                         {
                             continue;
                         }
-                        if encoded
-                            .iter()
-                            .any(|operand| DefraMergeOperator.touches(b"doc", operand, &[*id]))
-                        {
+                        if encoded.iter().any(|operand| {
+                            DefraMergeOperator::default().touches(b"doc", operand, &[*id])
+                        }) {
                             return Err(TestCaseError::fail(format!(
                                 "an operand without part {id} touches it"
                             )));
@@ -508,7 +509,7 @@ fn text_parts_replace_in_commit_order_and_obey_engine_contracts() {
         .clone()
         .prop_map(|value| document_parts(&value).unwrap());
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"doc".to_vec()),
         documents.prop_map(|value| value.encode().unwrap()),
         operands.clone(),
@@ -516,7 +517,7 @@ fn text_parts_replace_in_commit_order_and_obey_engine_contracts() {
     .unwrap();
     assert!(checked.folds > 0, "text operands must fold");
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"doc".to_vec()),
         operands,
         regolith::testing::proptest::collection::vec(0u32..4, 0..5),
@@ -535,12 +536,12 @@ fn text_parts_replace_in_commit_order_and_obey_engine_contracts() {
         })
         .unwrap()
     };
-    let merged = DefraMergeOperator
+    let merged = DefraMergeOperator::default()
         .full_merge(b"doc", None, &[&text(5, "zzz"), &text(2, "abc")])
         .unwrap();
     let stored = StoredDocument::decode(&merged).unwrap();
     assert_eq!(
-        stored.fields[&0].materialize(),
+        stored.fields[&0].materialize(&crdt::Crdts::default()),
         Some(NormalValue::String("abc".into()))
     );
 }
@@ -593,11 +594,11 @@ fn json_part(
 fn json_parts_compose_exactly_and_touch_only_their_field() {
     use regolith::testing::proptest::strategy::{Just, Strategy};
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"doc".to_vec()),
         json_part().prop_map(|value| {
             let mut settled = StoredDocument::default();
-            settled.apply(value).unwrap();
+            settled.apply(value, &crdt::Crdts::default()).unwrap();
             settled.encode().unwrap()
         }),
         json_part().prop_map(|value| document_parts(&value).unwrap()),
@@ -605,7 +606,7 @@ fn json_parts_compose_exactly_and_touch_only_their_field() {
     .unwrap();
     assert!(checked.folds > 0);
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"doc".to_vec()),
         json_part().prop_map(|value| document_parts(&value).unwrap()),
         regolith::testing::proptest::collection::vec(5u32..9, 0..3),

@@ -14,17 +14,20 @@ use crate::DB;
 const KEY: &str = "users-collection:v2";
 
 fn users_v2() -> Collection {
-    Collection::new(schema::CollectionVersion::new(
-        "Users",
-        "v2",
-        "users-collection",
-        vec![schema::FieldDescription::new(
-            "1",
-            "name",
-            schema::FieldKind::string(),
-            schema::CType::LwwRegister,
-        )],
-    ))
+    Collection::new(
+        schema::CollectionVersion::new(
+            "Users",
+            "v2",
+            "users-collection",
+            vec![schema::FieldDescription::new(
+                "1",
+                "name",
+                schema::FieldKind::string(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 /// A history no stored version backs: served only from the cache, so a load

@@ -13,7 +13,7 @@ use crate::RegolithStore;
 fn fold(base: Option<&[u8]>, writes: &[&Write]) -> Set {
     let operands: Vec<Vec<u8>> = writes.iter().map(|write| write.operand()).collect();
     let refs: Vec<&[u8]> = operands.iter().map(Vec::as_slice).collect();
-    let bytes = DefraMergeOperator
+    let bytes = DefraMergeOperator::default()
         .full_merge(b"set", base, &refs)
         .expect("a head set operand folds");
     Set::read(&bytes).expect("a folded head set reads back")
@@ -88,7 +88,7 @@ fn bases() -> impl Strategy<Value = Vec<u8>> {
                 write.supersede_ahead(&name);
             }
         }
-        DefraMergeOperator
+        DefraMergeOperator::default()
             .full_merge(b"set", None, &[&write.operand()])
             .unwrap()
     })
@@ -97,7 +97,7 @@ fn bases() -> impl Strategy<Value = Vec<u8>> {
 #[test]
 fn head_set_folds_obey_the_engine_contract() {
     let checked = regolith::testing::check_merge_operator(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"set".to_vec()),
         bases(),
         operands(),
@@ -109,7 +109,7 @@ fn head_set_folds_obey_the_engine_contract() {
 #[test]
 fn head_set_touches_obey_the_engine_contract() {
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"set".to_vec()),
         operands(),
         proptest::collection::vec(0u32..4, 0..3),
@@ -123,7 +123,7 @@ fn head_set_touches_obey_the_engine_contract() {
 fn every_head_set_operand_touches_every_part() {
     let operand = adds(&[(b"a", 1)]).operand();
     for parts in [&[][..], &[1], &[1, 2]] {
-        assert!(DefraMergeOperator.touches(b"set", &operand, parts));
+        assert!(DefraMergeOperator::default().touches(b"set", &operand, parts));
     }
 }
 
@@ -224,7 +224,7 @@ fn malformed_bytes_fail_with_none() {
     let operand = block(&[b"a"], &[b"b"], (b"c", 7)).operand();
     for end in 0..operand.len() {
         assert!(
-            DefraMergeOperator
+            DefraMergeOperator::default()
                 .full_merge(b"set", None, &[&operand[..end]])
                 .is_none(),
             "an operand cut at {end}"
@@ -232,24 +232,24 @@ fn malformed_bytes_fail_with_none() {
     }
     let mut longer = operand.clone();
     longer.push(0);
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", None, &[&longer])
         .is_none());
-    let value = DefraMergeOperator
+    let value = DefraMergeOperator::default()
         .full_merge(b"set", None, &[&operand])
         .unwrap();
     // A value is no operand and an operand is no value.
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", None, &[&value])
         .is_none());
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", Some(&operand), &[&operand])
         .is_none());
     assert!(Set::read(&operand).is_none());
     for end in 0..value.len() {
         assert!(Set::read(&value[..end]).is_none(), "a value cut at {end}");
     }
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .partial_merge(b"set", &operand, &value)
         .is_none());
     // Names must ascend and never repeat.
@@ -259,7 +259,7 @@ fn malformed_bytes_fail_with_none() {
     }
     let body = [&[2u8][..], &duplicate].concat();
     let forged = [b"DM\x01\x08".as_slice(), &body].concat();
-    assert!(DefraMergeOperator
+    assert!(DefraMergeOperator::default()
         .full_merge(b"set", None, &[&forged])
         .is_none());
 }
@@ -330,12 +330,12 @@ fn an_operand_touches_the_parts_of_the_names_it_holds() {
     let operand = block(&[b"p"], &[b"q"], (b"c", 2)).operand();
     let held = [b"p".as_slice(), b"q", b"c"].map(part);
     for name in held {
-        assert!(DefraMergeOperator.touches(b"set", &operand, &[name]));
+        assert!(DefraMergeOperator::default().touches(b"set", &operand, &[name]));
     }
     let other = part(b"other");
     assert!(!held.contains(&other), "these names hash to distinct parts");
-    assert!(!DefraMergeOperator.touches(b"set", &operand, &[other]));
-    assert!(DefraMergeOperator.touches(b"set", &operand, &[7, other]));
+    assert!(!DefraMergeOperator::default().touches(b"set", &operand, &[other]));
+    assert!(DefraMergeOperator::default().touches(b"set", &operand, &[7, other]));
 }
 
 /// The law, with the parts of names: what a fold touches is what its two
@@ -346,7 +346,7 @@ fn head_set_touches_by_name_obey_the_engine_contract() {
         .map(part)
         .to_vec();
     let checked = regolith::testing::check_touches(
-        &DefraMergeOperator,
+        &DefraMergeOperator::default(),
         Just(b"set".to_vec()),
         operands(),
         proptest::sample::subsequence(parts, 1..=3),

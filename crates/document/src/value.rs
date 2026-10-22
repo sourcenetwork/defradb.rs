@@ -85,8 +85,9 @@ impl FieldValue {
                     });
                 }
             }
-            CType::LwwRegister | CType::None | CType::Json => {
-                // LWW Register, None and Json accept any value
+            CType::LwwRegister | CType::None | CType::Json | CType::Custom(_) => {
+                // LWW Register, None, Json and custom types accept any value;
+                // a custom type's operations refuse what it cannot hold
             }
             CType::Text => {
                 if value.as_str().is_none() && !value.is_nil() {

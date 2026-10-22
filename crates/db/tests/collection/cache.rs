@@ -5,17 +5,20 @@ use schema::FieldDescription;
 use schema::FieldKind;
 
 fn test_collection(name: &str) -> Collection {
-    Collection::new(CollectionVersion::new(
-        name,
-        "v1",
-        format!("col-{}", name.to_lowercase()),
-        vec![FieldDescription::new(
-            "1",
-            "_docID",
-            FieldKind::doc_id(),
-            schema::CType::LwwRegister,
-        )],
-    ))
+    Collection::new(
+        CollectionVersion::new(
+            name,
+            "v1",
+            format!("col-{}", name.to_lowercase()),
+            vec![FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )],
+        ),
+        crdt::Crdts::default(),
+    )
 }
 
 #[test]
