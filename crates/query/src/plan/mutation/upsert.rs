@@ -23,6 +23,7 @@ use crate::planner::{Doc, PlanNode};
 
 use super::create::CreateInput;
 use super::create_conversions::{json_to_normal_value_with_kind_and_time, normal_value_to_json};
+use super::update::UpdateInput;
 
 /// Input for an upsert mutation - field values for create or update.
 #[derive(Debug, Clone)]
@@ -63,23 +64,10 @@ impl UpsertInput {
         collection: Option<&CollectionVersion>,
         utc_now: DateTime<FixedOffset>,
     ) -> Result<usize> {
-        let mut modified_count = 0;
-
-        for (field_name, value) in &self.fields {
-            let field_kind = collection.and_then(|c| {
-                c.fields
-                    .iter()
-                    .find(|f| f.name == *field_name)
-                    .map(|f| &f.kind)
-            });
-            let normal_value =
-                json_to_normal_value_with_kind_and_time(value, field_kind, Some(utc_now))?;
-            doc.set(field_name.clone(), normal_value)
-                .map_err(|e| QueryError::execution(e.to_string()))?;
-            modified_count += 1;
-        }
-
-        Ok(modified_count)
+        let update = UpdateInput {
+            fields: self.fields.clone(),
+        };
+        update.apply_to_with_time(doc, collection, Some(utc_now))
     }
 }
 
