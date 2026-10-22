@@ -44,6 +44,8 @@ pub enum FieldCrdtError {
     Decode { field: String, message: String },
     #[error("cannot encode block data: {0}")]
     Encode(String),
+    #[error("a block of field {field} contradicts its own version: {message}")]
+    Version { field: String, message: String },
     #[error("the history of field {field} cannot be replayed: {message}")]
     History { field: String, message: String },
     #[error(transparent)]

@@ -1,5 +1,5 @@
 use defra_core::block::{CrdtDelta, TextDeltaPayload};
-use defra_core::TextOp;
+use defra_core::{TextEdits, TextOp};
 use document::{FieldOp, NormalValue};
 use rapidhash::RapidHashSet;
 use schema::{CType, FieldDescription};
@@ -41,15 +41,24 @@ fn text_of(value: Option<&NormalValue>) -> &str {
     value.and_then(NormalValue::as_str).unwrap_or_default()
 }
 
-fn encode_ops(ops: &[TextOp]) -> Result<Vec<u8>, FieldCrdtError> {
-    TextOp::encode_all(ops).map_err(|error| FieldCrdtError::Encode(error.to_string()))
+/// A block's data: `ops`, and the length of `text`, the text they leave.
+fn encode_edits(ops: Vec<TextOp>, text: &str) -> Result<Vec<u8>, FieldCrdtError> {
+    TextEdits {
+        ops,
+        len: text.chars().count() as u64,
+    }
+    .encode()
+    .map_err(|error| FieldCrdtError::Encode(error.to_string()))
 }
 
-fn decode_ops(field: &FieldDescription, data: &[u8]) -> Result<Vec<TextOp>, FieldCrdtError> {
+fn decode_edits(field: &FieldDescription, data: &[u8]) -> Result<TextEdits, FieldCrdtError> {
     if data == NIL {
-        return Ok(TextOp::replace_all(""));
+        return Ok(TextEdits {
+            ops: TextOp::replace_all(""),
+            len: 0,
+        });
     }
-    TextOp::decode_all(data).map_err(|error| FieldCrdtError::Decode {
+    TextEdits::decode(data).map_err(|error| FieldCrdtError::Decode {
         field: field.name.clone(),
         message: error.to_string(),
     })
@@ -75,6 +84,37 @@ fn text_value(history: &[CausalBlock], text: String) -> NormalValue {
         NormalValue::Null
     } else {
         NormalValue::String(text)
+    }
+}
+
+/// The Fugue blocks of a field's causal blocks: a set restates the text.
+fn text_blocks(history: &[CausalBlock]) -> Result<Vec<TextBlock>, FieldCrdtError> {
+    history
+        .iter()
+        .map(|block| {
+            let ops = match &block.op {
+                FieldOp::Edit(ops) => ops.clone(),
+                FieldOp::Set(value) => TextOp::replace_all(text_of(Some(value))),
+                FieldOp::Increment(_) => {
+                    return Err(FieldCrdtError::UnsupportedOp {
+                        crdt: CType::Text,
+                        op: "increment",
+                    })
+                }
+            };
+            Ok(TextBlock {
+                id: block.id.clone(),
+                parents: block.parents.clone(),
+                ops,
+            })
+        })
+        .collect()
+}
+
+fn history_error(field: &FieldDescription, error: impl std::fmt::Display) -> FieldCrdtError {
+    FieldCrdtError::History {
+        field: field.name.clone(),
+        message: error.to_string(),
     }
 }
 
@@ -144,9 +184,10 @@ impl FieldCrdt for TextField {
         match op {
             Some(FieldOp::Set(NormalValue::Null)) => Ok(Some(NIL.to_vec())),
             Some(FieldOp::Edit(_)) if value.is_nil() => Ok(Some(NIL.to_vec())),
-            Some(FieldOp::Edit(ops)) => encode_ops(ops).map(Some),
+            Some(FieldOp::Edit(ops)) => encode_edits(ops.clone(), text_of(Some(value))).map(Some),
             Some(FieldOp::Set(value)) => {
-                encode_ops(&TextOp::replace_all(text_of(Some(value)))).map(Some)
+                let text = text_of(Some(value));
+                encode_edits(TextOp::replace_all(text), text).map(Some)
             }
             Some(FieldOp::Increment(_)) => Err(FieldCrdtError::UnsupportedOp {
                 crdt: CType::Text,
@@ -159,7 +200,8 @@ impl FieldCrdt for TextField {
 
     /// The block data of a first write of `data`: an insert of the whole text.
     fn encode(&self, data: &NormalValue) -> Result<Vec<u8>, FieldCrdtError> {
-        encode_ops(&TextOp::diff("", text_of(Some(data))))
+        let text = text_of(Some(data));
+        encode_edits(TextOp::diff("", text), text)
     }
 
     /// The text a block's edits make of the empty text: a first block's value.
@@ -169,7 +211,7 @@ impl FieldCrdt for TextField {
         }
         Ok(NormalValue::String(TextOp::apply_all(
             "",
-            &decode_ops(field, data)?,
+            &decode_edits(field, data)?.ops,
         )))
     }
 
@@ -234,7 +276,7 @@ impl CausalCrdt for TextField {
         if data == NIL {
             return Ok(FieldOp::Set(NormalValue::Null));
         }
-        decode_ops(field, data).map(FieldOp::Edit)
+        decode_edits(field, data).map(|edits| FieldOp::Edit(edits.ops))
     }
 
     fn replay(
@@ -242,31 +284,44 @@ impl CausalCrdt for TextField {
         field: &FieldDescription,
         history: &[CausalBlock],
     ) -> Result<NormalValue, FieldCrdtError> {
-        let blocks = history
-            .iter()
-            .map(|block| {
-                let ops = match &block.op {
-                    FieldOp::Edit(ops) => ops.clone(),
-                    FieldOp::Set(value) => TextOp::replace_all(text_of(Some(value))),
-                    FieldOp::Increment(_) => {
-                        return Err(FieldCrdtError::UnsupportedOp {
-                            crdt: CType::Text,
-                            op: "increment",
-                        })
-                    }
-                };
-                Ok(TextBlock {
-                    id: block.id.clone(),
-                    parents: block.parents.clone(),
-                    ops,
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        fugue::replay(&blocks)
+        fugue::replay(&text_blocks(history)?)
             .map(|text| text_value(history, text))
-            .map_err(|error| FieldCrdtError::History {
-                field: field.name.clone(),
-                message: error.to_string(),
-            })
+            .map_err(|error| history_error(field, error))
+    }
+
+    /// Fugue over placeholders for the critical block's text, as many as the
+    /// length its block records ([`fugue::merge_text`]).
+    fn merge_from(
+        &self,
+        field: &FieldDescription,
+        current: Option<&NormalValue>,
+        critical: &[u8],
+        after: &[CausalBlock],
+        new: &[u8],
+    ) -> Result<Option<NormalValue>, FieldCrdtError> {
+        let Ok(base) = usize::try_from(decode_edits(field, critical)?.len) else {
+            return Ok(None);
+        };
+        fugue::merge_text(text_of(current), base, &text_blocks(after)?, new)
+            .map(|text| text.map(|text| text_value(after, text)))
+            .map_err(|error| history_error(field, error))
+    }
+
+    /// A Text block records the length of the text it leaves.
+    fn check_version(
+        &self,
+        field: &FieldDescription,
+        data: &[u8],
+        value: &NormalValue,
+    ) -> Result<(), FieldCrdtError> {
+        let recorded = decode_edits(field, data)?.len;
+        let len = text_of(Some(value)).chars().count() as u64;
+        if recorded == len {
+            return Ok(());
+        }
+        Err(FieldCrdtError::Version {
+            field: field.name.clone(),
+            message: format!("it records {recorded} characters for its version, which has {len}"),
+        })
     }
 }

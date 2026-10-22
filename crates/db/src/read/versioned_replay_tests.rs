@@ -137,8 +137,11 @@ fn an_undecodable_text_block_fails_the_replay_with_its_error() {
         (block.generate_cid().unwrap(), block)
     };
     let broken = text(1, vec![0xff], Vec::new());
-    let edits = defra_core::TextOp::encode_all(&defra_core::TextOp::diff("", "a")).unwrap();
-    let child = text(2, edits, vec![broken.0]);
+    let edits = defra_core::TextEdits {
+        ops: defra_core::TextOp::diff("", "a"),
+        len: 1,
+    };
+    let child = text(2, edits.encode().unwrap(), vec![broken.0]);
 
     let error = replay_deltas(&collection, &[broken.clone(), child], "bae-0000")
         .unwrap_err()

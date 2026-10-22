@@ -81,6 +81,12 @@ impl Rng {
 /// A random DAG of `count` blocks from `peers` peers that sync at random. Each
 /// block's ops count in its own parent version, as a real writer's do.
 fn history(seed: u64, peers: usize, count: usize) -> Vec<TextBlock> {
+    history_of(seed, peers, count, false)
+}
+
+/// [`history`], and with `past_end` some ops also reach past the end of their
+/// text: a clear of the whole text, or an insert at the end.
+fn history_of(seed: u64, peers: usize, count: usize, past_end: bool) -> Vec<TextBlock> {
     let mut rng = Rng(seed);
     let mut blocks: Vec<TextBlock> = Vec::new();
     let mut known: Vec<Vec<usize>> = vec![Vec::new(); peers];
@@ -100,7 +106,11 @@ fn history(seed: u64, peers: usize, count: usize) -> Vec<TextBlock> {
         let mut ops = Vec::new();
         for _ in 0..=rng.below(2) {
             let len = text.chars().count() as u64;
-            let op = if len > 0 && rng.below(3) == 0 {
+            let op = if past_end && rng.below(8) == 0 {
+                del(0, u64::MAX)
+            } else if past_end && rng.below(8) == 0 {
+                ins(u64::MAX, "$")
+            } else if len > 0 && rng.below(3) == 0 {
                 del(rng.below(len), 1 + rng.below(3))
             } else {
                 let run: String = (0..=rng.below(3))
@@ -333,4 +343,71 @@ fn a_visible_node_past_the_end_is_an_error() {
     let order = Order::new(vec![1, 2, 3], |node| node != 2);
     assert!(order.nth_visible(1, |node| node != 2).is_ok());
     assert!(order.nth_visible(2, |node| node != 2).is_err());
+}
+
+/// Whether every block of `blocks` comes before `x` or after it.
+fn is_critical(blocks: &[TextBlock], x: usize) -> bool {
+    let before = closure(blocks, x, true);
+    (0..blocks.len()).all(|b| before.contains(&b) || closure(blocks, b, false).contains(&x))
+}
+
+/// INV_CriticalReplay: merging a head into the text of every other block,
+/// replayed from any critical block over placeholders for its text, gives the
+/// full replay. Deletes and concurrency before the critical block, and ops
+/// that reach past the end, included.
+#[test]
+fn merging_from_any_critical_block_matches_a_full_replay() {
+    let mut checked = 0;
+    for seed in 0..600 {
+        // Small DAGs of few peers have critical blocks often enough to count.
+        let peers = 2 + (seed % 2) as usize;
+        let count = 4 + (seed % 9) as usize;
+        let blocks = history_of(seed, peers, count, seed % 3 == 1);
+        let all: Vec<usize> = (0..blocks.len()).collect();
+        let want = replay(&blocks).unwrap();
+        for new in heads(&blocks, &all) {
+            let rest: Vec<usize> = all.iter().copied().filter(|&b| b != new).collect();
+            let current = version(&blocks, &rest);
+            for x in (0..blocks.len()).filter(|&x| x != new && is_critical(&blocks, x)) {
+                let base = closure(&blocks, x, true);
+                let after: Vec<TextBlock> = all
+                    .iter()
+                    .filter(|b| !base.contains(b))
+                    .map(|&b| blocks[b].clone())
+                    .collect();
+                let len = version(&blocks, &base).chars().count();
+                let got = merge_text(&current, len, &after, &blocks[new].id).unwrap();
+                assert_eq!(
+                    got.as_deref(),
+                    Some(want.as_str()),
+                    "seed {seed}, new {new}, x {x}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "only {checked} merges had a critical block");
+}
+
+/// A stored text that is not what the blocks leave, or a block that already
+/// builds on the one merged, sends the caller to a full replay.
+#[test]
+fn a_merge_that_does_not_fit_the_stored_text_asks_for_a_full_replay() {
+    let after = [
+        block(2, &[1], vec![ins(1, "x")]),
+        block(3, &[1], vec![ins(0, "y")]),
+    ];
+    assert_eq!(
+        merge_text("axb", 2, &after, &[3]).unwrap().as_deref(),
+        Some("yaxb")
+    );
+    assert_eq!(merge_text("ab", 2, &after, &[3]).unwrap(), None);
+    assert_eq!(merge_text("azb", 2, &after, &[3]).unwrap(), None);
+    assert_eq!(merge_text("axbc", 2, &after, &[3]).unwrap(), None);
+    let built_on = [
+        block(2, &[1], vec![ins(1, "x")]),
+        block(3, &[2], vec![ins(0, "y")]),
+    ];
+    assert_eq!(merge_text("yaxb", 2, &built_on, &[2]).unwrap(), None);
+    assert!(merge_text("ab", 2, &after, &[9]).is_err());
 }
