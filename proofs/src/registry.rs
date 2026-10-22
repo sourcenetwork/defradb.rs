@@ -112,6 +112,14 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Contract],
     },
     Property {
+        family: "RobustPrune blocked covered checks",
+        name: "blocked_eq_sequential — checking candidates in blocks keeps exactly the edges the one-at-a-time walk keeps, for any cut into blocks",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/select/robust_prune.rs RobustPrune::select; crates/defra-core/src/vector/kernel/mod.rs squared_euclidean_block",
+        model_ref: "RobustPruneBlocks.blocked_eq_sequential / no_since_keeps_a_covered_edge",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Vector index link maintenance",
         name: "INV_NoLostLinks — blind additions preserve links and stale structural pruning aborts",
         axis: Tla,

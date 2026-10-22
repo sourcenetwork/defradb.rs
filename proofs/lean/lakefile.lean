@@ -71,3 +71,6 @@ lean_lib PendingCache where
 
 @[default_target]
 lean_lib SharedQuantizer where
+
+@[default_target]
+lean_lib RobustPruneBlocks where
