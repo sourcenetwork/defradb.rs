@@ -172,7 +172,11 @@ impl FieldCrdt for CounterField {
         Ok(self.materialize(state.part()).ok_or_else(sum)?)
     }
 
-    fn write<'a>(&self, value: &'a NormalValue, op: Option<&'a FieldOp>) -> FieldWrite<'a> {
+    fn write<'value>(
+        &self,
+        value: &'value NormalValue,
+        op: Option<&'value FieldOp>,
+    ) -> FieldWrite<'value> {
         match op {
             Some(FieldOp::Increment(by)) => FieldWrite {
                 data: by,

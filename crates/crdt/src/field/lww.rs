@@ -65,7 +65,11 @@ impl FieldCrdt for LwwField {
         }
     }
 
-    fn write<'a>(&self, value: &'a NormalValue, _op: Option<&'a FieldOp>) -> FieldWrite<'a> {
+    fn write<'value>(
+        &self,
+        value: &'value NormalValue,
+        _op: Option<&'value FieldOp>,
+    ) -> FieldWrite<'value> {
         FieldWrite {
             data: value,
             merges: true,

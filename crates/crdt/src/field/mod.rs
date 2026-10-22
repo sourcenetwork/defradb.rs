@@ -39,19 +39,19 @@ pub enum FieldCrdtError {
 }
 
 /// What a field block carries besides the data.
-pub struct DeltaParts<'a> {
-    pub field_name: &'a str,
+pub struct DeltaParts<'name> {
+    pub field_name: &'name str,
     pub priority: u64,
-    pub collection_version_id: &'a str,
+    pub collection_version_id: &'name str,
     pub nonce: i64,
     /// The encoded (and possibly encrypted) value or operation.
     pub data: Vec<u8>,
 }
 
 /// What a local write's block carries, and how it reaches the document value.
-pub struct FieldWrite<'a> {
+pub struct FieldWrite<'value> {
     /// The value or operation the block carries.
-    pub data: &'a NormalValue,
+    pub data: &'value NormalValue,
     /// Whether `data` merges into the stored value as an operand. When it does
     /// not, the document value is put whole.
     pub merges: bool,
@@ -101,7 +101,11 @@ pub trait FieldCrdt: Send + Sync {
 
     /// What a local write of `value`, by `op` when it has one, puts in its
     /// block and merges into the document value.
-    fn write<'a>(&self, value: &'a NormalValue, op: Option<&'a FieldOp>) -> FieldWrite<'a>;
+    fn write<'value>(
+        &self,
+        value: &'value NormalValue,
+        op: Option<&'value FieldOp>,
+    ) -> FieldWrite<'value>;
 
     /// The block data of `data`, the value or operation a block carries.
     fn encode(&self, data: &NormalValue) -> Result<Vec<u8>, FieldCrdtError> {
