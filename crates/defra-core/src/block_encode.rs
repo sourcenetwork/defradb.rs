@@ -78,7 +78,8 @@ impl<'block> Payload<'block> {
             | CrdtDelta::FieldDefinition(_)
             | CrdtDelta::CollectionDefinition(_)
             | CrdtDelta::Immutable(_)
-            | CrdtDelta::Text(_) => None,
+            | CrdtDelta::Text(_)
+            | CrdtDelta::Json(_) => None,
         }
     }
 }

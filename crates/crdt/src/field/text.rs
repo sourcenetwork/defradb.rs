@@ -95,10 +95,10 @@ fn text_blocks(history: &[CausalBlock]) -> Result<Vec<TextBlock>, FieldCrdtError
             let ops = match &block.op {
                 FieldOp::Edit(ops) => ops.clone(),
                 FieldOp::Set(value) => TextOp::replace_all(text_of(Some(value))),
-                FieldOp::Increment(_) => {
+                op => {
                     return Err(FieldCrdtError::UnsupportedOp {
                         crdt: CType::Text,
-                        op: "increment",
+                        op: op.name(),
                     })
                 }
             };
@@ -135,11 +135,11 @@ impl FieldCrdt for TextField {
 
     fn named_op(&self, op: FieldOp) -> Result<FieldOp, FieldCrdtError> {
         match op {
-            FieldOp::Increment(_) => Err(FieldCrdtError::UnsupportedOp {
+            op @ (FieldOp::Set(_) | FieldOp::Edit(_)) => Ok(op),
+            op => Err(FieldCrdtError::UnsupportedOp {
                 crdt: CType::Text,
-                op: "increment",
+                op: op.name(),
             }),
-            op => Ok(op),
         }
     }
 
@@ -155,9 +155,9 @@ impl FieldCrdt for TextField {
                 text_of(current),
                 ops,
             ))),
-            FieldOp::Increment(_) => Err(FieldCrdtError::UnsupportedOp {
+            op => Err(FieldCrdtError::UnsupportedOp {
                 crdt: CType::Text,
-                op: "increment",
+                op: op.name(),
             }),
         }
     }
@@ -189,9 +189,9 @@ impl FieldCrdt for TextField {
                 let text = text_of(Some(value));
                 encode_edits(TextOp::replace_all(text), text).map(Some)
             }
-            Some(FieldOp::Increment(_)) => Err(FieldCrdtError::UnsupportedOp {
+            Some(op) => Err(FieldCrdtError::UnsupportedOp {
                 crdt: CType::Text,
-                op: "increment",
+                op: op.name(),
             }),
             None if value.is_nil() => Ok(None),
             None => self.encode(value).map(Some),

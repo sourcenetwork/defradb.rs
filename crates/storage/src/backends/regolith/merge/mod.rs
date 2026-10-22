@@ -199,7 +199,7 @@ impl MergeOperator for DefraMergeOperator {
             if !fold_exactly(&left, &right) {
                 return None;
             }
-            left.apply(right)?;
+            left.fold(right)?;
             return document_parts(&left);
         }
         let (INT64, left) = decode(left)? else {

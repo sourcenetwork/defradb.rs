@@ -304,6 +304,15 @@ pub trait DocFetcher: MaybeSendSync {
         ))
     }
 
+    /// The conflicts of a Json field of one document: for each path, the
+    /// concurrent edits its winner beat.
+    async fn get_json_conflicts(&self, options: &JsonConflictOptions) -> Result<Vec<JsonConflict>> {
+        let _ = options;
+        Err(crate::error::QueryError::execution(
+            "json conflict queries are unsupported",
+        ))
+    }
+
     /// Fetch commits from the _commits system collection.
     ///
     /// This method fetches commit history from the headstore and blockstore.
@@ -620,6 +629,28 @@ mod tests {
         })
         .unwrap()
     }
+}
+
+/// Which Json field of which document `_jsonConflicts` reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonConflictOptions {
+    pub collection: String,
+    pub doc_id: String,
+    pub field: String,
+}
+
+/// One edit that lost a race at a path of a Json field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsonConflict {
+    /// The path, as its keys; empty for the field itself.
+    pub path: Vec<String>,
+    /// The block that made the edit, when this node can name it.
+    pub cid: Option<String>,
+    /// The block's priority, as `_commits` reports it.
+    pub height: u64,
+    /// What the edit wrote: a value, `{}` for a map, nothing for a delete.
+    pub value: Option<serde_json::Value>,
+    pub deleted: bool,
 }
 
 /// Node-local first materialization order, never a cross-replica creation clock.

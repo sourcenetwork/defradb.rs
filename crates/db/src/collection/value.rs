@@ -1,6 +1,7 @@
 //! Materialized document puts and field operands. Block CBOR stays unchanged.
 use super::*;
 use crdt::stored::{StoredDocument, StoredField};
+use document::FieldOp;
 use rapidhash::RapidHashMap;
 use storage::namespace::Namespace;
 
@@ -35,6 +36,48 @@ fn field_value(
     .map_err(|error| Error::InvalidDocument(error.to_string()))
 }
 
+/// The part a tagged field's put stores: `base`, the part already stored,
+/// after the write's prepared operand. Without one, the part stands as it is,
+/// or, with none stored, is the state of the field's value. `None` for a nil
+/// value with nothing stored.
+fn tagged_put(
+    tagged: &dyn crdt::TaggedCrdt,
+    field: &schema::FieldDescription,
+    doc: &Document,
+    priority: u64,
+    base: Option<&StoredField>,
+) -> Result<Option<StoredField>> {
+    let invalid = |e: &dyn std::fmt::Display| Error::InvalidDocument(e.to_string());
+    let base = base.filter(|part| part.name == field.name);
+    let recorded = match base {
+        Some(base) => !tagged
+            .tags(field, base.part())
+            .map_err(|e| invalid(&e))?
+            .is_empty(),
+        None => false,
+    };
+    let mut part = match (doc.pending_op(&field.name), base) {
+        (Some(FieldOp::Operand { operand, .. }), base) => {
+            let operand = crdt::field::tagged::decode_operand(operand)
+                .ok_or_else(|| invalid(&"invalid prepared operand"))?;
+            crdt::field::tagged::land(tagged, base, operand)
+                .ok_or_else(|| invalid(&"a prepared operand does not land"))?
+        }
+        (_, Some(base)) if recorded => base.clone(),
+        _ => {
+            let value = doc.get(&field.name).unwrap_or(&NormalValue::Null);
+            if value.is_nil() {
+                return Ok(None);
+            }
+            tagged
+                .state(field, priority, value)
+                .map_err(|e| invalid(&e))?
+        }
+    };
+    part.priority = priority;
+    Ok(Some(part))
+}
+
 impl Collection {
     pub(crate) async fn put_document_value(
         &self,
@@ -64,26 +107,51 @@ impl Collection {
                 .map_err(Error::InvalidDocument)?,
             )
         };
+        let previous = if !creating
+            && self.def.fields.iter().any(|field| {
+                crdt::field_crdt(field.crdt_type).is_some_and(|crdt| crdt.tagged().is_some())
+            }) {
+            datastore
+                .get_parts(&self.doc_key(doc_short_id), &[])
+                .await
+                .map_err(Error::Storage)?
+                .as_deref()
+                .and_then(StoredDocument::decode)
+        } else {
+            None
+        };
         let mut stored = StoredDocument::default();
         for field in &self.def.fields {
             let value = doc.get(&field.name).unwrap_or(&NormalValue::Null);
             let Some(crdt) = crdt::field_crdt(field.crdt_type) else {
                 continue;
             };
-            if value.is_nil() && crdt.replicates_ops() {
-                continue;
-            }
             let id = ids.get(&field.name).ok_or_else(|| {
                 Error::InvalidDocument(format!("missing part ID for {}", field.name))
             })?;
-            let priority = priorities
-                .and_then(|values| values.get(&field.name).map(|order| order.priority))
-                .unwrap_or_else(|| {
-                    heads
-                        .as_ref()
-                        .map(|heads| heads.field_max_priority(&field.name))
-                        .unwrap_or(1)
-                });
+            let priority_of = |field: &schema::FieldDescription| {
+                priorities
+                    .and_then(|values| values.get(&field.name).map(|order| order.priority))
+                    .unwrap_or_else(|| {
+                        heads
+                            .as_ref()
+                            .map(|heads| heads.field_max_priority(&field.name))
+                            .unwrap_or(1)
+                    })
+            };
+            if let Some(tagged) = crdt.tagged() {
+                let base = previous
+                    .as_ref()
+                    .and_then(|previous| previous.fields.get(id));
+                if let Some(part) = tagged_put(tagged, field, doc, priority_of(field), base)? {
+                    stored.fields.insert(*id, part);
+                }
+                continue;
+            }
+            if value.is_nil() && crdt.replicates_ops() {
+                continue;
+            }
+            let priority = priority_of(field);
             let raw = priorities
                 .and_then(|values| values.get(&field.name))
                 .and_then(|order| order.raw_value.as_deref());
@@ -184,6 +252,23 @@ impl Collection {
             .transpose()
     }
 
+    /// The stored state of `field`, read without validation: for a tagged
+    /// field, whose writes and merges decide nothing on it.
+    pub(crate) async fn read_part_unvalidated(
+        &self,
+        datastore: &NamespaceView,
+        doc_short_id: u64,
+        field: &str,
+    ) -> Result<Option<StoredField>> {
+        Ok(datastore
+            .get_parts(&self.doc_key(doc_short_id), &[])
+            .await
+            .map_err(Error::Storage)?
+            .as_deref()
+            .and_then(StoredDocument::decode)
+            .and_then(|stored| stored.fields.into_values().find(|part| part.name == field)))
+    }
+
     /// Write a local update's changed fields as one operand, each at the
     /// priority its new block takes: one above the field's heads in `heads`,
     /// the snapshot the update builds its blocks from.
@@ -231,6 +316,17 @@ impl Collection {
             if !modified.contains(&field.name) {
                 continue;
             }
+            let id = ids.get(&field.name).ok_or_else(|| {
+                Error::InvalidDocument(format!("missing part ID for {}", field.name))
+            })?;
+            let priority = priorities[&field.name].priority;
+            if let Some(FieldOp::Operand { operand, .. }) = doc.pending_op(&field.name) {
+                let mut part = crdt::field::tagged::decode_operand(operand)
+                    .ok_or_else(|| Error::InvalidDocument("invalid prepared operand".into()))?;
+                part.priority = priority;
+                parts.fields.insert(*id, part);
+                continue;
+            }
             let current = doc.get(&field.name).unwrap_or(&NormalValue::Null);
             let write = field_crdt(field)?.write(current, doc.pending_op(&field.name));
             if !write.merges {
@@ -240,13 +336,9 @@ impl Collection {
                     .put_document_value(datastore, doc_short_id, doc, false, Some(&priorities))
                     .await;
             }
-            let id = ids.get(&field.name).ok_or_else(|| {
-                Error::InvalidDocument(format!("missing part ID for {}", field.name))
-            })?;
-            parts.fields.insert(
-                *id,
-                field_value(field, write.data, priorities[&field.name].priority, None)?,
-            );
+            parts
+                .fields
+                .insert(*id, field_value(field, write.data, priority, None)?);
         }
         // An operand must name each part as the stored value does; a schema
         // transition is a put above, never an operand.

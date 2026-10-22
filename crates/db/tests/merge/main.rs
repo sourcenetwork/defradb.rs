@@ -15,6 +15,7 @@ mod head_failures;
 mod head_provider;
 mod head_publication;
 mod immutable_block;
+mod json_merge;
 mod long_history;
 mod long_history_authorization;
 mod long_history_encryption;

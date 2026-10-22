@@ -1,7 +1,7 @@
 use super::*;
 use bytes::Bytes;
 use defra_core::cid_encoding::CidText;
-use document::NormalValue;
+use document::{FieldOp, NormalValue};
 
 use crate::block::builder::BlockResult;
 use crate::collection::Collection;
@@ -66,6 +66,16 @@ pub(crate) async fn write_local_update(
     prepared_inputs: &query::prepared::PreparedInputMemo,
 ) -> query::error::Result<()> {
     apply_field_ops(datastore, collection, doc, doc_short_id, modified_fields).await?;
+    prepare_tagged_writes(
+        datastore,
+        collection,
+        doc,
+        doc_short_id,
+        modified_fields,
+        heads,
+        prepared_inputs,
+    )
+    .await?;
     let generated = crate::search::embedding::set_embedding_from_inputs(
         &collection.schema().vector_embeddings,
         doc,
@@ -255,7 +265,8 @@ async fn apply_field_ops(
     let mut blind = Vec::new();
     let mut causal = Vec::new();
     for field in &collection.schema().fields {
-        let Some(crdt) = crdt::field_crdt(field.crdt_type) else {
+        let Some(crdt) = crdt::field_crdt(field.crdt_type).filter(|crdt| crdt.tagged().is_none())
+        else {
             continue;
         };
         let op = doc.pending_op(&field.name).cloned();
@@ -320,6 +331,84 @@ async fn apply_field_ops(
             .map_err(|e| execution(&e))?;
         // Setting the value drops the pending op; the block still carries it.
         doc.edit(field.name.clone(), op)
+            .map_err(|e| execution(&e))?;
+    }
+    Ok(())
+}
+
+/// Prepare each write of a tagged field against its stored state, read
+/// without validation: the write's block acts only on the operations that
+/// state records, all in its past, so it decides nothing on the state and
+/// a concurrent writer of the field never conflicts with it. A write that
+/// names no operation sets the field's value. The block's parents are the
+/// field's heads in `heads`, the snapshot the update builds its blocks from,
+/// one priority above them. The document then holds the value the write
+/// leaves and the prepared write ([`FieldOp::Operand`]).
+///
+/// Each write's data carries a nonce, drawn once per document, field and
+/// heads and memoized in `prepared_inputs`, so an attempt that runs again
+/// writes the same block, and two peers' equal writes stay two operations.
+async fn prepare_tagged_writes(
+    datastore: &NamespaceView,
+    collection: &Collection,
+    doc: &mut Document,
+    doc_short_id: u64,
+    modified_fields: &rapidhash::RapidHashSet<String>,
+    heads: &crate::block::builder::DocHeadsSnapshot,
+    prepared_inputs: &query::prepared::PreparedInputMemo,
+) -> query::error::Result<()> {
+    let execution =
+        |error: &dyn std::fmt::Display| query::error::QueryError::execution(error.to_string());
+    for field in &collection.schema().fields {
+        let Some(tagged) = crdt::field_crdt(field.crdt_type).and_then(|crdt| crdt.tagged()) else {
+            continue;
+        };
+        let op = match doc.pending_op(&field.name) {
+            Some(op) => op.clone(),
+            None if modified_fields.contains(&field.name) => {
+                FieldOp::Set(doc.get(&field.name).cloned().unwrap_or(NormalValue::Null))
+            }
+            None => continue,
+        };
+        let state = collection
+            .read_part_unvalidated(datastore, doc_short_id, &field.name)
+            .await
+            .map_err(|e| execution(&e))?;
+        let parents: Vec<Vec<u8>> = heads
+            .field_heads(&field.name)
+            .iter()
+            .map(Cid::to_bytes)
+            .collect();
+        let priority = heads.field_max_priority(&field.name) + 1;
+        let nonce = crate::block::builder::fresh_nonce(
+            Some(prepared_inputs),
+            (
+                "json-nonce-v1",
+                collection.collection_id(),
+                doc_short_id,
+                &field.name,
+                priority,
+                &parents,
+            ),
+        )
+        .map_err(|e| execution(&e))?;
+        let write = crdt::field::tagged::local_write(
+            tagged,
+            field,
+            state.as_ref(),
+            &op,
+            priority,
+            &parents,
+            nonce,
+        )
+        .map_err(|e| execution(&e))?;
+        let prepared = write
+            .op()
+            .ok_or_else(|| execution(&"the prepared operand does not encode"))?;
+        doc.set(field.name.clone(), write.value)
+            .map_err(|e| execution(&e))?;
+        // Setting the value drops the pending op; the block still carries it.
+        doc.edit(field.name.clone(), prepared)
             .map_err(|e| execution(&e))?;
     }
     Ok(())

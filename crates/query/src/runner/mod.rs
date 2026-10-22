@@ -30,6 +30,7 @@ mod executor;
 mod explain;
 mod fetcher;
 pub(crate) mod introspection;
+mod json_conflicts;
 mod mutation;
 mod mutation_inputs;
 mod owners;

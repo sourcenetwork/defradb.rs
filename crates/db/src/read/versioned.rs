@@ -7,7 +7,7 @@
 
 use cid::Cid;
 use crdt::stored::StoredField;
-use crdt::CausalBlock;
+use crdt::{CausalBlock, TaggedBlock};
 use defra_core::block::{Block, CrdtDelta, Encryption, FieldDelta};
 use document::Document;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
@@ -644,6 +644,7 @@ fn replay_deltas(
 ) -> Result<Document> {
     let mut fields: RapidHashMap<String, StoredField> = RapidHashMap::new();
     let mut histories: RapidHashMap<String, Vec<CausalBlock>> = RapidHashMap::new();
+    let mut tagged: RapidHashMap<String, Vec<TaggedBlock>> = RapidHashMap::new();
     let mut is_deleted = false;
     let mut max_composite_priority: u64 = 0;
 
@@ -660,7 +661,9 @@ fn replay_deltas(
     });
     for (cid, block, delta) in deltas {
         if let Some(field_delta) = delta.field() {
-            if !causal_history(collection, &mut histories, cid, block, &delta, &field_delta)? {
+            if !causal_history(collection, &mut histories, cid, block, &delta, &field_delta)?
+                && !tagged_history(collection, &mut tagged, cid, block, &delta, &field_delta)
+            {
                 replay_field(collection, &mut fields, &delta, &field_delta);
             }
             continue;
@@ -694,6 +697,22 @@ fn replay_deltas(
             .and_then(|value| crdt.state(field, 0, &value))
             .map_err(|e| Error::Serialization(e.to_string()))?;
         fields.insert(name, state);
+    }
+
+    // A tagged field is the replay of its whole history.
+    for (name, history) in tagged {
+        let Some((field, tagged)) = collection
+            .field_by_name(&name)
+            .and_then(|field| Some((field, crdt::field_crdt(field.crdt_type)?.tagged()?)))
+        else {
+            continue;
+        };
+        let state = tagged
+            .replay(field, &history)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        if let Some(state) = state {
+            fields.insert(name, state);
+        }
     }
 
     // Build document from collected field values
@@ -762,6 +781,39 @@ fn causal_history(
             op,
         });
     Ok(true)
+}
+
+/// Add a field block to its field's history when the field is tagged, and
+/// report whether it was.
+fn tagged_history(
+    collection: &CollectionVersion,
+    histories: &mut RapidHashMap<String, Vec<TaggedBlock>>,
+    cid: &Cid,
+    block: &Block,
+    delta: &CrdtDelta,
+    field_delta: &FieldDelta<'_>,
+) -> bool {
+    let name = field_delta.field_name;
+    let Some(field) = collection.field_by_name(name).filter(|field| {
+        crdt::field_crdt(field.crdt_type).is_some_and(|crdt| crdt.tagged().is_some())
+    }) else {
+        return false;
+    };
+    match crdt::delta_crdt(delta, field.crdt_type) {
+        Ok(_) => histories
+            .entry(name.to_owned())
+            .or_default()
+            .push(TaggedBlock {
+                cid: cid.to_bytes(),
+                parents: block.heads.iter().flatten().map(Cid::to_bytes).collect(),
+                priority: field_delta.priority,
+                data: field_delta.data.to_vec(),
+            }),
+        Err(error) => {
+            tracing::warn!(field_name = %name, %error, "Refused field block during replay")
+        }
+    }
+    true
 }
 
 /// Merge one field block into the replayed states, through the CRDT that

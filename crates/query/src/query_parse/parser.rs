@@ -729,7 +729,21 @@ pub(super) fn parse_field_to_select(
                 "_documentArrivals accepts collection, after, limit and docID only",
             ));
         }
+        if collection_name == "_jsonConflicts"
+            && !matches!(arg_name.as_str(), "collection" | "docID" | "field")
+        {
+            return Err(QueryError::parse(
+                "_jsonConflicts accepts collection, docID and field only",
+            ));
+        }
         match arg_name.as_str() {
+            "collection" if collection_name == "_jsonConflicts" => {
+                select.arrival_collection =
+                    Some(resolve_string_value(arg_value, variables, "collection")?);
+            }
+            "field" if collection_name == "_jsonConflicts" => {
+                select.json_field = Some(resolve_string_value(arg_value, variables, "field")?);
+            }
             "collection" if collection_name == "_documentArrivals" => {
                 select.arrival_collection =
                     Some(resolve_string_value(arg_value, variables, "collection")?);

@@ -470,11 +470,13 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             metadata.verified_creator = verified;
         }
 
-        // A causal field's heads move only with its composite, so its block
-        // merges there, against those heads.
-        if crdt::delta_crdt(&block.delta, CType::None).is_ok_and(|crdt| crdt.causal().is_some()) {
+        // A causal or tagged field's heads move only with its composite, so
+        // its block merges there, against those heads.
+        if crdt::delta_crdt(&block.delta, CType::None)
+            .is_ok_and(|crdt| crdt.causal().is_some() || crdt.tagged().is_some())
+        {
             return Ok(MergeOutcome::terminal_skip(
-                "causal field block merged via its composite",
+                "causal or tagged field block merged via its composite",
             ));
         }
 

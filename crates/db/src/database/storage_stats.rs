@@ -170,6 +170,7 @@ pub async fn collect(reader: &dyn Reader, count_versions: bool) -> Result<Storag
                 Some(CrdtDelta::Lww(_)) => "lww",
                 Some(CrdtDelta::Counter(_)) => "counter",
                 Some(CrdtDelta::Text(_)) => "text",
+                Some(CrdtDelta::Json(_)) => "json",
                 Some(CrdtDelta::Composite(_)) => "composite",
                 Some(CrdtDelta::Immutable(_)) => "immutable",
                 Some(CrdtDelta::Collection(_)) => "collection",

@@ -57,6 +57,9 @@ pub struct CompositeMergeState {
     pub(crate) field_block_priorities: RapidHashMap<Cid, u64>,
     pub(crate) field_priorities: RapidHashMap<String, crate::collection::value::FieldOrder>,
     pub(crate) field_values: RapidHashMap<String, NormalValue>,
+    /// The operations the document value's whole put lands, by field
+    /// ([`FieldMergeResult::op`](super::field::FieldMergeResult)).
+    pub(crate) field_ops: RapidHashMap<String, document::FieldOp>,
     pub(crate) any_field_applied: bool,
     pub(crate) encrypted_policy_checked: bool,
     pub(crate) field_block_heads: RapidHashMap<String, Vec<Cid>>,

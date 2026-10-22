@@ -29,6 +29,11 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .execute_arrivals_query(select, fetcher, caller_identity)
                 .await;
         }
+        if select.collection_name == "_jsonConflicts" {
+            return self
+                .execute_json_conflicts_query(select, fetcher, caller_identity)
+                .await;
+        }
         // Handle encrypted search queries (encrypted_<Collection>)
         if select.is_encrypted {
             return self

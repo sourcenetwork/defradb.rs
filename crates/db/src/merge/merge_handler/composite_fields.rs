@@ -194,6 +194,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 if result.applied {
                     state.any_field_applied = true;
                 }
+                if let Some(op) = result.op {
+                    state.field_ops.insert(field_name.clone(), op);
+                }
                 if let Some(value) = result.value {
                     state.field_values.insert(field_name, value);
                 }

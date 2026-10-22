@@ -4,12 +4,17 @@ use crate::{CType, FieldKind, ScalarKind};
 
 /// Check if a CRDT type is supported as a user-specified field type.
 /// Matches Go's IsSupportedFieldCType (None, LwwRegister, PnCounter, PCounter), plus
-/// the Rust-only Text.
+/// the Rust-only Text and Json.
 /// Object and Composite are internal types, not user-assignable.
 pub(super) fn is_crdt_type_supported(crdt: CType) -> bool {
     matches!(
         crdt,
-        CType::None | CType::LwwRegister | CType::PnCounter | CType::PCounter | CType::Text
+        CType::None
+            | CType::LwwRegister
+            | CType::PnCounter
+            | CType::PCounter
+            | CType::Text
+            | CType::Json
     )
 }
 
@@ -48,6 +53,7 @@ pub(super) fn format_crdt_type(crdt: CType) -> String {
         CType::PnCounter => "pncounter".to_string(),
         CType::PCounter => "pcounter".to_string(),
         CType::Text => "text".to_string(),
+        CType::Json => "json".to_string(),
         CType::Unknown(_) => "unknown".to_string(),
     }
 }

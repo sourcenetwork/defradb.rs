@@ -24,6 +24,14 @@
 \* Only a set below a path implies the path is a map. A delete never creates
 \* anything: if Bob had deleted "a.b" instead of setting it, "a" stays gone.
 \*
+\* A frontier names each edit by its operation ID, which a writer computes
+\* before its block (and its CID) exists. Two peers can make the very same
+\* edit on the same heads at once; their blocks differ only in signature,
+\* so their CIDs differ. Each write carries its own nonce, so the two edits
+\* still take two IDs. If they shared one, a peer that merged both would
+\* keep one entry for two blocks, and a delete that saw only one of them
+\* would wipe the other on some peers and not on others.
+\*
 \* Example: "a" and "a.b" are empty. Alice deletes "a"; Bob sets "a.b" to 1,
 \* neither having seen the other. Every peer ends with {"a": {"b": 1}}, and
 \* the conflicts query at "a" lists Alice's delete.
@@ -41,30 +49,55 @@
 \*   * a type clash resolves other than by that same order;
 \*   * the conflicts query lists anything but the racing edits that lost.
 \*
-\* Code this models (defradb.rs). The JSON CRDT is not written yet: this model
-\* is its contract (issue #2129), and these are the files it will live in:
-\*   crates/crdt/src/json.rs                       the per-path registers: the
+\* Code this models (defradb.rs):
+\*   crates/defra-core/src/json_crdt.rs            the per-path registers: the
 \*                                                 frontier of racing edits,
 \*                                                 the winner, the conflicts
-\*   crates/db/src/merge/merge_handler/json.rs     applies a received JSON block
+\*   crates/crdt/src/field/json.rs                 JsonField, the field's
+\*                                                 TaggedCrdt: a write's ops,
+\*                                                 a block's operand, replay
+\*   crates/db/src/merge/merge_handler/field_tagged.rs
+\*                                                 applies a received block
 \*                                                 once its parents are merged
+\*   crates/db/src/write/autocommit/helpers.rs     a local write's ops and
+\*                                                 operand
+\*                                                 (prepare_tagged_writes)
 \*
-\* Correspondence table (model -> planned Rust):
-\*   Create        json.rs: a write turns a JSON value into one op per path and
-\*                 emits a block whose parents are the field's heads
-\*   Deliver       merge_handler/json.rs: a received block is merged once every
-\*                 parent block is local (the DAG sync's causal buffer)
-\*   Apply         json.rs: add the op to its path's frontier, drop the edits
-\*                 it saw at that path and below, refresh the winners
-\*   front         json.rs: each path's frontier, the edits that no later edit
-\*                 of the same path or of a path above has seen
-\*   win           json.rs: each path's current winner among its own edits
-\*   Beats         json.rs: priority, then CID
-\*   Implied       json.rs: the sets below a path, each making it a map
-\*   Winner, Doc   json.rs: reading the JSON from the frontiers
-\*   Conflicts     json.rs: the conflicts query
-\*   SpecDoc       the same JSON read straight from a set of blocks, with no
-\*                 incremental state; no Rust counterpart
+\* Correspondence table (model -> Rust):
+\*   Create        json.rs write_data (block_ops, deep_set; json_crdt.rs diff):
+\*                 a write turns a JSON value into ops at paths;
+\*                 prepare_tagged_writes gives its block the field's heads as
+\*                 parents. One block may carry ops at
+\*                 several distinct paths: they act as a chain of one-op blocks
+\*                 sharing one ID, which never race one another
+\*   Deliver       field_tagged.rs merge_field_tagged: a received block is
+\*                 merged once every parent block is local
+\*   Apply         json_crdt.rs Frontier::delta, then Frontier::compose: drop
+\*                 the edits in the block's past at its paths and below, add
+\*                 its edits (json.rs effect); tagged_past finds that past by
+\*                 walking its DAG
+\*   front         json_crdt.rs Frontier::entries, stored as the field's
+\*                 part; it holds operation IDs
+\*   OpId          json_crdt.rs block_id over the data json.rs write_data
+\*                 writes (encode_write: the ops and a nonce drawn by
+\*                 prepare_tagged_writes); SharedIds exists only for the RED
+\*                 configuration whose writes carry no nonce
+\*   Dup           field_tagged.rs merge_field_tagged: a block whose ID the
+\*                 stored state already records changes nothing
+\*   win, Winner   json_crdt.rs Index::winner
+\*   Beats         json_crdt.rs beats: priority, then block ID. The ID
+\*                 (block_id) is a digest of the block's priority, parents and
+\*                 plain ops: it stands in for the CID, which a local writer
+\*                 does not know yet when it writes the stored value
+\*   Implied       json_crdt.rs Index::racers: the sets below a path
+\*   Doc           json_crdt.rs Frontier::materialize
+\*   Conflicts     json_crdt.rs Frontier::conflicts, read by _jsonConflicts
+\*                 (crates/db/src/read/json_conflicts.rs); an edit's `seen`
+\*                 records the edits above it in its past, which is how the
+\*                 code tells two edits at different depths are concurrent
+\*   SpecDoc       json_crdt.rs replay (json.rs TaggedCrdt::replay): the JSON
+\*                 read straight from the whole DAG, used by time-travel reads
+\*                 (crates/db/src/read/versioned.rs)
 
 EXTENDS Naturals, FiniteSets, TLC
 
@@ -73,7 +106,8 @@ CONSTANTS
   MaxBlocks,   \* how many edit blocks may be written in all, so the model stays finite
   UseCid,           \* TRUE: a priority tie is broken by the CID (the design)
   DeleteWins,       \* TRUE: a delete beats a concurrent edit below it (a RED)
-  DeleteImpliesMap  \* TRUE: a delete below a path says the path is a map (a RED)
+  DeleteImpliesMap, \* TRUE: a delete below a path says the path is a map (a RED)
+  SharedIds         \* TRUE: equal edits on the same past share one ID (a RED)
 
 VARIABLES
   blocks,   \* the blocks written so far; the index is the block ID
@@ -123,6 +157,19 @@ KindOf(b) == blocks[b].kind   \* what it does there
 Past(b) == blocks[b].past     \* the blocks its author had seen
 Prio(b) == blocks[b].prio     \* its priority: one more than the highest it saw
 
+\* The operation ID of block b. In the design every update draws a nonce, and
+\* a create is the root of its own document (a DocID is the CID of its first
+\* block, signature included), so every block has its own ID. In the RED, a block takes the ID of the first
+\* block that made the same edit on the same past at the same priority,
+\* whoever wrote it.
+OpId(b) ==
+  IF ~SharedIds THEN b
+  ELSE CHOOSE x \in 1..b :
+         /\ PathOf(x) = PathOf(b) /\ KindOf(x) = KindOf(b)       \* the same edit
+         /\ Past(x) = Past(b) /\ Prio(x) = Prio(b)               \* on the same past
+         /\ \A y \in 1..(x - 1) :                                \* and the first such
+              ~(PathOf(y) = PathOf(b) /\ KindOf(y) = KindOf(b) /\ Past(y) = Past(b) /\ Prio(y) = Prio(b))
+
 \* Two blocks race when neither author had seen the other's block.
 Concurrent(x, y) == x # y /\ x \notin Past(y) /\ y \notin Past(x)
 
@@ -152,7 +199,7 @@ Implied(f, p) ==
 
 \* What a winning block makes path p read as.
 ValueOf(b, p) ==
-  CASE KindAt(b, p) = "value"  -> b         \* the plain value it set
+  CASE KindAt(b, p) = "value"  -> OpId(b)   \* the plain value it set
     [] KindAt(b, p) = "map"    -> MapVal    \* a map
     [] KindAt(b, p) = "list"   -> ListVal   \* a list
     [] KindAt(b, p) = "delete" -> Absent    \* gone
@@ -236,7 +283,8 @@ FirstSetsListOrDeletes == nblocks = 0 \/ KindOf(1) \in {"list", "delete"}
 TypeOK ==
   /\ nblocks \in 0..MaxBlocks                                 \* within the allowance
   /\ \A n \in Peers : known[n] \subseteq 1..nblocks           \* only written blocks
-  /\ \A n \in Peers : \A p \in Paths : front[n][p] \subseteq known[n]   \* frontiers hold merged blocks
+  /\ \A n \in Peers : \A p \in Paths :
+       front[n][p] \subseteq {OpId(x) : x \in known[n]}               \* frontiers hold merged edits' IDs
   /\ \A n \in Peers : \A p \in Paths : win[n][p] \in {0} \cup front[n][p] \* a winner is on the frontier
 
 \* At the start nothing is written and nobody holds anything.
@@ -247,20 +295,25 @@ Init ==
   /\ front = [n \in Peers |-> [p \in Paths |-> {}]]      \* every frontier empty
   /\ win = [n \in Peers |-> [p \in Paths |-> 0]]         \* no winner anywhere
 
-\* Peer n merges block b: it joins its path's frontier, and
+\* Peer n merges block b: its edit, by ID, joins its path's frontier, and
 \* the edits it had seen leave that frontier and every frontier below. A path
 \* keeps its winner unless the new block beats it or the winner just left;
-\* then the best of what remains takes over.
+\* then the best of what remains takes over. A block whose ID the frontier
+\* already holds changes nothing.
 Apply(n, b) ==
   LET p == PathOf(b)                                          \* the path b edits
+      i == OpId(b)                                            \* the ID its edit goes by
+      seen == {OpId(x) : x \in Past(b)}                       \* the IDs of what it saw
+      dup == \E q \in Paths : i \in front[n][q]               \* an edit by that ID is held
       f == [q \in Paths |->
-              IF q = p THEN (front[n][q] \ Past(b)) \cup {b}  \* b joins, what it saw leaves
-              ELSE IF Above(p, q) THEN front[n][q] \ Past(b)  \* below: what it saw is wiped
+              IF dup THEN front[n][q]                         \* a held edit: nothing changes
+              ELSE IF q = p THEN (front[n][q] \ seen) \cup {i} \* b joins, what it saw leaves
+              ELSE IF Above(p, q) THEN front[n][q] \ seen      \* below: what it saw is wiped
               ELSE front[n][q]]                               \* elsewhere: untouched
       old == win[n]                                           \* the winners before
       w == [q \in Paths |->
               IF old[q] \notin f[q] THEN Best(f[q])           \* winner gone: best remaining
-              ELSE IF q = p /\ Beats(b, old[q]) THEN b        \* b beats it: b
+              ELSE IF ~dup /\ q = p /\ Beats(i, old[q]) THEN i \* b beats it: b
               ELSE old[q]]                                    \* otherwise it stays
   IN /\ known' = [known EXCEPT ![n] = @ \cup {b}]             \* n now holds b
      /\ front' = [front EXCEPT ![n] = f]                      \* its new frontiers
@@ -299,6 +352,13 @@ Next ==
 
 \* The whole behaviour: start, then any sequence of steps.
 Spec == Init /\ [][Next]_vars
+
+\* A state constraint the shared-ID RED checks under, so it finishes in time:
+\* only the edits its bug needs, sets of "a.b" and deletes of "a".
+SharedIdEdits ==
+  \A b \in 1..nblocks :
+    \/ PathOf(b) = "ab" /\ KindOf(b) = "value"   \* a set of "a.b"
+    \/ PathOf(b) = "a" /\ KindOf(b) = "delete"   \* or a delete of "a"
 
 \* ---- What must hold ----
 

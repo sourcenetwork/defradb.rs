@@ -8,6 +8,7 @@ use schema::FieldDescription;
 use super::create_conversions::json_to_normal_value_with_kind_and_time;
 use crate::error::{QueryError, Result};
 use crate::mapper::InputOp;
+use defra_core::json_crdt::{JsonEdit, JsonOp};
 
 /// The op an implicit `field: value` input makes: the one the field's type
 /// reads a written value as.
@@ -38,6 +39,15 @@ pub(super) fn named_op(
         InputOp::Set(json) => FieldOp::Set(value(json)?),
         InputOp::Increment(json) => FieldOp::Increment(value(json)?),
         InputOp::Text(edits) => FieldOp::Edit(edits.clone()),
+        InputOp::JsonDelete(paths) => FieldOp::Paths(
+            paths
+                .iter()
+                .map(|path| JsonOp {
+                    path: path.clone(),
+                    edit: JsonEdit::Delete,
+                })
+                .collect(),
+        ),
     };
     match field_def.and_then(|field| crdt::field_crdt(field.crdt_type)) {
         Some(crdt) => crdt

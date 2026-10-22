@@ -9,11 +9,15 @@
 //!
 //! Most types merge a block into the stored value on its own. A type whose
 //! operations count in the value they edit, such as positions in a text,
-//! merges by causal replay instead ([`CausalCrdt`]).
+//! merges by causal replay instead ([`CausalCrdt`]). A type whose state
+//! records its operations by ID, and whose operations act only on those their
+//! writer had seen, merges by its block's causal past ([`TaggedCrdt`]).
 
 mod causal;
 mod counter;
+mod json;
 mod lww;
+pub mod tagged;
 pub mod testing;
 mod text;
 
@@ -25,7 +29,9 @@ use crate::stored::{Part, StoredField, ValueKind};
 
 pub use causal::{history_op, CausalBlock, CausalCrdt};
 pub use counter::{counter_kind, CounterField};
+pub use json::JsonField;
 pub use lww::LwwField;
+pub use tagged::{InPast, Tag, TaggedBlock, TaggedCrdt};
 pub use text::TextField;
 
 #[derive(Debug, thiserror::Error)]
@@ -205,6 +211,13 @@ pub trait FieldCrdt: Send + Sync {
         None
     }
 
+    /// How the type merges by its blocks' causal past, for a type whose state
+    /// records its operations by ID; `None` for any other. A type is at most
+    /// one of causal and tagged.
+    fn tagged(&self) -> Option<&dyn TaggedCrdt> {
+        None
+    }
+
     /// Whether a write's operation is blind: it does not depend on the value
     /// it lands on, so the write decides nothing on that value. True for a
     /// type that replicates operations, unless they count in the value they
@@ -218,6 +231,7 @@ static LWW: LwwField = LwwField;
 static P_COUNTER: CounterField = CounterField::new(CType::PCounter);
 static PN_COUNTER: CounterField = CounterField::new(CType::PnCounter);
 static TEXT: TextField = TextField;
+static JSON: JsonField = JsonField;
 
 /// The CRDT type a field declares, or `None` for a type with no field blocks
 /// (`None`, `Object`, `Composite`, unknown).
@@ -227,6 +241,7 @@ pub fn field_crdt(ctype: CType) -> Option<&'static dyn FieldCrdt> {
         CType::PCounter => Some(&P_COUNTER),
         CType::PnCounter => Some(&PN_COUNTER),
         CType::Text => Some(&TEXT),
+        CType::Json => Some(&JSON),
         _ => None,
     }
 }
@@ -252,11 +267,15 @@ pub fn delta_crdt(
     match (delta, declared) {
         (CrdtDelta::Text(_), CType::Text | CType::None) => Ok(&TEXT),
         (CrdtDelta::Text(_), _) => Err(mismatched("text")),
-        (CrdtDelta::Lww(_), CType::PCounter | CType::PnCounter | CType::Text) => {
+        (CrdtDelta::Json(_), CType::Json | CType::None) => Ok(&JSON),
+        (CrdtDelta::Json(_), _) => Err(mismatched("json")),
+        (CrdtDelta::Lww(_), CType::PCounter | CType::PnCounter | CType::Text | CType::Json) => {
             Err(mismatched("LWW"))
         }
         (CrdtDelta::Lww(_), _) => Ok(&LWW),
-        (CrdtDelta::Counter(_), CType::LwwRegister | CType::Text) => Err(mismatched("counter")),
+        (CrdtDelta::Counter(_), CType::LwwRegister | CType::Text | CType::Json) => {
+            Err(mismatched("counter"))
+        }
         (CrdtDelta::Counter(_), CType::PnCounter) => Ok(&PN_COUNTER),
         (CrdtDelta::Counter(_), _) => Ok(&P_COUNTER),
         _ => Err(FieldCrdtError::NotAFieldBlock),
@@ -270,5 +289,6 @@ pub fn part_crdt(kind: ValueKind) -> &'static dyn FieldCrdt {
         ValueKind::Lww => &LWW,
         ValueKind::Int64 | ValueKind::Float32 | ValueKind::Float64 => &PN_COUNTER,
         ValueKind::Text => &TEXT,
+        ValueKind::Json => &JSON,
     }
 }
