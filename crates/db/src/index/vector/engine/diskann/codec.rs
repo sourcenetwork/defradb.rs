@@ -171,7 +171,13 @@ impl<'bytes> Iterator for RecordEdges<'bytes> {
             &chunk[8..],
         ))
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.edges.size_hint()
+    }
 }
+
+impl ExactSizeIterator for RecordEdges<'_> {}
 
 /// Every length is checked before it is used, so a corrupt record is an error
 /// rather than a panic or a huge allocation.
