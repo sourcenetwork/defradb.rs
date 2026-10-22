@@ -38,6 +38,9 @@ docs/
 # Local dev tooling installed by `just setup`
 .tooling/
 
+# direnv's cache for the flake devShell. `.envrc` itself is tracked.
+.direnv/
+
 # Benchmark output. `bench-out/` is where a bench writes its family when it is
 # run standalone, without DEFRA_BENCH_OUT pointing somewhere; the rest is what
 # `just perf` leaves behind building the dashboard locally.

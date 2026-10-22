@@ -1,0 +1,111 @@
+name: Nix
+
+# The flake is the NixOS onboarding path and nothing else in CI evaluates it,
+# so without this job it rots silently: a nixpkgs or fenix change, or a new
+# native build requirement, is found by the next person running `nix develop`.
+#
+# Path-filtered, because the flake itself changes rarely. The weekly schedule
+# is what catches drift the filter cannot see -- the inputs moving under a
+# flake.nix nobody touched.
+on:
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - .envrc
+      - Cargo.toml
+      - .github/workflows/nix.yml
+  pull_request:
+    branches: ['**']
+    paths:
+      - flake.nix
+      - flake.lock
+      - .envrc
+      - Cargo.toml
+      - .github/workflows/nix.yml
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'tip' }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' && github.ref != 'refs/heads/main' }}
+
+jobs:
+  dev-shell:
+    name: Nix devShell
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          # fenix publishes the prebuilt toolchains here. Read-only: a public
+          # cache needs no token, and this workflow pushes nothing.
+          name: fenix
+          skipPush: true
+
+      # Evaluates every output, including the darwin devShells that no runner
+      # here can build. Eval is the only check the macOS shells get.
+      - name: Check flake outputs
+        run: nix flake check --all-systems
+
+      - name: Check nix formatting
+        run: |
+          nix fmt
+          git diff --exit-code -- '*.nix'
+
+      - name: Realise the devShell
+        run: nix develop --command true
+
+      # RUSTFLAGS is set deliberately: the shellHook unsets it because a value
+      # here replaces .cargo/config.toml's wasm32 rustflags table wholesale,
+      # and asserting that in an environment where it was never set proves
+      # nothing. This step fails if the shellHook stops unsetting it.
+      - name: Assert the shell carries what the build needs
+        env:
+          RUSTFLAGS: --cfg=flake_ci_expects_this_unset
+        run: nix develop --command bash .github/scripts/assert-nix-shell.sh
+
+      # libdbus-sys links against dbus through pkg-config. This is the
+      # cheapest compile that exercises it.
+      #
+      # --manifest-path, not -p keyring: that spec is ambiguous between this
+      # workspace crate and the external `keyring` v3 it wraps, and pinning the
+      # version here would break on the next bump.
+      - name: Build the dbus-linked crate
+        run: >-
+          nix develop --command
+          cargo check --manifest-path crates/keyring/Cargo.toml --features system
+
+      # The keyring system tests are all #[ignore]d, but the binary links
+      # libdbus-1.so.3 with no rpath for it, so loading it to list its tests is
+      # what proves LD_LIBRARY_PATH reaches the loader.
+      - name: Load a dbus-linked test binary
+        run: >-
+          nix develop --command
+          cargo test --manifest-path crates/keyring/Cargo.toml --features system -- --list
+
+  workspace:
+    name: Nix workspace check (full)
+    # A whole-workspace compile is too slow for every flake PR, but it is the
+    # only thing that notices a new native build dependency the shell lacks,
+    # so it runs on the schedule that watches for drift.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: fenix
+          skipPush: true
+
+      - name: Check every workspace target
+        run: nix develop --command cargo check --workspace --all-targets
