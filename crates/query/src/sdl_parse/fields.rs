@@ -415,6 +415,7 @@ impl<'a> SdlParser<'a> {
             "lwwregister" | "lww" | "lww_register" => Ok(CType::LwwRegister),
             "pncounter" | "counter" | "pn_counter" => Ok(CType::PnCounter),
             "pcounter" | "p_counter" => Ok(CType::PCounter),
+            "text" => Ok(CType::Text),
             other => Err(QueryError::parse(format!(
                 "Argument \"type\" has invalid value \"{}\"",
                 other

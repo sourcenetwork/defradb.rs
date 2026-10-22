@@ -63,7 +63,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Iroh service records | TLA+, Lean | p2p |
 | Iroh solicited replies | TLA+ | p2p |
 | Reply-driven DAG fetch | TLA+ | p2p |
-| Text CRDT convergence | TLA+ & Lean | crdt, db-merge (specified before the code, #2127) |
+| Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

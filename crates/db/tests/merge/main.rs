@@ -32,3 +32,4 @@ mod se_storage;
 mod se_validate;
 mod single_root_batch;
 mod synced_definition_cache;
+mod text_merge;

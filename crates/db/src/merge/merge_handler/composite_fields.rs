@@ -77,7 +77,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Phase 1: decode/decrypt every linked field ONCE and validate @immutable
         // BEFORE persisting anything, so a rejected composite leaves no partial write.
         // One entry per link: an Immutable block carries several field deltas.
-        let mut pending: Vec<(Cid, Vec<CrdtDelta>)> = Vec::with_capacity(links.len());
+        let mut pending: Vec<(Cid, Vec<Cid>, Vec<CrdtDelta>)> = Vec::with_capacity(links.len());
         for dag_link in links {
             let link_name = &dag_link.name;
             let link_cid = &dag_link.link;
@@ -149,11 +149,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     }
                 }
             }
-            pending.push((*link_cid, deltas));
+            pending.push((
+                *link_cid,
+                linked_block.heads.clone().unwrap_or_default(),
+                deltas,
+            ));
         }
 
         // Phase 2: persist the decoded deltas.
-        for (link_cid, deltas) in pending {
+        for (link_cid, parents, deltas) in pending {
             for effective in deltas {
                 let Some(delta) = effective.field() else {
                     return Err(MergeError::UnsupportedDelta(format!(
@@ -174,6 +178,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         context.metadata.collection_id,
                         context.doc_id_str,
                         context.doc_short_id,
+                        Some(&parents),
+                        Some(context.metadata),
                         &mut state.reads,
                         false,
                     )

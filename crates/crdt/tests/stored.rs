@@ -1,4 +1,4 @@
-use crdt::field::{CounterField, LwwField};
+use crdt::field::{CounterField, LwwField, TextField};
 use crdt::stored::{document_from_storage, encode_parts, Part, StoredDocument, ValueKind};
 use document::NormalValue;
 use schema::CollectionVersion;
@@ -193,4 +193,37 @@ fn encoded_parts_are_the_stored_document_of_those_fields() {
         value: &[0; 4],
     };
     assert!(encode_parts(&[], std::iter::once((1, short))).is_none());
+}
+
+#[test]
+fn a_text_operand_replaces_the_stored_text_whatever_its_priority() {
+    let text = |priority, value: &str| {
+        let mut doc = StoredDocument::default();
+        doc.fields.insert(
+            1,
+            TextField::stored(
+                "body".to_owned(),
+                priority,
+                &NormalValue::String(value.to_owned()),
+            )
+            .unwrap(),
+        );
+        doc
+    };
+    let mut stored = text(5, "zzz");
+    stored.apply(text(3, "abc")).unwrap();
+    let body = &stored.fields[&1];
+    assert_eq!(
+        body.materialize().as_ref().and_then(NormalValue::as_str),
+        Some("abc")
+    );
+    assert_eq!(body.priority, 5);
+    let decoded = StoredDocument::decode(&stored.encode().unwrap()).unwrap();
+    assert_eq!(decoded.fields[&1].kind, ValueKind::Text);
+    let mut lww = StoredDocument::default();
+    lww.fields.insert(
+        1,
+        LwwField::stored("body".to_owned(), 9, &NormalValue::String("x".to_owned())).unwrap(),
+    );
+    assert!(text(1, "a").apply(lww).is_none());
 }
