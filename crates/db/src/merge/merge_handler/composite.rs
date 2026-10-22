@@ -100,7 +100,7 @@ enum CompositeMergeFrame {
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// Process a Composite delta from a block.
     ///
-    /// Composite deltas contain links to the actual field LWW/Counter blocks.
+    /// Composite deltas contain links to the actual field blocks.
     /// This method processes all linked blocks within a SINGLE transaction to ensure
     /// atomicity between CRDT field merges and document storage.
     ///

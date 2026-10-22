@@ -203,7 +203,7 @@ impl Collection {
         // Get the document for index cleanup
         let doc = match datastore.get(&key).await.map_err(Error::Storage)? {
             Some(bytes) => {
-                let mut d = Document::from_storage_cbor(&bytes, self.schema_arc())?;
+                let mut d = crdt::stored::document_from_storage(&bytes, self.schema_arc())?;
                 d.set_id(doc_id.clone());
                 d
             }

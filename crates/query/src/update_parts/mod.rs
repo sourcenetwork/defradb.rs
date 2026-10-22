@@ -98,7 +98,7 @@ impl Run {
         let mut parts = self.written(collection, &collection.indexes, patch, |name| {
             field(collection, name)
                 .and_then(|field| crdt::field_crdt(field.crdt_type))
-                .is_some_and(|crdt| crdt.always_changes())
+                .is_some_and(|crdt| crdt.replicates_ops())
         });
         if let Some(filter) = filter {
             parts.extend(compared(collection, filter)?);

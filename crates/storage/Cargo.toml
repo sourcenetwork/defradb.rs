@@ -13,6 +13,7 @@ bench = false
 [dependencies]
 web-time.workspace = true
 defra-core = { path = "../defra-core" }
+crdt = { path = "../crdt" }
 document = { path = "../document" }
 schema = { path = "../schema" }
 regolith.workspace = true

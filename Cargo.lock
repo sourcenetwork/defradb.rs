@@ -3317,19 +3317,12 @@ dependencies = [
 name = "crdt"
 version = "0.5.0"
 dependencies = [
- "async-trait",
- "bytes",
+ "ciborium",
  "defra-core",
  "document",
  "proptest",
- "rapidhash",
  "schema",
- "serde",
- "serde_json",
- "storage",
  "thiserror 2.0.21",
- "tracing",
- "workers",
 ]
 
 [[package]]
@@ -4585,6 +4578,7 @@ dependencies = [
  "blockstore",
  "bytes",
  "cid",
+ "crdt",
  "crypto",
  "db",
  "defra-core",
@@ -12112,6 +12106,7 @@ dependencies = [
  "bytes",
  "chrono",
  "cid",
+ "crdt",
  "crypto",
  "defra-core",
  "document",

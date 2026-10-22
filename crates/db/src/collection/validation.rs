@@ -112,16 +112,19 @@ impl Collection {
             .iter()
             .filter(|field| field.immutable && checked(&field.name))
         {
-            let unchanged = ::document::stored::stores_same_lww(
-                old_doc.get(&field_def.name),
-                new_doc.get(&field_def.name),
-            )
-            .map_err(|error| {
-                Error::InvalidDocument(format!(
-                    "immutable field '{}' holds a value that cannot be stored: {error}",
-                    field_def.name
-                ))
-            })?;
+            // Values compare by the state a register stores for them.
+            let stored = |doc: &Document| {
+                let value = doc.get(&field_def.name).unwrap_or(&NormalValue::Null);
+                crdt::field::LwwField::stored(String::new(), 0, value).map(|state| state.value)
+            };
+            let unchanged = stored(old_doc)
+                .and_then(|old| Ok(old == stored(new_doc)?))
+                .map_err(|error| {
+                    Error::InvalidDocument(format!(
+                        "immutable field '{}' holds a value that cannot be stored: {error}",
+                        field_def.name
+                    ))
+                })?;
             if !unchanged {
                 return Err(Error::InvalidDocument(format!(
                     "immutable field '{}' cannot be changed",

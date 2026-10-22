@@ -6,10 +6,11 @@
 //! 3. Replaying CRDT deltas forward to reconstruct document state
 
 use cid::Cid;
-use defra_core::block::{Block, CrdtDelta, Encryption};
-use document::{Document, NormalValue};
+use crdt::stored::StoredField;
+use defra_core::block::{Block, CrdtDelta, Encryption, FieldDelta};
+use document::Document;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
-use schema::CollectionVersion;
+use schema::{CType, CollectionVersion, FieldDescription, FieldKind, ScalarKind};
 use std::collections::VecDeque;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -172,7 +173,7 @@ impl<S: Store> VersionedFetcher<S> {
 
         let mut documents = Vec::with_capacity(members.len());
         for doc_id in members {
-            documents.push(self.replay_deltas(&collection, &sorted_blocks, &doc_id)?);
+            documents.push(replay_deltas(&collection, &sorted_blocks, &doc_id)?);
         }
         Ok(documents)
     }
@@ -293,7 +294,7 @@ impl<S: Store> VersionedFetcher<S> {
             let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
             sorted_blocks.sort_by_key(|(_, block)| block.delta.priority());
 
-            let document = self.replay_deltas(&collection, &sorted_blocks, &doc_id)?;
+            let document = replay_deltas(&collection, &sorted_blocks, &doc_id)?;
             documents.push(document);
         }
 
@@ -451,7 +452,7 @@ impl<S: Store> VersionedFetcher<S> {
     ) -> Result<()> {
         let mut cids: Vec<Cid> = blocks
             .values()
-            .filter(|block| matches!(block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_)))
+            .filter(|block| block.delta.field().is_some())
             .filter_map(|block| block.encryption)
             .collect();
         if cids.is_empty() {
@@ -465,10 +466,8 @@ impl<S: Store> VersionedFetcher<S> {
             let Some(encryption_cid) = block.encryption else {
                 continue;
             };
-            let payload = match &mut block.delta {
-                CrdtDelta::Lww(payload) => &mut payload.data,
-                CrdtDelta::Counter(payload) => &mut payload.data,
-                _ => continue,
+            let Some(payload) = block.delta.field_data_mut() else {
+                continue;
             };
             let plaintext = keys
                 .get(&encryption_cid)
@@ -632,167 +631,113 @@ impl<S: Store> VersionedFetcher<S> {
             .map(kms::RequestContext::with_user)
             .unwrap_or_else(kms::RequestContext::anonymous)
     }
+}
 
-    /// Replay CRDT deltas to reconstruct document state.
-    ///
-    /// Blocks should be sorted by priority (ascending) before calling this method.
-    fn replay_deltas(
-        &self,
-        collection: &Arc<CollectionVersion>,
-        blocks: &[(Cid, Block)],
-        doc_id: &str,
-    ) -> Result<Document> {
-        let mut field_values: RapidHashMap<String, (u64, NormalValue)> = RapidHashMap::new();
-        let mut is_deleted = false;
-        let mut max_composite_priority: u64 = 0;
+/// Replay CRDT deltas to reconstruct document state.
+///
+/// Blocks should be sorted by priority (ascending) before calling this method.
+fn replay_deltas(
+    collection: &Arc<CollectionVersion>,
+    blocks: &[(Cid, Block)],
+    doc_id: &str,
+) -> Result<Document> {
+    let mut fields: RapidHashMap<String, StoredField> = RapidHashMap::new();
+    let mut is_deleted = false;
+    let mut max_composite_priority: u64 = 0;
 
-        // An Immutable block replays as the LWW field deltas it replaces.
-        let deltas = blocks.iter().flat_map(|(_, block)| match &block.delta {
-            CrdtDelta::Immutable(payload) => payload
-                .lww_deltas()
-                .map(|delta| std::borrow::Cow::Owned(CrdtDelta::Lww(delta)))
-                .collect(),
-            other => vec![std::borrow::Cow::Borrowed(other)],
-        });
-        for delta in deltas {
-            match delta.as_ref() {
-                CrdtDelta::Lww(payload) => {
-                    let field_name = &payload.field_name;
-                    let priority = payload.priority;
-
-                    // LWW merge: higher priority wins, on tie, lexicographic comparison
-                    let should_apply = match field_values.get(field_name) {
-                        None => true,
-                        Some((current_priority, current_value)) => {
-                            if priority > *current_priority {
-                                true
-                            } else if priority == *current_priority {
-                                // Tie-break: lexicographic comparison of encoded data
-                                let current_encoded = Self::encode_value(current_value);
-                                payload.data > current_encoded
-                            } else {
-                                false
-                            }
-                        }
-                    };
-
-                    if should_apply {
-                        if payload.data.is_empty() {
-                            // Tombstone - remove field
-                            field_values.remove(field_name);
-                        } else {
-                            // Decode and store value
-                            match ciborium::from_reader::<NormalValue, _>(&payload.data[..]) {
-                                Ok(value) => {
-                                    field_values.insert(field_name.clone(), (priority, value));
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        field_name = %field_name,
-                                        error = %e,
-                                        "Failed to decode LWW value during replay"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                CrdtDelta::Counter(payload) => {
-                    let field_name = &payload.field_name;
-
-                    // Counter: accumulate increments
-                    if !payload.data.is_empty() {
-                        match ciborium::from_reader::<NormalValue, _>(&payload.data[..]) {
-                            Ok(increment_value) => match &increment_value {
-                                NormalValue::Int(increment) => {
-                                    let current: i64 = field_values
-                                        .get(field_name)
-                                        .and_then(|(_, v)| v.as_int())
-                                        .unwrap_or(0);
-                                    let new_value = current.saturating_add(*increment);
-                                    field_values.insert(
-                                        field_name.clone(),
-                                        (payload.priority, NormalValue::Int(new_value)),
-                                    );
-                                }
-                                NormalValue::Float64(increment) => {
-                                    let current: f64 = field_values
-                                        .get(field_name)
-                                        .and_then(|(_, v)| v.as_float64())
-                                        .unwrap_or(0.0);
-                                    let new_value = current + increment;
-                                    field_values.insert(
-                                        field_name.clone(),
-                                        (payload.priority, NormalValue::Float64(new_value)),
-                                    );
-                                }
-                                NormalValue::Float32(increment) => {
-                                    let current: f32 = field_values
-                                        .get(field_name)
-                                        .and_then(|(_, v)| v.as_float32())
-                                        .unwrap_or(0.0);
-                                    let new_value = current + increment;
-                                    field_values.insert(
-                                        field_name.clone(),
-                                        (payload.priority, NormalValue::Float32(new_value)),
-                                    );
-                                }
-                                other => {
-                                    tracing::warn!(
-                                        field_name = %field_name,
-                                        value_type = ?other,
-                                        "Unexpected Counter value type during replay"
-                                    );
-                                }
-                            },
-                            Err(e) => {
-                                tracing::warn!(
-                                    field_name = %field_name,
-                                    error = %e,
-                                    "Failed to decode Counter value during replay"
-                                );
-                            }
-                        }
-                    }
-                }
-                CrdtDelta::Composite(payload) if payload.priority >= max_composite_priority => {
-                    // Track document status from composite blocks.
-                    // The highest-priority composite determines the final status.
-                    max_composite_priority = payload.priority;
-                    is_deleted = payload.status == 2;
-                }
-                _ => {
-                    // Collection and schema definition deltas are not relevant for document reconstruction
-                }
+    // An Immutable block replays as the LWW field deltas it replaces.
+    let deltas = blocks.iter().flat_map(|(_, block)| match &block.delta {
+        CrdtDelta::Immutable(payload) => payload
+            .lww_deltas()
+            .map(|delta| std::borrow::Cow::Owned(CrdtDelta::Lww(delta)))
+            .collect(),
+        other => vec![std::borrow::Cow::Borrowed(other)],
+    });
+    for delta in deltas {
+        if let Some(field_delta) = delta.field() {
+            replay_field(collection, &mut fields, &delta, &field_delta);
+            continue;
+        }
+        match delta.as_ref() {
+            CrdtDelta::Composite(payload) if payload.priority >= max_composite_priority => {
+                // Track document status from composite blocks.
+                // The highest-priority composite determines the final status.
+                max_composite_priority = payload.priority;
+                is_deleted = payload.status == 2;
+            }
+            _ => {
+                // Collection and schema definition deltas are not relevant for document reconstruction
             }
         }
-
-        // Build document from collected field values
-        let mut document = Document::new(collection.clone());
-        for (field_name, (_priority, value)) in field_values {
-            document.set_unchecked(field_name, value);
-        }
-
-        // Set document ID
-        if let Ok(doc_id_obj) = document::DocID::from_string(doc_id) {
-            document.set_id(doc_id_obj);
-        }
-
-        // Set deleted status from composite block
-        if is_deleted {
-            document.set_deleted(true);
-        }
-
-        Ok(document)
     }
 
-    /// Encode a NormalValue to bytes for comparison.
-    fn encode_value(value: &NormalValue) -> Vec<u8> {
-        let mut buf = Vec::new();
-        if ciborium::into_writer(value, &mut buf).is_ok() {
-            buf
-        } else {
-            Vec::new()
+    // Build document from collected field values
+    let mut document = Document::new(collection.clone());
+    for (field_name, state) in fields {
+        // A deleted value (a tombstone) leaves the field unset.
+        if state.value.is_empty() {
+            continue;
+        }
+        match state.materialize() {
+            Some(value) => document.set_unchecked(field_name, value),
+            None => tracing::warn!(
+                field_name = %field_name,
+                "Undecodable field state during replay"
+            ),
+        }
+    }
+
+    // Set document ID
+    if let Ok(doc_id_obj) = document::DocID::from_string(doc_id) {
+        document.set_id(doc_id_obj);
+    }
+
+    // Set deleted status from composite block
+    if is_deleted {
+        document.set_deleted(true);
+    }
+
+    Ok(document)
+}
+
+/// Merge one field block into the replayed states, through the CRDT that
+/// wrote it, exactly as a live merge does.
+fn replay_field(
+    collection: &CollectionVersion,
+    fields: &mut RapidHashMap<String, StoredField>,
+    delta: &CrdtDelta,
+    field_delta: &FieldDelta<'_>,
+) {
+    let name = field_delta.field_name;
+    let declared = collection.field_by_name(name);
+    let Some(crdt) = crdt::delta_crdt(delta, declared.map_or(CType::None, |field| field.crdt_type))
+    else {
+        return;
+    };
+    let undeclared;
+    let field = match declared {
+        Some(field) => field,
+        None => {
+            undeclared =
+                FieldDescription::new("", name, FieldKind::Scalar(ScalarKind::None), crdt.ctype());
+            &undeclared
+        }
+    };
+    let incoming = match crdt.block_state(field, field_delta.priority, field_delta.data) {
+        Ok(incoming) => incoming,
+        Err(error) => {
+            tracing::warn!(field_name = %name, %error, "Undecodable field block during replay");
+            return;
+        }
+    };
+    match fields.get_mut(name) {
+        Some(state) => {
+            if crdt.merge(state, incoming).is_none() {
+                tracing::warn!(field_name = %name, "Unmergeable field block during replay");
+            }
+        }
+        None => {
+            fields.insert(name.to_owned(), incoming);
         }
     }
 }
@@ -800,6 +745,10 @@ impl<S: Store> VersionedFetcher<S> {
 #[cfg(test)]
 #[path = "versioned_retry_tests.rs"]
 mod retry_tests;
+
+#[cfg(test)]
+#[path = "versioned_replay_tests.rs"]
+mod replay_tests;
 
 /// AES-GCM decryption of a historical field delta.
 fn decrypt_with_key(data: &[u8], key: &[u8; 32]) -> std::result::Result<Vec<u8>, String> {

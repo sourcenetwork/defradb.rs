@@ -1,7 +1,7 @@
 ---- MODULE TwoStoreCounter ----
 \* Counter materialization under concurrent local-write vs remote-merge, abstracting
-\* crates/db/src/merge/merge_handler/counter.rs (process_counter_delta /
-\* process_counter_delta_in_txn: reconcile_int64(blob) -> merge(+delta) -> blob:=acc)
+\* the pre-#1021 merge path (reconcile acc := blob -> merge(+delta) -> blob := acc),
+\* now crates/db/src/merge/merge_handler/field_ops.rs (apply_field_op_once)
 \* and the local-write path in the `db` crate's doc_mutator. Anchors in the
 \* TwoStoreCounter_DESIGN.md (and project memory same_doc_merge_storm_undercount).
 \*
@@ -88,7 +88,7 @@ LocalApply(o) ==
   /\ UNCHANGED <<acc, snap>>
 
 \* ---- Merge step 1: reconcile the accumulation store up to the current blob. ----------
-\* counter.rs: `counter.reconcile_int64(datastore, current_blob_value)`.
+\* Pre-#1021 split only: field_ops.rs keeps no second store; its operand reads the part at commit.
 MergeReconcile(o) ==
   /\ o \in RemoteOps
   /\ pc[o] = "todo"
@@ -98,7 +98,7 @@ MergeReconcile(o) ==
   /\ UNCHANGED <<blob, doneCount>>
 
 \* ---- Merge step 2: apply the delta and write the value back. -------------------------
-\* counter.rs: `counter.merge(+delta)` then materialize blob := acc.
+\* field_ops.rs: `apply_field_op_once` merges the operation onto the counter's part.
 MergeCommit(o) ==
   /\ o \in RemoteOps
   /\ pc[o] = "recon"

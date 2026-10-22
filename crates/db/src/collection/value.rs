@@ -1,6 +1,6 @@
 //! Materialized document puts and field operands. Block CBOR stays unchanged.
 use super::*;
-use document::stored::{StoredDocument, StoredField, ValueKind};
+use crdt::stored::{StoredDocument, StoredField};
 use rapidhash::RapidHashMap;
 use storage::namespace::Namespace;
 
@@ -19,14 +19,20 @@ fn field_crdt(field: &schema::FieldDescription) -> Result<&'static dyn crdt::Fie
     })
 }
 
+/// The state `field` stores at `priority`: the merged block bytes when a merge
+/// resolved them, else the state of `value`.
 fn field_value(
     field: &schema::FieldDescription,
     value: &NormalValue,
     priority: u64,
+    raw: Option<&[u8]>,
 ) -> Result<StoredField> {
-    field_crdt(field)?
-        .stored_field(field, priority, value)
-        .map_err(|error| Error::InvalidDocument(error.to_string()))
+    let crdt = field_crdt(field)?;
+    match raw {
+        Some(raw) => crdt.block_state(field, priority, raw),
+        None => crdt.state(field, priority, value),
+    }
+    .map_err(|error| Error::InvalidDocument(error.to_string()))
 }
 
 impl Collection {
@@ -64,7 +70,7 @@ impl Collection {
             let Some(crdt) = crdt::field_crdt(field.crdt_type) else {
                 continue;
             };
-            if value.is_nil() && crdt.stored_by_operands() {
+            if value.is_nil() && crdt.replicates_ops() {
                 continue;
             }
             let id = ids.get(&field.name).ok_or_else(|| {
@@ -78,16 +84,12 @@ impl Collection {
                         .map(|heads| heads.field_max_priority(&field.name))
                         .unwrap_or(1)
                 });
-            let mut stored_field = field_value(field, value, priority)?;
-            if stored_field.kind == ValueKind::Lww {
-                if let Some(raw) = priorities
-                    .and_then(|values| values.get(&field.name))
-                    .and_then(|order| order.raw_value.as_ref())
-                {
-                    stored_field.value.clone_from(raw);
-                }
-            }
-            stored.fields.insert(*id, stored_field);
+            let raw = priorities
+                .and_then(|values| values.get(&field.name))
+                .and_then(|order| order.raw_value.as_deref());
+            stored
+                .fields
+                .insert(*id, field_value(field, value, priority, raw)?);
         }
         let bytes = stored
             .encode()
@@ -115,9 +117,9 @@ impl Collection {
         let Some(ids) = self.part_ids(datastore).await? else {
             return Ok(false);
         };
-        // Counter increments reach the value as their own operands
-        // (`crdt::Counter`), so a resolved document never restates a counter
-        // and this read decides nothing: it only checks part identities.
+        // Operations reach the value as their own operands, so a resolved
+        // document never restates them and this read decides nothing: it only
+        // checks part identities.
         let key = self.doc_key(doc_short_id);
         let Some(bytes) = datastore
             .get_parts(&key, &[])
@@ -131,7 +133,7 @@ impl Collection {
         };
         let mut parts = StoredDocument::default();
         for field in &self.def.fields {
-            if crdt::field_crdt(field.crdt_type).is_none_or(|crdt| crdt.stored_by_operands()) {
+            if crdt::field_crdt(field.crdt_type).is_none_or(|crdt| crdt.replicates_ops()) {
                 continue;
             }
             let Some(order) = priorities.get(&field.name) else {
@@ -142,12 +144,9 @@ impl Collection {
             };
             let old = stored.fields.get(id);
             let value = doc.get(&field.name).unwrap_or(&NormalValue::Null);
-            let mut resolved = field_value(field, value, order.priority)?;
+            let resolved = field_value(field, value, order.priority, order.raw_value.as_deref())?;
             if old.is_some_and(|old| old.name != resolved.name || old.kind != resolved.kind) {
                 return Ok(false);
-            }
-            if let Some(raw) = order.raw_value.as_ref() {
-                resolved.value.clone_from(raw);
             }
             parts.fields.insert(*id, resolved);
         }
@@ -176,7 +175,7 @@ impl Collection {
             .await
             .map_err(Error::Storage)?
             .map(|bytes| {
-                Document::from_storage_cbor(&bytes, self.schema_arc()).map_err(Error::from)
+                crdt::stored::document_from_storage(&bytes, self.schema_arc()).map_err(Error::from)
             })
             .transpose()
     }
@@ -229,20 +228,20 @@ impl Collection {
                 continue;
             }
             let current = doc.get(&field.name).unwrap_or(&NormalValue::Null);
-            let Some(value) = field_crdt(field)?.operand(current, doc.pending_op(&field.name))
-            else {
+            let write = field_crdt(field)?.write(current, doc.pending_op(&field.name));
+            if !write.merges {
                 // A write with no operand form, such as an absolute counter
                 // replacement, is structural: the document value is put whole.
                 return self
                     .put_document_value(datastore, doc_short_id, doc, false, Some(&priorities))
                     .await;
-            };
+            }
             let id = ids.get(&field.name).ok_or_else(|| {
                 Error::InvalidDocument(format!("missing part ID for {}", field.name))
             })?;
             parts.fields.insert(
                 *id,
-                field_value(field, value, priorities[&field.name].priority)?,
+                field_value(field, write.data, priorities[&field.name].priority, None)?,
             );
         }
         // An operand must name each part as the stored value does; a schema

@@ -11,16 +11,17 @@ pub mod composite;
 mod composite_fields;
 mod composite_heads;
 pub mod composite_persist;
-mod counter;
 mod definition;
 mod dispatch;
 mod doc_identity;
 mod encryption;
 pub(crate) mod error;
+mod field;
+mod field_ops;
+mod field_state;
 mod frame_source;
 mod history;
 pub mod hook;
-mod lww;
 mod merge_keys;
 mod protected_update;
 mod recovery;
@@ -28,8 +29,8 @@ pub mod se_merge;
 mod signature;
 pub(crate) use signature::verify_signature_data;
 
-pub(crate) use error::{CounterMergeResult, LwwMergeResult};
 pub use error::{HistoryRejection, MergeError};
+pub use field::FieldMergeResult;
 
 use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
@@ -39,15 +40,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use cid::Cid;
-use crdt::traits::{Context, ReplicatedData, ValueReader};
-use crdt::{Counter, CounterDelta, Lww, LwwDelta, NumericKind};
 use datastore::NamespaceView;
 use defra_core::block::{
     Block, CollectionDefinitionDeltaPayload, CrdtDelta, FieldDefinitionDeltaPayload,
     IMMUTABLE_LINK_NAME,
 };
 use defra_core::merge::{BlockMetadata, MergeErrorDisposition, MergeHandler, MergeOutcome};
-use defra_core::types::DocId;
 use document::{DocID, Document, NormalValue};
 use events::{MergeCompleteData, Message, Update};
 use schema::{

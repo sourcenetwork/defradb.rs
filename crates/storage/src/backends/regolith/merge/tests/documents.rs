@@ -1,6 +1,7 @@
 //! Document values: part operands, their CRDT order and the parts they touch.
 
-use document::stored::{StoredDocument, StoredField, ValueKind};
+use crdt::field::{CounterField, LwwField};
+use crdt::stored::{StoredDocument, StoredField, ValueKind};
 use document::NormalValue;
 use regolith::MergeOperator;
 
@@ -28,7 +29,7 @@ fn field(id: u32, priority: u64, value: NormalValue) -> StoredDocument {
     StoredDocument {
         fields: [(
             id,
-            StoredField::lww(format!("field{id}"), priority, &value).unwrap(),
+            LwwField::stored(format!("field{id}"), priority, &value).unwrap(),
         )]
         .into(),
     }
@@ -101,7 +102,7 @@ fn mixed_parts(
     use regolith::testing::proptest::prelude::*;
     let part = (0u32..4, 1u64..4, -1000i64..1000).prop_map(move |(id, priority, value)| {
         let field = if id < 3 {
-            StoredField::counter(
+            CounterField::stored(
                 format!("count{id}"),
                 kind,
                 priority,
@@ -109,7 +110,7 @@ fn mixed_parts(
             )
             .unwrap()
         } else {
-            StoredField::lww(format!("field{id}"), priority, &NormalValue::Int(value)).unwrap()
+            LwwField::stored(format!("field{id}"), priority, &NormalValue::Int(value)).unwrap()
         };
         (id, field)
     });
@@ -144,7 +145,7 @@ fn integer_counter_parts_fold_exactly_and_touch_only_their_parts() {
         document_parts(&StoredDocument {
             fields: [(
                 0,
-                StoredField::counter(
+                CounterField::stored(
                     "count0".into(),
                     ValueKind::Int64,
                     1,
@@ -190,7 +191,7 @@ fn float_counter_parts_are_not_folded_early() {
         document_parts(&StoredDocument {
             fields: [(
                 0,
-                StoredField::counter(
+                CounterField::stored(
                     "count".into(),
                     ValueKind::Float64,
                     1,
@@ -214,7 +215,7 @@ fn an_absent_counter_part_starts_from_zero() {
     let increment = document_parts(&StoredDocument {
         fields: [(
             0,
-            StoredField::counter(
+            CounterField::stored(
                 "count".into(),
                 ValueKind::Float64,
                 1,
@@ -465,14 +466,14 @@ fn a_part_no_operand_touches_keeps_its_bytes() {
 /// stored document holding that one field.
 #[test]
 fn a_borrowed_part_writes_the_operand_of_its_document() {
-    let counter = StoredField::counter(
+    let counter = CounterField::stored(
         "count".to_owned(),
         ValueKind::Int64,
         4,
         &NormalValue::Int(7),
     )
     .unwrap();
-    let part = document::stored::Part {
+    let part = crdt::stored::Part {
         name: &counter.name,
         kind: counter.kind,
         priority: counter.priority,

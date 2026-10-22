@@ -15,7 +15,7 @@ mod outcome;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
-use document::stored::StoredDocument;
+use crdt::stored::StoredDocument;
 use embedded::{EmbeddedNode, EmbeddedStore, NodeBuilder};
 use outcome::Result;
 use serde_json::Value;

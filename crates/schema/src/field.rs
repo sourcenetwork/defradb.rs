@@ -163,7 +163,7 @@ impl FieldDescription {
 
         // Float counter merge is not order-independent: IEEE-754 addition is not
         // associative, so replicas can converge to different values. The behavior
-        // matches Go (parity), so this is a warning, not an error. See NumericKind
+        // matches Go (parity), so this is a warning, not an error. See CounterField
         // in crates/crdt and `float_add_not_assoc` in proofs/lean.
         if self.crdt_type.is_counter() && self.kind.is_float() {
             tracing::warn!(
