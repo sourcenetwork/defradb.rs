@@ -40,15 +40,6 @@ sysroot="$(rustc --print sysroot)"
 [ -z "${RUSTFLAGS:-}" ] ||
   fail "RUSTFLAGS is set ($RUSTFLAGS); it silently voids the wasm32 rustflags table"
 
-[ -n "${LIBCLANG_PATH:-}" ] || fail "LIBCLANG_PATH is unset; bindgen does not find libclang here"
-
-# librocksdb-sys 0.16 vendors RocksDB 8.10, whose headers use uint64_t without
-# including <cstdint>.
-case "${CXXFLAGS:-}" in
-  *cstdint*) ;;
-  *) fail "CXXFLAGS does not include cstdint; the vendored RocksDB build fails without it" ;;
-esac
-
 # Test binaries link libdbus-1.so.3 without recording an rpath for it.
 case "${LD_LIBRARY_PATH:-}" in
   *dbus*) ;;

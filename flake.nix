@@ -97,21 +97,9 @@
           buildInputs = [
             pkgs.openssl # openssl-sys
             pkgs.dbus # libdbus-sys, via keyring's secret-service backend
-            pkgs.zlib # libz-sys
           ];
 
-          # bindgen does not locate libclang on its own here.
-          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           OPENSSL_NO_VENDOR = "1";
-
-          # librocksdb-sys 0.16 vendors RocksDB 8.10, whose headers use
-          # uint64_t without including <cstdint> and relied on libstdc++
-          # pulling it in transitively. Current GCC does not, so the bundled
-          # build fails with "'uint64_t' has not been declared". RocksDB
-          # reaches the graph through the vera.rs dependency, so this is needed
-          # for `cargo clippy --all` even though no first-party crate uses it.
-          # cc-rs passes CXXFLAGS through to every C++ translation unit.
-          CXXFLAGS = "-include cstdint";
 
           # Test binaries link libdbus-1.so.3 without recording an rpath for
           # it, so the library path is needed at run time and not only at link
@@ -119,7 +107,6 @@
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.openssl
             pkgs.dbus
-            pkgs.zlib
           ];
 
           shellHook = ''

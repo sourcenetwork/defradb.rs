@@ -59,7 +59,7 @@ before use. The host needs `bash`, `curl`, `tar`, `unzip` and `git`.
 `just setup` cannot work on NixOS: the archives it downloads are prebuilt and
 dynamically linked against a loader that does not exist there. Use the flake
 instead, which provides the toolchain and every native build dependency
-(`protoc`, `cmake`, `pkg-config`, OpenSSL, D-Bus, libclang):
+(`protoc`, `cmake`, `pkg-config`, OpenSSL, D-Bus):
 
 ```bash
 nix develop                      # or `direnv allow`, via the tracked .envrc
