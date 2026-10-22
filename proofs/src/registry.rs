@@ -607,11 +607,12 @@ pub const PROPERTIES: &[Property] = &[
     Property {
         // A path's register keeps the same winner whatever order edits arrive
         // in, or if one arrives twice; a path's key reads back as the path, and
-        // one key starts another only when its path is above the other's.
+        // one key starts another only when its path is above the other's; the
+        // keys under a path are one stretch of the frontier's sorted entries.
         family: "JSON CRDT per-path merge",
-        name: "join_comm / join_assoc / join_idem / decode_encode / encode_prefix: order-free registers and nesting path keys",
+        name: "join_comm / join_assoc / join_idem / decode_encode / encode_prefix / prefix_convex: order-free registers, nesting path keys, and one range per subtree",
         axis: Lean,
-        anchor: "crates/defra-core/src/json_crdt.rs beats, encode_path, decode_path",
+        anchor: "crates/defra-core/src/json_crdt.rs beats, encode_path, decode_path, Frontier::under, Frontier::at",
         model_ref: "JsonCrdt.{Lww,Path} (lake build)",
         tiers: &[Contract],
     },
