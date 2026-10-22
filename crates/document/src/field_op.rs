@@ -31,4 +31,13 @@ impl FieldOp {
             (_, next) => next,
         }
     }
+
+    /// The operation's name, as a refusal names it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            FieldOp::Set(_) => "set",
+            FieldOp::Increment(_) => "increment",
+            FieldOp::Edit(_) => "edit",
+        }
+    }
 }
