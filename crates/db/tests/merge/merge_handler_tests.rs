@@ -1051,8 +1051,9 @@ fn synced_collection_definition_persists_short_id_mapping() {
     .unwrap()
 }
 
-/// A counter block is applied by the composite that links it, once, and
-/// marked merged: the document holds its value.
+/// A counter block that arrives before its document has a value is left to
+/// the composite that links it, which applies it once and marks it merged:
+/// the document holds its value.
 #[test]
 fn counter_merge_marks_cid_merged() {
     workers::block_on(async {
@@ -1084,6 +1085,14 @@ fn counter_merge_marks_cid_merged() {
             None,
             false,
         );
+
+        let counter_block = blockstore.get(&counter_cid).await.unwrap().unwrap();
+        let outcome = handler
+            .handle_block(&counter_cid, &counter_block, metadata.clone())
+            .await
+            .unwrap();
+        assert!(outcome.is_terminal_skip(), "{outcome:?}");
+        assert!(!blockstore.is_merged(&counter_cid).await.unwrap());
 
         let outcome = handler
             .handle_block(&built.cid, &built.block, metadata)
@@ -1279,83 +1288,65 @@ fn interactive_counter_increment_and_concurrent_same_doc_merge_both_commit() {
     .unwrap()
 }
 
+/// A standalone counter block for a document with no value yet is left to its
+/// composite, on every delivery: it writes no value and claims no applied key,
+/// so the composite still applies it once.
 #[test]
-fn shared_counter_block_is_applied_once_per_document() {
+fn counter_merge_of_an_unmaterialized_document_waits_for_its_composite() {
     workers::block_on(async {
         let (handler, blockstore) = make_handler_with_counter_schema().await;
-        let doc_ids = [
-            DocID::new_v0(
-                "bafyreihgg6a5auqhikq4nvw6fj3kbreovdbazlisbs5kerkahoqwwiz75i"
-                    .parse()
-                    .unwrap(),
+        let doc_id = DocID::new_v0(
+            "bafyreihgg6a5auqhikq4nvw6fj3kbreovdbazlisbs5kerkahoqwwiz75i"
+                .parse()
+                .unwrap(),
+        )
+        .to_string();
+        let (cid, payload) = put_counter_delta_block(&blockstore, &doc_id, 5, 1, 4242).await;
+        register_test_block_owner(&handler, 1, &doc_id, &cid).await;
+
+        let txn = handler.db().new_txn(false).await.unwrap();
+        let doc_short_id = db::docid::map::get_doc_ref(&txn.systemstore().unwrap(), &doc_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .doc_short_id;
+        {
+            let mut datastore = txn.datastore().unwrap();
+            let headstore = txn.headstore().unwrap();
+            for _ in 0..2 {
+                let result = handler
+                    .merge_field_in_txn(
+                        &mut datastore,
+                        &headstore,
+                        &cid,
+                        &CrdtDelta::Counter(payload.clone()),
+                        Some("col-counters"),
+                        &doc_id,
+                        doc_short_id,
+                    )
+                    .await
+                    .unwrap();
+                assert!(!result.applied());
+                assert_eq!(result.value(), None);
+            }
+            let applied_key =
+                storage::keys::HeadstorePriorityKey::new(doc_short_id, payload.priority, cid)
+                    .bytes();
+            assert!(!headstore.has(&applied_key).await.unwrap());
+        }
+        txn.force_commit().await.unwrap();
+
+        let collection = handler.db().get_collection("Counters").unwrap().unwrap();
+        let reader = handler.db().new_txn(true).await.unwrap();
+        let stored = collection
+            .get_by_doc_id(
+                &reader.datastore().unwrap(),
+                &reader.systemstore().unwrap(),
+                &DocID::from_string(&doc_id).unwrap(),
             )
-            .to_string(),
-            DocID::new_v0(
-                "bafyreie7rtdexuf47f633477mfieshkeh5rwnjeommkgqrzl22n6g4bfmm"
-                    .parse()
-                    .unwrap(),
-            )
-            .to_string(),
-        ];
-        let mut data = Vec::new();
-        ciborium::into_writer(&5_i64, &mut data).unwrap();
-        let payload = CounterDeltaPayload {
-            field_name: "score".to_string(),
-            collection_version_id: "v1".to_string(),
-            priority: 1,
-            data,
-            nonce: 7,
-        };
-        let block = Block::new(CrdtDelta::Counter(payload.clone()), vec![], vec![]);
-        let cid = block.generate_cid().unwrap();
-        blockstore
-            .put(&cid, &block.to_dag_cbor().unwrap())
             .await
             .unwrap();
-
-        for doc_id in &doc_ids {
-            register_test_block_owner(&handler, 1, doc_id, &cid).await;
-        }
-
-        for (index, doc_id) in doc_ids.iter().enumerate() {
-            let txn = handler.db().new_txn(false).await.unwrap();
-            let doc_short_id = {
-                let systemstore = txn.systemstore().unwrap();
-                db::docid::map::get_doc_ref(&systemstore, doc_id)
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .doc_short_id
-            };
-            {
-                let mut datastore = txn.datastore().unwrap();
-                let headstore = txn.headstore().unwrap();
-                for attempt in 0..2 {
-                    let result = handler
-                        .merge_field_in_txn(
-                            &mut datastore,
-                            &headstore,
-                            &cid,
-                            &CrdtDelta::Counter(payload.clone()),
-                            Some("col-counters"),
-                            doc_id,
-                            doc_short_id,
-                        )
-                        .await
-                        .unwrap();
-                    // Once per document: the second delivery finds its applied key.
-                    assert_eq!(result.applied(), attempt == 0);
-                    // No document value exists yet: the first delivery hands its
-                    // composite the sum to put, the second has nothing to add.
-                    let expected = (attempt == 0).then_some(NormalValue::Int(5));
-                    assert_eq!(result.value(), expected.as_ref());
-                }
-            }
-            txn.force_commit().await.unwrap();
-            if index == 0 {
-                blockstore.mark_as_merged(&cid).await.unwrap();
-            }
-        }
+        assert!(stored.is_none(), "no partial document value was written");
     })
     .unwrap()
 }
@@ -1432,6 +1423,90 @@ fn a_shared_counter_block_lands_once_on_each_stored_document() {
         for (doc_id, seed) in &docs {
             assert_eq!(read_counter_value(&db, doc_id, "score").await, seed + 5);
         }
+    })
+    .unwrap()
+}
+
+/// A counter block on a field its collection declares LWW is refused, as Go
+/// refuses a delta of another CRDT type: the refusal is terminal, nothing is
+/// written, and the document still reads with its value.
+#[test]
+fn a_counter_block_on_an_lww_field_is_refused() {
+    workers::block_on(async {
+        let (handler, blockstore, _bus) = make_handler_with_schema_and_bus().await;
+        let collection = handler.db().get_collection("Users").unwrap().unwrap();
+        let mut doc =
+            Document::from_json_str(r#"{"name": "Ann", "age": 30}"#, users_collection()).unwrap();
+        let (doc_id, doc_short_id, _) = create_doc_locally(&handler, &collection, &mut doc).await;
+        let doc_id = doc_id.to_string();
+
+        let mut data = Vec::new();
+        ciborium::into_writer(&5_i64, &mut data).unwrap();
+        let payload = CounterDeltaPayload {
+            field_name: "age".to_string(),
+            collection_version_id: "v1".to_string(),
+            priority: 2,
+            data,
+            nonce: 1,
+        };
+        let block = Block::new(CrdtDelta::Counter(payload.clone()), vec![], vec![]);
+        let cid = block.generate_cid().unwrap();
+        let block_data = block.to_dag_cbor().unwrap();
+        blockstore.put(&cid, &block_data).await.unwrap();
+        register_test_block_owner(&handler, collection.resolved_root_id(), &doc_id, &cid).await;
+
+        let txn = handler.db().new_txn(false).await.unwrap();
+        let error = handler
+            .merge_field_in_txn(
+                &mut txn.datastore().unwrap(),
+                &txn.headstore().unwrap(),
+                &cid,
+                &CrdtDelta::Counter(payload),
+                Some("col-users"),
+                &doc_id,
+                doc_short_id,
+            )
+            .await
+            .err()
+            .expect("a counter block on an LWW field is refused");
+        txn.force_discard().unwrap();
+        let message = error.to_string();
+        assert!(
+            matches!(error, MergeError::UnsupportedDelta(_))
+                && message.contains("'age'")
+                && message.contains("LwwRegister")
+                && message.contains("counter"),
+            "{message}"
+        );
+        assert_eq!(
+            handler.error_disposition(&error),
+            MergeErrorDisposition::Terminal
+        );
+
+        let metadata = BlockMetadata::normal(
+            &doc_id,
+            "col-users",
+            "did:key:z6MkrMismatchedBlock",
+            None,
+            false,
+        );
+        let outcome = handler
+            .handle_block(&cid, &block_data, metadata)
+            .await
+            .unwrap();
+        assert!(outcome.is_rejected(), "{outcome:?}");
+
+        let reader = handler.db().new_txn(true).await.unwrap();
+        let stored = collection
+            .get_by_doc_id(
+                &reader.datastore().unwrap(),
+                &reader.systemstore().unwrap(),
+                &DocID::from_string(&doc_id).unwrap(),
+            )
+            .await
+            .unwrap()
+            .expect("the document still reads");
+        assert_eq!(stored.get("age"), Some(&NormalValue::Int(30)));
     })
     .unwrap()
 }

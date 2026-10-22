@@ -175,6 +175,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         context.doc_id_str,
                         context.doc_short_id,
                         &mut state.reads,
+                        false,
                     )
                     .await?;
                 match result.order {
@@ -217,7 +218,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let Some(delta) = effective.field() else {
             return Ok(());
         };
-        if crdt::delta_crdt(effective, CType::None).is_none_or(|crdt| crdt.replicates_ops()) {
+        if crdt::delta_crdt(effective, CType::None)
+            .ok()
+            .is_none_or(|crdt| crdt.replicates_ops())
+        {
             return Ok(());
         }
         let data = delta.data;

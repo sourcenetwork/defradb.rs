@@ -8,8 +8,15 @@ use defra_core::block::FieldDelta;
 
 use super::field::FieldMergeResult;
 
-impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
-    /// Apply a block's operation to `field` once.
+impl<S, B> DbMergeHandler<S, B>
+where
+    S: Store,
+    B: blockstore::Blockstore,
+{
+    /// Apply a block's operation to `field` once. A `standalone` block finds
+    /// no operand target when the document has no value on its schema
+    /// version; it is then deferred untouched, applied key unclaimed, so its
+    /// composite applies it.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn apply_field_op_once(
         &self,
@@ -21,24 +28,32 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         field: &FieldDescription,
         delta: &FieldDelta<'_>,
         doc_short_id: u64,
+        standalone: bool,
     ) -> std::result::Result<FieldMergeResult, MergeError> {
         let failed = |error: crdt::FieldCrdtError| MergeError::MergeFailed(error.to_string());
         let storage = |error: storage::corekv::Error| MergeError::Storage(error.to_string());
         let input = crdt
             .decode(field, delta.data)
             .map_err(|error| MergeError::BlockDecode(format!("field '{}': {error}", field.name)))?;
+        let state = crdt.state(field, delta.priority, &input).map_err(failed)?;
         let op = crdt.op(input, false).map_err(failed)?;
+        let target = op_target(datastore, collection, doc_short_id, field).await?;
+        if target.is_none() && standalone {
+            return Ok(FieldMergeResult {
+                applied: false,
+                value: None,
+                order: None,
+                deferred: true,
+            });
+        }
         let applied_key =
             storage::keys::HeadstorePriorityKey::new(doc_short_id, delta.priority, *cid).bytes();
         let applied = !headstore.has(&applied_key).await.map_err(storage)?;
 
-        let value = match op_target(datastore, collection, doc_short_id, field).await? {
+        let value = match target {
             Some(part) => {
                 let doc_key = collection.doc_key(doc_short_id);
                 if applied {
-                    let state = crdt
-                        .block_state(field, delta.priority, delta.data)
-                        .map_err(failed)?;
                     let operand =
                         storage::merge::document_part(part, state.part()).ok_or_else(|| {
                             MergeError::MergeFailed(format!(
@@ -83,6 +98,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             applied,
             value,
             order: None,
+            deferred: false,
         })
     }
 
