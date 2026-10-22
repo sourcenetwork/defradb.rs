@@ -133,6 +133,7 @@ jobs:
           - { family: schema_validate, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: sift, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: startup, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { family: text_merge, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: transaction, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: transport, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { family: vector_mutations, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }

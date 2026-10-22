@@ -22,6 +22,7 @@ use defra_core::block::LwwDeltaPayload;
 use defra_core::block::Signature;
 use defra_core::block::SignatureHeader;
 use defra_core::block::SignatureType;
+use defra_core::block::TextDeltaPayload;
 use defra_core::merge::BlockMetadata;
 use defra_core::merge::ExplicitReplayAuthorization;
 use defra_core::merge::MergeBlock;
@@ -1507,6 +1508,63 @@ fn a_counter_block_on_an_lww_field_is_refused() {
             .unwrap()
             .expect("the document still reads");
         assert_eq!(stored.get("age"), Some(&NormalValue::Int(30)));
+    })
+    .unwrap()
+}
+
+/// A Text block on a field its collection declares LWW is refused the same
+/// way: a terminal refusal naming the field and both types.
+#[test]
+fn a_text_block_on_an_lww_field_is_refused() {
+    workers::block_on(async {
+        let (handler, blockstore, _bus) = make_handler_with_schema_and_bus().await;
+        let collection = handler.db().get_collection("Users").unwrap().unwrap();
+        let mut doc =
+            Document::from_json_str(r#"{"name": "Ann", "age": 30}"#, users_collection()).unwrap();
+        let (doc_id, doc_short_id, _) = create_doc_locally(&handler, &collection, &mut doc).await;
+        let doc_id = doc_id.to_string();
+
+        let payload = TextDeltaPayload {
+            field_name: "name".to_string(),
+            collection_version_id: "v1".to_string(),
+            priority: 2,
+            data: defra_core::TextOp::encode_all(&defra_core::TextOp::diff("", "Bo")).unwrap(),
+        };
+        let block = Block::new(CrdtDelta::Text(payload.clone()), vec![], vec![]);
+        let cid = block.generate_cid().unwrap();
+        blockstore
+            .put(&cid, &block.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+        register_test_block_owner(&handler, collection.resolved_root_id(), &doc_id, &cid).await;
+
+        let txn = handler.db().new_txn(false).await.unwrap();
+        let error = handler
+            .merge_field_in_txn(
+                &mut txn.datastore().unwrap(),
+                &txn.headstore().unwrap(),
+                &cid,
+                &CrdtDelta::Text(payload),
+                Some("col-users"),
+                &doc_id,
+                doc_short_id,
+            )
+            .await
+            .err()
+            .expect("a Text block on an LWW field is refused");
+        txn.force_discard().unwrap();
+        let message = error.to_string();
+        assert!(
+            matches!(error, MergeError::UnsupportedDelta(_))
+                && message.contains("'name'")
+                && message.contains("LwwRegister")
+                && message.contains("text"),
+            "{message}"
+        );
+        assert_eq!(
+            handler.error_disposition(&error),
+            MergeErrorDisposition::Terminal
+        );
     })
     .unwrap()
 }

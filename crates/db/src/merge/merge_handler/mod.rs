@@ -17,6 +17,7 @@ mod doc_identity;
 mod encryption;
 pub(crate) mod error;
 mod field;
+mod field_causal;
 mod field_ops;
 mod field_state;
 mod frame_source;

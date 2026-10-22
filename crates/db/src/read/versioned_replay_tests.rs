@@ -107,3 +107,42 @@ fn a_counter_block_on_an_lww_field_is_skipped_in_a_replay() {
         NormalValue::Int(7)
     );
 }
+
+/// A Text block that does not decode fails the read with its decode error;
+/// skipping it would leave its child without a parent version.
+#[test]
+fn an_undecodable_text_block_fails_the_replay_with_its_error() {
+    let collection = Arc::new(CollectionVersion::new(
+        "Notes",
+        "v1",
+        "col-notes",
+        vec![FieldDescription::new(
+            "1",
+            "body",
+            FieldKind::string(),
+            CType::Text,
+        )],
+    ));
+    let text = |priority, data, heads| {
+        let block = Block::new(
+            CrdtDelta::Text(defra_core::block_delta::TextDeltaPayload {
+                field_name: "body".into(),
+                priority,
+                collection_version_id: "v1".into(),
+                data,
+            }),
+            heads,
+            Vec::new(),
+        );
+        (block.generate_cid().unwrap(), block)
+    };
+    let broken = text(1, vec![0xff], Vec::new());
+    let edits = defra_core::TextOp::encode_all(&defra_core::TextOp::diff("", "a")).unwrap();
+    let child = text(2, edits, vec![broken.0]);
+
+    let error = replay_deltas(&collection, &[broken.clone(), child], "bae-0000")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(&broken.0.to_string()), "{error}");
+    assert!(error.contains("text ops"), "{error}");
+}

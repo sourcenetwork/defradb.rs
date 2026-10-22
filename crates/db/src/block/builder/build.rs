@@ -43,9 +43,12 @@ pub async fn build_blocks_from_document<B: Blockstore>(
         }
 
         let crdt = field_crdt_of(doc, field_name)?;
-        let value_bytes = crdt
-            .encode(crdt.write(field_value.value(), None).data)
-            .map_err(|error| error.to_string())?;
+        let Some(value_bytes) = crdt
+            .block_data(field_value.value(), None)
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
+        };
         let delta = crdt.delta(crdt::DeltaParts {
             field_name,
             priority: 1, // Initial priority for new documents

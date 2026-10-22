@@ -8,6 +8,7 @@ use crate::block::{
     Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
     CounterDeltaPayload, CrdtDelta, DAGLink, Encryption, FieldDefinitionDeltaPayload,
     ImmutableDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType,
+    TextDeltaPayload,
 };
 use crate::{Error, Result};
 
@@ -84,6 +85,9 @@ impl TryFrom<&CrdtDelta> for Ipld {
             CrdtDelta::Immutable(payload) => {
                 map.insert("immutable".to_string(), Ipld::from(payload));
             }
+            CrdtDelta::Text(payload) => {
+                map.insert("text".to_string(), Ipld::from(payload));
+            }
             CrdtDelta::Collection(payload) => {
                 map.insert("collection".to_string(), Ipld::from(payload));
             }
@@ -111,6 +115,26 @@ impl TryFrom<&CrdtDelta> for Ipld {
 
 impl From<&LwwDeltaPayload> for Ipld {
     fn from(payload: &LwwDeltaPayload) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "fieldName".to_string(),
+            Ipld::String(payload.field_name.clone()),
+        );
+        map.insert(
+            "priority".to_string(),
+            Ipld::Integer(payload.priority as i128),
+        );
+        map.insert(
+            "schemaVersionID".to_string(),
+            Ipld::String(payload.collection_version_id.clone()),
+        );
+        map.insert("data".to_string(), Ipld::Bytes(payload.data.clone()));
+        Ipld::Map(map)
+    }
+}
+
+impl From<&TextDeltaPayload> for Ipld {
+    fn from(payload: &TextDeltaPayload) -> Self {
         let mut map = BTreeMap::new();
         map.insert(
             "fieldName".to_string(),

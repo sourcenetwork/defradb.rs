@@ -62,7 +62,7 @@ fn sum(kind: ValueKind, current: &[u8], increment: &[u8]) -> Option<Vec<u8>> {
             + f64::from_be_bytes(increment.try_into().ok()?))
         .to_be_bytes()
         .to_vec(),
-        ValueKind::Lww => return None,
+        ValueKind::Lww | ValueKind::Text => return None,
     })
 }
 
@@ -104,7 +104,7 @@ impl CounterField {
                 .or_else(|| value.as_float32().map(f64::from))
                 .or_else(|| value.as_int().map(|v| v as f64))
                 .map(|v| v.to_be_bytes().to_vec()),
-            ValueKind::Lww => None,
+            ValueKind::Lww | ValueKind::Text => None,
         };
         let Some(value) = bytes else {
             return Err(document::Error::InvalidFieldValue {
@@ -147,6 +147,12 @@ impl FieldCrdt for CounterField {
         let by = match op {
             FieldOp::Set(value) => return Ok(value.clone()),
             FieldOp::Increment(by) => by,
+            FieldOp::Edit(_) => {
+                return Err(FieldCrdtError::UnsupportedOp {
+                    crdt: self.ctype,
+                    op: "edit",
+                })
+            }
         };
         if !matches!(
             by,
@@ -203,7 +209,9 @@ impl FieldCrdt for CounterField {
             ValueKind::Float64 => {
                 NormalValue::Float64(ciborium::from_reader(data).map_err(decode)?)
             }
-            ValueKind::Lww => return Err(FieldCrdtError::UnsupportedKind(field.name.clone())),
+            ValueKind::Lww | ValueKind::Text => {
+                return Err(FieldCrdtError::UnsupportedKind(field.name.clone()))
+            }
         })
     }
 
@@ -238,7 +246,7 @@ impl FieldCrdt for CounterField {
             ValueKind::Float64 => Some(NormalValue::Float64(f64::from_be_bytes(
                 value.try_into().ok()?,
             ))),
-            ValueKind::Lww => None,
+            ValueKind::Lww | ValueKind::Text => None,
         }
     }
 

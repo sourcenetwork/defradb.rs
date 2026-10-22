@@ -1,7 +1,7 @@
 use crdt::field::testing::check_field_crdt;
 use crdt::{delta_crdt, field_crdt, FieldCrdt};
 use defra_core::block::CrdtDelta;
-use defra_core::block_delta::{CounterDeltaPayload, LwwDeltaPayload};
+use defra_core::block_delta::{CounterDeltaPayload, LwwDeltaPayload, TextDeltaPayload};
 use document::{FieldOp, NormalValue};
 use proptest::prelude::*;
 use schema::{CType, FieldDescription, FieldKind};
@@ -54,6 +54,23 @@ fn counters_meet_the_contract() {
         &field(FieldKind::int(), CType::PnCounter),
         &[NormalValue::Int(i64::MIN)],
         &[NormalValue::Int(-1), NormalValue::Int(7)],
+    );
+}
+
+fn strings(values: &[&str]) -> Vec<NormalValue> {
+    values
+        .iter()
+        .map(|value| NormalValue::String((*value).into()))
+        .collect()
+}
+
+#[test]
+fn text_meets_the_contract() {
+    check_field_crdt(
+        crdt(CType::Text),
+        &field(FieldKind::string(), CType::Text),
+        &[NormalValue::String("hello".into()), NormalValue::Null],
+        &strings(&["hello world", "", "héllo", "help"]),
     );
 }
 
@@ -128,9 +145,12 @@ fn a_block_finds_the_crdt_that_wrote_it() {
         collection_version_id: "v".into(),
         data: Vec::new(),
     });
+    let text = text();
     let ctype = |delta, declared| delta_crdt(delta, declared).ok().map(|crdt| crdt.ctype());
     assert_eq!(ctype(&lww, CType::LwwRegister), Some(CType::LwwRegister));
     assert_eq!(ctype(&lww, CType::None), Some(CType::LwwRegister));
+    assert_eq!(ctype(&text, CType::Text), Some(CType::Text));
+    assert_eq!(ctype(&text, CType::None), Some(CType::Text));
     assert_eq!(ctype(&counter, CType::PnCounter), Some(CType::PnCounter));
     assert_eq!(ctype(&counter, CType::PCounter), Some(CType::PCounter));
     assert_eq!(ctype(&counter, CType::None), Some(CType::PCounter));
@@ -153,6 +173,7 @@ fn a_block_of_another_family_is_refused() {
         collection_version_id: "v".into(),
         data: Vec::new(),
     });
+    let text = text();
     let refusal = |delta, declared| match delta_crdt(delta, declared) {
         Err(error) => error.to_string(),
         Ok(crdt) => panic!("{declared} accepted a {} block", crdt.ctype()),
@@ -169,6 +190,29 @@ fn a_block_of_another_family_is_refused() {
         refusal(&lww, CType::PCounter),
         "field 'value' is declared PCounter, but its block is of type LWW"
     );
+    for declared in [CType::LwwRegister, CType::PCounter, CType::PnCounter] {
+        assert_eq!(
+            refusal(&text, declared),
+            format!("field 'value' is declared {declared}, but its block is of type text")
+        );
+    }
+    assert_eq!(
+        refusal(&lww, CType::Text),
+        "field 'value' is declared Text, but its block is of type LWW"
+    );
+    assert_eq!(
+        refusal(&counter, CType::Text),
+        "field 'value' is declared Text, but its block is of type counter"
+    );
+}
+
+fn text() -> CrdtDelta {
+    CrdtDelta::Text(TextDeltaPayload {
+        field_name: "value".into(),
+        priority: 1,
+        collection_version_id: "v".into(),
+        data: Vec::new(),
+    })
 }
 
 fn lww_value() -> impl Strategy<Value = NormalValue> {
@@ -190,6 +234,20 @@ proptest! {
             &field(FieldKind::string(), CType::LwwRegister),
             &stored,
             &inputs,
+        );
+    }
+
+    #[test]
+    fn text_merge_laws_hold(
+        stored in proptest::collection::vec("[a-c]{0,3}", 1..3),
+        inputs in proptest::collection::vec("[a-cé]{0,4}", 1..4),
+    ) {
+        let strings = |values: Vec<String>| values.into_iter().map(NormalValue::String).collect::<Vec<_>>();
+        check_field_crdt(
+            crdt(CType::Text),
+            &field(FieldKind::string(), CType::Text),
+            &strings(stored),
+            &strings(inputs),
         );
     }
 
@@ -216,4 +274,93 @@ fn lww_block_state_refuses_bytes_that_are_not_one_cbor_value() {
     assert!(lww.block_state(&field, 1, &[0x61, b'a', 0x00]).is_err());
     assert!(lww.block_state(&field, 1, &[0x61, b'a']).is_ok());
     assert!(lww.block_state(&field, 1, &[]).is_ok());
+}
+
+/// Two edits of one Text field in one write stack, as #2135's insert_text
+/// calls did: the second counts its positions in the text the first left.
+#[test]
+fn text_edits_in_one_write_stack_in_order() {
+    let text = field(FieldKind::string(), CType::Text);
+    let collection = schema::CollectionBuilder::new("Test", "bafytest")
+        .field(text.clone())
+        .build();
+    let insert = |pos, text: &str| defra_core::TextOp::Insert {
+        pos,
+        text: text.into(),
+    };
+    let mut doc = document::Document::new(collection);
+    doc.edit("value", FieldOp::Edit(vec![insert(5, " world")]))
+        .unwrap();
+    doc.edit("value", FieldOp::Edit(vec![insert(11, "!")]))
+        .unwrap();
+    let pending = doc.pending_op("value").unwrap();
+    // #2135's insert_text(5, " world") then insert_text(11, "!") pushed both.
+    assert_eq!(
+        pending,
+        &FieldOp::Edit(vec![insert(5, " world"), insert(11, "!")])
+    );
+    assert_eq!(
+        crdt(CType::Text)
+            .apply(&text, Some(&NormalValue::String("hello".into())), pending)
+            .unwrap(),
+        NormalValue::String("hello world!".into())
+    );
+    doc.edit("value", FieldOp::Set(NormalValue::String("reset".into())))
+        .unwrap();
+    assert_eq!(doc.pending_op("value"), None, "a set drops the edits");
+}
+
+#[test]
+fn only_edits_stack() {
+    let one = NormalValue::Int(1);
+    assert_eq!(
+        FieldOp::Increment(one.clone()).then(FieldOp::Increment(NormalValue::Int(2))),
+        FieldOp::Increment(NormalValue::Int(2))
+    );
+    assert_eq!(
+        FieldOp::Edit(Vec::new()).then(FieldOp::Increment(one.clone())),
+        FieldOp::Increment(one)
+    );
+}
+
+/// A Text write of null is the block data CBOR null, and a replay reads null
+/// exactly while every head of the history writes null.
+#[test]
+fn a_text_history_whose_heads_write_null_replays_to_null() {
+    let text = field(FieldKind::string(), CType::Text);
+    let crdt = crdt(CType::Text);
+    let causal = crdt.causal().unwrap();
+    let nil = crdt
+        .block_data(&NormalValue::Null, Some(&FieldOp::Set(NormalValue::Null)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(nil, [0xf6]);
+    let block = |id: u8, parents: &[u8], data: &[u8]| crdt::CausalBlock {
+        id: vec![id],
+        parents: parents.iter().map(|parent| vec![*parent]).collect(),
+        op: causal.block_op(&text, data).unwrap(),
+    };
+    let typed = crdt
+        .block_data(&NormalValue::String("ab".into()), None)
+        .unwrap()
+        .unwrap();
+    let first = block(1, &[], &typed);
+    let replay = |history: &[crdt::CausalBlock]| causal.replay(&text, history).unwrap();
+
+    assert_eq!(
+        replay(&[first.clone(), block(2, &[1], &nil)]),
+        NormalValue::Null
+    );
+    assert_eq!(
+        replay(&[first.clone(), block(2, &[1], &nil), block(3, &[1], &nil)]),
+        NormalValue::Null
+    );
+    assert_eq!(
+        replay(&[first.clone(), block(2, &[1], &nil), block(3, &[1], &typed)]),
+        NormalValue::String("ab".into())
+    );
+    assert_eq!(
+        replay(&[first, block(2, &[1], &nil), block(3, &[2], &typed)]),
+        NormalValue::String("ab".into())
+    );
 }

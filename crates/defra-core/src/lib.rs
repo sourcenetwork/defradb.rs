@@ -30,6 +30,7 @@ pub mod lens_block;
 pub mod merge;
 pub mod request_context;
 pub mod signing;
+pub mod text_op;
 pub mod thread_bounds;
 pub mod types;
 pub mod vector;
@@ -41,7 +42,8 @@ pub use block::{
     Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CollectionSetDeltaPayload,
     CompositeDeltaPayload, CounterDeltaPayload, CrdtDelta, DAGLink, DocumentStatus, Encryption,
     FieldDefinitionDeltaPayload, ImmutableDeltaPayload, LwwDeltaPayload, Signature,
-    SignatureHeader, SignatureType, DAG_CBOR_CODEC, IMMUTABLE_LINK_NAME, SHA2_256_CODE,
+    SignatureHeader, SignatureType, TextDeltaPayload, DAG_CBOR_CODEC, IMMUTABLE_LINK_NAME,
+    SHA2_256_CODE,
 };
 pub use collection::collection_short_id;
 pub use encryption::EncryptionKey;
@@ -53,6 +55,7 @@ pub use lens_block::{
 };
 pub use request_context::RequestContext;
 pub use signing::SigningKeyType;
+pub use text_op::TextOp;
 
 /// Version information for DefraDB
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

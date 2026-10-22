@@ -69,6 +69,30 @@ impl ImmutableDeltaPayload {
     }
 }
 
+/// Text delta payload for block embedding: edits to a Text field.
+///
+/// Shaped as an LWW delta, so a field's encryption treats both alike; `data`
+/// is the CBOR of the block's [`TextOp`](crate::text_op::TextOp)s. The ops
+/// count positions in the block's parent version, the text its `heads`
+/// produce. A Rust-only delta: Go peers cannot decode it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextDeltaPayload {
+    /// Field name
+    #[serde(rename = "fieldName")]
+    pub field_name: String,
+
+    /// Priority
+    pub priority: u64,
+
+    /// Collection version identifier
+    #[serde(rename = "collectionVersionID")]
+    pub collection_version_id: String,
+
+    /// The encoded ops
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
 /// Counter delta payload for block embedding
 ///
 /// Matches Go's `crdt.CounterDelta` structure.

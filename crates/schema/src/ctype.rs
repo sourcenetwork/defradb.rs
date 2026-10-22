@@ -9,8 +9,9 @@
 //! - 3 = Composite
 //! - 4 = PnCounter
 //! - 5 = PCounter
+//! - 6 = Text (Rust-only)
 
-use crate::FieldKind;
+use crate::{FieldKind, ScalarKind};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
@@ -30,6 +31,8 @@ pub enum CType {
     PnCounter,
     /// Positive Counter (increment only)
     PCounter,
+    /// Collaborative text: a Fugue sequence of characters (Rust-only)
+    Text,
     /// Unknown CRDT type (preserves raw value for validation errors)
     Unknown(u8),
 }
@@ -46,6 +49,7 @@ impl Serialize for CType {
             CType::Composite => 3,
             CType::PnCounter => 4,
             CType::PCounter => 5,
+            CType::Text => 6,
             CType::Unknown(v) => *v,
         };
         serializer.serialize_u8(value)
@@ -73,6 +77,7 @@ impl<'de> Deserialize<'de> for CType {
                     3 => CType::Composite,
                     4 => CType::PnCounter,
                     5 => CType::PCounter,
+                    6 => CType::Text,
                     _ => CType::Unknown(kind), // Preserve unknown for validation
                 })
             }
@@ -84,6 +89,7 @@ impl<'de> Deserialize<'de> for CType {
                 "Composite" | "composite" | "COMPOSITE" => Ok(CType::Composite),
                 "PnCounter" | "pncounter" | "PN_COUNTER" => Ok(CType::PnCounter),
                 "PCounter" | "pcounter" | "P_COUNTER" => Ok(CType::PCounter),
+                "Text" | "text" | "TEXT" => Ok(CType::Text),
                 _ => Err(de::Error::custom("unknown crdt string representation")),
             },
             // Null decodes as Go's zero value
@@ -103,6 +109,7 @@ impl CType {
             CType::Composite => 3,
             CType::PnCounter => 4,
             CType::PCounter => 5,
+            CType::Text => 6,
             CType::Unknown(v) => v,
         }
     }
@@ -116,6 +123,7 @@ impl CType {
             3 => CType::Composite,
             4 => CType::PnCounter,
             5 => CType::PCounter,
+            6 => CType::Text,
             v => CType::Unknown(v),
         }
     }
@@ -129,6 +137,10 @@ impl CType {
             CType::Composite => true,
             // Counters only work with numeric types
             CType::PnCounter | CType::PCounter => kind.is_numeric(),
+            // Text is a sequence of characters
+            CType::Text => kind
+                .as_scalar()
+                .is_some_and(|scalar| scalar.base_kind() == ScalarKind::NillableString),
             CType::Unknown(_) => false,
         }
     }
@@ -136,6 +148,11 @@ impl CType {
     /// Returns true if this is a counter type
     pub fn is_counter(&self) -> bool {
         matches!(self, CType::PnCounter | CType::PCounter)
+    }
+
+    /// Returns true if this is the Text type
+    pub fn is_text(&self) -> bool {
+        matches!(self, CType::Text)
     }
 
     /// Returns true if this counter type allows decrement (negative increments)
@@ -156,6 +173,7 @@ impl fmt::Display for CType {
             CType::Composite => write!(f, "Composite"),
             CType::PnCounter => write!(f, "PnCounter"),
             CType::PCounter => write!(f, "PCounter"),
+            CType::Text => write!(f, "Text"),
             CType::Unknown(v) => write!(f, "Unknown({})", v),
         }
     }
@@ -173,6 +191,28 @@ mod tests {
         assert!(!CType::PnCounter.is_compatible_with(&FieldKind::string()));
         assert!(!CType::PnCounter.is_compatible_with(&FieldKind::bool()));
         assert!(!CType::PCounter.is_compatible_with(&FieldKind::datetime()));
+    }
+
+    #[test]
+    fn text_is_only_for_strings() {
+        assert!(CType::Text.is_compatible_with(&FieldKind::string()));
+        assert!(CType::Text.is_compatible_with(&FieldKind::Scalar(ScalarKind::String)));
+        assert!(!CType::Text.is_compatible_with(&FieldKind::int()));
+        assert!(!CType::Text.is_compatible_with(&FieldKind::bool()));
+        assert!(CType::Text.is_text());
+        assert!(!CType::Text.is_counter());
+    }
+
+    #[test]
+    fn text_serializes_as_six_and_parses_from_its_names() {
+        assert_eq!(serde_json::to_string(&CType::Text).unwrap(), "6");
+        assert_eq!(serde_json::from_str::<CType>("6").unwrap(), CType::Text);
+        assert_eq!(
+            serde_json::from_str::<CType>(r#""text""#).unwrap(),
+            CType::Text
+        );
+        assert_eq!(CType::from_u8(CType::Text.to_u8()), CType::Text);
+        assert_eq!(CType::Text.to_string(), "Text");
     }
 
     #[test]

@@ -1,10 +1,10 @@
 //! Contract checks for a [`FieldCrdt`](super::FieldCrdt), for the built-in
 //! types and for any type added later.
 
-use document::NormalValue;
+use document::{FieldOp, NormalValue};
 use schema::FieldDescription;
 
-use super::{DeltaParts, FieldCrdt};
+use super::{CausalBlock, CausalCrdt, DeltaParts, FieldCrdt};
 use crate::stored::{StoredDocument, StoredField};
 use defra_core::block::CrdtDelta;
 
@@ -57,6 +57,10 @@ where
 /// - a state-based type's merge is idempotent and picks the same winner in
 ///   any order.
 ///
+/// A causal type ([`FieldCrdt::causal`]) stores a value that every writer
+/// read validated, so its part merges replace in commit order instead, and
+/// its replay obeys [`check_causal`] on histories built from `inputs`.
+///
 /// Panics on the first law that fails.
 pub fn check_field_crdt(
     crdt: &dyn FieldCrdt,
@@ -101,7 +105,9 @@ pub fn check_field_crdt(
         assert_eq!(carried.data, bytes.as_slice(), "delta data round trip");
         match &delta {
             CrdtDelta::Counter(counter) => assert_eq!(counter.nonce, 42, "delta nonce"),
-            _ => assert!(!crdt.replicates_ops(), "an operation delta carries a nonce"),
+            // A causal op is told apart by the parents it counts in, so only
+            // a blind op needs a nonce to repeat.
+            _ => assert!(!crdt.blind_op(), "a blind operation delta carries a nonce"),
         }
 
         for priority in [1, 2] {
@@ -134,7 +140,121 @@ pub fn check_field_crdt(
         }
     }
 
-    check_merges(crdt, &block_states);
+    match crdt.causal() {
+        Some(causal) => {
+            check_replacements(crdt, &block_states);
+            check_causal(crdt, causal, field, inputs);
+        }
+        None => check_merges(crdt, &block_states),
+    }
+}
+
+/// A causal type's part merge: the later state replaces the earlier, in any
+/// grouping.
+fn check_replacements(crdt: &dyn FieldCrdt, states: &[StoredField]) {
+    for left in states {
+        for right in states {
+            assert_eq!(
+                fold([left, right]).fields[&0].materialize(),
+                crdt.materialize(right.part()),
+                "{right:?} replaces {left:?}"
+            );
+            let mut pair = left.clone();
+            crdt.merge(&mut pair, right.clone()).expect("states fold");
+            for base in states {
+                assert_eq!(
+                    fold([base, &pair]),
+                    fold([base, left, right]),
+                    "partial merge of {left:?} and {right:?} onto {base:?}"
+                );
+            }
+        }
+    }
+}
+
+fn block(id: u8, parents: &[u8], op: FieldOp) -> CausalBlock {
+    CausalBlock {
+        id: vec![id],
+        parents: parents.iter().map(|&parent| vec![parent]).collect(),
+        op,
+    }
+}
+
+/// Check the replay of a causal type on histories of `values`, each the
+/// value of a write; nil values are skipped. For a first write `base`, and writes `a` and `b` made
+/// concurrently on top of it:
+///
+/// - a block's data hands back the operation written in it;
+/// - a first write's history replays to its value;
+/// - `apply(current, diff(current, value)) == value`;
+/// - a block whose parents are the history's heads replays to its operation
+///   applied to the history's value, the merge's shortcut;
+/// - the same blocks in any order replay to the same value;
+/// - a block that restates a value replays to that value.
+///
+/// Panics on the first law that fails.
+pub fn check_causal(
+    crdt: &dyn FieldCrdt,
+    causal: &dyn CausalCrdt,
+    field: &FieldDescription,
+    values: &[NormalValue],
+) {
+    let replay = |history: &[CausalBlock]| causal.replay(field, history).expect("history replays");
+    let block_op = |value: &NormalValue, op: Option<&FieldOp>| {
+        let data = crdt
+            .block_data(value, op)
+            .expect("block data encodes")
+            .expect("a write of a value makes a block");
+        causal.block_op(field, &data).expect("block data decodes")
+    };
+    let diff = |current: &NormalValue, value: &NormalValue| {
+        let op = causal.diff(Some(current), value).expect("a diff");
+        assert_eq!(
+            &crdt
+                .apply(field, Some(current), &op)
+                .expect("a diff applies"),
+            value,
+            "diff({current:?}, {value:?}) applied"
+        );
+        assert_eq!(block_op(value, Some(&op)), op, "{op:?} round trips");
+        op
+    };
+    let values: Vec<&NormalValue> = values.iter().filter(|value| !value.is_nil()).collect();
+    for &base in &values {
+        let first = block(0, &[], block_op(base, None));
+        assert_eq!(
+            &replay(std::slice::from_ref(&first)),
+            base,
+            "first write {base:?}"
+        );
+        for &a in &values {
+            let left = block(1, &[0], diff(base, a));
+            let linear = [first.clone(), left.clone()];
+            assert_eq!(
+                replay(&linear),
+                crdt.apply(field, Some(base), &left.op).expect("applies"),
+                "{a:?} on {base:?}: replay against the shortcut"
+            );
+            let restated = block(1, &[0], FieldOp::Set(a.clone()));
+            assert_eq!(&replay(&[first.clone(), restated]), a, "{a:?} restated");
+            for &b in &values {
+                let right = block(2, &[0], diff(base, b));
+                let concurrent = [first.clone(), left.clone(), right];
+                let merged = replay(&concurrent);
+                for order in permutations(&concurrent) {
+                    assert_eq!(replay(&order), merged, "merge order {order:?}");
+                }
+                let next = block(3, &[1, 2], diff(&merged, base));
+                let mut after = concurrent.to_vec();
+                after.push(next.clone());
+                assert_eq!(
+                    &replay(&after),
+                    base,
+                    "a write on the merge of {a:?} and {b:?} against the shortcut"
+                );
+            }
+        }
+    }
 }
 
 fn check_merges(crdt: &dyn FieldCrdt, states: &[StoredField]) {

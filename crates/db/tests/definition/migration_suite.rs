@@ -32,6 +32,7 @@ use storage::index::IndexIterator;
 use storage::RegolithStore;
 
 mod paged_reindex;
+mod text_lens;
 mod unique_conflicts;
 
 #[derive(Default)]

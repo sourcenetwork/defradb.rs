@@ -133,7 +133,11 @@ impl Collection {
         };
         let mut parts = StoredDocument::default();
         for field in &self.def.fields {
-            if crdt::field_crdt(field.crdt_type).is_none_or(|crdt| crdt.replicates_ops()) {
+            // An operation reaches the value as its own operand, except a
+            // causal one, whose merged value is given whole.
+            if crdt::field_crdt(field.crdt_type)
+                .is_none_or(|crdt| crdt.replicates_ops() && crdt.causal().is_none())
+            {
                 continue;
             }
             let Some(order) = priorities.get(&field.name) else {

@@ -89,12 +89,12 @@ pub(crate) fn compute_document_blocks_with_inputs(
         }
 
         let crdt = field_crdt_of(doc, field_name)?;
-        let value_bytes = crdt
-            .encode(
-                crdt.write(field_value.value(), doc.pending_op(field_name))
-                    .data,
-            )
-            .map_err(|error| error.to_string())?;
+        let Some(value_bytes) = crdt
+            .block_data(field_value.value(), doc.pending_op(field_name))
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
+        };
 
         // Encrypt delta and create Encryption metadata block if configured
         let (value_bytes, encryption_cid) = if let Some(enc) = encryption_config {

@@ -400,13 +400,11 @@ pub async fn resolve_block_doc_ids(
     cid: &cid::Cid,
     block: &defra_core::Block,
 ) -> Result<Option<Vec<String>>> {
-    let is_doc_delta = matches!(
-        block.delta,
-        defra_core::CrdtDelta::Lww(_)
-            | defra_core::CrdtDelta::Counter(_)
-            | defra_core::CrdtDelta::Immutable(_)
-            | defra_core::CrdtDelta::Composite(_)
-    );
+    let is_doc_delta = block.delta.field().is_some()
+        || matches!(
+            block.delta,
+            defra_core::CrdtDelta::Immutable(_) | defra_core::CrdtDelta::Composite(_)
+        );
     if !is_doc_delta {
         return Ok(Some(Vec::new()));
     }

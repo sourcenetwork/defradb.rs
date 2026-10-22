@@ -8,6 +8,7 @@ use crate::block::{
     Block, CollectionDefinitionDeltaPayload, CollectionDeltaPayload, CompositeDeltaPayload,
     CounterDeltaPayload, CrdtDelta, DAGLink, Encryption, FieldDefinitionDeltaPayload,
     ImmutableDeltaPayload, LwwDeltaPayload, Signature, SignatureHeader, SignatureType,
+    TextDeltaPayload,
 };
 use crate::{Error, Result};
 
@@ -132,6 +133,9 @@ impl TryFrom<&Ipld> for CrdtDelta {
                 immutable,
             )?));
         }
+        if let Some(text) = map.get("text") {
+            return Ok(CrdtDelta::Text(TextDeltaPayload::try_from(text)?));
+        }
         if let Some(collection) = map.get("collection") {
             return Ok(CrdtDelta::Collection(CollectionDeltaPayload::try_from(
                 collection,
@@ -187,6 +191,29 @@ impl TryFrom<&Ipld> for LwwDeltaPayload {
         };
 
         Ok(LwwDeltaPayload {
+            field_name: parse_string(map, "fieldName")?,
+            priority: parse_u64(map, "priority")?,
+            collection_version_id: parse_string(map, "schemaVersionID")?,
+            data: parse_bytes(map, "data")?,
+        })
+    }
+}
+
+impl TryFrom<&Ipld> for TextDeltaPayload {
+    type Error = Error;
+
+    fn try_from(ipld: &Ipld) -> Result<Self> {
+        let map = match ipld {
+            Ipld::Map(m) => m,
+            _ => {
+                return Err(Error::IpldError(format!(
+                    "Expected IPLD map for TextDeltaPayload, got {}",
+                    ipld_type_name(ipld)
+                )))
+            }
+        };
+
+        Ok(TextDeltaPayload {
             field_name: parse_string(map, "fieldName")?,
             priority: parse_u64(map, "priority")?,
             collection_version_id: parse_string(map, "schemaVersionID")?,

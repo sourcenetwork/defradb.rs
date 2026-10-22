@@ -7,6 +7,7 @@
 
 use cid::Cid;
 use crdt::stored::StoredField;
+use crdt::CausalBlock;
 use defra_core::block::{Block, CrdtDelta, Encryption, FieldDelta};
 use document::Document;
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
@@ -642,20 +643,26 @@ fn replay_deltas(
     doc_id: &str,
 ) -> Result<Document> {
     let mut fields: RapidHashMap<String, StoredField> = RapidHashMap::new();
+    let mut histories: RapidHashMap<String, Vec<CausalBlock>> = RapidHashMap::new();
     let mut is_deleted = false;
     let mut max_composite_priority: u64 = 0;
 
     // An Immutable block replays as the LWW field deltas it replaces.
-    let deltas = blocks.iter().flat_map(|(_, block)| match &block.delta {
-        CrdtDelta::Immutable(payload) => payload
-            .lww_deltas()
-            .map(|delta| std::borrow::Cow::Owned(CrdtDelta::Lww(delta)))
-            .collect(),
-        other => vec![std::borrow::Cow::Borrowed(other)],
+    let deltas = blocks.iter().flat_map(|(cid, block)| {
+        let deltas = match &block.delta {
+            CrdtDelta::Immutable(payload) => payload
+                .lww_deltas()
+                .map(|delta| std::borrow::Cow::Owned(CrdtDelta::Lww(delta)))
+                .collect(),
+            other => vec![std::borrow::Cow::Borrowed(other)],
+        };
+        deltas.into_iter().map(move |delta| (cid, block, delta))
     });
-    for delta in deltas {
+    for (cid, block, delta) in deltas {
         if let Some(field_delta) = delta.field() {
-            replay_field(collection, &mut fields, &delta, &field_delta);
+            if !causal_history(collection, &mut histories, cid, block, &delta, &field_delta)? {
+                replay_field(collection, &mut fields, &delta, &field_delta);
+            }
             continue;
         }
         match delta.as_ref() {
@@ -669,6 +676,24 @@ fn replay_deltas(
                 // Collection and schema definition deltas are not relevant for document reconstruction
             }
         }
+    }
+
+    // A causal field is the replay of its whole history.
+    for (name, history) in histories {
+        let Some(field) = collection.field_by_name(&name) else {
+            continue;
+        };
+        let Some(crdt) = crdt::field_crdt(field.crdt_type) else {
+            continue;
+        };
+        let Some(causal) = crdt.causal() else {
+            continue;
+        };
+        let state = causal
+            .replay(field, &history)
+            .and_then(|value| crdt.state(field, 0, &value))
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        fields.insert(name, state);
     }
 
     // Build document from collected field values
@@ -698,6 +723,45 @@ fn replay_deltas(
     }
 
     Ok(document)
+}
+
+/// Add a field block to its field's history when the field is causal, and
+/// report whether it was. A block the field's type cannot read fails the
+/// read: every later block counts in its version, so the history cannot
+/// replay without it.
+fn causal_history(
+    collection: &CollectionVersion,
+    histories: &mut RapidHashMap<String, Vec<CausalBlock>>,
+    cid: &Cid,
+    block: &Block,
+    delta: &CrdtDelta,
+    field_delta: &FieldDelta<'_>,
+) -> Result<bool> {
+    let name = field_delta.field_name;
+    let Some(field) = collection.field_by_name(name).filter(|field| {
+        crdt::field_crdt(field.crdt_type).is_some_and(|crdt| crdt.causal().is_some())
+    }) else {
+        return Ok(false);
+    };
+    let op = crdt::delta_crdt(delta, field.crdt_type)
+        .map_err(|error| error.to_string())
+        .and_then(|writer| {
+            crdt::history_op(writer, field, field_delta.data).map_err(|error| error.to_string())
+        })
+        .map_err(|error| {
+            Error::Serialization(format!(
+                "field '{name}' block {cid} cannot be read: {error}"
+            ))
+        })?;
+    histories
+        .entry(name.to_owned())
+        .or_default()
+        .push(CausalBlock {
+            id: cid.to_bytes(),
+            parents: block.heads.iter().flatten().map(Cid::to_bytes).collect(),
+            op,
+        });
+    Ok(true)
 }
 
 /// Merge one field block into the replayed states, through the CRDT that

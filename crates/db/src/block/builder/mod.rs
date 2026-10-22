@@ -170,7 +170,7 @@ pub fn compute_signature(
     // Only sign first field blocks (priority <= 1) and composite blocks.
     // Higher-priority field blocks are not signed: their integrity is
     // guaranteed by the signature on the parent composite block.
-    let is_field = matches!(&block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_));
+    let is_field = block.delta.field().is_some();
     if is_field && block.delta.priority() > 1 {
         return Ok(None);
     }
@@ -268,7 +268,7 @@ fn compute_signature_prepared(
     if signer.remote_signer.is_none() || inputs.is_none() {
         return compute_signature(block, signer).map_err(BuildError::Message);
     }
-    let is_field = matches!(&block.delta, CrdtDelta::Lww(_) | CrdtDelta::Counter(_));
+    let is_field = block.delta.field().is_some();
     if is_field && block.delta.priority() > 1 {
         return Ok(None);
     }
