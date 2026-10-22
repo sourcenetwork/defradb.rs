@@ -269,6 +269,9 @@ async fn set_incremented_counters(
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
         doc.set(field.name.clone(), value)
             .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
+        // Setting the value drops the pending op; the block still carries it.
+        doc.edit(field.name.clone(), op)
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
     }
     Ok(())
 }

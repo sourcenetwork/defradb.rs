@@ -264,6 +264,7 @@ impl Document {
             .crdt_type(&field_name)
             .ok_or_else(|| Error::FieldNotExist(field_name.clone()))?;
         let field_value = FieldValue::new(crdt_type, value.into())?;
+        self.pending_ops.remove(&field_name);
         self.values.insert(field_name, field_value);
         self.is_dirty = true;
         Ok(())
