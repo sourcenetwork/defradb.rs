@@ -86,9 +86,12 @@
 \*   Apply         json_crdt.rs Frontier::delta, then Frontier::compose: drop
 \*                 the edits in the block's past at its paths and below, add
 \*                 its edits (json.rs effect); tagged_past finds that past by
-\*                 walking its DAG
-\*   front         json_crdt.rs Frontier::entries, stored as the field's
-\*                 part; it holds operation IDs
+\*                 walking its DAG. An op reads only its path, the paths above
+\*                 it (Frontier::at) and the paths below it (Frontier::under,
+\*                 one range: Path.lean prefix_convex); compose finds each
+\*                 edit it drops or adds by binary search
+\*   front         json_crdt.rs Frontier::entries, sorted by path key and
+\*                 block, stored as the field's part; it holds operation IDs
 \*   OpId          json_crdt.rs block_id over the data json.rs write_data
 \*                 writes (encode_write: the ops and a nonce drawn by
 \*                 prepare_tagged_writes); SharedIds exists only for the RED

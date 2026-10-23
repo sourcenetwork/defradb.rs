@@ -21,6 +21,7 @@
 //! The contract is `proofs/tla/JsonCrdt.tla`; the path key encoding and the
 //! register laws are proven in `proofs/lean/JsonCrdt`.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,8 @@ pub struct Entry {
 
 /// A JSON field's stored value, or an operand on it: the entries it removes,
 /// by path and block, and the entries it adds. A stored value removes nothing.
+/// Both lists are sorted by path key, then block, with no repeats, so the
+/// entries at a path and below it are one range; `decode` restores the order.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frontier {
     pub removes: Vec<(Path, Vec<u8>)>,
@@ -100,6 +103,28 @@ pub fn encode_path(path: &[String]) -> Vec<u8> {
         key.extend_from_slice(&[0, 1]);
     }
     key
+}
+
+/// A path's key, byte by byte, as `encode_path` writes it, without building it.
+fn key_bytes(path: &[String]) -> impl Iterator<Item = u8> + '_ {
+    path.iter().flat_map(|segment| {
+        segment
+            .as_bytes()
+            .iter()
+            .flat_map(|&byte| std::iter::once(byte).chain((byte == 0).then_some(255)))
+            .chain([0, 1])
+    })
+}
+
+/// How `path`'s key sorts against `key`.
+fn cmp_key(path: &[String], key: &[u8]) -> Ordering {
+    key_bytes(path).cmp(key.iter().copied())
+}
+
+/// Whether `path`'s key starts with `key`: `path` is `key`'s path or below it.
+fn key_starts_with(path: &[String], key: &[u8]) -> bool {
+    let mut bytes = key_bytes(path);
+    key.iter().all(|&byte| bytes.next() == Some(byte))
 }
 
 /// The path whose key is `key`, if it is one.
@@ -361,35 +386,59 @@ impl Frontier {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        ciborium::from_reader(bytes)
-            .map_err(|error| Error::Serialization(format!("json frontier: {error}")))
+        let mut frontier: Self = ciborium::from_reader(bytes)
+            .map_err(|error| Error::Serialization(format!("json frontier: {error}")))?;
+        frontier.sort();
+        Ok(frontier)
+    }
+
+    /// Put both lists in path key and block order, the last of any repeat
+    /// winning, unless they already are.
+    fn sort(&mut self) {
+        let owned_entry_key = |entry: &Entry| (encode_path(&entry.path), entry.block.clone());
+        if !is_strictly_sorted(&self.entries, entry_parts) {
+            let entries: BTreeMap<EntryKey, Entry> = std::mem::take(&mut self.entries)
+                .into_iter()
+                .map(|entry| (owned_entry_key(&entry), entry))
+                .collect();
+            self.entries = entries.into_values().collect();
+        }
+        let owned_remove_key = |(path, block): &(Path, Vec<u8>)| (encode_path(path), block.clone());
+        if !is_strictly_sorted(&self.removes, remove_parts) {
+            let removes: Removes = std::mem::take(&mut self.removes)
+                .into_iter()
+                .map(|remove| (owned_remove_key(&remove), remove))
+                .collect();
+            self.removes = removes.into_values().collect();
+        }
     }
 
     /// Apply `later` after this one: drop what it removes, add what it adds.
     /// The result removes what either removed, so it is itself an operand,
-    /// and composing is associative.
+    /// and composing is associative. Each of `later`'s entries and removes is
+    /// one binary search here, whatever this frontier's size.
     pub fn compose(&mut self, later: Frontier) {
-        let key = |path: &[String], block: &[u8]| (encode_path(path), block.to_vec());
-        let removed: BTreeSet<(Vec<u8>, Vec<u8>)> = later
-            .removes
-            .iter()
-            .map(|(path, block)| key(path, block))
-            .collect();
-        let mut entries: BTreeMap<(Vec<u8>, Vec<u8>), Entry> = std::mem::take(&mut self.entries)
-            .into_iter()
-            .map(|entry| (key(&entry.path, &entry.block), entry))
-            .filter(|(k, _)| !removed.contains(k))
-            .collect();
-        for entry in later.entries {
-            entries.insert(key(&entry.path, &entry.block), entry);
+        for (path, block) in &later.removes {
+            if let Ok(at) = find(&self.entries, &encode_path(path), block, entry_parts) {
+                self.entries.remove(at);
+            }
         }
-        self.entries = entries.into_values().collect();
-        let removes: Removes = std::mem::take(&mut self.removes)
-            .into_iter()
-            .chain(later.removes)
-            .map(|(path, block)| (key(&path, &block), (path, block)))
-            .collect();
-        self.removes = removes.into_values().collect();
+        for entry in later.entries {
+            match find(
+                &self.entries,
+                &encode_path(&entry.path),
+                &entry.block,
+                entry_parts,
+            ) {
+                Ok(at) => self.entries[at] = entry,
+                Err(at) => self.entries.insert(at, entry),
+            }
+        }
+        for (path, block) in later.removes {
+            if let Err(at) = find(&self.removes, &encode_path(&path), &block, remove_parts) {
+                self.removes.insert(at, (path, block));
+            }
+        }
     }
 
     /// The same frontier as a stored value: what it removes no longer matters.
@@ -401,39 +450,66 @@ impl Frontier {
     /// onto this frontier. `in_past` says whether an entry's block is in the
     /// new block's causal past: the edits it had seen at an op's path and
     /// below leave, and the edits above an op's path it had seen are recorded.
+    /// An op reads only the entries at its path, below it and above it.
     pub fn delta<F>(&self, ops: &[JsonOp], block: &[u8], priority: u64, in_past: F) -> Frontier
     where
         F: Fn(&[u8]) -> bool,
     {
         let mut removes = Removes::new();
-        let mut entries = Vec::with_capacity(ops.len());
+        let mut entries: BTreeMap<Vec<u8>, Entry> = BTreeMap::new();
         for op in ops {
-            let mut seen = BTreeSet::new();
-            for entry in &self.entries {
-                if !in_past(&entry.block) {
-                    continue;
-                }
-                if entry.path.starts_with(&op.path) {
+            let key = encode_path(&op.path);
+            for entry in self.under(&key) {
+                if in_past(&entry.block) {
                     removes.insert(
                         (encode_path(&entry.path), entry.block.clone()),
                         (entry.path.clone(), entry.block.clone()),
                     );
-                } else if op.path.starts_with(&entry.path) {
-                    seen.insert(entry.block.clone());
                 }
             }
-            entries.push(Entry {
-                path: op.path.clone(),
-                block: block.to_vec(),
-                priority,
-                edit: op.edit.clone(),
-                seen: seen.into_iter().collect(),
-            });
+            let mut seen = BTreeSet::new();
+            for depth in 0..op.path.len() {
+                let above = encode_path(&op.path[..depth]);
+                for entry in self.at(&above) {
+                    if in_past(&entry.block) {
+                        seen.insert(entry.block.clone());
+                    }
+                }
+            }
+            entries.insert(
+                key,
+                Entry {
+                    path: op.path.clone(),
+                    block: block.to_vec(),
+                    priority,
+                    edit: op.edit.clone(),
+                    seen: seen.into_iter().collect(),
+                },
+            );
         }
         Frontier {
             removes: removes.into_values().collect(),
-            entries,
+            entries: entries.into_values().collect(),
         }
+    }
+
+    /// The entries at `key`'s path and every path below it: one range, since
+    /// a key prefixes exactly its own path's and those below (`encode_path`).
+    fn under(&self, key: &[u8]) -> &[Entry] {
+        let start = self
+            .entries
+            .partition_point(|entry| cmp_key(&entry.path, key).is_lt());
+        let len = self.entries[start..].partition_point(|entry| key_starts_with(&entry.path, key));
+        &self.entries[start..start + len]
+    }
+
+    /// The entries at `key`'s path itself.
+    fn at(&self, key: &[u8]) -> &[Entry] {
+        let start = self
+            .entries
+            .partition_point(|entry| cmp_key(&entry.path, key).is_lt());
+        let len = self.entries[start..].partition_point(|entry| cmp_key(&entry.path, key).is_eq());
+        &self.entries[start..start + len]
     }
 
     /// The operand of a local write: its block's past is everything stored.
@@ -506,6 +582,41 @@ impl Frontier {
         }
         conflicts
     }
+}
+
+fn entry_parts(entry: &Entry) -> (&[String], &[u8]) {
+    (entry.path.as_slice(), entry.block.as_slice())
+}
+
+fn remove_parts((path, block): &(Path, Vec<u8>)) -> (&[String], &[u8]) {
+    (path.as_slice(), block.as_slice())
+}
+
+/// Where the item with path key `key` and block `block` sits in `items`,
+/// sorted by path key then block, or where it would go.
+fn find<T, P>(items: &[T], key: &[u8], block: &[u8], parts: P) -> std::result::Result<usize, usize>
+where
+    P: Fn(&T) -> (&[String], &[u8]),
+{
+    items.binary_search_by(|item| {
+        let (path, item_block) = parts(item);
+        cmp_key(path, key).then_with(|| item_block.cmp(block))
+    })
+}
+
+/// Whether `items` are in path key then block order, with no repeats.
+fn is_strictly_sorted<T, P>(items: &[T], parts: P) -> bool
+where
+    P: Fn(&T) -> (&[String], &[u8]),
+{
+    items.windows(2).all(|pair| {
+        let (path, block) = parts(&pair[0]);
+        let (next_path, next_block) = parts(&pair[1]);
+        key_bytes(path)
+            .cmp(key_bytes(next_path))
+            .then_with(|| block.cmp(next_block))
+            .is_lt()
+    })
 }
 
 /// One block of a Json field's DAG, for [`replay`]: its CID, its parents'
