@@ -1,18 +1,21 @@
 //! The walk, linking a node in, and the pruning they share.
 
 use std::borrow::Cow;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use rapidhash::{HashMapExt, HashSetExt, RapidHashMap, RapidHashSet};
 
 use super::cache::Codes;
 use super::codec::{self, GraphState, Record, Trained};
+use super::pending_cache::{Copy, Segment, Tag, MAX_PENDING_CACHE_BYTES};
 use super::DiskAnn;
 use crate::index::error::{Error, Result};
 use crate::index::vector::engine::ann::{Admit, Candidate, Neighbor, VectorIndexEngine};
 use crate::index::vector::engine::select::{EdgeSelector, RobustPrune};
 use crate::index::vector::quantize::{ProductQuantizer, Quantizer};
 use crate::index::vector::store::{NodeId, VectorNodeStore};
+use defra_core::thread_bounds::MaybeSend;
 use defra_core::vector::Element;
 
 /// A node the walk reached, ranked by its code.
@@ -330,6 +333,114 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             .collect()
     }
 
+    /// Every vector the snapshot and the transaction itself have pending,
+    /// ranked by its code: the transaction's own appends, plus the shared copy
+    /// where it provably covers the snapshot and a scan of the log where it
+    /// may not (`proofs/tla/PendingCache.tla`). A scan the copy could not
+    /// stand in for reloads it, and so does a gap too big to fit under the
+    /// cap: one ordered scan instead of a point read per missing entry.
+    async fn pending_candidates(
+        &self,
+        pq: &ProductQuantizer,
+        table: &[f32],
+        generation: u64,
+        out: &mut Vec<Visit>,
+    ) -> Result<()> {
+        let m = pq.code_len();
+        let mut push = |id: NodeId, code: &[u8]| {
+            out.push(Visit {
+                id,
+                distance: pq.distance(table, code),
+                code: Vec::new(),
+            })
+        };
+        for entry in self.store().own_pending_log().await? {
+            let (id, code) = codec::decode_log_entry(&entry, m)?;
+            push(id, code);
+        }
+        let Some(codes) = &self.codes else {
+            return self.scan_pending(m, None, &mut push).await;
+        };
+        let cache = &codes.pending;
+        let head = self.store().pending_log_head().await?;
+        let copy = cache.load();
+        if copy.is_oversized() && copy.tag().is_some_and(|tag| tag.generation >= generation) {
+            return self.scan_pending(m, None, &mut push).await;
+        }
+        let reload = match copy.tag() {
+            Some(tag) if tag.generation == generation => {
+                if tag.position >= head {
+                    copy.for_each(m, push);
+                    return Ok(());
+                }
+                if copy.can_hold(head - tag.position, m) {
+                    if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
+                        let next = Arc::new(copy.caught_up(head, added));
+                        next.for_each(m, push);
+                        cache.publish(next);
+                        return Ok(());
+                    }
+                }
+                true
+            }
+            Some(tag) => tag.generation < generation,
+            None => true,
+        };
+        if !reload {
+            return self.scan_pending(m, None, &mut push).await;
+        }
+        let mut segment = Segment::default();
+        self.scan_pending(m, Some(&mut segment), &mut push).await?;
+        let tag = Tag {
+            generation,
+            position: head,
+        };
+        cache.publish(Arc::new(Copy::loaded(tag, segment)));
+        Ok(())
+    }
+
+    /// Visits every vector the snapshot's pending log inserts, copying each
+    /// into `into` when given one, and stops copying once `into` is past the
+    /// cap.
+    async fn scan_pending<F>(
+        &self,
+        m: usize,
+        mut into: Option<&mut Segment>,
+        visit: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(NodeId, &[u8]) + MaybeSend,
+    {
+        self.store()
+            .iterate_pending_log(|_, entry| {
+                let (id, code) = codec::decode_log_entry(entry, m)?;
+                if let Some(segment) = into.as_deref_mut() {
+                    segment.push(id, code);
+                    if segment.bytes() > MAX_PENDING_CACHE_BYTES {
+                        into = None;
+                    }
+                }
+                visit(id, code);
+                Ok(ControlFlow::Continue(()))
+            })
+            .await
+    }
+
+    /// The inserts logged after `from` through `through`, or `None` when an
+    /// entry is gone: a truncate the copy did not see, which only a scan can
+    /// stand in for.
+    async fn read_pending_log(&self, m: usize, from: u64, through: u64) -> Result<Option<Segment>> {
+        let mut added = Segment::default();
+        for position in from + 1..=through {
+            let Some(bytes) = self.store().pending_log_entry(position).await? else {
+                return Ok(None);
+            };
+            let (id, code) = codec::decode_log_entry(&bytes, m)?;
+            added.push(id, code);
+        }
+        Ok(Some(added))
+    }
+
     /// Walks the graph and scans the pending codes, then re-ranks the best `L`
     /// admitted candidates of both by their full vectors.
     ///
@@ -367,15 +478,7 @@ impl<S: VectorNodeStore> DiskAnn<S> {
             Some(entry) => self.walk(&pq, entry, &table, l).await?,
             None => Vec::new(),
         };
-        self.store()
-            .iterate_aux(codec::PENDING, b"", |key, code| {
-                candidates.push(Visit {
-                    id: codec::id_from_key(key)?,
-                    distance: pq.distance(&table, code),
-                    code: Vec::new(),
-                });
-                Ok(())
-            })
+        self.pending_candidates(&pq, &table, graph.generation, &mut candidates)
             .await?;
         candidates.sort_by(by_distance);
 
