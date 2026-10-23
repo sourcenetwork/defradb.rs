@@ -234,7 +234,7 @@ fn commit(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: (*name).to_string(),
                 priority,
-                schema_version_id: version_id.to_string(),
+                collection_version_id: version_id.to_string(),
                 data: cbor(value),
             }),
             heads,
@@ -252,7 +252,7 @@ fn commit(
 
     let mut composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: version_id.to_string(),
+            collection_version_id: version_id.to_string(),
             priority,
             status,
         }),

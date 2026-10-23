@@ -56,7 +56,7 @@ fn collection_cid_doc_id_filter_accepts_an_alias() {
         let genesis = |priority| {
             Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: format!("v{priority}"),
+                    collection_version_id: format!("v{priority}"),
                     priority: 1,
                     status: 1,
                 }),
@@ -71,7 +71,7 @@ fn collection_cid_doc_id_filter_accepts_an_alias() {
         );
         let collection = Block::new(
             CrdtDelta::Collection(CollectionDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
             }),
             vec![],

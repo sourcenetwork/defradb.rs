@@ -197,7 +197,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         let collection = self
-            .block_collection(&payload.schema_version_id, metadata.collection_id)
+            .block_collection(&payload.collection_version_id, metadata.collection_id)
             .await?;
 
         if let Some(collection) = collection.as_ref() {
@@ -206,14 +206,14 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             if metadata.collection_id.is_some()
                 && self.is_governed(collection.schema())
                 && self
-                    .block_collection(&payload.schema_version_id, None)
+                    .block_collection(&payload.collection_version_id, None)
                     .await?
                     .is_none_or(|own| own.collection_id() != collection.collection_id())
             {
                 return Ok(CompositeMergePreparation::Complete(
                     MergeOutcome::retryable_skip(format!(
                         "schema version {} is not held; a governed collection is resolved only from the block",
-                        payload.schema_version_id
+                        payload.collection_version_id
                     )),
                 ));
             }
@@ -452,8 +452,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let doc_short_id = {
             let collection = collection_lookup.as_ref().ok_or_else(|| {
                 MergeError::MissingMetadata(format!(
-                    "Collection not found for schema_version_id: {}",
-                    payload.schema_version_id
+                    "Collection not found for collection_version_id: {}",
+                    payload.collection_version_id
                 ))
             })?;
             let systemstore = match txn.systemstore() {
@@ -555,7 +555,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             cid: *cid,
                             collection_id: metadata
                                 .collection_id
-                                .unwrap_or(&payload.schema_version_id)
+                                .unwrap_or(&payload.collection_version_id)
                                 .to_string(),
                             by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                         };
@@ -592,7 +592,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 committed_events.push(Message::update(Update::new(
                     doc_id_str.to_string(),
                     *cid,
-                    payload.schema_version_id.clone(),
+                    payload.collection_version_id.clone(),
                     event_block,
                     false,
                     true,
@@ -603,7 +603,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     cid: *cid,
                     collection_id: metadata
                         .collection_id
-                        .unwrap_or(&payload.schema_version_id)
+                        .unwrap_or(&payload.collection_version_id)
                         .to_string(),
                     by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                 }));
@@ -614,7 +614,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         cid: *cid,
                         collection_id: metadata
                             .collection_id
-                            .unwrap_or(&payload.schema_version_id)
+                            .unwrap_or(&payload.collection_version_id)
                             .to_string(),
                         by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                     }));
@@ -925,8 +925,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let doc_short_id = {
             let collection = collection_lookup.as_ref().ok_or_else(|| {
                 MergeError::MissingMetadata(format!(
-                    "Collection not found for schema_version_id: {}",
-                    payload.schema_version_id
+                    "Collection not found for collection_version_id: {}",
+                    payload.collection_version_id
                 ))
             })?;
             self.db
@@ -997,7 +997,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         cid: *cid,
                         collection_id: metadata
                             .collection_id
-                            .unwrap_or(&payload.schema_version_id)
+                            .unwrap_or(&payload.collection_version_id)
                             .to_string(),
                         by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                     };
@@ -1056,7 +1056,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     let update = Update::new(
                         doc_id_str.to_string(),
                         *cid,
-                        payload.schema_version_id.clone(),
+                        payload.collection_version_id.clone(),
                         block.to_dag_cbor().map_err(|error| {
                             MergeError::BlockDecode(format!(
                                 "Failed to encode merged composite update block: {}",
@@ -1082,7 +1082,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             cid: *cid,
                             collection_id: metadata
                                 .collection_id
-                                .unwrap_or(&payload.schema_version_id)
+                                .unwrap_or(&payload.collection_version_id)
                                 .to_string(),
                             by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                         };
@@ -1098,7 +1098,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             cid: *cid,
                             collection_id: metadata
                                 .collection_id
-                                .unwrap_or(&payload.schema_version_id)
+                                .unwrap_or(&payload.collection_version_id)
                                 .to_string(),
                             by_peer: metadata.sender_peer.unwrap_or("").to_string(),
                         };

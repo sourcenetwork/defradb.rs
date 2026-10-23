@@ -193,8 +193,8 @@ async fn sync_lens<S: storage::corekv::Store + 'static, B: Blockstore>(
     }
 
     let config = lens::LensConfig {
-        source_schema_version_id: String::new(),
-        destination_schema_version_id: String::new(),
+        source_collection_version_id: String::new(),
+        destination_collection_version_id: String::new(),
         lenses: lens_modules,
     };
 

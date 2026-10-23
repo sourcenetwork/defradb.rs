@@ -97,7 +97,7 @@ async fn set_stored_value(
         .unwrap();
     doc.set("verified", value);
     if current {
-        doc.set_schema_version_id(collection.version_id());
+        doc.set_collection_version_id(collection.version_id());
     }
     collection
         .save_with_datastore(&datastore, &doc, short_id)
@@ -144,7 +144,7 @@ fn materialize_preserves_preexisting_unique_collision_across_transform() {
         let collection = db.get_collection("Users").unwrap().unwrap();
         for id in [&first, &second] {
             let doc = load_user(&db, id).await;
-            assert_eq!(doc.schema_version_id(), Some(collection.version_id()));
+            assert_eq!(doc.collection_version_id(), Some(collection.version_id()));
             assert_eq!(
                 doc.get("verified"),
                 Some(&document::NormalValue::Bool(true))

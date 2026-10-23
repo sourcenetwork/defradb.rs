@@ -96,7 +96,7 @@ fn unreadable_merge_state_fails_the_counter_merge() {
         ciborium::into_writer(&5_i64, &mut data).unwrap();
         let payload = CounterDeltaPayload {
             field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data,
             nonce: 31,

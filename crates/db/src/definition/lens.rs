@@ -54,7 +54,7 @@ pub fn doc_needs_migration(doc: &Document, target_version_id: &str, has_migratio
         return false;
     }
 
-    let doc_version = doc.schema_version_id();
+    let doc_version = doc.collection_version_id();
     let needs = doc.needs_migration(target_version_id);
 
     debug!(

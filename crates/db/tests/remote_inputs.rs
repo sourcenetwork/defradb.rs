@@ -128,7 +128,7 @@ async fn encrypted_composite(
         let block = Block::new_with_options(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field.to_string(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
                 data: ciphertext,
             }),
@@ -147,7 +147,7 @@ async fn encrypted_composite(
     }
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "v1".into(),
+            collection_version_id: "v1".into(),
             priority: 1,
             status: 1,
         }),

@@ -27,11 +27,11 @@ fn test_build_blocks_creates_proper_structure() {
         doc.set("age", NormalValue::Int(30));
 
         let blockstore = make_test_blockstore();
-        let schema_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
+        let collection_version_id = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
 
         let result = build_blocks_from_document(
             &doc,
-            &crate::common::schema::version(schema_version_id),
+            &crate::common::schema::version(collection_version_id),
             &blockstore,
         )
         .await
@@ -81,11 +81,11 @@ fn test_field_block_contains_lww_delta() {
         doc.set("name", NormalValue::String("Bob".to_string()));
 
         let blockstore = make_test_blockstore();
-        let schema_version_id = "schema-v1";
+        let collection_version_id = "schema-v1";
 
         let result = build_blocks_from_document(
             &doc,
-            &crate::common::schema::version(schema_version_id),
+            &crate::common::schema::version(collection_version_id),
             &blockstore,
         )
         .await
@@ -100,7 +100,7 @@ fn test_field_block_contains_lww_delta() {
         match &field_block.delta {
             CrdtDelta::Lww(payload) => {
                 assert_eq!(payload.field_name, "name");
-                assert_eq!(payload.schema_version_id, schema_version_id);
+                assert_eq!(payload.collection_version_id, collection_version_id);
                 assert_eq!(payload.priority, 1);
             }
             _ => panic!("Expected LWW delta"),
@@ -199,7 +199,7 @@ fn test_compute_signature_rejects_local_secp256r1_block_signing() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
+            collection_version_id: "schema-v1".to_string(),
             status: 1,
             priority: 1,
         }),
@@ -248,7 +248,7 @@ fn test_compute_signature_refuses_remote_secp256r1_without_the_gate() {
 
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 status: 1,
                 priority: 1,
             }),
@@ -287,7 +287,7 @@ fn test_compute_signature_signs_remote_secp256r1_once_the_gate_is_open() {
 
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 status: 1,
                 priority: 1,
             }),
@@ -361,7 +361,7 @@ fn test_compute_signature_passes_signing_authorization_to_remote_signer() {
 
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
+            collection_version_id: "schema-v1".to_string(),
             status: 1,
             priority: 1,
         }),

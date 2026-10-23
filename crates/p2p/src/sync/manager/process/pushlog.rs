@@ -859,7 +859,7 @@ pub(super) mod tests {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field_name.to_string(),
                 priority: 1,
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 data: b"value".to_vec(),
             }),
             vec![],
@@ -877,7 +877,7 @@ pub(super) mod tests {
     ) -> (Cid, Vec<u8>) {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -890,13 +890,13 @@ pub(super) mod tests {
     }
 
     fn create_collection_block(
-        schema_version_id: &str,
+        collection_version_id: &str,
         doc_id: &str,
         composite_cid: Cid,
     ) -> (Cid, Vec<u8>) {
         let block = Block::new(
             CrdtDelta::Collection(CollectionDeltaPayload {
-                schema_version_id: schema_version_id.to_string(),
+                collection_version_id: collection_version_id.to_string(),
                 priority: 1,
             }),
             vec![],
@@ -926,7 +926,7 @@ pub(super) mod tests {
         let (field_cid, _) = create_lww_block(field_name);
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 priority,
                 status: 1,
             }),

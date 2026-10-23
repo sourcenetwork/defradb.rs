@@ -114,8 +114,14 @@ fn patch_collection_registers_migration_atomically() {
             .unwrap()
             .unwrap();
         let persisted: LensConfig = serde_json::from_slice(&persisted).unwrap();
-        assert_eq!(persisted.source_schema_version_id, original.version_id());
-        assert_eq!(persisted.destination_schema_version_id, patched.version_id);
+        assert_eq!(
+            persisted.source_collection_version_id,
+            original.version_id()
+        );
+        assert_eq!(
+            persisted.destination_collection_version_id,
+            patched.version_id
+        );
         assert!(db
             .get_all_collection_versions()
             .await

@@ -81,14 +81,14 @@ impl<S: Store> CommitsFetcher<S> {
         }
     }
 
-    /// Get schema version ID from delta
-    pub(super) fn get_schema_version_id(&self, delta: &CrdtDelta) -> Option<String> {
+    /// Get collection version ID from delta
+    pub(super) fn get_collection_version_id(&self, delta: &CrdtDelta) -> Option<String> {
         match delta {
-            CrdtDelta::Lww(d) => Some(d.schema_version_id.clone()),
-            CrdtDelta::Counter(d) => Some(d.schema_version_id.clone()),
-            CrdtDelta::Composite(d) => Some(d.schema_version_id.clone()),
-            CrdtDelta::Immutable(d) => Some(d.schema_version_id.clone()),
-            CrdtDelta::Collection(d) => Some(d.schema_version_id.clone()),
+            CrdtDelta::Lww(d) => Some(d.collection_version_id.clone()),
+            CrdtDelta::Counter(d) => Some(d.collection_version_id.clone()),
+            CrdtDelta::Composite(d) => Some(d.collection_version_id.clone()),
+            CrdtDelta::Immutable(d) => Some(d.collection_version_id.clone()),
+            CrdtDelta::Collection(d) => Some(d.collection_version_id.clone()),
             CrdtDelta::CollectionSet(_) => None,
             CrdtDelta::FieldDefinition(_) => None,
             CrdtDelta::CollectionDefinition(_) => None,

@@ -343,7 +343,7 @@ fn authored_fields(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field.to_string(),
                 priority,
-                schema_version_id: collection_id.to_string(),
+                collection_version_id: collection_id.to_string(),
                 data: db::block::builder::encode_value_as_cbor(&NormalValue::String(
                     value.to_string(),
                 ))
@@ -359,7 +359,7 @@ fn authored_fields(
 
     let mut composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: collection_id.to_string(),
+            collection_version_id: collection_id.to_string(),
             priority,
             status: 1,
         }),
@@ -1226,7 +1226,7 @@ fn an_unresolved_update_in_a_claimed_collection_without_validator_is_not_indexed
 }
 
 #[test]
-fn a_recovered_deferred_composite_is_not_forwarded_under_the_schema_version_id() {
+fn a_recovered_deferred_composite_is_not_forwarded_under_the_collection_version_id() {
     workers::block_on(async {
         let validator = Arc::new(GenesisFirst::default());
         let node = Node::with_versioned_notes(
@@ -1260,7 +1260,7 @@ fn a_recovered_deferred_composite_is_not_forwarded_under_the_schema_version_id()
         );
         // The re-driven merge is forwarded with the id it was given, which is
         // none: the sink skips the push, as the first attempt would have. Never
-        // the schema version id, which no replicator subscribes to.
+        // the collection version id, which no replicator subscribes to.
         let forwarded = node.forwarded_with_ids();
         assert_eq!(forwarded, vec![(updated.cid, String::new())]);
     })

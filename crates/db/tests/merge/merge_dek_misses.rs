@@ -109,7 +109,7 @@ fn a_merge_with_more_encrypted_fields_than_any_cap_merges_whole() {
             let field = Block::new_with_options(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: field_name(index),
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority: 1,
                     data: ciphertext,
                 }),
@@ -127,7 +127,7 @@ fn a_merge_with_more_encrypted_fields_than_any_cap_merges_whole() {
         }
         let composite = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
                 status: 1,
             }),

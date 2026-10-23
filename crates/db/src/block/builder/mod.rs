@@ -481,7 +481,7 @@ mod prepared_signature_tests {
 
     fn block(parent: Option<Cid>) -> Block {
         let payload = CompositeDeltaPayload {
-            schema_version_id: "schema-v1".into(),
+            collection_version_id: "schema-v1".into(),
             priority: 2,
             status: 0,
         };

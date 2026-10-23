@@ -52,7 +52,7 @@ pub(crate) fn compute_document_blocks_with_inputs(
     signing_config: Option<&SigningConfig>,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
 ) -> Result<ComputedBlocks, BuildError> {
-    let schema_version_id = schema.version_id.as_str();
+    let collection_version_id = schema.version_id.as_str();
     let doc_ref_bytes = identity.encode();
 
     let field_count = doc
@@ -208,14 +208,14 @@ pub(crate) fn compute_document_blocks_with_inputs(
                 field_name: field_name.clone(),
                 priority,
                 nonce,
-                schema_version_id: schema_version_id.to_string(),
+                collection_version_id: collection_version_id.to_string(),
                 data: value_bytes,
             })
         } else {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field_name.clone(),
                 priority,
-                schema_version_id: schema_version_id.to_string(),
+                collection_version_id: collection_version_id.to_string(),
                 data: value_bytes,
             })
         };
@@ -304,7 +304,7 @@ pub(crate) fn compute_document_blocks_with_inputs(
     }
 
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority,
         status: 1,
     };

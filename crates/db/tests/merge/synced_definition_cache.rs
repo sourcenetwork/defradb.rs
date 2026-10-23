@@ -180,7 +180,7 @@ fn document(collection_version: &str, value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>)
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "did".to_string(),
             priority: 1,
-            schema_version_id: collection_version.to_string(),
+            collection_version_id: collection_version.to_string(),
             data: db::block::builder::encode_value_as_cbor(&NormalValue::String(value.to_string()))
                 .unwrap(),
         }),
@@ -190,7 +190,7 @@ fn document(collection_version: &str, value: &str) -> (Cid, Vec<(Cid, Vec<u8>)>)
     let field_cid = field.generate_cid().unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: collection_version.to_string(),
+            collection_version_id: collection_version.to_string(),
             priority: 1,
             status: 1,
         }),

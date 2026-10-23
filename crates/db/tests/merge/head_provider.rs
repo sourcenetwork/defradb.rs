@@ -166,7 +166,7 @@ fn falls_back_to_ownership_index_when_head_indexes_are_missing() {
 
         let block = Block::new_with_options(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema-v1".to_string(),
+                collection_version_id: "schema-v1".to_string(),
                 priority: 7,
                 status: 1,
             }),

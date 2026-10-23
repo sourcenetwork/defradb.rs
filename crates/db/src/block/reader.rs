@@ -71,7 +71,7 @@ pub async fn read_document_for_se<S: storage::corekv::Store>(
     document.set_id(canonical_doc_id);
     if let Some(version_bytes) = version_bytes {
         if let Ok(version) = String::from_utf8(version_bytes.into()) {
-            document.set_schema_version_id(version);
+            document.set_collection_version_id(version);
         }
     }
     Ok(Some(document))

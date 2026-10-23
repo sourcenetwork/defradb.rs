@@ -295,12 +295,12 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             .await?;
         }
 
-        let schema_version_id = collection.version_id().to_string();
+        let collection_version_id = collection.version_id().to_string();
         let acp_registration = self.owed_acp_registration(context, &collection)?;
         let computed_blocks = doc
             .write_preparation()
             .and_then(|write| write.payload::<PreparedCreateBlocks>())
-            .filter(|prepared| prepared.schema_version_id == schema_version_id)
+            .filter(|prepared| prepared.collection_version_id == collection_version_id)
             .map(|prepared| prepared.computed.clone())
             .map(Ok)
             .unwrap_or_else(|| {

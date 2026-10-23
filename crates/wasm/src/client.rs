@@ -424,7 +424,7 @@ impl DefraClient {
                 let schema = col.schema();
                 collections.push(CollectionInfo {
                     name: schema.name.clone(),
-                    schema_version_id: schema.version_id.clone(),
+                    collection_version_id: schema.version_id.clone(),
                     fields: schema.fields.iter().map(FieldInfo::from).collect(),
                 });
             }

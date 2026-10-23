@@ -16,17 +16,17 @@ use crate::{Error, LensDoc, Result, TargetedHistoryLink, TransformId};
 /// Input to the lens pipeline: a document with its schema version.
 #[derive(Debug, Clone)]
 pub struct LensInput {
-    /// The schema version ID of the document.
-    pub schema_version_id: String,
+    /// The collection version ID of the document.
+    pub collection_version_id: String,
     /// The document to transform.
     pub doc: LensDoc,
 }
 
 impl LensInput {
     /// Create a new lens input.
-    pub fn new(schema_version_id: impl Into<String>, doc: LensDoc) -> Self {
+    pub fn new(collection_version_id: impl Into<String>, doc: LensDoc) -> Self {
         Self {
-            schema_version_id: schema_version_id.into(),
+            collection_version_id: collection_version_id.into(),
             doc,
         }
     }
@@ -66,9 +66,9 @@ impl Lens {
     }
 
     /// Put a document into the pipeline for transformation.
-    pub async fn put(&mut self, schema_version_id: &str, doc: LensDoc) -> Result<()> {
+    pub async fn put(&mut self, collection_version_id: &str, doc: LensDoc) -> Result<()> {
         self.pending
-            .push_back(LensInput::new(schema_version_id, doc));
+            .push_back(LensInput::new(collection_version_id, doc));
         Ok(())
     }
 
@@ -87,12 +87,12 @@ impl Lens {
     }
 
     /// Check if a migration is needed for the given schema version.
-    pub fn needs_migration(&self, schema_version_id: &str) -> bool {
-        schema_version_id != self.target_version_id
-            && self.collection_history.contains_key(schema_version_id)
+    pub fn needs_migration(&self, collection_version_id: &str) -> bool {
+        collection_version_id != self.target_version_id
+            && self.collection_history.contains_key(collection_version_id)
     }
 
-    /// Get the target schema version ID.
+    /// Get the target collection version ID.
     pub fn target_version_id(&self) -> &str {
         &self.target_version_id
     }
@@ -110,29 +110,29 @@ pub async fn transform_to_target(
     input: LensInput,
 ) -> Result<LensDoc> {
     debug!(
-        from_version = %input.schema_version_id,
+        from_version = %input.collection_version_id,
         to_version = %target_version_id,
         history_size = collection_history.len(),
         "Starting transform_to_target"
     );
 
-    if input.schema_version_id == target_version_id {
+    if input.collection_version_id == target_version_id {
         debug!("Document already at target version, no transform needed");
         return Ok(input.doc);
     }
 
     let _history_link = collection_history
-        .get(&input.schema_version_id)
+        .get(&input.collection_version_id)
         .ok_or_else(|| {
             warn!(
-                version = %input.schema_version_id,
+                version = %input.collection_version_id,
                 "Schema version not found in history"
             );
-            Error::SchemaVersionNotFound(input.schema_version_id.clone())
+            Error::SchemaVersionNotFound(input.collection_version_id.clone())
         })?;
 
     let mut current_doc = input.doc;
-    let mut current_version = input.schema_version_id.clone();
+    let mut current_version = input.collection_version_id.clone();
 
     let mut visited = RapidHashSet::new();
     visited.insert(current_version.clone());
@@ -243,14 +243,14 @@ pub async fn transform_to_target(
             visited.insert(current_version.clone());
         } else {
             warn!(
-                from = %input.schema_version_id,
+                from = %input.collection_version_id,
                 to = %target_version_id,
                 current = %current_version,
                 "No migration path found"
             );
             return Err(Error::Pipeline(format!(
                 "no migration path from {} to {}",
-                input.schema_version_id, target_version_id
+                input.collection_version_id, target_version_id
             )));
         }
     }

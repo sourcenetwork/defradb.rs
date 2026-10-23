@@ -69,7 +69,7 @@ pub struct CounterDelta {
     /// Nonce ensures idempotent delivery (same delta only applied once)
     nonce: i64,
     /// Schema version identifier
-    schema_version_id: String,
+    collection_version_id: String,
     /// The increment/decrement value as big-endian bytes.
     /// Int64/Float64: 8 bytes, Float32: 4 bytes.
     data: Vec<u8>,
@@ -84,7 +84,7 @@ impl CounterDelta {
         field_name: String,
         priority: u64,
         nonce: i64,
-        schema_version_id: String,
+        collection_version_id: String,
         increment: i64,
     ) -> Result<Self> {
         if doc_id.is_empty() {
@@ -93,9 +93,9 @@ impl CounterDelta {
         if field_name.is_empty() {
             return Err(Error::MergeError("field_name cannot be empty".into()));
         }
-        if schema_version_id.is_empty() {
+        if collection_version_id.is_empty() {
             return Err(Error::MergeError(
-                "schema_version_id cannot be empty".into(),
+                "collection_version_id cannot be empty".into(),
             ));
         }
         Ok(Self {
@@ -103,7 +103,7 @@ impl CounterDelta {
             field_name,
             priority,
             nonce,
-            schema_version_id,
+            collection_version_id,
             data: increment.to_be_bytes().to_vec(),
             kind: NumericKind::Int64,
         })
@@ -115,7 +115,7 @@ impl CounterDelta {
         field_name: String,
         priority: u64,
         nonce: i64,
-        schema_version_id: String,
+        collection_version_id: String,
         increment: f64,
     ) -> Result<Self> {
         if doc_id.is_empty() {
@@ -124,9 +124,9 @@ impl CounterDelta {
         if field_name.is_empty() {
             return Err(Error::MergeError("field_name cannot be empty".into()));
         }
-        if schema_version_id.is_empty() {
+        if collection_version_id.is_empty() {
             return Err(Error::MergeError(
-                "schema_version_id cannot be empty".into(),
+                "collection_version_id cannot be empty".into(),
             ));
         }
         Ok(Self {
@@ -134,7 +134,7 @@ impl CounterDelta {
             field_name,
             priority,
             nonce,
-            schema_version_id,
+            collection_version_id,
             data: increment.to_be_bytes().to_vec(),
             kind: NumericKind::Float64,
         })
@@ -149,7 +149,7 @@ impl CounterDelta {
         field_name: String,
         priority: u64,
         nonce: i64,
-        schema_version_id: String,
+        collection_version_id: String,
         increment: f32,
     ) -> Result<Self> {
         if doc_id.is_empty() {
@@ -158,9 +158,9 @@ impl CounterDelta {
         if field_name.is_empty() {
             return Err(Error::MergeError("field_name cannot be empty".into()));
         }
-        if schema_version_id.is_empty() {
+        if collection_version_id.is_empty() {
             return Err(Error::MergeError(
-                "schema_version_id cannot be empty".into(),
+                "collection_version_id cannot be empty".into(),
             ));
         }
         Ok(Self {
@@ -168,7 +168,7 @@ impl CounterDelta {
             field_name,
             priority,
             nonce,
-            schema_version_id,
+            collection_version_id,
             data: increment.to_be_bytes().to_vec(),
             kind: NumericKind::Float32,
         })
@@ -194,9 +194,9 @@ impl CounterDelta {
         self.nonce
     }
 
-    /// Get the schema version ID
-    pub fn schema_version_id(&self) -> &str {
-        &self.schema_version_id
+    /// Get the collection version ID
+    pub fn collection_version_id(&self) -> &str {
+        &self.collection_version_id
     }
 
     /// Get the raw data bytes
@@ -289,8 +289,8 @@ impl Delta for CounterDelta {
         &self.field_name
     }
 
-    fn schema_version_id(&self) -> &str {
-        &self.schema_version_id
+    fn collection_version_id(&self) -> &str {
+        &self.collection_version_id
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -310,7 +310,7 @@ pub struct Counter {
     /// The counter's part ID in that document value
     part: u32,
     /// Schema version
-    schema_version_id: String,
+    collection_version_id: String,
     /// Field name
     field_name: String,
     /// Whether decrement is allowed
@@ -323,7 +323,7 @@ impl Counter {
     /// Create a new Counter CRDT
     ///
     /// # Arguments
-    /// * `schema_version_id` - Schema version identifier (must not be empty)
+    /// * `collection_version_id` - Schema version identifier (must not be empty)
     /// * `value_key` - Key of the document value (must not be empty)
     /// * `part` - The field's part ID in that value
     /// * `field_name` - Field name (must not be empty)
@@ -331,18 +331,18 @@ impl Counter {
     /// * `kind` - Numeric type (Int64, Float32 or Float64)
     ///
     /// # Errors
-    /// Returns an error if schema_version_id, value_key, or field_name is empty.
+    /// Returns an error if collection_version_id, value_key, or field_name is empty.
     pub fn new(
-        schema_version_id: String,
+        collection_version_id: String,
         value_key: Vec<u8>,
         part: u32,
         field_name: String,
         allow_decrement: bool,
         kind: NumericKind,
     ) -> Result<Self> {
-        if schema_version_id.is_empty() {
+        if collection_version_id.is_empty() {
             return Err(Error::MergeError(
-                "schema_version_id cannot be empty".into(),
+                "collection_version_id cannot be empty".into(),
             ));
         }
         if value_key.is_empty() {
@@ -354,7 +354,7 @@ impl Counter {
         Ok(Self {
             value_key,
             part,
-            schema_version_id,
+            collection_version_id,
             field_name,
             allow_decrement,
             kind,
@@ -408,7 +408,7 @@ impl Counter {
         let missing = || {
             Error::MergeError(format!(
                 "counter value not found for field '{}' in schema '{}'",
-                self.field_name, self.schema_version_id
+                self.field_name, self.collection_version_id
             ))
         };
         let bytes = reader
@@ -450,10 +450,10 @@ impl ReplicatedData for Counter {
         }
 
         // Validate schema version
-        if counter_delta.schema_version_id != self.schema_version_id {
+        if counter_delta.collection_version_id != self.collection_version_id {
             return Err(Error::MergeError(format!(
                 "schema version mismatch: expected {}, got {}",
-                self.schema_version_id, counter_delta.schema_version_id
+                self.collection_version_id, counter_delta.collection_version_id
             )));
         }
 

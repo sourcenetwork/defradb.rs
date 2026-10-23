@@ -23,7 +23,7 @@ fn test_lww_delta() -> CrdtDelta {
     CrdtDelta::Lww(LwwDeltaPayload {
         field_name: "name".to_string(),
         priority: 1,
-        schema_version_id: "schema1".to_string(),
+        collection_version_id: "schema1".to_string(),
         data: b"John".to_vec(),
     })
 }
@@ -71,7 +71,7 @@ fn test_go_wire_compat_lww_simple() {
     if let CrdtDelta::Lww(lww) = &block.delta {
         assert_eq!(lww.field_name, "name");
         assert_eq!(lww.priority, 1);
-        assert_eq!(lww.schema_version_id, "schema1");
+        assert_eq!(lww.collection_version_id, "schema1");
         assert_eq!(lww.data, b"John");
     } else {
         panic!("Expected LWW delta");
@@ -163,7 +163,7 @@ fn test_go_wire_compat_collection() {
 
     if let CrdtDelta::Collection(collection) = &block.delta {
         assert_eq!(collection.priority, 1);
-        assert_eq!(collection.schema_version_id, "schema1");
+        assert_eq!(collection.collection_version_id, "schema1");
     } else {
         panic!("Expected Collection delta");
     }
@@ -487,14 +487,14 @@ fn test_delta_wire_format_carries_no_doc_id() {
                 field_name: "f".to_string(),
                 priority: 1,
                 nonce: 0,
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 data: vec![],
             }),
         ),
         (
             "composite",
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 status: 1,
             }),
@@ -511,7 +511,7 @@ fn test_delta_wire_format_carries_no_doc_id() {
 #[test]
 fn test_composite_delta_roundtrip() {
     let delta = CrdtDelta::Composite(CompositeDeltaPayload {
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority: 5,
         status: 1,
     });
@@ -534,7 +534,7 @@ fn test_counter_delta_roundtrip() {
         field_name: "counter_field".to_string(),
         priority: 3,
         nonce: -42,
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         data: vec![1, 2, 3, 4],
     });
 
@@ -554,7 +554,7 @@ fn test_counter_delta_roundtrip() {
 #[test]
 fn test_collection_delta_roundtrip() {
     let delta = CrdtDelta::Collection(CollectionDeltaPayload {
-        schema_version_id: "v2".to_string(),
+        collection_version_id: "v2".to_string(),
         priority: 10,
     });
 
@@ -564,7 +564,7 @@ fn test_collection_delta_roundtrip() {
 
     if let CrdtDelta::Collection(c) = &restored.delta {
         assert_eq!(c.priority, 10);
-        assert_eq!(c.schema_version_id, "v2");
+        assert_eq!(c.collection_version_id, "v2");
     } else {
         panic!("Expected Collection delta");
     }
@@ -770,7 +770,7 @@ fn test_block_with_corrupted_cid_in_heads() {
 fn test_composite_status_zero_cbor_rejected() {
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema-v1".to_string(),
+            collection_version_id: "schema-v1".to_string(),
             priority: 1,
             status: 0,
         }),
@@ -989,7 +989,7 @@ fn test_go_wire_compat_composite_with_links() {
     if let CrdtDelta::Composite(composite) = &block.delta {
         assert_eq!(composite.priority, 1);
         assert_eq!(composite.status, 1);
-        assert_eq!(composite.schema_version_id, "schema1");
+        assert_eq!(composite.collection_version_id, "schema1");
     } else {
         panic!("Expected Composite delta");
     }
@@ -1006,7 +1006,7 @@ fn test_rust_produces_go_compatible_counter() {
         field_name: "count".to_string(),
         priority: 1,
         nonce: 12345,
-        schema_version_id: "schema1".to_string(),
+        collection_version_id: "schema1".to_string(),
         data: vec![0x0A],
     });
     let block = Block::new(delta, vec![], vec![]);
@@ -1027,7 +1027,7 @@ fn test_rust_produces_go_compatible_counter() {
 #[test]
 fn test_rust_produces_go_compatible_composite() {
     let delta = CrdtDelta::Composite(CompositeDeltaPayload {
-        schema_version_id: "schema1".to_string(),
+        collection_version_id: "schema1".to_string(),
         priority: 1,
         status: 1,
     });
@@ -1048,7 +1048,7 @@ fn test_rust_produces_go_compatible_composite() {
 #[test]
 fn test_rust_produces_go_compatible_collection() {
     let delta = CrdtDelta::Collection(CollectionDeltaPayload {
-        schema_version_id: "schema1".to_string(),
+        collection_version_id: "schema1".to_string(),
         priority: 1,
     });
     let block = Block::new(delta, vec![], vec![]);

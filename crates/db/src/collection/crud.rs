@@ -116,7 +116,7 @@ impl Collection {
         let Some(mut doc) = doc else { return Ok(None) };
         doc.set_id(doc_id.clone());
         if let Some(version) = version {
-            doc.set_schema_version_id(version);
+            doc.set_collection_version_id(version);
         }
         Ok(Some(doc))
     }
@@ -244,7 +244,7 @@ impl Collection {
 
                 // Load and set the schema version
                 if let Some(version) = version {
-                    doc.set_schema_version_id(version);
+                    doc.set_collection_version_id(version);
                 }
 
                 // Check deletion status if requested
@@ -444,7 +444,7 @@ impl Collection {
         }
 
         if let Some(version) = self.load_version(datastore, doc_short_id).await? {
-            doc.set_schema_version_id(version);
+            doc.set_collection_version_id(version);
         }
 
         Ok(Some((doc_short_id, doc, is_deleted)))
@@ -620,7 +620,7 @@ impl Collection {
         priorities: Option<&rapidhash::RapidHashMap<String, super::value::FieldOrder>>,
     ) -> Result<DocID> {
         let target = if let Some(version) = doc
-            .schema_version_id()
+            .collection_version_id()
             .filter(|version| *version != self.version_id())
         {
             let system = datastore.sibling(storage::namespace::Namespace::Systemstore);
@@ -642,7 +642,7 @@ impl Collection {
 
         if target.is_none()
             && doc
-                .schema_version_id()
+                .collection_version_id()
                 .is_some_and(|version| version != self.version_id())
         {
             // An as-yet unknown definition has no local part IDs. A plain put
@@ -667,7 +667,7 @@ impl Collection {
         }
 
         // Store schema version - preserve document's version if set, otherwise use collection's
-        let version = doc.schema_version_id().unwrap_or(&self.def.version_id);
+        let version = doc.collection_version_id().unwrap_or(&self.def.version_id);
         self.store_document_version(datastore, doc_short_id, version)
             .await?;
 

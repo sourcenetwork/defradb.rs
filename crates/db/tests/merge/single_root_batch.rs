@@ -19,7 +19,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         .unwrap();
     let mut doc = Document::new();
     doc.set("name", NormalValue::String("initial".to_string()));
-    doc.set_schema_version_id("v1");
+    doc.set_collection_version_id("v1");
     let (doc_id, _, initial) = create_doc_locally(&handler, &collection, &mut doc).await;
     let mut field_heads = initial.field_cids;
     let mut composite_heads = vec![initial.cid];
@@ -30,7 +30,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".into(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority,
                 data,
             }),
@@ -44,7 +44,7 @@ fn single_root_history_uses_bounded_commits_not_one_per_revision() {
             .unwrap();
         let composite = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority,
                 status: 1,
             }),

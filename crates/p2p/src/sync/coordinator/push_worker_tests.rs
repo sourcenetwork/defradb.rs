@@ -103,7 +103,7 @@ fn versioned_job(peer: &str, priority: u64) -> PushJobSpec {
     let doc_id = "doc-versioned";
     let block = Block::new_with_options(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority,
             status: 1,
         }),
@@ -282,7 +282,7 @@ async fn head_hint_signing_failure_sends_no_dependency_pushlogs() {
     let dependency_cid = defra_core::block::generate_cid_from_bytes(&dependency).unwrap();
     let root = Block::new_with_options(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -333,7 +333,7 @@ async fn root_only_push_installs_receiver_pull_authority() {
 
     let root = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -391,7 +391,7 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "value".to_string(),
             priority: 1,
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             data: b"current".to_vec(),
         }),
         vec![],
@@ -402,7 +402,7 @@ async fn run_ownership_arm(expand_dag: bool) -> OwnershipArm {
 
     let root = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),

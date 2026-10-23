@@ -916,7 +916,7 @@ mod tests {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field_name.to_string(),
                 priority: 1,
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 data: b"value".to_vec(),
             }),
             vec![],
@@ -930,7 +930,7 @@ mod tests {
     fn create_composite_block(_doc_id: &str, field_name: &str, field_cid: Cid) -> (Cid, Vec<u8>) {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 priority: 1,
                 status: 1,
             }),

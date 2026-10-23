@@ -189,7 +189,7 @@ impl TryFrom<&Ipld> for LwwDeltaPayload {
         Ok(LwwDeltaPayload {
             field_name: parse_string(map, "fieldName")?,
             priority: parse_u64(map, "priority")?,
-            schema_version_id: parse_string(map, "schemaVersionID")?,
+            collection_version_id: parse_string(map, "schemaVersionID")?,
             data: parse_bytes(map, "data")?,
         })
     }
@@ -230,7 +230,7 @@ impl TryFrom<&Ipld> for ImmutableDeltaPayload {
 
         Ok(ImmutableDeltaPayload {
             priority: parse_u64(map, "priority")?,
-            schema_version_id: parse_string(map, "schemaVersionID")?,
+            collection_version_id: parse_string(map, "schemaVersionID")?,
             fields,
         })
     }
@@ -254,7 +254,7 @@ impl TryFrom<&Ipld> for CounterDeltaPayload {
             field_name: parse_string(map, "fieldName")?,
             priority: parse_u64(map, "priority")?,
             nonce: parse_i64(map, "nonce")?,
-            schema_version_id: parse_string(map, "schemaVersionID")?,
+            collection_version_id: parse_string(map, "schemaVersionID")?,
             data: parse_bytes(map, "data")?,
         })
     }
@@ -278,7 +278,7 @@ impl TryFrom<&Ipld> for CompositeDeltaPayload {
             .map_err(Error::IpldError)?;
 
         Ok(CompositeDeltaPayload {
-            schema_version_id: parse_string(map, "schemaVersionID")?,
+            collection_version_id: parse_string(map, "schemaVersionID")?,
             priority: parse_u64(map, "priority")?,
             status,
         })
@@ -300,7 +300,7 @@ impl TryFrom<&Ipld> for CollectionDeltaPayload {
         };
 
         Ok(CollectionDeltaPayload {
-            schema_version_id: parse_string(map, "schemaVersionID")?,
+            collection_version_id: parse_string(map, "schemaVersionID")?,
             priority: parse_u64(map, "priority")?,
         })
     }

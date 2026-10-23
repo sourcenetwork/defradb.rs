@@ -66,7 +66,7 @@ fn record() -> Document {
     doc.set("author", NormalValue::String("did:key:alice".into()));
     doc.set("body", NormalValue::String("hello".into()));
     doc.set("kind", NormalValue::String("note".into()));
-    doc.set_schema_version_id("v1");
+    doc.set_collection_version_id("v1");
     doc
 }
 
@@ -123,7 +123,7 @@ async fn put_genesis(
         .unwrap();
     let mut composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "v1".into(),
+            collection_version_id: "v1".into(),
             priority: 1,
             status: 1,
         }),
@@ -299,7 +299,7 @@ fn peer_without_immutable_flags_merges_and_chains_its_updates() {
             &blockstore,
             ImmutableDeltaPayload {
                 priority: 1,
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 fields: BTreeMap::from([
                     ("author".to_string(), cbor("did:key:alice")),
                     ("kind".to_string(), cbor("note")),
@@ -417,7 +417,7 @@ fn later_immutable_block_cannot_change_a_value() {
         let forged = Block::new(
             CrdtDelta::Immutable(ImmutableDeltaPayload {
                 priority: 2,
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 fields: BTreeMap::from([("author".to_string(), cbor("did:key:mallory"))]),
             }),
             vec![],
@@ -430,7 +430,7 @@ fn later_immutable_block_cannot_change_a_value() {
             .unwrap();
         let update = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 2,
                 status: 1,
             }),
@@ -634,7 +634,7 @@ fn an_encrypted_genesis_cannot_carry_an_immutable_block() {
         let encryption = Block::new(
             CrdtDelta::Immutable(ImmutableDeltaPayload {
                 priority: 1,
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 fields: BTreeMap::new(),
             }),
             vec![],
@@ -646,7 +646,7 @@ fn an_encrypted_genesis_cannot_carry_an_immutable_block() {
             &blockstore,
             ImmutableDeltaPayload {
                 priority: 1,
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 fields: BTreeMap::from([("author".to_string(), cbor("did:key:alice"))]),
             },
             Some(encryption),
