@@ -7,6 +7,15 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_OwnerObservation_Green.cfg OwnerObservation.tla GREEN"
+  "MC_OwnerObservation_Red_Actor.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Node.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_App.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Document.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Member.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Registered.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Bound.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_Snapshot.cfg OwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"

@@ -218,6 +218,17 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         answered(Some(handle), outcome)
     }
 
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        self.observe_owners(context, handle, collection, doc_ids)
+            .await
+    }
+
     async fn begin_txn(
         &self,
         readonly: bool,
