@@ -33,10 +33,6 @@ pub struct P2pDocumentAddArgs {
     /// Document IDs to add
     #[arg(value_name = "docIDs")]
     pub doc_ids: Vec<String>,
-
-    /// Schema ID
-    #[arg(long = "schemaID")]
-    pub schema_id: Option<String>,
 }
 
 /// Arguments for p2p document delete command
@@ -45,10 +41,6 @@ pub struct P2pDocumentDeleteArgs {
     /// Document IDs to remove
     #[arg(value_name = "docIDs")]
     pub doc_ids: Vec<String>,
-
-    /// Schema ID
-    #[arg(long = "schemaID")]
-    pub schema_id: Option<String>,
 }
 
 /// Arguments for p2p document list command
@@ -80,13 +72,11 @@ impl P2pDocumentArgs {
 
 impl P2pDocumentAddArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let schema_ids: Vec<String> = self.schema_id.iter().cloned().collect();
-
         let client = HttpClient::new(&ctx.url)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
-        client.p2p_document_add(&self.doc_ids, &schema_ids).await?;
+        client.p2p_document_add(&self.doc_ids).await?;
         println!("Added document(s) to P2P sync");
         Ok(())
     }
@@ -94,15 +84,11 @@ impl P2pDocumentAddArgs {
 
 impl P2pDocumentDeleteArgs {
     pub async fn execute(&self, ctx: &ClientContext) -> Result<()> {
-        let schema_ids: Vec<String> = self.schema_id.iter().cloned().collect();
-
         let client = HttpClient::new(&ctx.url)?
             .with_auth_token(ctx.auth_token.clone())
             .with_verbose(ctx.verbose);
 
-        client
-            .p2p_document_remove(&self.doc_ids, &schema_ids)
-            .await?;
+        client.p2p_document_remove(&self.doc_ids).await?;
         println!("Removed document(s) from P2P sync");
         Ok(())
     }
