@@ -35,7 +35,7 @@ fn actor(did: &str) -> RequestContext {
 fn owner_observation_preserves_actor_document_and_collection_boundaries() {
     workers::block_on(async {
         let (node, _, doc) = fixture().await;
-        let context = actor(A);
+        let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let result = node
             .observe_document_owners_in_txn(
@@ -48,12 +48,24 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
             .unwrap();
         assert_eq!(result[0].doc_id, doc);
         assert_eq!(result[0].owner.as_ref().map(Did::as_str), Some(A));
-        assert!(node
+        let denied = node
             .observe_document_owners_in_txn(
                 &handle,
                 "Users",
                 std::slice::from_ref(&doc),
-                Some(Did::new(B).unwrap())
+                Some(Did::new(B).unwrap()),
+            )
+            .await
+            .unwrap();
+        assert!(denied[0].owner.is_none());
+        assert!(node
+            .runner()
+            .observe_document_owners_in_txn(
+                actor(B),
+                &handle,
+                "Users",
+                std::slice::from_ref(&doc),
+                Some(Did::new(A).unwrap()),
             )
             .await
             .is_err());
@@ -72,14 +84,18 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
             .rollback_txn_as(&context, &handle)
             .await
             .unwrap();
-        let hidden = node.runner().begin_txn_as(&actor(B), true).await.unwrap();
+        let hidden = node
+            .runner()
+            .begin_txn_as(&RequestContext::default(), true)
+            .await
+            .unwrap();
         let result = node
             .observe_document_owners_in_txn(&hidden, "Users", &[doc], Some(Did::new(B).unwrap()))
             .await
             .unwrap();
         assert!(result[0].owner.is_none());
         node.runner()
-            .rollback_txn_as(&actor(B), &hidden)
+            .rollback_txn_as(&RequestContext::default(), &hidden)
             .await
             .unwrap();
         node.shutdown().await;
@@ -91,7 +107,7 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
 fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes() {
     workers::block_on(async {
         let (node, policy, doc) = fixture().await;
-        let context = actor(A);
+        let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let before = node
             .observe_document_owners_in_txn(
@@ -127,14 +143,18 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
             .rollback_txn_as(&context, &handle)
             .await
             .unwrap();
-        let next = node.runner().begin_txn_as(&actor(B), true).await.unwrap();
+        let next = node
+            .runner()
+            .begin_txn_as(&RequestContext::default(), true)
+            .await
+            .unwrap();
         let current = node
             .observe_document_owners_in_txn(&next, "Users", &[doc], Some(Did::new(B).unwrap()))
             .await
             .unwrap();
         assert_eq!(current[0].owner.as_ref().map(Did::as_str), Some(B));
         node.runner()
-            .rollback_txn_as(&actor(B), &next)
+            .rollback_txn_as(&RequestContext::default(), &next)
             .await
             .unwrap();
         node.shutdown().await;
@@ -146,7 +166,7 @@ fn owner_observation_keeps_the_row_snapshot_after_external_registration_changes(
 fn owner_observation_bounds_requests_and_keeps_unregistered_ownership_unknown() {
     workers::block_on(async {
         let (node, policy, doc) = fixture().await;
-        let context = actor(A);
+        let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         for (collection, ids) in [
             ("Users", Vec::new()),
@@ -215,7 +235,7 @@ fn owner_observation_does_not_treat_a_deleted_document_as_a_live_member() {
         })
         .await
         .unwrap();
-        let context = actor(A);
+        let context = RequestContext::default();
         let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
         let result = node
             .observe_document_owners_in_txn(&handle, "Users", &[doc], Some(Did::new(A).unwrap()))

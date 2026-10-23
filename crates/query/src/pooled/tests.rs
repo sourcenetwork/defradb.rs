@@ -65,8 +65,13 @@ impl QueryExecutor for Recorder {
         handle: &TransactionHandle,
         collection: &str,
         doc_ids: &[String],
+        identity: Option<identity::Did>,
     ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
         assert_eq!(context.identity(), Some("did:key:owner"));
+        assert_eq!(
+            identity.as_ref().map(identity::Did::as_str),
+            Some("did:key:reader")
+        );
         assert_eq!(handle.as_str(), "owned");
         assert_eq!(collection, "Users");
         assert_eq!(doc_ids, ["known"]);
@@ -334,6 +339,7 @@ fn owner_observation_passes_once_to_the_transaction_registry_without_a_pool_hop(
         &TransactionHandle::new("owned".into()),
         "Users",
         &["known".into()],
+        Some(identity::Did::new("did:key:reader").unwrap()),
     ))
     .unwrap()
     .unwrap();

@@ -159,9 +159,16 @@ impl QueryExecutor for PooledExecutor {
         handle: &TransactionHandle,
         collection: &str,
         doc_ids: &[String],
+        identity: Option<identity::Did>,
     ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
         self.inner
-            .observe_document_owners_in_txn(context.or_ambient(), handle, collection, doc_ids)
+            .observe_document_owners_in_txn(
+                context.or_ambient(),
+                handle,
+                collection,
+                doc_ids,
+                identity,
+            )
             .await
     }
 

@@ -68,8 +68,9 @@ impl EmbeddedTransaction<'_> {
 
 impl EmbeddedNode {
     /// Read authenticated owners in the same explicit transaction as its rows.
-    /// A supplied actor retains its identity; otherwise use the node's actor.
-    /// This grants no relationship and never reads a detached ACP provider.
+    /// The node remains the transaction actor. A supplied document-read identity
+    /// follows the ordinary GraphQL permission path; it does not borrow another
+    /// actor's transaction. This grants no relationship or detached ACP read.
     pub async fn observe_document_owners_in_txn(
         &self,
         handle: &TransactionHandle,
@@ -77,12 +78,10 @@ impl EmbeddedNode {
         doc_ids: &[String],
         identity: Option<identity::Did>,
     ) -> query::error::Result<Vec<query::owners::DocumentOwnerObservation>> {
-        let mut context = self.node_context();
-        if let Some(identity) = identity {
-            context = context.with_identity(Some(identity.to_string()));
-        }
+        let context = self.node_context();
+        let identity = identity.or_else(|| self.node_query_identity.clone());
         self.runner()
-            .observe_document_owners_in_txn(context, handle, collection, doc_ids)
+            .observe_document_owners_in_txn(context, handle, collection, doc_ids, identity)
             .await
     }
 }

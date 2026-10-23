@@ -21,6 +21,7 @@ where
         handle: &TransactionHandle,
         collection: &str,
         doc_ids: &[String],
+        identity: Option<identity::Did>,
     ) -> Result<Vec<DocumentOwnerObservation>> {
         let mut name = collection.chars();
         if !name
@@ -37,11 +38,14 @@ where
             ));
         }
         let context = context.or_ambient();
-        let identity = context
-            .identity()
-            .map(Did::new)
-            .transpose()
-            .map_err(|error| QueryError::execution(error.to_string()))?;
+        let identity = match identity {
+            Some(identity) => Some(identity),
+            None => context
+                .identity()
+                .map(Did::new)
+                .transpose()
+                .map_err(|error| QueryError::execution(error.to_string()))?,
+        };
         let ids = serde_json::to_string(doc_ids)
             .map_err(|error| QueryError::execution(error.to_string()))?;
         let request = QueryRequest::new(format!("{{ {collection}(docID: {ids}) {{ _docID }} }}"))
