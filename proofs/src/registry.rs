@@ -700,6 +700,18 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Dropping an index while its backfill runs: the drop's commit takes
+        // the backfill record with it, a backfill failure is recorded only
+        // while the index is defined, entries go in pages after the
+        // definition commits, and a restart finishes an unfinished drop.
+        family: "Index drop during backfill",
+        name: "INV_NoRecordForGoneIndex / INV_NoOrphanEntries / LIVE_DropFinishes",
+        axis: Tla,
+        anchor: "crates/db/src/index/drop.rs DB::drop_index, DropIndexAttempt, DropPage, DB::resume_index_drops; crates/db/src/index/backfill.rs BackfillPage::index, DB::backfill_index, FailBackfillAttempt, DB::resume_index_backfills",
+        model_ref: "MC_IndexDropBackfill_{Green,Red_KeepRecord,Red_BlindFail,Red_SameTxn,Red_Forget}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Iroh solicited replies",
         name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
         axis: Tla,
