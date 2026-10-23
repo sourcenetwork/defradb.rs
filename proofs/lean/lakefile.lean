@@ -71,3 +71,6 @@ lean_lib ServiceRecord where
 
 @[default_target]
 lean_lib StorageFailure where
+
+@[default_target]
+lean_lib WalkCutoff where
