@@ -96,7 +96,7 @@ pub struct ClientArgs {
     pub tx: Option<u64>,
 
     /// Enable verbose output (show HTTP requests/responses)
-    #[arg(long, short = 'v', global = true)]
+    #[arg(long, global = true)]
     pub verbose: bool,
 
     #[command(subcommand)]
