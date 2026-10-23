@@ -384,7 +384,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "CRDT merge laws",
-        name: "PCounterGuard: the positive counter's op accepts only non-negative values, so its value never decreases under any run of accepted or refused writes",
+        name: "PCounterGuard: the positive counter's op accepts only non-negative values, so its value never decreases under any run of accepted or refused writes whose sum stays inside i64 (an i64 sum wraps, as in Go)",
         axis: Lean,
         anchor: "crates/crdt/src/field/counter.rs CounterField::op; crates/crdt/tests/field_contract.rs only_the_positive_counter_refuses_a_negative_value",
         model_ref: "DefraConvergence.PCounterGuard.run_ge (lake build)",

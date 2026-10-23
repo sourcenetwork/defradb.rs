@@ -14,6 +14,11 @@ This file models the guard as a function from `d` to "accepted `d`" or
 "refused", applies accepted values by addition, and proves the value cannot
 drop under any run of writes, accepted or refused, in any order, on create or
 on update (the guard does not look at which one it is).
+
+The numbers here are unbounded whole numbers (`Int`). The Rust counter adds
+`i64` values with wrapping, as Go does, so a sum past `i64::MAX` rolls over to
+a negative value. These promises hold for every run whose sum stays inside
+`i64`; an overflowing run is outside them.
 -/
 
 namespace DefraConvergence.PCounterGuard
@@ -63,7 +68,8 @@ theorem apply_op_ge (v d : Int) : v ≤ apply v (op d) := by
   · simp only [apply]; omega
 
 /-- Promise: under any sequence of writes the final value is at least the
-    starting value, so a positive counter never decreases. -/
+    starting value, so a positive counter never decreases, as long as its
+    sum does not overflow `i64` (see the story above). -/
 theorem run_ge (ds : List Int) : ∀ v : Int, v ≤ run v ds := by
   -- Induct on the writes still to come.
   induction ds with
