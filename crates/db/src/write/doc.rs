@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use storage::corekv::{OnCommit, Store};
 
-use crate::block::builder::DocStorageIdentity;
+use crate::block::builder::DocRef;
 use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
 use crate::collection::loader::{get_collection_with_index_manager, get_collection_with_lazy_load};
 use crate::collection::Collection;
@@ -132,10 +132,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
     /// drawn once per create of the statement and kept in the memo, so a run
     /// after a missing input gives each create the ID the first run gave it,
     /// and the KMS keys requested for that document are found.
-    async fn next_create_identity(
-        &self,
-        collection: &Collection,
-    ) -> query::error::Result<DocStorageIdentity> {
+    async fn next_create_identity(&self, collection: &Collection) -> query::error::Result<DocRef> {
         let ordinal = self.creates.fetch_add(1, Ordering::Relaxed);
         let request = query::prepared::PreparedInputRequest::new(
             query::prepared::PreparedInputKind::Allocation,
@@ -158,10 +155,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
             .map_err(|_| {
                 query::error::QueryError::execution("invalid prepared document short ID")
             })?;
-        Ok(DocStorageIdentity::new(
-            collection.resolved_root_id(),
-            short_id,
-        ))
+        Ok(DocRef::new(collection.resolved_root_id(), short_id))
     }
 
     async fn ensure_collection_can_write(
@@ -557,7 +551,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 &headstore,
                 &doc,
                 collection.schema(),
-                DocStorageIdentity::new(collection.resolved_root_id(), doc_short_id),
+                DocRef::new(collection.resolved_root_id(), doc_short_id),
                 Some(&modified_fields),
                 enc_config,
                 sign_config,

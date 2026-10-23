@@ -148,7 +148,7 @@ async fn inherited_encryption(
 pub(crate) async fn inherited_encryption_policy(
     blockstore: &NamespaceView,
     headstore: &NamespaceView,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     fields: &[String],
 ) -> Result<(bool, rapidhash::RapidHashSet<String>), String> {
     let snapshot = DocHeadsSnapshot::load(headstore, identity.doc_short_id).await?;
@@ -295,7 +295,7 @@ pub async fn write_document_blocks(
     headstore: &NamespaceView,
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     modified_fields: Option<&rapidhash::RapidHashSet<String>>,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
@@ -328,7 +328,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
     headstore: &NamespaceView,
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     modified_fields: Option<&rapidhash::RapidHashSet<String>>,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
@@ -339,7 +339,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
 ) -> Result<BlockResult, BuildError> {
     let schema_version_id = schema.version_id.as_str();
     let immutable_fields = immutable_field_names(schema);
-    let doc_ref_bytes = identity.doc_ref_bytes();
+    let doc_ref_bytes = identity.encode();
 
     let mut field_links: Vec<DAGLink> = Vec::new();
     let mut field_cids: Vec<Cid> = Vec::new();

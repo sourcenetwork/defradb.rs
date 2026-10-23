@@ -27,7 +27,7 @@ fn field_priority_is_independent_of_sibling_updates() {
         let shared = SharedTxn::new(txn);
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared, Namespace::Headstore);
-        let identity = DocStorageIdentity::new(1, 1);
+        let identity = DocRef::new(1, 1);
 
         let mut doc = Document::new();
         doc.set("a", NormalValue::Int(1));

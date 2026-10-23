@@ -161,8 +161,7 @@ pub(super) async fn create_doc_locally(
         let raw_blockstore = txn.blockstore().unwrap();
         let systemstore = txn.systemstore().unwrap();
         let short_id = handler.db().next_doc_short_id().await.unwrap();
-        let identity =
-            db::block::builder::DocStorageIdentity::new(collection.resolved_root_id(), short_id);
+        let identity = db::block::builder::DocRef::new(collection.resolved_root_id(), short_id);
         let result = db::block::builder::write_document_blocks(
             &raw_blockstore,
             &headstore,
@@ -2299,10 +2298,7 @@ fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
                     &headstore,
                     &doc,
                     &crate::common::schema::version("v1"),
-                    db::block::builder::DocStorageIdentity::new(
-                        collection.resolved_root_id(),
-                        _doc_short_id,
-                    ),
+                    db::block::builder::DocRef::new(collection.resolved_root_id(), _doc_short_id),
                     Some(&modified_fields),
                     None,
                     None,

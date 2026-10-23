@@ -164,7 +164,7 @@ fn test_compute_document_blocks_places_encryption_metadata_in_blockstore_entries
     let computed = compute_document_blocks(
         &doc,
         &crate::common::schema::version("schema-v1"),
-        DocStorageIdentity::new(1, 1),
+        DocRef::new(1, 1),
         Some(&enc),
         None,
     )

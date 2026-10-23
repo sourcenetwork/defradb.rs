@@ -13,7 +13,7 @@ use query::prepared::PreparedInputMemo;
 use schema::CollectionVersion;
 
 use crate::block::builder::{
-    compute_document_blocks_with_inputs, BuildError, ComputedBlocks, DocStorageIdentity,
+    compute_document_blocks_with_inputs, BuildError, ComputedBlocks, DocRef,
 };
 
 /// Documents per run at most: a few milliseconds of compute, so a run never
@@ -36,7 +36,7 @@ pub(super) type Computed = (Document, Result<ComputedBlocks, BuildError>);
 /// without a pool.
 pub(super) async fn compute_blocks(
     pool: Option<&workers::Pool>,
-    docs: Vec<(Document, DocStorageIdentity)>,
+    docs: Vec<(Document, DocRef)>,
     schema: &Arc<CollectionVersion>,
     context: &RequestContext,
     memo: Option<&PreparedInputMemo>,
@@ -104,7 +104,7 @@ pub(super) async fn compute_blocks(
 }
 
 fn compute_run(
-    run: Vec<(Document, DocStorageIdentity)>,
+    run: Vec<(Document, DocRef)>,
     schema: &CollectionVersion,
     context: &RequestContext,
     memo: Option<&PreparedInputMemo>,
@@ -130,12 +130,12 @@ mod tests {
 
     use super::*;
 
-    fn documents(count: usize) -> Vec<(Document, DocStorageIdentity)> {
+    fn documents(count: usize) -> Vec<(Document, DocRef)> {
         (0..count)
             .map(|at| {
                 let mut doc = Document::new();
                 doc.set("name", NormalValue::String(format!("user-{at}")));
-                (doc, DocStorageIdentity::new(1, at as u64 + 1))
+                (doc, DocRef::new(1, at as u64 + 1))
             })
             .collect()
     }

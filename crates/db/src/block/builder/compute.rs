@@ -29,7 +29,7 @@ pub struct ComputedBlocks {
 pub fn compute_document_blocks(
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
 ) -> Result<ComputedBlocks, String> {
@@ -47,13 +47,13 @@ pub fn compute_document_blocks(
 pub(crate) fn compute_document_blocks_with_inputs(
     doc: &Document,
     schema: &CollectionVersion,
-    identity: DocStorageIdentity,
+    identity: DocRef,
     encryption_config: Option<&EncryptionConfig>,
     signing_config: Option<&SigningConfig>,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
 ) -> Result<ComputedBlocks, BuildError> {
     let schema_version_id = schema.version_id.as_str();
-    let doc_ref_bytes = identity.doc_ref_bytes();
+    let doc_ref_bytes = identity.encode();
 
     let field_count = doc
         .values()
