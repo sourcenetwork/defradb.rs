@@ -27,10 +27,20 @@ fn test_schema() -> CollectionVersion {
         "v1",
         "col-test",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
-            FieldDescription::new("4", "score", FieldKind::float64()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "4",
+                "score",
+                FieldKind::float64(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -74,8 +84,8 @@ proptest! {
             // Create documents
             let mut docs = Vec::new();
             for i in 0..doc_count {
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String(format!("user_{}", i)));
+                let mut doc = Document::new(schema.clone());
+                doc.set("name", NormalValue::String(format!("user_{}", i))).unwrap();
                 docs.push((next_test_doc_short_id(), doc));
             }
 
@@ -129,8 +139,8 @@ proptest! {
                 .unwrap();
 
             // Create document
-            let mut doc = Document::new();
-            doc.set("name", NormalValue::String(name.clone()));
+            let mut doc = Document::new(schema.clone());
+            doc.set("name", NormalValue::String(name.clone())).unwrap();
             let doc_short_id = next_test_doc_short_id();
 
             manager
@@ -205,8 +215,8 @@ proptest! {
                 .unwrap();
 
             // Create document with old name
-            let mut old_doc = Document::new();
-            old_doc.set("name", NormalValue::String(old_name.clone()));
+            let mut old_doc = Document::new(schema.clone());
+            old_doc.set("name", NormalValue::String(old_name.clone())).unwrap();
             let old_doc_short_id = next_test_doc_short_id();
 
             manager
@@ -215,8 +225,8 @@ proptest! {
                 .unwrap();
 
             // Update to new name
-            let mut new_doc = Document::new();
-            new_doc.set("name", NormalValue::String(new_name.clone()));
+            let mut new_doc = Document::new(schema.clone());
+            new_doc.set("name", NormalValue::String(new_name.clone())).unwrap();
 
             manager
                 .on_document_update(&datastore, &old_doc, &new_doc, old_doc_short_id, &schema)
@@ -283,10 +293,10 @@ proptest! {
 
             // Create multiple documents with same name but different IDs
             for i in 0..count {
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String(name.clone()));
+                let mut doc = Document::new(schema.clone());
+                doc.set("name", NormalValue::String(name.clone())).unwrap();
                 // Add unique field to ensure different doc_ids
-                doc.set("age", NormalValue::Int(i as i64));
+                doc.set("age", NormalValue::Int(i as i64)).unwrap();
                 let doc_short_id = next_test_doc_short_id();
 
                 manager
@@ -345,9 +355,9 @@ proptest! {
                 .unwrap();
 
             // First document should succeed
-            let mut doc1 = Document::new();
-            doc1.set("name", NormalValue::String(name.clone()));
-            doc1.set("age", NormalValue::Int(1)); // Unique field for different ID
+            let mut doc1 = Document::new(schema.clone());
+            doc1.set("name", NormalValue::String(name.clone())).unwrap();
+            doc1.set("age", NormalValue::Int(1)).unwrap(); // Unique field for different ID
             let doc1_short_id = next_test_doc_short_id();
 
             let result1 = manager
@@ -356,9 +366,9 @@ proptest! {
             assert!(result1.is_ok(), "First document should succeed");
 
             // Second document with same name value should fail (unique constraint)
-            let mut doc2 = Document::new();
-            doc2.set("name", NormalValue::String(name.clone()));
-            doc2.set("age", NormalValue::Int(2)); // Different age for different ID
+            let mut doc2 = Document::new(schema.clone());
+            doc2.set("name", NormalValue::String(name.clone())).unwrap();
+            doc2.set("age", NormalValue::Int(2)).unwrap(); // Different age for different ID
             let doc2_short_id = next_test_doc_short_id();
 
             let result2 = manager
@@ -409,9 +419,9 @@ proptest! {
             // Create all documents
             let mut docs = Vec::new();
             for (i, name) in creates.iter().enumerate() {
-                let mut doc = Document::new();
-                doc.set("name", NormalValue::String(name.clone()));
-                doc.set("age", NormalValue::Int(i as i64));
+                let mut doc = Document::new(schema.clone());
+                doc.set("name", NormalValue::String(name.clone())).unwrap();
+                doc.set("age", NormalValue::Int(i as i64)).unwrap();
                 let doc_short_id = next_test_doc_short_id();
 
                 manager

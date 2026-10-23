@@ -14,9 +14,14 @@ fn users_schema() -> CollectionVersion {
         "users-v1",
         "users-collection",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
     .with_index(
@@ -33,9 +38,10 @@ fn age_filter(age: i64) -> Filter {
 }
 
 async fn create_user(mutator: &AutoCommitMutator<RegolithStore>, name: &str, age: i64) -> DocID {
-    let mut doc = Document::new();
-    doc.set("name", NormalValue::String(name.to_owned()));
-    doc.set("age", NormalValue::Int(age));
+    let mut doc = Document::new(users_schema());
+    doc.set("name", NormalValue::String(name.to_owned()))
+        .unwrap();
+    doc.set("age", NormalValue::Int(age)).unwrap();
     mutator.create("Users", doc).await.unwrap().doc_id
 }
 
@@ -83,9 +89,10 @@ fn filtered_truncate_includes_soft_deleted_documents() {
         db.create_collection(users_schema()).await.unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".into()));
-        doc.set("age", NormalValue::Int(30));
+        let mut doc = Document::new(users_schema());
+        doc.set("name", NormalValue::String("Alice".into()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(30)).unwrap();
         let created = mutator.create("Users", doc).await.unwrap();
         mutator.delete("Users", &created.doc_id).await.unwrap();
 
@@ -168,17 +175,22 @@ fn filtered_truncate_processes_more_than_one_chunk() {
             "users-v1",
             "users-collection",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "age", FieldKind::int()),
-                FieldDescription::new("3", "seq", FieldKind::int()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "age", FieldKind::int(), schema::CType::LwwRegister),
+                FieldDescription::new("3", "seq", FieldKind::int(), schema::CType::LwwRegister),
             ],
         );
-        db.create_collection(schema).await.unwrap();
+        db.create_collection(schema.clone()).await.unwrap();
         let mutator = AutoCommitMutator::new(db.clone());
         for seq in 0..=1000 {
-            let mut doc = Document::new();
-            doc.set("age", NormalValue::Int(30));
-            doc.set("seq", NormalValue::Int(seq));
+            let mut doc = Document::new(schema.clone());
+            doc.set("age", NormalValue::Int(30)).unwrap();
+            doc.set("seq", NormalValue::Int(seq)).unwrap();
             mutator.create("Users", doc).await.unwrap();
         }
 

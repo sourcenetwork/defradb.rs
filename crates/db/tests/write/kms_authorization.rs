@@ -11,21 +11,20 @@ fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
     workers::block_on(async {
     for has_visible_match in [false, true] {
         let fixture = super::kms::fixture().await;
-        fixture
-            .db
-            .create_collection(
-                CollectionVersion::new(
+        let protected = CollectionVersion::new(
                     "Protected",
                     "protected-v1",
                     "protected",
                     vec![
-                        FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                        FieldDescription::new("2", "left", FieldKind::string()),
-                        FieldDescription::new("3", "right", FieldKind::string()),
+                        FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+                        FieldDescription::new("2", "left", FieldKind::string(), schema::CType::LwwRegister),
+                        FieldDescription::new("3", "right", FieldKind::string(), schema::CType::LwwRegister),
                     ],
                 )
-                .with_policy(PolicyDescription::new("policy", "protected")),
-            )
+                .with_policy(PolicyDescription::new("policy", "protected"));
+        fixture
+            .db
+            .create_collection(protected.clone())
             .await
             .unwrap();
         let acp = Arc::new(acp::LocalDocumentACP::new(Arc::new(
@@ -41,8 +40,11 @@ fn prepared_upsert_keeps_hidden_matches_out_of_its_target_set() {
             let doc = mutator
                 .create(
                     "Protected",
-                    Document::from_json_str(&format!(r#"{{"left":"match","right":"{value}"}}"#))
-                        .unwrap(),
+                    Document::from_json_str(
+                        &format!(r#"{{"left":"match","right":"{value}"}}"#),
+                        protected.clone(),
+                    )
+                    .unwrap(),
                 )
                 .await
                 .unwrap();

@@ -23,9 +23,11 @@ fn corpus(count: usize) -> Vec<(u64, Document, Vec<f64>)> {
         .map(|i| {
             let angle = i as f64 * 0.37;
             let vector = vec![angle.sin(), angle.cos(), (angle * 0.5).sin(), 0.25];
-            let mut doc = Document::new();
-            doc.set("title", NormalValue::String(format!("doc-{i}")));
-            doc.set("embedding", NormalValue::Float64Array(vector.clone()));
+            let mut doc = Document::new(docs_schema());
+            doc.set("title", NormalValue::String(format!("doc-{i}")))
+                .unwrap();
+            doc.set("embedding", NormalValue::Float64Array(vector.clone()))
+                .unwrap();
             (i as u64 + 1, doc, vector)
         })
         .collect()

@@ -106,8 +106,13 @@ fn deferred_registration_hook_uses_bearer_captured_before_commit() {
             "v1",
             "bearer-hook-doc",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         );
         schema.policy = Some(PolicyDescription::new(
@@ -206,8 +211,13 @@ fn deferred_unregistration_hook_uses_bearer_captured_before_commit() {
             "v1",
             "bearer-hook-delete-doc",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         );
         schema.policy = Some(PolicyDescription::new(

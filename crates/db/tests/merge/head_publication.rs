@@ -86,7 +86,8 @@ fn a_replayed_create_after_a_local_update_stays_superseded() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("name", document::NormalValue::String("Bob".to_string()));
+        doc.set("name", document::NormalValue::String("Bob".to_string()))
+            .unwrap();
         mutator
             .update(
                 "Users",

@@ -18,6 +18,9 @@ pub enum Error {
     #[error("field not found: {0}")]
     FieldNotFound(String),
 
+    #[error("the given field does not exist. Name: {0}")]
+    FieldNotExist(String),
+
     #[error("field name cannot be empty")]
     EmptyFieldName,
 

@@ -71,7 +71,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
             Err(error) => return Err(MergeError::Database(error)),
             Ok(None) => {
-                let mut new_doc = Document::new();
+                let mut new_doc = Document::new(collection.schema_arc());
                 new_doc.set_id(doc_id.clone());
                 (new_doc, None)
             }
@@ -80,7 +80,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         doc.set_schema_version_id(&context.payload.schema_version_id);
 
         for (field_name, value) in &state.field_values {
-            doc.set(field_name, value.clone());
+            doc.set_unchecked(field_name.clone(), value.clone());
         }
 
         let known_fields: rapidhash::RapidHashSet<&str> = collection

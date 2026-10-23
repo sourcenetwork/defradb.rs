@@ -741,8 +741,13 @@ mod tests {
             "v1",
             "users-v1",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         )
     }
@@ -831,8 +836,13 @@ mod stream_tests {
             "v1",
             "users-v1",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         )
     }
@@ -882,7 +892,9 @@ mod stream_tests {
 
     impl CountingFetcher {
         fn with_docs(n: usize, pulled: Arc<AtomicUsize>) -> Self {
-            let docs = (0..n).map(|_| (Document::new(), false)).collect();
+            let docs = (0..n)
+                .map(|_| (crate::test_utils::test_doc(&[]), false))
+                .collect();
             Self { docs, pulled }
         }
     }
@@ -952,9 +964,9 @@ mod stream_tests {
     fn exact_document_lookup_does_not_pull_collection_and_preserves_residual_filter() {
         workers::block_on(async {
             let id = document::DocID::new_v0_from_seed("point-read");
-            let doc = Document::with_id(id.clone());
+            let doc = Document::with_id(id.clone(), crate::test_utils::test_collection(&[]));
             let pulled = Arc::new(AtomicUsize::new(0));
-            let mut docs = vec![(Document::new(), false); 1000];
+            let mut docs = vec![(crate::test_utils::test_doc(&[]), false); 1000];
             docs.push((doc, false));
             let fetcher = Arc::new(CountingFetcher {
                 docs,

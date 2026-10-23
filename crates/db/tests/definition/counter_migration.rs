@@ -24,19 +24,31 @@ fn tally() -> CollectionVersion {
         VERSION,
         "col-tally",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "up", FieldKind::int()).with_crdt_type(CType::PCounter),
-            FieldDescription::new("3", "net", FieldKind::int()).with_crdt_type(CType::PnCounter),
-            FieldDescription::new("4", "ratio", FieldKind::float64())
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "up", FieldKind::int(), schema::CType::LwwRegister)
+                .with_crdt_type(CType::PCounter),
+            FieldDescription::new("3", "net", FieldKind::int(), schema::CType::LwwRegister)
                 .with_crdt_type(CType::PnCounter),
-            FieldDescription::new("5", "name", FieldKind::string()),
+            FieldDescription::new(
+                "4",
+                "ratio",
+                FieldKind::float64(),
+                schema::CType::LwwRegister,
+            )
+            .with_crdt_type(CType::PnCounter),
+            FieldDescription::new("5", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
 
 async fn create(db: &Arc<DB<RegolithStore>>, json: &str) -> DocID {
     AutoCommitMutator::new(db.clone())
-        .create("Tally", Document::from_json_str(json).unwrap())
+        .create("Tally", Document::from_json_str(json, tally()).unwrap())
         .await
         .unwrap()
         .doc_id
@@ -167,7 +179,7 @@ fn accumulators_move_into_their_documents_once() {
         assert_eq!(keys_under(&store, MARKER).await.len(), 1);
 
         // The documents now hold the counters: an increment lands once.
-        let mut increment = Document::new();
+        let mut increment = Document::new(tally());
         increment.set_id(DocID::from_string(&ahead).unwrap());
         increment.set_counter_delta("up".to_string(), NormalValue::Int(1));
         AutoCommitMutator::new(reopened.clone())

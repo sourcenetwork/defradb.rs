@@ -182,11 +182,10 @@ pub async fn import_database_as<S: Store + 'static>(
                 }
             }
 
-            let mut doc =
-                Document::from_map(doc_map.clone().into_iter().collect()).map_err(|e| {
+            let doc = Document::from_map(doc_map.clone().into_iter().collect(), schema.clone())
+                .map_err(|e| {
                     format!("failed to create document in '{}': {}", collection_name, e)
                 })?;
-            doc.set_collection(schema.clone());
 
             let create_result = mutator.create_as(context, collection_name, doc).await;
             let created_doc = match create_result {
@@ -257,7 +256,8 @@ pub async fn import_database_as<S: Store + 'static>(
                     pending.doc_id, pending.collection_name
                 )
             })?;
-        doc.set(pending.fk_name.clone(), target);
+        doc.set(pending.fk_name.clone(), target)
+            .map_err(|e| e.to_string())?;
         let mut modified_fields = RapidHashSet::new();
         modified_fields.insert(pending.fk_name.clone());
 

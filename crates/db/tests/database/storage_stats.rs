@@ -89,7 +89,11 @@ fn signed_branchable_documents_classify_collection_and_signature_blocks() {
         let created = db::AutoCommitMutator::new(db.clone())
             .create(
                 "Users",
-                Document::from_json_str(r#"{"name":"private name"}"#).unwrap(),
+                Document::from_json_str(
+                    r#"{"name":"private name"}"#,
+                    crate::common::schema::test_schema().as_branchable(),
+                )
+                .unwrap(),
             )
             .await;
         set_signing_config(None);
@@ -117,11 +121,13 @@ async fn stats_schema(txn: &mut dyn Txn, short_id: u32, indexes: Vec<schema::Ind
         "3",
         "number",
         schema::FieldKind::int(),
+        schema::CType::LwwRegister,
     ));
     schema.fields.push(schema::FieldDescription::new(
         "4",
         "numbers",
         schema::FieldKind::int_array(),
+        schema::CType::LwwRegister,
     ));
     txn.set(
         format!("s/collection/id/{}", schema.version_id).as_bytes(),
@@ -355,8 +361,9 @@ fn offline_scan_is_read_only_and_matches_the_live_snapshot() {
             .await
             .unwrap();
         let mutator = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("private value".into()));
+        let mut doc = Document::new(crate::common::schema::test_schema());
+        doc.set("name", NormalValue::String("private value".into()))
+            .unwrap();
         mutator.create("Users", doc).await.unwrap();
         mutator.take_txn().await.unwrap().commit().await.unwrap();
         drop(mutator);
@@ -505,14 +512,16 @@ fn shared_blocks_count_each_document_history_once() {
             "3",
             "other",
             schema::FieldKind::string(),
+            schema::CType::LwwRegister,
         ));
-        db.create_collection(schema).await.unwrap();
+        db.create_collection(schema.clone()).await.unwrap();
         let mut ids = Vec::new();
         for other in ["first", "second"] {
             let mutator = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-            let mut doc = Document::new();
-            doc.set("name", NormalValue::String("shared".into()));
-            doc.set("other", NormalValue::String(other.into()));
+            let mut doc = Document::new(schema.clone());
+            doc.set("name", NormalValue::String("shared".into()))
+                .unwrap();
+            doc.set("other", NormalValue::String(other.into())).unwrap();
             ids.push(mutator.create("Users", doc).await.unwrap().doc_id);
             mutator.take_txn().await.unwrap().commit().await.unwrap();
         }
@@ -523,9 +532,10 @@ fn shared_blocks_count_each_document_history_once() {
         assert_eq!(field.versions, Some(2));
 
         let mutator = DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
-        let mut doc = Document::new();
+        let mut doc = Document::new(schema.clone());
         doc.set_id(ids[0].clone());
-        doc.set("name", NormalValue::String("changed".into()));
+        doc.set("name", NormalValue::String("changed".into()))
+            .unwrap();
         mutator
             .update("Users", doc, ["name".to_string()].into_iter().collect())
             .await

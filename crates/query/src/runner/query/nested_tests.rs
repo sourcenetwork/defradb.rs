@@ -170,11 +170,21 @@ fn relation_collections() -> (
         "v1",
         "coll-file",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "path", FieldKind::string()),
-            FieldDescription::new("4", "functions", FieldKind::relation("Function", true))
-                .with_relation_name("file_functions"),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "path", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "4",
+                "functions",
+                FieldKind::relation("Function", true),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("file_functions"),
         ],
     );
 
@@ -183,14 +193,29 @@ fn relation_collections() -> (
         "v1",
         "coll-function",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "file", FieldKind::relation("File", false))
-                .with_relation_name("file_functions")
-                .as_primary(),
-            FieldDescription::new("4", "_fileID", FieldKind::doc_id())
-                .with_relation_name("file_functions")
-                .as_primary(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "file",
+                FieldKind::relation("File", false),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("file_functions")
+            .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_fileID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .with_relation_name("file_functions")
+            .as_primary(),
         ],
     );
 
@@ -273,8 +298,13 @@ fn relation_collections_resolved_by_id() -> (
         "vers-file",
         "coll-file",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     );
 
@@ -283,11 +313,27 @@ fn relation_collections_resolved_by_id() -> (
         "vers-function",
         "coll-function",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "file", FieldKind::relation("coll-file", false))
-                .as_primary(),
-            FieldDescription::new("4", "_fileID", FieldKind::doc_id()).as_primary(),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new(
+                "3",
+                "file",
+                FieldKind::relation("coll-file", false),
+                schema::CType::LwwRegister,
+            )
+            .as_primary(),
+            FieldDescription::new(
+                "4",
+                "_fileID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            )
+            .as_primary(),
         ],
     );
 
@@ -309,7 +355,7 @@ fn relation_collections_resolved_by_id() -> (
 }
 
 fn doc(json: &str) -> Document {
-    Document::from_json_str(json).unwrap()
+    crate::test_utils::doc_from_json(json)
 }
 
 struct MockDocumentAcp {
@@ -467,9 +513,9 @@ fn nested_acp_relations_keep_public_join_targets() {
         "v1",
         "coll-company",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "employees", FieldKind::relation("Employee", true))
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "employees", FieldKind::relation("Employee", true), schema::CType::LwwRegister)
                 .with_relation_name("employee_company"),
         ],
     );
@@ -480,12 +526,12 @@ fn nested_acp_relations_keep_public_join_targets() {
         "v1",
         "coll-employee",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "company", FieldKind::relation("Company", false))
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "company", FieldKind::relation("Company", false), schema::CType::LwwRegister)
                 .with_relation_name("employee_company")
                 .as_primary(),
-            FieldDescription::new("4", "_companyID", FieldKind::doc_id())
+            FieldDescription::new("4", "_companyID", FieldKind::doc_id(), schema::CType::LwwRegister)
                 .with_relation_name("employee_company")
                 .as_primary(),
         ],

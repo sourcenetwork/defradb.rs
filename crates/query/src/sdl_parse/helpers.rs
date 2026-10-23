@@ -404,8 +404,8 @@ pub(super) fn generate_field_id(field_name: &str, kind: &FieldKind, crdt_type: C
         String::new(), // ID will be generated
         field_name.to_string(),
         kind.clone(),
-    )
-    .with_crdt_type(crdt_type);
+        crdt_type,
+    );
 
     match schema::generate_field_cid(&field) {
         Ok(cid) => cid.to_string(),

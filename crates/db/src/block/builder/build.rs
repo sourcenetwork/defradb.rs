@@ -46,11 +46,7 @@ pub async fn build_blocks_from_document<B: Blockstore>(
         let value_bytes = encode_value_as_cbor(field_value.value())?;
 
         // Check if this field is a Counter type
-        let is_counter = doc
-            .fields()
-            .get(field_name)
-            .map(|f| f.crdt_type().is_counter())
-            .unwrap_or(false);
+        let is_counter = doc.crdt_type(field_name).is_some_and(|t| t.is_counter());
 
         // Create the appropriate delta based on CRDT type
         let delta = if is_counter {

@@ -22,8 +22,13 @@ fn branchable_schema() -> CollectionVersion {
         "v1",
         "col-transcript",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "body", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
     .as_branchable()
@@ -52,8 +57,13 @@ fn branchable_collection_writes_expose_collection_heads() {
         db.create_collection(branchable_schema()).await.unwrap();
 
         let mutator = AutoCommitMutator::new(db.clone());
-        let mut doc = Document::new();
-        doc.set("body", "first".to_string());
+        let transcript = db
+            .get_collection("Transcript")
+            .unwrap()
+            .unwrap()
+            .schema_arc();
+        let mut doc = Document::new(transcript);
+        doc.set("body", "first".to_string()).unwrap();
         mutator.create("Transcript", doc).await.unwrap();
 
         let raw = raw_collection_head_keys(&store).await;

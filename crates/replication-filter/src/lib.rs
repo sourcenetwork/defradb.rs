@@ -184,9 +184,16 @@ mod tests {
 
     fn test_fields() -> Vec<FieldDescription> {
         vec![
-            FieldDescription::new("1", "agent_did", FieldKind::string()).as_immutable(),
-            FieldDescription::new("2", "kind", FieldKind::string()).as_immutable(),
-            FieldDescription::new("3", "body", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "agent_did",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            )
+            .as_immutable(),
+            FieldDescription::new("2", "kind", FieldKind::string(), schema::CType::LwwRegister)
+                .as_immutable(),
+            FieldDescription::new("3", "body", FieldKind::string(), schema::CType::LwwRegister),
         ]
     }
 

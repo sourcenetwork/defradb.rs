@@ -116,7 +116,7 @@ impl DocFetcher for FailingFetcher {
             .await
     }
 
-    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<Document>> {
+    async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<document::CommitRow>> {
         self.inner.get_commits(options).await
     }
 
@@ -139,8 +139,9 @@ async fn seeded_db() -> Arc<DB<RegolithStore>> {
 
     let docs = (0..COLLECTION_SIZE)
         .map(|i| {
-            let mut doc = Document::new();
-            doc.set("name", document::NormalValue::String(format!("User{i}")));
+            let mut doc = Document::new(users_schema());
+            doc.set("name", document::NormalValue::String(format!("User{i}")))
+                .unwrap();
             doc
         })
         .collect();

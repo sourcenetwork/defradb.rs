@@ -71,12 +71,18 @@ fn a_merge_with_more_encrypted_fields_than_any_cap_merges_whole() {
     workers::block_on(async {
         let store = Arc::new(RegolithStore::in_memory().unwrap());
         let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-        let mut fields = vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())];
+        let mut fields = vec![FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        )];
         fields.extend((0..FIELDS).map(|index| {
             FieldDescription::new(
                 (index + 2).to_string(),
                 field_name(index),
                 FieldKind::string(),
+                schema::CType::LwwRegister,
             )
         }));
         db.create_collection(CollectionVersion::new("Wide", "v1", "col-wide", fields))

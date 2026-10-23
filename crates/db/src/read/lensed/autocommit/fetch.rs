@@ -274,7 +274,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
     pub(super) async fn get_commits_impl(
         &self,
         options: &CommitsQueryOptions,
-    ) -> query::error::Result<Vec<Document>> {
+    ) -> query::error::Result<Vec<document::CommitRow>> {
         let db_options = DbCommitsOptions {
             doc_id: options.doc_id.clone(),
             cid: options.cid.clone(),
@@ -299,13 +299,14 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Document> {
         let kms = self.db.kms();
         self.db
             .read_lent(|txn| async move {
                 VersionedFetcher::with_kms(Some(txn), kms, caller_identity.cloned())
-                    .get_document_at_cid(cid, expected_doc_id)
+                    .get_document_at_cid(cid, expected_doc_id, collection.clone())
                     .await
             })
             .await
@@ -317,7 +318,7 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
 
     pub(super) async fn get_documents_at_cid_impl(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         caller_identity: Option<&identity::Did>,
@@ -326,7 +327,12 @@ impl<S: Store + 'static> LensedAutoCommitFetcher<S> {
         self.db
             .read_lent(|txn| async move {
                 VersionedFetcher::with_kms(Some(txn), kms, caller_identity.cloned())
-                    .get_documents_at_cid(cid, expected_doc_id, Some(collection_short_id))
+                    .get_documents_at_cid(
+                        cid,
+                        expected_doc_id,
+                        Some(collection.resolved_root_id()),
+                        collection.clone(),
+                    )
                     .await
             })
             .await

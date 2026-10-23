@@ -15,6 +15,40 @@ use crate::fetcher::{DocFetcher, FetchByIdsResult};
 use crate::txn::{SharedTurn, TransactionContext, TransactionHandle, TransactionRegistry, TxnJob};
 use storage::corekv::MaybeSend;
 
+/// A collection defining `fields` as last-write-wins scalars.
+pub fn test_collection(fields: &[&str]) -> schema::CollectionVersion {
+    fields
+        .iter()
+        .enumerate()
+        .fold(
+            schema::CollectionBuilder::new("Test", "bafytest"),
+            |builder, (i, name)| {
+                builder.field(schema::FieldDescription::new(
+                    i.to_string(),
+                    *name,
+                    schema::FieldKind::Scalar(schema::ScalarKind::None),
+                    schema::CType::LwwRegister,
+                ))
+            },
+        )
+        .build()
+}
+
+/// An empty document of a collection defining `fields`.
+pub fn test_doc(fields: &[&str]) -> Document {
+    Document::new(test_collection(fields))
+}
+
+/// A document built from `json`, against a collection defining its keys.
+pub fn doc_from_json(json: &str) -> Document {
+    let value: serde_json::Value = serde_json::from_str(json).unwrap();
+    let names: Vec<&str> = value
+        .as_object()
+        .map(|o| o.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    Document::from_json_str(json, test_collection(&names)).unwrap()
+}
+
 /// Mock fetcher for testing that stores documents in memory.
 pub struct MockFetcher {
     docs: HopscotchMap<String, Arc<Atom<Vec<Document>>>, RandomState>,

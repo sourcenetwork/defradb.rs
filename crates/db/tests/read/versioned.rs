@@ -128,6 +128,7 @@ fn collection_cid_doc_id_filter_accepts_an_alias() {
                 &collection_cid.to_string(),
                 Some(&alias),
                 Some(COLLECTION_SHORT_ID),
+                Arc::new(crate::common::schema::version("v1")),
             )
             .await
             .unwrap();

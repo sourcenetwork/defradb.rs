@@ -22,6 +22,7 @@ fn users_v2() -> Collection {
             "1",
             "name",
             schema::FieldKind::string(),
+            schema::CType::LwwRegister,
         )],
     ))
 }

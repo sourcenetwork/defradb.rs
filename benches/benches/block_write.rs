@@ -34,11 +34,26 @@ fn runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+fn wide_collection(width: usize) -> schema::CollectionVersion {
+    let fields = (0..width)
+        .map(|index| {
+            schema::FieldDescription::new(
+                (index + 1).to_string(),
+                format!("field_{index}"),
+                schema::FieldKind::Scalar(schema::ScalarKind::None),
+                schema::CType::LwwRegister,
+            )
+        })
+        .collect();
+    schema::CollectionVersion::new("Bench", SCHEMA_VERSION_ID, "col-bench", fields)
+}
+
 fn make_document(field_count: usize, value_size: usize) -> Document {
     let value = "x".repeat(value_size);
-    let mut doc = Document::new();
+    let mut doc = Document::new(wide_collection(field_count));
     for index in 0..field_count {
-        doc.set(format!("field_{index}"), NormalValue::String(value.clone()));
+        doc.set(format!("field_{index}"), NormalValue::String(value.clone()))
+            .unwrap();
     }
     doc
 }

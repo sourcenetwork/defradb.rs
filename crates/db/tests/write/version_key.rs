@@ -20,9 +20,14 @@ fn collection() -> CollectionVersion {
         "versioned-v1",
         "col-versioned",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::int()),
-            FieldDescription::new("3", "right", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -42,7 +47,7 @@ fn an_update_at_the_same_version_does_not_rewrite_the_version_key() {
         let created = creator
             .create(
                 "Versioned",
-                Document::from_json_str(r#"{"left": 0, "right": 0}"#).unwrap(),
+                Document::from_json_str(r#"{"left": 0, "right": 0}"#, collection()).unwrap(),
             )
             .await
             .unwrap();
@@ -61,7 +66,7 @@ fn an_update_at_the_same_version_does_not_rewrite_the_version_key() {
             .await
             .unwrap()
             .unwrap();
-        doc.set("left", NormalValue::Int(1));
+        doc.set("left", NormalValue::Int(1)).unwrap();
         updater
             .update(
                 "Versioned",

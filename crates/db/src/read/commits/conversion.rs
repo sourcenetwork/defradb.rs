@@ -5,7 +5,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use base64::Engine;
 use cid::Cid;
 use defra_core::block::{Block, CrdtDelta, Signature};
-use document::Document;
+use document::CommitRow;
 use serde_json::{json, Value as JsonValue};
 use storage::corekv::Store;
 
@@ -71,7 +71,7 @@ impl<S: Store> CommitsFetcher<S> {
         block: &Block,
         doc_id: Option<&str>,
         field_filter: Option<&str>,
-    ) -> Result<Vec<Document>> {
+    ) -> Result<Vec<CommitRow>> {
         let views = match &block.delta {
             CrdtDelta::Immutable(payload) => payload
                 .fields
@@ -105,7 +105,7 @@ impl<S: Store> CommitsFetcher<S> {
         doc_id: Option<&str>,
         field_name: Option<String>,
         delta_data: Option<Vec<u8>>,
-    ) -> Result<Document> {
+    ) -> Result<CommitRow> {
         tracing::debug!(
             cid = %cid,
             signature = ?block.signature,
@@ -242,7 +242,7 @@ impl<S: Store> CommitsFetcher<S> {
         };
         map.insert("signature".to_string(), sig_value);
 
-        Ok(Document::from_map(map)?)
+        Ok(CommitRow::from_map(map)?)
     }
 
     /// Build simple links array (without recursive nesting) for nested queries.

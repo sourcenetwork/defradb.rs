@@ -155,9 +155,14 @@ fn patch_collection() -> CollectionVersion {
         "v1",
         "col-patch",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "left", FieldKind::int()),
-            FieldDescription::new("3", "right", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "left", FieldKind::int(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "right", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -169,7 +174,10 @@ fn fields(names: &[&str]) -> RapidHashSet<String> {
 async fn create(fixture: &Fixture, json: &str) -> Document {
     let created = fixture
         .mutator()
-        .create("Patch", Document::from_json_str(json).unwrap())
+        .create(
+            "Patch",
+            Document::from_json_str(json, patch_collection()).unwrap(),
+        )
         .await
         .unwrap();
     fixture
@@ -218,7 +226,7 @@ fn an_update_that_loses_to_a_delete_reports_not_found() {
         let id = doc.id().unwrap().clone();
 
         let mut patched = doc.clone();
-        patched.set("left", NormalValue::Int(2));
+        patched.set("left", NormalValue::Int(2)).unwrap();
         let (loser, winner) = fixture
             .race(
                 |mutator| async move { mutator.update("Patch", patched, fields(&["left"])).await },
@@ -245,9 +253,9 @@ fn an_update_of_a_field_another_update_changed_writes_again_on_top_of_it() {
         let id = doc.id().unwrap().clone();
 
         let mut first = doc.clone();
-        first.set("left", NormalValue::Int(1));
+        first.set("left", NormalValue::Int(1)).unwrap();
         let mut second = doc.clone();
-        second.set("left", NormalValue::Int(2));
+        second.set("left", NormalValue::Int(2)).unwrap();
         let (loser, winner) = fixture
             .race(
                 |mutator| async move { mutator.update("Patch", first, fields(&["left"])).await },
@@ -286,16 +294,18 @@ fn a_create_that_loses_a_unique_index_race_reports_the_violation() {
             kind: None,
             auto_generated: false,
         }];
-        let fixture = Fixture::new(collection).await;
+        let fixture = Fixture::new(collection.clone()).await;
+        let (first, second) = (collection.clone(), collection);
 
         let (loser, winner) = fixture
             .race(
                 |mutator| async move {
-                    let doc = Document::from_json_str(r#"{"left": 7, "right": 1}"#).unwrap();
+                    let doc = Document::from_json_str(r#"{"left": 7, "right": 1}"#, first).unwrap();
                     mutator.create("Patch", doc).await
                 },
                 |mutator| async move {
-                    let doc = Document::from_json_str(r#"{"left": 7, "right": 2}"#).unwrap();
+                    let doc =
+                        Document::from_json_str(r#"{"left": 7, "right": 2}"#, second).unwrap();
                     mutator.create("Patch", doc).await
                 },
             )
@@ -322,9 +332,9 @@ fn a_compare_and_set_that_loses_reports_the_conflict_with_its_reason() {
 
         let expected = doc.clone();
         let mut compared = doc.clone();
-        compared.set("right", NormalValue::Int(1));
+        compared.set("right", NormalValue::Int(1)).unwrap();
         let mut other = doc.clone();
-        other.set("left", NormalValue::Int(1));
+        other.set("left", NormalValue::Int(1)).unwrap();
         let (loser, winner) = fixture
             .race(
                 |mutator| async move {

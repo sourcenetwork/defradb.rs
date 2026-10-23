@@ -154,8 +154,13 @@ impl CollectionVersion {
             new_ids.insert(new_id.clone());
 
             // Create the _id field with same relation_name and is_primary
-            let id_field = FieldDescription::new(new_id, id_field_name, FieldKind::doc_id())
-                .with_crdt_type(CType::LwwRegister);
+            let id_field = FieldDescription::new(
+                new_id,
+                id_field_name,
+                FieldKind::doc_id(),
+                crate::CType::LwwRegister,
+            )
+            .with_crdt_type(CType::LwwRegister);
 
             let id_field = if let Some(rel_name) = &field.relation_name {
                 id_field.with_relation_name(rel_name.clone())

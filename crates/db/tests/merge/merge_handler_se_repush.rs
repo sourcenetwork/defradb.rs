@@ -49,9 +49,14 @@ async fn make_handler_with_encrypted_index() -> (
         "v1",
         "col-users",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "age", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "age", FieldKind::int(), schema::CType::LwwRegister),
         ],
     );
     collection.encrypted_indexes = vec![EncryptedIndexDescription::new("name")];

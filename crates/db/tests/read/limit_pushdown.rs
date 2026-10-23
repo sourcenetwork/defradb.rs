@@ -34,8 +34,9 @@ async fn seeded_db<S: Store + 'static>(store: S) -> Arc<DB<CountingStore<S>>> {
 
     let docs = (0..COLLECTION_SIZE)
         .map(|i| {
-            let mut doc = Document::new();
-            doc.set("name", document::NormalValue::String(format!("User{i}")));
+            let mut doc = Document::new(users_schema());
+            doc.set("name", document::NormalValue::String(format!("User{i}")))
+                .unwrap();
             doc
         })
         .collect();

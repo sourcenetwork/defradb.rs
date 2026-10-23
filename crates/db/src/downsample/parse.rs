@@ -45,7 +45,7 @@ pub(super) fn normal_value_to_time(value: &NormalValue) -> Option<DateTime<Fixed
         .or_else(|| value.as_str().and_then(document::parse_rfc3339))
 }
 
-fn decode_commit_delta_value(commit: &document::Document) -> Option<NormalValue> {
+fn decode_commit_delta_value(commit: &document::CommitRow) -> Option<NormalValue> {
     use base64::Engine;
 
     let delta_base64 = commit.get("delta")?.as_str()?;
@@ -300,7 +300,7 @@ pub(super) fn parse_downsample_source_query(
 }
 
 pub(super) fn group_commit_values_by_height(
-    commits: Vec<document::Document>,
+    commits: Vec<document::CommitRow>,
     fields: &RapidHashSet<&str>,
 ) -> BTreeMap<u64, RapidHashMap<String, NormalValue>> {
     let mut values_by_height: BTreeMap<u64, RapidHashMap<String, NormalValue>> = BTreeMap::new();

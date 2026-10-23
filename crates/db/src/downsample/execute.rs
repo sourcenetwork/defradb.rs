@@ -131,7 +131,7 @@ impl<S: Store + 'static> crate::database::DB<S> {
         force_write: bool,
     ) {
         if force_write || doc.get(field_name) != Some(&value) {
-            doc.set(field_name, value);
+            doc.set_unchecked(field_name.to_string(), value);
             modified_fields.insert(field_name.to_string());
         }
     }
@@ -602,8 +602,7 @@ where
         };
         let Some(mut doc) = existing else {
             self.created.store(true, Ordering::Release);
-            let mut doc = Document::new();
-            doc.set_collection(self.plan.target.clone());
+            let mut doc = Document::new(self.plan.target.clone());
             doc.set_schema_version_id(self.plan.target.version_id.clone());
             self.db
                 .apply_window_to_target_doc(
@@ -642,7 +641,6 @@ where
         if modified_fields.is_empty() {
             return done;
         }
-        doc.set_collection(self.plan.target.clone());
         doc.set_schema_version_id(self.plan.target.version_id.clone());
         doc.set_id(id);
         mutator
@@ -669,12 +667,42 @@ mod tests {
                 "window-v1",
                 "window",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "source_doc_id", FieldKind::string()),
-                    FieldDescription::new("3", "source_height", FieldKind::int()),
-                    FieldDescription::new("4", "window_start", FieldKind::datetime()),
-                    FieldDescription::new("5", "window_end", FieldKind::datetime()),
-                    FieldDescription::new("6", "count", FieldKind::int()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "source_doc_id",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "3",
+                        "source_height",
+                        FieldKind::int(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "4",
+                        "window_start",
+                        FieldKind::datetime(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "5",
+                        "window_end",
+                        FieldKind::datetime(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "6",
+                        "count",
+                        FieldKind::int(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             );
             db.create_collection(target).await.unwrap();
@@ -697,7 +725,7 @@ mod tests {
                     measure_field: "value".into(),
                 },
             };
-            let source = Document::new();
+            let source = Document::new(crate::common::schema::open_collection(&[]));
             let window = |height| WindowAggregate {
                 count: height,
                 sum: None,

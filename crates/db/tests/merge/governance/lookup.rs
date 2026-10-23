@@ -144,7 +144,8 @@ impl Node {
                 .unwrap(),
         );
         let immutable = |id: &str, name: &str| {
-            let mut field = FieldDescription::new(id, name, FieldKind::string());
+            let mut field =
+                FieldDescription::new(id, name, FieldKind::string(), schema::CType::LwwRegister);
             field.immutable = true;
             field
         };
@@ -153,10 +154,20 @@ impl Node {
             "col-grants",
             "col-grants",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
                 immutable("2", "writer"),
                 immutable("3", "twin"),
-                FieldDescription::new("4", "holder", FieldKind::string()),
+                FieldDescription::new(
+                    "4",
+                    "holder",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         ))
         .await
@@ -166,8 +177,18 @@ impl Node {
             "col-notes",
             "col-notes",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "grant", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new(
+                    "2",
+                    "grant",
+                    FieldKind::string(),
+                    schema::CType::LwwRegister,
+                ),
             ],
         ))
         .await

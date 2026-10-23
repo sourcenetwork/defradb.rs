@@ -18,9 +18,14 @@ fn collection() -> CollectionVersion {
         "twin-v1",
         "col-twin",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
-            FieldDescription::new("3", "size", FieldKind::int()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
+            FieldDescription::new("3", "size", FieldKind::int(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -42,11 +47,11 @@ fn two_identical_creates_exactly_one_commits() {
         let second = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.expect("txn two"));
 
         let one = first
-            .create("Twin", Document::from_json_str(DOC).unwrap())
+            .create("Twin", Document::from_json_str(DOC, collection()).unwrap())
             .await
             .expect("first create");
         let two = second
-            .create("Twin", Document::from_json_str(DOC).unwrap())
+            .create("Twin", Document::from_json_str(DOC, collection()).unwrap())
             .await
             .expect("second create");
         assert_eq!(
@@ -95,7 +100,7 @@ fn concurrent_identical_autocommit_creates_exactly_one_commits() {
                     move || async move {
                         barrier.wait().await;
                         mutator
-                            .create("Twin", Document::from_json_str(DOC).unwrap())
+                            .create("Twin", Document::from_json_str(DOC, collection()).unwrap())
                             .await
                     },
                 )

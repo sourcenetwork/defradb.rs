@@ -10,7 +10,12 @@ fn version(name: &str, collection_id: &str, version_id: &str) -> Collection {
         name,
         version_id,
         collection_id,
-        vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+        vec![FieldDescription::new(
+            "1",
+            "_docID",
+            FieldKind::doc_id(),
+            schema::CType::LwwRegister,
+        )],
     ))
 }
 

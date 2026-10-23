@@ -37,7 +37,11 @@ fn document_crud_roundtrips_through_encrypted_store() {
         // Create a document through the encrypted store via the real mutator flow
         // (allocates the doc short ID and derives the DocID from the genesis block).
         let mutator = AutoCommitMutator::new(db.clone());
-        let doc = Document::from_json_str(r#"{"name": "Alice"}"#).unwrap();
+        let doc = Document::from_json_str(
+            r#"{"name": "Alice"}"#,
+            db.get_collection("Users").unwrap().unwrap().schema_arc(),
+        )
+        .unwrap();
         let created = mutator.create("Users", doc).await.unwrap();
 
         // Read it back in a fresh transaction; the value must decrypt cleanly.

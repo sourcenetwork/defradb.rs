@@ -82,9 +82,19 @@ fn unreadable_merge_state_fails_the_counter_merge() {
                 "v1",
                 "col-counters",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "score", FieldKind::int())
-                        .with_crdt_type(CType::PnCounter),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "score",
+                        FieldKind::int(),
+                        schema::CType::LwwRegister,
+                    )
+                    .with_crdt_type(CType::PnCounter),
                 ],
             ))
             .await

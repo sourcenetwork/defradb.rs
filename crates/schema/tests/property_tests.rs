@@ -257,7 +257,7 @@ proptest! {
         let kind = FieldKind::Scalar(scalar);
         let is_numeric = kind.is_numeric();
 
-        let field = FieldDescription::new("1", "counter_field", kind.clone())
+        let field = FieldDescription::new("1", "counter_field", kind.clone(), schema::CType::LwwRegister)
             .with_crdt_type(CType::PnCounter);
         let valid = field.validate().is_ok();
 
@@ -441,8 +441,8 @@ proptest! {
         target_collection in "[a-z]{1,15}",
     ) {
         let fields = vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", &field_name, FieldKind::relation(&target_collection, false))
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("2", &field_name, FieldKind::relation(&target_collection, false), schema::CType::LwwRegister)
                 .with_relation_name("test_relation"),
         ];
         let mut coll = CollectionVersion::new(&collection_name, "v1", "coll-test", fields);
@@ -467,8 +467,8 @@ proptest! {
         target_collection in "[a-z]{1,15}",
     ) {
         let fields = vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", &field_name, FieldKind::relation(&target_collection, true))
+            FieldDescription::new("1", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("2", &field_name, FieldKind::relation(&target_collection, true), schema::CType::LwwRegister)
                 .with_relation_name("test_relation"),
         ];
         let mut coll = CollectionVersion::new(&collection_name, "v1", "coll-test", fields);
@@ -486,14 +486,14 @@ proptest! {
         field_name in relation_field_name(),
         is_primary in any::<bool>(),
     ) {
-        let mut rel_field = FieldDescription::new("1", &field_name, FieldKind::relation("target", false))
+        let mut rel_field = FieldDescription::new("1", &field_name, FieldKind::relation("target", false), schema::CType::LwwRegister)
             .with_relation_name("test_relation");
         if is_primary {
             rel_field = rel_field.as_primary();
         }
 
         let fields = vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
             rel_field,
         ];
         let mut coll = CollectionVersion::new("test", "v1", "coll-test", fields);
@@ -508,8 +508,8 @@ proptest! {
     #[test]
     fn id_fields_have_lww_crdt(field_name in relation_field_name()) {
         let fields = vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("1", &field_name, FieldKind::relation("target", false))
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("1", &field_name, FieldKind::relation("target", false), schema::CType::LwwRegister)
                 .with_relation_name("test_relation"),
         ];
         let mut coll = CollectionVersion::new("test", "v1", "coll-test", fields);
@@ -524,8 +524,8 @@ proptest! {
     #[test]
     fn id_field_generation_idempotent(field_name in relation_field_name()) {
         let fields = vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("1", &field_name, FieldKind::relation("target", false))
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("1", &field_name, FieldKind::relation("target", false), schema::CType::LwwRegister)
                 .with_relation_name("test_relation"),
         ];
         let mut coll = CollectionVersion::new("test", "v1", "coll-test", fields);
@@ -558,8 +558,8 @@ proptest! {
         relation_name in "[a-z_]{3,20}",
     ) {
         let fields = vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("1", &field_name, FieldKind::relation("target", false))
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
+            FieldDescription::new("1", &field_name, FieldKind::relation("target", false), schema::CType::LwwRegister)
                 .with_relation_name(&relation_name),
         ];
         let mut coll = CollectionVersion::new("test", "v1", "coll-test", fields);
@@ -593,9 +593,9 @@ proptest! {
         // Ensure different names
         prop_assume!(col1_name != col2_name);
 
-        let mut field1 = FieldDescription::new("1", "rel", FieldKind::relation(col2_name.to_lowercase(), false))
+        let mut field1 = FieldDescription::new("1", "rel", FieldKind::relation(col2_name.to_lowercase(), false), schema::CType::LwwRegister)
             .with_relation_name(&relation_name);
-        let mut field2 = FieldDescription::new("1", "rel", FieldKind::relation(col1_name.to_lowercase(), false))
+        let mut field2 = FieldDescription::new("1", "rel", FieldKind::relation(col1_name.to_lowercase(), false), schema::CType::LwwRegister)
             .with_relation_name(&relation_name);
 
         if primary_on_first {
@@ -605,11 +605,11 @@ proptest! {
         }
 
         let coll1 = CollectionVersion::new(&col1_name, "v1", "coll-1", vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
             field1,
         ]);
         let coll2 = CollectionVersion::new(&col2_name, "v1", "coll-2", vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
             field2,
         ]);
 
@@ -631,19 +631,19 @@ proptest! {
         // Ensure different names
         prop_assume!(col1_name != col2_name);
 
-        let field1 = FieldDescription::new("1", "rel", FieldKind::relation(col2_name.to_lowercase(), false))
+        let field1 = FieldDescription::new("1", "rel", FieldKind::relation(col2_name.to_lowercase(), false), schema::CType::LwwRegister)
             .with_relation_name(&relation_name)
             .as_primary();
-        let field2 = FieldDescription::new("1", "rel", FieldKind::relation(col1_name.to_lowercase(), false))
+        let field2 = FieldDescription::new("1", "rel", FieldKind::relation(col1_name.to_lowercase(), false), schema::CType::LwwRegister)
             .with_relation_name(&relation_name)
             .as_primary(); // BOTH primary!
 
         let coll1 = CollectionVersion::new(&col1_name, "v1", "coll-1", vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
             field1,
         ]);
         let coll2 = CollectionVersion::new(&col2_name, "v1", "coll-2", vec![
-            FieldDescription::new("0", "_docID", FieldKind::doc_id()),
+            FieldDescription::new("0", "_docID", FieldKind::doc_id(), schema::CType::LwwRegister),
             field2,
         ]);
 

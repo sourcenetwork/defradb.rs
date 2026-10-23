@@ -430,6 +430,7 @@ mod tests {
                     "1",
                     "tags",
                     FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                    schema::CType::LwwRegister,
                 )],
             );
             let result = execute_introspection(
@@ -487,11 +488,13 @@ mod tests {
                         "1",
                         "name",
                         FieldKind::Scalar(schema::ScalarKind::NonNillableString),
+                        schema::CType::LwwRegister,
                     ),
                     FieldDescription::new(
                         "2",
                         "tags",
                         FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                        schema::CType::LwwRegister,
                     ),
                 ],
             );
@@ -544,11 +547,13 @@ mod tests {
                         "1",
                         "name",
                         FieldKind::Scalar(schema::ScalarKind::String),
+                        schema::CType::LwwRegister,
                     ),
                     FieldDescription::new(
                         "2",
                         "tags",
                         FieldKind::ScalarArray(ScalarArrayKind::StringArray),
+                        schema::CType::LwwRegister,
                     ),
                 ],
             );

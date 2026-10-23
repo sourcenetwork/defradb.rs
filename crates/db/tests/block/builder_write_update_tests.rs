@@ -18,9 +18,10 @@ fn update_keeps_doc_id_without_composite_heads() {
         let headstore = NamespaceView::new(shared, Namespace::Headstore);
         let identity = DocStorageIdentity::new(1, 1);
 
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".to_string()));
-        doc.set("age", NormalValue::Int(30));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name", "age"]));
+        doc.set("name", NormalValue::String("Alice".to_string()))
+            .unwrap();
+        doc.set("age", NormalValue::Int(30)).unwrap();
         let created = write_document_blocks(
             &blockstore,
             &headstore,
@@ -41,7 +42,8 @@ fn update_keeps_doc_id_without_composite_heads() {
             .unwrap();
 
         doc.set_id(DocID::from_string(&created.doc_id).unwrap());
-        doc.set("name", NormalValue::String("Bob".to_string()));
+        doc.set("name", NormalValue::String("Bob".to_string()))
+            .unwrap();
         let changed = RapidHashSet::from_iter(["name".to_string()]);
         let updated = write_document_blocks(
             &blockstore,

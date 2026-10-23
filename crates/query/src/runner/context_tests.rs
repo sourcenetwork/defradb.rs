@@ -96,8 +96,13 @@ fn users() -> CollectionVersion {
         "v1",
         "coll-user",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "name", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
         ],
     )
 }
@@ -281,8 +286,13 @@ fn a_remote_signed_create_carries_its_access_decision_in_its_context() {
             "v1",
             "coll-note",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "body", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "body", FieldKind::string(), schema::CType::LwwRegister),
             ],
         );
         notes.policy = Some(PolicyDescription::new("policy", "notes"));
@@ -329,8 +339,13 @@ fn the_dac_bypass_in_a_request_reads_documents_dac_hides() {
             "v1",
             "coll-company",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         );
         company.policy = Some(PolicyDescription::new("policy", "companies"));
@@ -338,8 +353,9 @@ fn the_dac_bypass_in_a_request_reads_documents_dac_hides() {
         let fetcher = MockFetcher::new();
         fetcher.add_doc(
             "Company",
-            Document::from_json_str(&format!(r#"{{"_docID":"{private}","name":"Private"}}"#))
-                .unwrap(),
+            crate::test_utils::doc_from_json(&format!(
+                r#"{{"_docID":"{private}","name":"Private"}}"#
+            )),
         );
         let acp = Arc::new(PolicyAcp {
             private_docs: RapidHashMap::from_iter([(private.to_string(), owner)]),
@@ -464,18 +480,22 @@ fn each_read_checks_access_with_its_own_requests_bearer() {
             "v1",
             "coll-company",
             vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "name", FieldKind::string()),
+                FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                ),
+                FieldDescription::new("2", "name", FieldKind::string(), schema::CType::LwwRegister),
             ],
         );
         company.policy = Some(PolicyDescription::new("policy", "companies"));
         let fetcher = MockFetcher::new();
         fetcher.add_doc(
             "Company",
-            Document::from_json_str(
+            crate::test_utils::doc_from_json(
                 r#"{"_docID":"bae-47bd7c29-69cc-5b8a-856f-caaa93d9ace0","name":"Acme"}"#,
-            )
-            .unwrap(),
+            ),
         );
         let acp = Arc::new(BearerAcp::default());
         let runner = QueryRunner::new(fetcher, vec![company]).with_acp(acp.clone());

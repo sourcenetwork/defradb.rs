@@ -18,9 +18,7 @@ use crate::error::{QueryError, Result};
 use crate::mutator::{CreateResult, DocMutator};
 use crate::planner::{Doc, PlanNode};
 
-use super::create_conversions::{
-    json_to_normal_value, json_to_normal_value_with_kind_and_time, normal_value_to_json,
-};
+use super::create_conversions::{json_to_normal_value_with_kind_and_time, normal_value_to_json};
 
 /// Input for a create mutation - field values to set on the new document.
 #[derive(Debug, Clone)]
@@ -43,19 +41,6 @@ impl CreateInput {
         self
     }
 
-    /// Convert to a Document for storage (without schema-aware type coercion).
-    pub fn to_document(&self) -> Result<Document> {
-        let mut doc = Document::new();
-
-        for (field_name, value) in &self.fields {
-            // Convert JsonValue to appropriate NormalValue
-            let normal_value = json_to_normal_value(value)?;
-            doc.set(field_name.clone(), normal_value);
-        }
-
-        Ok(doc)
-    }
-
     /// Convert to a Document for storage with schema-aware type coercion.
     ///
     /// This method uses the collection schema to properly coerce values,
@@ -73,33 +58,22 @@ impl CreateInput {
         collection: &CollectionVersion,
         request_time: Option<DateTime<FixedOffset>>,
     ) -> Result<Document> {
-        use schema::CType;
-
-        let mut doc = Document::new();
-
-        // Set collection on document for proper docID generation.
-        // Go DefraDB includes the collection_id in the docID hash, so we must too.
-        doc.set_collection(collection.clone());
+        // The document carries its collection: Go DefraDB includes the
+        // collection_id in the docID hash, so we must too.
+        let mut doc = Document::new(collection.clone());
 
         for (field_name, value) in &self.fields {
             // Look up the field in the schema to get its kind and CRDT type
             let field_def = collection.fields.iter().find(|f| f.name == *field_name);
             let field_kind = field_def.map(|f| &f.kind);
-            let crdt_type = field_def.map(|f| f.crdt_type).unwrap_or(CType::LwwRegister);
 
             // Convert JsonValue to appropriate NormalValue, using schema for type coercion
             let normal_value =
                 json_to_normal_value_with_kind_and_time(value, field_kind, request_time)?;
 
-            // Use set_with_crdt to preserve the CRDT type from the schema
-            // This is critical for Counter fields to generate correct block CIDs
-            doc.set_with_crdt(field_name.clone(), crdt_type, normal_value)
-                .map_err(|e| {
-                    QueryError::execution(format!(
-                        "Failed to set field '{}' with CRDT type {:?}: {}",
-                        field_name, crdt_type, e
-                    ))
-                })?;
+            doc.set(field_name.clone(), normal_value).map_err(|e| {
+                QueryError::execution(format!("Failed to set field '{}': {}", field_name, e))
+            })?;
         }
 
         // Apply schema defaults for fields not present in the input.
@@ -118,20 +92,18 @@ impl CreateInput {
             };
 
             let field_kind = Some(&field_def.kind);
-            let crdt_type = field_def.crdt_type;
 
             // Convert the default value using schema-aware coercion.
             // This handles UTC_NOW for DateTime fields via json_to_normal_value_with_kind_and_time.
             let normal_value =
                 json_to_normal_value_with_kind_and_time(default_value, field_kind, request_time)?;
 
-            doc.set_with_crdt(field_def.name.clone(), crdt_type, normal_value)
-                .map_err(|e| {
-                    QueryError::execution(format!(
-                        "Failed to set default value for field '{}' with CRDT type {:?}: {}",
-                        field_def.name, crdt_type, e
-                    ))
-                })?;
+            doc.set(field_def.name.clone(), normal_value).map_err(|e| {
+                QueryError::execution(format!(
+                    "Failed to set default value for field '{}': {}",
+                    field_def.name, e
+                ))
+            })?;
         }
 
         Ok(doc)
@@ -324,12 +296,12 @@ impl PlanNode for CreateNode {
             } else {
                 let mut docs = Vec::with_capacity(self.inputs.len());
                 for input in &self.inputs {
-                    let doc = if let Some(ref collection) = self.collection {
-                        input.to_document_with_schema_and_time(collection, self.request_time)?
-                    } else {
-                        input.to_document()?
-                    };
-                    docs.push(doc);
+                    let collection = self.collection.as_ref().ok_or_else(|| {
+                        QueryError::execution("create has no collection definition")
+                    })?;
+                    docs.push(
+                        input.to_document_with_schema_and_time(collection, self.request_time)?,
+                    );
                 }
                 docs
             };

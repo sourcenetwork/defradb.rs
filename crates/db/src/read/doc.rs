@@ -267,7 +267,7 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
     async fn get_commits(
         &self,
         options: &CommitsQueryOptions,
-    ) -> query::error::Result<Vec<Document>> {
+    ) -> query::error::Result<Vec<document::CommitRow>> {
         // Convert query options to db options
         let db_options = DbCommitsOptions {
             doc_id: options.doc_id.clone(),
@@ -599,25 +599,31 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
         &self,
         cid: &str,
         expected_doc_id: Option<&str>,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         _caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Document> {
         let versioned_fetcher = VersionedFetcher::new(self.shared_txn()?);
         versioned_fetcher
-            .get_document_at_cid(cid, expected_doc_id)
+            .get_document_at_cid(cid, expected_doc_id, collection.clone())
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
     async fn get_documents_at_cid(
         &self,
-        collection_short_id: u32,
+        collection: &std::sync::Arc<schema::CollectionVersion>,
         cid: &str,
         expected_doc_id: Option<&str>,
         _caller_identity: Option<&identity::Did>,
     ) -> query::error::Result<Vec<Document>> {
         let versioned_fetcher = VersionedFetcher::new(self.shared_txn()?);
         versioned_fetcher
-            .get_documents_at_cid(cid, expected_doc_id, Some(collection_short_id))
+            .get_documents_at_cid(
+                cid,
+                expected_doc_id,
+                Some(collection.resolved_root_id()),
+                collection.clone(),
+            )
             .await
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }

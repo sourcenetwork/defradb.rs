@@ -24,11 +24,12 @@ impl RecordingFetcher {
     /// A document per short id, titled after it, so a caller can tell which
     /// ones came back.
     fn document(short_id: u64) -> document::Document {
-        let mut doc = document::Document::new();
+        let mut doc = document::Document::new(definition(&["title"]));
         doc.set(
             "title",
             document::NormalValue::String(format!("doc-{short_id}")),
-        );
+        )
+        .unwrap();
         doc
     }
 }
@@ -96,8 +97,18 @@ fn collection() -> CollectionVersion {
         "v1",
         "col-docs",
         vec![
-            FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-            FieldDescription::new("2", "title", FieldKind::string()),
+            FieldDescription::new(
+                "1",
+                "_docID",
+                FieldKind::doc_id(),
+                schema::CType::LwwRegister,
+            ),
+            FieldDescription::new(
+                "2",
+                "title",
+                FieldKind::string(),
+                schema::CType::LwwRegister,
+            ),
         ],
     )
 }
@@ -219,4 +230,22 @@ fn a_vector_routed_scan_reports_an_index_fetch() {
         );
     })
     .unwrap()
+}
+
+fn definition(fields: &[&str]) -> schema::CollectionVersion {
+    fields
+        .iter()
+        .enumerate()
+        .fold(
+            schema::CollectionBuilder::new("Test", "bafytest"),
+            |builder, (i, name)| {
+                builder.field(schema::FieldDescription::new(
+                    i.to_string(),
+                    *name,
+                    schema::FieldKind::Scalar(schema::ScalarKind::None),
+                    schema::CType::LwwRegister,
+                ))
+            },
+        )
+        .build()
 }
