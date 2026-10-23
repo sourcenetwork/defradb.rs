@@ -323,6 +323,43 @@ fn only_edits_stack() {
     );
 }
 
+/// A client names a set on a register or a text, an increment on a counter
+/// and edits on a text; anything else is refused by the field's type.
+#[test]
+fn a_named_op_is_taken_only_by_a_type_that_takes_it() {
+    let set = || FieldOp::Set(NormalValue::Int(1));
+    let increment = |by| FieldOp::Increment(NormalValue::Int(by));
+    let edit = || FieldOp::Edit(Vec::new());
+    let named = |ctype, op| {
+        field_crdt(ctype)
+            .expect("a field type")
+            .named_op(op)
+            .map_err(|error| error.to_string())
+    };
+    assert_eq!(named(CType::LwwRegister, set()), Ok(set()));
+    assert_eq!(named(CType::Text, set()), Ok(set()));
+    assert_eq!(named(CType::Text, edit()), Ok(edit()));
+    assert_eq!(named(CType::PnCounter, increment(-2)), Ok(increment(-2)));
+    assert_eq!(named(CType::PCounter, increment(2)), Ok(increment(2)));
+    assert_eq!(
+        named(CType::PCounter, increment(-2)),
+        Err("value cannot be negative".into())
+    );
+    for counter in [CType::PCounter, CType::PnCounter] {
+        assert!(named(counter, set())
+            .unwrap_err()
+            .contains("use `increment`"));
+        assert!(named(counter, edit()).is_err());
+    }
+    for (ctype, op) in [
+        (CType::LwwRegister, increment(1)),
+        (CType::LwwRegister, edit()),
+        (CType::Text, increment(1)),
+    ] {
+        assert!(named(ctype, op).is_err());
+    }
+}
+
 /// A Text write of null is the block data CBOR null, and a replay reads null
 /// exactly while every head of the history writes null.
 #[test]

@@ -6,8 +6,14 @@
 use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::Value as JsonValue;
 
-use super::{Filter, Requestable};
+use super::{split_update_input, Filter, InputOp, Requestable};
 use crate::document::DocumentMapping;
+
+/// An update's implicitly set fields, then its explicit ops by field.
+pub type UpdateSplit = (
+    RapidHashMap<String, JsonValue>,
+    RapidHashMap<String, InputOp>,
+);
 
 /// Type of mutation operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +76,8 @@ pub struct Mutation {
     pub alias: Option<String>,
     /// For CREATE: Array of documents to create (each is a field-value map)
     pub create_input: Vec<RapidHashMap<String, JsonValue>>,
-    /// For UPDATE: Fields to update (patch)
+    /// For UPDATE: Fields to update (patch), and explicit CRDT ops keyed by
+    /// op name; [`Mutation::split_update`] tells them apart.
     pub update_input: RapidHashMap<String, JsonValue>,
     /// For UPDATE/DELETE: Specific document IDs to target
     pub doc_ids: Option<Vec<String>>,
@@ -211,6 +218,26 @@ impl Mutation {
     pub fn with_update_input(mut self, input: RapidHashMap<String, JsonValue>) -> Self {
         self.update_input = input;
         self
+    }
+
+    /// This update's implicitly set fields and its explicit ops. A key that
+    /// names a field of `collection` is that field, never an op.
+    pub fn split_update(
+        &self,
+        collection: &schema::CollectionVersion,
+    ) -> crate::error::Result<UpdateSplit> {
+        split_update_input(&self.update_input, |key| {
+            collection.field_by_name(key).is_some()
+        })
+    }
+
+    /// Every field this update writes, through its input or an op.
+    pub fn update_fields(
+        &self,
+        collection: &schema::CollectionVersion,
+    ) -> crate::error::Result<rapidhash::RapidHashSet<String>> {
+        let (fields, ops) = self.split_update(collection)?;
+        Ok(fields.into_keys().chain(ops.into_keys()).collect())
     }
 
     /// Set document IDs to target.

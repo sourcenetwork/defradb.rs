@@ -16,11 +16,12 @@ use tracing;
 use crate::document::{document_to_plan_doc, DocumentMapping};
 use crate::error::{QueryError, Result};
 use crate::fetcher::DocFetcher;
-use crate::mapper::Filter;
+use crate::mapper::{Filter, InputOp};
 use crate::mutator::{DocMutator, UpdateResult};
 use crate::planner::{Doc, PlanNode};
 
 use super::create_conversions::{json_to_normal_value_with_kind_and_time, normal_value_to_json};
+use super::update_ops;
 use chrono::{DateTime, FixedOffset};
 
 fn is_known_prepared_update_target(
@@ -36,6 +37,8 @@ fn is_known_prepared_update_target(
 pub struct UpdateInput {
     /// Field values to update, keyed by field name
     pub fields: RapidHashMap<String, JsonValue>,
+    /// Explicit CRDT ops, keyed by field
+    pub ops: RapidHashMap<String, InputOp>,
 }
 
 impl UpdateInput {
@@ -43,7 +46,13 @@ impl UpdateInput {
     pub fn new() -> Self {
         Self {
             fields: RapidHashMap::new(),
+            ops: RapidHashMap::new(),
         }
+    }
+
+    /// Every field this update writes, through a value or an op.
+    pub fn field_names(&self) -> RapidHashSet<String> {
+        self.fields.keys().chain(self.ops.keys()).cloned().collect()
     }
 
     /// Add a field value to update.
@@ -76,29 +85,21 @@ impl UpdateInput {
         for (field_name, value) in &self.fields {
             let field_def =
                 collection.and_then(|c| c.fields.iter().find(|f| f.name == *field_name));
-            let field_kind = field_def.map(|f| &f.kind);
-            let normal_value =
-                json_to_normal_value_with_kind_and_time(value, field_kind, request_time)?;
+            let normal_value = json_to_normal_value_with_kind_and_time(
+                value,
+                field_def.map(|f| &f.kind),
+                request_time,
+            )?;
+            let op = update_ops::implicit_op(field_def, normal_value)?;
+            update_ops::write_op(doc, field_name, field_def, op)?;
+            modified_count += 1;
+        }
 
-            if let Some((fd, crdt)) =
-                field_def.and_then(|fd| crdt::field_crdt(fd.crdt_type).map(|crdt| (fd, crdt)))
-            {
-                let op = crdt
-                    .op(normal_value, false)
-                    .map_err(|e| QueryError::execution(e.to_string()))?;
-                let value = crdt
-                    .apply(fd, doc.get(field_name), &op)
-                    .map_err(|e| QueryError::execution(e.to_string()))?;
-                doc.set(field_name.clone(), value)
-                    .map_err(|e| QueryError::execution(e.to_string()))?;
-                doc.edit(field_name.clone(), op)
-                    .map_err(|e| QueryError::execution(e.to_string()))?;
-                modified_count += 1;
-                continue;
-            }
-
-            doc.set(field_name.clone(), normal_value)
-                .map_err(|e| QueryError::execution(e.to_string()))?;
+        for (field_name, op) in &self.ops {
+            let field_def =
+                collection.and_then(|c| c.fields.iter().find(|f| f.name == *field_name));
+            let op = update_ops::named_op(field_name, field_def, op, request_time)?;
+            update_ops::write_op(doc, field_name, field_def, op)?;
             modified_count += 1;
         }
 
@@ -318,7 +319,7 @@ impl UpdateNode {
             return None;
         }
         let collection = self.collection.as_deref()?;
-        let patch: RapidHashSet<String> = self.input.fields.keys().cloned().collect();
+        let patch: RapidHashSet<String> = self.input.field_names();
         self.mutator
             .update_run()
             .planned(collection, &patch, self.filter.as_ref())
@@ -449,8 +450,7 @@ impl PlanNode for UpdateNode {
                     )?;
 
                     // Collect the modified field names for block creation
-                    let mut modified_fields: RapidHashSet<String> =
-                        self.input.fields.keys().cloned().collect();
+                    let mut modified_fields: RapidHashSet<String> = self.input.field_names();
 
                     if let Some(embeddings) = &self.prepared_embeddings {
                         let id = doc.id().map(ToString::to_string).unwrap_or_default();
@@ -628,6 +628,12 @@ impl PlanNode for UpdateNode {
         let mut input_obj = serde_json::Map::new();
         for (field_name, value) in &self.input.fields {
             input_obj.insert(field_name.clone(), value.clone());
+        }
+        for (field_name, op) in &self.input.ops {
+            input_obj.insert(
+                field_name.clone(),
+                serde_json::to_value(op).unwrap_or(JsonValue::Null),
+            );
         }
         obj.insert("input".to_string(), JsonValue::Object(input_obj));
 

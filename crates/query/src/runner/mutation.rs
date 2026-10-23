@@ -3,7 +3,7 @@
 use acp::{DocumentPermission, Identity};
 use chrono::{DateTime, FixedOffset, Utc};
 use identity::Did;
-use rapidhash::RapidHashMap;
+use rapidhash::{HashMapExt, RapidHashMap};
 use serde_json::{Map, Value as JsonValue};
 use std::sync::Arc;
 use web_time::Instant;
@@ -417,13 +417,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                 .filter(|id| !projected_ids.is_some_and(|ids| ids.contains(*id)))
                 .cloned()
                 .collect();
+            let (update_input, update_ops) = if mutation.mutation_type == MutationType::Update {
+                mutation.split_update(&collection)?
+            } else {
+                (mutation.update_input.clone(), RapidHashMap::new())
+            };
             let request = crate::access_hooks::WriteRequest {
                 identity: caller_identity.as_ref(),
                 collection: &collection,
                 kind: mutation.mutation_type,
                 doc_ids: &validation_ids,
                 create_input: &mutation.create_input,
-                update_input: &mutation.update_input,
+                update_input: &update_input,
+                update_ops: &update_ops,
             };
             if strict_attempt {
                 let exact_request = serde_json::to_vec(&(
@@ -434,7 +440,8 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                     mutation.mutation_type.as_prefix(),
                     &validation_ids,
                     &mutation.create_input,
-                    &mutation.update_input,
+                    &update_input,
+                    &update_ops,
                 ))
                 .map_err(|error| QueryError::execution(error.to_string()))?;
                 let prepared_request = crate::prepared::PreparedInputRequest::new(

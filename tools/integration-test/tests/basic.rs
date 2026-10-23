@@ -8,6 +8,8 @@ mod collection_management;
 mod crdt_field_blocks;
 #[path = "basic/crdt_fields.rs"]
 mod crdt_fields;
+#[path = "basic/crdt_input_ops.rs"]
+mod crdt_input_ops;
 #[path = "basic/cross_runtime_cids.rs"]
 mod cross_runtime_cids;
 #[path = "basic/cross_runtime_queries.rs"]

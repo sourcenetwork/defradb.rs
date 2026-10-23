@@ -4,6 +4,7 @@ mod create;
 mod create_conversions;
 mod delete;
 mod update;
+mod update_ops;
 mod upsert;
 
 pub use create::{CreateInput, CreateNode};
