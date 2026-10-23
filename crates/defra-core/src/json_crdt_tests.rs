@@ -182,6 +182,27 @@ fn a_type_clash_resolves_by_the_same_order_and_the_loser_takes_its_children() {
 }
 
 #[test]
+fn a_losing_block_that_sets_several_paths_below_is_one_conflict() {
+    let mut sim = Sim::new();
+    let root = create(&mut sim, json!({}));
+    let other = sim.write(&[root], vec![set(&["b"], json!(1))]);
+    let value = sim.write(&[other], vec![set(&["a"], json!(5))]);
+    let child = sim.write(
+        &[root],
+        vec![set(&["a", "c"], json!(2)), set(&["a", "d"], json!(3))],
+    );
+    let merged = sim.merge(&[root, other, value, child]);
+    assert_eq!(
+        view(&merged),
+        view(&sim.merge(&[root, child, other, value]))
+    );
+    assert_eq!(merged.value(), json!({"a": 5, "b": 1}));
+    let conflicts = merged.conflicts();
+    assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+    assert_eq!(conflicts[0].block, sim.blocks[child].id);
+}
+
+#[test]
 fn an_edit_that_saw_the_one_above_it_is_not_a_conflict() {
     let mut sim = Sim::new();
     let root = create(&mut sim, json!({}));

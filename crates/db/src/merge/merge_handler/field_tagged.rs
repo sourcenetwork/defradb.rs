@@ -22,8 +22,8 @@ where
     B: blockstore::Blockstore,
 {
     /// Merge the block `cid` of the tagged `field` into its stored state. A
-    /// block among the field's heads, or whose operation the state records,
-    /// changes nothing. The operand lands on the field's part of the document
+    /// block published before, among the field's heads, or whose operation
+    /// the state records, changes nothing. The operand lands on the field's part of the document
     /// value; a value on another schema version is rewritten whole by the
     /// block's composite, which takes the operand. A tagged block always
     /// merges through its composite, never standalone.
@@ -73,7 +73,17 @@ where
         let current = |state: Option<&crdt::stored::StoredField>| {
             state.and_then(|state| tagged.materialize(state.part()))
         };
-        if heads.contains(cid) || tags.iter().any(|tag| tag.id == id) {
+        // A block merged before keeps its published priority entry after a
+        // later block drops its tags from the state. Validated, as in
+        // `publish`, so two first deliveries of one block never both apply.
+        let entry = storage::keys::HeadstorePriorityKey::new(doc_short_id, delta.priority, *cid);
+        let published = headstore
+            .get(&entry.bytes())
+            .await
+            .map_err(|e| MergeError::Storage(e.to_string()))?
+            .as_deref()
+            == Some(crate::block::heads::document::PUBLISHED);
+        if published || heads.contains(cid) || tags.iter().any(|tag| tag.id == id) {
             return Ok(FieldMergeResult {
                 applied: false,
                 value: current(state.as_ref()),

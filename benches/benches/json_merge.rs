@@ -7,9 +7,10 @@
 //! A field of `KEYS` keys, each written by one block of a linear history, so
 //! its frontier holds one entry per key. `fast_path` is a block whose parents
 //! are the field's heads: one key set over the frontier, every entry in its
-//! past. `concurrent` is the same edit from a block that has not seen the
-//! last write, so the merge asks of each entry whether it is in the block's
-//! past. `read` materializes the field, and `conflicts` lists its losers;
+//! past. `concurrent` sets the last key from a block that has not seen its
+//! write, so the merge asks of each entry whether it is in the block's past.
+//! `read` materializes the field; `conflicts` lists the losers once a block
+//! that saw none of the history has set every key, one loser per key;
 //! `replay` rebuilds the frontier from the whole DAG, as a time-travel read
 //! does.
 
@@ -65,6 +66,10 @@ fn merge(c: &mut Criterion) {
             })
         });
         let last = blocks.last().map(|b| b.cid.clone()).unwrap_or_default();
+        let unseen = vec![JsonOp {
+            path: vec![format!("k{}", keys - 1)],
+            edit: JsonEdit::Set(json!("edited")),
+        }];
         let past: BTreeSet<Vec<u8>> = blocks
             .iter()
             .map(|b| b.cid.clone())
@@ -73,14 +78,23 @@ fn merge(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("concurrent", keys), &frontier, |b, f| {
             b.iter(|| {
                 let mut f = f.clone();
-                f.compose(f.delta(black_box(&edit), &id, keys as u64, |e| past.contains(e)));
+                f.compose(f.delta(black_box(&unseen), &id, keys as u64, |e| past.contains(e)));
                 black_box(f)
             })
         });
         group.bench_with_input(BenchmarkId::new("read", keys), &frontier, |b, f| {
             b.iter(|| black_box(f.materialize()))
         });
-        group.bench_with_input(BenchmarkId::new("conflicts", keys), &frontier, |b, f| {
+        let rival: Vec<JsonOp> = (0..keys)
+            .map(|n| JsonOp {
+                path: vec![format!("k{n}")],
+                edit: JsonEdit::Set(json!("rival")),
+            })
+            .collect();
+        let mut contested = frontier.clone();
+        contested.compose(contested.delta(&rival, &[0xee; 32], 1, |_| false));
+        assert!(contested.conflicts().len() >= keys - 1);
+        group.bench_with_input(BenchmarkId::new("conflicts", keys), &contested, |b, f| {
             b.iter(|| black_box(f.conflicts()))
         });
         group.bench_function(BenchmarkId::new("replay", keys), |b| {

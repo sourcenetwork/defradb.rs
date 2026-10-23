@@ -6,7 +6,11 @@ use crate::txn::TransactionRegistry;
 use identity::Did;
 use serde_json::{json, Map, Value};
 
-impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
+impl<F, R> QueryRunner<F, R>
+where
+    F: DocFetcher + 'static,
+    R: TransactionRegistry,
+{
     /// `_jsonConflicts(collection, docID, field)`: the edits each path of a
     /// Json field's winner beat, for a document the caller can read.
     pub(crate) async fn execute_json_conflicts_query(
@@ -32,7 +36,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 &self.context(),
                 self.acp.as_ref(),
                 self.acp_registration_projection.as_deref(),
-                &acp::Identity::from(caller),
+                &acp::Identity::from(caller.clone()),
                 &policy.id,
                 &policy.resource_name,
                 &collection.collection_id,
@@ -44,6 +48,12 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
             if !allowed {
                 return Ok(Value::Array(Vec::new()));
             }
+        }
+        if !self
+            .app_may_read(caller.as_ref(), &collection, doc_id)
+            .await?
+        {
+            return Ok(Value::Array(Vec::new()));
         }
         let conflicts = fetcher
             .get_json_conflicts(&JsonConflictOptions {
