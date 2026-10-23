@@ -105,19 +105,27 @@ impl FieldCrdt for LwwField {
     }
 
     /// A block carries the register's state: its bytes are the state, and the
-    /// tie-break orders them exactly as every replica received them.
+    /// tie-break orders them exactly as every replica received them. Bytes
+    /// that are not one CBOR value are refused, whether or not they would win.
     fn block_state(
         &self,
         field: &FieldDescription,
         priority: u64,
         data: &[u8],
     ) -> Result<StoredField, FieldCrdtError> {
-        Ok(StoredField {
+        let state = StoredField {
             name: field.name.clone(),
             kind: ValueKind::Lww,
             priority,
             value: data.to_vec(),
-        })
+        };
+        if self.materialize(state.part()).is_none() {
+            return Err(FieldCrdtError::Decode {
+                field: field.name.clone(),
+                message: "invalid LWW state".into(),
+            });
+        }
+        Ok(state)
     }
 
     fn materialize(&self, state: Part<'_>) -> Option<NormalValue> {
