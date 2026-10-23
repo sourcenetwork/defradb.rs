@@ -47,6 +47,6 @@ pub use collections::{
     CollectionDocIdsResponse,
 };
 pub use documents::{
-    create_document, delete_document, delete_documents_with_filter, get_document, update_document,
+    add_document, delete_document, delete_documents_with_filter, get_document, update_document,
     update_documents_with_filter, DocumentsResult,
 };
