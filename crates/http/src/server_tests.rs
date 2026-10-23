@@ -71,8 +71,8 @@ async fn trailing_slash_normalization_preserves_the_method() {
     let trailing = get(ServerConfig::default(), "/api/v0/schema/").await;
     assert_eq!(trailing, canonical);
 
-    let canonical = post(ServerConfig::default(), "/api/v0/schema", 0).await;
-    let trailing = post(ServerConfig::default(), "/api/v0/schema/", 0).await;
+    let canonical = post(ServerConfig::default(), "/api/v0/collections", 0).await;
+    let trailing = post(ServerConfig::default(), "/api/v0/collections/", 0).await;
     assert_eq!(trailing, canonical);
 }
 
@@ -143,26 +143,18 @@ fn backup_limited() -> ServerConfig {
 #[tokio::test]
 async fn schema_add_rejects_oversized_body() {
     assert_eq!(
-        post(schema_limited(), "/api/v1/schema", OVERSIZED).await,
+        post(schema_limited(), "/api/v1/collections", OVERSIZED).await,
         StatusCode::PAYLOAD_TOO_LARGE
     );
 }
 
 #[tokio::test]
 async fn schema_add_accepts_body_within_limit() {
-    let status = post(schema_limited(), "/api/v1/schema", LIMIT as usize).await;
+    let status = post(schema_limited(), "/api/v1/collections", LIMIT as usize).await;
     assert_ne!(
         status,
         StatusCode::PAYLOAD_TOO_LARGE,
         "a body at the limit must not be rejected as too large"
-    );
-}
-
-#[tokio::test]
-async fn collection_schema_add_rejects_oversized_body() {
-    assert_eq!(
-        post(schema_limited(), "/api/v1/collections", OVERSIZED).await,
-        StatusCode::PAYLOAD_TOO_LARGE
     );
 }
 
@@ -192,16 +184,6 @@ async fn collection_patch_is_not_bound_by_the_schema_limit() {
 /// `internal/db/collection.go:276`), so it is a schema request body.
 #[tokio::test]
 async fn view_add_rejects_oversized_body() {
-    assert_eq!(
-        post(schema_limited(), "/api/v1/views", OVERSIZED).await,
-        StatusCode::PAYLOAD_TOO_LARGE
-    );
-}
-
-/// `/view` is the Go-compatible mount of the same `add_view` handler, so it
-/// carries the same SDL body and must not be a bypass for the `/views` cap.
-#[tokio::test]
-async fn go_view_add_rejects_oversized_body() {
     assert_eq!(
         post(schema_limited(), "/api/v1/view", OVERSIZED).await,
         StatusCode::PAYLOAD_TOO_LARGE
@@ -246,7 +228,7 @@ async fn zero_means_unlimited() {
         max_body_size: 0,
         ..Default::default()
     };
-    let status = post(config, "/api/v1/schema", ABOVE_AXUM_DEFAULT).await;
+    let status = post(config, "/api/v1/collections", ABOVE_AXUM_DEFAULT).await;
     assert_ne!(
         status,
         StatusCode::PAYLOAD_TOO_LARGE,
@@ -308,7 +290,7 @@ async fn route_limit_survives_the_disabled_global_limit() {
         ..Default::default()
     };
     assert_eq!(
-        post(config, "/api/v1/schema", OVERSIZED).await,
+        post(config, "/api/v1/collections", OVERSIZED).await,
         StatusCode::PAYLOAD_TOO_LARGE
     );
 }
@@ -322,7 +304,7 @@ async fn route_limit_never_exceeds_the_global_limit() {
         ..Default::default()
     };
     assert_eq!(
-        post(config, "/api/v1/schema", OVERSIZED).await,
+        post(config, "/api/v1/collections", OVERSIZED).await,
         StatusCode::PAYLOAD_TOO_LARGE,
         "global body limit must still bound a looser per-route limit"
     );

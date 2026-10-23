@@ -17,7 +17,7 @@ use schema::CollectionVersion;
 
 /// Add a schema (Go-compatible format).
 ///
-/// POST /api/v0/schema
+/// POST /api/v0/collections
 ///
 /// Body: SDL text (text/plain)
 /// Returns: Array of created CollectionVersions

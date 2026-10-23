@@ -32,7 +32,7 @@ pub async fn endpoint_id() -> String {
 }
 
 pub async fn add_schema(sdl: &str, token: Option<&str>) {
-    http("POST", "/api/v0/schema", "text/plain", sdl, token).await;
+    http("POST", "/api/v0/collections", "text/plain", sdl, token).await;
 }
 
 /// A node with document ACP only takes pushes for collections it follows.

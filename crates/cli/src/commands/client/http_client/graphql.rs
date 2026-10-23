@@ -34,7 +34,7 @@ impl HttpClient {
     }
 
     pub async fn schema(&self) -> Result<String> {
-        let url = format!("{}/api/v0/schema", self.base_url);
+        let url = format!("{}/api/v0/collections", self.base_url);
         self.request_text("GET", &url, None).await
     }
 
