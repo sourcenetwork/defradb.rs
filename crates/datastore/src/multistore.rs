@@ -20,7 +20,7 @@ use storage::namespace::Namespace;
 /// it back into the transaction takes `self`; only the holder of the one
 /// remaining reference gets either ([`Arc::get_mut`], [`Arc::try_unwrap`]), so
 /// a view still open at that moment is an error, never a wait. Each settles
-/// the queue first, so a savepoint's rollback takes back exactly what was
+/// the queue first, so a savepoint's discard takes back exactly what was
 /// registered after it, and so does a drop, so a transaction that ends with
 /// its last view still runs the abort callbacks registered through views.
 pub struct SharedTxn {

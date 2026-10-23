@@ -179,7 +179,7 @@ fn writable_transaction_observes_its_own_migration_registration() {
             error.contains("lens migration failed"),
             "the read ignored its transaction's migration: {error}"
         );
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }

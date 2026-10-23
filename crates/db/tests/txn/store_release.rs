@@ -13,7 +13,7 @@ use storage::RegolithStore;
 
 enum Finish {
     Commit,
-    Rollback,
+    Discard,
     Abandon,
 }
 
@@ -33,7 +33,7 @@ async fn assert_store_released(name: &str, finish: Finish) {
     let handle = registry.begin(false).await.unwrap();
     match finish {
         Finish::Commit => registry.commit(&handle).await.unwrap(),
-        Finish::Rollback => registry.rollback(&handle).await.unwrap(),
+        Finish::Discard => registry.discard(&handle).await.unwrap(),
         Finish::Abandon => registry.abandon(&handle),
     }
 
@@ -59,9 +59,9 @@ fn commit_releases_the_store() {
 }
 
 #[test]
-fn rollback_releases_the_store() {
+fn discard_releases_the_store() {
     workers::block_on(async {
-        assert_store_released("txn-store-release-rollback", Finish::Rollback).await;
+        assert_store_released("txn-store-release-discard", Finish::Discard).await;
     })
     .unwrap()
 }

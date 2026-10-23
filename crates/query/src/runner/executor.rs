@@ -248,19 +248,19 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         self.registry.commit_as(context, handle).await
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.rollback(handle).await
+        self.registry.discard(handle).await
     }
 
-    async fn rollback_txn_as(
+    async fn discard_txn_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.registry.rollback_as(context, handle).await
+        self.registry.discard_as(context, handle).await
     }
 
     fn abandon_txn(&self, handle: &TransactionHandle) {

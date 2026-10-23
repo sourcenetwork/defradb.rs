@@ -40,7 +40,7 @@ fn transaction_ownership_rejects_foreign_access_without_consuming_handle() {
                         Err(TransactionError::NotFound(_))
                     ));
                     assert!(matches!(
-                        registry.rollback(&handle).await,
+                        registry.discard(&handle).await,
                         Err(TransactionError::NotFound(_))
                     ));
                 })

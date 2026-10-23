@@ -20,7 +20,7 @@ impl EmbeddedNode {
     /// let txn = node.begin_transaction_guard(false).await?;
     /// let response = txn.execute("mutation { add_Users(input: {name: \"Alice\"}) { _docID } }").await;
     /// if response.has_errors() {
-    ///     txn.rollback().await
+    ///     txn.discard().await
     /// } else {
     ///     txn.commit().await
     /// }
@@ -61,7 +61,7 @@ impl EmbeddedTransaction<'_> {
     }
 
     /// Roll back the writes and consume the owning transaction.
-    pub async fn rollback(self) -> Result<(), TransactionError> {
-        self.guard.rollback().await
+    pub async fn discard(self) -> Result<(), TransactionError> {
+        self.guard.discard().await
     }
 }

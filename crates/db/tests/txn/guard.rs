@@ -120,7 +120,7 @@ enum PauseAt {
     Begin,
     Execute,
     Commit,
-    Rollback,
+    Discard,
     AfterCommit,
 }
 
@@ -162,7 +162,7 @@ fn cancellation_while_finalization_waits_for_an_active_request_releases_the_tran
                 if commit {
                     guard.commit().await
                 } else {
-                    guard.rollback().await
+                    guard.discard().await
                 }
             });
             assert!(futures::poll!(&mut finalize).is_pending());
@@ -215,9 +215,9 @@ impl QueryExecutor for PausedExecutor {
         Ok(())
     }
 
-    async fn rollback_txn(&self, handle: &TransactionHandle) -> Result<(), TransactionError> {
-        self.pause(PauseAt::Rollback).await;
-        self.inner.rollback_txn(handle).await
+    async fn discard_txn(&self, handle: &TransactionHandle) -> Result<(), TransactionError> {
+        self.pause(PauseAt::Discard).await;
+        self.inner.discard_txn(handle).await
     }
 
     fn abandon_txn(&self, handle: &TransactionHandle) {
@@ -236,7 +236,7 @@ fn cancellation_at_each_guard_boundary_discards_uncommitted_state() {
             PauseAt::Begin,
             PauseAt::Execute,
             PauseAt::Commit,
-            PauseAt::Rollback,
+            PauseAt::Discard,
         ] {
             let fixture = Fixture::new().await;
             let executor = PausedExecutor {
@@ -270,8 +270,8 @@ fn cancellation_at_each_guard_boundary_discards_uncommitted_state() {
                     PauseAt::Commit => {
                         guard.commit().await.unwrap();
                     }
-                    PauseAt::Rollback => {
-                        guard.rollback().await.unwrap();
+                    PauseAt::Discard => {
+                        guard.discard().await.unwrap();
                     }
                     _ => unreachable!(),
                 }
@@ -305,7 +305,7 @@ fn cancellation_after_durable_commit_cannot_undo_it_or_discard_another_transacti
         let other = fixture.runner.begin_txn(false).await.unwrap();
         drop(commit);
         assert_eq!(fixture.registry.active_transaction_count().unwrap(), 1);
-        fixture.runner.rollback_txn(&other).await.unwrap();
+        fixture.runner.discard_txn(&other).await.unwrap();
         let response = fixture.runner.execute(read()).await;
         assert!(!response.has_errors(), "{:?}", response.errors);
         assert_eq!(

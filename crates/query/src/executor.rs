@@ -361,7 +361,7 @@ pub struct ErrorLocation {
 ///
 /// 1. Call `begin_txn()` to start a new transaction
 /// 2. Execute queries with `execute_in_txn()` using the returned transaction ID
-/// 3. Call `commit_txn()` or `rollback_txn()` to end the transaction
+/// 3. Call `commit_txn()` or `discard_txn()` to end the transaction
 ///
 /// # Example
 ///
@@ -386,7 +386,7 @@ pub struct ErrorLocation {
 ///     for query in queries {
 ///         let resp = executor.execute_in_txn(query, &handle).await;
 ///         if resp.has_errors() {
-///             executor.rollback_txn_as(&context, &handle).await.ok();
+///             executor.discard_txn_as(&context, &handle).await.ok();
 ///             return Err(TransactionError::execution("query failed"));
 ///         }
 ///         responses.push(resp);
@@ -453,7 +453,7 @@ pub trait QueryExecutor: MaybeSendSync {
     /// Begin a new transaction.
     ///
     /// Returns a transaction handle that can be used with `execute_in_txn()`.
-    /// The transaction remains active until `commit_txn()` or `rollback_txn()` is called.
+    /// The transaction remains active until `commit_txn()` or `discard_txn()` is called.
     ///
     /// # Arguments
     /// * `readonly` - If true, the transaction cannot perform write operations
@@ -495,23 +495,23 @@ pub trait QueryExecutor: MaybeSendSync {
         context.mirror(self.commit_txn(handle)).await
     }
 
-    /// Rollback a transaction.
+    /// Discard a transaction.
     ///
     /// All operations performed within the transaction are discarded.
-    /// After rollback, the transaction handle is no longer valid.
-    async fn rollback_txn(
+    /// After discard, the transaction handle is no longer valid.
+    async fn discard_txn(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError>;
 
-    /// [`Self::rollback_txn`] for the request `context` serves. The default
-    /// runs `rollback_txn` inside [`RequestContext::mirror`].
-    async fn rollback_txn_as(
+    /// [`Self::discard_txn`] for the request `context` serves. The default
+    /// runs `discard_txn` inside [`RequestContext::mirror`].
+    async fn discard_txn_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        context.mirror(self.rollback_txn(handle)).await
+        context.mirror(self.discard_txn(handle)).await
     }
 
     /// Remove an abandoned transaction without committing or spawning cleanup.
