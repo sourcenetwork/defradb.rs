@@ -23,6 +23,7 @@ pub enum ValueKind {
     Float32 = 2,
     Float64 = 3,
     Text = 4,
+    Json = 5,
 }
 
 impl ValueKind {
@@ -33,6 +34,7 @@ impl ValueKind {
             2 => ValueKind::Float32,
             3 => ValueKind::Float64,
             4 => ValueKind::Text,
+            5 => ValueKind::Json,
             _ => return None,
         })
     }
@@ -206,9 +208,26 @@ impl StoredDocument {
 
     /// Apply one operand in commit order: each part merges into the part of
     /// the same ID, or into its kind's starting state when the value lacks
-    /// it. Callers put a fresh value instead when the schema version changes;
-    /// IDs and names cannot be repurposed.
+    /// it. The result is a stored value, so a tagged part settles
+    /// ([`TaggedCrdt::settle`](crate::field::TaggedCrdt::settle)). Callers
+    /// put a fresh value instead when the schema version changes; IDs and
+    /// names cannot be repurposed.
     pub fn apply(&mut self, operand: Self) -> Option<()> {
+        let ids: Vec<u32> = operand.fields.keys().copied().collect();
+        self.fold(operand)?;
+        for id in ids {
+            let part = self.fields.get_mut(&id)?;
+            if let Some(tagged) = part_crdt(part.kind).tagged() {
+                tagged.settle(part)?;
+            }
+        }
+        Some(())
+    }
+
+    /// Fold a later operand into this one, leaving an operand for a value
+    /// not known yet: as [`apply`](Self::apply), but a tagged part keeps what
+    /// it removes from that value.
+    pub fn fold(&mut self, operand: Self) -> Option<()> {
         for (id, incoming) in operand.fields {
             if !self.fields.contains_key(&id)
                 && self

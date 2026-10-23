@@ -15,6 +15,7 @@ mod head_failures;
 mod head_provider;
 mod head_publication;
 mod immutable_block;
+mod json_merge;
 mod merge_dek_misses;
 mod merge_handler_composite_persist;
 mod merge_handler_se_merge;

@@ -264,6 +264,15 @@ impl<S: Store + 'static> DocFetcher for DbDocFetcher<S> {
             .map_err(|e| query::error::QueryError::execution(e.to_string()))
     }
 
+    async fn get_json_conflicts(
+        &self,
+        options: &query::fetcher::JsonConflictOptions,
+    ) -> query::error::Result<Vec<query::fetcher::JsonConflict>> {
+        crate::read::json_conflicts::read(&*self.shared_txn()?, options)
+            .await
+            .map_err(|e| query::error::QueryError::execution(e.to_string()))
+    }
+
     async fn get_commits(
         &self,
         options: &CommitsQueryOptions,

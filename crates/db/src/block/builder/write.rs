@@ -863,7 +863,7 @@ fn encrypt_retry_delta(
 /// A fresh nonce for an update of an operation-based field, so equal
 /// operations stay distinct blocks. Drawn once per exact block input and
 /// memoized, so an attempt that runs again writes the same block.
-fn fresh_nonce<I>(
+pub(crate) fn fresh_nonce<I>(
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
     block_input: I,
 ) -> Result<i64, BuildError>

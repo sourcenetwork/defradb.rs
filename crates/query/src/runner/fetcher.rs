@@ -250,6 +250,13 @@ impl DocFetcher for FetcherWrapper {
         self.get_fetcher().get_document_arrivals(options).await
     }
 
+    async fn get_json_conflicts(
+        &self,
+        options: &crate::fetcher::JsonConflictOptions,
+    ) -> Result<Vec<crate::fetcher::JsonConflict>> {
+        self.get_fetcher().get_json_conflicts(options).await
+    }
+
     async fn get_commits(&self, options: &CommitsQueryOptions) -> Result<Vec<document::CommitRow>> {
         self.get_fetcher().get_commits(options).await
     }

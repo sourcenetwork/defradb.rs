@@ -544,3 +544,131 @@ fn text_parts_replace_in_commit_order_and_obey_engine_contracts() {
         Some(NormalValue::String("abc".into()))
     );
 }
+
+/// A Json part on field 7: entries and removes drawn from a few paths and
+/// blocks, so operands overlap, remove each other's entries and re-add them.
+fn json_part(
+) -> impl regolith::testing::proptest::strategy::Strategy<Value = StoredDocument> + Clone {
+    use defra_core::json_crdt::{Entry, Frontier, JsonEdit};
+    use regolith::testing::proptest::prelude::*;
+    let paths = || {
+        prop_oneof![
+            Just(vec![]),
+            Just(vec!["a".to_owned()]),
+            Just(vec!["a".to_owned(), "b".to_owned()]),
+            Just(vec!["c".to_owned()]),
+        ]
+    };
+    let entry = (paths(), 0u8..4, 0u8..3).prop_map(|(path, block, edit)| Entry {
+        path,
+        block: vec![block],
+        priority: u64::from(block),
+        edit: match edit {
+            0 => JsonEdit::Set(serde_json::json!(block)),
+            1 => JsonEdit::Map,
+            _ => JsonEdit::Delete,
+        },
+        seen: vec![vec![block.saturating_sub(1)]],
+    });
+    let remove = (paths(), 0u8..4).prop_map(|(path, block)| (path, vec![block]));
+    (
+        regolith::testing::proptest::collection::vec(remove, 0..3),
+        regolith::testing::proptest::collection::vec(entry, 0..3),
+    )
+        .prop_map(|(removes, entries)| StoredDocument {
+            fields: [(
+                7,
+                StoredField {
+                    name: "meta".to_owned(),
+                    kind: ValueKind::Json,
+                    priority: 1,
+                    value: Frontier { removes, entries }.encode().unwrap(),
+                },
+            )]
+            .into(),
+        })
+}
+
+#[test]
+fn json_parts_compose_exactly_and_touch_only_their_field() {
+    use regolith::testing::proptest::strategy::{Just, Strategy};
+    let checked = regolith::testing::check_merge_operator(
+        &DefraMergeOperator,
+        Just(b"doc".to_vec()),
+        json_part().prop_map(|value| {
+            let mut settled = StoredDocument::default();
+            settled.apply(value).unwrap();
+            settled.encode().unwrap()
+        }),
+        json_part().prop_map(|value| document_parts(&value).unwrap()),
+    )
+    .unwrap();
+    assert!(checked.folds > 0);
+    let checked = regolith::testing::check_touches(
+        &DefraMergeOperator,
+        Just(b"doc".to_vec()),
+        json_part().prop_map(|value| document_parts(&value).unwrap()),
+        regolith::testing::proptest::collection::vec(5u32..9, 0..3),
+    )
+    .unwrap();
+    assert!(checked.folds > 0);
+}
+
+/// `Collection::put_document_value` rewrites a whole document value on a
+/// base it read with `get_parts(key, &[])`, which validates nothing. A blind
+/// Json operand that commits in between is still not lost: the put writes the
+/// key, a newer version of a written key conflicts at commit, and the retry
+/// reads the merged value.
+#[test]
+fn a_whole_document_put_conflicts_with_a_json_operand_committed_after_its_read() {
+    use defra_core::json_crdt::{Entry, Frontier, JsonEdit};
+    workers::block_on(async {
+        let json = |block: u8| StoredDocument {
+            fields: [(
+                7,
+                StoredField {
+                    name: "meta".to_owned(),
+                    kind: ValueKind::Json,
+                    priority: u64::from(block),
+                    value: Frontier {
+                        removes: Vec::new(),
+                        entries: vec![Entry {
+                            path: vec![format!("k{block}")],
+                            block: vec![block],
+                            priority: u64::from(block),
+                            edit: JsonEdit::Set(serde_json::json!(block)),
+                            seen: Vec::new(),
+                        }],
+                    }
+                    .encode()
+                    .unwrap(),
+                },
+            )]
+            .into(),
+        };
+        let store = RegolithStore::in_memory().unwrap();
+        let mut seed = store.new_txn(false).await.unwrap();
+        seed.set(b"doc", &json(1).encode().unwrap()).await.unwrap();
+        seed.commit().await.unwrap();
+
+        let mut put = store.new_txn(false).await.unwrap();
+        let base = put.get_parts(b"doc", &[]).await.unwrap().unwrap();
+        let mut merge = store.new_txn(false).await.unwrap();
+        merge
+            .merge(b"doc", &document_parts(&json(2)).unwrap())
+            .await
+            .unwrap();
+        merge.commit().await.unwrap();
+        let mut whole = StoredDocument::decode(&base).unwrap();
+        whole.fields.extend(field(1, 2, NormalValue::Int(5)).fields);
+        put.set(b"doc", &whole.encode().unwrap()).await.unwrap();
+        assert!(put.commit().await.is_err(), "the stale put must conflict");
+
+        let reader = store.new_txn(true).await.unwrap();
+        let stored = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap()).unwrap();
+        let frontier = Frontier::decode(&stored.fields[&7].value).unwrap();
+        assert_eq!(frontier.entries.len(), 2, "the operand survives");
+        assert!(!stored.fields.contains_key(&1));
+    })
+    .unwrap()
+}

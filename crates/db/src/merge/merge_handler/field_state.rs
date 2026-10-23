@@ -219,6 +219,7 @@ where
                 raw_value: Some(state.value),
             }),
             deferred: false,
+            op: None,
         })
     }
 }

@@ -6,6 +6,7 @@ pub mod doc;
 pub(crate) mod index_count;
 pub(crate) mod index_stream;
 pub(crate) mod index_tiebreak;
+pub(crate) mod json_conflicts;
 pub mod lensed;
 pub mod seek;
 pub(crate) mod vector;

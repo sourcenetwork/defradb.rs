@@ -6,6 +6,12 @@
 //! names one of the collection's fields is always that field, as it is in Go,
 //! so a collection with a field named like an op writes that field and cannot
 //! use that op.
+//!
+//! On a Json field, `set: { meta: { a: { b: 1 } } }` sets each leaf at its
+//! path (`a.b`) and leaves every other key alone, and `delete: { meta: ["a",
+//! "b"] }` deletes one path, given as its keys; a list of such lists deletes
+//! each. A path is a list rather than a dotted string so that any key, dots
+//! included, is written as itself.
 
 use defra_core::TextOp;
 use rapidhash::{HashMapExt, RapidHashMap};
@@ -27,6 +33,8 @@ pub enum InputOp {
     Increment(JsonValue),
     /// Edit the field's characters, in positions of its current text.
     Text(Vec<TextOp>),
+    /// Delete these paths of a Json field.
+    JsonDelete(Vec<Vec<String>>),
 }
 
 /// Split an update input into its implicitly set fields and its explicit ops.
@@ -58,6 +66,7 @@ where
             let op = match key.as_str() {
                 "set" => InputOp::Set(arg.clone()),
                 "increment" => InputOp::Increment(arg.clone()),
+                "delete" if arg.is_array() => InputOp::JsonDelete(json_paths(field, arg)?),
                 op => InputOp::Text(text_ops(op, field, arg)?),
             };
             if ops.insert(field.clone(), op).is_some() {
@@ -75,6 +84,30 @@ pub(crate) fn two_ops(field: &str) -> QueryError {
     QueryError::parse(format!(
         "`{field}` is given more than one op; send one op per field in an update"
     ))
+}
+
+/// The paths a Json `delete` names: one list of keys, or a list of them.
+fn json_paths(field: &str, arg: &JsonValue) -> Result<Vec<Vec<String>>> {
+    let usage = || {
+        QueryError::parse(format!(
+            "`delete` on `{field}` takes a path as a list of keys, such as [\"a\", \"b\"], \
+             or a list of paths"
+        ))
+    };
+    let path = |value: &JsonValue| -> Result<Vec<String>> {
+        value
+            .as_array()
+            .ok_or_else(usage)?
+            .iter()
+            .map(|key| key.as_str().map(str::to_owned).ok_or_else(usage))
+            .collect()
+    };
+    let items = arg.as_array().ok_or_else(usage)?;
+    if !items.is_empty() && items.iter().all(JsonValue::is_array) {
+        items.iter().map(path).collect()
+    } else {
+        Ok(vec![path(arg)?])
+    }
 }
 
 fn text_ops(op: &str, field: &str, arg: &JsonValue) -> Result<Vec<TextOp>> {
@@ -190,6 +223,21 @@ mod tests {
         assert_eq!(ops["n"], InputOp::Increment(json!(1)));
         assert_eq!(fields.len(), 2);
         assert_eq!(ops.len(), 1);
+    }
+
+    #[test]
+    fn a_list_under_delete_names_json_paths() {
+        let (_, ops) =
+            split(json!({"delete": {"meta": ["a", "b.c"], "tags": [["x"], []]}})).unwrap();
+        assert_eq!(
+            ops["meta"],
+            InputOp::JsonDelete(vec![vec!["a".into(), "b.c".into()]])
+        );
+        assert_eq!(
+            ops["tags"],
+            InputOp::JsonDelete(vec![vec!["x".into()], vec![]])
+        );
+        assert!(split(json!({"delete": {"meta": ["a", 1]}})).is_err());
     }
 
     #[test]

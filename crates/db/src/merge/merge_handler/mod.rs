@@ -20,6 +20,7 @@ mod field;
 mod field_causal;
 mod field_ops;
 mod field_state;
+mod field_tagged;
 mod frame_source;
 pub mod hook;
 mod merge_keys;

@@ -16,6 +16,7 @@ defra-core = { path = "../defra-core" }
 document = { path = "../document" }
 rapidhash.workspace = true
 schema = { path = "../schema" }
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -44,6 +44,7 @@ where
                 value: None,
                 order: None,
                 deferred: true,
+                op: None,
             });
         }
         let applied_key =
@@ -99,6 +100,7 @@ where
             value,
             order: None,
             deferred: false,
+            op: None,
         })
     }
 
