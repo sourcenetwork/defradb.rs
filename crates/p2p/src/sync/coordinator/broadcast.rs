@@ -256,6 +256,13 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             let Some(peer_id) = Self::peer_id_for_replicator(rep) else {
                 continue;
             };
+            // Only a `@branchable` collection pushes collection heads.
+            if push.doc_id.is_empty()
+                && rep.ack_scope(&push.collection_id, true) != crate::AckScope::Collection
+            {
+                missing_documents += 1;
+                continue;
+            }
             if rep.is_filtered_for_collection(&push.collection_id) {
                 let Some(document) = push.document.as_ref() else {
                     missing_documents += 1;

@@ -98,6 +98,9 @@ RUNS=(
   "MC_RegisterDocOnce_Green.cfg RegisterDocOnce.tla GREEN" # racing registrations of one document: one owner, the winner owns it, one wins
   "MC_RegisterDocOnce_Red_NoValidation.cfg RegisterDocOnce.tla RED" # deciding scan not validated: two owners (INV_OneOwner)
   "MC_RegisterDocOnce_Red_Sentinel.cfg RegisterDocOnce.tla RED" # main before the fix: the identical sentinel write commits, two owners (INV_OneOwner)
+  "MC_ReplicationAckScope_Green.cfg ReplicationAckScope.tla GREEN" # push and read pick one ack scope: an acknowledged document reads acknowledged, a never-pushed one never does
+  "MC_ReplicationAckScope_Red_MainRule.cfg ReplicationAckScope.tla RED" # main before the fix: collection scope for a filtered replicator, its acks never read (INV_AckedReadsAcked)
+  "MC_ReplicationAckScope_Red_PushToFiltered.cfg ReplicationAckScope.tla RED" # collection heads pushed to a filtered replicator: it gets unmatched documents (INV_FilterRespected)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)
