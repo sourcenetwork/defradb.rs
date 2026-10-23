@@ -10,8 +10,8 @@ use std::sync::Arc;
 use storage::corekv::{OnCommit, Store};
 
 use super::helpers::{
-    ensure_collection_is_active, register_block_doc_id_mappings, register_created_doc,
-    write_branchable_collection_block, write_local_create, write_local_update,
+    ensure_collection_is_active, register_block_doc_id_mappings, write_branchable_collection_block,
+    write_local_update,
 };
 use crate::block::builder::DocStorageIdentity;
 use crate::block::builder::{write_delete_block_with_inputs, write_document_blocks_with_inputs};
@@ -20,6 +20,8 @@ use crate::database::DB;
 use crate::event::emission::register_update_event_callback;
 use crate::txn::held::Held;
 use crate::txn::{DbTxn, LentTxn};
+use crate::write::create::{self as pipeline, CreateStores};
+use crate::write::prepare::prepared_identity;
 use datastore::BasicTxn;
 use defra_core::RequestContext;
 
@@ -30,6 +32,9 @@ pub struct BatchMutator<S: Store + 'static> {
     acp_registration_projection: Arc<query::txn::AcpRegistrationProjection>,
     /// The run of its request this mutator's attempt is.
     update_run: query::update_parts::Run,
+    /// Creates this attempt has made: the ordinal that names a create.s
+    /// short ID in the memo.
+    creates: std::sync::atomic::AtomicU64,
 }
 
 impl<S: Store + 'static> BatchMutator<S> {
@@ -48,6 +53,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             txn: Held::none(),
             acp_registration_projection: query::txn::AcpRegistrationProjection::detached_shared(),
             update_run: query::update_parts::Run::First,
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -63,6 +69,7 @@ impl<S: Store + 'static> BatchMutator<S> {
             prepared_inputs,
             acp_registration_projection,
             update_run: query::update_parts::Run::First,
+            creates: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -272,6 +279,7 @@ impl<S: Store + 'static> storage::corekv::RetryAttemptFn for BatchRetryAttempt<S
                 prepared_inputs: self.prepared_inputs.clone(),
                 acp_registration_projection,
                 update_run: query::update_parts::Run::after(retry.previous_conflict().as_ref()),
+                creates: std::sync::atomic::AtomicU64::new(0),
             });
             let mutator: Arc<dyn DocMutator> = batch.clone();
             let fetcher_dyn: Arc<dyn query::fetcher::DocFetcher> = fetcher.clone();
@@ -366,128 +374,72 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
             .map_err(crate::error::commit_query_error)?;
         self.validate_collection_for_write(&collection).await?;
         ensure_collection_is_active(&self.db, collection_name, &collection)?;
-        let embedding_config = self.db.options().embedding_config();
-
-        let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
-        crate::search::embedding::set_embedding_from_inputs(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            true,
-            &RapidHashSet::default(),
-            &embedding_config,
-            &prepared_inputs,
-        )?;
 
         // No per-doc write guard for creates: the DocID is derived from the
         // genesis block inside the txn; the mapping duplicate check is the gate.
-
-        self.db
-            .validate_downsample_write(&datastore, &systemstore, &collection, &doc, None)
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
-        let short_id = collection.resolved_root_id();
-        let enc_config = context.encryption();
-        let sign_config = context.signing();
-
-        let identity = match crate::write::prepare::prepared_identity(&doc) {
-            Some(identity) => identity,
-            None => DocStorageIdentity::new(
-                short_id,
-                self.db
-                    .next_doc_short_id()
-                    .await
-                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?,
-            ),
+        let prepared_inputs = self.prepared_inputs.clone().unwrap_or_default();
+        pipeline::embed(&self.db, &collection, &mut doc, Some(&prepared_inputs)).await?;
+        // With a memo the batch runs as engine-retried attempts: the short ID
+        // is kept in the memo and keys are asked of it, so nothing remote runs
+        // inside an attempt and a retry finds the keys it already has. A batch
+        // over a lent transaction has no memo and no retry: it mints directly.
+        let identity = match (&self.prepared_inputs, prepared_identity(&doc)) {
+            (_, Some(identity)) => identity,
+            (Some(memo), None) => {
+                let ordinal = self
+                    .creates
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let identity =
+                    pipeline::memo_identity(&self.db, &collection, memo, ordinal).await?;
+                pipeline::seed_identity(&self.db, &mut doc, identity);
+                identity
+            }
+            (None, None) => {
+                let identity = pipeline::identity(&self.db, &collection, &doc).await?;
+                pipeline::prepare_keys(&self.db, &mut doc, identity, context).await?;
+                identity
+            }
         };
-        let doc_short_id = identity.doc_short_id;
-        {
+        let computed = pipeline::compute(
+            &collection,
+            &doc,
+            identity,
+            context,
+            self.prepared_inputs.as_ref(),
+        )?;
+
+        let created = {
             let (blockstore, headstore) = self.block_and_head_stores().await?;
-            crate::write::prepare::prepare_keys_with_stores(
+            pipeline::persist(
                 &self.db,
-                &mut doc,
-                identity,
-                None,
-                enc_config,
-                Some((&blockstore, &headstore)),
-                None,
-            )
-            .await?;
-        }
-
-        let (doc_id, doc_cid, doc_block, col_block_data) = {
-            let (blockstore, headstore) = self.block_and_head_stores().await?;
-
-            let block_result = write_document_blocks_with_inputs(
-                &blockstore,
-                &headstore,
-                &doc,
-                collection.schema(),
-                identity,
-                None,
-                enc_config,
-                sign_config,
-                context.batch_session(),
-                self.db.kms().as_ref(),
-                self.prepared_inputs.as_ref(),
-                None,
-            )
-            .await
-            .map_err(|error| {
-                error.into_query_error_in(&format!(
-                    "failed to write document blocks for create on collection {collection_name}"
-                ))
-            })?;
-
-            let doc_id = register_created_doc(
-                self.db.document_acp(),
-                context.creator(),
-                &systemstore,
-                &datastore,
-                &collection,
-                doc_short_id,
-                &block_result,
-            )
-            .await?;
-            self.register_created_doc_with_acp(context, &collection, doc_id.to_string())
-                .await?;
-            doc.set_id(doc_id.clone());
-
-            write_local_create(&datastore, &collection, &doc, doc_short_id, &index_manager).await?;
-
-            let col_block_data = write_branchable_collection_block(
-                &self.db,
+                &CreateStores {
+                    datastore: &datastore,
+                    systemstore: &systemstore,
+                    blockstore: &blockstore,
+                    headstore: &headstore,
+                },
                 collection_name,
                 &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                doc_short_id,
+                &index_manager,
+                &doc,
+                &computed,
                 context,
                 self.prepared_inputs.as_ref(),
             )
-            .await?;
-
-            (doc_id, block_result.cid, block_result.block, col_block_data)
+            .await?
         };
-
+        self.register_created_doc_with_acp(context, &collection, created.doc_id.to_string())
+            .await?;
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
-            doc_id.to_string(),
-            doc_cid,
-            doc_block.clone(),
-            col_block_data.clone(),
+            created.doc_id.to_string(),
+            created.cid,
+            created.block.clone(),
+            created.collection_block.clone(),
         )
         .await?;
-
-        doc.clear_write_preparation();
-        let mut result = CreateResult::with_commit(doc_id, doc, doc_cid, doc_block);
-        if let Some((col_cid, col_bytes)) = col_block_data {
-            result.broadcast_cid = Some(col_cid);
-            result.broadcast_block = Some(col_bytes);
-        }
-        Ok(result)
+        Ok(created.into_result())
     }
 
     async fn update(
