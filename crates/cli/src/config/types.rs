@@ -191,7 +191,7 @@ impl std::str::FromStr for TransportType {
 ///
 /// - `None`: No document-level access control (default)
 /// - `Local`: Local Zanzibar-based ACP
-/// - `Vera`: Remote Vera ACP (Cosmos SDK / Go verad)
+/// - `Vera`: Remote Vera ACP (Cosmos SDK / Go verad), named `remote` in Go
 /// - `VeraRs`: Native Vera ACP
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -201,7 +201,7 @@ pub enum AcpDocumentType {
     None,
     Local,
     #[cfg(feature = "vera")]
-    #[serde(alias = "sourcehub", alias = "source-hub")]
+    #[serde(alias = "sourcehub", alias = "source-hub", alias = "remote")]
     Vera,
     #[cfg(feature = "vera")]
     #[serde(rename = "verars", alias = "vera-rs")]
@@ -229,7 +229,7 @@ impl std::str::FromStr for AcpDocumentType {
             "none" | "" => Ok(AcpDocumentType::None),
             "local" => Ok(AcpDocumentType::Local),
             #[cfg(feature = "vera")]
-            "vera" | "sourcehub" => Ok(AcpDocumentType::Vera),
+            "vera" | "sourcehub" | "remote" => Ok(AcpDocumentType::Vera),
             #[cfg(feature = "vera")]
             "verars" => Ok(AcpDocumentType::VeraRs),
             _ => Err(Error::InvalidAcpType(s.to_string())),

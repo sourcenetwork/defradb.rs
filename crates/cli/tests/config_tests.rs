@@ -49,6 +49,7 @@ fn cli_with_defaults() -> Cli {
         development: None,
         acp_node_enable: None,
         acp_document_type: None,
+        remote_dac_address: None,
         command: Command::Version(VersionArgs {
             format: "text".to_string(),
             full: false,
@@ -237,6 +238,7 @@ const CONFIG_BACKED_GLOBAL_FLAGS: &[&str] = &[
     "development",
     "node-acp-enable",
     "document-acp-type",
+    "remote-dac-address",
 ];
 
 // `rootdir` selects the config file before Config exists, so it cannot be
