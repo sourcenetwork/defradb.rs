@@ -44,6 +44,7 @@ pub struct VectorIndex {
     metric: Metric,
     seed: u64,
     codes: Option<Arc<CodeCache>>,
+    shared: Option<Arc<CodeCache>>,
 }
 
 impl VectorIndex {
@@ -127,6 +128,7 @@ impl VectorIndex {
             diskann,
             metric,
             codes: None,
+            shared: None,
         })
     }
 
@@ -138,6 +140,15 @@ impl VectorIndex {
             self.codes = Some(caches.get(self.collection_short_id, self.desc.id));
         }
         self
+    }
+
+    /// Lets a DiskANN index's writes share this node's copy of its quantizer
+    /// rather than rebuild it from the stored codebooks on every transaction.
+    /// Any other index is unchanged.
+    pub fn share_quantizer(&mut self, caches: &CodeCaches) {
+        if self.vector.algorithm == VectorAlgorithm::DiskAnn {
+            self.shared = Some(caches.get(self.collection_short_id, self.desc.id));
+        }
     }
 
     pub fn vector_description(&self) -> &VectorIndexDescription {
@@ -200,9 +211,10 @@ impl VectorIndex {
             )?),
             VectorAlgorithm::DiskAnn => {
                 let engine = DiskAnn::try_new(store, self.metric, self.diskann, self.seed)?;
-                Engine::DiskAnn(match &self.codes {
-                    Some(codes) => engine.with_codes(codes.clone()),
-                    None => engine,
+                Engine::DiskAnn(match (&self.codes, &self.shared) {
+                    (Some(codes), _) => engine.with_codes(codes.clone()),
+                    (None, Some(shared)) => engine.with_shared_quantizer(shared.clone()),
+                    (None, None) => engine,
                 })
             }
         })

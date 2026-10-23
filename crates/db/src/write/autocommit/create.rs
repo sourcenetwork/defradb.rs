@@ -410,6 +410,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     attempt.collection_name
                 ))
             })?;
+            let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
 
             self.db
                 .validate_downsample_write(&datastore, &systemstore, &collection, doc, None)
@@ -807,6 +808,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                         "failed to create index manager: {error}"
                     ))
                 })?;
+                let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
                 let mut results = Vec::with_capacity(attempt.docs.len());
                 for ((mut doc, identity), computed) in attempt
                     .docs

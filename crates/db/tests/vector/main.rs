@@ -3,6 +3,7 @@
 mod diskann_engine;
 mod diskann_pending_cache;
 mod diskann_resident;
+mod diskann_shared_quantizer;
 mod diskann_streaming;
 mod diskann_write_cost;
 mod edge_selection;
