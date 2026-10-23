@@ -52,7 +52,7 @@ async fn field_block(blockstore: &NamespaceView, cid: &Cid) -> Block {
 fn update_without_config_inherits_encryption_from_previous_block() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(1, 1);
+        let identity = DocRef::new(1, 1);
 
         let mut doc = Document::new();
         doc.set("secret", NormalValue::String("classified".to_string()));
@@ -119,7 +119,7 @@ fn update_without_config_inherits_encryption_from_previous_block() {
 fn update_without_config_inherits_composite_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(2, 2);
+        let identity = DocRef::new(2, 2);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));
@@ -182,7 +182,7 @@ fn update_without_config_inherits_composite_encryption() {
 fn inherited_encryption_writes_no_new_encryption_block() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(4, 4);
+        let identity = DocRef::new(4, 4);
 
         let mut doc = Document::new();
         doc.set("secret", NormalValue::String("classified".to_string()));
@@ -246,7 +246,7 @@ fn inherited_encryption_writes_no_new_encryption_block() {
 fn explicit_config_on_update_overrides_inheritance() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(5, 5);
+        let identity = DocRef::new(5, 5);
 
         let mut doc = Document::new();
         doc.set("secret", NormalValue::String("classified".to_string()));
@@ -318,7 +318,7 @@ fn explicit_config_on_update_overrides_inheritance() {
 fn inheritance_is_per_field() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(6, 6);
+        let identity = DocRef::new(6, 6);
 
         let mut doc = Document::new();
         doc.set("secret", NormalValue::String("classified".to_string()));
@@ -397,7 +397,7 @@ fn inheritance_is_per_field() {
 fn field_added_by_update_inherits_document_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(7, 7);
+        let identity = DocRef::new(7, 7);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));
@@ -461,7 +461,7 @@ fn field_added_by_update_inherits_document_encryption() {
 fn update_of_unencrypted_document_stays_plaintext() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(3, 3);
+        let identity = DocRef::new(3, 3);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Bob".to_string()));
@@ -523,7 +523,7 @@ fn update_of_unencrypted_document_stays_plaintext() {
 fn delete_block_inherits_composite_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(8, 8);
+        let identity = DocRef::new(8, 8);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));
@@ -579,7 +579,7 @@ fn delete_block_inherits_composite_encryption() {
 fn field_added_to_field_encrypted_document_stays_plaintext() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(9, 9);
+        let identity = DocRef::new(9, 9);
 
         let mut doc = Document::new();
         doc.set("secret", NormalValue::String("classified".to_string()));
@@ -638,7 +638,7 @@ fn field_added_to_field_encrypted_document_stays_plaintext() {
 fn field_added_to_unencrypted_document_stays_plaintext() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(10, 10);
+        let identity = DocRef::new(10, 10);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));
@@ -694,7 +694,7 @@ fn field_added_to_unencrypted_document_stays_plaintext() {
 fn document_policy_covers_field_whose_history_predates_encryption() {
     workers::block_on(async {
         let (blockstore, headstore) = stores().await;
-        let identity = DocStorageIdentity::new(11, 11);
+        let identity = DocRef::new(11, 11);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));
@@ -794,7 +794,7 @@ async fn create_immutable_record(
         &headstore,
         &doc,
         &immutable_schema(),
-        DocStorageIdentity::new(11, 11),
+        DocRef::new(11, 11),
         None,
         Some(enc),
         None,

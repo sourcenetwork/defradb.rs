@@ -4,7 +4,7 @@ use bytes::Bytes;
 use events::{Message, Update};
 use storage::corekv::OnCommit;
 
-use crate::block::builder::DocStorageIdentity;
+use crate::block::builder::DocRef;
 
 use crate::block::builder::{
     compute_document_blocks_with_inputs, insert_computed_blocks, ComputedBlocks,
@@ -57,7 +57,7 @@ struct CreateManyRetryAttempt<S: Store> {
     collection_name: String,
     collection: Collection,
     docs: Vec<Document>,
-    identities: Vec<DocStorageIdentity>,
+    identities: Vec<DocRef>,
     computed: Vec<ComputedBlocks>,
     context: RequestContext,
     acp_registration: Option<AcpRegistration>,
@@ -219,7 +219,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
             return Ok(());
         }
         let (_collection_guard, collection) = self.guarded_collection(collection_name).await?;
-        let identity = DocStorageIdentity::new(
+        let identity = DocRef::new(
             collection.resolved_root_id(),
             self.db
                 .next_doc_short_id()
@@ -275,7 +275,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
 
         let identity = match crate::write::prepare::prepared_identity(&doc) {
             Some(identity) => identity,
-            None => DocStorageIdentity::new(
+            None => DocRef::new(
                 collection.resolved_root_id(),
                 self.db
                     .next_doc_short_id()
@@ -618,7 +618,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         for doc in &mut prepared_docs {
             let identity = match crate::write::prepare::prepared_identity(doc) {
                 Some(identity) => identity,
-                None => DocStorageIdentity::new(
+                None => DocRef::new(
                     short_id,
                     self.db
                         .next_doc_short_id()

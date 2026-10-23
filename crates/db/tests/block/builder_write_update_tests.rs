@@ -16,7 +16,7 @@ fn update_keeps_doc_id_without_composite_heads() {
         let shared = SharedTxn::new(store.new_txn(false).await.unwrap());
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared, Namespace::Headstore);
-        let identity = DocStorageIdentity::new(1, 1);
+        let identity = DocRef::new(1, 1);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));

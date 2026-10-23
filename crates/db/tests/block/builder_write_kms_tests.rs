@@ -101,7 +101,7 @@ fn kms_write_path_links_field_block_to_kms_encryption_cid() {
             &headstore,
             &doc,
             &crate::common::schema::version("schema-v1"),
-            DocStorageIdentity::new(1, 1),
+            DocRef::new(1, 1),
             None,
             Some(&enc),
             None,
@@ -141,7 +141,7 @@ fn inheritance_resolves_the_key_through_the_kms() {
         let shared = SharedTxn::new(txn);
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
-        let identity = DocStorageIdentity::new(1, 1);
+        let identity = DocRef::new(1, 1);
 
         let mut doc = Document::new();
         doc.set("secret", NormalValue::String("classified".to_string()));
@@ -215,7 +215,7 @@ fn document_policy_fallback_mints_through_the_kms() {
         let shared = SharedTxn::new(txn);
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared.clone(), Namespace::Headstore);
-        let identity = DocStorageIdentity::new(2, 2);
+        let identity = DocRef::new(2, 2);
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("Alice".to_string()));
