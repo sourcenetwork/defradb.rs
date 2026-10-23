@@ -103,9 +103,9 @@ pub unsafe extern "C" fn rollback_txn(node_ptr: usize, txn_id: *const c_char) ->
                 .map_err(|e| format!("invalid transaction ID: {}", e))?;
 
             runner
-                .rollback_txn(&handle)
+                .discard_txn(&handle)
                 .await
-                .map_err(|e| format!("failed to rollback transaction: {}", e))?;
+                .map_err(|e| format!("failed to discard transaction: {}", e))?;
 
             Ok(())
         })

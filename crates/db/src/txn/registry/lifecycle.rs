@@ -1,4 +1,4 @@
-//! Transaction begin, requests, commit, rollback and abandon, each a message
+//! Transaction begin, requests, commit, discard and abandon, each a message
 //! to the worker that owns the transaction.
 
 use super::*;
@@ -196,14 +196,14 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
     }
 
-    async fn rollback(
+    async fn discard(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.rollback_as(&RequestContext::ambient(), handle).await
+        self.discard_as(&RequestContext::ambient(), handle).await
     }
 
-    async fn rollback_as(
+    async fn discard_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
@@ -216,9 +216,9 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             .map_err(|error| unavailable(error, handle))?
             .finish(id, &caller(context), move |owned| {
                 Box::pin(async move {
-                    owned.rollback().map_err(|error| {
+                    owned.discard().map_err(|error| {
                         TransactionError::execution(format!(
-                            "rollback error for transaction '{label}': {error}"
+                            "discard error for transaction '{label}': {error}"
                         ))
                     })
                 })

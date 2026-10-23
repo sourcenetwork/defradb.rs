@@ -204,13 +204,13 @@ fn test_begin_and_commit() {
 }
 
 #[test]
-fn test_begin_and_rollback() {
+fn test_begin_and_discard() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = DbTransactionRegistry::new(db);
 
         let txn_id = registry.begin(false).await.unwrap();
-        let result = registry.rollback(&txn_id).await;
+        let result = registry.discard(&txn_id).await;
         assert!(result.is_ok());
     })
     .unwrap()
@@ -231,13 +231,13 @@ fn test_commit_nonexistent_returns_error() {
 }
 
 #[test]
-fn test_rollback_nonexistent_returns_error() {
+fn test_discard_nonexistent_returns_error() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = DbTransactionRegistry::new(db);
 
         let nonexistent: TransactionHandle = "nonexistent".parse().unwrap();
-        let result = registry.rollback(&nonexistent).await;
+        let result = registry.discard(&nonexistent).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     })
@@ -272,28 +272,28 @@ fn test_double_commit_returns_error() {
 }
 
 #[test]
-fn test_double_rollback_returns_error() {
+fn test_double_discard_returns_error() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = DbTransactionRegistry::new(db);
 
         let txn_id = registry.begin(false).await.unwrap();
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
 
-        let result = registry.rollback(&txn_id).await;
+        let result = registry.discard(&txn_id).await;
         assert!(result.is_err());
     })
     .unwrap()
 }
 
 #[test]
-fn test_commit_after_rollback_returns_error() {
+fn test_commit_after_discard_returns_error() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = DbTransactionRegistry::new(db);
 
         let txn_id = registry.begin(false).await.unwrap();
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
 
         let result = registry.commit(&txn_id).await;
         assert!(result.is_err());
@@ -302,7 +302,7 @@ fn test_commit_after_rollback_returns_error() {
 }
 
 #[test]
-fn test_rollback_after_commit_returns_error() {
+fn test_discard_after_commit_returns_error() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = DbTransactionRegistry::new(db);
@@ -310,7 +310,7 @@ fn test_rollback_after_commit_returns_error() {
         let txn_id = registry.begin(false).await.unwrap();
         registry.commit(&txn_id).await.unwrap();
 
-        let result = registry.rollback(&txn_id).await;
+        let result = registry.discard(&txn_id).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     })
@@ -333,7 +333,7 @@ fn test_get_returns_not_found_after_commit() {
 }
 
 #[test]
-fn test_get_returns_not_found_after_rollback() {
+fn test_get_returns_not_found_after_discard() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = DbTransactionRegistry::new(db);
@@ -341,7 +341,7 @@ fn test_get_returns_not_found_after_rollback() {
         let txn_id = registry.begin(false).await.unwrap();
         assert!(found(&registry, &txn_id).await);
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
         assert!(!found(&registry, &txn_id).await);
     })
     .unwrap()
@@ -373,11 +373,11 @@ fn test_set_migration_in_txn_is_only_visible_inside_transaction() {
             "transaction-local migration should be visible inside the transaction"
         );
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
 
-        let global_after_rollback = db.lens_store().list().await.unwrap();
+        let global_after_discard = db.lens_store().list().await.unwrap();
         assert!(
-            !global_after_rollback.contains_key(&transform_id.to_string()),
+            !global_after_discard.contains_key(&transform_id.to_string()),
             "rolled back migration leaked into global lens list"
         );
     })
@@ -426,7 +426,7 @@ fn test_doc_fetcher_get_all_empty_collection() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -449,7 +449,7 @@ fn test_doc_fetcher_get_all_unknown_collection() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -472,7 +472,7 @@ fn test_doc_fetcher_get_by_ids_empty() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -501,7 +501,7 @@ fn test_doc_fetcher_get_by_ids_invalid_id_treated_as_not_found() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -519,7 +519,7 @@ fn test_is_consumed_returns_false_before_take() {
             "Transaction should not be consumed before it ends"
         );
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -533,7 +533,7 @@ fn test_is_consumed_returns_true_after_take() {
         let txn_id = registry.begin(true).await.unwrap();
 
         // End the transaction
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
 
         assert!(
             !found(&registry, &txn_id).await,
@@ -557,7 +557,7 @@ fn test_doc_fetcher_after_txn_consumed_returns_error() {
         .await;
 
         // Ending the transaction takes it back from every handle it was lent to.
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
 
         // Now try to use the fetcher - should fail with "transaction already consumed"
         let result = fetcher.get_all("Users").await;
@@ -592,7 +592,7 @@ fn test_transaction_sees_committed_data() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -624,7 +624,7 @@ fn test_get_by_ids_returns_matching_docs() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -646,9 +646,9 @@ fn test_multiple_concurrent_transactions() {
         assert_ne!(txn1, txn2);
         assert_ne!(txn2, txn3);
 
-        registry.rollback(&txn1).await.unwrap();
-        registry.rollback(&txn2).await.unwrap();
-        registry.rollback(&txn3).await.unwrap();
+        registry.discard(&txn1).await.unwrap();
+        registry.discard(&txn2).await.unwrap();
+        registry.discard(&txn3).await.unwrap();
     })
     .unwrap()
 }
@@ -667,14 +667,14 @@ fn test_transaction_ids_are_unique() {
         }
 
         for id in ids {
-            registry.rollback(&id).await.unwrap();
+            registry.discard(&id).await.unwrap();
         }
     })
     .unwrap()
 }
 
 #[test]
-fn test_rollback_discards_uncommitted_writes() {
+fn test_discard_discards_uncommitted_writes() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let collection = db.get_collection("Users").unwrap().unwrap();
@@ -726,7 +726,7 @@ fn test_transaction_does_not_see_uncommitted_writes() {
         );
 
         write_txn.force_discard().unwrap();
-        registry.rollback(&reader_txn_id).await.unwrap();
+        registry.discard(&reader_txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -760,11 +760,11 @@ fn test_concurrent_parallel_transaction_operations() {
                             .unwrap()
                             .await
                             .unwrap();
-                        reg.rollback(&txn_id).await.unwrap();
+                        reg.discard(&txn_id).await.unwrap();
 
                         assert!(
                             !found(&reg, &txn_id).await,
-                            "Task {} transaction should be gone after rollback",
+                            "Task {} transaction should be gone after discard",
                             i
                         );
                     },
@@ -800,7 +800,7 @@ fn test_doc_fetcher_get_by_ids_unknown_collection() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -850,7 +850,7 @@ fn test_get_by_ids_with_nonexistent_valid_id() {
         })
         .await;
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -895,7 +895,7 @@ fn test_concurrent_commit_same_transaction() {
 }
 
 #[test]
-fn test_concurrent_rollback_same_transaction() {
+fn test_concurrent_discard_same_transaction() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = Arc::new(DbTransactionRegistry::new(db));
@@ -908,7 +908,7 @@ fn test_concurrent_rollback_same_transaction() {
         let handle1 = workers::spawn(
             Some(crate::common::worker_io::pool()),
             "test",
-            move || async move { reg1.rollback(&txn1).await },
+            move || async move { reg1.discard(&txn1).await },
         )
         .unwrap();
 
@@ -917,7 +917,7 @@ fn test_concurrent_rollback_same_transaction() {
         let handle2 = workers::spawn(
             Some(crate::common::worker_io::pool()),
             "test",
-            move || async move { reg2.rollback(&txn2).await },
+            move || async move { reg2.discard(&txn2).await },
         )
         .unwrap();
 
@@ -927,14 +927,14 @@ fn test_concurrent_rollback_same_transaction() {
         // Exactly one should succeed, one should fail
         let successes = results.iter().filter(|r| r.is_ok()).count();
         let failures = results.iter().filter(|r| r.is_err()).count();
-        assert_eq!(successes, 1, "Exactly one rollback should succeed");
-        assert_eq!(failures, 1, "Exactly one rollback should fail");
+        assert_eq!(successes, 1, "Exactly one discard should succeed");
+        assert_eq!(failures, 1, "Exactly one discard should fail");
     })
     .unwrap()
 }
 
 #[test]
-fn test_concurrent_commit_and_rollback_same_transaction() {
+fn test_concurrent_commit_and_discard_same_transaction() {
     workers::block_on(async {
         let db = test_db_with_collections().await;
         let registry = Arc::new(DbTransactionRegistry::new(db));
@@ -956,7 +956,7 @@ fn test_concurrent_commit_and_rollback_same_transaction() {
         let handle2 = workers::spawn(
             Some(crate::common::worker_io::pool()),
             "test",
-            move || async move { reg2.rollback(&txn2).await },
+            move || async move { reg2.discard(&txn2).await },
         )
         .unwrap();
 
@@ -1046,7 +1046,7 @@ fn test_cleanup_only_old_transactions() {
 
         // The new transaction should still be usable
         assert!(found(&registry, &new_txn).await);
-        registry.rollback(&new_txn).await.unwrap();
+        registry.discard(&new_txn).await.unwrap();
     })
     .unwrap()
 }
@@ -1093,7 +1093,7 @@ fn test_active_transaction_count() {
         registry.commit(&txn1).await.unwrap();
         assert_eq!(registry.active_transaction_count().unwrap(), 1);
 
-        registry.rollback(&txn2).await.unwrap();
+        registry.discard(&txn2).await.unwrap();
         assert_eq!(registry.active_transaction_count().unwrap(), 0);
     })
     .unwrap()
@@ -1129,7 +1129,7 @@ fn test_snapshot_isolation_after_external_commit() {
             after_commit_docs.len()
         );
 
-        registry.rollback(&reader_txn_id).await.unwrap();
+        registry.discard(&reader_txn_id).await.unwrap();
 
         // Step 4: A NEW transaction started after commit SHOULD see the data
         let new_reader_txn_id = registry.begin(true).await.unwrap();
@@ -1147,7 +1147,7 @@ fn test_snapshot_isolation_after_external_commit() {
             Some("CommittedData")
         );
 
-        registry.rollback(&new_reader_txn_id).await.unwrap();
+        registry.discard(&new_reader_txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -1177,7 +1177,7 @@ fn test_new_transaction_sees_recently_created_collection() {
             "New transaction should see recently created collection"
         );
 
-        registry.rollback(&txn_id).await.unwrap();
+        registry.discard(&txn_id).await.unwrap();
     })
     .unwrap()
 }
@@ -1227,7 +1227,7 @@ fn test_collection_snapshot_isolation_during_deletion() {
             "DB should report collection as deleted"
         );
 
-        registry.rollback(&reader_txn_id).await.unwrap();
+        registry.discard(&reader_txn_id).await.unwrap();
 
         // A NEW transaction should NOT see the deleted collection
         let new_txn_id = registry.begin(true).await.unwrap();
@@ -1242,7 +1242,7 @@ fn test_collection_snapshot_isolation_during_deletion() {
             "Error should mention the collection name"
         );
 
-        registry.rollback(&new_txn_id).await.unwrap();
+        registry.discard(&new_txn_id).await.unwrap();
     })
     .unwrap()
 }

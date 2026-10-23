@@ -231,7 +231,7 @@ fn delete_without_where() {
 // ── Transaction tests ──
 
 #[test]
-fn begin_commit_rollback() {
+fn begin_commit_discard() {
     assert_eq!(sql_to_graphql("BEGIN").unwrap(), SqlStatement::Begin);
     assert_eq!(
         sql_to_graphql("START TRANSACTION").unwrap(),

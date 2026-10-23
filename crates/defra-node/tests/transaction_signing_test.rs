@@ -178,9 +178,9 @@ fn embedded_transaction_mutation_uses_node_signer() {
         "configured transactional execute must fail closed when its signer disappears: {:?}",
         create_in_txn_without_signer.errors
     );
-    node.rollback_transaction(&txn_without_signer)
+    node.discard_transaction(&txn_without_signer)
         .await
-        .expect("rollback txn");
+        .expect("discard txn");
 
     node.shutdown().await;
 

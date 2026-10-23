@@ -41,6 +41,6 @@ mod tests {
         );
         assert_eq!(response.data, Some(json!({ "TxnOnly": [] })));
 
-        registry.rollback(&handle).await.unwrap();
+        registry.discard(&handle).await.unwrap();
     }
 }

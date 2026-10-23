@@ -110,7 +110,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
         }
     }
 
-    /// Take the transaction out of the mutator (for commit/rollback). `None`
+    /// Take the transaction out of the mutator (for commit/discard). `None`
     /// once it was taken, or while another handle still holds it.
     pub async fn take_txn(&self) -> Option<DbTxn<S>> {
         self.txn.take()

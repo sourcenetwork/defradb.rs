@@ -53,7 +53,7 @@ fn statements_in_a_transaction_see_the_collection_it_added() {
         );
 
         registry
-            .rollback_as(&defra_core::RequestContext::default(), &handle)
+            .discard_as(&defra_core::RequestContext::default(), &handle)
             .await
             .unwrap();
     })
