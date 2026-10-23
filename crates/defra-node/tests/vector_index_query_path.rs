@@ -48,7 +48,7 @@ fn doc_id_restrictions_fill_vector_pages_after_offset() {
             let result = node
                 .execute_request_in_txn(QueryRequest::new(&query), &handle)
                 .await;
-            node.rollback_transaction(&handle).await.unwrap();
+            node.discard_transaction(&handle).await.unwrap();
             result
         } else {
             node.execute(&query).await
@@ -98,7 +98,7 @@ fn protected_similarity_pages_count_only_authorized_documents() {
         let response = if in_transaction {
             let handle = node.begin_transaction(true).await.unwrap();
             let result = node.execute_request_in_txn(request, &handle).await;
-            node.rollback_transaction(&handle).await.unwrap();
+            node.discard_transaction(&handle).await.unwrap();
             result
         } else {
             node.execute_request(request).await

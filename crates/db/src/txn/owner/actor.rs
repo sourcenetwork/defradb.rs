@@ -3,14 +3,14 @@
 //! The task holds the transaction by value for its whole life and takes the
 //! messages of its mailbox one at a time, in the order they arrived: a
 //! request runs only after every request queued before it has finished, and
-//! the end of the transaction (commit, rollback, abandon, an idle sweep)
+//! the end of the transaction (commit, discard, abandon, an idle sweep)
 //! comes after everything queued before that end. Nothing else ever touches
 //! the transaction, so it needs no lock.
 //!
 //! Between requests the transaction waits in a one-place slot it shares with
 //! its table entry, so an abandon from any thread drops an idle transaction
 //! at once; a request finding the slot empty was abandoned. A commit or
-//! rollback takes the entry out of the table before it is queued, so a
+//! discard takes the entry out of the table before it is queued, so a
 //! request either is queued before the end or finds nothing.
 
 use std::sync::{Arc, Weak};
@@ -46,7 +46,7 @@ pub(super) type Last<T> = Box<dyn FnOnce(T) -> LocalBoxFuture<'static, ()>>;
 pub(super) enum Message<T> {
     /// A request.
     Run(Work<T>),
-    /// The transaction's end: commit or rollback. `begun` says it began when
+    /// The transaction's end: commit or discard. `begun` says it began when
     /// it was handed over, no request running the transaction then; one that
     /// had to wait for a request begins when the owner takes it, and a caller
     /// that stopped waiting before that gets an abandon instead. Dropping the
@@ -108,7 +108,7 @@ pub(super) async fn own<T, K>(
         took
     };
     // Whether the loop ended on the message of whoever took the entry out of
-    // the table: a commit, a rollback or an abandon.
+    // the table: a commit, a discard or an abandon.
     let mut taker_seen = false;
     while let Some(message) = mailbox.recv_async().await {
         match message {

@@ -79,7 +79,7 @@ pub trait Delta: MaybeSendSync {
 /// to a `ReaderWriter` (typically a transaction) for each operation.
 /// This pattern:
 /// - Matches Go DefraDB's design where CRDTs receive `corekv.ReaderWriter`
-/// - Allows the caller to control transaction lifecycle (commit/rollback)
+/// - Allows the caller to control transaction lifecycle (commit/discard)
 /// - Enables multiple CRDT operations within a single transaction
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

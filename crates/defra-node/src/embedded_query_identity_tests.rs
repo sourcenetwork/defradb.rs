@@ -66,7 +66,7 @@ impl QueryExecutor for IdentityRecordingExecutor {
         Ok(())
     }
 
-    async fn rollback_txn(&self, _handle: &TransactionHandle) -> Result<(), TransactionError> {
+    async fn discard_txn(&self, _handle: &TransactionHandle) -> Result<(), TransactionError> {
         Ok(())
     }
 

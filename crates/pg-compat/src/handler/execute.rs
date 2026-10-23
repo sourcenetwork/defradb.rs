@@ -101,7 +101,7 @@ impl DefraQueryHandler {
             SqlStatement::SyntheticQuery { columns } => encode::encode_synthetic_response(&columns),
             SqlStatement::Begin => self.handle_begin_single(client).await,
             SqlStatement::Commit => self.handle_commit_single(client).await,
-            SqlStatement::Rollback => self.handle_rollback_single(client).await,
+            SqlStatement::Rollback => self.handle_discard_single(client).await,
             SqlStatement::CreateTable {
                 sdl,
                 table_name,

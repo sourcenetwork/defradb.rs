@@ -30,7 +30,7 @@ pub trait Transaction: Send + Sync + private::Sealed {
     async fn commit(self) -> Result<()>;
 
     /// Rollback the transaction
-    async fn rollback(self) -> Result<()>;
+    async fn discard(self) -> Result<()>;
 
     /// Set a key-value pair in the transaction
     async fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()>;

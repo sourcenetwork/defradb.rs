@@ -230,7 +230,7 @@ impl<S: Store + 'static> MutationBatchController for BatchMutator<S> {
         result
     }
 
-    async fn rollback(&self) -> query::error::Result<()> {
+    async fn discard(&self) -> query::error::Result<()> {
         let txn = self.take_txn().await?;
         let result = txn
             .discard()

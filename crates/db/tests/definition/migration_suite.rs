@@ -853,7 +853,7 @@ fn implicit_query_leaves_storage_unchanged_after_snapshot_closes() {
             explicit_docs[0].get("verified"),
             Some(&document::NormalValue::Bool(true))
         );
-        registry.rollback(&explicit).await.unwrap();
+        registry.discard(&explicit).await.unwrap();
         assert_eq!(verified_index_count(&db).await, 0);
 
         let fetcher = db::LensedAutoCommitFetcher::new(db.clone());

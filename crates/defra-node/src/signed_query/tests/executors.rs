@@ -134,7 +134,7 @@ impl QueryExecutor for TestExecution {
         Err(TransactionError::not_supported("test executor"))
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {

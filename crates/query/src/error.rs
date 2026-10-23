@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, QueryError>;
 /// Error type for transaction operations.
 ///
 /// This provides structured errors for transaction lifecycle operations
-/// (`begin_txn`, `commit_txn`, `rollback_txn`) enabling callers to handle
+/// (`begin_txn`, `commit_txn`, `discard_txn`) enabling callers to handle
 /// different error conditions appropriately.
 #[derive(Debug, Error)]
 pub enum TransactionError {
@@ -16,7 +16,7 @@ pub enum TransactionError {
     #[error("transaction not found: {0}")]
     NotFound(String),
 
-    /// The transaction was already finalized (double commit/rollback).
+    /// The transaction was already finalized (double commit/discard).
     #[error("transaction already finalized: {0}")]
     AlreadyFinalized(String),
 

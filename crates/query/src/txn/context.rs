@@ -442,7 +442,7 @@ pub trait TransactionContext: MaybeSendSync {
     /// Check if the transaction is still active (not yet committed or rolled back).
     ///
     /// Returns `true` if the transaction can still be used for queries.
-    /// Returns `false` if the transaction has been consumed via commit/rollback.
+    /// Returns `false` if the transaction has been consumed via commit/discard.
     ///
     /// # Implementation Note
     ///

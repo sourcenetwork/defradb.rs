@@ -183,19 +183,19 @@ impl QueryExecutor for PooledExecutor {
         self.inner.commit_txn_as(context, handle).await
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.inner.rollback_txn(handle).await
+        self.inner.discard_txn(handle).await
     }
 
-    async fn rollback_txn_as(
+    async fn discard_txn_as(
         &self,
         context: &RequestContext,
         handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
-        self.inner.rollback_txn_as(context, handle).await
+        self.inner.discard_txn_as(context, handle).await
     }
 
     fn abandon_txn(&self, handle: &TransactionHandle) {

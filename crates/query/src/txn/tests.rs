@@ -67,7 +67,7 @@ impl crate::QueryExecutor for MockExecutor {
         Ok(())
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
@@ -125,7 +125,7 @@ impl crate::QueryExecutor for FailingCommitExecutor {
         Err(TransactionError::execution("simulated storage failure"))
     }
 
-    async fn rollback_txn(
+    async fn discard_txn(
         &self,
         _handle: &TransactionHandle,
     ) -> std::result::Result<(), TransactionError> {
@@ -144,7 +144,7 @@ fn test_guard_begin_creates_transaction() {
         let guard = TransactionGuard::begin(&executor, false).await.unwrap();
         assert!(guard.handle().is_some());
         assert!(guard.handle().unwrap().as_str().starts_with("mock-txn-"));
-        guard.rollback().await.unwrap();
+        guard.discard().await.unwrap();
     })
     .unwrap()
 }
@@ -180,12 +180,12 @@ fn test_guard_commit_consumes_guard() {
 }
 
 #[test]
-fn test_guard_rollback_consumes_guard() {
+fn test_guard_discard_consumes_guard() {
     workers::block_on(async {
         let executor = MockExecutor::new();
         let guard = TransactionGuard::begin(&executor, false).await.unwrap();
         assert!(!executor.was_rolled_back());
-        guard.rollback().await.unwrap();
+        guard.discard().await.unwrap();
         assert!(executor.was_rolled_back());
     })
     .unwrap()
@@ -313,11 +313,11 @@ fn test_noop_registry_commit_returns_error() {
 }
 
 #[test]
-fn test_noop_registry_rollback_returns_error() {
+fn test_noop_registry_discard_returns_error() {
     workers::block_on(async {
         let registry = NoOpTransactionRegistry;
         let handle: TransactionHandle = "any-id".parse().unwrap();
-        let result = registry.rollback(&handle).await;
+        let result = registry.discard(&handle).await;
         assert!(result.is_err());
     })
     .unwrap()

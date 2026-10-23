@@ -637,12 +637,12 @@ impl EmbeddedNode {
     }
 
     /// Roll back a transaction owned by this embedded node.
-    pub async fn rollback_transaction(
+    pub async fn discard_transaction(
         &self,
         transaction: &TransactionHandle,
     ) -> Result<(), query::TransactionError> {
         self.runner
-            .rollback_txn_as(&self.node_context(), transaction)
+            .discard_txn_as(&self.node_context(), transaction)
             .await
     }
 
