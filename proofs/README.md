@@ -20,7 +20,7 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 40 families (bounded model claims)
+### Modeled: 41 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
 | B3 filtered replication | TLA+ | p2p, db-merge |
@@ -44,6 +44,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Deferred-ACP overlay consistency | TLA+ | query |
 | Order-preserving key encoding | Lean | storage |
 | DiskANN resident code table | Lean | db-index |
+| DiskANN walk cutoff | Lean | db-index (vector) |
 | Index-maintenance consistency | Lean + TLA+ | db-index, db-merge |
 | Concurrent collection-head transitions | TLA+ & Lean | db-block-builder, storage |
 | Commit-ordered document arrivals | TLA+ | db, storage (pinned regolith) |

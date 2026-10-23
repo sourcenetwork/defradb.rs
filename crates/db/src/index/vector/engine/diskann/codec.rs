@@ -155,9 +155,33 @@ pub fn encode_record(record: &Record) -> Vec<u8> {
     buf
 }
 
+/// A record's own code and its edges, borrowed from the record's bytes.
+pub struct RecordEdges<'bytes> {
+    pub code: &'bytes [u8],
+    edges: std::slice::ChunksExact<'bytes, u8>,
+}
+
+impl<'bytes> Iterator for RecordEdges<'bytes> {
+    type Item = (NodeId, &'bytes [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let chunk = self.edges.next()?;
+        Some((
+            NodeId(u64::from_le_bytes(chunk[..8].try_into().unwrap())),
+            &chunk[8..],
+        ))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.edges.size_hint()
+    }
+}
+
+impl ExactSizeIterator for RecordEdges<'_> {}
+
 /// Every length is checked before it is used, so a corrupt record is an error
 /// rather than a panic or a huge allocation.
-pub fn decode_record(bytes: &[u8], m: usize) -> Result<Record> {
+pub fn record_edges(bytes: &[u8], m: usize) -> Result<RecordEdges<'_>> {
     let header = m + 4;
     if bytes.len() < header {
         return Err(invalid("DISKANN record is truncated"));
@@ -167,18 +191,17 @@ pub fn decode_record(bytes: &[u8], m: usize) -> Result<Record> {
     if bytes.len() != header + count.saturating_mul(entry) {
         return Err(invalid("DISKANN record length disagrees with its count"));
     }
-    let neighbors = bytes[header..]
-        .chunks_exact(entry)
-        .map(|chunk| {
-            (
-                NodeId(u64::from_le_bytes(chunk[..8].try_into().unwrap())),
-                chunk[8..].to_vec(),
-            )
-        })
-        .collect();
+    Ok(RecordEdges {
+        code: &bytes[..m],
+        edges: bytes[header..].chunks_exact(entry),
+    })
+}
+
+pub fn decode_record(bytes: &[u8], m: usize) -> Result<Record> {
+    let edges = record_edges(bytes, m)?;
     Ok(Record {
-        code: bytes[..m].to_vec(),
-        neighbors,
+        code: edges.code.to_vec(),
+        neighbors: edges.map(|(id, code)| (id, code.to_vec())).collect(),
     })
 }
 
