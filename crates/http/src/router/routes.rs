@@ -173,6 +173,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/disconnect", post(handlers::p2p::disconnect)) // Go-compatible
         .route("/peers", get(handlers::p2p::list_peers))
         .route("/peers", post(handlers::p2p::connect_peer)) // Legacy
+        .route("/peers/{peer_id}", get(handlers::p2p::peer_details))
         .route("/replicators", get(handlers::p2p::list_replicators)) // Go uses /replicators
         .route("/replicators", post(handlers::p2p::add_replicator))
         .route("/replicators", delete(handlers::p2p::remove_replicator))
@@ -555,6 +556,37 @@ mod tests {
 
             assert_eq!(response.status(), axum::http::StatusCode::OK);
         }
+    }
+
+    #[tokio::test]
+    async fn p2p_peer_details_route_returns_one_peer() {
+        let executor = Arc::new(MockQueryExecutor::new()) as Arc<dyn QueryExecutor>;
+        let p2p =
+            Arc::new(MockP2POperations::new().with_peer("12D3KooWPeer")) as Arc<dyn P2POperations>;
+        let router = create_router_with_state(
+            AppStateBuilder::new(executor, edge::testing::edge())
+                .with_p2p(p2p)
+                .build(),
+        );
+        let get = |uri: &'static str| {
+            router.clone().oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+        };
+
+        let response = get("/api/v1/p2p/peers/12D3KooWPeer").await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["peer_id"], "12D3KooWPeer");
+        assert_eq!(body["connected"], true);
+
+        let response = get("/api/v0/p2p/peers/%2012D3KooWPeer").await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

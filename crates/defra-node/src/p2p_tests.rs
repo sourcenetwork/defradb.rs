@@ -101,7 +101,9 @@ async fn wait_for_listen_addr(node: &EmbeddedNode) -> String {
             Instant::now() < deadline,
             "node never exposed a P2P listen address"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        edge::testing::edge()
+            .sleep(Duration::from_millis(100))
+            .await;
     }
 }
 
@@ -121,7 +123,9 @@ async fn wait_for_connected_peer(node: &EmbeddedNode) {
             Instant::now() < deadline,
             "node never reported a connected peer"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        edge::testing::edge()
+            .sleep(Duration::from_millis(100))
+            .await;
     }
 }
 
@@ -141,7 +145,9 @@ async fn wait_for_no_connected_peer(node: &EmbeddedNode) {
             Instant::now() < deadline,
             "node still reports a connected peer: {peers:?}"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        edge::testing::edge()
+            .sleep(Duration::from_millis(100))
+            .await;
     }
 }
 
@@ -178,7 +184,9 @@ async fn wait_for_collection_len(node: &EmbeddedNode, collection: &str, expected
             "collection {collection} never reached {expected} docs; last response: {:?}",
             response.data
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        edge::testing::edge()
+            .sleep(Duration::from_millis(200))
+            .await;
     }
 }
 
@@ -208,7 +216,9 @@ async fn wait_for_user_age(node: &EmbeddedNode, expected: i64) {
             "User age never reached {expected}; last response: {:?}",
             response.data
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        edge::testing::edge()
+            .sleep(Duration::from_millis(200))
+            .await;
     }
 }
 
@@ -484,7 +494,9 @@ async fn wait_for_agent_doc_dids(node: &EmbeddedNode, expected_dids: &[&str]) {
             expected_dids,
             present
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        edge::testing::edge()
+            .sleep(Duration::from_millis(200))
+            .await;
     }
 }
 
@@ -661,7 +673,9 @@ async fn wait_for_turn_snapshot(
             return None;
         }
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        edge::testing::edge()
+            .sleep(Duration::from_millis(200))
+            .await;
     }
 }
 
@@ -1133,7 +1147,7 @@ async fn create_turn(node: &EmbeddedNode, spec: TurnSpec<'_>) {
             );
         }
 
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        edge::testing::edge().sleep(Duration::from_millis(5)).await;
     }
 
     let finalize_response = node
@@ -1248,260 +1262,279 @@ async fn create_turn(node: &EmbeddedNode, spec: TurnSpec<'_>) {
     );
 }
 
-#[tokio::test]
-async fn live_replicator_pushes_post_config_writes() {
-    init_tracing();
+#[test]
+fn live_replicator_pushes_post_config_writes() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
 
-    let node0 = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node0");
-    let node1 = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node1");
+            let node0 = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node0");
+            let node1 = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node1");
 
-    node0
-        .add_schema("type User { name: String age: Int }")
-        .await
-        .expect("schema on node0");
-    node1
-        .add_schema("type User { name: String age: Int }")
-        .await
-        .expect("schema on node1");
+            node0
+                .add_schema("type User { name: String age: Int }")
+                .await
+                .expect("schema on node0");
+            node1
+                .add_schema("type User { name: String age: Int }")
+                .await
+                .expect("schema on node1");
 
-    let addr0 = wait_for_listen_addr(&node0).await;
-    let addr1 = wait_for_listen_addr(&node1).await;
+            let addr0 = wait_for_listen_addr(&node0).await;
+            let addr1 = wait_for_listen_addr(&node1).await;
 
-    let p2p0 = node0.p2p().expect("node0 p2p");
-    let p2p1 = node1.p2p().expect("node1 p2p");
+            let p2p0 = node0.p2p().expect("node0 p2p");
+            let p2p1 = node1.p2p().expect("node1 p2p");
 
-    p2p0.connect_peer(&addr1)
-        .await
-        .expect("connect node0 -> node1");
-    wait_for_connected_peer(&node0).await;
-    wait_for_connected_peer(&node1).await;
+            p2p0.connect_peer(&addr1)
+                .await
+                .expect("connect node0 -> node1");
+            wait_for_connected_peer(&node0).await;
+            wait_for_connected_peer(&node1).await;
 
-    p2p0.add_collections(vec!["User".to_string()])
-        .await
-        .expect("subscribe node0 User");
-    p2p1.add_collections(vec!["User".to_string()])
-        .await
-        .expect("subscribe node1 User");
+            p2p0.add_collections(vec!["User".to_string()])
+                .await
+                .expect("subscribe node0 User");
+            p2p1.add_collections(vec!["User".to_string()])
+                .await
+                .expect("subscribe node1 User");
 
-    p2p1.add_replicator(
-        vec!["User".to_string()],
-        Some(&addr0),
-        Default::default(),
-        Vec::new(),
-        None,
-    )
-    .await
-    .expect("authorize node0 on node1");
-    p2p0.add_replicator(
-        vec!["User".to_string()],
-        Some(&addr1),
-        Default::default(),
-        Vec::new(),
-        None,
-    )
-    .await
-    .expect("set replicator node0 -> node1");
+            p2p1.add_replicator(
+                vec!["User".to_string()],
+                Some(&addr0),
+                Default::default(),
+                Vec::new(),
+                None,
+            )
+            .await
+            .expect("authorize node0 on node1");
+            p2p0.add_replicator(
+                vec!["User".to_string()],
+                Some(&addr1),
+                Default::default(),
+                Vec::new(),
+                None,
+            )
+            .await
+            .expect("set replicator node0 -> node1");
 
-    let response = node0
-        .execute(r#"mutation { add_User(input: {name: "Alice", age: 30}) { _docID name age } }"#)
-        .await;
-    assert!(
-        response.errors.is_empty(),
-        "mutation returned errors: {:?}",
-        response.errors
-    );
+            let response = node0
+                .execute(
+                    r#"mutation { add_User(input: {name: "Alice", age: 30}) { _docID name age } }"#,
+                )
+                .await;
+            assert!(
+                response.errors.is_empty(),
+                "mutation returned errors: {:?}",
+                response.errors
+            );
 
-    wait_for_collection_len(&node1, "User", 1).await;
+            wait_for_collection_len(&node1, "User", 1).await;
 
-    node0.shutdown().await;
-    node1.shutdown().await;
+            node0.shutdown().await;
+            node1.shutdown().await;
+        })
+        .unwrap()
 }
 
-#[tokio::test]
-async fn p2p_document_subscriptions_survive_restart_and_delete() {
-    init_tracing();
+#[test]
+fn p2p_document_subscriptions_survive_restart_and_delete() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
 
-    let data_path = unique_data_path("p2p-doc-subscriptions");
-    let secret_key_path = data_path.join("p2p.key");
+            let data_path = unique_data_path("p2p-doc-subscriptions");
+            let secret_key_path = data_path.join("p2p.key");
 
-    let doc_id = {
-        let node = build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
+            let doc_id = {
+                let node =
+                    build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
 
-        node.add_schema("type Note { text: String }")
-            .await
-            .expect("add schema");
-        let response = node
-            .execute(r#"mutation { add_Note(input: {text: "persist me"}) { _docID } }"#)
-            .await;
-        assert!(
-            response.errors.is_empty(),
-            "mutation returned errors: {:?}",
-            response.errors
-        );
-        let doc_id = extract_created_doc_id(&response, "add_Note");
+                node.add_schema("type Note { text: String }")
+                    .await
+                    .expect("add schema");
+                let response = node
+                    .execute(r#"mutation { add_Note(input: {text: "persist me"}) { _docID } }"#)
+                    .await;
+                assert!(
+                    response.errors.is_empty(),
+                    "mutation returned errors: {:?}",
+                    response.errors
+                );
+                let doc_id = extract_created_doc_id(&response, "add_Note");
 
-        node.p2p()
-            .expect("p2p")
-            .add_documents(vec![defra_http::router::P2pDocumentRequest {
-                collection: String::new(),
-                doc_id: doc_id.clone(),
-            }])
-            .await
-            .expect("add document subscription");
-        let docs = node
-            .p2p()
-            .expect("p2p")
-            .get_documents()
-            .await
-            .expect("list document subscriptions");
-        assert!(docs.iter().any(|doc| doc.doc_id == doc_id));
+                node.p2p()
+                    .expect("p2p")
+                    .add_documents(vec![defra_http::router::P2pDocumentRequest {
+                        collection: String::new(),
+                        doc_id: doc_id.clone(),
+                    }])
+                    .await
+                    .expect("add document subscription");
+                let docs = node
+                    .p2p()
+                    .expect("p2p")
+                    .get_documents()
+                    .await
+                    .expect("list document subscriptions");
+                assert!(docs.iter().any(|doc| doc.doc_id == doc_id));
 
-        node.shutdown().await;
-        doc_id
-    };
+                node.shutdown().await;
+                doc_id
+            };
 
-    {
-        let node = build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
+            {
+                let node =
+                    build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
 
-        let docs = node
-            .p2p()
-            .expect("p2p")
-            .get_documents()
-            .await
-            .expect("list restored document subscriptions");
-        assert!(
-            docs.iter().any(|doc| doc.doc_id == doc_id),
-            "persisted document subscription was not restored"
-        );
+                let docs = node
+                    .p2p()
+                    .expect("p2p")
+                    .get_documents()
+                    .await
+                    .expect("list restored document subscriptions");
+                assert!(
+                    docs.iter().any(|doc| doc.doc_id == doc_id),
+                    "persisted document subscription was not restored"
+                );
 
-        node.p2p()
-            .expect("p2p")
-            .remove_documents(vec![defra_http::router::P2pDocumentRequest {
-                collection: String::new(),
-                doc_id: doc_id.clone(),
-            }])
-            .await
-            .expect("remove document subscription");
-        let docs = node
-            .p2p()
-            .expect("p2p")
-            .get_documents()
-            .await
-            .expect("list document subscriptions after remove");
-        assert!(!docs.iter().any(|doc| doc.doc_id == doc_id));
+                node.p2p()
+                    .expect("p2p")
+                    .remove_documents(vec![defra_http::router::P2pDocumentRequest {
+                        collection: String::new(),
+                        doc_id: doc_id.clone(),
+                    }])
+                    .await
+                    .expect("remove document subscription");
+                let docs = node
+                    .p2p()
+                    .expect("p2p")
+                    .get_documents()
+                    .await
+                    .expect("list document subscriptions after remove");
+                assert!(!docs.iter().any(|doc| doc.doc_id == doc_id));
 
-        node.shutdown().await;
-    }
+                node.shutdown().await;
+            }
 
-    {
-        let node = build_persistent_p2p_node(data_path.clone(), secret_key_path).await;
+            {
+                let node = build_persistent_p2p_node(data_path.clone(), secret_key_path).await;
 
-        let docs = node
-            .p2p()
-            .expect("p2p")
-            .get_documents()
-            .await
-            .expect("list document subscriptions after restart");
-        assert!(
-            !docs.iter().any(|doc| doc.doc_id == doc_id),
-            "removed document subscription was restored after restart"
-        );
+                let docs = node
+                    .p2p()
+                    .expect("p2p")
+                    .get_documents()
+                    .await
+                    .expect("list document subscriptions after restart");
+                assert!(
+                    !docs.iter().any(|doc| doc.doc_id == doc_id),
+                    "removed document subscription was restored after restart"
+                );
 
-        node.shutdown().await;
-    }
+                node.shutdown().await;
+            }
 
-    let _ = tokio::fs::remove_dir_all(data_path).await;
+            let _ = std::fs::remove_dir_all(data_path);
+        })
+        .unwrap()
 }
 
-#[tokio::test]
-async fn p2p_replicator_survives_embedded_restart() {
-    init_tracing();
+#[test]
+fn p2p_replicator_survives_embedded_restart() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
 
-    let data_path0 = unique_data_path("p2p-replicator-node0");
-    let data_path1 = unique_data_path("p2p-replicator-node1");
-    let secret_key_path0 = data_path0.join("p2p.key");
-    let secret_key_path1 = data_path1.join("p2p.key");
+            let data_path0 = unique_data_path("p2p-replicator-node0");
+            let data_path1 = unique_data_path("p2p-replicator-node1");
+            let secret_key_path0 = data_path0.join("p2p.key");
+            let secret_key_path1 = data_path1.join("p2p.key");
 
-    let doc_id = {
-        let node0 = build_persistent_p2p_node(data_path0.clone(), secret_key_path0.clone()).await;
-        let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
+            let doc_id = {
+                let node0 =
+                    build_persistent_p2p_node(data_path0.clone(), secret_key_path0.clone()).await;
+                let node1 =
+                    build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
 
-        node0
-            .add_schema("type User { name: String age: Int }")
-            .await
-            .expect("schema on node0");
-        node1
-            .add_schema("type User { name: String age: Int }")
-            .await
-            .expect("schema on node1");
+                node0
+                    .add_schema("type User { name: String age: Int }")
+                    .await
+                    .expect("schema on node0");
+                node1
+                    .add_schema("type User { name: String age: Int }")
+                    .await
+                    .expect("schema on node1");
 
-        install_one_way_replicator(&node0, &node1, &["User"]).await;
+                install_one_way_replicator(&node0, &node1, &["User"]).await;
 
-        let response = node0
+                let response = node0
             .execute(
                 r#"mutation { add_User(input: {name: "Persisted", age: 30}) { _docID name age } }"#,
             )
             .await;
-        assert!(
-            response.errors.is_empty(),
-            "mutation returned errors: {:?}",
-            response.errors
-        );
-        let doc_id = extract_created_doc_id(&response, "add_User");
+                assert!(
+                    response.errors.is_empty(),
+                    "mutation returned errors: {:?}",
+                    response.errors
+                );
+                let doc_id = extract_created_doc_id(&response, "add_User");
 
-        wait_for_collection_len(&node1, "User", 1).await;
+                wait_for_collection_len(&node1, "User", 1).await;
 
-        node0.shutdown().await;
-        node1.shutdown().await;
-        doc_id
-    };
+                node0.shutdown().await;
+                node1.shutdown().await;
+                doc_id
+            };
 
-    {
-        let node0 = build_persistent_p2p_node(data_path0.clone(), secret_key_path0).await;
-        let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1).await;
+            {
+                let node0 = build_persistent_p2p_node(data_path0.clone(), secret_key_path0).await;
+                let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1).await;
 
-        let addr1 = wait_for_listen_addr(&node1).await;
-        node0
-            .p2p()
-            .expect("node0 p2p")
-            .connect_peer(&addr1)
-            .await
-            .expect("reconnect node0 -> node1");
-        wait_for_connected_peer(&node0).await;
-        wait_for_connected_peer(&node1).await;
+                let addr1 = wait_for_listen_addr(&node1).await;
+                node0
+                    .p2p()
+                    .expect("node0 p2p")
+                    .connect_peer(&addr1)
+                    .await
+                    .expect("reconnect node0 -> node1");
+                wait_for_connected_peer(&node0).await;
+                wait_for_connected_peer(&node1).await;
 
-        let response = node0
+                let response = node0
             .execute(&format!(
                 r#"mutation {{ update_User(docID: "{}", input: {{age: 42}}) {{ _docID age }} }}"#,
                 doc_id
             ))
             .await;
-        assert!(
-            response.errors.is_empty(),
-            "update returned errors: {:?}",
-            response.errors
-        );
+                assert!(
+                    response.errors.is_empty(),
+                    "update returned errors: {:?}",
+                    response.errors
+                );
 
-        wait_for_user_age(&node1, 42).await;
+                wait_for_user_age(&node1, 42).await;
 
-        node0.shutdown().await;
-        node1.shutdown().await;
-    }
+                node0.shutdown().await;
+                node1.shutdown().await;
+            }
 
-    let _ = tokio::fs::remove_dir_all(data_path0).await;
-    let _ = tokio::fs::remove_dir_all(data_path1).await;
+            let _ = std::fs::remove_dir_all(data_path0);
+            let _ = std::fs::remove_dir_all(data_path1);
+        })
+        .unwrap()
 }
 
-#[tokio::test]
-async fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
+#[test]
+fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
+    edge::testing::edge().block_on(async {
     init_tracing();
 
     let data_path0 = unique_data_path("filtered-p2p-replicator-node0");
@@ -1590,7 +1623,7 @@ async fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
         }
 
         wait_for_agent_doc_dids(&node1, &["did:key:phone"]).await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        edge::testing::edge().sleep(Duration::from_secs(2)).await;
         let present = query_agent_doc_dids(&node1).await;
         assert_eq!(
             present,
@@ -1602,13 +1635,16 @@ async fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
         node1.shutdown().await;
     }
 
-    let _ = tokio::fs::remove_dir_all(data_path0).await;
-    let _ = tokio::fs::remove_dir_all(data_path1).await;
+    let _ = std::fs::remove_dir_all(data_path0);
+    let _ = std::fs::remove_dir_all(data_path1);
+})
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[test]
 #[ignore = "stress test for same-session follow-up replication under desktop-like load"]
-async fn live_replicator_same_session_followup_turn_converges() {
+fn live_replicator_same_session_followup_turn_converges() {
+    edge::testing::edge().block_on(async {
     init_tracing();
 
     let node0 = EmbeddedNode::builder()
@@ -1726,10 +1762,13 @@ async fn live_replicator_same_session_followup_turn_converges() {
         receiver, expected_receiver,
         "same-session followup turn failed to converge without explicit sync nudge; receiver={receiver:?} expected={second_expected:?} sender_diag={sender_diag:?} receiver_diag={receiver_diag:?}",
     );
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn live_replicator_filtered_push_respects_predicate() {
+#[test]
+fn live_replicator_filtered_push_respects_predicate() {
+    edge::testing::edge().block_on(async {
     init_tracing();
 
     let sender = EmbeddedNode::builder()
@@ -1779,7 +1818,7 @@ async fn live_replicator_filtered_push_respects_predicate() {
 
     wait_for_agent_doc_dids(&receiver, &["did:key:alice", "did:key:carol"]).await;
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    edge::testing::edge().sleep(Duration::from_secs(3)).await;
 
     let present = query_agent_doc_dids(&receiver).await;
     assert!(
@@ -1794,10 +1833,13 @@ async fn live_replicator_filtered_push_respects_predicate() {
 
     sender.shutdown().await;
     receiver.shutdown().await;
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn filtered_backfill_via_transport_pusher_respects_predicate() {
+#[test]
+fn filtered_backfill_via_transport_pusher_respects_predicate() {
+    edge::testing::edge().block_on(async {
     init_tracing();
 
     let sender = EmbeddedNode::builder()
@@ -1847,7 +1889,7 @@ async fn filtered_backfill_via_transport_pusher_respects_predicate() {
 
     wait_for_agent_doc_dids(&receiver, &["did:key:alice", "did:key:carol"]).await;
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    edge::testing::edge().sleep(Duration::from_secs(3)).await;
 
     let present = query_agent_doc_dids(&receiver).await;
     assert!(
@@ -1862,6 +1904,8 @@ async fn filtered_backfill_via_transport_pusher_respects_predicate() {
 
     sender.shutdown().await;
     receiver.shutdown().await;
+})
+    .unwrap()
 }
 
 /// #1309: `shutdown()` must release the store before it returns.
@@ -1872,57 +1916,61 @@ async fn filtered_backfill_via_transport_pusher_respects_predicate() {
 /// reopening the same data path failed with the backend reporting the file
 /// locked for up to a sweep interval. No retry and no sleep here on purpose:
 /// a bounded-deadline reopen would pass either way and prove nothing.
-#[tokio::test]
-async fn p2p_shutdown_releases_store_for_immediate_reopen() {
-    init_tracing();
+#[test]
+fn p2p_shutdown_releases_store_for_immediate_reopen() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
 
-    let data_path = unique_data_path("p2p-shutdown-reopen");
-    let secret_key_path = data_path.join("p2p.key");
+            let data_path = unique_data_path("p2p-shutdown-reopen");
+            let secret_key_path = data_path.join("p2p.key");
 
-    let node = build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
+            let node = build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
 
-    // The sweeps must be visible to the coordinator's task registry, which is
-    // what shutdown drains. Before the fix they were spawned bare and appeared
-    // in no accounting at all.
-    let status = node
-        .p2p()
-        .expect("p2p")
-        .sync_status()
-        .await
-        .expect("sync status");
-    let retained = status["retained_background_tasks"]
-        .as_u64()
-        .expect("retained_background_tasks");
-    let retry_markers = status["push_retry_markers"]
-        .as_object()
-        .expect("push_retry_markers");
-    assert_eq!(retry_markers["document_markers"], 0);
-    assert_eq!(retry_markers["collection_markers"], 0);
-    assert!(
-        retained >= 2,
-        "the resync sweep and retry clock must be registered, got {retained}"
-    );
+            // The sweeps must be visible to the coordinator's task registry, which is
+            // what shutdown drains. Before the fix they were spawned bare and appeared
+            // in no accounting at all.
+            let status = node
+                .p2p()
+                .expect("p2p")
+                .sync_status()
+                .await
+                .expect("sync status");
+            let retained = status["retained_background_tasks"]
+                .as_u64()
+                .expect("retained_background_tasks");
+            let retry_markers = status["push_retry_markers"]
+                .as_object()
+                .expect("push_retry_markers");
+            assert_eq!(retry_markers["document_markers"], 0);
+            assert_eq!(retry_markers["collection_markers"], 0);
+            assert!(
+                retained >= 2,
+                "the resync sweep and retry clock must be registered, got {retained}"
+            );
 
-    node.shutdown().await;
-    drop(node);
+            node.shutdown().await;
+            drop(node);
 
-    let reopened = EmbeddedNode::builder()
-        .data_path(data_path.clone())
-        .with_p2p(persistent_p2p_config(secret_key_path))
-        .build()
-        .await;
+            let reopened = EmbeddedNode::builder()
+                .data_path(data_path.clone())
+                .with_p2p(persistent_p2p_config(secret_key_path))
+                .build()
+                .await;
 
-    let reopened = match reopened {
-        Ok(node) => node,
-        Err(error) => {
+            let reopened = match reopened {
+                Ok(node) => node,
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&data_path);
+                    panic!("reopen after shutdown must not race the pending-DAG sweeps: {error}");
+                }
+            };
+
+            reopened.shutdown().await;
+            drop(reopened);
             let _ = std::fs::remove_dir_all(&data_path);
-            panic!("reopen after shutdown must not race the pending-DAG sweeps: {error}");
-        }
-    };
-
-    reopened.shutdown().await;
-    drop(reopened);
-    let _ = std::fs::remove_dir_all(&data_path);
+        })
+        .unwrap()
 }
 
 /// An embedded node must serve its branchable-collection heads to
@@ -1935,8 +1983,9 @@ async fn p2p_shutdown_releases_store_for_immediate_reopen() {
 /// side: a coordinator wired with a `NoOpHeadProvider` answers every
 /// BranchableSync response (and DocSync head lookup) with zero heads, and a
 /// late-joining peer can never pull the collection.
-#[tokio::test]
-async fn branchable_sync_pulls_collection_from_embedded_peer() {
+#[test]
+fn branchable_sync_pulls_collection_from_embedded_peer() {
+    edge::testing::edge().block_on(async {
     init_tracing();
 
     let source = EmbeddedNode::builder()
@@ -1988,7 +2037,7 @@ async fn branchable_sync_pulls_collection_from_embedded_peer() {
                 Instant::now() < deadline,
                 "source never exposed a loopback listen address: {addrs:?}"
             );
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            edge::testing::edge().sleep(Duration::from_millis(100)).await;
         }
     };
     let joiner_p2p = joiner.p2p().expect("joiner p2p");
@@ -2013,6 +2062,8 @@ async fn branchable_sync_pulls_collection_from_embedded_peer() {
 
     source.shutdown().await;
     joiner.shutdown().await;
+})
+    .unwrap()
 }
 
 /// An encrypted create on one embedded node must replicate to a peer as
@@ -2026,8 +2077,9 @@ async fn branchable_sync_pulls_collection_from_embedded_peer() {
 /// replica. The CLI and `embedded` runtimes wire the KMS
 /// (crates/cli/src/commands/start/server.rs, crates/embedded/src/node.rs);
 /// this pins defra-node serving and fetching the same way.
-#[tokio::test]
-async fn encrypted_create_replicates_plaintext_to_replicator() {
+#[test]
+fn encrypted_create_replicates_plaintext_to_replicator() {
+    edge::testing::edge().block_on(async {
     init_tracing();
 
     let writer = EmbeddedNode::builder()
@@ -2108,11 +2160,13 @@ async fn encrypted_create_replicates_plaintext_to_replicator() {
             Instant::now() < deadline,
             "replica never saw the decrypted document; last: {doc:?}"
         );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        edge::testing::edge().sleep(Duration::from_millis(200)).await;
     }
 
     writer.shutdown().await;
     replica.shutdown().await;
+})
+    .unwrap()
 }
 
 /// `EmbeddedNode::allow_p2p_peer` is the only reachable way to widen an
@@ -2120,70 +2174,82 @@ async fn encrypted_create_replicates_plaintext_to_replicator() {
 /// `p2p-adapter` down to `IrohTransport::allow_peer`, not stop at the
 /// transport layer, or an operator admitting a new peer at runtime would
 /// have no way to do so short of a restart.
-#[tokio::test]
-async fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
-    init_tracing();
+#[test]
+fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
 
-    let node_a = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node_a");
+            let node_a = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node_a");
 
-    // node_b starts with an explicit allowlist that excludes node_a.
-    let mut config_b = test_p2p_config();
-    config_b.allowlist = p2p::iroh::IrohAllowlistConfig::Explicit(Default::default());
-    let node_b = EmbeddedNode::builder()
-        .with_p2p(config_b)
-        .build()
-        .await
-        .expect("build node_b");
+            // node_b starts with an explicit allowlist that excludes node_a.
+            let mut config_b = test_p2p_config();
+            config_b.allowlist = p2p::iroh::IrohAllowlistConfig::Explicit(Default::default());
+            let node_b = EmbeddedNode::builder()
+                .with_p2p(config_b)
+                .build()
+                .await
+                .expect("build node_b");
 
-    let addr_b = wait_for_listen_addr(&node_b).await;
-    let p2p_a = node_a.p2p().expect("node_a p2p");
-    let p2p_b = node_b.p2p().expect("node_b p2p");
-    let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
+            let addr_b = wait_for_listen_addr(&node_b).await;
+            let p2p_a = node_a.p2p().expect("node_a p2p");
+            let p2p_b = node_b.p2p().expect("node_b p2p");
+            let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
 
-    p2p_a
-        .connect_peer(&addr_b)
-        .await
-        .expect("dial reaches node_b");
+            // node_b's refusal closes the connection after the handshake, so
+            // the dial either completes or times out; any other error means it
+            // never reached node_b's allowlist.
+            if let Err(error) = p2p_a.connect_peer(&addr_b).await {
+                let message = error.to_string();
+                assert!(
+                    message.contains("timeout")
+                        || message.contains("timed out")
+                        || message.contains("not authorized"),
+                    "refused dial failed before reaching node_b: {message}"
+                );
+            }
 
-    let deadline = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < deadline {
-        let connected = p2p_b
-            .connected_peers()
-            .await
-            .expect("node_b connected_peers");
-        assert!(
-            connected.is_empty(),
-            "a peer refused by the allowlist must never appear connected"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while Instant::now() < deadline {
+                let connected = p2p_b
+                    .connected_peers()
+                    .await
+                    .expect("node_b connected_peers");
+                assert!(
+                    connected.is_empty(),
+                    "a peer refused by the allowlist must never appear connected"
+                );
+                edge::testing::edge().sleep(Duration::from_millis(50)).await;
+            }
 
-    // Clear node_a's stale local view of the refused attempt before
-    // redialing, so the next connect cannot short-circuit as "already
-    // connected".
-    p2p_a
-        .disconnect_peer(&addr_b)
-        .await
-        .expect("clear stale attempt");
+            // Clear node_a's stale local view of the refused attempt before
+            // redialing, so the next connect cannot short-circuit as "already
+            // connected".
+            p2p_a
+                .disconnect_peer(&addr_b)
+                .await
+                .expect("clear stale attempt");
 
-    node_b
-        .allow_p2p_peer(&peer_a)
-        .await
-        .expect("authorize node_a at runtime");
+            node_b
+                .allow_p2p_peer(&peer_a)
+                .await
+                .expect("authorize node_a at runtime");
 
-    p2p_a
-        .connect_peer(&addr_b)
-        .await
-        .expect("connect after authorization");
-    wait_for_connected_peer(&node_a).await;
-    wait_for_connected_peer(&node_b).await;
+            p2p_a
+                .connect_peer(&addr_b)
+                .await
+                .expect("connect after authorization");
+            wait_for_connected_peer(&node_a).await;
+            wait_for_connected_peer(&node_b).await;
 
-    node_a.shutdown().await;
-    node_b.shutdown().await;
+            node_a.shutdown().await;
+            node_b.shutdown().await;
+        })
+        .unwrap()
 }
 
 /// `EmbeddedNode::deny_p2p_peer` is the reachable way to cut off an
@@ -2192,188 +2258,89 @@ async fn allow_p2p_peer_authorizes_a_peer_refused_by_the_allowlist() {
 /// and must actually flow through `p2p-adapter` down to
 /// `IrohTransport::deny_peer`, and it must close the connection node_a
 /// already holds, not just stop the next one.
-#[tokio::test]
-async fn deny_p2p_peer_revokes_an_already_connected_peer() {
-    init_tracing();
+#[test]
+fn deny_p2p_peer_revokes_an_already_connected_peer() {
+    edge::testing::edge()
+        .block_on(async {
+            init_tracing();
 
-    let node_a = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node_a");
+            let node_a = EmbeddedNode::builder()
+                .with_p2p(test_p2p_config())
+                .build()
+                .await
+                .expect("build node_a");
 
-    // node_b starts with an explicit allowlist that admits node_a up front,
-    // so the connection this test revokes is established normally rather
-    // than through the runtime `allow_p2p_peer` path already covered above.
-    let p2p_a = node_a.p2p().expect("node_a p2p");
-    let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
-    let mut config_b = test_p2p_config();
-    config_b.allowlist =
-        p2p::iroh::IrohAllowlistConfig::Explicit([peer_a.clone()].into_iter().collect());
-    let node_b = EmbeddedNode::builder()
-        .with_p2p(config_b)
-        .build()
-        .await
-        .expect("build node_b");
+            // node_b starts with an explicit allowlist that admits node_a up front,
+            // so the connection this test revokes is established normally rather
+            // than through the runtime `allow_p2p_peer` path already covered above.
+            let p2p_a = node_a.p2p().expect("node_a p2p");
+            let peer_a = p2p_a.local_peer_id().await.expect("node_a peer id");
+            let mut config_b = test_p2p_config();
+            config_b.allowlist =
+                p2p::iroh::IrohAllowlistConfig::Explicit([peer_a.clone()].into_iter().collect());
+            let node_b = EmbeddedNode::builder()
+                .with_p2p(config_b)
+                .build()
+                .await
+                .expect("build node_b");
 
-    let addr_b = wait_for_listen_addr(&node_b).await;
-    let p2p_b = node_b.p2p().expect("node_b p2p");
+            let addr_b = wait_for_listen_addr(&node_b).await;
+            let p2p_b = node_b.p2p().expect("node_b p2p");
 
-    p2p_a
-        .connect_peer(&addr_b)
-        .await
-        .expect("connect while authorized");
-    wait_for_connected_peer(&node_a).await;
-    wait_for_connected_peer(&node_b).await;
+            p2p_a
+                .connect_peer(&addr_b)
+                .await
+                .expect("connect while authorized");
+            wait_for_connected_peer(&node_a).await;
+            wait_for_connected_peer(&node_b).await;
 
-    node_b
-        .deny_p2p_peer(&peer_a)
-        .await
-        .expect("revoke node_a at runtime");
+            node_b
+                .deny_p2p_peer(&peer_a)
+                .await
+                .expect("revoke node_a at runtime");
 
-    // The revoke must close the connection node_a already holds, not just
-    // refuse the next one: both sides converge on no connected peers.
-    wait_for_no_connected_peer(&node_b).await;
-    wait_for_no_connected_peer(&node_a).await;
+            // The revoke must close the connection node_a already holds, not just
+            // refuse the next one: both sides converge on no connected peers.
+            wait_for_no_connected_peer(&node_b).await;
+            wait_for_no_connected_peer(&node_a).await;
 
-    // And the next connection attempt is refused: reconnecting does not
-    // slip back in.
-    p2p_a
-        .connect_peer(&addr_b)
-        .await
-        .expect("dial reaches node_b again");
-    let deadline = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < deadline {
-        let connected = p2p_b
-            .connected_peers()
-            .await
-            .expect("node_b connected_peers");
-        assert!(
-            connected.is_empty(),
-            "a denied peer must not be able to reconnect"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+            // And the next connection attempt is refused: reconnecting does not
+            // slip back in.
+            p2p_a
+                .connect_peer(&addr_b)
+                .await
+                .expect("dial reaches node_b again");
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while Instant::now() < deadline {
+                let connected = p2p_b
+                    .connected_peers()
+                    .await
+                    .expect("node_b connected_peers");
+                assert!(
+                    connected.is_empty(),
+                    "a denied peer must not be able to reconnect"
+                );
+                edge::testing::edge().sleep(Duration::from_millis(50)).await;
+            }
 
-    // The other half, and the one that decides whether this is a revocation
-    // at all: node_b must also refuse to dial node_a. Barring only the
-    // inbound side leaves node_b's own reconnect sweep free to redial the
-    // peer it just revoked, which would restore node_a's full stream service
-    // over a connection node_b opened itself. node_a would accept happily;
-    // the refusal has to come from node_b.
-    let addr_a = wait_for_listen_addr(&node_a).await;
-    let outbound = p2p_b.connect_peer(&addr_a).await;
-    assert!(
-        outbound.is_err(),
-        "node_b must refuse to dial a peer it revoked, got {outbound:?}"
-    );
-    wait_for_no_connected_peer(&node_b).await;
+            // The other half, and the one that decides whether this is a revocation
+            // at all: node_b must also refuse to dial node_a. Barring only the
+            // inbound side leaves node_b's own reconnect sweep free to redial the
+            // peer it just revoked, which would restore node_a's full stream service
+            // over a connection node_b opened itself. node_a would accept happily;
+            // the refusal has to come from node_b.
+            let addr_a = wait_for_listen_addr(&node_a).await;
+            let outbound = p2p_b.connect_peer(&addr_a).await;
+            assert!(
+                outbound.is_err(),
+                "node_b must refuse to dial a peer it revoked, got {outbound:?}"
+            );
+            wait_for_no_connected_peer(&node_b).await;
 
-    node_a.shutdown().await;
-    node_b.shutdown().await;
+            node_a.shutdown().await;
+            node_b.shutdown().await;
+        })
+        .unwrap()
 }
 
-async fn wait_for_acknowledged(
-    sender: &EmbeddedNode,
-    peer_id: &str,
-    collection: &str,
-    doc_id: &str,
-) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let acknowledged = sender
-            .p2p()
-            .expect("sender p2p")
-            .replication_acknowledged(peer_id, collection, &[doc_id.to_string()])
-            .await
-            .expect("replication_acknowledged");
-        if acknowledged == [true] {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{collection} {doc_id} was never acknowledged by {peer_id}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: &str) {
-    let node0 = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node0");
-    let node1 = EmbeddedNode::builder()
-        .with_p2p(test_p2p_config())
-        .build()
-        .await
-        .expect("build node1");
-    node0.add_schema(schema).await.expect("schema on node0");
-    node1.add_schema(schema).await.expect("schema on node1");
-    install_one_way_replicator(&node0, &node1, &[collection]).await;
-    let peer1 = node1
-        .p2p()
-        .expect("node1 p2p")
-        .local_peer_id()
-        .await
-        .expect("node1 peer id");
-
-    let response = node0
-        .execute(&format!(
-            r#"mutation {{ add_{collection}(input: {{body: "first"}}) {{ _docID }} }}"#
-        ))
-        .await;
-    assert!(response.errors.is_empty(), "{:?}", response.errors);
-    let doc_id = response.data.expect("data")[format!("add_{collection}")][0]["_docID"]
-        .as_str()
-        .expect("doc id")
-        .to_string();
-    wait_for_acknowledged(&node0, &peer1, collection, &doc_id).await;
-
-    let unknown = node0
-        .p2p()
-        .expect("node0 p2p")
-        .replication_acknowledged(
-            "not-a-replicator",
-            collection,
-            std::slice::from_ref(&doc_id),
-        )
-        .await
-        .expect("query unknown peer");
-    assert_eq!(unknown, [false]);
-
-    let response = node0
-        .execute(&format!(
-            r#"mutation {{ update_{collection}(docID: "{doc_id}", input: {{body: "second"}}) {{ _docID }} }}"#
-        ))
-        .await;
-    assert!(response.errors.is_empty(), "{:?}", response.errors);
-    wait_for_acknowledged(&node0, &peer1, collection, &doc_id).await;
-    let on_peer = node1
-        .execute(&format!(
-            r#"{{ {collection}(docID: "{doc_id}") {{ body }} }}"#
-        ))
-        .await;
-    assert_eq!(
-        on_peer.data.expect("data")[collection][0]["body"],
-        "second",
-        "acknowledged before the peer stored the current heads"
-    );
-
-    node0.shutdown().await;
-    node1.shutdown().await;
-}
-
-#[tokio::test]
-async fn replicator_acknowledges_current_document_heads() {
-    init_tracing();
-    assert_replicator_acknowledges_current_heads("type Note { body: String }", "Note").await;
-}
-
-#[tokio::test]
-async fn replicator_acknowledges_current_branchable_collection_heads() {
-    init_tracing();
-    assert_replicator_acknowledges_current_heads("type Note @branchable { body: String }", "Note")
-        .await;
-}
+mod acknowledgment;

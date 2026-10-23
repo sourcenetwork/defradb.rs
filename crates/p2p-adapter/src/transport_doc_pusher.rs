@@ -39,6 +39,14 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         Ok(storage::stores::PushRetryMarkerStats::default())
     }
 
+    /// Durable push retries owed to one peer, or `None` when there are none.
+    async fn push_retries_for_peer(
+        &self,
+        _peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        Ok(None)
+    }
+
     async fn replication_acknowledged(
         &self,
         _peer_id: &str,
@@ -47,6 +55,17 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
     ) -> P2PResult<Vec<bool>> {
         Err(P2PError::unsupported(
             "replication acknowledgement is unavailable",
+        ))
+    }
+
+    async fn document_heads_acknowledged(
+        &self,
+        _peer_id: &str,
+        _collection_name: &str,
+        _doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        Err(P2PError::unsupported(
+            "document head acknowledgement is unavailable",
         ))
     }
 
@@ -231,6 +250,19 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         Ok(())
     }
 
+    async fn push_retries_for_peer(
+        &self,
+        peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        let markers = self
+            .db
+            .peerstore()
+            .get_retry_documents(peer_id)
+            .await
+            .map_err(|error| P2PError::internal(error.to_string()))?;
+        Ok(crate::peer_details::PeerPushRetries::from_markers(&markers))
+    }
+
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         self.db
             .peerstore()
@@ -246,6 +278,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         doc_ids: &[String],
     ) -> P2PResult<Vec<bool>> {
         db::merge::replication_acknowledged(&self.db, peer_id, collection_name, doc_ids)
+            .await
+            .map_err(P2PError::internal)
+    }
+
+    async fn document_heads_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        db::merge::document_heads_acknowledged(&self.db, peer_id, collection_name, doc_ids)
             .await
             .map_err(P2PError::internal)
     }

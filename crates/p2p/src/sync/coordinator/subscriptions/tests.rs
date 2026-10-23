@@ -341,6 +341,7 @@ impl P2PTransport for RecordingTransport {
     async fn send_se_query_response(
         &self,
         _peer_id: &PeerId,
+        _token: Option<Self::ResponseToken>,
         _reply: QuerySEArtifactsReply,
     ) -> crate::Result<()> {
         Ok(())

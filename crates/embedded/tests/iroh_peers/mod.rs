@@ -5,10 +5,11 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
+use crate::clock::sleep;
 use crate::outcome::Result;
 use embedded::{EmbeddedNode, EmbeddedStore, IrohConfig};
 use serde_json::Value as JsonValue;
-use tokio::time::{sleep, Duration, Instant};
+use std::time::{Duration, Instant};
 
 pub type Node = EmbeddedNode<EmbeddedStore>;
 

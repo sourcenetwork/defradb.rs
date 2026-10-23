@@ -11,9 +11,8 @@ use crate::planner::{index_selection::CursorSeek, Doc, ExecInfo, PlanNode};
 
 /// OrderByNode sorts documents based on ORDER BY conditions.
 ///
-/// This node buffers all documents from its source during `start()`,
-/// sorts them according to the specified conditions, then yields
-/// sorted documents one at a time during `next()`.
+/// A known ordered prefix bounds buffering to one equal-prefix group.
+/// Without that guarantee the full source must be sorted before yielding.
 ///
 /// Follows Go DefraDB semantics:
 /// - Null values sort before non-null values (nulls first)
@@ -25,6 +24,9 @@ pub struct OrderByNode {
     document_mapping: DocumentMapping,
     buffer: Vec<Doc>,
     position: usize,
+    ordered_prefix: usize,
+    pending: Option<Doc>,
+    exhausted: bool,
     current_doc: Doc,
     /// Execution statistics for explain execute mode
     exec_info: ExecInfo,
@@ -43,9 +45,54 @@ impl OrderByNode {
             document_mapping,
             buffer: Vec::new(),
             position: 0,
+            ordered_prefix: 0,
+            pending: None,
+            exhausted: false,
             current_doc: Doc::default(),
             exec_info: ExecInfo::default(),
         }
+    }
+
+    pub(crate) fn with_ordered_prefix(mut self, count: usize) -> Self {
+        self.ordered_prefix = count.min(self.order_by.conditions.len());
+        self
+    }
+
+    async fn load_order_group(&mut self) -> Result<()> {
+        self.buffer.clear();
+        self.position = 0;
+        if let Some(doc) = self.pending.take() {
+            self.buffer.push(doc);
+        }
+        while !self.exhausted {
+            if !self.source.next().await? {
+                self.exhausted = true;
+                break;
+            }
+            let doc = self.source.value().deep_clone();
+            if let Some(first) = self.buffer.first() {
+                let same_prefix =
+                    self.order_by.conditions[..self.ordered_prefix]
+                        .iter()
+                        .all(|condition| {
+                            Self::compare_by_condition_static(
+                                first,
+                                &doc,
+                                condition,
+                                &self.document_mapping,
+                            ) == Ordering::Equal
+                        });
+                if !same_prefix {
+                    self.pending = Some(doc);
+                    break;
+                }
+            }
+            self.buffer.push(doc);
+        }
+        self.buffer.sort_by(|a, b| {
+            Self::compare_docs_static(a, b, &self.order_by, &self.document_mapping)
+        });
+        Ok(())
     }
 
     /// Compare two JSON values, returning Ordering.
@@ -217,6 +264,8 @@ impl PlanNode for OrderByNode {
     async fn init(&mut self) -> Result<()> {
         self.buffer.clear();
         self.position = 0;
+        self.pending = None;
+        self.exhausted = false;
         self.exec_info = ExecInfo::default();
         self.source.init().await
     }
@@ -247,6 +296,9 @@ impl PlanNode for OrderByNode {
         }
 
         self.source.start().await?;
+        if self.ordered_prefix > 0 {
+            return Ok(());
+        }
 
         // Buffer all documents from source
         while self.source.next().await? {
@@ -267,6 +319,9 @@ impl PlanNode for OrderByNode {
     async fn next(&mut self) -> Result<bool> {
         self.exec_info.iterations += 1;
 
+        if self.position >= self.buffer.len() && self.ordered_prefix > 0 {
+            self.load_order_group().await?;
+        }
         if self.position >= self.buffer.len() {
             return Ok(false);
         }
@@ -282,6 +337,7 @@ impl PlanNode for OrderByNode {
 
     async fn close(&mut self) -> Result<()> {
         self.buffer.clear();
+        self.pending = None;
         self.source.close().await
     }
 

@@ -11,14 +11,17 @@ pub async fn test_concurrent_writes_different_keys<S: Store + 'static>(store: Ar
     for i in 0..20 {
         let store = store.clone();
         let commit_count = commit_count.clone();
-        handles.push(tokio::spawn(async move {
-            let mut txn = store.new_txn(false).await.unwrap();
-            txn.set(format!("key_{}", i).as_bytes(), b"value")
-                .await
-                .unwrap();
-            txn.commit().await.unwrap();
-            commit_count.fetch_add(1, Ordering::SeqCst);
-        }));
+        handles.push(
+            workers::spawn(None, "test", move || async move {
+                let mut txn = store.new_txn(false).await.unwrap();
+                txn.set(format!("key_{}", i).as_bytes(), b"value")
+                    .await
+                    .unwrap();
+                txn.commit().await.unwrap();
+                commit_count.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap(),
+        );
     }
 
     for handle in handles {
@@ -48,21 +51,24 @@ pub async fn test_concurrent_writes_same_key<S: Store + 'static>(store: Arc<S>) 
         let store = store.clone();
         let success_count = success_count.clone();
         let conflict_count = conflict_count.clone();
-        handles.push(tokio::spawn(async move {
-            let mut txn = store.new_txn(false).await.unwrap();
-            txn.set(b"contended_key", format!("value_{}", i).as_bytes())
-                .await
-                .unwrap();
-            match txn.commit().await {
-                Ok(()) => {
-                    success_count.fetch_add(1, Ordering::SeqCst);
+        handles.push(
+            workers::spawn(None, "test", move || async move {
+                let mut txn = store.new_txn(false).await.unwrap();
+                txn.set(b"contended_key", format!("value_{}", i).as_bytes())
+                    .await
+                    .unwrap();
+                match txn.commit().await {
+                    Ok(()) => {
+                        success_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(error) if error.is_txn_conflict() => {
+                        conflict_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(e) => panic!("unexpected error: {}", e),
                 }
-                Err(error) if error.is_txn_conflict() => {
-                    conflict_count.fetch_add(1, Ordering::SeqCst);
-                }
-                Err(e) => panic!("unexpected error: {}", e),
-            }
-        }));
+            })
+            .unwrap(),
+        );
     }
 
     for handle in handles {
@@ -142,14 +148,17 @@ pub async fn test_parallel_stress<S: Store + 'static>(store: Arc<S>) {
     for i in 0..50 {
         let store = store.clone();
         let commit_count = commit_count.clone();
-        handles.push(tokio::spawn(async move {
-            let mut txn = store.new_txn(false).await.unwrap();
-            txn.set(format!("stress_key_{}", i).as_bytes(), b"value")
-                .await
-                .unwrap();
-            txn.commit().await.unwrap();
-            commit_count.fetch_add(1, Ordering::SeqCst);
-        }));
+        handles.push(
+            workers::spawn(None, "test", move || async move {
+                let mut txn = store.new_txn(false).await.unwrap();
+                txn.set(format!("stress_key_{}", i).as_bytes(), b"value")
+                    .await
+                    .unwrap();
+                txn.commit().await.unwrap();
+                commit_count.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap(),
+        );
     }
 
     for handle in handles {
@@ -202,27 +211,33 @@ pub async fn test_snapshot_isolation_concurrent<S: Store + 'static>(store: Arc<S
         let total_checks = total_checks.clone();
         let barrier = barrier.clone();
 
-        handles.push(tokio::spawn(async move {
-            barrier.wait().await; // Synchronize start
+        handles.push(
+            workers::spawn(None, "test", move || async move {
+                barrier.wait().await; // Synchronize start
 
-            // Start a read transaction
-            let reader = store.new_txn(true).await.unwrap();
+                // Start a read transaction
+                let reader = store.new_txn(true).await.unwrap();
 
-            // Read initial value
-            let first_read = reader.get(b"snapshot_key").await.unwrap();
+                // Read initial value
+                let first_read = reader.get(b"snapshot_key").await.unwrap();
 
-            // Wait a bit for writers to do their work
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                // Wait a bit for writers to do their work
+                workers::delay(std::time::Duration::from_millis(50))
+                    .unwrap()
+                    .await
+                    .unwrap();
 
-            // Read again - should see SAME value (snapshot isolation)
-            let second_read = reader.get(b"snapshot_key").await.unwrap();
+                // Read again - should see SAME value (snapshot isolation)
+                let second_read = reader.get(b"snapshot_key").await.unwrap();
 
-            total_checks.fetch_add(1, Ordering::SeqCst);
+                total_checks.fetch_add(1, Ordering::SeqCst);
 
-            if first_read != second_read {
-                violations.fetch_add(1, Ordering::SeqCst);
-            }
-        }));
+                if first_read != second_read {
+                    violations.fetch_add(1, Ordering::SeqCst);
+                }
+            })
+            .unwrap(),
+        );
     }
 
     // Spawn 10 writer tasks - each writes a unique value
@@ -230,26 +245,32 @@ pub async fn test_snapshot_isolation_concurrent<S: Store + 'static>(store: Arc<S
         let store = store.clone();
         let barrier = barrier.clone();
 
-        handles.push(tokio::spawn(async move {
-            barrier.wait().await; // Synchronize start
+        handles.push(
+            workers::spawn(None, "test", move || async move {
+                barrier.wait().await; // Synchronize start
 
-            // Small random delay to interleave with readers
-            tokio::time::sleep(std::time::Duration::from_millis(i * 5)).await;
-
-            // Retry on TxnConflict since all writers target the same key
-            loop {
-                let mut writer = store.new_txn(false).await.unwrap();
-                writer
-                    .set(b"snapshot_key", format!("writer_{}", i).as_bytes())
+                // Small random delay to interleave with readers
+                workers::delay(std::time::Duration::from_millis(i * 5))
+                    .unwrap()
                     .await
                     .unwrap();
-                match writer.commit().await {
-                    Ok(()) => break,
-                    Err(error) if error.is_txn_conflict() => continue,
-                    Err(e) => panic!("Unexpected commit error: {:?}", e),
+
+                // Retry on TxnConflict since all writers target the same key
+                loop {
+                    let mut writer = store.new_txn(false).await.unwrap();
+                    writer
+                        .set(b"snapshot_key", format!("writer_{}", i).as_bytes())
+                        .await
+                        .unwrap();
+                    match writer.commit().await {
+                        Ok(()) => break,
+                        Err(error) if error.is_txn_conflict() => continue,
+                        Err(e) => panic!("Unexpected commit error: {:?}", e),
+                    }
                 }
-            }
-        }));
+            })
+            .unwrap(),
+        );
     }
 
     // Start everyone

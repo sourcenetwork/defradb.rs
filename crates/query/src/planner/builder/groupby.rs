@@ -24,6 +24,7 @@ impl super::Planner {
         scan_mapping: &DocumentMapping,
         index_provides_ordering: bool,
         join_provides_ordering: bool,
+        ordered_prefix: usize,
     ) -> Result<Box<dyn PlanNode>> {
         let has_group_by = select.group_by.is_some();
 
@@ -338,11 +339,10 @@ impl super::Planner {
             // Skip if index (own or via join) already provides the ordering
             if let Some(ref order_by) = select.order_by {
                 if !index_provides_ordering && !join_provides_ordering {
-                    plan = Box::new(OrderByNode::new(
-                        plan,
-                        order_by.clone(),
-                        scan_mapping.clone(),
-                    ));
+                    plan = Box::new(
+                        OrderByNode::new(plan, order_by.clone(), scan_mapping.clone())
+                            .with_ordered_prefix(ordered_prefix),
+                    );
                 }
             }
 

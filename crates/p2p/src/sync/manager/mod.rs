@@ -31,7 +31,7 @@ pub(crate) use diagnostics::record_gossip_decode_failure_sample;
 pub use diagnostics::{
     GossipDecodeFailureSample, GossipTransport, SyncDiagnostics, SyncDiagnosticsSnapshot,
 };
-pub use events::SyncEvent;
+pub use events::{SyncEvent, SyncEventReceiver};
 // Coordinator dispatch helper (#1116 stage 2) needs to name this type in its
 // signature; the `pending` module itself stays private.
 pub(crate) use pending::PendingDag;

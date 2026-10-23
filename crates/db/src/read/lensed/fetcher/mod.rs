@@ -266,6 +266,16 @@ impl<S: Store + 'static> DocFetcher for LensedDocFetcher<S> {
             .await
     }
 
+    async fn stream_index_scan(
+        &self,
+        collection_name: &str,
+        params: &query::planner::index_selection::IndexScanParams,
+        show_deleted: bool,
+    ) -> query::error::Result<Option<Box<dyn query::doc_stream::DocStream>>> {
+        self.stream_index_scan_impl(collection_name, params, show_deleted)
+            .await
+    }
+
     async fn stream_by_doc_short_ids(
         &self,
         collection_name: &str,

@@ -4282,3 +4282,39 @@ async fn sync_status_surfaces_quarantine_counters() {
     assert_eq!(after.pending_dag_terminal_quarantined, 1);
     assert_eq!(after.quarantined_pending_dags, 1);
 }
+
+#[tokio::test]
+async fn live_connection_allows_pull_before_lifecycle_notification_without_granting_push() {
+    let replicators = Arc::new(ReplicatorRegistry::new());
+    let peer_state = Arc::new(PeerStateTracker::new());
+    let peer = random_peer_id();
+    let unknown = random_peer_id();
+    let (coordinator, _) =
+        create_test_coordinator(AccessMode::Controlled, replicators, Arc::clone(&peer_state));
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(vec![peer.clone()]);
+    assert!(!peer_state.is_connected(peer.as_str()));
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_ok());
+    assert!(coordinator.check_peer_is_replicator(&peer).await.is_ok());
+    assert!(coordinator
+        .check_pushlog_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
+    assert!(coordinator
+        .check_access_str(unknown.as_str(), "collection1")
+        .await
+        .is_err());
+    coordinator
+        .runtime
+        .transport
+        .set_connected_peers(Vec::new());
+    assert!(coordinator
+        .check_access_str(peer.as_str(), "collection1")
+        .await
+        .is_err());
+}

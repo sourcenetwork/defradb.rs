@@ -13,7 +13,8 @@ pub(crate) mod values;
 mod tests;
 
 pub use conditions::{
-    can_be_ordered_by_index, can_use_index, extract_field_conditions, select_best_index,
+    can_be_ordered_by_filtered_index, can_be_ordered_by_index, can_use_index,
+    extract_field_conditions, filtered_index_order_prefix, select_best_index,
     select_best_index_with_estimates,
 };
 pub use estimate::{

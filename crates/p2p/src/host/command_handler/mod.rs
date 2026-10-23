@@ -53,6 +53,9 @@ impl<S: Store> P2PHost<S> {
             HostCommand::PeerAddresses { response } => {
                 self.handle_peer_addresses(response);
             }
+            HostCommand::PeerConnection { peer_id, response } => {
+                self.handle_peer_connection(peer_id, response);
+            }
             HostCommand::Subscribe { topic, response } => {
                 self.handle_subscribe(topic, response);
             }

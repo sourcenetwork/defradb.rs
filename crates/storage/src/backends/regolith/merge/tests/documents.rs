@@ -212,51 +212,54 @@ fn an_absent_counter_part_starts_from_zero() {
     assert_eq!(stored.fields[&0].value, 0.0f64.to_be_bytes());
 }
 
-#[tokio::test]
-async fn disjoint_document_operands_commit_and_projected_reads_validate_only_named_fields() {
-    let store = RegolithStore::in_memory().unwrap();
-    let mut seed = store.new_txn(false).await.unwrap();
-    seed.set(b"doc", &field(1, 1, NormalValue::Int(10)).encode().unwrap())
-        .await
-        .unwrap();
-    seed.commit().await.unwrap();
-    let mut first = store.new_txn(false).await.unwrap();
-    let mut second = store.new_txn(false).await.unwrap();
-    first.get_parts(b"doc", &[1]).await.unwrap();
-    first
-        .merge(
-            b"doc",
-            &document_parts(&field(1, 2, NormalValue::Int(11))).unwrap(),
-        )
-        .await
-        .unwrap();
-    second
-        .merge(
-            b"doc",
-            &document_parts(&field(2, 1, NormalValue::Int(22))).unwrap(),
-        )
-        .await
-        .unwrap();
-    second.commit().await.unwrap();
-    first.commit().await.unwrap();
-    let mut stale = store.new_txn(false).await.unwrap();
-    stale.get_parts(b"doc", &[1]).await.unwrap();
-    let mut update = store.new_txn(false).await.unwrap();
-    update
-        .merge(
-            b"doc",
-            &document_parts(&field(1, 3, NormalValue::Int(12))).unwrap(),
-        )
-        .await
-        .unwrap();
-    update.commit().await.unwrap();
-    stale.set(b"decision", b"old").await.unwrap();
-    assert!(stale.commit().await.is_err());
-    let reader = store.new_txn(true).await.unwrap();
-    let stored = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap()).unwrap();
-    let doc = stored.materialize().unwrap();
-    assert_eq!(doc.get("field1"), Some(&NormalValue::Int(12)));
-    assert_eq!(doc.get("field2"), Some(&NormalValue::Int(22)));
+#[test]
+fn disjoint_document_operands_commit_and_projected_reads_validate_only_named_fields() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let mut seed = store.new_txn(false).await.unwrap();
+        seed.set(b"doc", &field(1, 1, NormalValue::Int(10)).encode().unwrap())
+            .await
+            .unwrap();
+        seed.commit().await.unwrap();
+        let mut first = store.new_txn(false).await.unwrap();
+        let mut second = store.new_txn(false).await.unwrap();
+        first.get_parts(b"doc", &[1]).await.unwrap();
+        first
+            .merge(
+                b"doc",
+                &document_parts(&field(1, 2, NormalValue::Int(11))).unwrap(),
+            )
+            .await
+            .unwrap();
+        second
+            .merge(
+                b"doc",
+                &document_parts(&field(2, 1, NormalValue::Int(22))).unwrap(),
+            )
+            .await
+            .unwrap();
+        second.commit().await.unwrap();
+        first.commit().await.unwrap();
+        let mut stale = store.new_txn(false).await.unwrap();
+        stale.get_parts(b"doc", &[1]).await.unwrap();
+        let mut update = store.new_txn(false).await.unwrap();
+        update
+            .merge(
+                b"doc",
+                &document_parts(&field(1, 3, NormalValue::Int(12))).unwrap(),
+            )
+            .await
+            .unwrap();
+        update.commit().await.unwrap();
+        stale.set(b"decision", b"old").await.unwrap();
+        assert!(stale.commit().await.is_err());
+        let reader = store.new_txn(true).await.unwrap();
+        let stored = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap()).unwrap();
+        let doc = stored.materialize().unwrap();
+        assert_eq!(doc.get("field1"), Some(&NormalValue::Int(12)));
+        assert_eq!(doc.get("field2"), Some(&NormalValue::Int(22)));
+    })
+    .unwrap()
 }
 
 #[test]
@@ -308,60 +311,63 @@ fn corrupt_encodings_are_refused_without_trusting_lengths() {
     assert!(DefraMergeOperator.touches(b"doc", b"DM\x01\x05broken", &[1]));
 }
 
-#[tokio::test]
-async fn encrypted_document_operands_survive_reopen_and_schema_put_terminates_old_operands() {
-    let dir = tempfile::tempdir().unwrap();
-    let options = crate::RegolithStoreOptions::default().with_encryption_key([23; 32]);
-    {
-        let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.set(b"doc", &field(1, 1, NormalValue::Int(10)).encode().unwrap())
-            .await
-            .unwrap();
-        seed.commit().await.unwrap();
-        let mut update = store.new_txn(false).await.unwrap();
-        update
-            .merge(
-                b"doc",
-                &document_parts(&field(1, 2, NormalValue::Int(20))).unwrap(),
-            )
-            .await
-            .unwrap();
-        update.commit().await.unwrap();
-        store.close().await.unwrap();
-    }
-    let store = RegolithStore::open_with_options(dir.path(), options).unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
-    let bytes = txn.get(b"doc").await.unwrap().unwrap();
-    let doc = StoredDocument::decode(&bytes)
-        .unwrap()
-        .materialize()
-        .unwrap();
-    assert_eq!(
-        doc.to_cbor().unwrap(),
-        document::Document::from_json_str(r#"{"field1":20}"#)
+#[test]
+fn encrypted_document_operands_survive_reopen_and_schema_put_terminates_old_operands() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let options = crate::RegolithStoreOptions::default().with_encryption_key([23; 32]);
+        {
+            let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.set(b"doc", &field(1, 1, NormalValue::Int(10)).encode().unwrap())
+                .await
+                .unwrap();
+            seed.commit().await.unwrap();
+            let mut update = store.new_txn(false).await.unwrap();
+            update
+                .merge(
+                    b"doc",
+                    &document_parts(&field(1, 2, NormalValue::Int(20))).unwrap(),
+                )
+                .await
+                .unwrap();
+            update.commit().await.unwrap();
+            store.close().await.unwrap();
+        }
+        let store = RegolithStore::open_with_options(dir.path(), options).unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        let bytes = txn.get(b"doc").await.unwrap().unwrap();
+        let doc = StoredDocument::decode(&bytes)
             .unwrap()
-            .to_cbor()
-            .unwrap()
-    );
-    txn.merge(
-        b"doc",
-        &document_parts(&field(1, 3, NormalValue::Int(30))).unwrap(),
-    )
-    .await
-    .unwrap();
-    // A version transition replaces both values and ordering metadata.
-    txn.set(b"doc", &field(2, 1, NormalValue::Int(40)).encode().unwrap())
+            .materialize()
+            .unwrap();
+        assert_eq!(
+            doc.to_cbor().unwrap(),
+            document::Document::from_json_str(r#"{"field1":20}"#)
+                .unwrap()
+                .to_cbor()
+                .unwrap()
+        );
+        txn.merge(
+            b"doc",
+            &document_parts(&field(1, 3, NormalValue::Int(30))).unwrap(),
+        )
         .await
         .unwrap();
-    txn.commit().await.unwrap();
-    let reader = store.new_txn(true).await.unwrap();
-    let doc = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap())
-        .unwrap()
-        .materialize()
-        .unwrap();
-    assert_eq!(doc.get("field1"), None);
-    assert_eq!(doc.get("field2"), Some(&NormalValue::Int(40)));
+        // A version transition replaces both values and ordering metadata.
+        txn.set(b"doc", &field(2, 1, NormalValue::Int(40)).encode().unwrap())
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        let reader = store.new_txn(true).await.unwrap();
+        let doc = StoredDocument::decode(&reader.get(b"doc").await.unwrap().unwrap())
+            .unwrap()
+            .materialize()
+            .unwrap();
+        assert_eq!(doc.get("field1"), None);
+        assert_eq!(doc.get("field2"), Some(&NormalValue::Int(40)));
+    })
+    .unwrap()
 }
 
 /// Floating-point counter parts beside LWW parts: a fold, where one happens,

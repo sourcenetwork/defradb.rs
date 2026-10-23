@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 
 use crate::search::embedding::{
     call_embeddings, normalized_embedding_url, EmbeddingCallError, EmbeddingInput,
+    EMBEDDING_TIMEOUT,
 };
 
 /// One embedding: what it is keyed by, and the request that makes it.
@@ -142,6 +143,7 @@ impl inputs::Source for Embeddings {
                 &endpoint.model,
                 &endpoint.api_key,
                 &texts,
+                EMBEDDING_TIMEOUT,
             )
             .await?;
             Ok(vectors

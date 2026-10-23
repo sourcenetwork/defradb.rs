@@ -78,98 +78,107 @@ async fn populate(db: &DB<RegolithStore>, count: usize) -> Vec<(u64, String)> {
     written
 }
 
-#[tokio::test]
-async fn a_seek_reads_only_what_was_asked_for() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    let written = populate(&db, 20).await;
+#[test]
+fn a_seek_reads_only_what_was_asked_for() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        let written = populate(&db, 20).await;
 
-    let txn = db.new_txn(false).await.unwrap();
-    let datastore = txn.datastore().unwrap();
-    let systemstore = txn.systemstore().unwrap();
-    let collection = collection();
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let collection = collection();
 
-    let wanted: Vec<u64> = written.iter().step_by(4).map(|(id, _)| *id).collect();
-    let got = collection
-        .get_by_short_ids(&datastore, &systemstore, &wanted, false)
-        .await
-        .unwrap();
+        let wanted: Vec<u64> = written.iter().step_by(4).map(|(id, _)| *id).collect();
+        let got = collection
+            .get_by_short_ids(&datastore, &systemstore, &wanted, false)
+            .await
+            .unwrap();
 
-    assert_eq!(got.len(), wanted.len());
-    assert_eq!(
-        got.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
-        wanted,
-        "the result must follow the order asked for"
-    );
-    for (short_id, doc, deleted) in &got {
-        assert!(!deleted);
-        let expected = &written.iter().find(|(id, _)| id == short_id).unwrap().1;
+        assert_eq!(got.len(), wanted.len());
         assert_eq!(
-            doc.get("title"),
-            Some(&NormalValue::String(expected.clone())),
-            "a seek returned the wrong document"
+            got.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
+            wanted,
+            "the result must follow the order asked for"
         );
-        assert!(doc.id().is_some(), "the document id must be hydrated");
-    }
+        for (short_id, doc, deleted) in &got {
+            assert!(!deleted);
+            let expected = &written.iter().find(|(id, _)| id == short_id).unwrap().1;
+            assert_eq!(
+                doc.get("title"),
+                Some(&NormalValue::String(expected.clone())),
+                "a seek returned the wrong document"
+            );
+            assert!(doc.id().is_some(), "the document id must be hydrated");
+        }
+    })
+    .unwrap()
 }
 
 /// An id whose document is gone is skipped, not reported: a caller holding an
 /// id from an index may hold a stale one.
-#[tokio::test]
-async fn absent_ids_are_skipped() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    let written = populate(&db, 5).await;
+#[test]
+fn absent_ids_are_skipped() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        let written = populate(&db, 5).await;
 
-    let txn = db.new_txn(false).await.unwrap();
-    let datastore = txn.datastore().unwrap();
-    let systemstore = txn.systemstore().unwrap();
-    let collection = collection();
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let collection = collection();
 
-    let mut wanted: Vec<u64> = written.iter().map(|(id, _)| *id).collect();
-    wanted.push(9_999_999);
-    let got = collection
-        .get_by_short_ids(&datastore, &systemstore, &wanted, false)
-        .await
-        .unwrap();
-    assert_eq!(got.len(), written.len(), "the absent id must be skipped");
+        let mut wanted: Vec<u64> = written.iter().map(|(id, _)| *id).collect();
+        wanted.push(9_999_999);
+        let got = collection
+            .get_by_short_ids(&datastore, &systemstore, &wanted, false)
+            .await
+            .unwrap();
+        assert_eq!(got.len(), written.len(), "the absent id must be skipped");
 
-    assert!(collection
-        .get_by_short_ids(&datastore, &systemstore, &[], false)
-        .await
-        .unwrap()
-        .is_empty());
+        assert!(collection
+            .get_by_short_ids(&datastore, &systemstore, &[], false)
+            .await
+            .unwrap()
+            .is_empty());
+    })
+    .unwrap()
 }
 
 /// A seek and a scan must agree about every document they both return, or the
 /// two paths have diverged about what a loaded document looks like.
-#[tokio::test]
-async fn a_seek_agrees_with_a_scan() {
-    let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
-    populate(&db, 30).await;
+#[test]
+fn a_seek_agrees_with_a_scan() {
+    workers::block_on(async {
+        let db = DB::new(RegolithStore::in_memory().unwrap()).unwrap();
+        populate(&db, 30).await;
 
-    let txn = db.new_txn(false).await.unwrap();
-    let datastore = txn.datastore().unwrap();
-    let systemstore = txn.systemstore().unwrap();
-    let collection = collection();
+        let txn = db.new_txn(false).await.unwrap();
+        let datastore = txn.datastore().unwrap();
+        let systemstore = txn.systemstore().unwrap();
+        let collection = collection();
 
-    let scanned = collection
-        .get_all_with_datastore_short_ids(&datastore, &systemstore, false)
-        .await
-        .unwrap();
-    let ids: Vec<u64> = scanned.iter().map(|(id, _, _)| *id).collect();
-    let sought = collection
-        .get_by_short_ids(&datastore, &systemstore, &ids, false)
-        .await
-        .unwrap();
+        let scanned = collection
+            .get_all_with_datastore_short_ids(&datastore, &systemstore, false)
+            .await
+            .unwrap();
+        let ids: Vec<u64> = scanned.iter().map(|(id, _, _)| *id).collect();
+        let sought = collection
+            .get_by_short_ids(&datastore, &systemstore, &ids, false)
+            .await
+            .unwrap();
 
-    assert_eq!(sought.len(), scanned.len());
-    for ((sid, sdoc, sdel), (gid, gdoc, gdel)) in scanned.iter().zip(&sought) {
-        assert_eq!(sid, gid);
-        assert_eq!(sdel, gdel);
-        assert_eq!(sdoc.id(), gdoc.id(), "document id differs");
-        assert_eq!(
-            sdoc.get("title"),
-            gdoc.get("title"),
-            "field value differs between seek and scan"
-        );
-    }
+        assert_eq!(sought.len(), scanned.len());
+        for ((sid, sdoc, sdel), (gid, gdoc, gdel)) in scanned.iter().zip(&sought) {
+            assert_eq!(sid, gid);
+            assert_eq!(sdel, gdel);
+            assert_eq!(sdoc.id(), gdoc.id(), "document id differs");
+            assert_eq!(
+                sdoc.get("title"),
+                gdoc.get("title"),
+                "field value differs between seek and scan"
+            );
+        }
+    })
+    .unwrap()
 }

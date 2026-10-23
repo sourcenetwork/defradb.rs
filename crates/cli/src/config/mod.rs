@@ -24,6 +24,7 @@ use crate::error::{Error, Result};
 pub use iroh_relay_server::{IrohRelayServerConfig, IrohRelayServerTlsConfig};
 pub use sections::{
     AcpConfig, ApiConfig, DatastoreConfig, EmbeddingConfig, KeyringConfig, LogConfig, NetConfig,
+    NetworkSecretHex,
 };
 pub use types::{AcpDocumentType, DatastoreType, LogFormat, LogLevel, LogOutput, TransportType};
 pub use workers::WorkersConfig;

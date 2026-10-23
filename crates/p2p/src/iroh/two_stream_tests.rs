@@ -8,18 +8,18 @@ use identity::{Identity, RawIdentity};
 use iroh::SecretKey;
 use n0_future::task::JoinHandle;
 use n0_future::time::timeout;
-use tokio::sync::mpsc;
 
 use super::{spawn_endpoint, IrohDiscoveryConfig, IrohEndpointConfig, IrohTransport};
 use crate::message::{PushLogReply, PushLogRequest};
 use crate::signing::sign_with_transport;
+use crate::sync::DispatchReceiver;
 use crate::transport::{P2PTransport, PeerId, TransportEvent};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct TestNode {
     transport: IrohTransport,
-    events: mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+    events: DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
     task: JoinHandle<()>,
 }
 
@@ -34,7 +34,6 @@ impl TestNode {
             bind_port: None,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
-            gossip_heal: Default::default(),
             allowlist: Default::default(),
         };
         let (command_tx, events, _replicators, task) = spawn_endpoint(config).await.unwrap();
@@ -82,7 +81,7 @@ fn signed_request(transport: &IrohTransport, label: &str) -> PushLogRequest {
 }
 
 async fn next_two_stream_request(
-    events: &mut mpsc::Receiver<TransportEvent<iroh::endpoint::SendStream>>,
+    events: &mut DispatchReceiver<TransportEvent<iroh::endpoint::SendStream>>,
 ) -> (PeerId, PushLogRequest, iroh::endpoint::SendStream) {
     loop {
         let event = timeout(IO_TIMEOUT, events.recv())
@@ -198,46 +197,6 @@ async fn two_stream_request_carries_cached_explicit_replay_capability() {
 }
 
 #[tokio::test]
-async fn two_stream_request_still_accepts_legacy_reverse_stream_reply() {
-    let sender = TestNode::spawn().await;
-    let mut receiver = TestNode::spawn().await;
-    connect(&sender.transport, &receiver.transport).await;
-
-    let request = signed_request(&sender.transport, "legacy-reply");
-    let message_id = request.message_id.clone();
-    let target = receiver.transport.local_peer_id().clone();
-    let sender_transport = sender.transport.clone();
-    let send_task = n0_future::task::spawn(async move {
-        sender_transport
-            .send_two_stream_request(&target, request)
-            .await
-    });
-
-    let (_, received, _) = next_two_stream_request(&mut receiver.events).await;
-    assert_eq!(received.message_id, message_id);
-    assert!(received.supports_same_stream_reply);
-    assert!(received.supports_retry_after);
-
-    let mut reply = PushLogReply::success(&message_id);
-    sign_with_transport(&receiver.transport, &mut reply).unwrap();
-    receiver
-        .transport
-        .send_two_stream_response(sender.transport.local_peer_id(), reply)
-        .await
-        .unwrap();
-
-    let received_reply = timeout(Duration::from_secs(1), send_task)
-        .await
-        .expect("legacy reverse-stream reply timed out")
-        .unwrap()
-        .unwrap();
-    assert_eq!(received_reply.message_id, message_id);
-
-    sender.shutdown().await;
-    receiver.shutdown().await;
-}
-
-#[tokio::test]
 async fn disconnected_two_stream_requests_release_send_slots_before_reply_timeout() {
     let sender = TestNode::spawn().await;
     let mut receiver = TestNode::spawn().await;
@@ -318,14 +277,14 @@ async fn concurrent_two_stream_fan_in_replies_on_request_streams() {
     }
     assert_eq!(peers.len(), SENDERS);
 
-    for (_, send_task) in &mut senders {
-        let reply = timeout(Duration::from_secs(1), send_task)
-            .await
-            .expect("fan-in two-stream reply timed out")
-            .unwrap()
-            .unwrap();
-        assert!(reply.err_message.is_none());
-    }
+    timeout(IO_TIMEOUT, async {
+        for (_, send_task) in &mut senders {
+            let reply = send_task.await.unwrap().unwrap();
+            assert!(reply.err_message.is_none());
+        }
+    })
+    .await
+    .expect("fan-in two-stream replies timed out");
 
     for (sender, _) in senders {
         sender.shutdown().await;

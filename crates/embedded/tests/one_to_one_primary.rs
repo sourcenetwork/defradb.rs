@@ -90,12 +90,18 @@ async fn primary_side_commits(signing: bool) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_primary_side_create_commits() {
-    primary_side_commits(false).await;
+#[test]
+fn a_primary_side_create_commits() {
+    workers::block_on(async {
+        primary_side_commits(false).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_signed_primary_side_create_commits() {
-    primary_side_commits(true).await;
+#[test]
+fn a_signed_primary_side_create_commits() {
+    workers::block_on(async {
+        primary_side_commits(true).await;
+    })
+    .unwrap()
 }

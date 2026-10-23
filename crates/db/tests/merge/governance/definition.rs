@@ -167,204 +167,230 @@ impl MergeValidator for AcceptEverything {
     }
 }
 
-#[tokio::test]
-async fn a_synced_definition_does_not_strip_a_governed_collection() {
-    let node = Node::bare().await;
-    node.define_grants().await;
-    assert_eq!(
-        node.grants_commitments(),
-        (Some(governed_policy()), true),
-        "the local definition holds its policy and its immutable field"
-    );
+#[test]
+fn a_synced_definition_does_not_strip_a_governed_collection() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        node.define_grants().await;
+        assert_eq!(
+            node.grants_commitments(),
+            (Some(governed_policy()), true),
+            "the local definition holds its policy and its immutable field"
+        );
 
-    definition("Grants", &["_docID", "writer"])
-        .merge(&node)
-        .await;
+        definition("Grants", &["_docID", "writer"])
+            .merge(&node)
+            .await;
 
-    assert_eq!(
-        node.grants_commitments(),
-        (Some(governed_policy()), true),
-        "a synced definition carries neither, so it must not replace them"
-    );
+        assert_eq!(
+            node.grants_commitments(),
+            (Some(governed_policy()), true),
+            "a synced definition carries neither, so it must not replace them"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_local_definition_replaces_one_synced_first() {
-    let node = Node::bare().await;
-    definition("Grants", &["_docID", "writer"])
-        .merge(&node)
-        .await;
+#[test]
+fn a_local_definition_replaces_one_synced_first() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        definition("Grants", &["_docID", "writer"])
+            .merge(&node)
+            .await;
 
-    node.define_grants().await;
+        node.define_grants().await;
 
-    assert_eq!(node.grants_commitments(), (Some(governed_policy()), true));
+        assert_eq!(node.grants_commitments(), (Some(governed_policy()), true));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn a_synced_definition_for_an_unknown_collection_still_registers() {
-    let node = Node::bare().await;
+#[test]
+fn a_synced_definition_for_an_unknown_collection_still_registers() {
+    workers::block_on(async {
+        let node = Node::bare().await;
 
-    let outcome = definition("Ledgers", &["_docID", "writer"])
-        .merge(&node)
-        .await;
+        let outcome = definition("Ledgers", &["_docID", "writer"])
+            .merge(&node)
+            .await;
 
-    assert_eq!(outcome, MergeOutcome::Merged);
-    let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
-    assert_eq!(collection.schema().name, "Ledgers");
-    assert!(collection
-        .schema()
-        .fields
-        .iter()
-        .any(|field| field.name == "writer"));
-}
-
-#[tokio::test]
-async fn a_synced_definition_restores_the_commitments_it_carries() {
-    let node = Node::bare().await;
-
-    definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), true)
-        .merge(&node)
-        .await;
-
-    let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
-    let schema = collection.schema();
-    assert_eq!(schema.governance_root.as_deref(), Some("root-a"));
-    assert!(schema.is_branchable);
-    assert!(schema
-        .fields
-        .iter()
-        .any(|field| field.name == "writer" && field.immutable));
-}
-
-#[tokio::test]
-async fn a_synced_definition_under_another_root_does_not_displace_a_local_one() {
-    let node = Node::bare().await;
-    node.define_grants().await;
-
-    definition_with("Grants", &["_docID", "!writer"], Some("root-b"), false)
-        .merge(&node)
-        .await;
-
-    assert_eq!(node.grants_commitments(), (Some(governed_policy()), true));
-    assert_eq!(
-        node.db
-            .get_collection("Grants")
-            .unwrap()
-            .unwrap()
+        assert_eq!(outcome, MergeOutcome::Merged);
+        let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
+        assert_eq!(collection.schema().name, "Ledgers");
+        assert!(collection
             .schema()
-            .governance_root,
-        None,
-        "the local record keeps its own root"
-    );
+            .fields
+            .iter()
+            .any(|field| field.name == "writer"));
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_synced_definition_restores_the_commitments_it_carries() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+
+        definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), true)
+            .merge(&node)
+            .await;
+
+        let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
+        let schema = collection.schema();
+        assert_eq!(schema.governance_root.as_deref(), Some("root-a"));
+        assert!(schema.is_branchable);
+        assert!(schema
+            .fields
+            .iter()
+            .any(|field| field.name == "writer" && field.immutable));
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_synced_definition_under_another_root_does_not_displace_a_local_one() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        node.define_grants().await;
+
+        definition_with("Grants", &["_docID", "!writer"], Some("root-b"), false)
+            .merge(&node)
+            .await;
+
+        assert_eq!(node.grants_commitments(), (Some(governed_policy()), true));
+        assert_eq!(
+            node.db
+                .get_collection("Grants")
+                .unwrap()
+                .unwrap()
+                .schema()
+                .governance_root,
+            None,
+            "the local record keeps its own root"
+        );
+    })
+    .unwrap()
 }
 
 /// A governed identity commits to the fields' immutability and to
 /// branchability, so a definition under the same root without them names a
 /// different collection, and the name-keyed cache must not let it take the
 /// place of the record that holds them.
-#[tokio::test]
-async fn a_synced_definition_under_the_same_root_without_the_flags_does_not_displace() {
-    let node = Node::bare().await;
-    definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), true)
-        .merge(&node)
-        .await;
-    let held = node.db.get_collection("Ledgers").unwrap().unwrap();
-    let held_id = held.schema().collection_id.clone();
+#[test]
+fn a_synced_definition_under_the_same_root_without_the_flags_does_not_displace() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        definition_with("Ledgers", &["_docID", "!writer"], Some("root-a"), true)
+            .merge(&node)
+            .await;
+        let held = node.db.get_collection("Ledgers").unwrap().unwrap();
+        let held_id = held.schema().collection_id.clone();
 
-    definition_with("Ledgers", &["_docID", "writer"], Some("root-a"), false)
-        .merge(&node)
-        .await;
+        definition_with("Ledgers", &["_docID", "writer"], Some("root-a"), false)
+            .merge(&node)
+            .await;
 
-    let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
-    let schema = collection.schema();
-    assert_eq!(
-        schema.collection_id, held_id,
-        "the weaker definition displaced the record"
-    );
-    assert!(schema.is_branchable, "branchable history was stripped");
-    assert!(
-        schema
-            .fields
-            .iter()
-            .any(|field| field.name == "writer" && field.immutable),
-        "@immutable was stripped"
-    );
+        let collection = node.db.get_collection("Ledgers").unwrap().unwrap();
+        let schema = collection.schema();
+        assert_eq!(
+            schema.collection_id, held_id,
+            "the weaker definition displaced the record"
+        );
+        assert!(schema.is_branchable, "branchable history was stripped");
+        assert!(
+            schema
+                .fields
+                .iter()
+                .any(|field| field.name == "writer" && field.immutable),
+            "@immutable was stripped"
+        );
+    })
+    .unwrap()
 }
 
 /// A definition block reproduces the identity it was built with on a node that
 /// has never seen the collection: the identity is a function of the block, and
 /// the block carries everything the identity commits to.
-#[tokio::test]
-async fn a_definition_block_reproduces_its_identity_on_a_fresh_node() {
-    let author = Node::bare().await;
-    let defined =
-        query::parse_sdl(r#"type Ledgers @governed(root: "root-a") { writer: String @immutable }"#)
-            .unwrap()
-            .remove(0);
-    author.db.create_collection(defined.clone()).await.unwrap();
-    let authored = author.db.get_collection("Ledgers").unwrap().unwrap();
-    let version_id = authored.schema().version_id.clone();
-    let cid: Cid = version_id.parse().expect("the version ID names the block");
-    let bytes = author.blockstore.get(&cid).await.unwrap().expect("block");
-
-    let fresh = Node::bare().await;
-    fresh.blockstore.put(&cid, &bytes).await.unwrap();
-    for link in Block::from_dag_cbor(&bytes).unwrap().links.iter().flatten() {
-        let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
-        fresh.blockstore.put(&link.link, &field).await.unwrap();
-    }
-    fresh
-        .handler
-        .handle_block(
-            &cid,
-            &bytes,
-            BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+#[test]
+fn a_definition_block_reproduces_its_identity_on_a_fresh_node() {
+    workers::block_on(async {
+        let author = Node::bare().await;
+        let defined = query::parse_sdl(
+            r#"type Ledgers @governed(root: "root-a") { writer: String @immutable }"#,
         )
-        .await
-        .unwrap();
+        .unwrap()
+        .remove(0);
+        author.db.create_collection(defined.clone()).await.unwrap();
+        let authored = author.db.get_collection("Ledgers").unwrap().unwrap();
+        let version_id = authored.schema().version_id.clone();
+        let cid: Cid = version_id.parse().expect("the version ID names the block");
+        let bytes = author.blockstore.get(&cid).await.unwrap().expect("block");
 
-    let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
-    assert_eq!(synced.schema().version_id, version_id);
-    assert_eq!(synced.schema().collection_id, version_id);
-    assert_eq!(synced.schema().governance_root.as_deref(), Some("root-a"));
-    assert_eq!(synced.schema().collection_id, defined.collection_id);
-    assert!(synced
-        .schema()
-        .fields
-        .iter()
-        .any(|field| field.name == "writer" && field.immutable));
+        let fresh = Node::bare().await;
+        fresh.blockstore.put(&cid, &bytes).await.unwrap();
+        for link in Block::from_dag_cbor(&bytes).unwrap().links.iter().flatten() {
+            let field = author.blockstore.get(&link.link).await.unwrap().unwrap();
+            fresh.blockstore.put(&link.link, &field).await.unwrap();
+        }
+        fresh
+            .handler
+            .handle_block(
+                &cid,
+                &bytes,
+                BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+            )
+            .await
+            .unwrap();
+
+        let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
+        assert_eq!(synced.schema().version_id, version_id);
+        assert_eq!(synced.schema().collection_id, version_id);
+        assert_eq!(synced.schema().governance_root.as_deref(), Some("root-a"));
+        assert_eq!(synced.schema().collection_id, defined.collection_id);
+        assert!(synced
+            .schema()
+            .fields
+            .iter()
+            .any(|field| field.name == "writer" && field.immutable));
+    })
+    .unwrap()
 }
 
 /// The gate cuts both ways: an ungoverned collection's delta carries neither
 /// its immutable flags nor its branchable flag, because its identity commits
 /// to neither, so a synced definition of that name must still be kept out of
 /// the cache even with no policy in sight.
-#[tokio::test]
-async fn a_synced_definition_does_not_strip_an_ungoverned_collection() {
-    let node = Node::bare().await;
-    node.define_ungoverned_grants().await;
+#[test]
+fn a_synced_definition_does_not_strip_an_ungoverned_collection() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        node.define_ungoverned_grants().await;
 
-    definition("Grants", &["_docID", "writer"])
-        .merge(&node)
-        .await;
+        definition("Grants", &["_docID", "writer"])
+            .merge(&node)
+            .await;
 
-    let collection = node.db.get_collection("Grants").unwrap().unwrap();
-    let schema = collection.schema();
-    assert!(schema.is_branchable, "branchable history was stripped");
-    assert!(
-        schema
-            .fields
-            .iter()
-            .any(|field| field.name == "writer" && field.immutable),
-        "the immutable flag was stripped"
-    );
+        let collection = node.db.get_collection("Grants").unwrap().unwrap();
+        let schema = collection.schema();
+        assert!(schema.is_branchable, "branchable history was stripped");
+        assert!(
+            schema
+                .fields
+                .iter()
+                .any(|field| field.name == "writer" && field.immutable),
+            "the immutable flag was stripped"
+        );
+    })
+    .unwrap()
 }
 
 /// The same, for a governed collection carrying a policy. Its collection ID
 /// and version ID differ — the policy reaches only the version — so the
 /// receiver cannot read the collection ID off the block's own CID.
-#[tokio::test]
-async fn a_policied_definition_block_reproduces_its_identity_on_a_fresh_node() {
+#[test]
+fn a_policied_definition_block_reproduces_its_identity_on_a_fresh_node() {
+    workers::block_on(async {
     let author = Node::bare().await;
     let defined = query::parse_sdl(
         r#"type Ledgers @governed(root: "root-a") @policy(id: "p1", resource: "ledgers") { writer: String @immutable }"#,
@@ -404,6 +430,8 @@ async fn a_policied_definition_block_reproduces_its_identity_on_a_fresh_node() {
         defined.collection_id,
         "the receiver must derive the same collection ID the author did"
     );
+})
+    .unwrap()
 }
 
 /// Carry the definition block named by `version_id`, with the field blocks it
@@ -433,33 +461,37 @@ const POLICIED_LEDGERS: &str = r#"type Ledgers @governed(root: "root-a") @policy
 /// without one. That record must not become the active version: activated,
 /// it would serve the collection with no policy at all, indistinguishable
 /// from one that never had one.
-#[tokio::test]
-async fn a_synced_version_bound_to_a_policy_this_node_does_not_hold_cannot_be_activated() {
-    let author = Node::bare().await;
-    let defined = query::parse_sdl(POLICIED_LEDGERS).unwrap().remove(0);
-    author.db.create_collection(defined.clone()).await.unwrap();
+#[test]
+fn a_synced_version_bound_to_a_policy_this_node_does_not_hold_cannot_be_activated() {
+    workers::block_on(async {
+        let author = Node::bare().await;
+        let defined = query::parse_sdl(POLICIED_LEDGERS).unwrap().remove(0);
+        author.db.create_collection(defined.clone()).await.unwrap();
 
-    let fresh = Node::bare().await;
-    sync_definition(&author, &fresh, &defined.version_id).await;
+        let fresh = Node::bare().await;
+        sync_definition(&author, &fresh, &defined.version_id).await;
 
-    let activated = fresh
-        .db
-        .set_active_collection_version(&defined.version_id)
-        .await;
-    assert!(
-        activated.is_err(),
-        "activated a version whose identity binds a policy the record does not hold"
-    );
-    let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
-    assert!(!synced.schema().is_active);
+        let activated = fresh
+            .db
+            .set_active_collection_version(&defined.version_id)
+            .await;
+        assert!(
+            activated.is_err(),
+            "activated a version whose identity binds a policy the record does not hold"
+        );
+        let synced = fresh.db.get_collection("Ledgers").unwrap().unwrap();
+        assert!(!synced.schema().is_active);
+    })
+    .unwrap()
 }
 
 /// A node that holds the collection with its policy receives a patched
 /// version from a peer. The patch binds the same policy, by CID, and the
 /// node holds that reference, so the rebuilt version keeps it: activating
 /// the patch must not turn the collection into an unpoliced one.
-#[tokio::test]
-async fn a_synced_patch_keeps_the_policy_this_node_holds() {
+#[test]
+fn a_synced_patch_keeps_the_policy_this_node_holds() {
+    workers::block_on(async {
     let author = Node::bare().await;
     let defined = query::parse_sdl(POLICIED_LEDGERS).unwrap().remove(0);
     author.db.create_collection(defined.clone()).await.unwrap();
@@ -489,6 +521,8 @@ async fn a_synced_patch_keeps_the_policy_this_node_holds() {
         defined.policy,
         "activating the synced patch dropped the policy"
     );
+})
+    .unwrap()
 }
 
 /// Splitting the collection ID from the version ID is a governed collection's
@@ -496,80 +530,87 @@ async fn a_synced_patch_keeps_the_policy_this_node_holds() {
 /// declares no root is not this tree's to write, so a receiver must read the
 /// collection ID off the block's own CID rather than derive one its author
 /// never derived and stop being that collection's replica.
-#[tokio::test]
-async fn an_ungoverned_policy_link_does_not_move_the_collection_id() {
-    let node = Node::bare().await;
-    let policy_cid = schema::generate_policy_cid(&PolicyDescription {
-        id: "p1".to_string(),
-        resource_name: "ledgers".to_string(),
+#[test]
+fn an_ungoverned_policy_link_does_not_move_the_collection_id() {
+    workers::block_on(async {
+        let node = Node::bare().await;
+        let policy_cid = schema::generate_policy_cid(&PolicyDescription {
+            id: "p1".to_string(),
+            resource_name: "ledgers".to_string(),
+        })
+        .unwrap();
+        let block = Block::new(
+            CrdtDelta::CollectionDefinition(
+                CollectionDefinitionDeltaPayload::new(1)
+                    .with_name("Ledgers")
+                    .with_policy_cid(policy_cid),
+            ),
+            vec![],
+            vec![],
+        );
+        let cid = block.generate_cid().unwrap();
+        let bytes = block.to_dag_cbor().unwrap();
+        node.blockstore.put(&cid, &bytes).await.unwrap();
+
+        assert_eq!(
+            node.handler
+                .handle_block(
+                    &cid,
+                    &bytes,
+                    BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
+                )
+                .await
+                .unwrap(),
+            MergeOutcome::Merged
+        );
+
+        let synced = node.db.get_collection("Ledgers").unwrap().unwrap();
+        assert_eq!(
+            synced.schema().collection_id,
+            cid.to_string(),
+            "an ungoverned definition names its collection by its own CID"
+        );
+        assert_eq!(synced.schema().version_id, cid.to_string());
     })
-    .unwrap();
-    let block = Block::new(
-        CrdtDelta::CollectionDefinition(
-            CollectionDefinitionDeltaPayload::new(1)
-                .with_name("Ledgers")
-                .with_policy_cid(policy_cid),
-        ),
-        vec![],
-        vec![],
-    );
-    let cid = block.generate_cid().unwrap();
-    let bytes = block.to_dag_cbor().unwrap();
-    node.blockstore.put(&cid, &bytes).await.unwrap();
-
-    assert_eq!(
-        node.handler
-            .handle_block(
-                &cid,
-                &bytes,
-                BlockMetadata::normal("", "", "peer-did", Some("peer"), false),
-            )
-            .await
-            .unwrap(),
-        MergeOutcome::Merged
-    );
-
-    let synced = node.db.get_collection("Ledgers").unwrap().unwrap();
-    assert_eq!(
-        synced.schema().collection_id,
-        cid.to_string(),
-        "an ungoverned definition names its collection by its own CID"
-    );
-    assert_eq!(synced.schema().version_id, cid.to_string());
+    .unwrap()
 }
 
 /// The definition block of a collection this node defined itself comes back
 /// from a peer. The record on disk is the one a restart reads, and it holds
 /// what the block cannot: that the collection is active, and for an
 /// ungoverned one, its `@immutable` flag. Neither may be rebuilt away.
-#[tokio::test]
-async fn a_held_version_is_not_rebuilt_from_its_own_block() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("node");
-    let governance = || MergeGovernance::new(["Grants"]).with_validator(Arc::new(AcceptEverything));
-    let version_id = {
-        let node = Node::open(RegolithStore::open(&path).unwrap(), governance(), false).await;
-        let defined = query::parse_sdl(r#"type Ledgers { writer: String @immutable }"#)
-            .unwrap()
-            .remove(0);
-        node.db.create_collection(defined.clone()).await.unwrap();
-        sync_definition(&node, &node, &defined.version_id).await;
-        let held = node.db.get_collection("Ledgers").unwrap().unwrap();
-        assert!(held.schema().is_active, "the cache lost the active flag");
-        node.db.close().await.unwrap();
-        defined.version_id
-    };
+#[test]
+fn a_held_version_is_not_rebuilt_from_its_own_block() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node");
+        let governance =
+            || MergeGovernance::new(["Grants"]).with_validator(Arc::new(AcceptEverything));
+        let version_id = {
+            let node = Node::open(RegolithStore::open(&path).unwrap(), governance(), false).await;
+            let defined = query::parse_sdl(r#"type Ledgers { writer: String @immutable }"#)
+                .unwrap()
+                .remove(0);
+            node.db.create_collection(defined.clone()).await.unwrap();
+            sync_definition(&node, &node, &defined.version_id).await;
+            let held = node.db.get_collection("Ledgers").unwrap().unwrap();
+            assert!(held.schema().is_active, "the cache lost the active flag");
+            node.db.close().await.unwrap();
+            defined.version_id
+        };
 
-    let node = Node::open(RegolithStore::open(&path).unwrap(), governance(), false).await;
-    let reopened = node.db.get_collection("Ledgers").unwrap().unwrap();
-    let schema = reopened.schema();
-    assert_eq!(schema.version_id, version_id);
-    assert!(schema.is_active, "the record on disk was rebuilt inactive");
-    assert!(
-        schema
-            .fields
-            .iter()
-            .any(|field| field.name == "writer" && field.immutable),
-        "the record on disk lost @immutable"
-    );
+        let node = Node::open(RegolithStore::open(&path).unwrap(), governance(), false).await;
+        let reopened = node.db.get_collection("Ledgers").unwrap().unwrap();
+        let schema = reopened.schema();
+        assert_eq!(schema.version_id, version_id);
+        assert!(schema.is_active, "the record on disk was rebuilt inactive");
+        assert!(
+            schema
+                .fields
+                .iter()
+                .any(|field| field.name == "writer" && field.immutable),
+            "the record on disk lost @immutable"
+        );
+    })
+    .unwrap()
 }

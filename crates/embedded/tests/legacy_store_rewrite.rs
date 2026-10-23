@@ -5,7 +5,7 @@
 //! with the same collections and documents. Opening the wrapped one rewrites
 //! it once into a store the engine seals; opening either gives every
 //! collection part IDs and puts its documents in the field format. Every
-//! query must answer exactly as main answered it.
+//! query follows the current document visibility contract.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,7 +41,9 @@ fn materialize(directory: &Path, fixture: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Every query main ran on the fixture, with main's answer.
+/// The original stores remain unchanged. Expected reads follow current
+/// visibility: `showDeleted` includes Notes even though the previous writer's
+/// live-only index query omitted that retained row.
 fn expected() -> Result<Vec<(String, Value)>> {
     let answers: Value = serde_json::from_str(include_str!("fixtures/legacy_expected.json"))?;
     answers
@@ -57,13 +59,13 @@ fn expected() -> Result<Vec<(String, Value)>> {
         .collect()
 }
 
-async fn assert_reads_as_main_read(node: &EmbeddedNode<EmbeddedStore>) -> Result<()> {
+async fn assert_expected_reads(node: &EmbeddedNode<EmbeddedStore>) -> Result<()> {
     for (query, data) in expected()? {
         let response = node.execute(&query).await;
         assert!(response.errors.is_empty(), "{query}: {:?}", response.errors);
         assert!(
             response.data.as_ref() == Some(&data),
-            "{query} answered {:?}, main answered {data}",
+            "{query} answered {:?}, expected {data}",
             response.data
         );
     }
@@ -143,13 +145,14 @@ fn files_contain(path: &Path, needle: &[u8]) -> Result<bool> {
     Ok(false)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_wrapped_store_of_the_previous_release_is_rewritten_and_reads_the_same() -> Result<()> {
+#[test]
+fn a_wrapped_store_of_the_previous_release_is_rewritten_and_reads_the_same() -> Result<()> {
+    workers::block_on(async {
     let directory = tempfile::tempdir()?;
     let path = materialize(directory.path(), "wrapped")?;
 
     let node = open(&path, Some(KEY)).await?;
-    assert_reads_as_main_read(&node).await?;
+    assert_expected_reads(&node).await?;
     let created = node
         .execute(r#"mutation { add_Book(input: {title: "Rust", pages: 560}) { title } }"#)
         .await;
@@ -203,58 +206,66 @@ async fn a_wrapped_store_of_the_previous_release_is_rewritten_and_reads_the_same
         .count();
     assert!(documents == 7, "found {documents} documents");
     Ok(())
+})
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn previous_release_documents_get_part_ids_and_field_operands() -> Result<()> {
-    let directory = tempfile::tempdir()?;
-    for (fixture, key) in [("plain", None), ("wrapped", Some(KEY))] {
-        let path = materialize(directory.path(), fixture)?;
-        let node = open(&path, key).await?;
-        assert_reads_as_main_read(&node).await?;
-        node.shutdown().await;
-        drop(node);
-        let entries = raw_entries(&path, key).await?;
-        assert_field_format(&entries)?;
-        assert!(
-            entries
-                .iter()
-                .any(|(key, _)| key == b"s/system/document_format"),
-            "{fixture}: the document format stamp is missing"
-        );
-        // Opening again changes nothing and reads the same.
-        let node = open(&path, key).await?;
-        assert_reads_as_main_read(&node).await?;
-        node.shutdown().await;
-        drop(node);
-        assert!(
-            raw_entries(&path, key).await? == entries,
-            "{fixture}: a second open changed the store"
-        );
-    }
-    Ok(())
+#[test]
+fn previous_release_documents_get_part_ids_and_field_operands() -> Result<()> {
+    workers::block_on(async {
+        let directory = tempfile::tempdir()?;
+        for (fixture, key) in [("plain", None), ("wrapped", Some(KEY))] {
+            let path = materialize(directory.path(), fixture)?;
+            let node = open(&path, key).await?;
+            assert_expected_reads(&node).await?;
+            node.shutdown().await;
+            drop(node);
+            let entries = raw_entries(&path, key).await?;
+            assert_field_format(&entries)?;
+            assert!(
+                entries
+                    .iter()
+                    .any(|(key, _)| key == b"s/system/document_format"),
+                "{fixture}: the document format stamp is missing"
+            );
+            // Opening again changes nothing and reads the same.
+            let node = open(&path, key).await?;
+            assert_expected_reads(&node).await?;
+            node.shutdown().await;
+            drop(node);
+            assert!(
+                raw_entries(&path, key).await? == entries,
+                "{fixture}: a second open changed the store"
+            );
+        }
+        Ok(())
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_wrapped_store_opened_without_its_key_is_refused_not_served() -> Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = materialize(directory.path(), "wrapped")?;
-    for (key, message) in [
-        (None, "open it with at-rest encryption on"),
-        (Some([0x11; 32]), "none of the configured at-rest keys"),
-    ] {
-        let error = match open(&path, key).await {
-            Ok(node) => {
-                node.shutdown().await;
-                panic!("a wrapped store opened with {key:?}")
-            }
-            Err(error) => format!("{error:#}"),
-        };
-        assert!(error.contains(message), "unexpected refusal: {error}");
-    }
-    // The refusals left the store as it was: its own key still opens it.
-    let node = open(&path, Some(KEY)).await?;
-    assert_reads_as_main_read(&node).await?;
-    node.shutdown().await;
-    Ok(())
+#[test]
+fn a_wrapped_store_opened_without_its_key_is_refused_not_served() -> Result<()> {
+    workers::block_on(async {
+        let directory = tempfile::tempdir()?;
+        let path = materialize(directory.path(), "wrapped")?;
+        for (key, message) in [
+            (None, "open it with at-rest encryption on"),
+            (Some([0x11; 32]), "none of the configured at-rest keys"),
+        ] {
+            let error = match open(&path, key).await {
+                Ok(node) => {
+                    node.shutdown().await;
+                    panic!("a wrapped store opened with {key:?}")
+                }
+                Err(error) => format!("{error:#}"),
+            };
+            assert!(error.contains(message), "unexpected refusal: {error}");
+        }
+        // The refusals left the store as it was: its own key still opens it.
+        let node = open(&path, Some(KEY)).await?;
+        assert_expected_reads(&node).await?;
+        node.shutdown().await;
+        Ok(())
+    })
+    .unwrap()
 }

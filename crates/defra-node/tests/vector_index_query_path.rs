@@ -14,8 +14,9 @@ use serde_json::Value;
 const DIMENSIONS: usize = 8;
 const CORPUS: usize = 40;
 
-#[tokio::test]
-async fn doc_id_restrictions_fill_vector_pages_after_offset() {
+#[test]
+fn doc_id_restrictions_fill_vector_pages_after_offset() {
+    workers::block_on(async {
     let node = node_with("FLAT").await;
     seed(&node).await;
     let documents = query_data(
@@ -56,10 +57,13 @@ async fn doc_id_restrictions_fill_vector_pages_after_offset() {
         assert_eq!(response.data.unwrap()["Note"].as_array().unwrap(), expected);
     }
     assert_routes(&node, &query, "restricted ids").await;
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn protected_similarity_pages_count_only_authorized_documents() {
+#[test]
+fn protected_similarity_pages_count_only_authorized_documents() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     let owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     let reader = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
@@ -123,6 +127,8 @@ async fn protected_similarity_pages_count_only_authorized_documents() {
         .as_array()
         .unwrap()
         .is_empty());
+})
+    .unwrap()
 }
 
 /// No metric argument: `SIMILARITY` scores by whichever metric the index
@@ -251,8 +257,9 @@ async fn assert_routes(node: &EmbeddedNode, query: &str, context: &str) {
     );
 }
 
-#[tokio::test]
-async fn nested_vector_pages_are_scoped_to_each_parent() {
+#[test]
+fn nested_vector_pages_are_scoped_to_each_parent() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema("type Owner { name: String notes: [Note] }
         type Note { title: String owner: Owner embedding: [Float32!] @index(vector: {dimensions: 4, flat: {metric: DOT}}) }")
@@ -306,100 +313,114 @@ async fn nested_vector_pages_are_scoped_to_each_parent() {
     )
     .await;
     assert!(vector_index(&explain).is_none());
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn similarity_reaches_the_index_on_the_autocommit_path() {
-    let node = node_with("").await;
-    seed(&node).await;
+#[test]
+fn similarity_reaches_the_index_on_the_autocommit_path() {
+    workers::block_on(async {
+        let node = node_with("").await;
+        seed(&node).await;
 
-    let query = similarity_query(&vector_for(3), 5, None);
-    assert_routes(&node, &query, "autocommit").await;
+        let query = similarity_query(&vector_for(3), 5, None);
+        assert_routes(&node, &query, "autocommit").await;
 
-    let data = query_data(&node, &query, "similarity").await;
-    let rows = data["Note"].as_array().expect("Note array");
-    assert_eq!(rows.len(), 5, "the index must return the requested count");
+        let data = query_data(&node, &query, "similarity").await;
+        let rows = data["Note"].as_array().expect("Note array");
+        assert_eq!(rows.len(), 5, "the index must return the requested count");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn similarity_reaches_the_index_inside_a_transaction() {
-    let node = node_with("").await;
-    seed(&node).await;
+#[test]
+fn similarity_reaches_the_index_inside_a_transaction() {
+    workers::block_on(async {
+        let node = node_with("").await;
+        seed(&node).await;
 
-    let handle = node
-        .begin_transaction(true)
-        .await
-        .expect("begin read transaction");
-    let query = format!(
-        "query @explain(type: execute) {}",
-        similarity_query(&vector_for(3), 5, None)
-    );
-    let response = node
-        .execute_request_in_txn(QueryRequest::new(&query), &handle)
-        .await;
-    assert!(
-        !response.has_errors(),
-        "in-transaction explain: {:?}",
-        response.errors
-    );
-    let explain = response.data.unwrap_or(Value::Null);
+        let handle = node
+            .begin_transaction(true)
+            .await
+            .expect("begin read transaction");
+        let query = format!(
+            "query @explain(type: execute) {}",
+            similarity_query(&vector_for(3), 5, None)
+        );
+        let response = node
+            .execute_request_in_txn(QueryRequest::new(&query), &handle)
+            .await;
+        assert!(
+            !response.has_errors(),
+            "in-transaction explain: {:?}",
+            response.errors
+        );
+        let explain = response.data.unwrap_or(Value::Null);
 
-    assert!(
+        assert!(
         vector_index(&explain).is_some(),
         "an in-transaction similarity query full-scanned instead of using the index\n{explain:#}"
     );
+    })
+    .unwrap()
 }
 
 /// The routing resolves a descriptor and calls `VectorIndex::search`, so it is
 /// engine-agnostic by construction. This pins that, so a new algorithm cannot
 /// land reachable only through its own engine tests.
-#[tokio::test]
-async fn similarity_reaches_the_index_for_every_algorithm() {
-    for algorithm in schema::VectorAlgorithm::ALL {
-        // Every algorithm supports the default metric, so none is skipped here;
-        // the pairs an algorithm refuses are covered by
-        // `an_unsupported_metric_is_refused_when_the_schema_is_written`.
-        assert!(algorithm.supports_metric(schema::DistanceMetric::default()));
-        let node = node_with(algorithm.as_str()).await;
-        seed(&node).await;
+#[test]
+fn similarity_reaches_the_index_for_every_algorithm() {
+    workers::block_on(async {
+        for algorithm in schema::VectorAlgorithm::ALL {
+            // Every algorithm supports the default metric, so none is skipped here;
+            // the pairs an algorithm refuses are covered by
+            // `an_unsupported_metric_is_refused_when_the_schema_is_written`.
+            assert!(algorithm.supports_metric(schema::DistanceMetric::default()));
+            let node = node_with(algorithm.as_str()).await;
+            seed(&node).await;
 
-        let query = similarity_query(&vector_for(5), 5, None);
-        assert_routes(&node, &query, algorithm.as_str()).await;
+            let query = similarity_query(&vector_for(5), 5, None);
+            assert_routes(&node, &query, algorithm.as_str()).await;
 
-        let data = query_data(&node, &query, algorithm.as_str()).await;
-        assert_eq!(
-            data["Note"].as_array().expect("Note array").len(),
-            5,
-            "{} returned a short page",
-            algorithm.as_str()
-        );
-    }
+            let data = query_data(&node, &query, algorithm.as_str()).await;
+            assert_eq!(
+                data["Note"].as_array().expect("Note array").len(),
+                5,
+                "{} returned a short page",
+                algorithm.as_str()
+            );
+        }
+    })
+    .unwrap()
 }
 
 /// A filter must not silently shrink the result set: the answer is the nearest
 /// `limit` documents *that match*, not whatever survives filtering the nearest
 /// `limit` overall.
-#[tokio::test]
-async fn a_filtered_similarity_query_returns_a_full_page() {
-    let node = node_with("").await;
-    seed(&node).await;
+#[test]
+fn a_filtered_similarity_query_returns_a_full_page() {
+    workers::block_on(async {
+        let node = node_with("").await;
+        seed(&node).await;
 
-    let query = similarity_query(&vector_for(3), 5, Some(r#"{tag: {_eq: "even"}}"#));
-    assert_routes(&node, &query, "filtered").await;
+        let query = similarity_query(&vector_for(3), 5, Some(r#"{tag: {_eq: "even"}}"#));
+        assert_routes(&node, &query, "filtered").await;
 
-    let data = query_data(&node, &query, "filtered similarity").await;
-    let rows = data["Note"].as_array().expect("Note array");
-    assert_eq!(
-        rows.len(),
-        5,
-        "half the corpus matches the filter, so a full page must be reachable; \
+        let data = query_data(&node, &query, "filtered similarity").await;
+        let rows = data["Note"].as_array().expect("Note array");
+        assert_eq!(
+            rows.len(),
+            5,
+            "half the corpus matches the filter, so a full page must be reachable; \
          a short page means the index returned the nearest 5 overall and the \
          filter then dropped the non-matching ones"
-    );
-    assert!(
-        rows.iter().all(|row| row["tag"] == "even"),
-        "every row must match the filter"
-    );
+        );
+        assert!(
+            rows.iter().all(|row| row["tag"] == "even"),
+            "every row must match the filter"
+        );
+    })
+    .unwrap()
 }
 
 /// A cosine index serves a `SIMILARITY` ranking, and serves the same answer the
@@ -411,8 +432,9 @@ async fn a_filtered_similarity_query_returns_a_full_page() {
 /// would have returned different documents, and the planner declined for that
 /// reason. Now both resolve one metric, so the routed page and the exhaustive
 /// page must be the same page.
-#[tokio::test]
-async fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
+#[test]
+fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
@@ -479,13 +501,16 @@ async fn a_cosine_index_routes_and_agrees_with_the_exhaustive_scan() {
             .all(|score| (-1.0 - SLOP..=1.0 + SLOP).contains(score)),
         "cosine scores must be cosines: {routed_scores:?}"
     );
+})
+    .unwrap()
 }
 
 /// A scalar index on the filtered field must not displace the vector index.
 /// Only the vector index can serve `ORDER BY similarity` with a limit; a scalar
 /// index narrows the filter and then leaves every match to be scored.
-#[tokio::test]
-async fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
+#[test]
+fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema(&format!(
         "type Note {{ title: String  tag: String @index  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: DOT}}}}) }}"
@@ -516,6 +541,8 @@ async fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
     let rows = rows["Note"].as_array().expect("Note array");
     assert_eq!(rows.len(), 5);
     assert!(rows.iter().all(|row| row["tag"] == "even"));
+})
+    .unwrap()
 }
 
 /// Every combination that reaches the read path, checked against one invariant:
@@ -529,8 +556,9 @@ async fn a_scalar_index_on_the_filter_does_not_displace_the_vector_index() {
 /// Axes: algorithm x metric x filter shape x fetcher. A new engine or metric
 /// enters the matrix by appearing in `ALL`, so coverage cannot fall behind the
 /// enum.
-#[tokio::test]
-async fn every_combination_agrees_with_an_exhaustive_scan() {
+#[test]
+fn every_combination_agrees_with_an_exhaustive_scan() {
+    workers::block_on(async {
     const LIMIT: usize = 5;
 
     for algorithm in schema::VectorAlgorithm::ALL {
@@ -641,6 +669,8 @@ async fn every_combination_agrees_with_an_exhaustive_scan() {
             }
         }
     }
+})
+    .unwrap()
 }
 
 /// Dimensions are required and must be greater than zero, which Go made
@@ -648,56 +678,62 @@ async fn every_combination_agrees_with_an_exhaustive_scan() {
 /// `@embedding` on the same field. A zero-dimension index cannot check a query
 /// vector's length, so a wrong-length query would be scored on its shared
 /// leading elements alone: silently wrong rather than merely approximate.
-#[tokio::test]
-async fn dimensions_are_required_when_the_schema_is_written() {
-    for sdl in [
-        "type Note { embedding: [Float32!] @index(vector: {}) }".to_string(),
-        "type Note { embedding: [Float32!] @index(vector: {dimensions: 0}) }".to_string(),
-        // An @embedding fixes the length, and used to supply it. It no longer does.
-        "type Note { title: String  embedding: [Float32!] @index(vector: {}) \
+#[test]
+fn dimensions_are_required_when_the_schema_is_written() {
+    workers::block_on(async {
+        for sdl in [
+            "type Note { embedding: [Float32!] @index(vector: {}) }".to_string(),
+            "type Note { embedding: [Float32!] @index(vector: {dimensions: 0}) }".to_string(),
+            // An @embedding fixes the length, and used to supply it. It no longer does.
+            "type Note { title: String  embedding: [Float32!] @index(vector: {}) \
              @embedding(provider: \"openai\", model: \"m\", fields: [\"title\"]) }"
-            .to_string(),
-    ] {
-        let node = EmbeddedNode::builder().build().await.unwrap();
-        let error = node
-            .add_schema(&sdl)
-            .await
-            .expect_err(&format!("must be refused: {sdl}"))
-            .to_string();
-        assert!(
-            error.contains("dimensions"),
-            "the error must name dimensions, got: {error}"
-        );
-    }
+                .to_string(),
+        ] {
+            let node = EmbeddedNode::builder().build().await.unwrap();
+            let error = node
+                .add_schema(&sdl)
+                .await
+                .expect_err(&format!("must be refused: {sdl}"))
+                .to_string();
+            assert!(
+                error.contains("dimensions"),
+                "the error must name dimensions, got: {error}"
+            );
+        }
+    })
+    .unwrap()
 }
 
 /// An algorithm that cannot rank by a metric must be refused when the schema is
 /// written, not when the first document is indexed.
-#[tokio::test]
-async fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
-    for algorithm in schema::VectorAlgorithm::ALL {
-        for metric in schema::DistanceMetric::ALL {
-            if algorithm.supports_metric(*metric) {
-                continue;
+#[test]
+fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
+    workers::block_on(async {
+        for algorithm in schema::VectorAlgorithm::ALL {
+            for metric in schema::DistanceMetric::ALL {
+                if algorithm.supports_metric(*metric) {
+                    continue;
+                }
+                let node = EmbeddedNode::builder().build().await.unwrap();
+                let result = node
+                    .add_schema(&format!(
+                        "type Note {{ embedding: [Float32!] {} }}",
+                        vector_index_sdl(*algorithm, *metric)
+                    ))
+                    .await;
+                let error = result.expect_err(&format!(
+                    "{} must refuse {}",
+                    algorithm.as_str(),
+                    metric.as_str()
+                ));
+                assert!(
+                    error.to_string().contains(metric.as_str()),
+                    "the error must name the metric, got: {error}"
+                );
             }
-            let node = EmbeddedNode::builder().build().await.unwrap();
-            let result = node
-                .add_schema(&format!(
-                    "type Note {{ embedding: [Float32!] {} }}",
-                    vector_index_sdl(*algorithm, *metric)
-                ))
-                .await;
-            let error = result.expect_err(&format!(
-                "{} must refuse {}",
-                algorithm.as_str(),
-                metric.as_str()
-            ));
-            assert!(
-                error.to_string().contains(metric.as_str()),
-                "the error must name the metric, got: {error}"
-            );
         }
-    }
+    })
+    .unwrap()
 }
 
 /// A filter that runs *above* the scan must still fill the page.
@@ -706,8 +742,9 @@ async fn an_unsupported_metric_is_refused_when_the_schema_is_written() {
 /// scan, so counting what the scan emitted says nothing about what survived.
 /// The nearest documents here all fail the filter, so a scan that stops after
 /// its first `k` candidates returns nothing at all.
-#[tokio::test]
-async fn a_relation_filter_above_the_scan_still_fills_the_page() {
+#[test]
+fn a_relation_filter_above_the_scan_still_fills_the_page() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema(
         "type Owner { name: String  notes: [Note] }
@@ -761,6 +798,8 @@ async fn a_relation_filter_above_the_scan_still_fills_the_page() {
          page means the scan stopped counting its own output while the filter \
          above it rejected every row"
     );
+})
+    .unwrap()
 }
 
 /// An empty index must not be reported as having served the scan.
@@ -768,28 +807,31 @@ async fn a_relation_filter_above_the_scan_still_fills_the_page() {
 /// With no candidates the scan falls through to reading the collection, so
 /// naming a vector index in the explain output would describe a search that
 /// never happened.
-#[tokio::test]
-async fn an_empty_index_is_not_reported_as_serving_the_scan() {
-    let node = node_with("").await;
+#[test]
+fn an_empty_index_is_not_reported_as_serving_the_scan() {
+    workers::block_on(async {
+        let node = node_with("").await;
 
-    let query = similarity_query(&vector_for(1), 5, None);
-    let explain = query_data(
-        &node,
-        &format!("query @explain(type: execute) {query}"),
-        "empty index",
-    )
-    .await;
+        let query = similarity_query(&vector_for(1), 5, None);
+        let explain = query_data(
+            &node,
+            &format!("query @explain(type: execute) {query}"),
+            "empty index",
+        )
+        .await;
 
-    assert_eq!(
-        vector_index(&explain),
-        None,
-        "an index that returned no candidates must not be named\n{explain:#}"
-    );
-    assert_eq!(
-        index_fetches(&explain),
-        0,
-        "nor counted as a fetch\n{explain:#}"
-    );
+        assert_eq!(
+            vector_index(&explain),
+            None,
+            "an index that returned no candidates must not be named\n{explain:#}"
+        );
+        assert_eq!(
+            index_fetches(&explain),
+            0,
+            "nor counted as a fetch\n{explain:#}"
+        );
+    })
+    .unwrap()
 }
 
 /// Exhausting the index is not exhausting the collection.
@@ -798,8 +840,9 @@ async fn an_empty_index_is_not_reported_as_serving_the_scan() {
 /// is null is never inserted, so a routed scan that stops when the index runs
 /// dry drops rows the caller asked for. With one indexed vector among three
 /// documents, `limit: 3` returned one row.
-#[tokio::test]
-async fn documents_without_a_vector_still_fill_the_page() {
+#[test]
+fn documents_without_a_vector_still_fill_the_page() {
+    workers::block_on(async {
     let node = node_with("").await;
 
     query_data(
@@ -844,11 +887,14 @@ async fn documents_without_a_vector_still_fill_the_page() {
             "{expected} missing from {titles:?}"
         );
     }
+})
+    .unwrap()
 }
 
 /// A document is returned once, not twice, when the fallback runs.
-#[tokio::test]
-async fn the_fallback_does_not_duplicate_indexed_documents() {
+#[test]
+fn the_fallback_does_not_duplicate_indexed_documents() {
+    workers::block_on(async {
     let node = node_with("").await;
 
     for index in 0..3 {
@@ -889,31 +935,37 @@ async fn the_fallback_does_not_duplicate_indexed_documents() {
         "a document must not be returned twice: {titles:?}"
     );
     assert_eq!(titles.len(), 4, "every document exactly once: {titles:?}");
+})
+    .unwrap()
 }
 
 /// A routed similarity query stays silent: `extensions` must be entirely
 /// absent, not merely an empty warnings list. Explain already says the index
 /// was used; nothing here needs a second channel to repeat that.
-#[tokio::test]
-async fn a_routed_similarity_query_has_no_extensions() {
-    let node = node_with("").await;
-    seed(&node).await;
+#[test]
+fn a_routed_similarity_query_has_no_extensions() {
+    workers::block_on(async {
+        let node = node_with("").await;
+        seed(&node).await;
 
-    let query = similarity_query(&vector_for(3), 5, None);
-    let response = node.execute(&query).await;
-    assert!(!response.has_errors(), "{:?}", response.errors);
-    assert!(
-        response.extensions.is_none(),
-        "a routed query must not carry extensions: {:?}",
-        response.extensions
-    );
+        let query = similarity_query(&vector_for(3), 5, None);
+        let response = node.execute(&query).await;
+        assert!(!response.has_errors(), "{:?}", response.errors);
+        assert!(
+            response.extensions.is_none(),
+            "a routed query must not carry extensions: {:?}",
+            response.extensions
+        );
+    })
+    .unwrap()
 }
 
 /// Without a limit, `route()` never gets far enough to ask for an index, so
 /// the scan falls back to scoring everything. The results are still correct;
 /// only the cost changed, which is exactly what the warning is for.
-#[tokio::test]
-async fn dropping_the_limit_warns_vector_index_unused() {
+#[test]
+fn dropping_the_limit_warns_vector_index_unused() {
+    workers::block_on(async {
     let node = node_with("").await;
     seed(&node).await;
 
@@ -948,12 +1000,15 @@ async fn dropping_the_limit_warns_vector_index_unused() {
         scores.windows(2).all(|pair| pair[0] >= pair[1]),
         "rows are not ordered by similarity: {scores:?}"
     );
+})
+    .unwrap()
 }
 
 /// Same shape as `dropping_the_limit_warns_vector_index_unused`, but the
 /// defect is the order direction instead of the missing limit.
-#[tokio::test]
-async fn ascending_order_warns_vector_index_unused() {
+#[test]
+fn ascending_order_warns_vector_index_unused() {
+    workers::block_on(async {
     let node = node_with("").await;
     seed(&node).await;
 
@@ -973,14 +1028,17 @@ async fn ascending_order_warns_vector_index_unused() {
     let detail = warning.detail.as_ref().expect("detail");
     assert_eq!(detail["reason"], "notOrderedBySimilarityDesc");
     assert_eq!(detail["field"], "embedding");
+})
+    .unwrap()
 }
 
 /// A metric no index on the field carries must still answer correctly: the
 /// query falls back to a full scan scored by the metric it named, and warns
 /// that the vector index went unused rather than silently ranking by the
 /// index's own metric instead.
-#[tokio::test]
-async fn a_metric_no_index_carries_scans_and_warns() {
+#[test]
+fn a_metric_no_index_carries_scans_and_warns() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}, hnsw: {{metric: COSINE}}}}) }}"
@@ -1053,14 +1111,17 @@ async fn a_metric_no_index_carries_scans_and_warns() {
         titles, expected_titles,
         "the scanned page must be the exhaustive DOT-scored page"
     );
+})
+    .unwrap()
 }
 
 /// The precision condition: a field with no vector index never warns, however
 /// the query is shaped. Written with the limit removed, the one shape that
 /// *would* warn if this field had an index (see
 /// `dropping_the_limit_warns_vector_index_unused`).
-#[tokio::test]
-async fn a_field_without_a_vector_index_never_warns() {
+#[test]
+fn a_field_without_a_vector_index_never_warns() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] @index(vector: {{dimensions: {DIMENSIONS}}})  plainEmbedding: [Float32!] }}"
@@ -1087,6 +1148,8 @@ async fn a_field_without_a_vector_index_never_warns() {
         "a similarity query on an unindexed field must never warn: {:?}",
         response.extensions
     );
+})
+    .unwrap()
 }
 
 /// Two vector indexes on one field, and a query that says which it means.
@@ -1097,8 +1160,9 @@ async fn a_field_without_a_vector_index_never_warns() {
 /// there was nothing for the argument to choose between. Each metric must reach
 /// its own index, and the routed page must be the exhaustive page for that
 /// metric, not for the other one.
-#[tokio::test]
-async fn a_named_metric_reaches_its_own_index_among_several() {
+#[test]
+fn a_named_metric_reaches_its_own_index_among_several() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
@@ -1157,13 +1221,16 @@ async fn a_named_metric_reaches_its_own_index_among_several() {
             "{metric}: routed page differs from the exhaustive one"
         );
     }
+})
+    .unwrap()
 }
 
 /// Naming no metric when the field carries several is ambiguous, so the query
 /// declines to route and says so rather than letting index order decide the
 /// results.
-#[tokio::test]
-async fn several_indexes_without_a_metric_warn_ambiguous() {
+#[test]
+fn several_indexes_without_a_metric_warn_ambiguous() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema(&format!(
         "type Note {{ title: String  tag: String  embedding: [Float32!] \
@@ -1194,4 +1261,6 @@ async fn several_indexes_without_a_metric_warn_ambiguous() {
         5,
         "declining to route must still fill the page"
     );
+})
+    .unwrap()
 }

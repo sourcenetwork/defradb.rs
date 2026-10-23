@@ -24,12 +24,14 @@ use super::storage::{fetch_doc_ids, FieldQuery};
 /// Opens a read transaction, byte-matches the request's search tags against
 /// locally stored artifacts, and sends back a **signed** reply. On failure a
 /// signed error reply is sent so the requester's correlator slot resolves
-/// instead of timing out.
+/// instead of timing out. The reply goes back on the request's stream when
+/// `token` carries one.
 pub async fn handle_query_request<S: Store, T: P2PTransport>(
     store: &S,
     transport: &T,
     peer_id: PeerId,
     request: QuerySEArtifactsRequest,
+    token: Option<T::ResponseToken>,
 ) {
     let reply = match build_reply(store, &request).await {
         Ok(doc_ids) => QuerySEArtifactsReply::success(&request.message_id, doc_ids),
@@ -51,7 +53,10 @@ pub async fn handle_query_request<S: Store, T: P2PTransport>(
         return;
     }
 
-    if let Err(error) = transport.send_se_query_response(&peer_id, reply).await {
+    if let Err(error) = transport
+        .send_se_query_response(&peer_id, token, reply)
+        .await
+    {
         tracing::warn!(peer_id = %peer_id, error = %error, "failed to send SE query reply");
     }
 }

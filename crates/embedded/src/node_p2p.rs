@@ -13,9 +13,7 @@ use crate::node::{EmbeddedBlockstore, WireDocumentAcpCallback};
 #[cfg(feature = "libp2p")]
 use crate::node_recovery::{restore_libp2p_documents, restore_libp2p_replicators};
 #[cfg(feature = "libp2p")]
-use crate::node_tasks::spawn_libp2p_event_handler;
-#[cfg(feature = "libp2p")]
-use crate::node_tasks::spawn_replication_loop;
+use crate::node_tasks::{spawn_libp2p_event_handler, spawn_node_task, spawn_replication_loop};
 #[cfg(feature = "libp2p")]
 use crate::Libp2pConfig;
 use crate::ManagedP2PSystem;
@@ -66,15 +64,15 @@ pub(crate) struct P2PSetup {
 }
 
 #[cfg(feature = "libp2p")]
-async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: tokio::task::JoinHandle<()>) {
+async fn shutdown_libp2p_host(handle: &p2p::P2PHostHandle, host_task: edge::Service) {
     if let Err(error) = handle.shutdown().await {
         tracing::debug!(%error, "failed to signal P2P host during setup rollback");
     }
-    if let Err(error) = host_task.await {
-        tracing::debug!(%error, "P2P host task failed during setup rollback");
-    }
+    host_task.stopped().await;
 }
 
+/// Builds the libp2p host and every task around it on `edge`: the p2p crate
+/// spawns onto the runtime it runs on, so the caller may be on any thread.
 #[cfg(feature = "libp2p")]
 pub(crate) async fn setup_libp2p<S>(
     store: Arc<S>,
@@ -88,6 +86,34 @@ pub(crate) async fn setup_libp2p<S>(
 where
     S: storage::corekv::Store + 'static,
 {
+    edge.spawn(assemble_libp2p(
+        store,
+        database,
+        event_bus,
+        config.clone(),
+        sync_config,
+        peer_keyring.cloned(),
+        edge.clone(),
+    ))
+    .await
+    .map_err(Error::NetworkSetup)?
+}
+
+#[cfg(feature = "libp2p")]
+async fn assemble_libp2p<S>(
+    store: Arc<S>,
+    database: Arc<db::DB<S>>,
+    event_bus: Arc<dyn events::Bus>,
+    config: Libp2pConfig,
+    sync_config: SyncConfig,
+    peer_keyring: Option<crate::PeerKeyring>,
+    edge: edge::Edge,
+) -> Result<P2PSetup>
+where
+    S: storage::corekv::Store + 'static,
+{
+    let edge = &edge;
+    let peer_keyring = peer_keyring.as_ref();
     use p2p::bitswap::BitswapStoreAdapter;
     use p2p::sync::DocumentHeadProvider;
     use storage::stores::Peerstore;
@@ -130,7 +156,7 @@ where
         )
         .await
         .map_err(Error::HostCreate)?;
-    let host_task = tokio::spawn(async move {
+    let host_task = spawn_node_task(edge, async move {
         host.run().await;
     });
 
@@ -220,7 +246,7 @@ where
     let merge_handler_inner_for_kms = replication.merge_handler_inner.clone();
 
     let coordinator_for_restore = coordinator.clone();
-    let pending_dag_resync_task = tokio::spawn(async move {
+    let pending_dag_resync_task = spawn_node_task(edge, async move {
         coordinator_for_restore
             .run_pending_dag_resync(std::time::Duration::from_secs(60))
             .await;
@@ -229,7 +255,7 @@ where
     // Receiver's re-arm loop (#1116 stage 2): dispatches due pending roots
     // at a tight cadence. Sibling of the resync sweep above.
     let coordinator_for_retry_clock = coordinator.clone();
-    let pending_dag_retry_task = tokio::spawn(async move {
+    let pending_dag_retry_task = spawn_node_task(edge, async move {
         coordinator_for_retry_clock
             .run_pending_dag_retry_clock(std::time::Duration::from_secs(2))
             .await
@@ -246,7 +272,7 @@ where
         db::merge::governance::SWEEP_INTERVAL,
         coordinator.shutdown_handle(),
     );
-    let governance_sweep_task = tokio::spawn(async move {
+    let governance_sweep_task = spawn_node_task(edge, async move {
         let _ = governance_sweep.await;
     });
 
@@ -287,12 +313,14 @@ where
         handle.clone(),
         se_correlator,
         manage_hooks.clone(),
+        edge,
     );
     let replication_task = spawn_replication_loop(
         coordinator.clone(),
         sync_events_rx,
         replication.merge_handler_on_pool(),
         event_bus.clone(),
+        edge,
     );
     let failure_recorder_task =
         defra_p2p_adapter::spawn_failure_recorder(retry_peers.clone(), failure_rx);
@@ -505,7 +533,6 @@ where
             bind_port: config.bind_port,
             bind_addr: config.bind_addr,
             max_concurrent_multipath_paths: config.max_concurrent_multipath_paths,
-            gossip_heal: p2p::iroh::GossipHealConfig::from_env(),
             allowlist: config.allowlist.clone(),
         },
         document_acp,
