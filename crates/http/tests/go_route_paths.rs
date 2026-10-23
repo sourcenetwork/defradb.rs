@@ -1,9 +1,9 @@
-//! Go's wire paths for policy registration and views must resolve on Rust.
+//! Go's wire paths for policy registration and views must resolve on Rust, and
+//! the Rust aliases that used to sit beside them must not.
 //!
-//! Go's client posts policies to `/acp/document/policy` and views to `/view`,
-//! where Rust served `/acp/policy` and `/views`, so every Go-compatible client
-//! 404'd. An aliased route also gets its own `MatchedPath`, so it needs its own
-//! permission entry or it silently falls to the safe default.
+//! Go's client posts policies to `/acp/document/policy` and views to `/view`.
+//! Each route needs its own permission entry or it silently falls to the safe
+//! default.
 
 mod common;
 use common::*;
@@ -66,20 +66,48 @@ async fn gos_view_paths_resolve() {
     }
 }
 
-/// The change is additive: every path Rust already served still resolves.
+/// Rust-only routes keep their paths.
 #[tokio::test]
-async fn the_rust_paths_still_resolve() {
+async fn the_rust_only_paths_still_resolve() {
+    let calls = [
+        Call::post("/api/v0/views/gc").json("{}"),
+        Call::post("/api/v0/acp/policy")
+            .method(Method::GET)
+            .authenticated(),
+    ];
+    for call in calls {
+        let (status, body) = call.send().await;
+        assert_ne!(status, StatusCode::NOT_FOUND, "{}: {body}", call.path);
+    }
+}
+
+/// Paths that only aliased a Go route are gone.
+#[tokio::test]
+async fn the_removed_aliases_are_not_served() {
     let calls = [
         Call::post("/api/v0/acp/policy")
             .body(POLICY)
             .authenticated(),
         Call::post("/api/v0/views").json(r#"{"Query":"q","SDL":"s"}"#),
         Call::post("/api/v0/views/refresh").json("{}"),
-        Call::post("/api/v0/views/gc").json("{}"),
+        Call::post("/api/v0/index").json("{}"),
+        Call::post("/api/v0/lens/set").json("{}"),
+        Call::post("/api/v0/schema").body("type A { a: String }"),
+        Call::post("/api/v0/nac/status").method(Method::GET),
+        Call::post("/api/v0/nac/admin").json("{}"),
+        Call::post("/api/v0/p2p/replicator").method(Method::GET),
+        Call::post("/api/v0/p2p/peers").method(Method::GET),
     ];
     for call in calls {
         let (status, body) = call.send().await;
-        assert_ne!(status, StatusCode::NOT_FOUND, "{}: {body}", call.path);
+        assert!(
+            matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ),
+            "{} is still served: {status} {body}",
+            call.path
+        );
     }
 }
 
@@ -99,20 +127,12 @@ async fn the_router_builds() {
     let _ = router();
 }
 
-/// A method Go does not register answers 405 on the alias exactly as on the
-/// canonical path. The auth middleware runs on a method mismatch, so this also
-/// pins that the merged permission arm does not turn a 405 into something else.
+/// A method Go does not register answers 405.
 #[tokio::test]
-async fn a_method_mismatch_answers_the_same_on_both_paths() {
-    let pairs = [
-        ("/api/v0/acp/document/policy", "/api/v0/acp/policy"),
-        ("/api/v0/view/refresh", "/api/v0/views/refresh"),
-    ];
-    for (go_path, rust_path) in pairs {
-        let (go_status, _) = Call::post(go_path).method(Method::PUT).send().await;
-        let (rust_status, _) = Call::post(rust_path).method(Method::PUT).send().await;
-        assert_eq!(go_status, StatusCode::METHOD_NOT_ALLOWED, "{go_path}");
-        assert_eq!(go_status, rust_status, "{go_path} vs {rust_path}");
+async fn a_method_mismatch_answers_405() {
+    for path in ["/api/v0/acp/document/policy", "/api/v0/view/refresh"] {
+        let (status, _) = Call::post(path).method(Method::PUT).send().await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
     }
 }
 
@@ -120,33 +140,20 @@ async fn a_method_mismatch_answers_the_same_on_both_paths() {
 // Permissions
 // ---------------------------------------------------------------------------
 
-/// Every Go path added here, with the canonical path it must agree with.
-const ALIASED_PATHS: &[(&str, &str, NodePermission)] = &[
-    (
-        "/api/v0/acp/document/policy",
-        "/api/v0/acp/policy",
-        NodePermission::DacPolicyAdd,
-    ),
-    ("/api/v0/view", "/api/v0/views", NodePermission::ViewAdd),
-    (
-        "/api/v0/view/refresh",
-        "/api/v0/views/refresh",
-        NodePermission::ViewRefresh,
-    ),
+/// Every Go path in this file, with the permission it carries.
+const GO_PATHS: &[(&str, NodePermission)] = &[
+    ("/api/v0/acp/document/policy", NodePermission::DacPolicyAdd),
+    ("/api/v0/view", NodePermission::ViewAdd),
+    ("/api/v0/view/refresh", NodePermission::ViewRefresh),
 ];
 
 #[tokio::test]
 async fn every_new_path_carries_its_own_permission() {
-    for (go_path, rust_path, expected) in ALIASED_PATHS {
+    for (go_path, expected) in GO_PATHS {
         assert_eq!(
             route_permission(go_path, &Method::POST),
             RoutePermission::Required(*expected),
             "{go_path}"
-        );
-        assert_eq!(
-            route_permission(go_path, &Method::POST),
-            route_permission(rust_path, &Method::POST),
-            "{go_path} must agree with {rust_path}"
         );
     }
 }
@@ -156,7 +163,7 @@ async fn every_new_path_carries_its_own_permission() {
 /// let a read-only actor register a DAC policy.
 #[tokio::test]
 async fn no_new_path_falls_to_the_safe_default() {
-    for (go_path, _, _) in ALIASED_PATHS {
+    for (go_path, _) in GO_PATHS {
         assert_ne!(
             route_permission(go_path, &Method::POST),
             RoutePermission::Required(NodePermission::DocumentRead),
@@ -169,49 +176,12 @@ async fn no_new_path_falls_to_the_safe_default() {
 /// permission as the v0 form it is normalized onto.
 #[tokio::test]
 async fn both_api_versions_resolve_the_same_permission() {
-    for (go_path, _, _) in ALIASED_PATHS {
+    for (go_path, _) in GO_PATHS {
         let v1_path = go_path.replacen("/api/v0/", "/api/v1/", 1);
         assert_eq!(
             route_permission(&v1_path, &Method::POST),
             route_permission(go_path, &Method::POST),
             "{v1_path}"
         );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Behaviour equivalence
-// ---------------------------------------------------------------------------
-
-/// The two policy paths share a handler but are registered separately, so the
-/// guard against them drifting is that they answer identically.
-#[tokio::test]
-async fn the_policy_paths_answer_identically() {
-    for (body, authenticated) in [(POLICY, true), (POLICY, false), ("", true)] {
-        let go = Call::post("/api/v0/acp/document/policy").body(body);
-        let rust = Call::post("/api/v0/acp/policy").body(body);
-        let (go, rust) = if authenticated {
-            (go.authenticated(), rust.authenticated())
-        } else {
-            (go, rust)
-        };
-        assert_eq!(go.send().await, rust.send().await, "body {body:?}");
-    }
-}
-
-#[tokio::test]
-async fn the_view_paths_answer_identically() {
-    let pairs = [
-        (
-            Call::post("/api/v0/view").json(r#"{"Query":"q","SDL":"s"}"#),
-            Call::post("/api/v0/views").json(r#"{"Query":"q","SDL":"s"}"#),
-        ),
-        (
-            Call::post("/api/v0/view/refresh").json(r#"{"Names":["A"]}"#),
-            Call::post("/api/v0/views/refresh").json(r#"{"Names":["A"]}"#),
-        ),
-    ];
-    for (go, rust) in pairs {
-        assert_eq!(go.send().await, rust.send().await, "{}", go.path);
     }
 }

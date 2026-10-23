@@ -177,15 +177,10 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/active-peers", get(handlers::p2p::active_peers)) // Go-compatible
         .route("/connect", post(handlers::p2p::connect)) // Go-compatible
         .route("/disconnect", post(handlers::p2p::disconnect)) // Go-compatible
-        .route("/peers", get(handlers::p2p::list_peers))
-        .route("/peers", post(handlers::p2p::connect_peer)) // Legacy
         .route("/peers/{peer_id}", get(handlers::p2p::peer_details))
-        .route("/replicators", get(handlers::p2p::list_replicators)) // Go uses /replicators
+        .route("/replicators", get(handlers::p2p::list_replicators))
         .route("/replicators", post(handlers::p2p::add_replicator))
         .route("/replicators", delete(handlers::p2p::remove_replicator))
-        .route("/replicator", get(handlers::p2p::list_replicators)) // Legacy
-        .route("/replicator", post(handlers::p2p::add_replicator))
-        .route("/replicator", delete(handlers::p2p::remove_replicator))
         .route("/collections", get(handlers::p2p::list_collections))
         .route("/collections", post(handlers::p2p::add_collections))
         .route("/collections", delete(handlers::p2p::remove_collections))
@@ -208,9 +203,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
     // ACP routes
     let acp_routes = Router::new()
         .route("/status", get(handlers::acp::get_status))
-        // /acp/policy is Rust's original path, kept as an alias.
         .route("/document/policy", post(handlers::acp::add_policy))
-        .route("/policy", post(handlers::acp::add_policy))
         .route("/policy", get(handlers::acp::list_policies))
         .route("/policy/{id}", get(handlers::acp::get_policy))
         .route("/document/decide", post(handlers::acp::decide_doc_access))
@@ -226,12 +219,6 @@ pub(crate) fn create_router_with_state_and_body_limits(
             "/document/relationship",
             delete(handlers::acp::remove_doc_relationship),
         );
-
-    // Index routes
-    let index_routes = Router::new()
-        .route("/", post(handlers::index::create_index))
-        .route("/", get(handlers::index::list_indexes))
-        .route("/", delete(handlers::index::delete_index));
 
     // Backup routes (POST for both to match Go DefraDB)
     let backup_routes = Router::new()
@@ -250,7 +237,6 @@ pub(crate) fn create_router_with_state_and_body_limits(
     let lens_routes = Router::new()
         .route("/", post(handlers::lens::add_lens))
         .route("/", get(handlers::lens::list_lenses))
-        .route("/set", post(handlers::lens::set_migration))
         .route("/reload", post(handlers::lens::reload));
 
     // Batch signing routes
@@ -259,13 +245,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/sign", post(handlers::batch::batch_sign))
         .route("/verify", post(handlers::batch::batch_verify));
 
-    // NAC (Node Access Control) routes
-    let nac_routes = Router::new()
-        .route("/status", get(handlers::nac::get_status))
-        .route("/admin", post(handlers::nac::add_admin))
-        .route("/admin", delete(handlers::nac::remove_admin));
-
-    // Go-compatible ACP node routes (aliased from /acp/node/*)
+    // ACP node routes
     // Go DefraDB uses:
     //   GET /acp/node/status
     //   POST /acp/node/relationship
@@ -284,17 +264,15 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/disable", post(handlers::nac::disable))
         .route("/re-enable", post(handlers::nac::re_enable));
 
-    // /views is Rust's original mount and carries the Rust-only /gc route.
-    // Deriving it from the Go set keeps the two mounts from drifting.
-    let go_view_routes = Router::new()
+    let view_routes = Router::new()
         // A view is defined by an SDL block, which Go parses with the same
         // `ParseSDL` as a schema add (`internal/db/view.go:47` vs
         // `internal/db/collection.go:276`), so it is a schema request body.
         .route("/", capped(post(handlers::views::add_view), limits.schema))
         .route("/refresh", post(handlers::views::refresh_views));
-    let view_routes = go_view_routes
-        .clone()
-        .route("/gc", post(handlers::views::gc_downsample_histories));
+
+    // Downsample history GC has no Go counterpart.
+    let view_gc_routes = Router::new().route("/gc", post(handlers::views::gc_downsample_histories));
 
     // Versioned API routes
     let api_routes = Router::new()
@@ -308,10 +286,6 @@ pub(crate) fn create_router_with_state_and_body_limits(
             axum::routing::any(handlers::graphql_ws_handler),
         )
         .route("/schema", get(handlers::schema))
-        .route(
-            "/schema",
-            capped(post(handlers::schema::add_collection), limits.schema),
-        )
         .route("/version", get(handlers::version))
         .route("/actions", get(handlers::actions::list_actions))
         // Transaction endpoints
@@ -322,23 +296,19 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .nest("/p2p", p2p_routes)
         // ACP endpoints (document-level access control)
         .nest("/acp", acp_routes)
-        // Go-compatible ACP node routes (NAC via /acp/node/*)
+        // Node access control
         .nest("/acp/node", acp_node_routes)
-        // Index endpoints
-        .nest("/index", index_routes)
         // Backup endpoints
         .nest("/backup", backup_routes)
         // View endpoints
-        .nest("/views", view_routes)
-        .nest("/view", go_view_routes)
+        .nest("/view", view_routes)
+        .nest("/views", view_gc_routes)
         // Block endpoints
         .nest("/block", block_routes)
         // Lens migration endpoints
         .nest("/lens", lens_routes)
         // Batch signing endpoints
         .nest("/batch", batch_routes)
-        // NAC endpoints (Rust-native routes)
-        .nest("/nac", nac_routes)
         // Go-compatible list-all encrypted indexes
         .route(
             "/encrypted-indexes",
@@ -531,7 +501,7 @@ mod tests {
             "/collections",
             "/p2p/info",
             "/acp/status",
-            "/index",
+            "/collections/indexes",
             "/encrypted-indexes",
             "/node/identity",
         ] {
