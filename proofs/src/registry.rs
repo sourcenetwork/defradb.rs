@@ -139,7 +139,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Retry input and marker fencing",
         name: "INV_ProviderOncePerContext / INV_NewRegistrationSurvivesOldAck / INV_NewRegistrationSurvivesOldClear",
         axis: Tla,
-        anchor: "crates/db/src/write/autocommit/{create,update,delete}.rs NeedsInput resolver; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
+        anchor: "crates/db/src/write/autocommit/{create,update,delete}.rs NeedsInput resolver; crates/db/src/write/create.rs NeedsInput waves; crates/query/src/prepared.rs; crates/storage/src/stores/peerstore.rs register/complete/clear retry scope",
         model_ref: "MC_RetryPreparedInputs_{Green,Red_*}.cfg / MC_RetryMarkerGeneration_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
@@ -697,6 +697,14 @@ pub const PROPERTIES: &[Property] = &[
         axis: Tla,
         anchor: "crates/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
         model_ref: "MC_ProviderLookup_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Document create pipeline",
+        name: "INV_NoStoreBeforeComposite / INV_NoMintInAttempt / INV_OneKeyPerField / INV_CommittedWhole",
+        axis: Tla,
+        anchor: "crates/db/src/write/create.rs embed, identity, seed_identity, memo_identity, prepare_keys, compute, compute_many, persist; crates/db/src/write/autocommit/create.rs create_many_with_resolved_inputs, create_impl, run_create_attempt; crates/db/src/write/autocommit/batch.rs BatchMutator::create_as (with a memo); crates/db/src/write/doc.rs DbDocMutator::create_as, next_create_identity",
+        model_ref: "MC_CreatePipeline_{Green,Red_*}.cfg",
         tiers: &[Boundary],
     },
     Property {

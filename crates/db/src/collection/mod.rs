@@ -357,6 +357,7 @@ impl Collection {
 
     /// The collection schema, shared: what a job computing on another worker
     /// is handed.
+    #[cfg(feature = "native")]
     pub(crate) fn shared_schema(&self) -> Arc<CollectionVersion> {
         Arc::clone(&self.def)
     }

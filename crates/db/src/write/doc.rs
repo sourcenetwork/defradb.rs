@@ -18,6 +18,7 @@ use crate::event::emission::register_update_event_callback;
 use crate::txn::held::Held;
 use crate::txn::{DbTxn, LentTxn};
 use crate::write::autocommit::helpers::write_branchable_collection_block;
+use crate::write::create::{self as pipeline, CreateStores};
 use defra_core::RequestContext;
 
 fn document_json_value(doc: &Document) -> Option<serde_json::Value> {
@@ -137,31 +138,7 @@ impl<S: Store + 'static> DbDocMutator<S> {
         collection: &Collection,
     ) -> query::error::Result<DocStorageIdentity> {
         let ordinal = self.creates.fetch_add(1, Ordering::Relaxed);
-        let request = query::prepared::PreparedInputRequest::new(
-            query::prepared::PreparedInputKind::Allocation,
-            [b"doc-short-id-v1".as_slice(), &ordinal.to_be_bytes()].concat(),
-        );
-        let drawn = match self.prepared_inputs.get(&request) {
-            Some(drawn) => drawn,
-            None => {
-                let short_id = self
-                    .db
-                    .next_doc_short_id()
-                    .await
-                    .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-                self.prepared_inputs
-                    .insert(request, short_id.to_be_bytes().as_slice())
-            }
-        };
-        let short_id = <[u8; 8]>::try_from(drawn.as_ref())
-            .map(u64::from_be_bytes)
-            .map_err(|_| {
-                query::error::QueryError::execution("invalid prepared document short ID")
-            })?;
-        Ok(DocStorageIdentity::new(
-            collection.resolved_root_id(),
-            short_id,
-        ))
+        pipeline::memo_identity(&self.db, collection, &self.prepared_inputs, ordinal).await
     }
 
     async fn ensure_collection_can_write(
@@ -331,110 +308,56 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
         self.ensure_collection_can_write(collection_name, &collection)
             .await?;
 
-        crate::search::embedding::set_embedding_from_inputs(
-            &collection.schema().vector_embeddings,
-            &mut doc,
-            true,
-            &rapidhash::RapidHashSet::default(),
-            &self.db.options().embedding_config(),
-            &self.prepared_inputs,
-        )?;
-
-        self.db
-            .validate_downsample_write(&datastore, &systemstore, &collection, &doc, None)
-            .await
-            .map_err(|e| query::error::QueryError::execution(e.to_string()))?;
-
+        let inputs = Some(&self.prepared_inputs);
+        pipeline::embed(&self.db, &collection, &mut doc, inputs).await?;
+        // The short ID comes from the memo, so a statement run again keeps
+        // it. Keys are never minted here: the builder asks the memo for them.
         let identity = self.next_create_identity(&collection).await?;
-        let doc_short_id = identity.doc_short_id;
+        pipeline::seed_identity(&self.db, &mut doc, identity);
+        let computed = pipeline::compute(&collection, &doc, identity, context, inputs)?;
 
-        // Blocks first: the public DocID is derived from the genesis composite
-        // block CID (Go #4838).
-        let (doc_id, doc_cid, doc_block, col_block_data) = {
+        let created = {
             let txn = &*self.shared_txn()?;
-
             let blockstore = txn.blockstore().map_err(|e| {
                 query::error::QueryError::execution(format!("failed to get blockstore: {}", e))
             })?;
             let headstore = txn.headstore().map_err(|e| {
                 query::error::QueryError::execution(format!("failed to get headstore: {}", e))
             })?;
-
-            let enc_config = context.encryption();
-            let sign_config = context.signing();
-            let kms = self.db.kms();
-
-            let block_result = write_document_blocks_with_inputs(
-                &blockstore,
-                &headstore,
-                &doc,
-                collection.schema(),
-                identity,
-                None,
-                enc_config,
-                sign_config,
-                context.batch_session(),
-                kms.as_ref(),
-                Some(&self.prepared_inputs),
-                None,
-            )
-            .await
-            .map_err(|error| {
-                error.into_query_error_in(&format!(
-                    "failed to write document blocks for transaction create on collection {collection_name}"
-                ))
-            })?;
-
-            let doc_id = crate::write::autocommit::helpers::register_created_doc(
-                self.db.document_acp(),
-                context.creator(),
-                &systemstore,
-                &datastore,
-                &collection,
-                doc_short_id,
-                &block_result,
-            )
-            .await?;
-            doc.set_id(doc_id.clone());
-
-            let col_block_data = write_branchable_collection_block(
+            pipeline::persist(
                 &self.db,
+                &CreateStores {
+                    datastore: &datastore,
+                    systemstore: &systemstore,
+                    blockstore: &blockstore,
+                    headstore: &headstore,
+                },
                 collection_name,
                 &collection,
-                &blockstore,
-                &headstore,
-                block_result.cid,
-                doc_short_id,
+                &index_manager,
+                &doc,
+                &computed,
                 context,
-                Some(&self.prepared_inputs),
+                inputs,
             )
-            .await?;
-
-            (doc_id, block_result.cid, block_result.block, col_block_data)
+            .await?
         };
-
-        crate::write::autocommit::helpers::write_local_create(
-            &datastore,
-            &collection,
-            &doc,
-            doc_short_id,
-            &index_manager,
-        )
-        .await?;
+        let mut doc = created.doc;
+        doc.clear_write_preparation();
 
         self.register_update_callback(
             collection_name.to_string(),
             collection.collection_id().to_string(),
-            doc_id.to_string(),
-            doc_cid,
-            doc_block,
+            created.doc_id.to_string(),
+            created.cid,
+            created.block,
             document_json_value(&doc),
-            col_block_data,
+            created.collection_block,
             context.creator().map(str::to_owned),
         )
         .await?;
 
-        Ok(CreateResult::new(doc_id, doc))
+        Ok(CreateResult::new(created.doc_id, doc))
     }
 
     async fn update(
