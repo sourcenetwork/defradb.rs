@@ -281,6 +281,62 @@ fn equal_creates_from_two_signers_are_two_documents() {
     .unwrap()
 }
 
+/// Carol merges Alice's `a.b = 1`, then Alice's delete of `a`, which drops the
+/// set's op from the stored frontier. After a restart forgets which blocks were
+/// merged, the set arrives again and must stay deleted.
+#[test]
+fn a_json_block_delivered_again_after_restart_is_not_reapplied() {
+    workers::block_on(async {
+        let alice = Node::open().await;
+        let mut carol = Node::open().await;
+        let doc_id = alice.create(serde_json::json!({"x": 1})).await;
+        for head in alice.heads(&doc_id).await {
+            carol.receive(&alice, &doc_id, &head).await;
+        }
+        let mut set = alice.edit(&doc_id);
+        set.set(
+            "meta",
+            NormalValue::Json(serde_json::json!({"x": 1, "a": {"b": 1}})),
+        )
+        .unwrap();
+        let set = alice.update(set).await;
+        let mut delete = alice.edit(&doc_id);
+        delete
+            .edit(
+                "meta",
+                FieldOp::Paths(vec![JsonOp {
+                    path: vec!["a".into()],
+                    edit: JsonEdit::Delete,
+                }]),
+            )
+            .unwrap();
+        let deleted = alice.update(delete).await;
+        carol.receive(&alice, &doc_id, &set).await;
+        carol.receive(&alice, &doc_id, &deleted).await;
+        let expected = NormalValue::Json(serde_json::json!({"x": 1}));
+        assert_eq!(carol.meta().await, expected);
+
+        carol.handler = DbMergeHandler::new(carol.db.clone(), carol.blocks.clone());
+        carol
+            .handler
+            .handle_block(
+                &set.0,
+                &set.1,
+                BlockMetadata::normal(
+                    &doc_id.to_string(),
+                    COLLECTION_ID,
+                    "did:key:z6MkrJsonMerge",
+                    Some("peer"),
+                    false,
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(carol.meta().await, expected);
+    })
+    .unwrap()
+}
+
 fn alice_or_bob<'node>(
     block: &(Cid, Bytes),
     from_bob: &(Cid, Bytes),

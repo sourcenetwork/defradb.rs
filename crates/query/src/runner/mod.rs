@@ -31,6 +31,8 @@ mod explain;
 mod fetcher;
 pub(crate) mod introspection;
 mod json_conflicts;
+#[cfg(test)]
+mod json_conflicts_tests;
 mod mutation;
 mod mutation_inputs;
 mod owners;

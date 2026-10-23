@@ -15,10 +15,13 @@ use storage::corekv::Store;
 use crate::error::{Error, Result};
 use crate::txn::DbTxn;
 
-pub(crate) async fn read<S: Store>(
+pub(crate) async fn read<S>(
     txn: &DbTxn<S>,
     options: &JsonConflictOptions,
-) -> Result<Vec<JsonConflict>> {
+) -> Result<Vec<JsonConflict>>
+where
+    S: Store,
+{
     let collection = txn
         .get_collection(&options.collection)
         .await?

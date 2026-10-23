@@ -67,11 +67,13 @@
 \*   Create        json.rs write_data (block_ops, deep_set; json_crdt.rs diff):
 \*                 a write turns a JSON value into ops at paths;
 \*                 prepare_tagged_writes gives its block the field's heads as
-\*                 parents. One block may carry ops at
-\*                 several distinct paths: they act as a chain of one-op blocks
-\*                 sharing one ID, which never race one another
+\*                 parents. A model block edits one path. A Rust block may
+\*                 carry ops at several distinct paths; this model does not
+\*                 check those, and covers single-path blocks only
 \*   Deliver       field_tagged.rs merge_field_tagged: a received block is
-\*                 merged once every parent block is local
+\*                 merged once every parent block is local; b \notin known[n]
+\*                 is the block's published priority entry (h/p/), which
+\*                 outlives the frontier dropping its ID
 \*   Apply         json_crdt.rs Frontier::delta, then Frontier::compose: drop
 \*                 the edits in the block's past at its paths and below, add
 \*                 its edits (json.rs effect); tagged_past finds that past by

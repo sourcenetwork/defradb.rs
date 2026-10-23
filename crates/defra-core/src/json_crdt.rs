@@ -452,7 +452,8 @@ impl Frontier {
     }
 
     /// Every edit that raced a path's winner and lost without the winner
-    /// having seen it, except an implied map losing to a map: they agree.
+    /// having seen it, except an implied map losing to a map: they agree. A
+    /// block is listed once per path, however many paths below it sets.
     pub fn conflicts(&self) -> Vec<Conflict> {
         let index = Index::new(self);
         let mut paths: BTreeSet<Vec<u8>> = BTreeSet::new();
@@ -470,9 +471,13 @@ impl Frontier {
                 .under(&key)
                 .filter(|(own, entry)| *own || entry.edit != JsonEdit::Delete)
                 .map(|(own, entry)| Racer { entry, own });
+            let mut listed: BTreeSet<&[u8]> = BTreeSet::new();
             for racer in racers {
                 let entry = racer.entry;
-                if entry.block == winner.entry.block || (racer.is_map() && winner.is_map()) {
+                if entry.block == winner.entry.block
+                    || (racer.is_map() && winner.is_map())
+                    || listed.contains(entry.block.as_slice())
+                {
                     continue;
                 }
                 let concurrent = match (racer.own, winner.own) {
@@ -485,6 +490,7 @@ impl Frontier {
                     let Some(path) = decode_path(&key) else {
                         continue;
                     };
+                    listed.insert(&entry.block);
                     conflicts.push(Conflict {
                         path,
                         block: entry.block.clone(),
