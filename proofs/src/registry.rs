@@ -48,6 +48,22 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Owner observations retain read gates and the transaction snapshot",
+        axis: Tla,
+        anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
+        model_ref: "MC_OwnerObservation_Green.cfg / MC_OwnerObservation_Red_*.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Acp.OwnerObservation.exact_snapshot and denied-owner noninterference",
+        axis: Lean,
+        anchor: "crates/query/src/runner/owners.rs",
+        model_ref: "Acp.OwnerObservation",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Peer connection observation",
         name: "NoSpuriousDenial — queued lifecycle notification cannot hide a connected peer",
         axis: Tla,

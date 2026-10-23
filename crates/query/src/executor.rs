@@ -450,6 +450,23 @@ pub trait QueryExecutor: MaybeSendSync {
         handle: &TransactionHandle,
     ) -> QueryResponse;
 
+    /// Observe owners of known documents through the existing transaction's
+    /// actor, read gates and actually bound local authorization snapshot.
+    /// Missing, hidden or unregistered entries return no owner. Unsupported
+    /// transaction-bound authorization is an error, never an empty inventory.
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        let _ = (context, handle, collection, doc_ids);
+        Err(crate::error::QueryError::execution(
+            "transaction-bound document owner observations are unsupported",
+        ))
+    }
+
     /// Begin a new transaction.
     ///
     /// Returns a transaction handle that can be used with `execute_in_txn()`.
