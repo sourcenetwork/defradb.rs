@@ -224,8 +224,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryExecutor for QueryRun
         handle: &TransactionHandle,
         collection: &str,
         doc_ids: &[String],
+        identity: Option<identity::Did>,
     ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
-        self.observe_owners(context, handle, collection, doc_ids)
+        self.observe_owners(context, handle, collection, doc_ids, identity)
             .await
     }
 

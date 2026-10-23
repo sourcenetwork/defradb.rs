@@ -105,6 +105,7 @@ fn owner_observation_rejects_a_capability_claim_without_a_bound_transaction_view
                 &handle,
                 "Users",
                 &["known".into()],
+                None,
             )
             .await
             .unwrap_err();
