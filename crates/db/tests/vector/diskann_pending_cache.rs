@@ -237,6 +237,28 @@ fn a_newer_copy_wins_and_an_oversized_one_leaves_a_marker() {
 }
 
 #[test]
+fn a_catch_up_past_the_cap_is_refused() {
+    let mut segment = Segment::default();
+    segment.push(NodeId(1), &[0; 8]);
+    let tag = Tag {
+        generation: 0,
+        position: 1,
+    };
+    let copy = Copy::loaded(tag, segment);
+    let per_entry = size_of::<NodeId>() + 8;
+    let room = ((MAX_PENDING_CACHE_BYTES - per_entry) / per_entry) as u64;
+    assert!(copy.can_hold(room, 8));
+    assert!(
+        !copy.can_hold(room + 1, 8),
+        "a gap past the cap scans instead"
+    );
+    assert!(
+        !copy.can_hold(u64::MAX, 8),
+        "an overflowing gap does not fit"
+    );
+}
+
+#[test]
 fn an_insert_during_a_merge_stays_pending() {
     workers::block_on(async {
         let (store, index, _caches) = cached_store().await;
