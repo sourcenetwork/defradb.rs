@@ -62,6 +62,10 @@
 \*   crates/db/src/write/autocommit/helpers.rs     a local write's ops and
 \*                                                 operand
 \*                                                 (prepare_tagged_writes)
+\*   crates/db/src/definition/migration/helpers.rs a lens write-back leaves a
+\*                                                 tagged field it changes to
+\*                                                 the next write
+\*                                                 (changes_block_state)
 \*
 \* Correspondence table (model -> Rust):
 \*   Create        json.rs write_data (block_ops, deep_set; json_crdt.rs diff):
@@ -69,7 +73,12 @@
 \*                 prepare_tagged_writes gives its block the field's heads as
 \*                 parents. A model block edits one path. A Rust block may
 \*                 carry ops at several distinct paths; this model does not
-\*                 check those, and covers single-path blocks only
+\*                 check those, and covers single-path blocks only. A lens
+\*                 migration is a Create too: prepare_tagged_writes writes a
+\*                 lensed tagged field as a set on the write that moves its
+\*                 document to the new version, and the migration write-back
+\*                 (definition/migration/helpers.rs changes_block_state)
+\*                 never stores one, so every edit in a frontier is a block
 \*   Deliver       field_tagged.rs merge_field_tagged: a received block is
 \*                 merged once every parent block is local; b \notin known[n]
 \*                 is the block's published priority entry (h/p/), which
