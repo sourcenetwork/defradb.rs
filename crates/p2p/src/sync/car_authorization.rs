@@ -87,7 +87,7 @@ mod tests {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "secret".to_string(),
                 priority: 1,
-                schema_version_id: "schema".to_string(),
+                collection_version_id: "schema".to_string(),
                 data: b"ciphertext".to_vec(),
             }),
             vec![],

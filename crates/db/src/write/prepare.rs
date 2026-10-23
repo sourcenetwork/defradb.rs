@@ -52,7 +52,7 @@ pub(crate) fn kms_input_request(
 /// invalidate the payload before the mutation retries.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedCreateBlocks {
-    pub schema_version_id: String,
+    pub collection_version_id: String,
     pub computed: crate::block::builder::ComputedBlocks,
 }
 
@@ -644,7 +644,7 @@ impl<S: Store + 'static> crate::AutoCommitMutator<S> {
                 })?;
                 let mut write = (*preparation).clone();
                 write.set_payload(Arc::new(PreparedCreateBlocks {
-                    schema_version_id: collection.version_id().to_string(),
+                    collection_version_id: collection.version_id().to_string(),
                     computed: blocks,
                 }));
                 doc.set_write_preparation(Arc::new(write));

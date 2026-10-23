@@ -10,7 +10,7 @@ const NONCES_SUFFIX: &[u8] = b"/nonces/";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CRDTValueKey {
     /// Schema version identifier.
-    pub schema_version_id: String,
+    pub collection_version_id: String,
     /// Raw document identifier bytes.
     pub doc_id: Vec<u8>,
     /// Field name.
@@ -20,12 +20,12 @@ pub struct CRDTValueKey {
 impl CRDTValueKey {
     /// Create a new CRDTValueKey.
     pub fn new(
-        schema_version_id: impl Into<String>,
+        collection_version_id: impl Into<String>,
         doc_id: impl Into<Vec<u8>>,
         field_name: impl Into<String>,
     ) -> Self {
         Self {
-            schema_version_id: schema_version_id.into(),
+            collection_version_id: collection_version_id.into(),
             doc_id: doc_id.into(),
             field_name: field_name.into(),
         }
@@ -34,7 +34,7 @@ impl CRDTValueKey {
     /// Create the corresponding priority key.
     pub fn priority_key(&self) -> CRDTPriorityKey {
         CRDTPriorityKey::new(
-            self.schema_version_id.clone(),
+            self.collection_version_id.clone(),
             self.doc_id.clone(),
             self.field_name.clone(),
         )
@@ -43,7 +43,7 @@ impl CRDTValueKey {
     /// Create a nonce key prefix for this field.
     pub fn nonce_prefix(&self) -> CRDTNoncePrefix {
         CRDTNoncePrefix::new(
-            self.schema_version_id.clone(),
+            self.collection_version_id.clone(),
             self.doc_id.clone(),
             self.field_name.clone(),
         )
@@ -54,14 +54,14 @@ impl Key for CRDTValueKey {
     fn bytes(&self) -> Vec<u8> {
         let mut key = Vec::with_capacity(
             DATA_PREFIX.len()
-                + self.schema_version_id.len()
+                + self.collection_version_id.len()
                 + 1
                 + self.doc_id.len()
                 + 1
                 + self.field_name.len(),
         );
         key.extend_from_slice(DATA_PREFIX);
-        key.extend_from_slice(self.schema_version_id.as_bytes());
+        key.extend_from_slice(self.collection_version_id.as_bytes());
         key.push(b'/');
         key.extend_from_slice(&self.doc_id);
         key.push(b'/');
@@ -72,7 +72,7 @@ impl Key for CRDTValueKey {
     fn to_string(&self) -> String {
         format!(
             "/data/{}/{}/{}",
-            self.schema_version_id,
+            self.collection_version_id,
             String::from_utf8_lossy(&self.doc_id),
             self.field_name
         )
@@ -91,12 +91,12 @@ pub struct CRDTPriorityKey {
 impl CRDTPriorityKey {
     /// Create a new CRDTPriorityKey.
     pub fn new(
-        schema_version_id: impl Into<String>,
+        collection_version_id: impl Into<String>,
         doc_id: impl Into<Vec<u8>>,
         field_name: impl Into<String>,
     ) -> Self {
         Self {
-            value_key: CRDTValueKey::new(schema_version_id, doc_id, field_name),
+            value_key: CRDTValueKey::new(collection_version_id, doc_id, field_name),
         }
     }
 }
@@ -125,12 +125,12 @@ pub struct CRDTNoncePrefix {
 impl CRDTNoncePrefix {
     /// Create a new CRDTNoncePrefix.
     pub fn new(
-        schema_version_id: impl Into<String>,
+        collection_version_id: impl Into<String>,
         doc_id: impl Into<Vec<u8>>,
         field_name: impl Into<String>,
     ) -> Self {
         Self {
-            value_key: CRDTValueKey::new(schema_version_id, doc_id, field_name),
+            value_key: CRDTValueKey::new(collection_version_id, doc_id, field_name),
         }
     }
 

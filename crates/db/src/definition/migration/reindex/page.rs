@@ -207,7 +207,7 @@ impl ReindexPage {
                         materialized += 1;
                     }
                     let mut restamped = doc;
-                    restamped.set_schema_version_id(collection.version_id());
+                    restamped.set_collection_version_id(collection.version_id());
                     restamped
                 }
                 ToActive::Identity => doc,

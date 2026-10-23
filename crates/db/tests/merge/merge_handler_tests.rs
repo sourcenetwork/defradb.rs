@@ -372,7 +372,7 @@ fn composite_merge_block(cid: Cid, block: &Block, doc_id: &str) -> MergeBlock {
 fn make_lww_block(signature_cid: Option<Cid>) -> Block {
     let payload = LwwDeltaPayload {
         field_name: "name".to_string(),
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority: 1,
         data: b"hello".to_vec(),
     };
@@ -616,7 +616,7 @@ fn verify_tampered_block_returns_error() {
         // Create a DIFFERENT block (tampered) but attach the same signature
         let tampered_payload = LwwDeltaPayload {
             field_name: "name".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data: b"TAMPERED".to_vec(),
         };
@@ -825,7 +825,7 @@ fn verify_forged_bls_signature_returns_error() {
         // Create a different block but attach the original signature
         let tampered_payload = LwwDeltaPayload {
             field_name: "name".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data: b"FORGED".to_vec(),
         };
@@ -1021,7 +1021,7 @@ fn counter_merge_of_an_unmaterialized_document_waits_for_its_composite() {
 
         let payload = CounterDeltaPayload {
             field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data: delta_data,
             nonce: 4242,
@@ -1076,7 +1076,7 @@ fn counter_merge_marks_cid_merged() {
         let mut doc = Document::new();
         doc.set_with_crdt("score", CType::PnCounter, NormalValue::Int(5))
             .unwrap();
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
         let built = db::block::builder::build_blocks_from_document(
             &doc,
             &crate::common::schema::version("v1"),
@@ -1162,7 +1162,7 @@ async fn put_counter_delta_block(
     ciborium::into_writer(&increment, &mut delta_data).unwrap();
     let payload = CounterDeltaPayload {
         field_name: "score".to_string(),
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority,
         data: delta_data,
         nonce,
@@ -1309,7 +1309,7 @@ fn counter_standalone_skips_already_merged_block() {
 
         let payload = CounterDeltaPayload {
             field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data: delta_data,
             nonce: 999,
@@ -1380,7 +1380,7 @@ fn shared_counter_block_is_applied_once_per_document() {
         ciborium::into_writer(&5_i64, &mut data).unwrap();
         let payload = CounterDeltaPayload {
             field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data,
             nonce: 7,
@@ -1524,7 +1524,7 @@ fn composite_merge_skips_locally_merged_counter_parent() {
         let mut doc = Document::new();
         doc.set_with_crdt("score", CType::PnCounter, NormalValue::Int(10))
             .unwrap();
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
         let (doc_id, _doc_short_id, local_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
         let doc_id_str = doc_id.to_string();
@@ -1537,7 +1537,7 @@ fn composite_merge_skips_locally_merged_counter_parent() {
         ciborium::into_writer(&10_i64, &mut update_data).unwrap();
         let update_field_payload = CounterDeltaPayload {
             field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             data: update_data,
             nonce: 99,
@@ -1555,7 +1555,7 @@ fn composite_merge_skips_locally_merged_counter_parent() {
             .unwrap();
 
         let update_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 1,
         };
@@ -1660,7 +1660,7 @@ fn remote_composite_merge_rejects_immutable_field_change() {
             NormalValue::String("did:key:alice".to_string()),
         );
         doc.set("body", NormalValue::String("v1".to_string()));
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
 
         // Persist the initial document locally (agent_did = alice).
         let (doc_id, _doc_short_id, create_blocks) =
@@ -1676,7 +1676,7 @@ fn remote_composite_merge_rejects_immutable_field_change() {
         .unwrap();
         let update_field_payload = LwwDeltaPayload {
             field_name: "agent_did".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             data: update_data,
         };
@@ -1695,7 +1695,7 @@ fn remote_composite_merge_rejects_immutable_field_change() {
             .unwrap();
 
         let update_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 1,
         };
@@ -1781,7 +1781,7 @@ fn remote_composite_merge_rejects_immutable_field_clear() {
             NormalValue::String("did:key:alice".to_string()),
         );
         doc.set("body", NormalValue::String("v1".to_string()));
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
@@ -1791,7 +1791,7 @@ fn remote_composite_merge_rejects_immutable_field_clear() {
         let clear_field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "agent_did".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 2,
                 data: Vec::new(),
             }),
@@ -1804,7 +1804,7 @@ fn remote_composite_merge_rejects_immutable_field_clear() {
             .await
             .unwrap();
         let clear_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 1,
         };
@@ -1864,7 +1864,7 @@ fn remote_merge_rejects_immutable_change_after_delete() {
         NormalValue::String("did:key:alice".to_string()),
     );
     doc.set("body", NormalValue::String("v1".to_string()));
-    doc.set_schema_version_id("v1");
+    doc.set_collection_version_id("v1");
 
     let (doc_id, _doc_short_id, create_blocks) =
         create_doc_locally(&handler, &collection, &mut doc).await;
@@ -1872,7 +1872,7 @@ fn remote_merge_rejects_immutable_change_after_delete() {
 
     // Remote deletion (status = 2): sets the deleted marker, retains bytes.
     let delete_payload = CompositeDeltaPayload {
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority: 2,
         status: 2,
     };
@@ -1915,7 +1915,7 @@ fn remote_merge_rejects_immutable_change_after_delete() {
     .unwrap();
     let recreate_field_payload = LwwDeltaPayload {
         field_name: "agent_did".to_string(),
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority: 3,
         data: update_data,
     };
@@ -1934,7 +1934,7 @@ fn remote_merge_rejects_immutable_change_after_delete() {
         .unwrap();
 
     let recreate_payload = CompositeDeltaPayload {
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority: 3,
         status: 1,
     };
@@ -1993,7 +1993,7 @@ fn remote_merge_allows_partial_update_to_deleted_doc() {
             NormalValue::String("did:key:alice".to_string()),
         );
         doc.set("body", NormalValue::String("v1".to_string()));
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
@@ -2001,7 +2001,7 @@ fn remote_merge_allows_partial_update_to_deleted_doc() {
 
         // Delete (status 2).
         let delete_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 2,
         };
@@ -2038,7 +2038,7 @@ fn remote_merge_allows_partial_update_to_deleted_doc() {
         ciborium::into_writer(&NormalValue::String("v2".to_string()), &mut body_data).unwrap();
         let body_payload = LwwDeltaPayload {
             field_name: "body".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 3,
             data: body_data,
         };
@@ -2053,7 +2053,7 @@ fn remote_merge_allows_partial_update_to_deleted_doc() {
             .await
             .unwrap();
         let recreate_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 3,
             status: 1,
         };
@@ -2111,7 +2111,7 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             NormalValue::String("did:key:alice".to_string()),
         );
         doc.set("body", NormalValue::String("v1".to_string()));
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
@@ -2126,7 +2126,7 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
         let did_block = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "agent_did".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 2,
                 data: encode("did:key:bob"),
             }),
@@ -2141,7 +2141,7 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
         let body_block = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "body".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 2,
                 data: encode("hijacked"),
             }),
@@ -2154,7 +2154,7 @@ fn batch_merge_rejects_immutable_change_without_partial_write() {
             .await
             .unwrap();
         let bad_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 1,
         };
@@ -2275,7 +2275,7 @@ fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
 
         let mut doc = Document::new();
         doc.set("age", NormalValue::Int(21));
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, create_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
@@ -2346,7 +2346,7 @@ fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
 
         let incoming_field_payload = LwwDeltaPayload {
             field_name: "age".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             data: stale_value,
         };
@@ -2363,7 +2363,7 @@ fn composite_lww_reseeds_from_local_doc_when_crdt_store_is_stale() {
             .unwrap();
 
         let incoming_composite_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 2,
             status: 1,
         };
@@ -2430,7 +2430,7 @@ fn composite_parent_replay_updates_headstore_for_merged_parent() {
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("John".to_string()));
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, local_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
@@ -2442,7 +2442,7 @@ fn composite_parent_replay_updates_headstore_for_merged_parent() {
                 ciborium::into_writer(&NormalValue::String(name.to_string()), &mut data).unwrap();
                 let field_payload = LwwDeltaPayload {
                     field_name: "name".to_string(),
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority,
                     data,
                 };
@@ -2451,7 +2451,7 @@ fn composite_parent_replay_updates_headstore_for_merged_parent() {
                 let field_data = field_block.to_dag_cbor().unwrap();
 
                 let composite_payload = CompositeDeltaPayload {
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority,
                     status: 1,
                 };
@@ -2571,7 +2571,7 @@ fn deep_composite_parent_chain_merges_on_worker_stack() {
 
         let mut doc = Document::new();
         doc.set("name", NormalValue::String("initial".to_string()));
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
 
         let (doc_id, _doc_short_id, local_blocks) =
             create_doc_locally(&handler, &collection, &mut doc).await;
@@ -2587,7 +2587,7 @@ fn deep_composite_parent_chain_merges_on_worker_stack() {
             let field_block = Block::new(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".to_string(),
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority,
                     data,
                 }),
@@ -2601,7 +2601,7 @@ fn deep_composite_parent_chain_merges_on_worker_stack() {
                 .unwrap();
 
             let payload = CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority,
                 status: 1,
             };
@@ -2683,7 +2683,7 @@ fn deep_collection_parent_chain_merges_on_worker_stack() {
 
         for priority in 1..=256 {
             let payload = CollectionDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority,
             };
             let block = Block::new(CrdtDelta::Collection(payload.clone()), heads, vec![]);
@@ -2747,7 +2747,7 @@ fn composite_access_denial_does_not_mark_unreadable_linked_counter_merged() {
 
         let field_payload = CounterDeltaPayload {
             field_name: "score".to_string(),
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             data: b"not-a-valid-encrypted-counter".to_vec(),
             nonce: 777,
@@ -2764,7 +2764,7 @@ fn composite_access_denial_does_not_mark_unreadable_linked_counter_merged() {
         blockstore.put(&field_cid, &field_block_data).await.unwrap();
 
         let composite_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             status: 0,
         };
@@ -2948,7 +2948,7 @@ fn composite_kms_unavailable_rolls_back_and_retries() {
         let field_block = Block {
             delta: CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: ciphertext,
             }),
@@ -2964,7 +2964,7 @@ fn composite_kms_unavailable_rolls_back_and_retries() {
             .unwrap();
 
         let composite_payload = CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             status: 0,
         };
@@ -3132,7 +3132,7 @@ fn merge_attempt_resolves_dek_outside_attempt_and_reuses_it() {
         let field_block = Block::new_with_options(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".into(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
                 data: ciphertext,
             }),
@@ -3149,7 +3149,7 @@ fn merge_attempt_resolves_dek_outside_attempt_and_reuses_it() {
 
         let composite_block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 1,
                 status: 1,
             }),
@@ -3207,7 +3207,7 @@ fn batch_merge_prepares_deks_outside_attempts_per_authorization_context() {
             let field = Block::new_with_options(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".into(),
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority: 1,
                     data: ciphertext,
                 }),
@@ -3223,7 +3223,7 @@ fn batch_merge_prepares_deks_outside_attempts_per_authorization_context() {
                 .unwrap();
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority: 1,
                     status: 1,
                 }),
@@ -3823,7 +3823,7 @@ fn batch_composite_identity_observes_staged_parent_ownership() {
         let (handler, _blockstore, _bus) = make_handler_with_schema_and_bus().await;
 
         let payload = |priority| CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority,
             status: 1,
         };
@@ -3871,7 +3871,7 @@ fn batch_composite_identity_walk_is_linear_in_ancestry_depth() {
         for priority in 1..=DEPTH as u64 {
             let block = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority,
                     status: 1,
                 }),
@@ -3910,7 +3910,7 @@ fn merge_depth_policy_accepts_last_supported_depth_and_rejects_limit() {
     let (handler, _) = make_handler();
     let block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -3952,7 +3952,7 @@ fn composite_identity_uses_merge_depth_policy() {
             17,
         );
         let payload = |priority| CompositeDeltaPayload {
-            schema_version_id: "v1".to_string(),
+            collection_version_id: "v1".to_string(),
             priority,
             status: 1,
         };
@@ -3997,7 +3997,7 @@ fn resolve_composite_doc_id_walks_deep_ancestry_on_a_small_stack() {
                 const DEPTH: usize = 4096;
                 let genesis = Block::new(
                     CrdtDelta::Composite(CompositeDeltaPayload {
-                        schema_version_id: "v1".to_string(),
+                        collection_version_id: "v1".to_string(),
                         priority: 1,
                         status: 1,
                     }),
@@ -4015,7 +4015,7 @@ fn resolve_composite_doc_id_walks_deep_ancestry_on_a_small_stack() {
                 for priority in 2..(DEPTH as u64 + 2) {
                     let block = Block::new(
                         CrdtDelta::Composite(CompositeDeltaPayload {
-                            schema_version_id: "v1".to_string(),
+                            collection_version_id: "v1".to_string(),
                             priority,
                             status: 1,
                         }),
@@ -4060,7 +4060,7 @@ fn resolve_composite_doc_id_explores_first_head_before_probing_later_siblings() 
         let make_composite = |priority: u64, heads: Vec<Cid>| {
             Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority,
                     status: 1,
                 }),
@@ -4211,12 +4211,12 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
             .unwrap();
         let mut doc =
             Document::from_json_str(r#"{"agent_did":"did:key:alice","body":"before"}"#).unwrap();
-        doc.set_schema_version_id("v1");
+        doc.set_collection_version_id("v1");
         let (doc_id, short_id, created) = create_doc_locally(&handler, &collection, &mut doc).await;
         let field = Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "body".into(),
-                schema_version_id: "v1".into(),
+                collection_version_id: "v1".into(),
                 priority: 2,
                 data: Vec::new(),
             }),
@@ -4229,7 +4229,7 @@ fn remote_field_tombstone_clears_materialized_value_and_keeps_its_priority() {
             .await
             .unwrap();
         let payload = CompositeDeltaPayload {
-            schema_version_id: "v1".into(),
+            collection_version_id: "v1".into(),
             priority: 7,
             status: 1,
         };

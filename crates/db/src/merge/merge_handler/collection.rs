@@ -76,7 +76,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
                     tracing::debug!(
                         %cid,
-                        schema_version = %payload.schema_version_id,
+                        schema_version = %payload.collection_version_id,
                         priority = payload.priority,
                         links_count = block.links.as_ref().map(|links| links.len()).unwrap_or(0),
                         heads_count = block.heads.as_ref().map(|heads| heads.len()).unwrap_or(0),
@@ -245,7 +245,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 if let Some(bus) = self.db.event_bus() {
                                     let col_id = metadata
                                         .collection_id
-                                        .unwrap_or(&payload.schema_version_id)
+                                        .unwrap_or(&payload.collection_version_id)
                                         .to_string();
                                     bus.publish(Message::merge_complete(MergeCompleteData {
                                         doc_id: doc_id_str,
@@ -324,7 +324,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         // Update collection headstore using proper head merging.
         // Only remove heads that this block explicitly supersedes (listed in block.heads),
         // preserving concurrent branches for later merge via write_collection_block.
-        let collection_id = metadata.collection_id.unwrap_or(&payload.schema_version_id);
+        let collection_id = metadata
+            .collection_id
+            .unwrap_or(&payload.collection_version_id);
         let collection = self.db.find_collection_by_id(collection_id)?;
         let txn = self.db.new_txn(false).await?;
         if let Some(collection) = collection.as_ref() {
@@ -426,7 +428,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
                     tracing::debug!(
                         %cid,
-                        schema_version = %payload.schema_version_id,
+                        schema_version = %payload.collection_version_id,
                         "Processing Collection delta in batch txn"
                     );
 
@@ -579,7 +581,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             // Collect per-document MergeComplete event
                             let col_id = metadata
                                 .collection_id
-                                .unwrap_or(&payload.schema_version_id)
+                                .unwrap_or(&payload.collection_version_id)
                                 .to_string();
                             pending_events.push(PendingMergeEvent {
                                 message: Message::merge_complete(MergeCompleteData {
@@ -595,7 +597,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             tracing::debug!(link_cid = %link_cid, outcome = ?outcome, "Composite skipped in batch");
                             let col_id = metadata
                                 .collection_id
-                                .unwrap_or(&payload.schema_version_id)
+                                .unwrap_or(&payload.collection_version_id)
                                 .to_string();
                             pending_events.push(PendingMergeEvent {
                                 message: Message::merge_complete(MergeCompleteData {
@@ -647,7 +649,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         }
 
         // Update collection headstore using the shared headstore view
-        let collection_id = metadata.collection_id.unwrap_or(&payload.schema_version_id);
+        let collection_id = metadata
+            .collection_id
+            .unwrap_or(&payload.collection_version_id);
         let short_id = {
             let txn = self.db.new_txn(true).await?;
             let short_id = if let Ok(systemstore) = txn.systemstore() {

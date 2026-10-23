@@ -98,7 +98,7 @@ mod shared_owner_tests {
         Block::new(
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority,
                 data,
             }),
@@ -170,7 +170,7 @@ mod shared_owner_tests {
             let block = Block::new(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".to_string(),
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority: 1,
                     data,
                 }),
@@ -243,7 +243,7 @@ mod shared_owner_tests {
             let block = Block::new_with_options(
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".to_string(),
-                    schema_version_id: "v1".to_string(),
+                    collection_version_id: "v1".to_string(),
                     priority: 1,
                     data,
                 }),

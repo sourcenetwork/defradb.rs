@@ -18,7 +18,7 @@ pub struct LensConfig {
         alias = "SourceSchemaVersionID",
         default
     )]
-    pub source_schema_version_id: String,
+    pub source_collection_version_id: String,
 
     /// ID of the collection version to migrate to.
     ///
@@ -28,7 +28,7 @@ pub struct LensConfig {
         alias = "DestinationSchemaVersionID",
         default
     )]
-    pub destination_schema_version_id: String,
+    pub destination_collection_version_id: String,
 
     /// The Lens modules to apply, in execution order.
     ///
@@ -40,13 +40,13 @@ pub struct LensConfig {
 impl LensConfig {
     /// Create a new lens configuration with a single module.
     pub fn new(
-        source_schema_version_id: impl Into<String>,
-        destination_schema_version_id: impl Into<String>,
+        source_collection_version_id: impl Into<String>,
+        destination_collection_version_id: impl Into<String>,
         lens: LensModule,
     ) -> Self {
         Self {
-            source_schema_version_id: source_schema_version_id.into(),
-            destination_schema_version_id: destination_schema_version_id.into(),
+            source_collection_version_id: source_collection_version_id.into(),
+            destination_collection_version_id: destination_collection_version_id.into(),
             lenses: vec![lens],
         }
     }
@@ -213,8 +213,8 @@ mod tests {
             "Lenses": [{"Path": "/path/to/transform.wasm", "Inverse": false}]
         }"#;
         let parsed: LensConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.source_schema_version_id, "v1");
-        assert_eq!(parsed.destination_schema_version_id, "v2");
+        assert_eq!(parsed.source_collection_version_id, "v1");
+        assert_eq!(parsed.destination_collection_version_id, "v2");
         assert_eq!(parsed.lenses.len(), 1);
         assert_eq!(
             parsed.lenses[0].path,

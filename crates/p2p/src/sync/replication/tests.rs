@@ -1925,7 +1925,7 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: b"value".to_vec(),
         }),
         vec![],
@@ -1936,7 +1936,7 @@ async fn test_pushlog_dag_needs_fetch_uses_poll_fetcher_when_sender_known() {
 
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2069,7 +2069,7 @@ async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: b"value".to_vec(),
         }),
         vec![],
@@ -2079,7 +2079,7 @@ async fn dead_bitswap_publisher_is_dropped_and_converges_on_redial() {
     let child_cid = child_block.generate_cid().unwrap();
     let root_block = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2262,7 +2262,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "value".to_string(),
             priority: 1,
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             data: b"current".to_vec(),
         }),
         vec![],
@@ -2274,7 +2274,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
     let field_cid = field.generate_cid().unwrap();
     let composite = Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
             status: 1,
         }),
@@ -2285,7 +2285,7 @@ async fn run_receiver_ownership_arm(expand_dag: bool) -> ReceiverOwnershipArm {
     let composite_cid = composite.generate_cid().unwrap();
     let root = Block::new(
         CrdtDelta::Collection(CollectionDeltaPayload {
-            schema_version_id: "schema".to_string(),
+            collection_version_id: "schema".to_string(),
             priority: 1,
         }),
         vec![],
@@ -3035,7 +3035,7 @@ async fn rapid_collection_commits_publish_only_the_current_head() {
     let head = |priority| {
         let block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "schema".to_string(),
+                collection_version_id: "schema".to_string(),
                 priority,
                 status: 1,
             }),

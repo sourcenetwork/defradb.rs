@@ -61,8 +61,8 @@ pub trait Delta: MaybeSendSync {
     /// Get field name this delta applies to
     fn field_name(&self) -> &str;
 
-    /// Get schema version ID
-    fn schema_version_id(&self) -> &str;
+    /// Get collection version ID
+    fn collection_version_id(&self) -> &str;
 
     /// Downcast to concrete type (for type-safe delta handling)
     fn as_any(&self) -> &dyn Any;

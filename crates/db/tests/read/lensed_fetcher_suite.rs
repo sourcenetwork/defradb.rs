@@ -56,7 +56,7 @@ fn unknown_document_version_passes_through() {
 
         let mut doc = Document::new();
         doc.set("name", "Alice");
-        doc.set_schema_version_id("foreign-v3");
+        doc.set_collection_version_id("foreign-v3");
 
         let returned = fetcher
             .process_document(doc, &collection, &datastore, true)
@@ -66,7 +66,7 @@ fn unknown_document_version_passes_through() {
             returned.get("name").and_then(|value| value.as_str()),
             Some("Alice")
         );
-        assert_eq!(returned.schema_version_id(), Some("foreign-v3"));
+        assert_eq!(returned.collection_version_id(), Some("foreign-v3"));
 
         drop(datastore);
         fetcher.take_txn().await.unwrap().discard().unwrap();

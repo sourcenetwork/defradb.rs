@@ -24,7 +24,7 @@ pub struct LwwDelta {
     /// Priority for conflict resolution
     priority: u64,
     /// Schema version identifier
-    schema_version_id: String,
+    collection_version_id: String,
     /// The new value (empty vec = deletion/tombstone)
     data: Vec<u8>,
 }
@@ -35,7 +35,7 @@ impl LwwDelta {
         doc_id: Vec<u8>,
         field_name: String,
         priority: u64,
-        schema_version_id: String,
+        collection_version_id: String,
         data: Vec<u8>,
     ) -> Result<Self> {
         if doc_id.is_empty() {
@@ -44,16 +44,16 @@ impl LwwDelta {
         if field_name.is_empty() {
             return Err(Error::MergeError("field_name cannot be empty".into()));
         }
-        if schema_version_id.is_empty() {
+        if collection_version_id.is_empty() {
             return Err(Error::MergeError(
-                "schema_version_id cannot be empty".into(),
+                "collection_version_id cannot be empty".into(),
             ));
         }
         Ok(Self {
             doc_id,
             field_name,
             priority,
-            schema_version_id,
+            collection_version_id,
             data,
         })
     }
@@ -63,9 +63,15 @@ impl LwwDelta {
         doc_id: Vec<u8>,
         field_name: String,
         priority: u64,
-        schema_version_id: String,
+        collection_version_id: String,
     ) -> Result<Self> {
-        Self::new(doc_id, field_name, priority, schema_version_id, Vec::new())
+        Self::new(
+            doc_id,
+            field_name,
+            priority,
+            collection_version_id,
+            Vec::new(),
+        )
     }
 
     /// Check if this delta is a tombstone (deletion)
@@ -88,9 +94,9 @@ impl LwwDelta {
         self.priority
     }
 
-    /// Get the schema version ID
-    pub fn schema_version_id(&self) -> &str {
-        &self.schema_version_id
+    /// Get the collection version ID
+    pub fn collection_version_id(&self) -> &str {
+        &self.collection_version_id
     }
 
     /// Get the data
@@ -116,8 +122,8 @@ impl Delta for LwwDelta {
         &self.field_name
     }
 
-    fn schema_version_id(&self) -> &str {
-        &self.schema_version_id
+    fn collection_version_id(&self) -> &str {
+        &self.collection_version_id
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -136,7 +142,7 @@ pub struct Lww {
     /// Storage key for the priority
     priority_key: Vec<u8>,
     /// Schema version
-    schema_version_id: String,
+    collection_version_id: String,
     /// Field name
     field_name: String,
 }
@@ -145,22 +151,22 @@ impl Lww {
     /// Create a new LWW register
     ///
     /// # Arguments
-    /// * `schema_version_id` - Schema version identifier (must not be empty)
+    /// * `collection_version_id` - Schema version identifier (must not be empty)
     /// * `doc_id` - Document identifier (must not be empty)
     /// * `field_name` - Field name (must not be empty)
     ///
     /// # Errors
-    /// Returns an error if schema_version_id, doc_id, or field_name is empty.
+    /// Returns an error if collection_version_id, doc_id, or field_name is empty.
     pub fn new(
-        schema_version_id: impl Into<String>,
+        collection_version_id: impl Into<String>,
         doc_id: &[u8],
         field_name: impl Into<String>,
     ) -> Result<Self> {
-        let schema_version_id = schema_version_id.into();
+        let collection_version_id = collection_version_id.into();
         let field_name = field_name.into();
-        if schema_version_id.is_empty() {
+        if collection_version_id.is_empty() {
             return Err(Error::MergeError(
-                "schema_version_id cannot be empty".into(),
+                "collection_version_id cannot be empty".into(),
             ));
         }
         if doc_id.is_empty() {
@@ -171,7 +177,7 @@ impl Lww {
         }
 
         let value_key = CRDTValueKey::new(
-            schema_version_id.clone(),
+            collection_version_id.clone(),
             doc_id.to_vec(),
             field_name.clone(),
         );
@@ -180,7 +186,7 @@ impl Lww {
         Ok(Self {
             value_key: value_key.bytes(),
             priority_key: priority_key.bytes(),
-            schema_version_id,
+            collection_version_id,
             field_name,
         })
     }
@@ -267,7 +273,7 @@ impl Lww {
                 Error::MergeError(format!(
                     "value not found for field '{}' in schema '{}'. \
                      This indicates the field has never been set or has been deleted.",
-                    self.field_name, self.schema_version_id
+                    self.field_name, self.collection_version_id
                 ))
             })
     }
@@ -313,10 +319,10 @@ impl ReplicatedData for Lww {
         }
 
         // Validate schema version matches
-        if lww_delta.schema_version_id != self.schema_version_id {
+        if lww_delta.collection_version_id != self.collection_version_id {
             return Err(Error::MergeError(format!(
                 "schema version mismatch: expected {}, got {}",
-                self.schema_version_id, lww_delta.schema_version_id
+                self.collection_version_id, lww_delta.collection_version_id
             )));
         }
 

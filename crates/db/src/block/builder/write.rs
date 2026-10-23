@@ -281,7 +281,7 @@ async fn encrypt_with_new_key(
 /// * `blockstore` - Transaction blockstore view
 /// * `headstore` - Transaction headstore view
 /// * `doc` - The document to build blocks from
-/// * `schema_version_id` - The schema version ID for CRDT deltas
+/// * `collection_version_id` - The collection version ID for CRDT deltas
 /// * `modified_fields` - Optional set of field names that were modified.
 ///   If Some, only these fields will have new blocks created.
 ///   If None (for create operations), all fields get new blocks.
@@ -337,7 +337,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
     heads: Option<DocHeadsSnapshot>,
 ) -> Result<BlockResult, BuildError> {
-    let schema_version_id = schema.version_id.as_str();
+    let collection_version_id = schema.version_id.as_str();
     let immutable_fields = immutable_field_names(schema);
     let doc_ref_bytes = identity.doc_ref_bytes();
 
@@ -541,14 +541,14 @@ pub(crate) async fn write_document_blocks_with_inputs(
                     field_name: field_name.clone(),
                     priority: field_priority,
                     nonce,
-                    schema_version_id: schema_version_id.to_string(),
+                    collection_version_id: collection_version_id.to_string(),
                     data: value_bytes,
                 })
             } else {
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: field_name.clone(),
                     priority: field_priority,
-                    schema_version_id: schema_version_id.to_string(),
+                    collection_version_id: collection_version_id.to_string(),
                     data: value_bytes,
                 })
             };
@@ -664,7 +664,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
     }
 
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority: composite_priority,
         status: 1,
     };
@@ -770,7 +770,7 @@ pub async fn write_delete_block(
     headstore: &NamespaceView,
     doc_id: &str,
     doc_short_id: u64,
-    schema_version_id: &str,
+    collection_version_id: &str,
     signing_config: Option<&SigningConfig>,
 ) -> Result<BlockResult, String> {
     write_delete_block_with_inputs(
@@ -778,7 +778,7 @@ pub async fn write_delete_block(
         headstore,
         doc_id,
         doc_short_id,
-        schema_version_id,
+        collection_version_id,
         signing_config,
         None,
         None,
@@ -794,7 +794,7 @@ pub(crate) async fn write_delete_block_with_inputs(
     headstore: &NamespaceView,
     doc_id: &str,
     doc_short_id: u64,
-    schema_version_id: &str,
+    collection_version_id: &str,
     signing_config: Option<&SigningConfig>,
     batch_session: Option<&str>,
     prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
@@ -810,7 +810,7 @@ pub(crate) async fn write_delete_block_with_inputs(
     let composite_heads = snapshot.field_heads("C");
 
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority,
         status: 2,
     };

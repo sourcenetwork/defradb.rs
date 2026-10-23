@@ -21,7 +21,7 @@ pub use vector_index_key::*;
 
 /// Special field ID for storing document schema version.
 ///
-/// Documents store their schema version ID as a field with this ID.
+/// Documents store their collection version ID as a field with this ID.
 /// This allows the lens migration system to determine if a document
 /// needs to be transformed to match the current collection schema.
 ///

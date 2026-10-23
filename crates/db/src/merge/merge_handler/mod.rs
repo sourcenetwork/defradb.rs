@@ -213,7 +213,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         &self.db
     }
 
-    /// The active collection a block belongs to, by its schema version id,
+    /// The active collection a block belongs to, by its collection version id,
     /// else by the id its metadata carries. Either id may name a version or
     /// the collection itself: the two are equal for a collection's first
     /// version and differ after a patch, and metadata recovered from a block
@@ -223,10 +223,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// skipped on one.
     pub(crate) async fn block_collection(
         &self,
-        schema_version_id: &str,
+        collection_version_id: &str,
         fallback_collection_id: Option<&str>,
     ) -> std::result::Result<Option<Collection>, MergeError> {
-        let ids = || std::iter::once(schema_version_id).chain(fallback_collection_id);
+        let ids = || std::iter::once(collection_version_id).chain(fallback_collection_id);
         for id in ids() {
             if let Some(collection) = self.db.get_collection_by_version_id(id)? {
                 return Ok(Some(collection));
