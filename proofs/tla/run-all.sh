@@ -16,6 +16,7 @@ RUNS=(
   "MC_OwnerObservation_Red_Registered.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Bound.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Snapshot.cfg OwnerObservation.tla RED"
+  "MC_OwnerObservation_Red_RegistrationSnapshot.cfg OwnerObservation.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
