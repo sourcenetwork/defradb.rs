@@ -3,7 +3,6 @@ use std::ffi::c_char;
 use acp::nac::NodePermission;
 use defra_core::{ActionExecution, ActionStatus};
 use serde::Serialize;
-use storage::corekv::Key;
 
 use crate::helpers::{get_node_database, require_c_str};
 use crate::nac_check::check_nac_for_node;
@@ -120,102 +119,15 @@ pub unsafe extern "C" fn delete_index(
         let database = try_ffi!(get_node_database(node_ptr));
 
         ffi_async!(node_ptr, {
-            // Get the collection
-            let collection = database
-                .get_collection(&collection_name_str)
-                .map_err(|e| format!("failed to get collection: {}", e))?
-                .ok_or_else(|| format!("collection '{}' not found", collection_name_str))?;
-            let collection_id = collection.collection_id().to_string();
-            let index_id = collection
-                .get_index(&index_name_str)
-                .map(|index| index.id)
-                .ok_or_else(|| {
-                    format!(
-                        "index with name doesn't exists. Name: {}",
-                        index_name_str
-                    )
+            database
+                .drop_index(&collection_name_str, &index_name_str)
+                .await
+                .map_err(|e| match e {
+                    db::Error::IndexNotFound { index, .. } => {
+                        format!("index with name doesn't exists. Name: {}", index)
+                    }
+                    other => format!("failed to delete index: {}", other),
                 })?;
-
-            // Create a transaction
-            let txn = database
-                .new_txn(false)
-                .await
-                .map_err(|e| format!("failed to create transaction: {}", e))?;
-
-            // Do all datastore operations in a scope to delete references before commit
-            {
-                let datastore = txn
-                    .datastore()
-                    .map_err(|e| format!("failed to get datastore: {}", e))?;
-
-                // Create the index manager
-                let mut index_manager = db::index::IndexManager::from_collection(
-                    collection.schema().resolved_root_id(),
-                    collection.schema(),
-                )
-                .map_err(|e| format!("failed to create index manager: {}", e))?;
-
-                // Delete the index
-                let dropped = index_manager
-                    .delete_index(&datastore, &index_name_str)
-                    .await
-                    .map_err(|e| format!("failed to delete index: {}", e))?;
-
-                if !dropped {
-                    return Err(format!(
-                        "index with name doesn't exists. Name: {}",
-                        index_name_str
-                    ));
-                }
-
-                // Update the collection schema to remove the index
-                let mut updated_schema = collection.schema().clone();
-                updated_schema
-                    .indexes
-                    .retain(|idx| idx.name != index_name_str);
-
-                // Save the updated schema at /collection/id/{version_id}
-                let collection_key =
-                    storage::keys::systemstore::CollectionKey::new(&updated_schema.version_id);
-                let schema_data = serde_json::to_vec(&updated_schema)
-                    .map_err(|e| format!("failed to serialize schema: {}", e))?;
-
-                let systemstore = txn
-                    .systemstore()
-                    .map_err(|e| format!("failed to get systemstore: {}", e))?;
-
-                systemstore
-                    .set(&collection_key.bytes(), &schema_data)
-                    .await
-                    .map_err(|e| format!("failed to save schema: {}", e))?;
-
-                // Update the name → version_id mapping at /collection/name/{name}
-                let name_key = storage::keys::systemstore::CollectionNameKey::new(&collection_name_str);
-                systemstore
-                    .set(&name_key.bytes(), updated_schema.version_id.as_bytes())
-                    .await
-                    .map_err(|e| format!("failed to save name mapping: {}", e))?;
-            }
-
-            // Commit the transaction (datastore reference is now dropped)
-            txn.commit()
-                .await
-                .map_err(|e| format!("failed to commit: {}", e))?;
-
-            database
-                .clear_action(
-                    &collection_id,
-                    defra_core::Action::BACKFILL_INDEX,
-                    &index_id.to_string(),
-                )
-                .await
-                .map_err(|e| format!("failed to clear index backfill state: {}", e))?;
-
-            // Reload the collection cache
-            database
-                .reload_cache()
-                .await
-                .map_err(|e| format!("failed to reload cache: {}", e))?;
 
             Ok("{}".to_string())
         })

@@ -28,6 +28,9 @@ pub enum Error {
     #[error("collection not found. collection version: {0}")]
     CollectionVersionNotFound(String),
 
+    #[error("index '{index}' not found on collection '{collection}'")]
+    IndexNotFound { collection: String, index: String },
+
     #[error("collection version ID can't be empty")]
     CollectionVersionIDEmpty,
 

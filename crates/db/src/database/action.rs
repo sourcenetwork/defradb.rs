@@ -124,6 +124,20 @@ async fn delete_keys(systemstore: &datastore::NamespaceView, keys: &[Vec<u8>]) -
     Ok(())
 }
 
+/// Delete every key of an action's record from `systemstore`.
+pub(crate) async fn delete_action_record(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+    action: Action,
+    subject: &str,
+) -> Result<()> {
+    delete_keys(
+        systemstore,
+        &action_record_keys(collection_id, action, subject),
+    )
+    .await
+}
+
 /// Mark an action's record errored with `reason`, keeping its progress.
 pub(crate) async fn stage_action_failure(
     systemstore: &datastore::NamespaceView,
