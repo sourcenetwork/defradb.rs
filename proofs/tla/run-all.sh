@@ -297,6 +297,13 @@ RUNS=(
   "MC_NodeShutdown_Red_ServicesNotAwaited.cfg NodeShutdown.tla RED" # stopped service still in storage when regolith closes
   "MC_NodeShutdown_Red_NoDrainDeadline.cfg NodeShutdown.tla RED" # hung request keeps shutdown waiting forever
   "MC_NodeShutdown_Red_FlushOnCaller.cfg NodeShutdown.tla RED" # refused flush runs the exporter join on the caller
+  "MC_EmbeddedStartup_Green.cfg EmbeddedStartup.tla GREEN" # every config starts as asked or fails holding nothing; startup ends
+  "MC_EmbeddedStartup_Red_IrohDefaultLadder.cfg EmbeddedStartup.tla RED" # iroh keeps the default retry ladder (INV_OneSchedule)
+  "MC_EmbeddedStartup_Red_ListenLeak.cfg EmbeddedStartup.tla RED" # failed listen leaves the host running (INV_FailedHoldsNothing)
+  "MC_EmbeddedStartup_Red_LateNacCheck.cfg EmbeddedStartup.tla RED" # NAC owner checked after the host started (INV_FailedHoldsNothing)
+  "MC_EmbeddedStartup_Red_NacUnowned.cfg EmbeddedStartup.tla RED" # NAC enabled with no owner (INV_NacAsAsked)
+  "MC_EmbeddedStartup_Red_DialBeforeNac.cfg EmbeddedStartup.tla RED" # bootstrap peer dialed before NAC (INV_NoPeerBeforeNac)
+  "MC_EmbeddedStartup_Red_BootstrapFatal.cfg EmbeddedStartup.tla RED" # unreachable bootstrap peer fails startup (INV_BootstrapNonFatal)
 )
 
 fails=0; n=0

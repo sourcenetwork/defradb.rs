@@ -110,7 +110,8 @@ fn p2p_shutdown_releases_persistent_store() -> Result<()> {
                 edge: Some(edge::testing::edge()),
                 persistence: Persistence::Persistent,
                 transport: TransportConfig::Libp2p(Libp2pConfig {
-                    listen_addr: "/ip4/127.0.0.1/tcp/0".to_string(),
+                    listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+                    ..Default::default()
                 }),
                 ..Default::default()
             };
@@ -176,7 +177,8 @@ fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
                 edge: Some(edge::testing::edge()),
                 persistence: Persistence::Persistent,
                 transport: TransportConfig::Libp2p(Libp2pConfig {
-                    listen_addr: format!("/ip4/127.0.0.1/tcp/{port}"),
+                    listen_addrs: vec![format!("/ip4/127.0.0.1/tcp/{port}")],
+                    ..Default::default()
                 }),
                 ..Default::default()
             };
@@ -187,6 +189,42 @@ fn failed_p2p_setup_releases_persistent_store() -> Result<()> {
             assert!(
                 result.is_err(),
                 "P2P setup should fail when the port is busy"
+            );
+
+            let reopened = storage::RegolithStore::open(&path)?;
+            storage::Store::close(&reopened).await?;
+
+            Ok(())
+        })
+        .unwrap()
+}
+
+/// NAC asked for by a node with no identity to own it is refused before the
+/// host starts (MC_EmbeddedStartup_Red_LateNacCheck), so the store is free.
+#[cfg(feature = "libp2p")]
+#[test]
+fn unownable_node_acp_releases_persistent_store() -> Result<()> {
+    edge::testing::edge()
+        .block_on(async {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("data.regolith");
+            let config = EmbeddedNodeConfig {
+                edge: Some(edge::testing::edge()),
+                persistence: Persistence::Persistent,
+                transport: TransportConfig::Libp2p(Libp2pConfig {
+                    listen_addrs: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
+                    ..Default::default()
+                }),
+                node_acp_enabled: true,
+                ..Default::default()
+            };
+
+            let result =
+                embedded::build_with_store(Arc::new(storage::RegolithStore::open(&path)?), config)
+                    .await;
+            assert!(
+                matches!(result, Err(embedded::Error::NodeAcpWithoutIdentity)),
+                "NAC without a node identity must be refused"
             );
 
             let reopened = storage::RegolithStore::open(&path)?;

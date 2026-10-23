@@ -317,7 +317,8 @@ impl NodeBuilder {
     #[cfg(feature = "libp2p")]
     pub fn with_libp2p(mut self, listen_addr: impl Into<String>) -> Self {
         self.config.transport = TransportConfig::Libp2p(Libp2pConfig {
-            listen_addr: listen_addr.into(),
+            listen_addrs: vec![listen_addr.into()],
+            ..Default::default()
         });
         self
     }
@@ -712,6 +713,28 @@ where
     if let Some(identity) = raw_identity.as_ref() {
         db_options = db_options.with_node_identity_arc(identity.clone());
     }
+    if let Some(retries) = config.max_txn_retries {
+        db_options = db_options.with_max_txn_retries(retries);
+    }
+    if let Some(size) = config.chunk_size {
+        db_options = db_options.with_chunk_size(size);
+    }
+    #[cfg(any(feature = "libp2p", feature = "iroh"))]
+    let retry_schedule = match &config.replicator_retry_intervals {
+        Some(intervals) => storage::stores::RetrySchedule::new(intervals.clone())
+            .map_err(Error::InvalidRetrySchedule)?,
+        None => storage::stores::RetrySchedule::default(),
+    };
+    // Checked before anything opens, so a refusal has nothing to close.
+    let nac_owner = if config.node_acp_enabled {
+        let owner = node_identity_did
+            .as_deref()
+            .ok_or(Error::NodeAcpWithoutIdentity)
+            .and_then(|did| identity::Did::new(did).map_err(Error::InvalidNodeIdentityDid))?;
+        Some(owner)
+    } else {
+        None
+    };
 
     let mut database = db::DB::open_from_arc_with_options(store.clone(), db_options)
         .await
@@ -781,6 +804,7 @@ where
                 event_bus.clone(),
                 libp2p,
                 sync_config.clone(),
+                retry_schedule.clone(),
                 config.peer_keyring.as_ref(),
                 edge,
             )
@@ -793,6 +817,7 @@ where
                 event_bus.clone(),
                 iroh,
                 sync_config.clone(),
+                retry_schedule.clone(),
                 raw_identity.clone(),
                 document_acp.clone(),
                 strict_replicated_doc_access,
@@ -817,7 +842,8 @@ where
         }
     };
 
-    let nac_manager = create_nac_manager(store.clone(), config.persistence).await?;
+    let nac_manager =
+        create_nac_manager(store.clone(), config.persistence, nac_owner.as_ref()).await?;
 
     // Wire the NAC manager into the DB so DB-layer `check_node_access` calls go
     // live. First-call-wins via the DB's OnceCell setter. Covers both the
@@ -840,6 +866,16 @@ where
                 correlator: setup.manage_correlator.clone(),
                 query_correlator: setup.manage_query_correlator.clone(),
             });
+        // A bootstrap peer that cannot be reached does not stop the node,
+        // as in Go: the node starts and the peer can be connected later.
+        #[cfg(feature = "libp2p")]
+        if let TransportConfig::Libp2p(libp2p) = &config.transport {
+            for addr in &libp2p.bootstrap_peers {
+                if let Err(error) = setup.system.ops().connect_peer(addr).await {
+                    tracing::warn!(%addr, %error, "failed to connect to bootstrap peer");
+                }
+            }
+        }
     }
 
     // Build the KMS once the NAC manager exists (PR #4778 ordering: the policy
