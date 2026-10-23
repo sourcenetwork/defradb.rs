@@ -535,6 +535,26 @@ fn set_takes_the_crdt_type_from_the_definition() {
 }
 
 #[test]
+fn set_refuses_a_relation_from_its_secondary_side() {
+    use schema::{CType, CollectionBuilder, FieldDescription, FieldKind};
+
+    let collection = CollectionBuilder::new("Author", "bafyauthor")
+        .field(FieldDescription::new(
+            "0",
+            "books",
+            FieldKind::relation("Book", true),
+            CType::None,
+        ))
+        .build();
+    let mut doc = Document::new(collection);
+    let err = doc.set("books", NormalValue::Null).unwrap_err();
+    assert!(
+        matches!(err, document::Error::CannotSetRelationFromSecondarySide(ref name) if name == "books")
+    );
+    assert!(doc.is_empty());
+}
+
+#[test]
 fn setting_a_field_drops_its_pending_op() {
     let mut doc = common::doc(&["hits"]);
     doc.edit("hits", document::FieldOp::Increment(NormalValue::Int(3)))
