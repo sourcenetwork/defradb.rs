@@ -51,6 +51,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Iroh solicited replies",
     "Reply-driven DAG fetch",
     "Text CRDT convergence",
+    "JSON CRDT per-path merge",
 ];
 
 pub fn properties_for(family: &'static str) -> impl Iterator<Item = &'static Property> {
