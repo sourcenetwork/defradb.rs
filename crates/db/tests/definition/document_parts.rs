@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use crdt::stored::StoredDocument;
 use db::definition::migration::document_parts::{CURRENT_DOCUMENT_FORMAT, DOCUMENT_FORMAT_KEY};
 use db::{AutoCommitMutator, DB};
-use document::stored::StoredDocument;
 use document::{DocID, Document, NormalValue};
 use query::mutator::DocMutator;
 use storage::corekv::{
@@ -104,7 +104,7 @@ async fn legacy_store(path: &Path) -> (Vec<DocID>, Reads) {
         txn.delete(&key).await.unwrap();
     }
     for (key, value) in raw(&store, b"d/d/").await {
-        let doc = Document::from_storage_cbor(&value, users.clone()).unwrap();
+        let doc = crdt::stored::document_from_storage(&value, users.clone()).unwrap();
         txn.set(&key, &doc.to_cbor().unwrap()).await.unwrap();
     }
     txn.delete(&[b"s", DOCUMENT_FORMAT_KEY].concat())
@@ -280,7 +280,7 @@ fn a_document_that_would_read_differently_stays_whole() {
             .unwrap()
             .unwrap()
             .schema_arc();
-        let mut doc = Document::from_storage_cbor(&value, users).unwrap();
+        let mut doc = crdt::stored::document_from_storage(&value, users).unwrap();
         doc.set_unchecked("retired".to_string(), NormalValue::String("kept".into()));
         let whole = doc.to_cbor().unwrap();
         let mut txn = store.new_txn(false).await.unwrap();

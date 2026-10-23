@@ -271,7 +271,7 @@ pub(crate) async fn cache_migrated_document_with_indexes(
     let Some(old_data) = datastore.get(&key).await.map_err(Error::Storage)? else {
         return Ok(false);
     };
-    let mut old_doc = Document::from_storage_cbor(&old_data, collection.schema_arc())?;
+    let mut old_doc = crdt::stored::document_from_storage(&old_data, collection.schema_arc())?;
     old_doc.set_id(doc_id.clone());
 
     collection

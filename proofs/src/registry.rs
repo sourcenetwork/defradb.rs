@@ -210,9 +210,17 @@ pub const PROPERTIES: &[Property] = &[
         // materialization hazard is checked by MixedFieldMaterialization.
         name: "CrdtField: comm+assoc => order-independent; PNCounter refines to signed Counter; mixed Counter×LWW inherits dedup",
         axis: Lean,
-        anchor: "crates/crdt/src/lww.rs set_value; crates/crdt/src/counter.rs; crates/crdt/src/composite.rs componentwise field merge",
+        anchor: "crates/crdt/src/field/lww.rs LwwField::merge; crates/crdt/src/field/counter.rs CounterField::merge; crates/crdt/src/stored.rs StoredDocument::apply componentwise field merge",
         model_ref: "DefraConvergence.MixedField (lake build); MC_MixedFieldMaterialization_Green.cfg",
         tiers: &[Contract, Behavioral],
+    },
+    Property {
+        family: "CRDT merge laws",
+        name: "PCounterGuard: the positive counter's op accepts only non-negative values, so its value never decreases under any run of accepted or refused writes whose sum stays inside i64 (an i64 sum wraps, as in Go)",
+        axis: Lean,
+        anchor: "crates/crdt/src/field/counter.rs CounterField::op; crates/crdt/tests/field_contract.rs only_the_positive_counter_refuses_a_negative_value",
+        model_ref: "DefraConvergence.PCounterGuard.run_ge (lake build)",
+        tiers: &[Contract],
     },
     Property {
         // Two behavioral legs: backfill (a write that pre-dates the replicator is
@@ -327,7 +335,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Encrypted LWW restart/replay",
         name: "INV_NoFilteredLoss / INV_LwwWinner — encrypted delivery remains complete and LWW-convergent",
         axis: Tla,
-        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs_transport.rs; crates/crdt/src/lww.rs",
+        anchor: "crates/db/src/merge/push_docs.rs; crates/db/src/merge/push_docs_transport.rs; crates/crdt/src/field/lww.rs",
         model_ref: "MC_EncryptedLwwReplay_Green.cfg",
         tiers: &[Behavioral],
     },
@@ -429,9 +437,23 @@ pub const PROPERTIES: &[Property] = &[
         family: "Transaction & merge-queue concurrency",
         name: "INV_NoLoss / INV_NoDoubleApply under concurrent same-doc mutation",
         axis: Tla,
-        anchor: "crates/db/src/merge/merge_handler/counter.rs; crates/db/src/write/doc.rs; crates/db/tests/merge/merge_handler_tests.rs; crates/db txn registry",
+        anchor: "crates/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/db/src/write/doc.rs; crates/db/tests/merge/merge_handler_tests.rs; crates/db txn registry",
         model_ref: "MC_TxnRegistry_Green.cfg / MC_TwoStoreCounter_Green.cfg / MC_MixedFieldMaterialization_Green.cfg",
         tiers: &[Behavioral, Boundary],
+    },
+    Property {
+        // A counter block that arrives on its own before its document has a
+        // value on the block's schema version is a terminal skip: no applied
+        // key, no value, no merged mark. The composite that writes the value
+        // applies it once. The db merge tests
+        // `counter_merge_of_an_unmaterialized_document_waits_for_its_composite`
+        // and `counter_merge_marks_cid_merged` check both arrival orders.
+        family: "Transaction & merge-queue concurrency",
+        name: "INV_NoLoss: a standalone counter block that arrives before its document's value is applied once, by its composite",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/field_ops.rs apply_field_op_once; crates/db/src/merge/merge_handler/batch.rs process_block_in_txn; crates/db/src/merge/merge_handler/composite_fields.rs; crates/db/tests/merge/merge_handler_tests.rs",
+        model_ref: "MC_TwoStoreCounter_{Green,Red_LostDeferral}.cfg",
+        tiers: &[Contract],
     },
     Property {
         // A commit begins when it is handed to its transaction's owner, or,
@@ -538,7 +560,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Document materialization status convergence",
         name: "INV_DeletedMarkerAbsorbs — active rematerialization never clears a tombstone",
         axis: Tla,
-        anchor: "crates/db/src/merge/merge_handler/composite_persist.rs handle_deletion / persist_merged_document; crates/crdt/src/composite.rs status",
+        anchor: "crates/db/src/merge/merge_handler/composite_persist.rs handle_deletion / persist_merged_document; crates/defra-core/src/block_delta.rs CompositeDeltaPayload status",
         model_ref: "MC_DocumentMaterialization_Green.cfg; DefraConvergence.DocumentMaterialization.delete_active_age_converge",
         tiers: &[Behavioral],
     },

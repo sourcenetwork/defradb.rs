@@ -40,7 +40,7 @@ async fn document_matches_filter<R: Reader + ?Sized>(
         return Ok(false);
     };
 
-    let doc = document::Document::from_storage_cbor(&doc_data, collection.schema_arc())
+    let doc = crdt::stored::document_from_storage(&doc_data, collection.schema_arc())
         .map_err(|e| format!("failed to decode document for replication filter: {}", e))?;
     let document_json = serde_json::Value::Object(
         doc.to_map()
@@ -584,7 +584,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     _ => continue,
                 };
 
-                let doc = match document::Document::from_storage_cbor(
+                let doc = match crdt::stored::document_from_storage(
                     &doc_data,
                     collection.schema_arc(),
                 ) {

@@ -62,5 +62,3 @@ pub use write_preparation::WritePreparation;
 
 // Re-export schema types commonly used with documents
 pub use schema::{CType, CollectionVersion};
-
-pub mod stored;

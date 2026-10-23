@@ -15,7 +15,7 @@ fn lake_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Mirrors `crates/crdt/src/traits.rs` `enum MergeResult`. If a variant is
+/// Mirrors `crates/crdt/src/field/mod.rs` `enum MergeResult`. If a variant is
 /// added/renamed there, update this list and `Conformance.lean` together — the
 /// assertion is what forces that.
 const MERGE_RESULT_VARIANTS: &[&str] = &["Applied", "RejectedLowerPriority", "RejectedTieBreak"];

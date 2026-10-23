@@ -22,6 +22,8 @@ mod multi_collection;
 mod no_signing;
 #[path = "basic/patch_secondary_relation_4709.rs"]
 mod patch_secondary_relation_4709;
+#[path = "basic/pcounter_negative.rs"]
+mod pcounter_negative;
 #[path = "basic/regolith_crash_reopen.rs"]
 mod regolith_crash_reopen;
 #[path = "basic/schema_size_limit.rs"]

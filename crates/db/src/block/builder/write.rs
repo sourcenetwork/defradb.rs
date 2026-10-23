@@ -435,9 +435,16 @@ pub(crate) async fn write_document_blocks_with_inputs(
             };
 
             let crdt = field_crdt_of(doc, field_name)?;
-            let value_bytes = encode_value_as_cbor(
-                crdt.block_data(field_value.value(), doc.pending_op(field_name)),
-            )?;
+            if is_create {
+                crdt.op(field_value.value().clone(), true)
+                    .map_err(|error| error.to_string())?;
+            }
+            let value_bytes = crdt
+                .encode(
+                    crdt.write(field_value.value(), doc.pending_op(field_name))
+                        .data,
+                )
+                .map_err(|error| error.to_string())?;
 
             let explicit = encryption_config.filter(|enc| enc.should_encrypt_field(field_name));
             let (value_bytes, encryption_cid) = if let Some(enc) = explicit {
@@ -493,44 +500,21 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 (value_bytes, None)
             };
 
-            let nonce = crdt
-                .nonce(is_create, &mut || {
-                    if let Some(inputs) = prepared_inputs {
-                        let exact = serde_json::to_vec(&(
-                            "counter-nonce-v1",
-                            &doc_ref_bytes,
-                            field_name,
-                            field_priority,
-                            &heads,
-                            &value_bytes,
-                        ))
-                        .map_err(|error| crdt::FieldCrdtError::Nonce(error.to_string()))?;
-                        let request = query::prepared::PreparedInputRequest::new(
-                            query::prepared::PreparedInputKind::Encryption,
-                            exact,
-                        );
-                        let nonce = match inputs.get(&request) {
-                            Some(nonce) => nonce,
-                            None => {
-                                let nonce: i64 = rand::random();
-                                inputs.insert(
-                                    request,
-                                    std::sync::Arc::<[u8]>::from(nonce.to_be_bytes()),
-                                )
-                            }
-                        };
-                        nonce
-                            .as_ref()
-                            .try_into()
-                            .map(i64::from_be_bytes)
-                            .map_err(|_| {
-                                crdt::FieldCrdtError::Nonce("invalid prepared counter nonce".into())
-                            })
-                    } else {
-                        Ok(rand::random())
-                    }
-                })
-                .map_err(|error| BuildError::Message(error.to_string()))?;
+            let nonce = if crdt.replicates_ops() && !is_create {
+                fresh_nonce(
+                    prepared_inputs,
+                    (
+                        "counter-nonce-v1",
+                        &doc_ref_bytes,
+                        field_name,
+                        field_priority,
+                        &heads,
+                        &value_bytes,
+                    ),
+                )?
+            } else {
+                0
+            };
 
             let delta = crdt.delta(crdt::DeltaParts {
                 field_name,
@@ -874,4 +858,37 @@ fn encrypt_retry_delta(
         Some(inputs) => encrypt_delta_prepared(plaintext, key, inputs),
         None => encrypt_delta(plaintext, key),
     }
+}
+
+/// A fresh nonce for an update of an operation-based field, so equal
+/// operations stay distinct blocks. Drawn once per exact block input and
+/// memoized, so an attempt that runs again writes the same block.
+fn fresh_nonce<I>(
+    prepared_inputs: Option<&query::prepared::PreparedInputMemo>,
+    block_input: I,
+) -> Result<i64, BuildError>
+where
+    I: serde::Serialize,
+{
+    let Some(inputs) = prepared_inputs else {
+        return Ok(rand::random());
+    };
+    let exact =
+        serde_json::to_vec(&block_input).map_err(|error| BuildError::Message(error.to_string()))?;
+    let request = query::prepared::PreparedInputRequest::new(
+        query::prepared::PreparedInputKind::Encryption,
+        exact,
+    );
+    let nonce = match inputs.get(&request) {
+        Some(nonce) => nonce,
+        None => {
+            let nonce: i64 = rand::random();
+            inputs.insert(request, std::sync::Arc::<[u8]>::from(nonce.to_be_bytes()))
+        }
+    };
+    nonce
+        .as_ref()
+        .try_into()
+        .map(i64::from_be_bytes)
+        .map_err(|_| BuildError::Message("invalid prepared counter nonce".into()))
 }

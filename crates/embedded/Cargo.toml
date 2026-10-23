@@ -79,6 +79,7 @@ libp2p = [
 iroh = ["p2p/iroh-transport", "p2p/kms", "defra-p2p-adapter/iroh", "defra-p2p-adapter/kms"]
 
 [dev-dependencies]
+crdt = { path = "../crdt" }
 defra-core = { path = "../defra-core", features = ["ambient"] }
 edge = { path = "../edge", features = ["testing"] }
 base64 = { workspace = true }

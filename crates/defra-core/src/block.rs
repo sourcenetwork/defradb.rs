@@ -285,7 +285,41 @@ pub enum CrdtDelta {
     CollectionDefinition(CollectionDefinitionDeltaPayload),
 }
 
+/// A field block's delta, read the same whichever field CRDT wrote it.
+#[derive(Debug, Clone, Copy)]
+pub struct FieldDelta<'a> {
+    pub field_name: &'a str,
+    pub priority: u64,
+    pub schema_version_id: &'a str,
+    /// The encoded (and possibly encrypted) value or operation.
+    pub data: &'a [u8],
+}
+
 impl CrdtDelta {
+    /// The field delta this is, when a field CRDT wrote it.
+    pub fn field(&self) -> Option<FieldDelta<'_>> {
+        let (field_name, priority, schema_version_id, data) = match self {
+            CrdtDelta::Lww(d) => (&d.field_name, d.priority, &d.schema_version_id, &d.data),
+            CrdtDelta::Counter(d) => (&d.field_name, d.priority, &d.schema_version_id, &d.data),
+            _ => return None,
+        };
+        Some(FieldDelta {
+            field_name,
+            priority,
+            schema_version_id,
+            data,
+        })
+    }
+
+    /// The data of a field delta, to replace with its decryption.
+    pub fn field_data_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match self {
+            CrdtDelta::Lww(d) => Some(&mut d.data),
+            CrdtDelta::Counter(d) => Some(&mut d.data),
+            _ => None,
+        }
+    }
+
     /// Get the priority of this delta
     pub fn priority(&self) -> u64 {
         match self {

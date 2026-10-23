@@ -83,8 +83,8 @@ impl UpdateInput {
             if let Some((fd, crdt)) =
                 field_def.and_then(|fd| crdt::field_crdt(fd.crdt_type).map(|crdt| (fd, crdt)))
             {
-                let op = crdt.input_op(normal_value);
-                crdt.check(&op, false)
+                let op = crdt
+                    .op(normal_value, false)
                     .map_err(|e| QueryError::execution(e.to_string()))?;
                 let value = crdt
                     .apply(fd, doc.get(field_name), &op)

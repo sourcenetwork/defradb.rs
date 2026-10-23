@@ -25,7 +25,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 Err(MergeError::MergeFailed(_)) => return Ok(None),
                 Err(e) => return Err(e),
             },
-            CrdtDelta::Lww(_) | CrdtDelta::Counter(_) | CrdtDelta::Immutable(_) => {
+            delta if delta.field().is_some() || matches!(delta, CrdtDelta::Immutable(_)) => {
                 match self.resolve_field_block_doc_id(cid).await? {
                     Some(doc_id) => doc_id,
                     None => return Ok(None),

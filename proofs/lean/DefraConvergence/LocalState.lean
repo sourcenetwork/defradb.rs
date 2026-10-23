@@ -10,13 +10,13 @@ Local CRDT state-machine model for the convergence split:
   relevant deltas.
 
 Source correspondence:
-* `crates/crdt/src/lww.rs`: LWW accepts the higher priority, with lexicographic
+* `crates/crdt/src/field/lww.rs`: LWW accepts the higher priority, with lexicographic
   bytes as the deterministic tie-break.
-* `crates/crdt/src/counter.rs`: counter merge applies wrapping Int64 addition;
+* `crates/crdt/src/field/counter.rs`: counter merge applies wrapping Int64 addition;
   the raw counter merge is not idempotent.
-* `crates/db/src/merge/merge_handler/counter.rs`: counter idempotency is supplied
+* `crates/db/src/merge/merge_handler/field_ops.rs`: counter idempotency is supplied
   by the durable merged-CID gate above the CRDT merge function.
-* `crates/crdt/src/composite.rs`: composite merge is componentwise over fields.
+* `crates/crdt/src/stored.rs`: a document value merges componentwise over fields.
 -/
 
 abbrev Rank := Nat
