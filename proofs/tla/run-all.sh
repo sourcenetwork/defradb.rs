@@ -47,10 +47,10 @@ RUNS=(
   "MC_ProviderLookup_Red_NoAsk.cfg ProviderLookup.tla RED" # an empty lookup asks nobody, as before (LIVE_Found)
   "MC_ProviderLookup_Red_BookOnly.cfg ProviderLookup.tla RED" # the answer leaves out the answerer's own record (LIVE_Found)
   "MC_ProviderLookup_Red_Always.cfg ProviderLookup.tla RED" # every lookup asks, even one the book answers (INV_AskOnlyWhenEmpty)
-  "MC_CreatePipeline_Green.cfg CreatePipeline.tla GREEN" # #1890: blocks stored once the composite exists, one short ID and one key mint per field across attempts
-  "MC_CreatePipeline_Red_AsComputed.cfg CreatePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
-  "MC_CreatePipeline_Red_PerAttempt.cfg CreatePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
-  "MC_CreatePipeline_Red_Direct.cfg CreatePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
+  "MC_WritePipeline_Green.cfg WritePipeline.tla GREEN" # #1890: creates and updates store blocks once the composite exists, one short ID and one key mint per field across attempts
+  "MC_WritePipeline_Red_AsComputed.cfg WritePipeline.tla RED" # each block stored as made (INV_NoStoreBeforeComposite)
+  "MC_WritePipeline_Red_PerAttempt.cfg WritePipeline.tla RED" # fresh short ID per attempt: a key minted twice (INV_OneKeyPerField)
+  "MC_WritePipeline_Red_Direct.cfg WritePipeline.tla RED" # key minted while the attempt runs (INV_NoMintInAttempt)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)
