@@ -932,6 +932,22 @@ impl P2PHostHandle {
         Ok(host_addrs)
     }
 
+    /// Describe the live connection to one peer, if connected.
+    pub async fn peer_connection(
+        &self,
+        peer_id: PeerId,
+    ) -> Result<Option<crate::transport::PeerConnectionInfo>> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(HostCommand::PeerConnection {
+                peer_id,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| Error::ChannelSend)?;
+        response_rx.await.map_err(|_| Error::ChannelReceive)
+    }
+
     /// Get connected peers with their full multiaddrs (Go-compatible ActivePeers).
     pub async fn peer_addresses(&self) -> Result<Vec<String>> {
         let (response_tx, response_rx) = oneshot::channel();

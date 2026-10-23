@@ -136,7 +136,9 @@ pub use signing::{sign_message, sign_message_cloned, verify_message};
 pub use topics::{DefraTopic, DOC_SYNC_TOPIC, ENCRYPTION_TOPIC, SYNC_BRANCHABLE_TOPIC};
 
 // Re-export transport types
-pub use transport::{InboundClassSnapshot, P2PTransport, PeerFetchStats, TransportEvent};
+pub use transport::{
+    InboundClassSnapshot, P2PTransport, PeerConnectionInfo, PeerFetchStats, TransportEvent,
+};
 
 // Re-export sync types
 #[cfg(feature = "iroh-transport")]
@@ -146,8 +148,8 @@ pub use sync::Libp2pSyncCoordinator;
 pub use sync::PENDING_RECOVERY_WORST_CASE_SECS;
 pub use sync::{
     Broadcaster, CreateReplicatorResult, DagSync, DagSyncConfig, DagSyncState,
-    LoadReplicatorsResult, NeedsFetchData, PeerStateTracker, ProcessQueue, SyncConfig,
-    SyncCoordinator, SyncEvent, SyncManager, SyncPlan,
+    LoadReplicatorsResult, NeedsFetchData, PeerHistory, PeerStateTracker, PeerSummary,
+    ProcessQueue, SyncConfig, SyncCoordinator, SyncEvent, SyncManager, SyncPlan,
 };
 
 // Re-export bitswap types

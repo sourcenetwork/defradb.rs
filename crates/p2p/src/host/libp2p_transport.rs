@@ -114,6 +114,14 @@ impl P2PTransport for Libp2pTransport {
         Ok(peers.into_iter().map(PeerId::from).collect())
     }
 
+    async fn peer_connection(
+        &self,
+        peer_id: &PeerId,
+    ) -> Result<Option<crate::transport::PeerConnectionInfo>> {
+        let pid = parse_libp2p_peer_id(peer_id)?;
+        self.handle.peer_connection(pid).await
+    }
+
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>> {
         let addrs = self.handle.listen_addresses().await?;
         Ok(addrs.into_iter().map(PeerAddr::from).collect())

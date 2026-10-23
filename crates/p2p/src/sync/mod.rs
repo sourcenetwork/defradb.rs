@@ -39,7 +39,8 @@ pub use coordinator::IrohSyncCoordinator;
 pub use coordinator::Libp2pSyncCoordinator;
 pub use coordinator::{
     CreateReplicatorResult, HeadHintCarAuthority, HeadHintCarGrant, LoadReplicatorsResult,
-    PushFailure, PushFailureReceiver, SyncCoordinator, SyncShutdownHandle, SyncStatus,
+    PeerDetails, PendingFetch, PushFailure, PushFailureReceiver, QuarantinedRoot, SyncCoordinator,
+    SyncShutdownHandle, SyncStatus,
 };
 pub use dag_sync::{DagSync, DagSyncConfig, DagSyncState, NeedsFetchData, SyncPlan};
 pub use dispatch_queue::{
@@ -64,7 +65,9 @@ pub use merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,
     RecoveredBlockMetadata,
 };
-pub use peer_state::{PeerStateTracker, PeerStats};
+pub use peer_state::{
+    PeerFailure, PeerHistory, PeerStateTracker, PeerStats, PeerSummary, SyncOutcomes, Timestamp,
+};
 pub use pending_store::{
     pooled_pending_store, Admission, PendingDagStorage, PendingDagStore, PersistedPendingDag,
     PersistedQuarantinedDag, PersistedReplayAuthorization, PersistedView, Registration,

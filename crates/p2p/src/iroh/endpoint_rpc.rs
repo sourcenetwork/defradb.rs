@@ -774,11 +774,11 @@ pub(super) async fn handle_car_request_response(
     )
     .await;
     timer.finish(match &result {
-        Ok(()) => FetchOutcome::Success,
+        Ok(outcome) => *outcome,
         Err(crate::error::Error::ResponseTimeout) => FetchOutcome::TimedOut,
         Err(_) => FetchOutcome::Failed,
     });
-    result
+    result.map(|_| ())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -791,7 +791,7 @@ async fn request_car_response(
     event_tx: &DispatchSender<TransportEvent<iroh::endpoint::SendStream>>,
     admission: &PeerAdmission,
     timer: &mut FetchTimer,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<FetchOutcome> {
     let connection = connect_with_cache(endpoint, peer_id, direct_addr, cache, admission).await?;
 
     let (mut send, mut recv) =
@@ -833,6 +833,7 @@ async fn request_car_response(
         }
     };
 
+    let outcome = car_reply_outcome(&car_data);
     if event_tx
         .send(TransportEvent::CarFetchResponse {
             query_id: None,
@@ -846,7 +847,23 @@ async fn request_car_response(
         warn!("Event channel closed, cannot emit CarFetchResponse");
     }
 
-    Ok(())
+    Ok(outcome)
+}
+
+/// How a CAR reply counts in the peer's fetch stats, the way a provider
+/// fetch counts it: an empty or header-only reply served nothing.
+fn car_reply_outcome(car_data: &[u8]) -> FetchOutcome {
+    if car_data.is_empty() {
+        FetchOutcome::Failed
+    } else if crate::sync::car::decode_car_oversized(car_data)
+        .is_ok_and(|notices| !notices.is_empty())
+    {
+        FetchOutcome::Partial
+    } else if crate::sync::car::car_has_any_block(car_data) {
+        FetchOutcome::Success
+    } else {
+        FetchOutcome::Failed
+    }
 }
 
 /// Try to fetch CAR blocks from a single provider.
@@ -1246,6 +1263,19 @@ mod tests {
     fn cid(label: &[u8]) -> cid::Cid {
         let hash = Code::Sha2_256.digest(label);
         cid::Cid::new_v1(0x71, hash)
+    }
+
+    #[test]
+    fn a_car_reply_counts_only_when_it_carries_blocks() {
+        use crate::sync::car::{encode_car, encode_car_response};
+        let root = cid(b"root");
+        assert_eq!(car_reply_outcome(&[]), FetchOutcome::Failed);
+        let header_only = encode_car(&[root], &[]).unwrap();
+        assert_eq!(car_reply_outcome(&header_only), FetchOutcome::Failed);
+        let with_block = encode_car(&[root], &[(&root, b"block".as_slice())]).unwrap();
+        assert_eq!(car_reply_outcome(&with_block), FetchOutcome::Success);
+        let size_limited = encode_car_response(&[root], &[], &[(root, 1 << 30)]).unwrap();
+        assert_eq!(car_reply_outcome(&size_limited), FetchOutcome::Partial);
     }
 
     #[test]

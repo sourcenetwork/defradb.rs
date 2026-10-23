@@ -345,6 +345,17 @@ impl P2PTransport for IrohTransport {
             .await
     }
 
+    async fn peer_connection(
+        &self,
+        peer_id: &PeerId,
+    ) -> Result<Option<crate::transport::PeerConnectionInfo>> {
+        self.send_command(|reply| IrohCommand::PeerConnection {
+            peer_id: peer_id.clone(),
+            reply,
+        })
+        .await
+    }
+
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>> {
         self.send_command(|reply| IrohCommand::ListenAddresses { reply })
             .await

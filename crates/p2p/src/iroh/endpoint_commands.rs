@@ -103,6 +103,10 @@ pub(super) async fn handle_command(
         IrohCommand::FetchStats { reply } => {
             let _ = reply.send(Ok(resources.fetch_stats.snapshot()));
         }
+        IrohCommand::PeerConnection { peer_id, reply } => {
+            let result = parse_endpoint_id(&peer_id).map(|id| peer_map.connection(&id));
+            let _ = reply.send(result);
+        }
         IrohCommand::ListenAddresses { reply } => {
             let endpoint_addr = endpoint.addr();
             let mut addrs = vec![

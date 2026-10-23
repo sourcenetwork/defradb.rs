@@ -75,6 +75,15 @@ impl TransportDocPusher for PooledDocPusher {
             .await
     }
 
+    async fn push_retries_for_peer(
+        &self,
+        peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        let peer_id = peer_id.to_owned();
+        self.on_pool(move |inner| async move { inner.push_retries_for_peer(&peer_id).await })
+            .await
+    }
+
     async fn replication_acknowledged(
         &self,
         peer_id: &str,

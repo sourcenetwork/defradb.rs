@@ -335,7 +335,10 @@ impl NodeBuilder {
         self
     }
 
-    /// The network runtime a configured transport runs on.
+    /// The network runtime the node's networking runs on: its transport,
+    /// its database's network work and the pool's stuck-poll monitor. Unset,
+    /// a node with a transport runs them on the process's own
+    /// ([`edge::on_demand`]), started on first use.
     pub fn with_edge(mut self, edge: edge::Edge) -> Self {
         self.config.edge = Some(edge);
         self
@@ -426,6 +429,7 @@ impl NodeBuilder {
     }
 
     pub async fn build(mut self) -> Result<EmbeddedNode<EmbeddedStore>> {
+        resolve_edge(&mut self.config)?;
         // The data path's worker pool comes before the store, which places
         // its compaction threads by the pool's plan.
         let pool = start_node_pool(self.workers.take(), self.config.edge.as_ref())?;
@@ -614,16 +618,30 @@ pub fn start_node_pool(
     .map_err(Error::PoolStart)
 }
 
+/// Decides the network runtime once, before anything holds it: the one the
+/// config names, or the process's own ([`edge::on_demand`]), started on
+/// first use, when the node has a transport and the config names none. The
+/// pool's stuck-poll monitor, the database's network work, the ACP and KMS
+/// clients and the transport then read the same edge from the config. A
+/// node without networking needs none.
+fn resolve_edge(config: &mut EmbeddedNodeConfig) -> Result<()> {
+    if config.edge.is_none() && !matches!(config.transport, TransportConfig::None) {
+        config.edge = Some(edge::on_demand().map_err(Error::NetworkStart)?.clone());
+    }
+    Ok(())
+}
+
 /// A node over a store the application opened, on a worker pool of the
 /// pool's default configuration. The store's own threads are not placed by
 /// the pool: [`NodeBuilder`] opens the store on the pool and places them.
 pub async fn build_with_store<S>(
     store: Arc<S>,
-    config: EmbeddedNodeConfig,
+    mut config: EmbeddedNodeConfig,
 ) -> Result<EmbeddedNode<S>>
 where
     S: storage::corekv::Store + 'static,
 {
+    resolve_edge(&mut config)?;
     let pool = start_node_pool(None, config.edge.as_ref())?;
     build_node(store, config, None, pool).await
 }
@@ -633,12 +651,13 @@ where
 /// it. Start the pool with [`start_node_pool`].
 pub async fn build_with_store_on_pool<S>(
     store: Arc<S>,
-    config: EmbeddedNodeConfig,
+    mut config: EmbeddedNodeConfig,
     pool: workers::Pool,
 ) -> Result<EmbeddedNode<S>>
 where
     S: storage::corekv::Store + 'static,
 {
+    resolve_edge(&mut config)?;
     build_node(store, config, None, pool).await
 }
 
@@ -659,13 +678,14 @@ fn check_access_hooks(
 #[cfg(feature = "iroh")]
 pub async fn build_with_store_and_access_hooks<S>(
     store: Arc<S>,
-    config: EmbeddedNodeConfig,
+    mut config: EmbeddedNodeConfig,
     hooks: Option<crate::AccessHooks>,
 ) -> Result<EmbeddedNode<S>>
 where
     S: storage::corekv::Store + 'static,
 {
     check_access_hooks(&config, hooks.as_ref())?;
+    resolve_edge(&mut config)?;
     let pool = start_node_pool(None, config.edge.as_ref())?;
     build_node(store, config, hooks, pool).await
 }
@@ -752,16 +772,8 @@ where
     #[cfg(all(not(feature = "vera"), any(feature = "libp2p", feature = "iroh")))]
     let strict_replicated_doc_access = false;
 
-    // A transport runs on the network runtime the config names, or on the
-    // process's own, started on first use, when it names none; a node
-    // without networking needs none.
-    let edge = match &config.edge {
-        _ if matches!(config.transport, TransportConfig::None) => None,
-        Some(edge) => Some(edge.clone()),
-        None => Some(edge::on_demand().map_err(Error::NetworkStart)?.clone()),
-    };
     let p2p_setup: Result<Option<crate::node_p2p::P2PSetup>> =
-        match (&config.transport, edge.as_ref()) {
+        match (&config.transport, config.edge.as_ref()) {
             #[cfg(feature = "libp2p")]
             (TransportConfig::Libp2p(libp2p), Some(edge)) => crate::node_p2p::setup_libp2p(
                 store.clone(),
@@ -790,7 +802,7 @@ where
             .await
             .map(Some),
             (TransportConfig::None, _) => Ok(None),
-            // A transport always has a runtime here.
+            // A transport always has a runtime here (`resolve_edge`).
             #[cfg(any(feature = "libp2p", feature = "iroh"))]
             (_, None) => Ok(None),
         };

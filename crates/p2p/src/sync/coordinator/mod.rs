@@ -52,6 +52,7 @@ mod event_handler;
 mod merge_state;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod network_tests;
+mod peer_details;
 #[cfg(feature = "libp2p-transport")]
 mod pubsub_client;
 #[cfg(feature = "libp2p-transport")]
@@ -62,6 +63,7 @@ mod result_types;
 mod selective_car_access;
 mod subscriptions;
 
+pub use peer_details::{PeerDetails, PendingFetch, QuarantinedRoot};
 pub use result_types::{CreateReplicatorResult, LoadReplicatorsResult};
 pub use selective_car_access::{HeadHintCarAuthority, HeadHintCarGrant};
 
@@ -205,6 +207,8 @@ pub struct SyncStatus {
     pub pending_dag_terminal_quarantined: u64,
     /// Current gauge of quarantined pending-DAG roots (#1128).
     pub quarantined_pending_dags: usize,
+    /// One line per tracked peer: when it was last seen and last synced.
+    pub peers: Vec<crate::sync::peer_state::PeerSummary>,
 }
 
 struct SyncShutdownState {
@@ -945,6 +949,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
             next_pending_retry_in_ms: self.manager.next_pending_retry_in_ms(),
             pending_dag_terminal_quarantined: diagnostics.pending_dag_terminal_quarantined,
             quarantined_pending_dags: self.manager.quarantined_pending_count(),
+            peers: self.access.peer_state.summaries(),
         }
     }
 

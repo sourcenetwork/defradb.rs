@@ -15,6 +15,14 @@ pub trait TransportDocPusher: defra_core::thread_bounds::MaybeSendSync {
         Ok(storage::stores::PushRetryMarkerStats::default())
     }
 
+    /// Durable push retries owed to one peer, or `None` when there are none.
+    async fn push_retries_for_peer(
+        &self,
+        _peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        Ok(None)
+    }
+
     async fn replication_acknowledged(
         &self,
         _peer_id: &str,
@@ -170,6 +178,19 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> DbTransportDocPusher<
 impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
     for DbTransportDocPusher<S, T>
 {
+    async fn push_retries_for_peer(
+        &self,
+        peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        let markers = self
+            .db
+            .peerstore()
+            .get_retry_documents(peer_id)
+            .await
+            .map_err(|error| P2PError::internal(error.to_string()))?;
+        Ok(crate::peer_details::PeerPushRetries::from_markers(&markers))
+    }
+
     async fn push_retry_marker_stats(&self) -> P2PResult<storage::stores::PushRetryMarkerStats> {
         self.db
             .peerstore()

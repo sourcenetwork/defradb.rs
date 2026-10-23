@@ -316,6 +316,25 @@ pub struct PeerFetchStats {
     pub in_flight_bytes: u64,
 }
 
+/// The live connection to one peer, as far as the transport can see it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PeerConnectionInfo {
+    /// `direct` or `relay`: how the selected connection reaches the peer.
+    pub path: &'static str,
+    /// The peer's address on the selected connection.
+    pub remote_address: Option<String>,
+    pub open_connections: u32,
+    /// Round-trip time on the selected path.
+    pub rtt_micros: Option<u64>,
+    /// Bytes sent and received over every open connection.
+    pub bytes_sent: Option<u64>,
+    pub bytes_received: Option<u64>,
+    /// Whether this node opened the connection, rather than the peer.
+    pub dialed_by_us: Option<bool>,
+    /// How long the oldest open connection has been up.
+    pub connected_for_secs: Option<u64>,
+}
+
 /// Trait abstracting the P2P transport layer.
 ///
 /// The sync coordinator is generic over this trait, allowing different transport
@@ -378,6 +397,12 @@ pub trait P2PTransport: Clone + Send + Sync + 'static {
     /// Per-peer measurements of our CAR fetches, for transports that keep them.
     async fn fetch_stats(&self) -> Result<Vec<PeerFetchStats>> {
         Ok(Vec::new())
+    }
+
+    /// The live connection to a peer, or `None` when not connected or the
+    /// transport cannot report it.
+    async fn peer_connection(&self, _peer_id: &PeerId) -> Result<Option<PeerConnectionInfo>> {
+        Ok(None)
     }
 
     async fn listen_addresses(&self) -> Result<Vec<PeerAddr>>;
