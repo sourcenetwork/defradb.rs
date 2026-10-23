@@ -62,3 +62,6 @@ lean_lib ServiceRecord where
 
 @[default_target]
 lean_lib WalkCutoff where
+
+@[default_target]
+lean_lib PqFourSums where

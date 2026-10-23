@@ -154,14 +154,30 @@ impl Quantizer for ProductQuantizer {
     }
 
     fn distance(&self, table: &[f32], code: &[u8]) -> f64 {
-        let mut total = 0.0f64;
-        for (j, part) in code.iter().enumerate().take(self.m) {
-            let at = j * CODEBOOK_SIZE + *part as usize;
-            if at < table.len() {
-                total += table[at] as f64;
-            }
+        // Four independent sums let the lookups overlap; one running total
+        // serialises every add behind the previous one. Each sum is named by a
+        // constant index so it stays in a register: indexed by `j % 4`, the
+        // array lives on the stack and every add waits on a store.
+        let lookup = |j: usize, part: u8| {
+            table
+                .get(j * CODEBOOK_SIZE + part as usize)
+                .map_or(0.0, |v| *v as f64)
+        };
+        let code = &code[..code.len().min(self.m)];
+        let (quads, rest) = code.as_chunks::<4>();
+        let mut acc = [0.0f64; 4];
+        for (q, quad) in quads.iter().enumerate() {
+            let j = q * 4;
+            acc[0] += lookup(j, quad[0]);
+            acc[1] += lookup(j + 1, quad[1]);
+            acc[2] += lookup(j + 2, quad[2]);
+            acc[3] += lookup(j + 3, quad[3]);
         }
-        total
+        let j = quads.len() * 4;
+        for (k, part) in rest.iter().enumerate() {
+            acc[k] += lookup(j + k, *part);
+        }
+        acc.iter().sum()
     }
 }
 
