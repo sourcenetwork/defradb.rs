@@ -6,7 +6,7 @@ use serde_json::Value as JsonValue;
 use crate::document::{document_to_plan_doc, DocumentMapping};
 use crate::error::Result;
 use crate::mapper::{Field, Filter, Mutation, Requestable, Select};
-use crate::plan::{CreateInput, UpdateInput, UpsertInput};
+use crate::plan::{AddInput, UpdateInput, UpsertInput};
 use crate::txn::TransactionRegistry;
 
 use super::{DocFetcher, QueryRunner};
@@ -181,16 +181,16 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         Ok(mapping)
     }
 
-    /// Build CreateInput objects from mutation input.
+    /// Build AddInput objects from mutation input.
     pub(crate) fn build_create_inputs(
         &self,
         mutation: &Mutation,
         collection: &schema::CollectionVersion,
-    ) -> Result<Vec<CreateInput>> {
+    ) -> Result<Vec<AddInput>> {
         let mut inputs = Vec::new();
 
         for doc_input in &mutation.create_input {
-            let mut create_input = CreateInput::new();
+            let mut create_input = AddInput::new();
             let normalized = self.normalize_mutation_input_fields(collection, doc_input);
             for (field_name, value) in normalized {
                 create_input = create_input.with_field(field_name.clone(), value.clone());

@@ -11,7 +11,7 @@ use web_time::Instant;
 use crate::error::{QueryError, Result};
 use crate::mapper::{Mutation, MutationType, Requestable};
 use crate::mutator::DocMutator;
-use crate::plan::{CreateNode, DeleteNode, UpdateNode, UpsertNode};
+use crate::plan::{AddNode, DeleteNode, UpdateNode, UpsertNode};
 use crate::planner::PlanNode;
 use crate::query_parse::parse_mutations_with_limits;
 use crate::txn::TransactionRegistry;
@@ -572,7 +572,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                         acp_filtered_doc_ids = Some(visible_doc_ids);
                     }
                 }
-                MutationType::Create => {
+                MutationType::Add => {
                     // CREATE permission is checked implicitly -- anyone can create
                     // but ownership is established via registration after the write.
                 }
@@ -678,7 +678,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             .into_owned()
             .with_encryption(mutation.encryption());
 
-        if matches!(mutation.mutation_type, MutationType::Create) {
+        if matches!(mutation.mutation_type, MutationType::Add) {
             match context.signing().cloned() {
                 Some(mut config) if config.remote_signer.is_some() => {
                     tracing::info!(
@@ -816,10 +816,10 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
 
         // Build and execute the appropriate mutation plan
         let mut plan: Box<dyn PlanNode> = match mutation.mutation_type {
-            MutationType::Create => {
+            MutationType::Add => {
                 let inputs = self.build_create_inputs(mutation, &collection)?;
                 Box::new(
-                    CreateNode::new(&mutation.collection_name, mutator.clone(), mapping.clone())
+                    AddNode::new(&mutation.collection_name, mutator.clone(), mapping.clone())
                         .with_context(context.clone())
                         .with_collection(collection.clone())
                         .with_request_time(request_time)
@@ -1006,7 +1006,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
             && !mutator.manages_external_acp_hooks()
             && matches!(
                 mutation.mutation_type,
-                MutationType::Create | MutationType::Upsert
+                MutationType::Add | MutationType::Upsert
             )
         {
             if let (Some(policy), Some(identity_did), Some(projection)) = (
@@ -1064,7 +1064,7 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry + 'static> QueryRunner<F, R
                         mutator.register_ordered_async_hook(callback).await?;
                     }
                 }
-            } else if let (Some(policy), Some(identity_did), MutationType::Create) = (
+            } else if let (Some(policy), Some(identity_did), MutationType::Add) = (
                 collection.policy.as_ref(),
                 caller_identity.as_ref(),
                 &mutation.mutation_type,

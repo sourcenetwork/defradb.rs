@@ -100,7 +100,7 @@ pub trait RestOperations: MaybeSendSync {
     ) -> RestResult<Option<JsonValue>>;
 
     /// Create a single document.
-    async fn create_document(
+    async fn add_document(
         &self,
         collection: &str,
         data: JsonValue,
@@ -108,7 +108,7 @@ pub trait RestOperations: MaybeSendSync {
     ) -> RestResult<JsonValue>;
 
     /// Create multiple documents.
-    async fn create_documents(
+    async fn add_many_documents(
         &self,
         collection: &str,
         data: Vec<JsonValue>,

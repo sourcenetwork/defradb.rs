@@ -36,7 +36,7 @@ pub(super) fn parse_field_to_mutation(
 
     // Create base mutation
     let mut mutation = match mutation_type {
-        MutationType::Create => Mutation::create(&collection_name),
+        MutationType::Add => Mutation::create(&collection_name),
         MutationType::Update => Mutation::update(&collection_name),
         MutationType::Delete => Mutation::delete(&collection_name),
         MutationType::Upsert => Mutation::upsert(&collection_name),
@@ -55,7 +55,7 @@ pub(super) fn parse_field_to_mutation(
     for (arg_name, arg_value) in &field.arguments {
         match (mutation_type, arg_name.as_str()) {
             // CREATE: input is array of documents (null means empty operation)
-            (MutationType::Create, "input") => {
+            (MutationType::Add, "input") => {
                 has_input_arg = true;
                 if !matches!(arg_value, Value::Null) {
                     let input = parse_create_input(arg_value, variables, &collection_name)?;
@@ -175,7 +175,7 @@ pub(super) fn parse_field_to_mutation(
 
     // Validate mutation has required arguments
     match mutation_type {
-        MutationType::Create => {
+        MutationType::Add => {
             if mutation.create_input.is_empty() && !has_input_arg {
                 return Err(QueryError::parse(format!(
                     "add_{} mutation requires 'input' argument with array of documents",
