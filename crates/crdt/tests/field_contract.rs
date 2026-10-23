@@ -207,3 +207,13 @@ proptest! {
         );
     }
 }
+
+#[test]
+fn lww_block_state_refuses_bytes_that_are_not_one_cbor_value() {
+    let lww = crdt(CType::LwwRegister);
+    let field = field(FieldKind::string(), CType::LwwRegister);
+    assert!(lww.block_state(&field, 1, &[0xff]).is_err());
+    assert!(lww.block_state(&field, 1, &[0x61, b'a', 0x00]).is_err());
+    assert!(lww.block_state(&field, 1, &[0x61, b'a']).is_ok());
+    assert!(lww.block_state(&field, 1, &[]).is_ok());
+}
