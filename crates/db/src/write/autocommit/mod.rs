@@ -22,10 +22,7 @@ use std::sync::Arc;
 use storage::corekv::{OnCommit, Store};
 use tracing::warn;
 
-use crate::block::builder::{
-    write_collection_block_with_inputs, write_delete_block_with_inputs,
-    write_document_blocks_with_inputs,
-};
+use crate::block::builder::{write_collection_block_with_inputs, write_delete_block_with_inputs};
 use crate::collection::Collection;
 use crate::database::DB;
 use crate::index::IndexManager;

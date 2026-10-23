@@ -1,0 +1,10 @@
+/Users/fredcarle/code/sourcenetwork/defradb.rs-update-pipeline/tools/integration-test/../defradb.rs-target-shared/wasm32-unknown-unknown/debug/deps/lens_sdk-8ef010b458475316.d: /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/lib.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/result.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/error.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/option.rs
+
+/Users/fredcarle/code/sourcenetwork/defradb.rs-update-pipeline/tools/integration-test/../defradb.rs-target-shared/wasm32-unknown-unknown/debug/deps/liblens_sdk-8ef010b458475316.rlib: /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/lib.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/result.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/error.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/option.rs
+
+/Users/fredcarle/code/sourcenetwork/defradb.rs-update-pipeline/tools/integration-test/../defradb.rs-target-shared/wasm32-unknown-unknown/debug/deps/liblens_sdk-8ef010b458475316.rmeta: /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/lib.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/result.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/error.rs /Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/option.rs
+
+/Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/lib.rs:
+/Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/result.rs:
+/Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/error.rs:
+/Users/fredcarle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lens_sdk-0.8.1/src/option.rs:

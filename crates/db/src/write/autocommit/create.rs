@@ -3,7 +3,8 @@ use events::{Message, Update};
 use storage::corekv::OnCommit;
 
 use crate::block::builder::ComputedBlocks;
-use crate::write::create::{self as pipeline, CreateStores, Created};
+use crate::write::create::{self as pipeline, Created};
+use crate::write::WriteStores;
 
 struct AcpRegistration {
     acp: Arc<dyn acp::DocumentACP>,
@@ -319,7 +320,7 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                     attempt.collection_name
                 ))
             })?;
-            let stores = CreateStores {
+            let stores = WriteStores {
                 datastore: &datastore,
                 systemstore: &systemstore,
                 blockstore: &blockstore,

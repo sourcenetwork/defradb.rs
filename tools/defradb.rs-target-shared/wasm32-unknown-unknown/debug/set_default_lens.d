@@ -1,0 +1,1 @@
+/Users/fredcarle/code/sourcenetwork/defradb.rs-update-pipeline/tools/integration-test/../defradb.rs-target-shared/wasm32-unknown-unknown/debug/set_default_lens.wasm: /Users/fredcarle/code/sourcenetwork/defradb.rs-update-pipeline/tools/integration-test/test-lenses/set_default/src/lib.rs
