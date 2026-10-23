@@ -147,76 +147,88 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn generate_then_get_roundtrips_through_durable_store() {
-        let fake = Arc::new(FakeEncBlockStore::default());
-        let store = BlockstoreKeyStore::new(fake.clone());
-        let (cid, stored) = store
-            .generate(&KeyScope::Document {
-                doc_id: "d1".into(),
-                field: None,
-            })
-            .await
-            .unwrap();
+    #[test]
+    fn generate_then_get_roundtrips_through_durable_store() {
+        workers::block_on(async {
+            let fake = Arc::new(FakeEncBlockStore::default());
+            let store = BlockstoreKeyStore::new(fake.clone());
+            let (cid, stored) = store
+                .generate(&KeyScope::Document {
+                    doc_id: "d1".into(),
+                    field: None,
+                })
+                .await
+                .unwrap();
 
-        // The block landed in the durable store.
-        assert!(fake.get_block(&cid).await.unwrap().is_some());
+            // The block landed in the durable store.
+            assert!(fake.get_block(&cid).await.unwrap().is_some());
 
-        // get reads it back and recovers the same key + bytes.
-        let got = store.get(&cid).await.unwrap().unwrap();
-        assert_eq!(got.key, stored.key);
-        assert_eq!(got.block_bytes, stored.block_bytes);
+            // get reads it back and recovers the same key + bytes.
+            let got = store.get(&cid).await.unwrap().unwrap();
+            assert_eq!(got.key, stored.key);
+            assert_eq!(got.block_bytes, stored.block_bytes);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn get_serves_a_block_written_outside_the_kms() {
-        // Simulates the legacy write path: a block placed in the durable store
-        // by something other than KMS::generate. The KMS must still serve it.
-        let fake = Arc::new(FakeEncBlockStore::default());
-        let block = Encryption {
-            key: vec![0x07; 32],
-        };
-        let block_bytes = block.to_dag_cbor().unwrap();
-        let cid = generate_cid_from_bytes(&block_bytes).unwrap();
-        fake.put_block(cid, block_bytes.clone().into())
-            .await
-            .unwrap();
+    #[test]
+    fn get_serves_a_block_written_outside_the_kms() {
+        workers::block_on(async {
+            // Simulates the legacy write path: a block placed in the durable store
+            // by something other than KMS::generate. The KMS must still serve it.
+            let fake = Arc::new(FakeEncBlockStore::default());
+            let block = Encryption {
+                key: vec![0x07; 32],
+            };
+            let block_bytes = block.to_dag_cbor().unwrap();
+            let cid = generate_cid_from_bytes(&block_bytes).unwrap();
+            fake.put_block(cid, block_bytes.clone().into())
+                .await
+                .unwrap();
 
-        let store = BlockstoreKeyStore::new(fake);
-        let got = store.get(&cid).await.unwrap().unwrap();
-        assert_eq!(got.key, [0x07; 32]);
-        assert_eq!(got.block_bytes, block_bytes);
+            let store = BlockstoreKeyStore::new(fake);
+            let got = store.get(&cid).await.unwrap().unwrap();
+            assert_eq!(got.key, [0x07; 32]);
+            assert_eq!(got.block_bytes, block_bytes);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn get_missing_returns_none() {
-        let fake = Arc::new(FakeEncBlockStore::default());
-        let store = BlockstoreKeyStore::new(fake);
-        let block = Encryption { key: vec![1u8; 32] };
-        let cid = generate_cid_from_bytes(&block.to_dag_cbor().unwrap()).unwrap();
-        assert!(store.get(&cid).await.unwrap().is_none());
+    #[test]
+    fn get_missing_returns_none() {
+        workers::block_on(async {
+            let fake = Arc::new(FakeEncBlockStore::default());
+            let store = BlockstoreKeyStore::new(fake);
+            let block = Encryption { key: vec![1u8; 32] };
+            let cid = generate_cid_from_bytes(&block.to_dag_cbor().unwrap()).unwrap();
+            assert!(store.get(&cid).await.unwrap().is_none());
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn put_persists_and_list_unsupported() {
-        let fake = Arc::new(FakeEncBlockStore::default());
-        let store = BlockstoreKeyStore::new(fake);
-        let block = Encryption {
-            key: vec![0x42; 32],
-        };
-        let block_bytes = block.to_dag_cbor().unwrap();
-        let cid = generate_cid_from_bytes(&block_bytes).unwrap();
-        store
-            .put(
-                cid,
-                StoredKey {
-                    key: [0x42; 32],
-                    block_bytes,
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(store.get(&cid).await.unwrap().unwrap().key, [0x42; 32]);
-        assert!(matches!(store.list().await, Err(Error::Unsupported(_))));
+    #[test]
+    fn put_persists_and_list_unsupported() {
+        workers::block_on(async {
+            let fake = Arc::new(FakeEncBlockStore::default());
+            let store = BlockstoreKeyStore::new(fake);
+            let block = Encryption {
+                key: vec![0x42; 32],
+            };
+            let block_bytes = block.to_dag_cbor().unwrap();
+            let cid = generate_cid_from_bytes(&block_bytes).unwrap();
+            store
+                .put(
+                    cid,
+                    StoredKey {
+                        key: [0x42; 32],
+                        block_bytes,
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(store.get(&cid).await.unwrap().unwrap().key, [0x42; 32]);
+            assert!(matches!(store.list().await, Err(Error::Unsupported(_))));
+        })
+        .unwrap()
     }
 }

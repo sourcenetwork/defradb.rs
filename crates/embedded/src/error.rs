@@ -36,6 +36,8 @@ pub enum Error {
     AccessHooksNeedIroh,
     #[error("the network runtime did not start: {0}")]
     NetworkStart(#[source] edge::EdgeError),
+    #[error("P2P setup did not finish on the network runtime: {0}")]
+    NetworkSetup(#[source] edge::EdgeError),
 
     #[error("SDL parse error: {0}")]
     SchemaParse(#[source] query::QueryError),

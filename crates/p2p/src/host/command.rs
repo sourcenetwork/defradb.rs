@@ -295,6 +295,12 @@ pub enum HostCommand {
         response: oneshot::Sender<Result<Option<identity::Did>>>,
     },
 
+    /// Describe the live connection to one peer.
+    PeerConnection {
+        peer_id: PeerId,
+        response: oneshot::Sender<Option<crate::transport::PeerConnectionInfo>>,
+    },
+
     /// Get connected peers with their full multiaddrs (Go-compatible ActivePeers).
     PeerAddresses {
         response: oneshot::Sender<Vec<String>>,

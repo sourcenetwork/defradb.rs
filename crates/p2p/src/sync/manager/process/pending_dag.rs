@@ -206,6 +206,20 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         })
     }
 
+    /// Pending DAGs this peer announced or is an alternate provider for.
+    pub fn pending_dags_from(&self, peer: &str) -> Vec<(Cid, PendingDag)> {
+        self.pending_dags.read(|pending| {
+            pending
+                .iter()
+                .filter(|(_, dag)| {
+                    dag.source_peer.as_deref() == Some(peer)
+                        || dag.alternate_providers.iter().any(|alt| alt == peer)
+                })
+                .map(|(cid, dag)| (*cid, PendingDag::clone(dag)))
+                .collect()
+        })
+    }
+
     /// Get missing CIDs for a pending DAG.
     pub fn pending_dag_missing(&self, root_cid: &Cid) -> Vec<Cid> {
         self.pending_dags.read(|pending| {

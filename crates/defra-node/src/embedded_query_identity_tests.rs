@@ -103,127 +103,142 @@ async fn signed_node_with_executor(
     node
 }
 
-#[tokio::test]
-async fn builder_rejects_invalid_node_identity_did() {
-    let _serial = SIGNING_STORE_GUARD.lock().await;
-    defra_core::signing::clear_identity_store();
-    let invalid_did = "invalid:key:zNode";
-    register_test_remote_node_identity(invalid_did);
+#[test]
+fn builder_rejects_invalid_node_identity_did() {
+    workers::block_on(async {
+        let _serial = SIGNING_STORE_GUARD.lock().await;
+        defra_core::signing::clear_identity_store();
+        let invalid_did = "invalid:key:zNode";
+        register_test_remote_node_identity(invalid_did);
 
-    let result = EmbeddedNode::builder()
-        .with_node_identity_did(invalid_did)
-        .build()
-        .await;
-    let error = match result {
-        Ok(node) => {
-            node.shutdown().await;
-            panic!("invalid node identity DID must be rejected")
-        }
-        Err(error) => error,
-    };
+        let result = EmbeddedNode::builder()
+            .with_node_identity_did(invalid_did)
+            .build()
+            .await;
+        let error = match result {
+            Ok(node) => {
+                node.shutdown().await;
+                panic!("invalid node identity DID must be rejected")
+            }
+            Err(error) => error,
+        };
 
-    assert!(
-        error.to_string().contains("invalid node identity DID"),
-        "{error:#}"
-    );
-    defra_core::signing::clear_identity_store();
+        assert!(
+            error.to_string().contains("invalid node identity DID"),
+            "{error:#}"
+        );
+        defra_core::signing::clear_identity_store();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn embedded_execute_defaults_node_identity_and_preserves_explicit_actor() {
-    let _serial = SIGNING_STORE_GUARD.lock().await;
-    defra_core::signing::clear_identity_store();
-    let node_did = "did:key:zEmbeddedNodeActor";
-    let explicit_did = identity::Did::new("did:key:zExplicitActor").unwrap();
-    let executor = Arc::new(IdentityRecordingExecutor::new(0));
-    let node = signed_node_with_executor(node_did, executor.clone()).await;
+#[test]
+fn embedded_execute_defaults_node_identity_and_preserves_explicit_actor() {
+    workers::block_on(async {
+        let _serial = SIGNING_STORE_GUARD.lock().await;
+        defra_core::signing::clear_identity_store();
+        let node_did = "did:key:zEmbeddedNodeActor";
+        let explicit_did = identity::Did::new("did:key:zExplicitActor").unwrap();
+        let executor = Arc::new(IdentityRecordingExecutor::new(0));
+        let node = signed_node_with_executor(node_did, executor.clone()).await;
 
-    let defaulted = node.execute("query { defaulted }").await;
-    assert!(!defaulted.has_errors(), "defaulted query failed");
-    let explicit = node
-        .execute_request(
-            QueryRequest::new("query { explicit }").with_identity(Some(explicit_did.clone())),
-        )
-        .await;
-    assert!(!explicit.has_errors(), "explicit-actor query failed");
-    assert_eq!(
-        executor.identities(),
-        vec![Some(node_did.to_string()), Some(explicit_did.to_string())]
-    );
+        let defaulted = node.execute("query { defaulted }").await;
+        assert!(!defaulted.has_errors(), "defaulted query failed");
+        let explicit = node
+            .execute_request(
+                QueryRequest::new("query { explicit }").with_identity(Some(explicit_did.clone())),
+            )
+            .await;
+        assert!(!explicit.has_errors(), "explicit-actor query failed");
+        assert_eq!(
+            executor.identities(),
+            vec![Some(node_did.to_string()), Some(explicit_did.to_string())]
+        );
 
-    node.shutdown().await;
-    defra_core::signing::clear_identity_store();
+        node.shutdown().await;
+        defra_core::signing::clear_identity_store();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn embedded_conflict_returns_after_one_attempt_with_node_identity() {
-    let _serial = SIGNING_STORE_GUARD.lock().await;
-    defra_core::signing::clear_identity_store();
-    let node_did = "did:key:zEmbeddedRetryActor";
-    let executor = Arc::new(IdentityRecordingExecutor::new(2));
-    let node = signed_node_with_executor(node_did, executor.clone()).await;
+#[test]
+fn embedded_conflict_returns_after_one_attempt_with_node_identity() {
+    workers::block_on(async {
+        let _serial = SIGNING_STORE_GUARD.lock().await;
+        defra_core::signing::clear_identity_store();
+        let node_did = "did:key:zEmbeddedRetryActor";
+        let executor = Arc::new(IdentityRecordingExecutor::new(2));
+        let node = signed_node_with_executor(node_did, executor.clone()).await;
 
-    let response = node.execute("mutation { retry }").await;
-    assert!(response.is_transaction_conflict(), "conflict must surface");
-    assert_eq!(executor.identities(), vec![Some(node_did.to_string())]);
+        let response = node.execute("mutation { retry }").await;
+        assert!(response.is_transaction_conflict(), "conflict must surface");
+        assert_eq!(executor.identities(), vec![Some(node_did.to_string())]);
 
-    node.shutdown().await;
-    defra_core::signing::clear_identity_store();
+        node.shutdown().await;
+        defra_core::signing::clear_identity_store();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn embedded_transaction_defaults_node_identity_and_preserves_explicit_actor() {
-    let _serial = SIGNING_STORE_GUARD.lock().await;
-    defra_core::signing::clear_identity_store();
-    let node_did = "did:key:zEmbeddedTransactionActor";
-    let explicit_did = identity::Did::new("did:key:zExplicitTransactionActor").unwrap();
-    let executor = Arc::new(IdentityRecordingExecutor::new(0));
-    let node = signed_node_with_executor(node_did, executor.clone()).await;
-    let handle = TransactionHandle::new("identity-test-txn".to_string());
+#[test]
+fn embedded_transaction_defaults_node_identity_and_preserves_explicit_actor() {
+    workers::block_on(async {
+        let _serial = SIGNING_STORE_GUARD.lock().await;
+        defra_core::signing::clear_identity_store();
+        let node_did = "did:key:zEmbeddedTransactionActor";
+        let explicit_did = identity::Did::new("did:key:zExplicitTransactionActor").unwrap();
+        let executor = Arc::new(IdentityRecordingExecutor::new(0));
+        let node = signed_node_with_executor(node_did, executor.clone()).await;
+        let handle = TransactionHandle::new("identity-test-txn".to_string());
 
-    let defaulted = node
-        .execute_request_in_txn(QueryRequest::new("query { defaulted }"), &handle)
-        .await;
-    assert!(
-        !defaulted.has_errors(),
-        "defaulted transaction query failed"
-    );
-    let explicit = node
-        .execute_request_in_txn(
-            QueryRequest::new("query { explicit }").with_identity(Some(explicit_did.clone())),
-            &handle,
-        )
-        .await;
-    assert!(!explicit.has_errors(), "explicit transaction query failed");
-    assert_eq!(
-        executor.identities(),
-        vec![Some(node_did.to_string()), Some(explicit_did.to_string())]
-    );
+        let defaulted = node
+            .execute_request_in_txn(QueryRequest::new("query { defaulted }"), &handle)
+            .await;
+        assert!(
+            !defaulted.has_errors(),
+            "defaulted transaction query failed"
+        );
+        let explicit = node
+            .execute_request_in_txn(
+                QueryRequest::new("query { explicit }").with_identity(Some(explicit_did.clone())),
+                &handle,
+            )
+            .await;
+        assert!(!explicit.has_errors(), "explicit transaction query failed");
+        assert_eq!(
+            executor.identities(),
+            vec![Some(node_did.to_string()), Some(explicit_did.to_string())]
+        );
 
-    node.shutdown().await;
-    defra_core::signing::clear_identity_store();
+        node.shutdown().await;
+        defra_core::signing::clear_identity_store();
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn unsigned_embedded_execution_remains_anonymous() {
-    let executor = Arc::new(IdentityRecordingExecutor::new(0));
-    let mut node = EmbeddedNode::builder()
-        .build()
-        .await
-        .expect("build unsigned identity-observing node");
-    node.runner = executor.clone();
-    let handle = TransactionHandle::new("anonymous-test-txn".to_string());
+#[test]
+fn unsigned_embedded_execution_remains_anonymous() {
+    workers::block_on(async {
+        let executor = Arc::new(IdentityRecordingExecutor::new(0));
+        let mut node = EmbeddedNode::builder()
+            .build()
+            .await
+            .expect("build unsigned identity-observing node");
+        node.runner = executor.clone();
+        let handle = TransactionHandle::new("anonymous-test-txn".to_string());
 
-    let direct = node.execute("query { direct }").await;
-    let retry = node.execute("query { retry }").await;
-    let transactional = node
-        .execute_request_in_txn(QueryRequest::new("query { transaction }"), &handle)
-        .await;
+        let direct = node.execute("query { direct }").await;
+        let retry = node.execute("query { retry }").await;
+        let transactional = node
+            .execute_request_in_txn(QueryRequest::new("query { transaction }"), &handle)
+            .await;
 
-    assert!(!direct.has_errors());
-    assert!(!retry.has_errors());
-    assert!(!transactional.has_errors());
-    assert_eq!(executor.identities(), vec![None, None, None]);
+        assert!(!direct.has_errors());
+        assert!(!retry.has_errors());
+        assert!(!transactional.has_errors());
+        assert_eq!(executor.identities(), vec![None, None, None]);
 
-    node.shutdown().await;
+        node.shutdown().await;
+    })
+    .unwrap()
 }

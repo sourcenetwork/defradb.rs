@@ -24,8 +24,9 @@ fn fetches(value: &Value) -> u64 {
     }
 }
 
-#[tokio::test]
-async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
+#[test]
+fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema("type Note { title: String owner: String @index }")
         .await
@@ -90,4 +91,91 @@ async fn exact_id_reads_seek_and_keep_filters_and_deleted_visibility() {
             .len(),
         1
     );
+})
+    .unwrap()
+}
+
+#[test]
+fn deleted_rows_remain_visible_with_indexed_filters_and_ordering() {
+    workers::block_on(async {
+        let node = EmbeddedNode::builder().build().await.unwrap();
+        node.add_schema("type RetainedNote { owner: String @index rank: Int @index body: String }")
+            .await
+            .unwrap();
+        let created = data(
+            &node,
+            r#"mutation { create_RetainedNote(input: [
+        {owner: "shared", rank: 1, body: "retained"},
+        {owner: "shared", rank: 2, body: "live"},
+        {owner: "other", rank: 3, body: "foreign"}
+    ]) {_docID} }"#,
+        )
+        .await;
+        let retired = created["add_RetainedNote"][0]["_docID"].as_str().unwrap();
+        data(
+            &node,
+            &format!(r#"mutation {{delete_RetainedNote(docID: "{retired}") {{_docID}}}}"#),
+        )
+        .await;
+        let expected = serde_json::json!([
+            {"rank":1,"body":"retained","_deleted":true},
+            {"rank":2,"body":"live","_deleted":false}
+        ]);
+        for selection in [
+            r#"filter: {owner: {_eq: "shared"}}, order: {rank: ASC}"#.to_owned(),
+            r#"filter: {rank: {_lte: 2}}, order: {rank: ASC}"#.to_owned(),
+            format!(r#"docID: "{retired}", filter: {{owner: {{_eq: "shared"}}}}"#),
+        ] {
+            let query = format!(
+                r#"{{RetainedNote({selection}, showDeleted: true) {{rank body _deleted}}}}"#
+            );
+            let rows = data(&node, &query).await;
+            let selected = if selection.starts_with("docID") {
+                serde_json::json!([expected[0]])
+            } else {
+                expected.clone()
+            };
+            assert_eq!(rows["RetainedNote"], selected, "{query}");
+        }
+        let all = data(
+            &node,
+            "{RetainedNote(showDeleted: true, order: {rank: ASC}) {rank}}",
+        )
+        .await;
+        assert_eq!(
+            all["RetainedNote"],
+            serde_json::json!([{"rank":1},{"rank":2},{"rank":3}])
+        );
+        let first = data(
+            &node,
+            "{RetainedNote(showDeleted: true, limit: 1, order: {rank: ASC}) {rank}}",
+        )
+        .await;
+        assert_eq!(first["RetainedNote"], serde_json::json!([{"rank":1}]));
+        let second = data(
+            &node,
+            "{RetainedNote(showDeleted: true, limit: 1, offset: 1, order: {rank: ASC}) {rank}}",
+        )
+        .await;
+        assert_eq!(second["RetainedNote"], serde_json::json!([{"rank":2}]));
+        for selection in [
+            r#"filter: {owner: {_eq: "absent"}}"#.to_owned(),
+            format!(r#"docID: "{retired}", filter: {{owner: {{_eq: "other"}}}}"#),
+        ] {
+            let result = data(
+                &node,
+                &format!(r#"{{RetainedNote(showDeleted: true, {selection}) {{rank}}}}"#),
+            )
+            .await;
+            assert_eq!(result["RetainedNote"], serde_json::json!([]));
+        }
+        let live = data(
+            &node,
+            r#"{RetainedNote(filter: {owner: {_eq: "shared"}}, order: {rank: ASC}) {rank}}"#,
+        )
+        .await;
+        assert_eq!(live["RetainedNote"], serde_json::json!([{"rank":2}]));
+        node.shutdown().await;
+    })
+    .unwrap()
 }

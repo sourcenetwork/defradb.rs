@@ -38,8 +38,9 @@ fn uses_vector_index(value: &Value) -> bool {
     }
 }
 
-#[tokio::test]
-async fn computed_similarity_filter_keeps_a_full_page_after_offset() {
+#[test]
+fn computed_similarity_filter_keeps_a_full_page_after_offset() {
+    workers::block_on(async {
     let node = fixture().await;
     let query = r#"{ Note(filter: {_alias: {sim: {_lt: 50}}}, order: {_alias: {sim: DESC}}, limit: 2, offset: 1) {
         tag sim: SIMILARITY(embedding: {vector: [1]})
@@ -52,29 +53,35 @@ async fn computed_similarity_filter_keeps_a_full_page_after_offset() {
     );
     let explain = data(&node, &format!("query @explain(type: execute) {query}")).await;
     assert!(!uses_vector_index(&explain), "{explain}");
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn group_limit_is_not_used_as_a_document_candidate_limit() {
-    let node = fixture().await;
-    let query = r#"{ Note(groupBy: [tag], order: {_alias: {sim: DESC}}, limit: 2) {
+#[test]
+fn group_limit_is_not_used_as_a_document_candidate_limit() {
+    workers::block_on(async {
+        let node = fixture().await;
+        let query = r#"{ Note(groupBy: [tag], order: {_alias: {sim: DESC}}, limit: 2) {
         tag sim: SIMILARITY(embedding: {vector: [1]})
     } }"#;
-    let result = data(&node, query).await;
-    let mut tags: Vec<_> = result["Note"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|row| row["tag"].as_str().unwrap())
-        .collect();
-    tags.sort_unstable();
-    assert_eq!(tags, ["cold", "hot"]);
-    let explain = data(&node, &format!("query @explain(type: execute) {query}")).await;
-    assert!(!uses_vector_index(&explain), "{explain}");
+        let result = data(&node, query).await;
+        let mut tags: Vec<_> = result["Note"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["tag"].as_str().unwrap())
+            .collect();
+        tags.sort_unstable();
+        assert_eq!(tags, ["cold", "hot"]);
+        let explain = data(&node, &format!("query @explain(type: execute) {query}")).await;
+        assert!(!uses_vector_index(&explain), "{explain}");
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn scalar_filter_keeps_vector_routing() {
+#[test]
+fn scalar_filter_keeps_vector_routing() {
+    workers::block_on(async {
     let node = fixture().await;
     let query = r#"{ Note(filter: {tag: {_eq: "cold"}}, order: {_alias: {sim: DESC}}, limit: 2) {
         tag sim: SIMILARITY(embedding: {vector: [1]})
@@ -87,4 +94,6 @@ async fn scalar_filter_keeps_vector_routing() {
     );
     let explain = data(&node, &format!("query @explain(type: execute) {query}")).await;
     assert!(uses_vector_index(&explain), "{explain}");
+})
+    .unwrap()
 }

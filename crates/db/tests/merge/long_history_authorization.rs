@@ -219,30 +219,82 @@ async fn authorized_history(batch: bool) {
     assert!(fixture.attempt(&root, batch).await.is_terminal_skip());
 }
 
-#[tokio::test]
-async fn strict_collection_history_uses_the_composites_document_identity() {
-    for carrier_doc in ["", "unrelated-carrier-document"] {
+#[test]
+fn strict_collection_history_uses_the_composites_document_identity() {
+    workers::block_on(async {
+        for carrier_doc in ["", "unrelated-carrier-document"] {
+            let owner = signer();
+            let fixture = Fixture::new(&owner, None).await;
+            let hook = Arc::new(AcpCompositeMergeHook::new(None));
+            hook.set_document_acp(fixture.acp.as_ref().unwrap().clone());
+            hook.set_strict_replicated_doc_access(true);
+            fixture.handler.set_composite_merge_hook(hook);
+            let root = fixture.history(&owner, None, 64).await;
+            let payload = CollectionDeltaPayload {
+                schema_version_id: "v1".into(),
+                priority: 1,
+            };
+            let block = Block::new(
+                CrdtDelta::Collection(payload.clone()),
+                vec![],
+                vec![DAGLink::new("_head", root.cid)],
+            );
+            let cid = block.generate_cid().unwrap();
+            let metadata =
+                BlockMetadata::normal(carrier_doc, "col-users", &owner.did, Some("peer"), false);
+            let mut yielded = false;
+            let mut completed = false;
+            for _ in 0..128 {
+                let outcome = fixture
+                    .handler
+                    .with_single_history_turn()
+                    .handle_block(&cid, &block.to_dag_cbor().unwrap(), metadata.clone())
+                    .await
+                    .unwrap();
+                if outcome == MergeOutcome::Yielded {
+                    yielded = true;
+                } else {
+                    assert!(
+                        outcome.is_merged() || outcome.is_terminal_skip(),
+                        "{outcome:?}"
+                    );
+                    completed = true;
+                    break;
+                }
+            }
+            assert!(yielded, "the history must exceed the fast-path budget");
+            assert!(completed, "collection history did not converge");
+            assert!(fixture.attempt(&root, false).await.is_terminal_skip());
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
+    workers::block_on(async {
         let owner = signer();
+        let attacker = signer();
         let fixture = Fixture::new(&owner, None).await;
         let hook = Arc::new(AcpCompositeMergeHook::new(None));
         hook.set_document_acp(fixture.acp.as_ref().unwrap().clone());
         hook.set_strict_replicated_doc_access(true);
         fixture.handler.set_composite_merge_hook(hook);
-        let root = fixture.history(&owner, None, 64).await;
-        let payload = CollectionDeltaPayload {
-            schema_version_id: "v1".into(),
-            priority: 1,
-        };
+        let root = fixture.history(&attacker, None, 64).await;
         let block = Block::new(
-            CrdtDelta::Collection(payload.clone()),
+            CrdtDelta::Collection(CollectionDeltaPayload {
+                schema_version_id: "v1".into(),
+                priority: 1,
+            }),
             vec![],
             vec![DAGLink::new("_head", root.cid)],
         );
         let cid = block.generate_cid().unwrap();
-        let metadata =
-            BlockMetadata::normal(carrier_doc, "col-users", &owner.did, Some("peer"), false);
-        let mut yielded = false;
-        let mut completed = false;
+        let metadata = BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false);
+        let expected = MergeOutcome::rejected(format!(
+            "signer {} lacks update permission on protected document {}",
+            attacker.did, fixture.doc_id
+        ));
         for _ in 0..128 {
             let outcome = fixture
                 .handler
@@ -250,60 +302,14 @@ async fn strict_collection_history_uses_the_composites_document_identity() {
                 .handle_block(&cid, &block.to_dag_cbor().unwrap(), metadata.clone())
                 .await
                 .unwrap();
-            if outcome == MergeOutcome::Yielded {
-                yielded = true;
-            } else {
-                assert!(
-                    outcome.is_merged() || outcome.is_terminal_skip(),
-                    "{outcome:?}"
-                );
-                completed = true;
-                break;
+            if outcome != MergeOutcome::Yielded {
+                assert_eq!(outcome, expected);
+                return;
             }
         }
-        assert!(yielded, "the history must exceed the fast-path budget");
-        assert!(completed, "collection history did not converge");
-        assert!(fixture.attempt(&root, false).await.is_terminal_skip());
-    }
-}
-
-#[tokio::test]
-async fn strict_collection_carrier_cannot_hide_an_unauthorized_root() {
-    let owner = signer();
-    let attacker = signer();
-    let fixture = Fixture::new(&owner, None).await;
-    let hook = Arc::new(AcpCompositeMergeHook::new(None));
-    hook.set_document_acp(fixture.acp.as_ref().unwrap().clone());
-    hook.set_strict_replicated_doc_access(true);
-    fixture.handler.set_composite_merge_hook(hook);
-    let root = fixture.history(&attacker, None, 64).await;
-    let block = Block::new(
-        CrdtDelta::Collection(CollectionDeltaPayload {
-            schema_version_id: "v1".into(),
-            priority: 1,
-        }),
-        vec![],
-        vec![DAGLink::new("_head", root.cid)],
-    );
-    let cid = block.generate_cid().unwrap();
-    let metadata = BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false);
-    let expected = MergeOutcome::rejected(format!(
-        "signer {} lacks update permission on protected document {}",
-        attacker.did, fixture.doc_id
-    ));
-    for _ in 0..128 {
-        let outcome = fixture
-            .handler
-            .with_single_history_turn()
-            .handle_block(&cid, &block.to_dag_cbor().unwrap(), metadata.clone())
-            .await
-            .unwrap();
-        if outcome != MergeOutcome::Yielded {
-            assert_eq!(outcome, expected);
-            return;
-        }
-    }
-    panic!("unauthorized history was not rejected");
+        panic!("unauthorized history was not rejected");
+    })
+    .unwrap()
 }
 
 async fn unauthorized_ancestor(batch: bool, explicit: bool) {
@@ -426,52 +432,82 @@ async fn revoked_after_yield(batch: bool) {
     assert!(hook.checks.load(Ordering::SeqCst) > checks);
 }
 
-#[tokio::test]
-async fn standalone_authorized_history_resumes() {
-    authorized_history(false).await;
+#[test]
+fn standalone_authorized_history_resumes() {
+    workers::block_on(async {
+        authorized_history(false).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_authorized_history_resumes() {
-    authorized_history(true).await;
+#[test]
+fn batch_authorized_history_resumes() {
+    workers::block_on(async {
+        authorized_history(true).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn standalone_deep_unauthorized_ancestor_is_rejected() {
-    unauthorized_ancestor(false, false).await;
+#[test]
+fn standalone_deep_unauthorized_ancestor_is_rejected() {
+    workers::block_on(async {
+        unauthorized_ancestor(false, false).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_deep_unauthorized_ancestor_is_rejected() {
-    unauthorized_ancestor(true, false).await;
+#[test]
+fn batch_deep_unauthorized_ancestor_is_rejected() {
+    workers::block_on(async {
+        unauthorized_ancestor(true, false).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn standalone_explicit_replay_preserves_ancestor_signer() {
-    unauthorized_ancestor(false, true).await;
+#[test]
+fn standalone_explicit_replay_preserves_ancestor_signer() {
+    workers::block_on(async {
+        unauthorized_ancestor(false, true).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_explicit_replay_preserves_ancestor_signer() {
-    unauthorized_ancestor(true, true).await;
+#[test]
+fn batch_explicit_replay_preserves_ancestor_signer() {
+    workers::block_on(async {
+        unauthorized_ancestor(true, true).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn standalone_replay_accepts_distinct_authorized_ancestor_signer() {
-    authorized_ancestor_with_distinct_replay_signer(false).await;
+#[test]
+fn standalone_replay_accepts_distinct_authorized_ancestor_signer() {
+    workers::block_on(async {
+        authorized_ancestor_with_distinct_replay_signer(false).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_replay_accepts_distinct_authorized_ancestor_signer() {
-    authorized_ancestor_with_distinct_replay_signer(true).await;
+#[test]
+fn batch_replay_accepts_distinct_authorized_ancestor_signer() {
+    workers::block_on(async {
+        authorized_ancestor_with_distinct_replay_signer(true).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn standalone_resumption_rechecks_revoked_permission() {
-    revoked_after_yield(false).await;
+#[test]
+fn standalone_resumption_rechecks_revoked_permission() {
+    workers::block_on(async {
+        revoked_after_yield(false).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn batch_resumption_rechecks_revoked_permission() {
-    revoked_after_yield(true).await;
+#[test]
+fn batch_resumption_rechecks_revoked_permission() {
+    workers::block_on(async {
+        revoked_after_yield(true).await;
+    })
+    .unwrap()
 }

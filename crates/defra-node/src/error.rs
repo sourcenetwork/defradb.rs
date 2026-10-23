@@ -255,38 +255,6 @@ pub enum Error {
     /// The transaction cleanup interval is zero while idle cleanup is on.
     #[error("transaction cleanup interval must be non-zero when idle cleanup is enabled")]
     ZeroCleanupInterval,
-    /// A caller-provided listener could not be prepared.
-    #[cfg(feature = "http")]
-    #[error("failed to prepare listener on {addr}: {source}")]
-    ListenerPrepare {
-        /// The listener address.
-        addr: std::net::SocketAddr,
-        /// Why the listener could not be prepared.
-        source: std::io::Error,
-    },
-    /// A caller-provided listener could not be adopted.
-    #[cfg(feature = "http")]
-    #[error("failed to adopt listener on {addr}: {source}")]
-    ListenerAdopt {
-        /// The listener address.
-        addr: std::net::SocketAddr,
-        /// Why the listener could not be adopted.
-        source: std::io::Error,
-    },
-    /// The HTTP listener could not bind.
-    #[cfg(feature = "http")]
-    #[error("failed to bind to {addr}: {source} ({})", bind_hint(.source))]
-    ListenerBind {
-        /// The address that was bound.
-        addr: std::net::SocketAddr,
-        /// Why binding failed.
-        source: std::io::Error,
-    },
-    /// The HTTP server stopped with an error.
-    #[cfg(feature = "http")]
-    #[error("server error: {0}")]
-    Serve(std::io::Error),
-
     /// A response lacks a field of a record.
     #[error("missing {field} in {within}")]
     MissingIn {
@@ -366,14 +334,3 @@ impl Error {
 
 /// Result alias for node operations.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Hint for why a bind failed, from the kind of the I/O error.
-#[cfg(feature = "http")]
-fn bind_hint(error: &std::io::Error) -> &'static str {
-    match error.kind() {
-        std::io::ErrorKind::AddrInUse => "port is already in use",
-        std::io::ErrorKind::PermissionDenied => "permission denied (try port > 1024)",
-        std::io::ErrorKind::AddrNotAvailable => "address not available on this host",
-        _ => "check network configuration",
-    }
-}

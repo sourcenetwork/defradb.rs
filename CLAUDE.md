@@ -100,7 +100,8 @@ tools/
 ├── integration-test/       # Rust-native integration tests (primary validation)
 ├── lens-host/              # Standalone WASM Lens transform runner (JSON stdin → stdout)
 ├── otel-smoke/             # OTLP exporter smoke tests against a Compose-run collector
-└── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
+├── pg-compat-harness/      # Drizzle ORM harness for the Postgres wire protocol
+└── vector-bench/           # Corpus, warm-up, memory-cap and usearch tools for vector_disk_cost
 ```
 
 Only `ffi-test`, `integration-test`, and `lens-host` are workspace members; the
@@ -403,6 +404,7 @@ that is correct but slower is not done.
 - **Rust** (1.98+): `rustup`
 - **protoc**: `brew install protobuf` — required by `crates/orbis`, whose `build.rs` compiles `proto/orbis.proto` via `tonic-prost-build`
 - **cbindgen**: `cargo install cbindgen` — generates C headers for FFI
+- **cargo-nextest**: `cargo install cargo-nextest --locked` — runs the tests; `.config/nextest.toml` keeps tests that start nodes serial
 - **Go** (1.26+): Required for FFI compatibility tests, and to build the pinned `GO_COMPAT_COMMIT`, which declares `go 1.26.7`
 
 ## Common Commands
@@ -411,18 +413,18 @@ that is correct but slower is not done.
 
 ```bash
 # Run all integration tests
-cargo test -p integration-test
+cargo nextest run -p integration-test
 
 # Run a specific area
-cargo test -p integration-test --test acp
-cargo test -p integration-test --test p2p
-cargo test -p integration-test --test basic
+cargo nextest run -p integration-test --test acp
+cargo nextest run -p integration-test --test p2p
+cargo nextest run -p integration-test --test basic
 
 # Run a specific submodule within an area
-cargo test -p integration-test --test acp -- negative::
+cargo nextest run -p integration-test --test acp -- negative::
 
 # Run a specific test
-cargo test -p integration-test --test acp -- basic::rust_acp_basic
+cargo nextest run -p integration-test --test acp -- basic::rust_acp_basic
 ```
 
 Integration tests live in `tools/integration-test/tests/` and exercise the full
@@ -464,8 +466,8 @@ Single-purpose binaries, each its own `[[test]]` with no submodules:
 ### Rust Commands
 
 ```bash
-cargo test                         # Run all unit tests
-cargo test -p crdt                 # Test specific crate
+cargo nextest run                  # Run all unit tests (cargo test --doc for doctests)
+cargo nextest run -p crdt          # Test specific crate
 cargo clippy --all --all-targets -- -D warnings  # Lint, benches included
 just check-node-graph              # Feature-graph contracts for defra-node
 cargo fmt --all                    # Format
@@ -530,10 +532,10 @@ git worktree remove ../defradb.rs-foo              # Remove worktree
 
 ## Before Committing
 
-1. `cargo test` passes
+1. `cargo nextest run` and `cargo test --doc` pass
 2. `cargo clippy --all --all-targets -- -D warnings` clean
 3. `cargo fmt --all` applied
-4. If touching core behavior: `cargo test -p integration-test` passes
+4. If touching core behavior: `cargo nextest run -p integration-test` passes
 
 ## ACP / Searchable Encryption
 

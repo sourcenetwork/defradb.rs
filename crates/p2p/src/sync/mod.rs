@@ -16,6 +16,7 @@ mod car_authorization;
 mod collection_store;
 mod coordinator;
 mod dag_sync;
+mod dispatch_queue;
 mod event_dispatcher;
 mod head_provider;
 mod head_scope;
@@ -38,9 +39,13 @@ pub use coordinator::IrohSyncCoordinator;
 pub use coordinator::Libp2pSyncCoordinator;
 pub use coordinator::{
     CreateReplicatorResult, HeadHintCarAuthority, HeadHintCarGrant, LoadReplicatorsResult,
-    PushFailure, PushFailureReceiver, SyncCoordinator, SyncShutdownHandle, SyncStatus,
+    PeerDetails, PendingFetch, PushFailure, PushFailureReceiver, QuarantinedRoot, SyncCoordinator,
+    SyncShutdownHandle, SyncStatus,
 };
 pub use dag_sync::{DagSync, DagSyncConfig, DagSyncState, NeedsFetchData, SyncPlan};
+pub use dispatch_queue::{
+    dispatch_queue, DispatchReceiver, DispatchSender, DispatchSource, Lease, Queued,
+};
 pub(crate) use event_dispatcher::classify_p2p_event;
 pub(crate) use event_dispatcher::DispatchDiagnostics;
 pub use event_dispatcher::{DispatchAdmission, DispatchClass, DispatchEvent, DispatchSnapshot};
@@ -49,7 +54,7 @@ pub use head_provider::{DocumentHeadProvider, NoOpHeadProvider};
 pub(crate) use manager::record_gossip_decode_failure_sample;
 pub use manager::{
     default_rate_limit_backoff, GossipDecodeFailureSample, GossipTransport, SyncConfig,
-    SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent, SyncManager,
+    SyncDiagnostics, SyncDiagnosticsSnapshot, SyncEvent, SyncEventReceiver, SyncManager,
     DEFAULT_MAX_ACTIVE_PUSHES_PER_PEER, DEFAULT_MAX_CONCURRENT_DAG_FETCHES,
     DEFAULT_MAX_CONCURRENT_PUSH_TASKS, DEFAULT_MAX_DOC_SYNC_REQUEST_DOC_IDS,
     DEFAULT_MAX_PENDING_DAGS, DEFAULT_PUSH_QUEUE_BYTE_CAPACITY, DEFAULT_PUSH_QUEUE_CAPACITY,
@@ -60,7 +65,9 @@ pub use merge::{
     BlockMetadata, MergeBlock, MergeErrorDisposition, MergeHandler, MergeOutcome,
     RecoveredBlockMetadata,
 };
-pub use peer_state::{PeerStateTracker, PeerStats};
+pub use peer_state::{
+    PeerFailure, PeerHistory, PeerStateTracker, PeerStats, PeerSummary, SyncOutcomes, Timestamp,
+};
 pub use pending_store::{
     pooled_pending_store, Admission, PendingDagStorage, PendingDagStore, PersistedPendingDag,
     PersistedQuarantinedDag, PersistedReplayAuthorization, PersistedView, Registration,

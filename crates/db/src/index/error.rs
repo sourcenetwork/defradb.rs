@@ -20,6 +20,16 @@ pub enum Error {
     #[error("vector index holds {indexed}-dimension vectors, got {got}")]
     VectorDimensionMismatch { indexed: usize, got: usize },
 
+    #[error("DiskANN code of node {id} is {got} bytes, the index's codes are {expected}")]
+    DiskAnnCodeLength {
+        id: u64,
+        expected: usize,
+        got: usize,
+    },
+
+    #[error("DiskANN resident codes outgrow a u32 slot at node {id}")]
+    DiskAnnCodeSlots { id: u64 },
+
     #[error("{0}")]
     Other(String),
 }

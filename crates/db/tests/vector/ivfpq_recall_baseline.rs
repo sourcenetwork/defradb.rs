@@ -119,78 +119,87 @@ fn report(label: &str, n: usize, nlist: u32, nprobe: u32, m: u32, row: &Row) {
 /// Queries are **held out**, not corpus members, and the clusters overlap. With
 /// tight clusters and a query drawn from the corpus, its true top-10 all sit in
 /// its own list and `nprobe` cannot matter, which measures nothing.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn recall_vs_nprobe() {
-    header();
-    for dimensions in [32usize, 128] {
-        let mut corpus = crate::support::Corpus::new(SEED);
-        let vectors = corpus.clustered(5_000, dimensions, 64, 0.45);
-        let queries = corpus.vectors(QUERIES, dimensions);
-        for nprobe in [1u32, 2, 4, 8, 16, 32, 64] {
-            let row = measure(&vectors, &queries, dimensions, 64, nprobe, 32).await;
-            report(
-                &format!("clustered d={dimensions}"),
-                vectors.len(),
-                64,
-                nprobe,
-                32,
-                &row,
-            );
+fn recall_vs_nprobe() {
+    workers::block_on(async {
+        header();
+        for dimensions in [32usize, 128] {
+            let mut corpus = crate::support::Corpus::new(SEED);
+            let vectors = corpus.clustered(5_000, dimensions, 64, 0.45);
+            let queries = corpus.vectors(QUERIES, dimensions);
+            for nprobe in [1u32, 2, 4, 8, 16, 32, 64] {
+                let row = measure(&vectors, &queries, dimensions, 64, nprobe, 32).await;
+                report(
+                    &format!("clustered d={dimensions}"),
+                    vectors.len(),
+                    64,
+                    nprobe,
+                    32,
+                    &row,
+                );
+            }
         }
-    }
+    })
+    .unwrap()
 }
 
 /// Compression against accuracy, with the coarse step exhaustive so the only
 /// error left is the codec's.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn recall_vs_compression() {
-    header();
-    let dimensions = 128;
-    let mut corpus = crate::support::Corpus::new(SEED ^ 0xC0DE);
-    let vectors = corpus.clustered(5_000, dimensions, 32, 0.12);
+fn recall_vs_compression() {
+    workers::block_on(async {
+        header();
+        let dimensions = 128;
+        let mut corpus = crate::support::Corpus::new(SEED ^ 0xC0DE);
+        let vectors = corpus.clustered(5_000, dimensions, 32, 0.12);
 
-    let queries = corpus.vectors(QUERIES, dimensions);
-    for m in [4u32, 8, 16, 32, 64] {
-        let row = measure(&vectors, &queries, dimensions, 32, 32, m).await;
-        report("clustered d=128", vectors.len(), 32, 32, m, &row);
-    }
+        let queries = corpus.vectors(QUERIES, dimensions);
+        for m in [4u32, 8, 16, 32, 64] {
+            let row = measure(&vectors, &queries, dimensions, 32, 32, m).await;
+            report("clustered d=128", vectors.len(), 32, 32, m, &row);
+        }
+    })
+    .unwrap()
 }
 
 /// What the untrained state costs: exact, and linear.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn the_untrained_state_is_exact() {
-    let dimensions = 64;
-    let mut corpus = crate::support::Corpus::new(SEED ^ 0xFEED);
-    let vectors = corpus.clustered(2_000, dimensions, 16, 0.12);
+fn the_untrained_state_is_exact() {
+    workers::block_on(async {
+        let dimensions = 64;
+        let mut corpus = crate::support::Corpus::new(SEED ^ 0xFEED);
+        let vectors = corpus.clustered(2_000, dimensions, 16, 0.12);
 
-    let mut index = IvfPq::try_new(
-        MemoryNodeStore::new(),
-        Metric::Cosine,
-        IvfPqParams::default(),
-        SEED,
-    )
-    .unwrap();
-    for (i, vector) in vectors.iter().enumerate() {
-        index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
-    }
-
-    let mut agreed = 0usize;
-    for q in 0..QUERIES {
-        let query = &vectors[q * 7 % vectors.len()];
-        let got: Vec<u64> = index
-            .search(query.as_slice(), K, None)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|n| n.id.0)
-            .collect();
-        if got == exact(&vectors, query, K).await {
-            agreed += 1;
+        let mut index = IvfPq::try_new(
+            MemoryNodeStore::new(),
+            Metric::Cosine,
+            IvfPqParams::default(),
+            SEED,
+        )
+        .unwrap();
+        for (i, vector) in vectors.iter().enumerate() {
+            index.insert(NodeId(i as u64 + 1), vector).await.unwrap();
         }
-    }
-    println!("untrained: {agreed}/{QUERIES} queries identical to an exact scan");
-    assert_eq!(agreed, QUERIES, "the untrained state must be exact");
+
+        let mut agreed = 0usize;
+        for q in 0..QUERIES {
+            let query = &vectors[q * 7 % vectors.len()];
+            let got: Vec<u64> = index
+                .search(query.as_slice(), K, None)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|n| n.id.0)
+                .collect();
+            if got == exact(&vectors, query, K).await {
+                agreed += 1;
+            }
+        }
+        println!("untrained: {agreed}/{QUERIES} queries identical to an exact scan");
+        assert_eq!(agreed, QUERIES, "the untrained state must be exact");
+    })
+    .unwrap()
 }

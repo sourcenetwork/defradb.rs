@@ -134,43 +134,46 @@ mod tests {
         max
     }
 
-    #[tokio::test]
-    async fn a_field_priority_is_its_highest_live_head_as_its_head_keys_give_it() {
-        let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
-        let txn = db.new_txn(false).await.unwrap();
-        let headstore = txn.headstore().unwrap();
-        // A short ID whose encoding is the byte `/`.
-        let doc_short_id = 0x2f;
-        let mut write = Write::default();
-        write.add(&document::name("name", &cid(1)), 3);
-        write.add(&document::name("name", &cid(2)), 5);
-        write.add(&document::name("nam", &cid(3)), 9);
-        write.add(&document::name("name_2", &cid(4)), 11);
-        write.add(&document::name("name", &cid(5)), 20);
-        write.supersede(&document::name("name", &cid(5)));
-        write.supersede_ahead(&document::name("name", &cid(6)));
-        write.add(&document::name("C", &cid(7)), 2);
-        document::commit(&headstore, doc_short_id, &write)
-            .await
-            .unwrap();
+    #[test]
+    fn a_field_priority_is_its_highest_live_head_as_its_head_keys_give_it() {
+        workers::block_on(async {
+            let db = DB::new(storage::RegolithStore::in_memory().unwrap()).unwrap();
+            let txn = db.new_txn(false).await.unwrap();
+            let headstore = txn.headstore().unwrap();
+            // A short ID whose encoding is the byte `/`.
+            let doc_short_id = 0x2f;
+            let mut write = Write::default();
+            write.add(&document::name("name", &cid(1)), 3);
+            write.add(&document::name("name", &cid(2)), 5);
+            write.add(&document::name("nam", &cid(3)), 9);
+            write.add(&document::name("name_2", &cid(4)), 11);
+            write.add(&document::name("name", &cid(5)), 20);
+            write.supersede(&document::name("name", &cid(5)));
+            write.supersede_ahead(&document::name("name", &cid(6)));
+            write.add(&document::name("C", &cid(7)), 2);
+            document::commit(&headstore, doc_short_id, &write)
+                .await
+                .unwrap();
 
-        let mut reads = BlockReads::default();
-        for field in ["name", "nam", "name_2", "C", "absent"] {
+            let mut reads = BlockReads::default();
+            for field in ["name", "nam", "name_2", "C", "absent"] {
+                assert_eq!(
+                    reads
+                        .field_priority(&headstore, doc_short_id, field)
+                        .await
+                        .unwrap(),
+                    iterated_priority(&headstore, doc_short_id, field).await,
+                    "{field}"
+                );
+            }
             assert_eq!(
                 reads
-                    .field_priority(&headstore, doc_short_id, field)
+                    .field_priority(&headstore, doc_short_id, "name")
                     .await
                     .unwrap(),
-                iterated_priority(&headstore, doc_short_id, field).await,
-                "{field}"
+                5
             );
-        }
-        assert_eq!(
-            reads
-                .field_priority(&headstore, doc_short_id, "name")
-                .await
-                .unwrap(),
-            5
-        );
+        })
+        .unwrap()
     }
 }

@@ -90,41 +90,45 @@ fn vector_operator_folding_and_touches_obey_engine_contracts() {
     assert!(checked.folds > 0);
 }
 
-#[tokio::test]
-async fn encrypted_links_reopen_and_structural_put_terminates_operands() {
-    use crate::corekv::Store;
-    let dir = tempfile::tempdir().unwrap();
-    let options = crate::RegolithStoreOptions::default().with_encryption_key([29; 32]);
-    {
-        let store = crate::RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.set(b"node", &encode_node(&Node::new(NodeId(0), vec![1.0], 0)))
-            .await
-            .unwrap();
-        seed.commit().await.unwrap();
-        let mut update = store.new_txn(false).await.unwrap();
-        update.merge(b"node", &vector::links(0, 1)).await.unwrap();
-        update.commit().await.unwrap();
-        store.close().await.unwrap();
-    }
-    let store = crate::RegolithStore::open_with_options(dir.path(), options).unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
-    assert_eq!(
-        decode_node(&txn.get(b"node").await.unwrap().unwrap())
-            .unwrap()
-            .layers[0],
-        vec![NodeId(1)]
-    );
-    txn.merge(b"node", &vector::links(0, 2)).await.unwrap();
-    let mut replacement = Node::new(NodeId(0), vec![0.0, 1.0], 0);
-    replacement.layers[0] = vec![NodeId(3)];
-    txn.set(b"node", &encode_node(&replacement)).await.unwrap();
-    txn.commit().await.unwrap();
-    let read = store.new_txn(true).await.unwrap();
-    assert_eq!(
-        decode_node(&read.get(b"node").await.unwrap().unwrap()).unwrap(),
-        replacement
-    );
+#[test]
+fn encrypted_links_reopen_and_structural_put_terminates_operands() {
+    workers::block_on(async {
+        use crate::corekv::Store;
+        let dir = tempfile::tempdir().unwrap();
+        let options = crate::RegolithStoreOptions::default().with_encryption_key([29; 32]);
+        {
+            let store =
+                crate::RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.set(b"node", &encode_node(&Node::new(NodeId(0), vec![1.0], 0)))
+                .await
+                .unwrap();
+            seed.commit().await.unwrap();
+            let mut update = store.new_txn(false).await.unwrap();
+            update.merge(b"node", &vector::links(0, 1)).await.unwrap();
+            update.commit().await.unwrap();
+            store.close().await.unwrap();
+        }
+        let store = crate::RegolithStore::open_with_options(dir.path(), options).unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        assert_eq!(
+            decode_node(&txn.get(b"node").await.unwrap().unwrap())
+                .unwrap()
+                .layers[0],
+            vec![NodeId(1)]
+        );
+        txn.merge(b"node", &vector::links(0, 2)).await.unwrap();
+        let mut replacement = Node::new(NodeId(0), vec![0.0, 1.0], 0);
+        replacement.layers[0] = vec![NodeId(3)];
+        txn.set(b"node", &encode_node(&replacement)).await.unwrap();
+        txn.commit().await.unwrap();
+        let read = store.new_txn(true).await.unwrap();
+        assert_eq!(
+            decode_node(&read.get(b"node").await.unwrap().unwrap()).unwrap(),
+            replacement
+        );
+    })
+    .unwrap()
 }
 
 /// Counts add to the metadata's bookkeeping and saturate, so they are not

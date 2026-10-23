@@ -14,6 +14,7 @@ use kovan::AtomOption;
 use super::{PushFailure, SyncShutdownHandle};
 use crate::message::PushLogRequest;
 use crate::signing::sign_with_transport;
+use crate::sync::peer_state::PeerStateTracker;
 use crate::sync::push_backlog::{HeadHintFailureReason, JobCompletion, PushBacklog, PushJobSpec};
 use crate::transport::P2PTransport;
 
@@ -23,6 +24,7 @@ pub(super) struct PushWorkerContext<T> {
     pub(super) selective_car_access: Arc<super::selective_car_access::SelectiveCarAccess>,
     pub(super) failure_tx: Arc<AtomOption<tokio::sync::mpsc::Sender<PushFailure>>>,
     pub(super) send_timeout: Duration,
+    pub(super) peer_state: Arc<PeerStateTracker>,
 }
 
 /// Hand a failed/rejected push to the persisted retry ladder. Losslessly:
@@ -258,6 +260,7 @@ where
             at_capacity: false,
             failure_reason: Some(HeadHintFailureReason::Local),
             retry_after: None,
+            error: Some("the head block could not be signed".to_string()),
         }
     };
     if let Some(reason) = send_outcome.failure_reason {
@@ -291,6 +294,13 @@ where
     }
     let send_failed = send_outcome.failed;
     let any_failed = root_missing || send_failed;
+    match send_outcome.error {
+        Some(error) => context
+            .peer_state
+            .record_head_push_failed(job.peer_id.as_str(), error),
+        None if !any_failed => context.peer_state.record_head_acked(job.peer_id.as_str()),
+        None => {}
+    }
 
     if any_failed && context.backlog.is_current(job).await {
         let _ = report_push_event(
@@ -335,7 +345,7 @@ fn build_request<T: P2PTransport>(transport: &T, job: &PushJobSpec) -> Option<Pu
 }
 
 /// Outcome of announcing one head hint to one peer.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct PushSendOutcome {
     /// Any block failed to land.
     pub failed: bool,
@@ -345,6 +355,8 @@ pub(super) struct PushSendOutcome {
     pub at_capacity: bool,
     pub failure_reason: Option<HeadHintFailureReason>,
     pub retry_after: Option<Duration>,
+    /// What went wrong, for the peer's failure history.
+    pub error: Option<String>,
 }
 
 pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
@@ -373,6 +385,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                 at_capacity: false,
                 failure_reason: Some(HeadHintFailureReason::Transport),
                 retry_after: None,
+                error: Some(format!("no reply within {}ms", send_timeout.as_millis())),
             }
         }
         Ok(Err(e)) => {
@@ -396,6 +409,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                 at_capacity: false,
                 failure_reason: Some(HeadHintFailureReason::Transport),
                 retry_after: None,
+                error: Some(e.to_string()),
             }
         }
         Ok(Ok(reply)) => {
@@ -412,6 +426,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                     at_capacity: false,
                     failure_reason: None,
                     retry_after: None,
+                    error: None,
                 };
             };
             if is_at_capacity_message(error_message) {
@@ -425,6 +440,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                     at_capacity: true,
                     failure_reason: Some(HeadHintFailureReason::CapacityNack),
                     retry_after: reply.retry_after(),
+                    error: Some(format!("rejected by peer: {error_message}")),
                 };
             }
             tracing::warn!(
@@ -438,6 +454,7 @@ pub(super) async fn send_head_hint_via_transport<T: P2PTransport>(
                 at_capacity: false,
                 failure_reason: Some(HeadHintFailureReason::OtherNack),
                 retry_after: reply.retry_after(),
+                error: Some(format!("rejected by peer: {error_message}")),
             }
         }
     }

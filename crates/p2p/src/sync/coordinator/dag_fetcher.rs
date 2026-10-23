@@ -333,6 +333,56 @@ pub(crate) async fn connected_alternate_providers<T: P2PTransport>(
     }
 }
 
+/// Connected peers, then the peers whose service record says they hold
+/// `collection_id`.
+pub(crate) async fn alternate_providers<T: P2PTransport>(
+    transport: &T,
+    root_cid: &Cid,
+    collection_id: &str,
+    source_peer: &PeerId,
+) -> Vec<PeerId> {
+    let mut providers = connected_alternate_providers(transport, root_cid).await;
+    add_collection_providers(transport, collection_id, source_peer, &mut providers).await;
+    providers
+}
+
+/// Appends the peers whose service record says they hold `collection_id`,
+/// after the ones already listed: the rotation tries them in order, so a
+/// node we would have to dial is asked only once the others fail. The best
+/// of them takes the last alternate slot the fetch context keeps, so a
+/// well-connected node still reaches one.
+pub(crate) async fn add_collection_providers<T: P2PTransport>(
+    transport: &T,
+    collection_id: &str,
+    source_peer: &PeerId,
+    providers: &mut Vec<PeerId>,
+) {
+    if collection_id.is_empty() {
+        return;
+    }
+    let records = transport
+        .collection_providers(collection_id)
+        .await
+        .unwrap_or_default();
+    let slot = crate::sync::pending_store::MAX_PENDING_DAG_ALTERNATE_PROVIDERS - 1;
+    if let Some(best) = records.iter().find(|peer| *peer != source_peer) {
+        providers.retain(|peer| peer != source_peer);
+        if providers
+            .iter()
+            .position(|peer| peer == best)
+            .is_none_or(|index| index >= slot)
+        {
+            providers.retain(|peer| peer != best);
+            providers.insert(slot.min(providers.len()), best.clone());
+        }
+    }
+    for peer in records {
+        if !providers.contains(&peer) {
+            providers.push(peer);
+        }
+    }
+}
+
 /// One full CAR-first + selective-walk attempt over the current provider set.
 async fn fetch_dag_attempt<B: Blockstore + 'static, T: P2PTransport>(
     transport: &T,

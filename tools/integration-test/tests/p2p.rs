@@ -16,6 +16,8 @@ mod manage_relay;
 mod manage_relay_common;
 #[path = "p2p/management.rs"]
 mod management;
+#[path = "p2p/peer_details.rs"]
+mod peer_details;
 #[path = "p2p/quarantine.rs"]
 mod quarantine;
 #[path = "p2p/receiver_pull.rs"]

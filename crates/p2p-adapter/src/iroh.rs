@@ -296,6 +296,24 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             .await
     }
 
+    async fn document_heads_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        self.check_nac(acp::nac::NodePermission::P2pReplicatorList)
+            .await?;
+        let Some(pusher) = self.doc_pusher.as_ref() else {
+            return Err(P2PError::unsupported(
+                "document head acknowledgement needs a document pusher",
+            ));
+        };
+        pusher
+            .document_heads_acknowledged(peer_id, collection_name, doc_ids)
+            .await
+    }
+
     async fn sync_status(&self) -> P2PResult<serde_json::Value> {
         let Some(coordinator) = self.sync_coordinator.as_ref() else {
             return Ok(serde_json::Value::Null);
@@ -310,6 +328,25 @@ impl<B: Blockstore + 'static> P2POperations for IrohP2PAdapter<B> {
             );
         }
         Ok(status)
+    }
+
+    async fn peer_details(&self, peer_id: &TransportPeerId) -> P2PResult<serde_json::Value> {
+        let Some(coordinator) = self.sync_coordinator.as_ref() else {
+            return Ok(serde_json::Value::Null);
+        };
+        let peer = parse_canonical_peer_id(peer_id.as_str())
+            .map_err(|error| P2PError::invalid_input(error.to_string()))?;
+        let details = coordinator.peer_details(&peer).await;
+        let identity = if details.history.connected || details.connection.is_some() {
+            Some(self.resolve_peer_identity(peer_id).await)
+        } else {
+            None
+        };
+        let push_retries = match self.doc_pusher.as_ref() {
+            Some(pusher) => pusher.push_retries_for_peer(peer_id.as_str()).await,
+            None => Ok(None),
+        };
+        crate::peer_details::peer_details_json(details, identity, push_retries)
     }
 
     async fn local_peer_id(&self) -> P2PResult<String> {
@@ -1189,7 +1226,6 @@ mod tests {
             bind_port: None,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             max_concurrent_multipath_paths: None,
-            gossip_heal: Default::default(),
             allowlist: Default::default(),
         }
     }

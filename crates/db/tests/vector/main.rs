@@ -1,6 +1,5 @@
 //! Vector index engines, quantization and recall gates.
 
-mod diskann_disk_cost;
 mod diskann_engine;
 mod diskann_resident;
 mod diskann_streaming;
@@ -22,6 +21,7 @@ mod support;
 mod vector_aux_store;
 mod vector_collection_index;
 mod vector_dimensions;
+mod vector_disk_cost;
 mod vector_distance_metrics;
 mod vector_engine;
 mod vector_filtered_search;

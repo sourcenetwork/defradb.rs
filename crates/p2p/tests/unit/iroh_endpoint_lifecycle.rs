@@ -2,6 +2,7 @@ use super::*;
 use crate::iroh::{IrohDiscoveryConfig, IrohRelayModeConfig};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
+use tokio::sync::oneshot;
 
 #[tokio::test]
 async fn endpoint_discards_buffered_commands_when_last_sender_drops() {

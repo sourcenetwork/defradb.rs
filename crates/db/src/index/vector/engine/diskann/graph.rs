@@ -88,11 +88,10 @@ impl<S: VectorNodeStore> DiskAnn<S> {
         if !self.params.resident_codes || cache.is_current(generation) {
             return Ok(());
         }
-        let codes = Codes::default();
+        let mut codes = Codes::default();
         self.store()
             .iterate_aux(codec::CODE, b"", |key, code| {
-                codes.insert(codec::id_from_key(key)?, code.to_vec());
-                Ok(())
+                codes.insert(codec::id_from_key(key)?, code)
             })
             .await?;
         cache.replace(generation, codes);

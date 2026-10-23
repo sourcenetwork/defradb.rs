@@ -228,6 +228,18 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
         Ok(serde_json::Value::Null)
     }
 
+    /// Everything this node knows about one peer, for debugging: connection
+    /// path and traffic, connect history, per-direction sync outcomes with
+    /// the last error, push queue and durable retries, pending and
+    /// quarantined fetches, and the peer's DID when connected. The JSON
+    /// shape is owned by `p2p::sync::PeerDetails`; the summaries in
+    /// `sync_status().peers` are the overview. The input is a canonical raw
+    /// transport peer ID. Transports without a sync coordinator return
+    /// `Null`.
+    async fn peer_details(&self, _peer_id: &TransportPeerId) -> P2PResult<serde_json::Value> {
+        Ok(serde_json::Value::Null)
+    }
+
     /// Connect to a peer at the given address.
     async fn connect_peer(&self, addr: &str) -> P2PResult<()>;
 
@@ -349,6 +361,20 @@ pub trait P2POperations: defra_core::thread_bounds::MaybeSendSync {
     ) -> P2PResult<Vec<bool>> {
         Err(P2PError::unsupported(
             "replication acknowledgement is unavailable",
+        ))
+    }
+
+    /// Whether each selected document's current composite heads were acknowledged.
+    /// Unlike collection replication, a selective push never acknowledges the
+    /// other documents or heads of a branchable collection.
+    async fn document_heads_acknowledged(
+        &self,
+        _peer_id: &str,
+        _collection_name: &str,
+        _doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        Err(P2PError::unsupported(
+            "document head acknowledgement is unavailable",
         ))
     }
 

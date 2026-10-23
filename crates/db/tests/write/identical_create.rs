@@ -33,82 +33,93 @@ async fn open() -> Arc<DB<RegolithStore>> {
     db
 }
 
-#[tokio::test]
-async fn two_identical_creates_exactly_one_commits() {
-    let db = open().await;
-    // Both transactions take their snapshot before either commits.
-    let first = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.expect("txn one"));
-    let second = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.expect("txn two"));
+#[test]
+fn two_identical_creates_exactly_one_commits() {
+    workers::block_on(async {
+        let db = open().await;
+        // Both transactions take their snapshot before either commits.
+        let first = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.expect("txn one"));
+        let second = DbDocMutator::new(Arc::clone(&db), db.new_txn(false).await.expect("txn two"));
 
-    let one = first
-        .create("Twin", Document::from_json_str(DOC).unwrap())
-        .await
-        .expect("first create");
-    let two = second
-        .create("Twin", Document::from_json_str(DOC).unwrap())
-        .await
-        .expect("second create");
-    assert_eq!(
-        one.doc_id, two.doc_id,
-        "identical content derives one DocID"
-    );
+        let one = first
+            .create("Twin", Document::from_json_str(DOC).unwrap())
+            .await
+            .expect("first create");
+        let two = second
+            .create("Twin", Document::from_json_str(DOC).unwrap())
+            .await
+            .expect("second create");
+        assert_eq!(
+            one.doc_id, two.doc_id,
+            "identical content derives one DocID"
+        );
 
-    first
-        .take_txn()
-        .await
-        .expect("take first")
-        .commit()
-        .await
-        .expect("the first create commits");
-    let error = second
-        .take_txn()
-        .await
-        .expect("take second")
-        .commit()
-        .await
-        .expect_err("the second identical create must not commit");
-    assert!(error.is_txn_conflict(), "{error}");
+        first
+            .take_txn()
+            .await
+            .expect("take first")
+            .commit()
+            .await
+            .expect("the first create commits");
+        let error = second
+            .take_txn()
+            .await
+            .expect("take second")
+            .commit()
+            .await
+            .expect_err("the second identical create must not commit");
+        assert!(error.is_txn_conflict(), "{error}");
 
-    let docs = LensedAutoCommitFetcher::new(Arc::clone(&db))
-        .get_all("Twin")
-        .await
-        .expect("read back");
-    assert_eq!(docs.len(), 1);
+        let docs = LensedAutoCommitFetcher::new(Arc::clone(&db))
+            .get_all("Twin")
+            .await
+            .expect("read back");
+        assert_eq!(docs.len(), 1);
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_identical_autocommit_creates_exactly_one_commits() {
-    const WRITERS: usize = 16;
-    let db = open().await;
-    let barrier = Arc::new(regolith::sync::Barrier::new(WRITERS));
-    let tasks: Vec<_> = (0..WRITERS)
-        .map(|_| {
-            let mutator = AutoCommitMutator::new(Arc::clone(&db));
-            let barrier = Arc::clone(&barrier);
-            tokio::spawn(async move {
-                barrier.wait().await;
-                mutator
-                    .create("Twin", Document::from_json_str(DOC).unwrap())
-                    .await
+#[test]
+fn concurrent_identical_autocommit_creates_exactly_one_commits() {
+    workers::block_on(async {
+        const WRITERS: usize = 16;
+        let db = open().await;
+        let barrier = Arc::new(regolith::sync::Barrier::new(WRITERS));
+        let tasks: Vec<_> = (0..WRITERS)
+            .map(|_| {
+                let mutator = AutoCommitMutator::new(Arc::clone(&db));
+                let barrier = Arc::clone(&barrier);
+                workers::spawn(
+                    Some(crate::common::worker_io::pool()),
+                    "test",
+                    move || async move {
+                        barrier.wait().await;
+                        mutator
+                            .create("Twin", Document::from_json_str(DOC).unwrap())
+                            .await
+                    },
+                )
+                .unwrap()
             })
-        })
-        .collect();
+            .collect();
 
-    let mut committed = Vec::new();
-    for task in tasks {
-        match task.await.expect("writer task") {
-            Ok(result) => committed.push(result.doc_id),
-            Err(error) => assert!(
-                error.to_string().contains("already exists"),
-                "a losing create reports the existing document: {error}"
-            ),
+        let mut committed = Vec::new();
+        for task in tasks {
+            match task.await.expect("writer task") {
+                Ok(result) => committed.push(result.doc_id),
+                Err(error) => assert!(
+                    error.to_string().contains("already exists"),
+                    "a losing create reports the existing document: {error}"
+                ),
+            }
         }
-    }
-    assert_eq!(committed.len(), 1, "exactly one identical create commits");
+        assert_eq!(committed.len(), 1, "exactly one identical create commits");
 
-    let docs = LensedAutoCommitFetcher::new(Arc::clone(&db))
-        .get_all("Twin")
-        .await
-        .expect("read back");
-    assert_eq!(docs.len(), 1);
+        let docs = LensedAutoCommitFetcher::new(Arc::clone(&db))
+            .get_all("Twin")
+            .await
+            .expect("read back");
+        assert_eq!(docs.len(), 1);
+    })
+    .unwrap()
 }

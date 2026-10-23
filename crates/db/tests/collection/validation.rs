@@ -73,28 +73,32 @@ fn non_nillable_field_rejects_null_and_missing_values() {
     assert!(error.contains("value not provided for non-nillable field. Name: createdAt"));
 }
 
-#[tokio::test]
-async fn atomic_creation_rejects_an_unknown_relation_target() {
-    let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .unwrap();
-    let author = FieldDescription::new("1", "author", FieldKind::named("Missing", false))
-        .with_relation_name("missing_posts")
-        .as_primary();
-    let posts = CollectionVersion::new("Post", "v-post", "c-post", vec![author]);
+#[test]
+fn atomic_creation_rejects_an_unknown_relation_target() {
+    workers::block_on(async {
+        let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .unwrap();
+        let author = FieldDescription::new("1", "author", FieldKind::named("Missing", false))
+            .with_relation_name("missing_posts")
+            .as_primary();
+        let posts = CollectionVersion::new("Post", "v-post", "c-post", vec![author]);
 
-    let error = database
-        .create_collections_atomic(vec![posts])
-        .await
-        .unwrap_err();
+        let error = database
+            .create_collections_atomic(vec![posts])
+            .await
+            .unwrap_err();
 
-    assert!(error
-        .to_string()
-        .contains("no type found for given name. Field: author, Kind: Missing"));
+        assert!(error
+            .to_string()
+            .contains("no type found for given name. Field: author, Kind: Missing"));
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn creation_rejects_an_invalid_default_value() {
+#[test]
+fn creation_rejects_an_invalid_default_value() {
+    workers::block_on(async {
     let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
         .await
         .unwrap();
@@ -107,15 +111,18 @@ async fn creation_rejects_an_invalid_default_value() {
     assert!(error.to_string().contains(
         "default field value is invalid. Collection: Counter, Inner: Field 'count' has incompatible type"
     ));
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn creation_accepts_supported_scalar_defaults() {
-    let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .unwrap();
-    let collections = query::parse_sdl(
-        r#"
+#[test]
+fn creation_accepts_supported_scalar_defaults() {
+    workers::block_on(async {
+        let database = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .unwrap();
+        let collections = query::parse_sdl(
+            r#"
         type Defaults {
             active: Boolean @default(value: true)
             created: DateTime @default(value: "2000-07-23T03:00:00Z")
@@ -126,13 +133,15 @@ async fn creation_accepts_supported_scalar_defaults() {
             image: Blob @default(value: "ff0099")
         }
         "#,
-    )
-    .unwrap();
-
-    database
-        .create_collections_atomic(collections)
-        .await
+        )
         .unwrap();
+
+        database
+            .create_collections_atomic(collections)
+            .await
+            .unwrap();
+    })
+    .unwrap()
 }
 
 #[test]

@@ -105,12 +105,18 @@ async fn rejection_preserves_replacement(stale: bool) {
     }
 }
 
-#[tokio::test]
-async fn stale_rejection_does_not_remove_replacement_cursor() {
-    rejection_preserves_replacement(true).await;
+#[test]
+fn stale_rejection_does_not_remove_replacement_cursor() {
+    workers::block_on(async {
+        rejection_preserves_replacement(true).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn current_rejection_releases_its_own_cursor() {
-    rejection_preserves_replacement(false).await;
+#[test]
+fn current_rejection_releases_its_own_cursor() {
+    workers::block_on(async {
+        rejection_preserves_replacement(false).await;
+    })
+    .unwrap()
 }

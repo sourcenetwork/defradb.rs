@@ -114,57 +114,66 @@ mod tests {
         (attempt, runs)
     }
 
-    #[tokio::test]
-    async fn the_committed_run_returns_its_value_as_the_callers_type() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let (attempt, runs) = loses_once(&store);
-        let value: usize = transact(&*store, engine_retry_options(1), None, attempt)
-            .await
-            .unwrap();
-        assert_eq!(value, 7);
-        assert_eq!(runs.load(Ordering::SeqCst), 2);
+    #[test]
+    fn the_committed_run_returns_its_value_as_the_callers_type() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let (attempt, runs) = loses_once(&store);
+            let value: usize = transact(&*store, engine_retry_options(1), None, attempt)
+                .await
+                .unwrap();
+            assert_eq!(value, 7);
+            assert_eq!(runs.load(Ordering::SeqCst), 2);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn a_value_of_another_type_is_an_error_not_a_panic() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let (attempt, _) = loses_once(&store);
-        let error = transact::<_, String>(&*store, engine_retry_options(1), None, attempt)
-            .await
-            .unwrap_err();
-        assert!(matches!(error, RetryAttemptError::Storage(Error::Other(_))));
+    #[test]
+    fn a_value_of_another_type_is_an_error_not_a_panic() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let (attempt, _) = loses_once(&store);
+            let error = transact::<_, String>(&*store, engine_retry_options(1), None, attempt)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, RetryAttemptError::Storage(Error::Other(_))));
+        })
+        .unwrap()
     }
 
     /// The counters are process-wide, so the test reads how much each grew.
-    #[tokio::test]
-    async fn a_named_layer_counts_re_runs_successes_and_exhaustions() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let before = telemetry::conflict_metrics_snapshot().push_marker;
+    #[test]
+    fn a_named_layer_counts_re_runs_successes_and_exhaustions() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let before = telemetry::conflict_metrics_snapshot().push_marker;
 
-        let (attempt, _) = loses_once(&store);
-        let _: usize = transact(
-            &*store,
-            engine_retry_options(1),
-            Some(RetryLayer::PushMarker),
-            attempt,
-        )
-        .await
-        .unwrap();
-        let retried = telemetry::conflict_metrics_snapshot().push_marker;
-        assert!(retried.attempts > before.attempts, "{retried:?}");
-        assert!(retried.successes > before.successes, "{retried:?}");
+            let (attempt, _) = loses_once(&store);
+            let _: usize = transact(
+                &*store,
+                engine_retry_options(1),
+                Some(RetryLayer::PushMarker),
+                attempt,
+            )
+            .await
+            .unwrap();
+            let retried = telemetry::conflict_metrics_snapshot().push_marker;
+            assert!(retried.attempts > before.attempts, "{retried:?}");
+            assert!(retried.successes > before.successes, "{retried:?}");
 
-        let (attempt, _) = loses_once(&store);
-        let error = transact::<_, usize>(
-            &*store,
-            engine_retry_options(0),
-            Some(RetryLayer::PushMarker),
-            attempt,
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(error, RetryAttemptError::Exhausted(_)));
-        let exhausted = telemetry::conflict_metrics_snapshot().push_marker;
-        assert!(exhausted.exhaustions > retried.exhaustions, "{exhausted:?}");
+            let (attempt, _) = loses_once(&store);
+            let error = transact::<_, usize>(
+                &*store,
+                engine_retry_options(0),
+                Some(RetryLayer::PushMarker),
+                attempt,
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(error, RetryAttemptError::Exhausted(_)));
+            let exhausted = telemetry::conflict_metrics_snapshot().push_marker;
+            assert!(exhausted.exhaustions > retried.exhaustions, "{exhausted:?}");
+        })
+        .unwrap()
     }
 }

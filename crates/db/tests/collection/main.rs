@@ -11,6 +11,7 @@ mod map;
 mod name;
 mod part_ids;
 mod retriever;
+mod schema_publication;
 mod schema_write_conflicts;
 mod selector;
 mod snapshot;

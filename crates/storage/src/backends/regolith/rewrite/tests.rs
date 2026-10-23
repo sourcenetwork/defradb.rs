@@ -116,16 +116,19 @@ fn store_path(dir: &tempfile::TempDir) -> PathBuf {
     dir.path().join("store")
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_wrapper_store_is_rewritten_at_its_first_open() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let expected = entries();
-    write_legacy(&path, &KEY, &expected);
-    assert_rewritten(&path, keyed(KEY), &expected).await;
-    // The rewritten store needs no second rewrite and keeps no plaintext.
-    assert_rewritten(&path, keyed(KEY), &expected).await;
-    assert!(RegolithStore::open(&path).is_err());
+#[test]
+fn a_wrapper_store_is_rewritten_at_its_first_open() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let expected = entries();
+        write_legacy(&path, &KEY, &expected);
+        assert_rewritten(&path, keyed(KEY), &expected).await;
+        // The rewritten store needs no second rewrite and keeps no plaintext.
+        assert_rewritten(&path, keyed(KEY), &expected).await;
+        assert!(RegolithStore::open(&path).is_err());
+    })
+    .unwrap()
 }
 
 /// A power cut at each step of the rewrite. Right after it the disk holds the old store or the checked copy at `P` or
@@ -133,218 +136,242 @@ async fn a_wrapper_store_is_rewritten_at_its_first_open() {
 /// value. A cut between a rename and its sync either loses the rename (the
 /// state of the step before) or keeps it (the state of the step itself), so
 /// the cuts below cover both outcomes.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_power_cut_at_every_step_leaves_the_old_store_or_the_checked_copy() {
-    let expected = entries();
-    for cut in [
-        Step::Copying,
-        Step::Copied,
-        Step::Verified,
-        Step::MovedAside,
-        Step::MovedIn,
-        Step::Retired,
-    ] {
+#[test]
+fn a_power_cut_at_every_step_leaves_the_old_store_or_the_checked_copy() {
+    workers::block_on(async {
+        let expected = entries();
+        for cut in [
+            Step::Copying,
+            Step::Copied,
+            Step::Verified,
+            Step::MovedAside,
+            Step::MovedIn,
+            Step::Retired,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = store_path(&dir);
+            let names = Names::new(&path).unwrap();
+            write_legacy(&path, &KEY, &expected);
+            cut_at(&path, &keyed(KEY), cut);
+
+            match cut {
+                Step::Copying | Step::Copied | Step::Verified => {
+                    assert!(names.copy.exists());
+                    assert_legacy(&path, &KEY, &expected);
+                }
+                Step::MovedAside => {
+                    assert!(!path.exists());
+                    assert_legacy(&names.legacy, &KEY, &expected);
+                }
+                Step::MovedIn => {
+                    assert_legacy(&names.legacy, &KEY, &expected);
+                    // The deletion of the old store may itself be cut half way.
+                    std::fs::remove_dir_all(names.legacy.join("sst")).unwrap();
+                }
+                Step::Retired => assert!(!names.legacy.exists()),
+            }
+            if cut == Step::Copied {
+                // A copy whose files were only partly written.
+                std::fs::remove_file(names.copy.join("MANIFEST")).unwrap();
+            }
+            assert_rewritten(&path, keyed(KEY), &expected).await;
+        }
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_wrong_copy_is_caught_and_the_store_left_unchanged() {
+    workers::block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let path = store_path(&dir);
         let names = Names::new(&path).unwrap();
+        let expected = entries();
         write_legacy(&path, &KEY, &expected);
-        cut_at(&path, &keyed(KEY), cut);
-
-        match cut {
-            Step::Copying | Step::Copied | Step::Verified => {
-                assert!(names.copy.exists());
-                assert_legacy(&path, &KEY, &expected);
+        let options = keyed(KEY);
+        let error = open_with_steps(&path, options.engine_with_keys(), &options, &mut |step| {
+            if step == Step::Copied {
+                let copy = Db::open(&names.copy, options.engine_with_keys()).unwrap();
+                copy.put(b"d/k/\0\0\0\x01", b"a copy bug").unwrap();
+                copy.close().unwrap();
             }
-            Step::MovedAside => {
-                assert!(!path.exists());
-                assert_legacy(&names.legacy, &KEY, &expected);
-            }
-            Step::MovedIn => {
-                assert_legacy(&names.legacy, &KEY, &expected);
-                // The deletion of the old store may itself be cut half way.
-                std::fs::remove_dir_all(names.legacy.join("sst")).unwrap();
-            }
-            Step::Retired => assert!(!names.legacy.exists()),
-        }
-        if cut == Step::Copied {
-            // A copy whose files were only partly written.
-            std::fs::remove_file(names.copy.join("MANIFEST")).unwrap();
-        }
-        assert_rewritten(&path, keyed(KEY), &expected).await;
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_wrong_copy_is_caught_and_the_store_left_unchanged() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let names = Names::new(&path).unwrap();
-    let expected = entries();
-    write_legacy(&path, &KEY, &expected);
-    let options = keyed(KEY);
-    let error = open_with_steps(&path, options.engine_with_keys(), &options, &mut |step| {
-        if step == Step::Copied {
-            let copy = Db::open(&names.copy, options.engine_with_keys()).unwrap();
-            copy.put(b"d/k/\0\0\0\x01", b"a copy bug").unwrap();
-            copy.close().unwrap();
-        }
-    })
-    .err()
-    .unwrap();
-    assert!(error.to_string().contains("does not match"), "{error}");
-    assert!(!names.copy.exists());
-    assert_legacy(&path, &KEY, &expected);
-    assert_rewritten(&path, keyed(KEY), &expected).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_value_the_wrapper_did_not_write_stops_the_rewrite() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let names = Names::new(&path).unwrap();
-    write_legacy(&path, &KEY, &entries());
-    let db = Db::open(&path, Options::default()).unwrap();
-    db.put(b"d/plain", b"not sealed").unwrap();
-    db.close().unwrap();
-    drop(db);
-    let error = RegolithStore::open_with_options(&path, keyed(KEY))
+        })
         .err()
         .unwrap();
-    assert!(error.to_string().contains("does not decrypt"), "{error}");
-    assert!(!names.copy.exists());
-    let stamp = Db::open_read_only(&path, Options::default())
-        .unwrap()
-        .get(&stamp_key())
-        .unwrap()
-        .unwrap();
-    assert_eq!(stamp.len(), 4 + wrapped::OVERHEAD);
+        assert!(error.to_string().contains("does not match"), "{error}");
+        assert!(!names.copy.exists());
+        assert_legacy(&path, &KEY, &expected);
+        assert_rewritten(&path, keyed(KEY), &expected).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_wrapper_store_without_its_key_is_refused_and_left_unchanged() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let expected = entries();
-    write_legacy(&path, &KEY, &expected);
-    for (options, message) in [
-        (
-            RegolithStoreOptions::default(),
-            "open it with at-rest encryption on",
-        ),
-        (keyed(OTHER_KEY), "none of the configured at-rest keys"),
-    ] {
-        let error = RegolithStore::open_with_options(&path, options)
+#[test]
+fn a_value_the_wrapper_did_not_write_stops_the_rewrite() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let names = Names::new(&path).unwrap();
+        write_legacy(&path, &KEY, &entries());
+        let db = Db::open(&path, Options::default()).unwrap();
+        db.put(b"d/plain", b"not sealed").unwrap();
+        db.close().unwrap();
+        drop(db);
+        let error = RegolithStore::open_with_options(&path, keyed(KEY))
             .err()
             .unwrap();
-        assert!(error.to_string().contains(message), "{error}");
-    }
-    let error = RegolithTxn::open_read_only(&path, keyed(KEY))
-        .err()
-        .unwrap();
-    assert!(
-        error.to_string().contains("open it read-write once"),
-        "{error}"
-    );
-    assert_legacy(&path, &KEY, &expected);
+        assert!(error.to_string().contains("does not decrypt"), "{error}");
+        assert!(!names.copy.exists());
+        let stamp = Db::open_read_only(&path, Options::default())
+            .unwrap()
+            .get(&stamp_key())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stamp.len(), 4 + wrapped::OVERHEAD);
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_wrapper_store_without_its_key_is_refused_and_left_unchanged() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let expected = entries();
+        write_legacy(&path, &KEY, &expected);
+        for (options, message) in [
+            (
+                RegolithStoreOptions::default(),
+                "open it with at-rest encryption on",
+            ),
+            (keyed(OTHER_KEY), "none of the configured at-rest keys"),
+        ] {
+            let error = RegolithStore::open_with_options(&path, options)
+                .err()
+                .unwrap();
+            assert!(error.to_string().contains(message), "{error}");
+        }
+        let error = RegolithTxn::open_read_only(&path, keyed(KEY))
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("open it read-write once"),
+            "{error}"
+        );
+        assert_legacy(&path, &KEY, &expected);
+    })
+    .unwrap()
 }
 
 /// A store written before a key rotation: the wrapper's key is now an older
 /// key, the copy is sealed under the current one, and once rewritten the
 /// store opens with the current key alone.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_older_key_opens_a_store_written_before_a_rotation() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let expected = entries();
-    write_legacy(&path, &OTHER_KEY, &expected);
-    let rotated = RegolithStoreOptions::default()
-        .with_encryption_keys(KEY, [OTHER_KEY])
-        .unwrap();
-    assert_rewritten(&path, rotated, &expected).await;
-    assert_rewritten(&path, keyed(KEY), &expected).await;
-    assert!(RegolithStore::open_with_options(&path, keyed(OTHER_KEY)).is_err());
+#[test]
+fn an_older_key_opens_a_store_written_before_a_rotation() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let expected = entries();
+        write_legacy(&path, &OTHER_KEY, &expected);
+        let rotated = RegolithStoreOptions::default()
+            .with_encryption_keys(KEY, [OTHER_KEY])
+            .unwrap();
+        assert_rewritten(&path, rotated, &expected).await;
+        assert_rewritten(&path, keyed(KEY), &expected).await;
+        assert!(RegolithStore::open_with_options(&path, keyed(OTHER_KEY)).is_err());
+    })
+    .unwrap()
 }
 
 /// The engine's own key rotation: files sealed under the older key stay
 /// readable while new files are sealed under the current one.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_sealed_store_reads_its_older_files_after_a_rotation() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let store = RegolithStore::open_with_options(&path, keyed(OTHER_KEY)).unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
-    txn.set(b"before", b"rotation").await.unwrap();
-    txn.commit().await.unwrap();
-    store.close().await.unwrap();
-    drop(store);
+#[test]
+fn a_sealed_store_reads_its_older_files_after_a_rotation() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let store = RegolithStore::open_with_options(&path, keyed(OTHER_KEY)).unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        txn.set(b"before", b"rotation").await.unwrap();
+        txn.commit().await.unwrap();
+        store.close().await.unwrap();
+        drop(store);
 
-    let rotated = || {
-        RegolithStoreOptions::default()
-            .with_encryption_keys(KEY, [OTHER_KEY])
-            .unwrap()
-    };
-    let store = RegolithStore::open_with_options(&path, rotated()).unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
-    txn.set(b"after", b"rotation").await.unwrap();
-    txn.commit().await.unwrap();
-    store.close().await.unwrap();
-    drop(store);
+        let rotated = || {
+            RegolithStoreOptions::default()
+                .with_encryption_keys(KEY, [OTHER_KEY])
+                .unwrap()
+        };
+        let store = RegolithStore::open_with_options(&path, rotated()).unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
+        txn.set(b"after", b"rotation").await.unwrap();
+        txn.commit().await.unwrap();
+        store.close().await.unwrap();
+        drop(store);
 
-    // The newer files name the current key, so the older key alone is not enough.
-    assert!(RegolithStore::open_with_options(&path, keyed(OTHER_KEY)).is_err());
-    let store = RegolithStore::open_with_options(&path, rotated()).unwrap();
-    let found = read_all(&store).await;
-    assert_eq!(
-        found.get(&b"before"[..]).map(Vec::as_slice),
-        Some(&b"rotation"[..])
-    );
-    assert_eq!(
-        found.get(&b"after"[..]).map(Vec::as_slice),
-        Some(&b"rotation"[..])
-    );
+        // The newer files name the current key, so the older key alone is not enough.
+        assert!(RegolithStore::open_with_options(&path, keyed(OTHER_KEY)).is_err());
+        let store = RegolithStore::open_with_options(&path, rotated()).unwrap();
+        let found = read_all(&store).await;
+        assert_eq!(
+            found.get(&b"before"[..]).map(Vec::as_slice),
+            Some(&b"rotation"[..])
+        );
+        assert_eq!(
+            found.get(&b"after"[..]).map(Vec::as_slice),
+            Some(&b"rotation"[..])
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_rewrite_already_running_elsewhere_refuses_the_open() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let names = Names::new(&path).unwrap();
-    let expected = entries();
-    write_legacy(&path, &KEY, &expected);
-    let env = regolith::env::std_env();
-    let held = RewriteLock::take(&names, &*env).unwrap();
-    let error = RegolithStore::open_with_options(&path, keyed(KEY))
-        .err()
-        .unwrap();
-    assert!(error.to_string().contains("another program"), "{error}");
-    assert_legacy(&path, &KEY, &expected);
-    drop(held);
-    assert_rewritten(&path, keyed(KEY), &expected).await;
+#[test]
+fn a_rewrite_already_running_elsewhere_refuses_the_open() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let names = Names::new(&path).unwrap();
+        let expected = entries();
+        write_legacy(&path, &KEY, &expected);
+        let env = regolith::env::std_env();
+        let held = RewriteLock::take(&names, &*env).unwrap();
+        let error = RegolithStore::open_with_options(&path, keyed(KEY))
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("another program"), "{error}");
+        assert_legacy(&path, &KEY, &expected);
+        drop(held);
+        assert_rewritten(&path, keyed(KEY), &expected).await;
+    })
+    .unwrap()
 }
 
 /// A power cut between the renames, then a program that knows nothing of the rewrite makes an empty store at
 /// `P`. The old store at `P.legacy` is the only copy of the data and must not
 /// be deleted.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_old_store_beside_a_store_that_is_not_its_rewrite_is_kept() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let names = Names::new(&path).unwrap();
-    let expected = entries();
-    write_legacy(&path, &KEY, &expected);
-    cut_at(&path, &keyed(KEY), Step::MovedAside);
-    let fresh = Db::open(&path, Options::default()).unwrap();
-    fresh.close().unwrap();
-    drop(fresh);
+#[test]
+fn an_old_store_beside_a_store_that_is_not_its_rewrite_is_kept() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let names = Names::new(&path).unwrap();
+        let expected = entries();
+        write_legacy(&path, &KEY, &expected);
+        cut_at(&path, &keyed(KEY), Step::MovedAside);
+        let fresh = Db::open(&path, Options::default()).unwrap();
+        fresh.close().unwrap();
+        drop(fresh);
 
-    let error = RegolithStore::open_with_options(&path, keyed(KEY))
-        .err()
-        .unwrap();
-    assert!(
-        error.to_string().contains("found an earlier store"),
-        "{error}"
-    );
-    assert_legacy(&names.legacy, &KEY, &expected);
+        let error = RegolithStore::open_with_options(&path, keyed(KEY))
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("found an earlier store"),
+            "{error}"
+        );
+        assert_legacy(&names.legacy, &KEY, &expected);
+    })
+    .unwrap()
 }
 
 #[test]
@@ -362,63 +389,72 @@ fn a_copy_with_no_store_beside_it_is_refused() {
 
 /// A store the previous release wrote without at-rest encryption is plain
 /// already: it opens as it is, with or without a key, and is not rewritten.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_plain_store_of_the_previous_release_is_not_rewritten() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let expected = entries();
-    let db = Db::open(&path, Options::default()).unwrap();
-    for (key, value) in &expected {
-        db.put(key, value).unwrap();
-    }
-    db.close().unwrap();
-    drop(db);
-    for options in [RegolithStoreOptions::default(), keyed(KEY)] {
-        let store = RegolithStore::open_with_options(&path, options).unwrap();
-        assert!(read_all(&store).await == expected);
-        store.close().await.unwrap();
-    }
+#[test]
+fn a_plain_store_of_the_previous_release_is_not_rewritten() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let expected = entries();
+        let db = Db::open(&path, Options::default()).unwrap();
+        for (key, value) in &expected {
+            db.put(key, value).unwrap();
+        }
+        db.close().unwrap();
+        drop(db);
+        for options in [RegolithStoreOptions::default(), keyed(KEY)] {
+            let store = RegolithStore::open_with_options(&path, options).unwrap();
+            assert!(read_all(&store).await == expected);
+            store.close().await.unwrap();
+        }
+    })
+    .unwrap()
 }
 
 /// A wrapper store whose database never wrote its stamp is found by its
 /// first entry when keys are configured.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_wrapper_store_without_the_stamp_is_found_by_its_first_entry() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = store_path(&dir);
-    let mut expected = entries();
-    expected.remove(&stamp_key());
-    write_legacy(&path, &KEY, &expected);
-    assert_rewritten(&path, keyed(KEY), &expected).await;
+#[test]
+fn a_wrapper_store_without_the_stamp_is_found_by_its_first_entry() {
+    workers::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir);
+        let mut expected = entries();
+        expected.remove(&stamp_key());
+        write_legacy(&path, &KEY, &expected);
+        assert_rewritten(&path, keyed(KEY), &expected).await;
+    })
+    .unwrap()
 }
 
 /// Times the rewrite of 256 MiB of 4 KiB values and prints its rate. Run with
 /// `REWRITE_RATE_DIR=<a folder on the disk to measure> cargo test -p storage
 /// --lib -- --ignored --nocapture rewrite_rate`.
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore]
-async fn rewrite_rate() {
-    let dir = match std::env::var_os("REWRITE_RATE_DIR") {
-        Some(base) => tempfile::tempdir_in(base).unwrap(),
-        None => tempfile::tempdir().unwrap(),
-    };
-    let path = store_path(&dir);
-    let db = Db::open(&path, Options::default()).unwrap();
-    let value = vec![7u8; 4 << 10];
-    let count = (256u64 << 20) / value.len() as u64;
-    for i in 0..count {
-        let key = [&b"d/"[..], &i.to_be_bytes()].concat();
-        db.put(&key, &seal(&KEY, &key, &value)).unwrap();
-    }
-    db.close().unwrap();
-    drop(db);
-    let started = std::time::Instant::now();
-    let store = RegolithStore::open_with_options(&path, keyed(KEY)).unwrap();
-    let elapsed = started.elapsed();
-    store.close().await.unwrap();
-    println!(
-        "rewrote {count} values, {} MiB of plaintext, in {elapsed:?}: {:.1} MiB/s",
-        256,
-        256.0 / elapsed.as_secs_f64()
-    );
+fn rewrite_rate() {
+    workers::block_on(async {
+        let dir = match std::env::var_os("REWRITE_RATE_DIR") {
+            Some(base) => tempfile::tempdir_in(base).unwrap(),
+            None => tempfile::tempdir().unwrap(),
+        };
+        let path = store_path(&dir);
+        let db = Db::open(&path, Options::default()).unwrap();
+        let value = vec![7u8; 4 << 10];
+        let count = (256u64 << 20) / value.len() as u64;
+        for i in 0..count {
+            let key = [&b"d/"[..], &i.to_be_bytes()].concat();
+            db.put(&key, &seal(&KEY, &key, &value)).unwrap();
+        }
+        db.close().unwrap();
+        drop(db);
+        let started = std::time::Instant::now();
+        let store = RegolithStore::open_with_options(&path, keyed(KEY)).unwrap();
+        let elapsed = started.elapsed();
+        store.close().await.unwrap();
+        println!(
+            "rewrote {count} values, {} MiB of plaintext, in {elapsed:?}: {:.1} MiB/s",
+            256,
+            256.0 / elapsed.as_secs_f64()
+        );
+    })
+    .unwrap()
 }

@@ -72,7 +72,7 @@ async fn shutdown_joins_subscriptions_and_syncs_with_a_full_event_queue() {
         for _ in 0..300 {
             transport.sync_blocks(root, vec![], vec![]).await.unwrap();
         }
-        while events.capacity() != 0 {
+        while !events.is_full(p2p::sync::DispatchClass::Completion) {
             tokio::task::yield_now().await;
         }
     })

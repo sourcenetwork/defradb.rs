@@ -93,66 +93,17 @@ async fn fs_acp() -> (ZanzibarDocumentACP<MemoryZanzibarStore>, String) {
     (acp, policy_id)
 }
 
-#[tokio::test]
-async fn cross_object_parent_edge_grants_read_inheritance() {
-    let (acp, policy_id) = fs_acp().await;
-    let owner = did_owner();
+#[test]
+fn cross_object_parent_edge_grants_read_inheritance() {
+    workers::block_on(async {
+        let (acp, policy_id) = fs_acp().await;
+        let owner = did_owner();
 
-    // alice gets a direct reader grant on the DIRECTORY (a normal actor grant
-    // through the same widened API).
-    acp.add_relationship(
-        &owner,
-        Subject::Entity(did_alice()),
-        &policy_id,
-        "directory",
-        "teamdir",
-        "reader",
-        &[],
-    )
-    .await
-    .unwrap();
-    assert!(can_read(&acp, &policy_id, did_alice(), "directory", "teamdir").await);
-
-    // BEFORE the cross-object edge: directory access must NOT leak to the file.
-    assert!(!can_read(&acp, &policy_id, did_alice(), "file", "report").await);
-
-    // Seed the cross-object edge through the widened trait API. The subject is a
-    // `directory` object reference (EntitySet, empty relation) — the parent edge.
-    let added = acp
-        .add_relationship(
+        // alice gets a direct reader grant on the DIRECTORY (a normal actor grant
+        // through the same widened API).
+        acp.add_relationship(
             &owner,
-            Subject::entity_set("directory", "teamdir", ""),
-            &policy_id,
-            "file",
-            "report",
-            "parent",
-            &[],
-        )
-        .await
-        .unwrap();
-    assert!(added, "the cross-object parent edge should be newly added");
-
-    // AFTER: alice reaches the file via parent->read -> directory#read -> reader.
-    assert!(
-        can_read(&acp, &policy_id, did_alice(), "file", "report").await,
-        "alice reads the file via cross-object parent->read inheritance"
-    );
-
-    // bob has no grant anywhere -> still denied through the TTU cone.
-    assert!(!can_read(&acp, &policy_id, did_bob(), "file", "report").await);
-}
-
-#[tokio::test]
-async fn add_actor_relationship_still_works_via_delegation() {
-    // The actor convenience path now routes through add_relationship; it must
-    // behave exactly as before.
-    let (acp, policy_id) = fs_acp().await;
-    let owner = did_owner();
-
-    let added = acp
-        .add_actor_relationship(
-            &owner,
-            &did_alice(),
+            Subject::Entity(did_alice()),
             &policy_id,
             "directory",
             "teamdir",
@@ -161,75 +112,116 @@ async fn add_actor_relationship_still_works_via_delegation() {
         )
         .await
         .unwrap();
-    assert!(added);
-    assert!(can_read(&acp, &policy_id, did_alice(), "directory", "teamdir").await);
+        assert!(can_read(&acp, &policy_id, did_alice(), "directory", "teamdir").await);
+
+        // BEFORE the cross-object edge: directory access must NOT leak to the file.
+        assert!(!can_read(&acp, &policy_id, did_alice(), "file", "report").await);
+
+        // Seed the cross-object edge through the widened trait API. The subject is a
+        // `directory` object reference (EntitySet, empty relation) — the parent edge.
+        let added = acp
+            .add_relationship(
+                &owner,
+                Subject::entity_set("directory", "teamdir", ""),
+                &policy_id,
+                "file",
+                "report",
+                "parent",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(added, "the cross-object parent edge should be newly added");
+
+        // AFTER: alice reaches the file via parent->read -> directory#read -> reader.
+        assert!(
+            can_read(&acp, &policy_id, did_alice(), "file", "report").await,
+            "alice reads the file via cross-object parent->read inheritance"
+        );
+
+        // bob has no grant anywhere -> still denied through the TTU cone.
+        assert!(!can_read(&acp, &policy_id, did_bob(), "file", "report").await);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn add_relationship_enforces_the_subject_floor() {
-    // A `directory` object edge on an actor-typed relation (`reader`) must be
-    // rejected by the floor validation wired into the add path.
-    let (acp, policy_id) = fs_acp().await;
-    let owner = did_owner();
+#[test]
+fn add_actor_relationship_still_works_via_delegation() {
+    workers::block_on(async {
+        // The actor convenience path now routes through add_relationship; it must
+        // behave exactly as before.
+        let (acp, policy_id) = fs_acp().await;
+        let owner = did_owner();
 
-    let err = acp
-        .add_relationship(
+        let added = acp
+            .add_actor_relationship(
+                &owner,
+                &did_alice(),
+                &policy_id,
+                "directory",
+                "teamdir",
+                "reader",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(added);
+        assert!(can_read(&acp, &policy_id, did_alice(), "directory", "teamdir").await);
+    })
+    .unwrap()
+}
+
+#[test]
+fn add_relationship_enforces_the_subject_floor() {
+    workers::block_on(async {
+        // A `directory` object edge on an actor-typed relation (`reader`) must be
+        // rejected by the floor validation wired into the add path.
+        let (acp, policy_id) = fs_acp().await;
+        let owner = did_owner();
+
+        let err = acp
+            .add_relationship(
+                &owner,
+                Subject::entity_set("directory", "teamdir", ""),
+                &policy_id,
+                "file",
+                "report",
+                "reader",
+                &[],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::SubjectRestrictionViolation { .. }),
+            "an object edge on an actor-typed relation must be rejected, got {:?}",
+            err
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn cross_object_revoke_removes_inherited_access() {
+    workers::block_on(async {
+        // The security property: an inherited cross-object grant can be REVOKED.
+        let (acp, policy_id) = fs_acp().await;
+        let owner = did_owner();
+
+        // alice is a direct reader on the directory.
+        acp.add_relationship(
             &owner,
-            Subject::entity_set("directory", "teamdir", ""),
+            Subject::Entity(did_alice()),
             &policy_id,
-            "file",
-            "report",
+            "directory",
+            "teamdir",
             "reader",
             &[],
         )
         .await
-        .unwrap_err();
-    assert!(
-        matches!(err, Error::SubjectRestrictionViolation { .. }),
-        "an object edge on an actor-typed relation must be rejected, got {:?}",
-        err
-    );
-}
+        .unwrap();
 
-#[tokio::test]
-async fn cross_object_revoke_removes_inherited_access() {
-    // The security property: an inherited cross-object grant can be REVOKED.
-    let (acp, policy_id) = fs_acp().await;
-    let owner = did_owner();
-
-    // alice is a direct reader on the directory.
-    acp.add_relationship(
-        &owner,
-        Subject::Entity(did_alice()),
-        &policy_id,
-        "directory",
-        "teamdir",
-        "reader",
-        &[],
-    )
-    .await
-    .unwrap();
-
-    // Seed the cross-object parent edge so the file inherits directory reads.
-    acp.add_relationship(
-        &owner,
-        Subject::entity_set("directory", "teamdir", ""),
-        &policy_id,
-        "file",
-        "report",
-        "parent",
-        &[],
-    )
-    .await
-    .unwrap();
-    assert!(
-        can_read(&acp, &policy_id, did_alice(), "file", "report").await,
-        "alice reads the file via the cross-object parent edge"
-    );
-
-    // Revoke the cross-object edge through the widened delete API.
-    let deleted = acp
-        .delete_relationship(
+        // Seed the cross-object parent edge so the file inherits directory reads.
+        acp.add_relationship(
             &owner,
             Subject::entity_set("directory", "teamdir", ""),
             &policy_id,
@@ -240,69 +232,95 @@ async fn cross_object_revoke_removes_inherited_access() {
         )
         .await
         .unwrap();
-    assert!(deleted, "the cross-object parent edge should be removed");
+        assert!(
+            can_read(&acp, &policy_id, did_alice(), "file", "report").await,
+            "alice reads the file via the cross-object parent edge"
+        );
 
-    // AFTER revoke: alice can no longer reach the file. Access did not leak.
-    assert!(
-        !can_read(&acp, &policy_id, did_alice(), "file", "report").await,
-        "revoking the parent edge must remove inherited file access"
-    );
+        // Revoke the cross-object edge through the widened delete API.
+        let deleted = acp
+            .delete_relationship(
+                &owner,
+                Subject::entity_set("directory", "teamdir", ""),
+                &policy_id,
+                "file",
+                "report",
+                "parent",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(deleted, "the cross-object parent edge should be removed");
+
+        // AFTER revoke: alice can no longer reach the file. Access did not leak.
+        assert!(
+            !can_read(&acp, &policy_id, did_alice(), "file", "report").await,
+            "revoking the parent edge must remove inherited file access"
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn local_backend_rejects_cross_object_delete() {
-    // The Local backend stores bare DIDs and cannot represent a cross-object
-    // edge; it must reject a delete of one with a typed UnsupportedSubject error.
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let owner = did_owner();
-    acp.register_doc_object(&owner, "policy1", "file", "report")
-        .await
-        .unwrap();
+#[test]
+fn local_backend_rejects_cross_object_delete() {
+    workers::block_on(async {
+        // The Local backend stores bare DIDs and cannot represent a cross-object
+        // edge; it must reject a delete of one with a typed UnsupportedSubject error.
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let owner = did_owner();
+        acp.register_doc_object(&owner, "policy1", "file", "report")
+            .await
+            .unwrap();
 
-    let err = acp
-        .delete_relationship(
-            &owner,
-            Subject::entity_set("directory", "teamdir", ""),
-            "policy1",
-            "file",
-            "report",
-            "parent",
-            &[],
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(err, Error::UnsupportedSubject(_)),
-        "Local backend must reject a cross-object delete subject, got {:?}",
-        err
-    );
+        let err = acp
+            .delete_relationship(
+                &owner,
+                Subject::entity_set("directory", "teamdir", ""),
+                "policy1",
+                "file",
+                "report",
+                "parent",
+                &[],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::UnsupportedSubject(_)),
+            "Local backend must reject a cross-object delete subject, got {:?}",
+            err
+        );
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn local_backend_rejects_cross_object_subjects() {
-    // The Local backend stores bare DIDs and cannot represent a cross-object
-    // edge; it must reject one with a typed UnsupportedSubject error.
-    let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
-    let owner = did_owner();
-    acp.register_doc_object(&owner, "policy1", "file", "report")
-        .await
-        .unwrap();
+#[test]
+fn local_backend_rejects_cross_object_subjects() {
+    workers::block_on(async {
+        // The Local backend stores bare DIDs and cannot represent a cross-object
+        // edge; it must reject one with a typed UnsupportedSubject error.
+        let acp = LocalDocumentACP::new(Arc::new(MemoryAcpStore::new()));
+        let owner = did_owner();
+        acp.register_doc_object(&owner, "policy1", "file", "report")
+            .await
+            .unwrap();
 
-    let err = acp
-        .add_relationship(
-            &owner,
-            Subject::entity_set("directory", "teamdir", ""),
-            "policy1",
-            "file",
-            "report",
-            "parent",
-            &[],
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(err, Error::UnsupportedSubject(_)),
-        "Local backend must reject a cross-object subject, got {:?}",
-        err
-    );
+        let err = acp
+            .add_relationship(
+                &owner,
+                Subject::entity_set("directory", "teamdir", ""),
+                "policy1",
+                "file",
+                "report",
+                "parent",
+                &[],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::UnsupportedSubject(_)),
+            "Local backend must reject a cross-object subject, got {:?}",
+            err
+        );
+    })
+    .unwrap()
 }

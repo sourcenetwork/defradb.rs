@@ -107,179 +107,189 @@ mod shared_owner_tests {
         )
     }
 
-    #[tokio::test]
-    async fn collection_commit_depth_starts_from_live_heads() {
-        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let parent = lww_block("parent", 1, vec![]);
-        let parent_cid = parent.generate_cid().unwrap();
-        let child = lww_block("child", 2, vec![parent_cid]);
-        let child_cid = child.generate_cid().unwrap();
+    #[test]
+    fn collection_commit_depth_starts_from_live_heads() {
+        workers::block_on(async {
+            let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+            let parent = lww_block("parent", 1, vec![]);
+            let parent_cid = parent.generate_cid().unwrap();
+            let child = lww_block("child", 2, vec![parent_cid]);
+            let child_cid = child.generate_cid().unwrap();
 
-        let txn = db.new_txn(false).await.unwrap();
-        {
-            let blockstore = txn.blockstore().unwrap();
-            let headstore = txn.headstore().unwrap();
-            blockstore
-                .set(&parent_cid.to_bytes(), &parent.to_dag_cbor().unwrap())
-                .await
-                .unwrap();
-            blockstore
-                .set(&child_cid.to_bytes(), &child.to_dag_cbor().unwrap())
-                .await
-                .unwrap();
-            for (cid, priority, parents) in
-                [(parent_cid, 1, vec![]), (child_cid, 2, vec![parent_cid])]
+            let txn = db.new_txn(false).await.unwrap();
             {
-                let set = db::block::heads::collection_set(&headstore, 1)
+                let blockstore = txn.blockstore().unwrap();
+                let headstore = txn.headstore().unwrap();
+                blockstore
+                    .set(&parent_cid.to_bytes(), &parent.to_dag_cbor().unwrap())
                     .await
                     .unwrap();
-                db::block::heads::publish_collection_block(
-                    &headstore, 1, &set, cid, priority, &parents,
-                )
+                blockstore
+                    .set(&child_cid.to_bytes(), &child.to_dag_cbor().unwrap())
+                    .await
+                    .unwrap();
+                for (cid, priority, parents) in
+                    [(parent_cid, 1, vec![]), (child_cid, 2, vec![parent_cid])]
+                {
+                    let set = db::block::heads::collection_set(&headstore, 1)
+                        .await
+                        .unwrap();
+                    db::block::heads::publish_collection_block(
+                        &headstore, 1, &set, cid, priority, &parents,
+                    )
+                    .await
+                    .unwrap();
+                }
+            }
+            txn.commit().await.unwrap();
+
+            let commits_txn = db.new_txn(true).await.unwrap();
+            let commits = CommitsFetcher::new(Arc::new(commits_txn))
+                .fetch_commits(&CommitsQueryOptions {
+                    depth: Some(1),
+                    ..Default::default()
+                })
                 .await
                 .unwrap();
-            }
-        }
-        txn.commit().await.unwrap();
 
-        let commits_txn = db.new_txn(true).await.unwrap();
-        let commits = CommitsFetcher::new(Arc::new(commits_txn))
-            .fetch_commits(&CommitsQueryOptions {
-                depth: Some(1),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(commits.len(), 1);
-        assert_eq!(
-            commits[0].get("cid").and_then(NormalValue::as_str),
-            Some(child_cid.to_string().as_str())
-        );
+            assert_eq!(commits.len(), 1);
+            assert_eq!(
+                commits[0].get("cid").and_then(NormalValue::as_str),
+                Some(child_cid.to_string().as_str())
+            );
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn shared_field_cid_fans_out_to_every_owner() {
-        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let mut data = Vec::new();
-        ciborium::into_writer(&NormalValue::String("shared".to_string()), &mut data).unwrap();
-        let block = Block::new(
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
-                priority: 1,
-                data,
-            }),
-            vec![],
-            vec![],
-        );
-        let cid = block.generate_cid().unwrap();
-        let owners = [
-            DocID::new_v0(defra_core::block::generate_cid_from_bytes(b"owner-a").unwrap())
-                .to_string(),
-            DocID::new_v0(defra_core::block::generate_cid_from_bytes(b"owner-b").unwrap())
-                .to_string(),
-        ];
+    #[test]
+    fn shared_field_cid_fans_out_to_every_owner() {
+        workers::block_on(async {
+            let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+            let mut data = Vec::new();
+            ciborium::into_writer(&NormalValue::String("shared".to_string()), &mut data).unwrap();
+            let block = Block::new(
+                CrdtDelta::Lww(LwwDeltaPayload {
+                    field_name: "name".to_string(),
+                    schema_version_id: "v1".to_string(),
+                    priority: 1,
+                    data,
+                }),
+                vec![],
+                vec![],
+            );
+            let cid = block.generate_cid().unwrap();
+            let owners = [
+                DocID::new_v0(defra_core::block::generate_cid_from_bytes(b"owner-a").unwrap())
+                    .to_string(),
+                DocID::new_v0(defra_core::block::generate_cid_from_bytes(b"owner-b").unwrap())
+                    .to_string(),
+            ];
 
-        let txn = db.new_txn(false).await.unwrap();
-        {
-            let blockstore = txn.blockstore().unwrap();
-            let systemstore = txn.systemstore().unwrap();
-            blockstore
-                .set(&cid.to_bytes(), &block.to_dag_cbor().unwrap())
+            let txn = db.new_txn(false).await.unwrap();
+            {
+                let blockstore = txn.blockstore().unwrap();
+                let systemstore = txn.systemstore().unwrap();
+                blockstore
+                    .set(&cid.to_bytes(), &block.to_dag_cbor().unwrap())
+                    .await
+                    .unwrap();
+                for owner in &owners {
+                    db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), owner)
+                        .await
+                        .unwrap();
+                }
+            }
+            txn.commit().await.unwrap();
+
+            let commits_txn = db.new_txn(true).await.unwrap();
+            let commits = CommitsFetcher::new(Arc::new(commits_txn))
+                .fetch_commits(&CommitsQueryOptions {
+                    cid: Some(cid.to_string()),
+                    ..Default::default()
+                })
                 .await
                 .unwrap();
-            for owner in &owners {
-                db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), owner)
+            let commit_owners: RapidHashSet<_> = commits
+                .iter()
+                .filter_map(|commit| commit.get("docID").and_then(|value| value.as_str()))
+                .collect();
+            assert_eq!(commit_owners, owners.iter().map(String::as_str).collect());
+
+            let version_txn = db.new_txn(true).await.unwrap();
+            let documents = VersionedFetcher::new(Arc::new(version_txn))
+                .get_documents_at_cid(&cid.to_string(), None, None)
+                .await
+                .unwrap();
+            let document_owners: RapidHashSet<_> = documents
+                .iter()
+                .filter_map(|document| document.id().map(ToString::to_string))
+                .collect();
+            assert_eq!(document_owners, owners.into_iter().collect());
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn signature_value_uses_graphql_base64_encoding() {
+        workers::block_on(async {
+            let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
+            let signature = Signature::new(
+                SignatureHeader::new(SignatureType::ES256K, b"identity".to_vec()),
+                vec![1, 2, 3, 4],
+            );
+            let signature_cid = signature.generate_cid().unwrap();
+            let mut data = Vec::new();
+            ciborium::into_writer(&NormalValue::String("value".to_string()), &mut data).unwrap();
+            let block = Block::new_with_options(
+                CrdtDelta::Lww(LwwDeltaPayload {
+                    field_name: "name".to_string(),
+                    schema_version_id: "v1".to_string(),
+                    priority: 1,
+                    data,
+                }),
+                vec![],
+                vec![],
+                None,
+                Some(signature_cid),
+            );
+            let cid = block.generate_cid().unwrap();
+            let doc_id =
+                DocID::new_v0(defra_core::block::generate_cid_from_bytes(b"owner").unwrap())
+                    .to_string();
+
+            let txn = db.new_txn(false).await.unwrap();
+            {
+                let blockstore = txn.blockstore().unwrap();
+                let systemstore = txn.systemstore().unwrap();
+                blockstore
+                    .set(&signature_cid.to_bytes(), &signature.to_dag_cbor().unwrap())
+                    .await
+                    .unwrap();
+                blockstore
+                    .set(&cid.to_bytes(), &block.to_dag_cbor().unwrap())
+                    .await
+                    .unwrap();
+                db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &doc_id)
                     .await
                     .unwrap();
             }
-        }
-        txn.commit().await.unwrap();
+            txn.commit().await.unwrap();
 
-        let commits_txn = db.new_txn(true).await.unwrap();
-        let commits = CommitsFetcher::new(Arc::new(commits_txn))
-            .fetch_commits(&CommitsQueryOptions {
-                cid: Some(cid.to_string()),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        let commit_owners: RapidHashSet<_> = commits
-            .iter()
-            .filter_map(|commit| commit.get("docID").and_then(|value| value.as_str()))
-            .collect();
-        assert_eq!(commit_owners, owners.iter().map(String::as_str).collect());
-
-        let version_txn = db.new_txn(true).await.unwrap();
-        let documents = VersionedFetcher::new(Arc::new(version_txn))
-            .get_documents_at_cid(&cid.to_string(), None, None)
-            .await
-            .unwrap();
-        let document_owners: RapidHashSet<_> = documents
-            .iter()
-            .filter_map(|document| document.id().map(ToString::to_string))
-            .collect();
-        assert_eq!(document_owners, owners.into_iter().collect());
-    }
-
-    #[tokio::test]
-    async fn signature_value_uses_graphql_base64_encoding() {
-        let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
-        let signature = Signature::new(
-            SignatureHeader::new(SignatureType::ES256K, b"identity".to_vec()),
-            vec![1, 2, 3, 4],
-        );
-        let signature_cid = signature.generate_cid().unwrap();
-        let mut data = Vec::new();
-        ciborium::into_writer(&NormalValue::String("value".to_string()), &mut data).unwrap();
-        let block = Block::new_with_options(
-            CrdtDelta::Lww(LwwDeltaPayload {
-                field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
-                priority: 1,
-                data,
-            }),
-            vec![],
-            vec![],
-            None,
-            Some(signature_cid),
-        );
-        let cid = block.generate_cid().unwrap();
-        let doc_id = DocID::new_v0(defra_core::block::generate_cid_from_bytes(b"owner").unwrap())
-            .to_string();
-
-        let txn = db.new_txn(false).await.unwrap();
-        {
-            let blockstore = txn.blockstore().unwrap();
-            let systemstore = txn.systemstore().unwrap();
-            blockstore
-                .set(&signature_cid.to_bytes(), &signature.to_dag_cbor().unwrap())
+            let commits_txn = db.new_txn(true).await.unwrap();
+            let commits = CommitsFetcher::new(Arc::new(commits_txn))
+                .fetch_commits(&CommitsQueryOptions {
+                    cid: Some(cid.to_string()),
+                    ..Default::default()
+                })
                 .await
                 .unwrap();
-            blockstore
-                .set(&cid.to_bytes(), &block.to_dag_cbor().unwrap())
-                .await
+            let signature = commits[0]
+                .get("signature")
+                .and_then(NormalValue::as_json)
                 .unwrap();
-            db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &doc_id)
-                .await
-                .unwrap();
-        }
-        txn.commit().await.unwrap();
 
-        let commits_txn = db.new_txn(true).await.unwrap();
-        let commits = CommitsFetcher::new(Arc::new(commits_txn))
-            .fetch_commits(&CommitsQueryOptions {
-                cid: Some(cid.to_string()),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        let signature = commits[0]
-            .get("signature")
-            .and_then(NormalValue::as_json)
-            .unwrap();
-
-        assert_eq!(signature["value"], "AQIDBA==");
+            assert_eq!(signature["value"], "AQIDBA==");
+        })
+        .unwrap()
     }
 }

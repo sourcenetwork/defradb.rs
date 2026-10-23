@@ -270,6 +270,31 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
         Ok(status)
     }
 
+    async fn peer_details(&self, peer_id: &TransportPeerId) -> P2PResult<serde_json::Value> {
+        let Some(coordinator) = self.sync_coordinator.as_ref() else {
+            return Ok(serde_json::Value::Null);
+        };
+        peer_id
+            .as_str()
+            .parse::<libp2p::PeerId>()
+            .map_err(|error| {
+                P2PError::invalid_input(format!("invalid peer ID '{peer_id}': {error}"))
+            })?;
+        let details = coordinator
+            .peer_details(&p2p::transport::PeerId::new(peer_id.as_str().to_string()))
+            .await;
+        let identity = if details.history.connected || details.connection.is_some() {
+            Some(self.resolve_peer_identity(peer_id).await)
+        } else {
+            None
+        };
+        let push_retries = match self.doc_pusher.as_ref() {
+            Some(pusher) => pusher.push_retries_for_peer(peer_id.as_str()).await,
+            None => Ok(None),
+        };
+        crate::peer_details::peer_details_json(details, identity, push_retries)
+    }
+
     async fn local_peer_id(&self) -> P2PResult<String> {
         self.handle
             .local_peer_id()

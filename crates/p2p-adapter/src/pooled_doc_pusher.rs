@@ -75,6 +75,15 @@ impl TransportDocPusher for PooledDocPusher {
             .await
     }
 
+    async fn push_retries_for_peer(
+        &self,
+        peer_id: &str,
+    ) -> P2PResult<Option<crate::peer_details::PeerPushRetries>> {
+        let peer_id = peer_id.to_owned();
+        self.on_pool(move |inner| async move { inner.push_retries_for_peer(&peer_id).await })
+            .await
+    }
+
     async fn replication_acknowledged(
         &self,
         peer_id: &str,
@@ -89,6 +98,25 @@ impl TransportDocPusher for PooledDocPusher {
         self.on_pool(move |inner| async move {
             inner
                 .replication_acknowledged(&peer_id, &collection_name, &doc_ids)
+                .await
+        })
+        .await
+    }
+
+    async fn document_heads_acknowledged(
+        &self,
+        peer_id: &str,
+        collection_name: &str,
+        doc_ids: &[String],
+    ) -> P2PResult<Vec<bool>> {
+        let (peer_id, collection_name, doc_ids) = (
+            peer_id.to_owned(),
+            collection_name.to_owned(),
+            doc_ids.to_vec(),
+        );
+        self.on_pool(move |inner| async move {
+            inner
+                .document_heads_acknowledged(&peer_id, &collection_name, &doc_ids)
                 .await
         })
         .await

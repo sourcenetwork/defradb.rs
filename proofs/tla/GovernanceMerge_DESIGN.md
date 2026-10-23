@@ -52,9 +52,9 @@ corrupts state.
   `enqueue_ready` and `redrive_deferred`: `Sweep` with `SweepScope = "Unmerged"`.
   `:124` `SWEEP_INTERVAL` (60 s) and `:129` `run_governance_sweep`, which runs
   one pass at startup (`Crash` followed by `Sweep`) and then on the interval.
-  Spawned from `crates/embedded/src/node_p2p.rs:236`,
-  `crates/p2p-adapter/src/iroh_peer/peer.rs:235` and
-  `crates/cli/src/commands/start/server_p2p/libp2p.rs:200`.
+  Spawned from `crates/embedded/src/node_p2p.rs:270`,
+  `crates/p2p-adapter/src/iroh_peer/peer.rs:278` and
+  `crates/cli/src/commands/start/server_p2p/libp2p.rs:225`.
 - `crates/p2p/src/sync/replication/handlers.rs:429` — a non-terminal
   `Skipped` is not marked merged, so the composite stays in the unmerged set
   the sweep walks. `Unmerged(r)`.

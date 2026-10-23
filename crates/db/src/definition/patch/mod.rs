@@ -340,7 +340,7 @@ impl<S: Store> crate::database::DB<S> {
             let collections = std::sync::Arc::clone(&self.collections);
             let registered_name = actual_name.clone();
             let active = new_schema.is_active;
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 collections.rcu(|old| {
                     let mut cache = old.clone();
                     if active {

@@ -793,24 +793,27 @@ mod tests {
         assert_eq!(explain["scanNode"]["prefixes"], json!([]));
     }
 
-    #[tokio::test]
-    async fn supplied_doc_ids_filter_preloaded_deleted_documents() {
-        let mut requested = Doc::new(2);
-        requested.set_doc_id("doc-1");
-        requested.mark_deleted();
-        let mut unrelated = Doc::new(2);
-        unrelated.set_doc_id("doc-2");
-        unrelated.mark_deleted();
+    #[test]
+    fn supplied_doc_ids_filter_preloaded_deleted_documents() {
+        workers::block_on(async {
+            let mut requested = Doc::new(2);
+            requested.set_doc_id("doc-1");
+            requested.mark_deleted();
+            let mut unrelated = Doc::new(2);
+            unrelated.set_doc_id("doc-2");
+            unrelated.mark_deleted();
 
-        let mut scan = ScanNode::new(make_collection(), make_mapping())
-            .with_docs(vec![unrelated, requested])
-            .with_doc_ids(vec!["doc-1".to_string()])
-            .with_show_deleted(true);
-        scan.init().await.unwrap();
+            let mut scan = ScanNode::new(make_collection(), make_mapping())
+                .with_docs(vec![unrelated, requested])
+                .with_doc_ids(vec!["doc-1".to_string()])
+                .with_show_deleted(true);
+            scan.init().await.unwrap();
 
-        assert!(scan.next().await.unwrap());
-        assert_eq!(scan.value().doc_id(), Some("doc-1"));
-        assert!(!scan.next().await.unwrap());
+            assert!(scan.next().await.unwrap());
+            assert_eq!(scan.value().doc_id(), Some("doc-1"));
+            assert!(!scan.next().await.unwrap());
+        })
+        .unwrap()
     }
 }
 
@@ -945,80 +948,93 @@ mod stream_tests {
         }
     }
 
-    #[tokio::test]
-    async fn exact_document_lookup_does_not_pull_collection_and_preserves_residual_filter() {
-        let id = document::DocID::new_v0_from_seed("point-read");
-        let doc = Document::with_id(id.clone());
-        let pulled = Arc::new(AtomicUsize::new(0));
-        let mut docs = vec![(Document::new(), false); 1000];
-        docs.push((doc, false));
-        let fetcher = Arc::new(CountingFetcher {
-            docs,
-            pulled: pulled.clone(),
-        });
-        for (filter, expected) in [
-            (serde_json::json!({"_docID":{"_eq":id.to_string()}}), true),
-            (
-                serde_json::json!({"_docID":{"_eq":id.to_string()}, "name":{"_eq":"absent"}}),
-                false,
-            ),
-            (serde_json::json!({"_docID":{"_eq":"missing"}}), false),
-        ] {
-            let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
-                .with_fetcher(fetcher.clone())
-                .with_filter(Filter::from_conditions(filter.as_object().unwrap().clone()));
-            node.init().await.unwrap();
-            assert_eq!(node.next().await.unwrap(), expected);
-            if expected {
-                assert_eq!(node.value().doc_id(), Some(id.to_string().as_str()));
-                assert!(!node.next().await.unwrap());
+    #[test]
+    fn exact_document_lookup_does_not_pull_collection_and_preserves_residual_filter() {
+        workers::block_on(async {
+            let id = document::DocID::new_v0_from_seed("point-read");
+            let doc = Document::with_id(id.clone());
+            let pulled = Arc::new(AtomicUsize::new(0));
+            let mut docs = vec![(Document::new(), false); 1000];
+            docs.push((doc, false));
+            let fetcher = Arc::new(CountingFetcher {
+                docs,
+                pulled: pulled.clone(),
+            });
+            for (filter, expected) in [
+                (serde_json::json!({"_docID":{"_eq":id.to_string()}}), true),
+                (
+                    serde_json::json!({"_docID":{"_eq":id.to_string()}, "name":{"_eq":"absent"}}),
+                    false,
+                ),
+                (serde_json::json!({"_docID":{"_eq":"missing"}}), false),
+            ] {
+                let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
+                    .with_fetcher(fetcher.clone())
+                    .with_filter(Filter::from_conditions(filter.as_object().unwrap().clone()));
+                node.init().await.unwrap();
+                assert_eq!(node.next().await.unwrap(), expected);
+                if expected {
+                    assert_eq!(node.value().doc_id(), Some(id.to_string().as_str()));
+                    assert!(!node.next().await.unwrap());
+                }
             }
-        }
-        assert_eq!(pulled.load(Ordering::SeqCst), 0);
-        let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
-            .with_fetcher(fetcher)
-            .with_doc_ids(vec![id.to_string()]);
-        node.init().await.unwrap();
-        assert!(node.next().await.unwrap());
-        assert!(!node.next().await.unwrap());
-        assert_eq!(pulled.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn scan_node_pulls_only_what_is_consumed() {
-        let pulled = Arc::new(AtomicUsize::new(0));
-        let fetcher = Arc::new(CountingFetcher::with_docs(1000, pulled.clone()));
-        let mut node = ScanNode::new(collection_fixture(), mapping_fixture()).with_fetcher(fetcher);
-
-        node.init().await.unwrap();
-        assert_eq!(
-            pulled.load(Ordering::SeqCst),
-            0,
-            "init() must not pull any document"
-        );
-
-        for _ in 0..10 {
+            assert_eq!(pulled.load(Ordering::SeqCst), 0);
+            let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
+                .with_fetcher(fetcher)
+                .with_doc_ids(vec![id.to_string()]);
+            node.init().await.unwrap();
             assert!(node.next().await.unwrap());
-        }
-        assert_eq!(pulled.load(Ordering::SeqCst), 10);
+            assert!(!node.next().await.unwrap());
+            assert_eq!(pulled.load(Ordering::SeqCst), 0);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn scan_node_with_docs_path_still_works() {
-        let mut node =
-            ScanNode::new(collection_fixture(), mapping_fixture()).with_docs(plan_docs_fixture(3));
+    #[test]
+    fn scan_node_pulls_only_what_is_consumed() {
+        workers::block_on(async {
+            let pulled = Arc::new(AtomicUsize::new(0));
+            let fetcher = Arc::new(CountingFetcher::with_docs(1000, pulled.clone()));
+            let mut node =
+                ScanNode::new(collection_fixture(), mapping_fixture()).with_fetcher(fetcher);
 
-        node.init().await.unwrap();
-        let mut seen = 0;
-        while node.next().await.unwrap() {
-            seen += 1;
-        }
-        assert_eq!(seen, 3);
+            node.init().await.unwrap();
+            assert_eq!(
+                pulled.load(Ordering::SeqCst),
+                0,
+                "init() must not pull any document"
+            );
+
+            for _ in 0..10 {
+                assert!(node.next().await.unwrap());
+            }
+            assert_eq!(pulled.load(Ordering::SeqCst), 10);
+        })
+        .unwrap()
     }
 
-    #[tokio::test]
-    async fn scan_node_without_docs_or_fetcher_still_errors() {
-        let mut node = ScanNode::new(collection_fixture(), mapping_fixture());
-        assert!(node.init().await.is_err());
+    #[test]
+    fn scan_node_with_docs_path_still_works() {
+        workers::block_on(async {
+            let mut node = ScanNode::new(collection_fixture(), mapping_fixture())
+                .with_docs(plan_docs_fixture(3));
+
+            node.init().await.unwrap();
+            let mut seen = 0;
+            while node.next().await.unwrap() {
+                seen += 1;
+            }
+            assert_eq!(seen, 3);
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn scan_node_without_docs_or_fetcher_still_errors() {
+        workers::block_on(async {
+            let mut node = ScanNode::new(collection_fixture(), mapping_fixture());
+            assert!(node.init().await.is_err());
+        })
+        .unwrap()
     }
 }
