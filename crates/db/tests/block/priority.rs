@@ -44,7 +44,7 @@ fn backfill_indexes_a_shared_cid_for_each_document() {
         let block = Block::new(
             defra_core::CrdtDelta::Lww(defra_core::LwwDeltaPayload {
                 field_name: "name".to_string(),
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
                 data: vec![1],
             }),

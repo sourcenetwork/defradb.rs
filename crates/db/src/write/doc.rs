@@ -689,7 +689,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 query::error::QueryError::execution(format!("failed to get headstore: {}", e))
             })?;
 
-            let schema_version_id = collection.version_id();
+            let collection_version_id = collection.version_id();
             let sign_config = context.signing();
 
             let block_result = write_delete_block_with_inputs(
@@ -697,7 +697,7 @@ impl<S: Store + 'static> DocMutator for DbDocMutator<S> {
                 &headstore,
                 &canonical_doc_id.to_string(),
                 doc_short_id,
-                schema_version_id,
+                collection_version_id,
                 sign_config,
                 context.batch_session(),
                 Some(&self.prepared_inputs),

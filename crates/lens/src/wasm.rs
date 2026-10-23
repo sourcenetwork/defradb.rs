@@ -254,8 +254,8 @@ impl TransformStore for WasmTransformStore {
         let compiled_modules = self.compile_modules(&config.lenses)?;
         info!(
             transform_id = %id,
-            source_version = %config.source_schema_version_id,
-            dest_version = %config.destination_schema_version_id,
+            source_version = %config.source_collection_version_id,
+            dest_version = %config.destination_collection_version_id,
             lenses_count = config.lenses.len(),
             "Transform added to WASM store"
         );

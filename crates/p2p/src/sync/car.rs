@@ -496,7 +496,7 @@ mod tests {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: "secret".to_string(),
                 priority: 1,
-                schema_version_id: "schema1".to_string(),
+                collection_version_id: "schema1".to_string(),
                 data: b"ciphertext".to_vec(),
             }),
             vec![],
@@ -643,7 +643,7 @@ mod tests {
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "status".to_string(),
                     priority: height,
-                    schema_version_id: "version1".to_string(),
+                    collection_version_id: "version1".to_string(),
                     data: vec![height as u8],
                 }),
                 previous_field.into_iter().collect(),
@@ -657,7 +657,7 @@ mod tests {
 
             let composite = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "version1".to_string(),
+                    collection_version_id: "version1".to_string(),
                     priority: height,
                     status: 1,
                 }),

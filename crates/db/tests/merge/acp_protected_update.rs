@@ -129,7 +129,7 @@ impl Fixture {
     ) -> (Cid, Vec<u8>) {
         let mut block = Block::new(
             CrdtDelta::Composite(CompositeDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority,
                 status,
             }),
@@ -234,7 +234,7 @@ fn composite_linked_from_collection_block_is_judged_by_its_own_signer() {
 
             let (hijack, _) = fixture.update(vec![fixture.genesis], 2, &attacker).await;
             let payload = CollectionDeltaPayload {
-                schema_version_id: "v1".to_string(),
+                collection_version_id: "v1".to_string(),
                 priority: 1,
             };
             let carrier = Block::new(
@@ -308,7 +308,7 @@ fn strict_unsigned_update_and_delete_are_refused() {
             let fixture = Fixture::new(&owner, true).await;
             let block = Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "v1".into(),
+                    collection_version_id: "v1".into(),
                     priority: 2,
                     status,
                 }),

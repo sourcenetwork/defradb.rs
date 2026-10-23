@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// # Arguments
 ///
 /// * `doc` - The document to build blocks from
-/// * `schema_version_id` - The schema version ID for CRDT deltas
+/// * `collection_version_id` - The collection version ID for CRDT deltas
 /// * `blockstore` - Blockstore to store field blocks
 ///
 /// # Returns
@@ -23,7 +23,7 @@ pub async fn build_blocks_from_document<B: Blockstore>(
     schema: &CollectionVersion,
     blockstore: &Arc<B>,
 ) -> Result<BlockResult, String> {
-    let schema_version_id = schema.version_id.as_str();
+    let collection_version_id = schema.version_id.as_str();
     let mut field_links: Vec<DAGLink> = Vec::new();
     let mut field_cids: Vec<Cid> = Vec::new();
 
@@ -58,14 +58,14 @@ pub async fn build_blocks_from_document<B: Blockstore>(
                 field_name: field_name.clone(),
                 priority: 1, // Initial priority for new documents
                 nonce: 0,    // Go uses nonce=0 for initial creation (deterministic CID)
-                schema_version_id: schema_version_id.to_string(),
+                collection_version_id: collection_version_id.to_string(),
                 data: value_bytes,
             })
         } else {
             CrdtDelta::Lww(LwwDeltaPayload {
                 field_name: field_name.clone(),
                 priority: 1, // Initial priority for new documents
-                schema_version_id: schema_version_id.to_string(),
+                collection_version_id: collection_version_id.to_string(),
                 data: value_bytes,
             })
         };
@@ -109,7 +109,7 @@ pub async fn build_blocks_from_document<B: Blockstore>(
 
     // Create the Composite delta payload
     let composite_payload = CompositeDeltaPayload {
-        schema_version_id: schema_version_id.to_string(),
+        collection_version_id: collection_version_id.to_string(),
         priority: 1, // Initial priority
         status: 1,   // Active document
     };

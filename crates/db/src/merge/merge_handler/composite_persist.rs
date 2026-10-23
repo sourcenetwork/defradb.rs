@@ -19,8 +19,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     ) -> std::result::Result<Option<MergeOutcome>, MergeError> {
         let collection = context.collection.as_ref().ok_or_else(|| {
             MergeError::MissingMetadata(format!(
-                "Collection not found for schema_version_id: {}",
-                context.payload.schema_version_id
+                "Collection not found for collection_version_id: {}",
+                context.payload.collection_version_id
             ))
         })?;
 
@@ -77,7 +77,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             }
         };
 
-        doc.set_schema_version_id(&context.payload.schema_version_id);
+        doc.set_collection_version_id(&context.payload.collection_version_id);
 
         for (field_name, value) in &state.field_values {
             doc.set(field_name, value.clone());

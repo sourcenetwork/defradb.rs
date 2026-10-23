@@ -174,7 +174,7 @@ pub struct Update {
     pub subject_doc_id: Option<String>,
     /// CID of the update block.
     pub cid: Cid,
-    /// Collection ID (schema version ID) the document belongs to.
+    /// Collection ID (collection version ID) the document belongs to.
     pub collection_id: String,
     /// Serialized block data.
     pub block: Bytes,

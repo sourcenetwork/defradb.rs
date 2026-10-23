@@ -358,7 +358,7 @@ fn test_lww_delta_validation_rejects_empty_values() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("field_name"));
 
-    // Empty schema_version_id
+    // Empty collection_version_id
     let result = LwwDelta::new(
         b"doc1".to_vec(),
         "name".to_string(),
@@ -370,14 +370,14 @@ fn test_lww_delta_validation_rejects_empty_values() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("schema_version_id"));
+        .contains("collection_version_id"));
 
     let result = LwwDelta::delete(b"doc1".to_vec(), "name".to_string(), 10, "".to_string());
     assert!(result.is_err());
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("schema_version_id"));
+        .contains("collection_version_id"));
 }
 
 #[test]
@@ -691,7 +691,7 @@ fn test_lww_constructor_empty_schema_version() {
     let err = result.err().unwrap();
     assert!(err
         .to_string()
-        .contains("schema_version_id cannot be empty"));
+        .contains("collection_version_id cannot be empty"));
 }
 
 #[test]

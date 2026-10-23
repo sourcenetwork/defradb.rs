@@ -232,7 +232,7 @@ pub async fn verify_block_signature<S: Store>(
 /// public key.
 ///
 /// Also checks document-level ACP permission (Read) if the block has a delta
-/// with schema_version_id.
+/// with collection_version_id.
 pub async fn verify_block_signature_as<S: Store>(
     context: &RequestContext,
     database: &Arc<DB<S>>,
@@ -401,9 +401,9 @@ async fn load_authorized_block_signature<S: Store>(
 
     // Check document/collection-level ACP permission (Read) if the block has
     // collection metadata.
-    if let Some(schema_version_id) = block.delta.schema_version_id() {
+    if let Some(collection_version_id) = block.delta.collection_version_id() {
         if let Some(collection) = database
-            .get_collection_by_version_id(schema_version_id)
+            .get_collection_by_version_id(collection_version_id)
             .map_err(|e| format!("failed to get collection: {}", e))?
         {
             let collection = collection.schema();

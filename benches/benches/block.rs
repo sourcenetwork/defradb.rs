@@ -89,7 +89,7 @@ fn lww_block(link_count: usize, payload_len: usize) -> Block {
         CrdtDelta::Lww(LwwDeltaPayload {
             field_name: "name".to_string(),
             priority: 1,
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             data: vec![0xABu8; payload_len],
         }),
         vec![],
@@ -100,7 +100,7 @@ fn lww_block(link_count: usize, payload_len: usize) -> Block {
 fn composite_block_with_links() -> Block {
     Block::new(
         CrdtDelta::Composite(CompositeDeltaPayload {
-            schema_version_id: "schema1".to_string(),
+            collection_version_id: "schema1".to_string(),
             priority: 7,
             status: 1,
         }),
@@ -243,7 +243,7 @@ fn bench_delta_variants(c: &mut Criterion) {
                 CrdtDelta::Lww(LwwDeltaPayload {
                     field_name: "name".to_string(),
                     priority: 1,
-                    schema_version_id: "schema1".to_string(),
+                    collection_version_id: "schema1".to_string(),
                     data: b"John".to_vec(),
                 }),
                 vec![],
@@ -257,7 +257,7 @@ fn bench_delta_variants(c: &mut Criterion) {
                     field_name: "count".to_string(),
                     priority: 1,
                     nonce: 12345,
-                    schema_version_id: "schema1".to_string(),
+                    collection_version_id: "schema1".to_string(),
                     data: vec![0x0A],
                 }),
                 vec![],
@@ -268,7 +268,7 @@ fn bench_delta_variants(c: &mut Criterion) {
             "composite",
             Block::new(
                 CrdtDelta::Composite(CompositeDeltaPayload {
-                    schema_version_id: "schema1".to_string(),
+                    collection_version_id: "schema1".to_string(),
                     priority: 1,
                     status: 1,
                 }),
@@ -280,7 +280,7 @@ fn bench_delta_variants(c: &mut Criterion) {
             "collection",
             Block::new(
                 CrdtDelta::Collection(CollectionDeltaPayload {
-                    schema_version_id: "schema1".to_string(),
+                    collection_version_id: "schema1".to_string(),
                     priority: 1,
                 }),
                 vec![],

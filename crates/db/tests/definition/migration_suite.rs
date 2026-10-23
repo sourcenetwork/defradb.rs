@@ -341,7 +341,7 @@ async fn seed_old_user(
     let doc_id = document::DocID::new_v0_from_seed(&seed);
     doc.set_id(doc_id.clone());
     doc.set("name", document::NormalValue::String(name.to_string()));
-    doc.set_schema_version_id(version_id);
+    doc.set_collection_version_id(version_id);
 
     let txn = db.new_txn(false).await.unwrap();
     let datastore = txn.datastore().unwrap();
@@ -489,12 +489,12 @@ fn lazy_lensed_read_leaves_storage_unchanged() {
             docs[0].get("verified"),
             Some(&document::NormalValue::Bool(true))
         );
-        assert_eq!(docs[0].schema_version_id(), Some(v2.as_str()));
+        assert_eq!(docs[0].collection_version_id(), Some(v2.as_str()));
         assert_eq!(transform_store.transform_calls.load(Ordering::SeqCst), 1);
 
         let persisted = load_user(&db, &doc_id).await;
         assert_eq!(persisted.get("verified"), None);
-        assert_eq!(persisted.schema_version_id(), Some(v1.as_str()));
+        assert_eq!(persisted.collection_version_id(), Some(v1.as_str()));
         assert_eq!(namespace_counts(&db).await, before_counts);
 
         fetcher.get_all("Users").await.unwrap();
@@ -510,7 +510,7 @@ fn lazy_lensed_read_leaves_storage_unchanged() {
         let persisted_after_restart = load_user(&reopened, &doc_id).await;
         assert_eq!(persisted_after_restart.get("verified"), None);
         assert_eq!(
-            persisted_after_restart.schema_version_id(),
+            persisted_after_restart.collection_version_id(),
             Some(v1.as_str())
         );
     })
@@ -527,7 +527,7 @@ fn eager_materialize_restamps_transformless_paths() {
         let doc_id = seed_user(&db).await;
         let v2 = add_verified_version(&db).await;
         assert_ne!(
-            load_user(&db, &doc_id).await.schema_version_id(),
+            load_user(&db, &doc_id).await.collection_version_id(),
             Some(v2.as_str())
         );
 
@@ -535,7 +535,7 @@ fn eager_materialize_restamps_transformless_paths() {
         let before_blob = load_user_blob(&db, &doc_id).await;
         assert_eq!(db.materialize_collection("Users").await.unwrap(), 1);
         assert_eq!(
-            load_user(&db, &doc_id).await.schema_version_id(),
+            load_user(&db, &doc_id).await.collection_version_id(),
             Some(v2.as_str())
         );
         assert_ne!(
@@ -745,11 +745,11 @@ fn lazy_full_scan_is_write_free_even_when_paused() {
         assert_eq!(docs.len(), 3);
         assert!(docs
             .iter()
-            .all(|doc| doc.schema_version_id() == Some(v2.as_str())));
+            .all(|doc| doc.collection_version_id() == Some(v2.as_str())));
         assert_eq!(verified_index_count(&db).await, 0);
         for doc_id in doc_ids {
             assert_eq!(
-                load_user(&db, &doc_id).await.schema_version_id(),
+                load_user(&db, &doc_id).await.collection_version_id(),
                 Some(v1.as_str())
             );
         }
@@ -797,7 +797,7 @@ fn implicit_full_scan_transforms_without_writes() {
         fetcher.take_txn().await.unwrap().discard().unwrap();
         for doc_id in source_ids {
             let stored = load_user(&db, &doc_id).await;
-            assert_eq!(stored.schema_version_id(), Some(v1.as_str()));
+            assert_eq!(stored.collection_version_id(), Some(v1.as_str()));
             assert_eq!(stored.get("verified"), None);
         }
         assert_eq!(verified_index_count(&db).await, 0);
@@ -893,7 +893,7 @@ fn implicit_query_leaves_storage_unchanged_after_snapshot_closes() {
         assert!(ordered.errors.is_empty(), "{:?}", ordered.errors);
         assert_eq!(ordered.data, indexed_response.data);
         assert_eq!(
-            load_user(&db, &doc_id).await.schema_version_id(),
+            load_user(&db, &doc_id).await.collection_version_id(),
             Some(v1.as_str())
         );
     })
@@ -1009,7 +1009,7 @@ fn concurrent_lazy_reads_of_same_document_are_idempotent() {
 
         let persisted = load_user(&db, &doc_id).await;
         assert_eq!(persisted.get("verified"), None);
-        assert_eq!(persisted.schema_version_id(), Some(v1.as_str()));
+        assert_eq!(persisted.collection_version_id(), Some(v1.as_str()));
         assert_eq!(
             verified_index_count(&db).await,
             0,
@@ -1093,7 +1093,7 @@ fn concurrent_update_wins_over_stale_lazy_write_back() {
             persisted.get("verified"),
             Some(&document::NormalValue::Bool(true))
         );
-        assert_eq!(persisted.schema_version_id(), Some(v2.as_str()));
+        assert_eq!(persisted.collection_version_id(), Some(v2.as_str()));
     })
     .unwrap()
 }
@@ -1151,7 +1151,7 @@ fn streaming_lensed_read_keeps_source_documents_unchanged() {
         fetcher.take_txn().await.unwrap().discard().unwrap();
         for doc_id in source_ids {
             let stored = load_user(&db, &doc_id).await;
-            assert_eq!(stored.schema_version_id(), Some(v1.as_str()));
+            assert_eq!(stored.collection_version_id(), Some(v1.as_str()));
             assert_eq!(stored.get("verified"), None);
         }
         assert_eq!(verified_index_count(&db).await, 0);
@@ -1206,12 +1206,12 @@ fn streaming_auto_commit_read_transforms_without_persisting() {
             docs[0].get("verified"),
             Some(&document::NormalValue::Bool(true))
         );
-        assert_eq!(docs[0].schema_version_id(), Some(v2.as_str()));
+        assert_eq!(docs[0].collection_version_id(), Some(v2.as_str()));
         assert_eq!(transform_store.transform_calls.load(Ordering::SeqCst), 1);
 
         let persisted = load_user(&db, &doc_id).await;
         assert_eq!(persisted.get("verified"), None);
-        assert_eq!(persisted.schema_version_id(), Some(v1.as_str()));
+        assert_eq!(persisted.collection_version_id(), Some(v1.as_str()));
     })
     .unwrap()
 }
@@ -1276,7 +1276,7 @@ fn streaming_auto_commit_read_is_write_free_after_partial_consumption() {
             None,
             "a partially consumed read must not persist its transformations"
         );
-        assert_eq!(persisted.schema_version_id(), Some(v1.as_str()));
+        assert_eq!(persisted.collection_version_id(), Some(v1.as_str()));
     })
     .unwrap()
 }
@@ -1322,11 +1322,11 @@ fn readonly_snapshot_history_reuse_preserves_migrated_values() {
                 docs[0].get("verified"),
                 Some(&document::NormalValue::Bool(true))
             );
-            assert_eq!(docs[0].schema_version_id(), Some(v2.as_str()));
+            assert_eq!(docs[0].collection_version_id(), Some(v2.as_str()));
         }
         let _ = fetcher.take_txn().await.unwrap().discard();
         assert_eq!(
-            load_user(&db, &doc_id).await.schema_version_id(),
+            load_user(&db, &doc_id).await.collection_version_id(),
             Some(v1.as_str())
         );
     })
@@ -1405,7 +1405,7 @@ fn eager_materialization_retries_from_the_concurrent_document() {
             persisted.get("verified"),
             Some(&document::NormalValue::Bool(true))
         );
-        assert_eq!(persisted.schema_version_id(), Some(v2.as_str()));
+        assert_eq!(persisted.collection_version_id(), Some(v2.as_str()));
         assert_eq!(transforms.transform_calls.load(Ordering::SeqCst), 2);
     })
     .unwrap()

@@ -733,7 +733,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
         )
         .await?;
 
-        let schema_version_id = collection.version_id();
+        let collection_version_id = collection.version_id();
         let sign_config = context.signing();
 
         let (doc_cid, doc_block, col_block_data) = {
@@ -744,7 +744,7 @@ impl<S: Store + 'static> DocMutator for BatchMutator<S> {
                 &headstore,
                 &canonical_doc_id.to_string(),
                 doc_short_id,
-                schema_version_id,
+                collection_version_id,
                 sign_config,
                 context.batch_session(),
                 self.prepared_inputs.as_ref(),

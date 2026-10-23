@@ -134,7 +134,7 @@ pub fn lens_doc_to_document(
         }
     }
 
-    doc.set_schema_version_id(collection.version_id());
+    doc.set_collection_version_id(collection.version_id());
     doc
 }
 
@@ -161,7 +161,7 @@ pub(crate) async fn migrate_to_active(
     lens_store: &Arc<dyn TransformStore>,
 ) -> Result<ToActive> {
     let target = collection.version_id();
-    let Some(version) = doc.schema_version_id() else {
+    let Some(version) = doc.collection_version_id() else {
         return Ok(ToActive::Identity);
     };
     if version == target {

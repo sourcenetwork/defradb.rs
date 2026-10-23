@@ -19,7 +19,7 @@ use tokio::time::timeout;
 fn make_data_block() -> (cid::Cid, Vec<u8>) {
     let payload = CompositeDeltaPayload {
         priority: 1,
-        schema_version_id: "bafyusers".to_string(),
+        collection_version_id: "bafyusers".to_string(),
         status: 1,
     };
     let block = DefraBlock::new(CrdtDelta::Composite(payload), Vec::new(), Vec::new());

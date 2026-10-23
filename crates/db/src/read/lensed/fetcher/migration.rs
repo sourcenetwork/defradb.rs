@@ -245,7 +245,7 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
             return Ok(doc);
         }
 
-        let doc_version = doc.schema_version_id().unwrap_or("unknown").to_string();
+        let doc_version = doc.collection_version_id().unwrap_or("unknown").to_string();
         let doc_id_str = doc.id().map(|id| id.to_string()).unwrap_or_default();
         debug!(
             doc_id = ?doc.id(),

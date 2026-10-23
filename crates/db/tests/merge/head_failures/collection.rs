@@ -19,7 +19,7 @@ async fn collection_block(
     heads: Vec<Cid>,
 ) -> CollectionBlock {
     let payload = CollectionDeltaPayload {
-        schema_version_id: "v1".to_string(),
+        collection_version_id: "v1".to_string(),
         priority,
     };
     let block = Block::new(CrdtDelta::Collection(payload.clone()), heads, vec![]);

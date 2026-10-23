@@ -22,8 +22,8 @@ pub struct Doc {
     fields: DocFields,
     /// Document status
     pub status: DocStatus,
-    /// Schema version ID (for migrations)
-    pub schema_version_id: Option<String>,
+    /// Collection version ID (for migrations)
+    pub collection_version_id: Option<String>,
     /// Number of stored fields from the original document (for fieldFetches metrics)
     pub stored_field_count: usize,
 }
@@ -35,7 +35,7 @@ impl Doc {
             hidden: false,
             fields: vec![None; num_fields],
             status: DocStatus::Active,
-            schema_version_id: None,
+            collection_version_id: None,
             stored_field_count: 0,
         }
     }
@@ -46,7 +46,7 @@ impl Doc {
             hidden: false,
             fields,
             status: DocStatus::Active,
-            schema_version_id: None,
+            collection_version_id: None,
             stored_field_count: 0,
         }
     }
@@ -96,7 +96,7 @@ impl Doc {
             hidden: self.hidden,
             fields: self.fields.clone(),
             status: self.status,
-            schema_version_id: self.schema_version_id.clone(),
+            collection_version_id: self.collection_version_id.clone(),
             stored_field_count: self.stored_field_count,
         }
     }
