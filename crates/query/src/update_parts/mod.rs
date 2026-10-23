@@ -96,7 +96,9 @@ impl Run {
             return None;
         }
         let mut parts = self.written(collection, &collection.indexes, patch, |name| {
-            field(collection, name).is_some_and(|field| field.crdt_type.is_counter())
+            field(collection, name)
+                .and_then(|field| crdt::field_crdt(field.crdt_type))
+                .is_some_and(|crdt| crdt.always_changes())
         });
         if let Some(filter) = filter {
             parts.extend(compared(collection, filter)?);

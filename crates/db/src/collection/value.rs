@@ -10,18 +10,13 @@ pub(crate) struct FieldOrder {
 }
 type Priorities = RapidHashMap<String, FieldOrder>;
 
-/// How the document value stores a counter field, or `None` when the field is
-/// not a counter of a numeric kind.
-pub(crate) fn counter_kind(field: &schema::FieldDescription) -> Option<ValueKind> {
-    if !field.crdt_type.is_counter() {
-        return None;
-    }
-    match field.kind.as_scalar().map(ScalarKind::base_kind) {
-        Some(ScalarKind::Int) => Some(ValueKind::Int64),
-        Some(ScalarKind::Float32) => Some(ValueKind::Float32),
-        Some(ScalarKind::Float64) => Some(ValueKind::Float64),
-        _ => None,
-    }
+fn field_crdt(field: &schema::FieldDescription) -> Result<&'static dyn crdt::FieldCrdt> {
+    crdt::field_crdt(field.crdt_type).ok_or_else(|| {
+        Error::InvalidDocument(format!(
+            "no CRDT for {} field {}",
+            field.crdt_type, field.name
+        ))
+    })
 }
 
 fn field_value(
@@ -29,13 +24,9 @@ fn field_value(
     value: &NormalValue,
     priority: u64,
 ) -> Result<StoredField> {
-    if !field.crdt_type.is_counter() {
-        return StoredField::lww(field.name.clone(), priority, value).map_err(Error::from);
-    }
-    let kind = counter_kind(field).ok_or_else(|| {
-        Error::InvalidDocument(format!("unsupported counter field {}", field.name))
-    })?;
-    StoredField::counter(field.name.clone(), kind, priority, value).map_err(Error::from)
+    field_crdt(field)?
+        .stored_field(field, priority, value)
+        .map_err(|error| Error::InvalidDocument(error.to_string()))
 }
 
 impl Collection {
@@ -70,7 +61,10 @@ impl Collection {
         let mut stored = StoredDocument::default();
         for field in &self.def.fields {
             let value = doc.get(&field.name).unwrap_or(&NormalValue::Null);
-            if field.crdt_type.is_counter() && value.is_nil() {
+            let Some(crdt) = crdt::field_crdt(field.crdt_type) else {
+                continue;
+            };
+            if value.is_nil() && crdt.stored_by_operands() {
                 continue;
             }
             let id = ids.get(&field.name).ok_or_else(|| {
@@ -137,7 +131,7 @@ impl Collection {
         };
         let mut parts = StoredDocument::default();
         for field in &self.def.fields {
-            if field.crdt_type.is_counter() {
+            if crdt::field_crdt(field.crdt_type).is_none_or(|crdt| crdt.stored_by_operands()) {
                 continue;
             }
             let Some(order) = priorities.get(&field.name) else {
@@ -234,16 +228,14 @@ impl Collection {
             if !modified.contains(&field.name) {
                 continue;
             }
-            let value = if field.crdt_type.is_counter() {
-                let Some(delta) = doc.get_counter_delta(&field.name) else {
-                    // Absolute counter replacement is structural, not an increment.
-                    return self
-                        .put_document_value(datastore, doc_short_id, doc, false, Some(&priorities))
-                        .await;
-                };
-                delta
-            } else {
-                doc.get(&field.name).unwrap_or(&NormalValue::Null)
+            let current = doc.get(&field.name).unwrap_or(&NormalValue::Null);
+            let Some(value) = field_crdt(field)?.operand(current, doc.pending_op(&field.name))
+            else {
+                // A write with no operand form, such as an absolute counter
+                // replacement, is structural: the document value is put whole.
+                return self
+                    .put_document_value(datastore, doc_short_id, doc, false, Some(&priorities))
+                    .await;
             };
             let id = ids.get(&field.name).ok_or_else(|| {
                 Error::InvalidDocument(format!("missing part ID for {}", field.name))

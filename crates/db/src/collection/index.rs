@@ -84,7 +84,7 @@ impl Collection {
         let old_doc = match update {
             Some((changed, _, run)) => {
                 let fields = run.written(&self.def, index_manager.get_indexes(), changed, |name| {
-                    doc.get_counter_delta(name).is_some()
+                    doc.pending_op(name).is_some()
                 });
                 self.get_with_datastore_fields(datastore, doc_short_id, doc_id, &fields)
                     .await?

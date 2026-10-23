@@ -50,7 +50,11 @@ async fn first_counter_update() -> Cid {
 
     doc.set_id(document::DocID::from_string(&created.doc_id).unwrap());
     doc.set("count", NormalValue::Int(1)).unwrap();
-    doc.set_counter_delta("count".to_string(), NormalValue::Int(1));
+    doc.edit(
+        "count".to_string(),
+        document::FieldOp::Increment(NormalValue::Int(1)),
+    )
+    .unwrap();
     let modified = RapidHashSet::from_iter(["count".to_string()]);
 
     write_document_blocks(

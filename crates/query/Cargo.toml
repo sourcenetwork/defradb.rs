@@ -31,6 +31,7 @@ inputs = { path = "../inputs" }
 cursor = { path = "../cursor" }
 defra-core = { path = "../defra-core" }
 document = { path = "../document" }
+crdt = { path = "../crdt" }
 storage = { path = "../storage" }
 schema = { path = "../schema" }
 identity = { path = "../identity" }

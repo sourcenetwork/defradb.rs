@@ -73,7 +73,11 @@ async fn increment(
     kind: CType,
 ) {
     let mut doc = Document::with_id(doc_id.clone(), tally(kind));
-    doc.set_counter_delta("count".to_string(), NormalValue::Int(by));
+    doc.edit(
+        "count".to_string(),
+        document::FieldOp::Increment(NormalValue::Int(by)),
+    )
+    .unwrap();
     mutator
         .update("Tally", doc, RapidHashSet::from_iter(["count".to_string()]))
         .await
@@ -191,7 +195,12 @@ fn an_increment_lands_on_the_stored_value_not_the_callers_copy() {
         // A stale caller copy that still says 0 and claims the result is 1.
         let mut stale = Document::with_id(doc_id.clone(), tally(CType::PnCounter));
         stale.set("count", NormalValue::Int(1)).unwrap();
-        stale.set_counter_delta("count".to_string(), NormalValue::Int(1));
+        stale
+            .edit(
+                "count".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(1)),
+            )
+            .unwrap();
         let updated = mutator
             .update(
                 "Tally",
@@ -219,7 +228,12 @@ fn a_callers_copy_never_replaces_the_stored_counter() {
             for (copy, expected) in [(100, 6), (2, 7)] {
                 let mut stale = Document::with_id(doc_id.clone(), tally(kind));
                 stale.set("count", NormalValue::Int(copy)).unwrap();
-                stale.set_counter_delta("count".to_string(), NormalValue::Int(1));
+                stale
+                    .edit(
+                        "count".to_string(),
+                        document::FieldOp::Increment(NormalValue::Int(1)),
+                    )
+                    .unwrap();
                 mutator
                     .update(
                         "Tally",
@@ -251,7 +265,11 @@ fn interactive_increments_and_other_field_updates_all_commit() {
         for by in [2, 3] {
             let mutator = db::DbDocMutator::new(db.clone(), db.new_txn(false).await.unwrap());
             let mut doc = Document::with_id(doc_id.clone(), tally(CType::PnCounter));
-            doc.set_counter_delta("count".to_string(), NormalValue::Int(by));
+            doc.edit(
+                "count".to_string(),
+                document::FieldOp::Increment(NormalValue::Int(by)),
+            )
+            .unwrap();
             mutator
                 .update("Tally", doc, RapidHashSet::from_iter(["count".to_string()]))
                 .await
