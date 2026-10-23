@@ -257,12 +257,18 @@ impl Document {
     }
 
     /// Set a field value. The field must exist in the collection definition,
-    /// which also gives the field its CRDT type.
+    /// which also gives the field its CRDT type. A relation is set from its
+    /// primary side only, as in Go.
     pub fn set(&mut self, field: impl Into<String>, value: impl Into<NormalValue>) -> Result<()> {
         let field_name = field.into();
-        let crdt_type = self
-            .crdt_type(&field_name)
+        let definition = self
+            .collection
+            .field_by_name(&field_name)
             .ok_or_else(|| Error::FieldNotExist(field_name.clone()))?;
+        if definition.kind.is_relation() && !definition.is_primary {
+            return Err(Error::CannotSetRelationFromSecondarySide(field_name));
+        }
+        let crdt_type = definition.crdt_type;
         let field_value = FieldValue::new(crdt_type, value.into())?;
         self.pending_ops.remove(&field_name);
         self.values.insert(field_name, field_value);
