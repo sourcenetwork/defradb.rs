@@ -83,8 +83,15 @@ impl Collection {
         // Get old document for index update
         let old_doc = match update {
             Some((changed, _, run)) => {
+                // A causal field's operation counts in its old value, so the
+                // write decides on it like on a set.
                 let fields = run.written(&self.def, index_manager.get_indexes(), changed, |name| {
                     doc.pending_op(name).is_some()
+                        && self
+                            .def
+                            .field_by_name(name)
+                            .and_then(|field| crdt::field_crdt(field.crdt_type))
+                            .is_none_or(|crdt| crdt.blind_op())
                 });
                 self.get_with_datastore_fields(datastore, doc_short_id, doc_id, &fields)
                     .await?

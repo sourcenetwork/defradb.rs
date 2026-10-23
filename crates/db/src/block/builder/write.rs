@@ -439,12 +439,12 @@ pub(crate) async fn write_document_blocks_with_inputs(
                 crdt.op(field_value.value().clone(), true)
                     .map_err(|error| error.to_string())?;
             }
-            let value_bytes = crdt
-                .encode(
-                    crdt.write(field_value.value(), doc.pending_op(field_name))
-                        .data,
-                )
-                .map_err(|error| error.to_string())?;
+            let Some(value_bytes) = crdt
+                .block_data(field_value.value(), doc.pending_op(field_name))
+                .map_err(|error| error.to_string())?
+            else {
+                continue;
+            };
 
             let explicit = encryption_config.filter(|enc| enc.should_encrypt_field(field_name));
             let (value_bytes, encryption_cid) = if let Some(enc) = explicit {

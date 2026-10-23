@@ -62,6 +62,10 @@ impl FieldCrdt for LwwField {
                 crdt: CType::LwwRegister,
                 op: "increment",
             }),
+            FieldOp::Edit(_) => Err(FieldCrdtError::UnsupportedOp {
+                crdt: CType::LwwRegister,
+                op: "edit",
+            }),
         }
     }
 

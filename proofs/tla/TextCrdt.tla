@@ -29,37 +29,76 @@
 \* would go before y, and Alice's peer, doing the same with Bob's block,
 \* would put y before x: "axy" on one peer, "ayx" on the other.
 \*
+\* A write of null is a block too: it clears every character of its parent
+\* version, and the field reads null. A peer that merges blocks one at a time
+\* keeps a null flag beside its text. The field is null exactly when every head
+\* of its history is such a clear: anything written beside or after a clear
+\* that is not one makes the field text again, even an empty one.
+\*
 \* What must never happen:
 \*   * two peers holding the same blocks show different text;
+\*   * two peers holding the same blocks disagree on whether the field is
+\*     null, a peer's null flag differs from what its heads say, or a null
+\*     field still shows characters;
 \*   * a peer's text differs from replaying its blocks from scratch;
 \*   * an insert lands anywhere but right after its left origin in its own
 \*     parent version, or a delete removes anything but its own character;
 \*   * a peer places a character somewhere other than where its author's
 \*     version put it.
+\*   * a character typed right after another lands apart from it: something
+\*     written without knowing the first character sits between the two, so
+\*     two runs typed at one spot at the same time interleave.
 \*
-\* Code this models (defradb.rs). The Text CRDT is not written yet: this model
-\* is its contract (issue #2127), and these are the files it will live in:
-\*   crates/crdt/src/text.rs                       the Text CRDT: Fugue
-\*                                                 placement, sibling order by
-\*                                                 CID, tombstones, replay
-\*   crates/db/src/merge/merge_handler/text.rs     applies a received Text block
-\*                                                 once its parents are merged
+\* Code this models (defradb.rs). A real block carries a list of edits, each
+\* an insert of a run of characters or a delete of a range. The model's blocks
+\* hold one character each; a real block is those one-character blocks in a
+\* row, each the parent of the next, so every character of a run is the right
+\* child of the one before it (crdt::fugue::Tree::apply).
 \*
-\* Correspondence table (model -> planned Rust):
-\*   Create         text.rs: a write diffs the new string against the current
-\*                  one and emits one block per edit, its parents the heads
-\*   Deliver        merge_handler/text.rs: a received block is merged once
-\*                  every parent block is local (the DAG sync's causal buffer)
-\*   Place          text.rs: Fugue placement against the block's parent version
-\*   SortBy/IdKey   text.rs: siblings ordered by the block CID
-\*   Canon          text.rs: replay of a block set from scratch; the stored
-\*                  value is the replayed text, the tree is thrown away
+\* Correspondence table (model -> Rust):
+\*   Create         crates/db/src/write/autocommit/helpers.rs apply_field_ops:
+\*                  a write diffs the stored text against the new value
+\*                  (TextField's CausalCrdt::diff in
+\*                  crates/crdt/src/field/text.rs) or takes the edits it was
+\*                  given, and TextField::block_data writes them as one
+\*                  block, its parents the field's heads; a write of null
+\*                  keeps the null value and its block is the "nil" kind,
+\*                  data CBOR null (TextField's NIL)
+\*   Deliver        crates/db/src/merge/merge_handler/field_causal.rs
+\*                  merge_field_causal: a received block is merged once every
+\*                  parent block is local (the DAG sync's causal buffer); a
+\*                  block whose parents are the field's heads is applied to
+\*                  the stored text as plain edits (FieldCrdt::apply), which
+\*                  INV_Intent makes equal to the replay; that block alone
+\*                  decides whether the field is null (NullAfter)
+\*   Place          crates/crdt/src/fugue.rs Tree::apply, the insert arm:
+\*                  Fugue placement against the block's parent version
+\*   Target         crates/crdt/src/fugue.rs Tree::apply, the delete arm
+\*   SortBy/IdKey   crates/crdt/src/fugue.rs Tree::attach and Tree::cmp_id:
+\*                  siblings ordered by block CID, then offset in the block
+\*   Trav           crates/crdt/src/fugue.rs Tree::traverse
+\*   Restrict,      crates/crdt/src/fugue.rs Tree::present and Tree::dead: a
+\*   DeadIn         node or delete counts in a version when its block is in
+\*                  the version's Ancestry
+\*   Canon          crates/crdt/src/fugue.rs replay, through TextField's
+\*                  CausalCrdt::replay, from causal_history in
+\*                  merge_handler/field_causal.rs; the stored value is the
+\*                  replayed text, the tree is thrown away
+\*   PlaceRule      "fugue" is Tree::apply; "next" exists only for the RED
+\*                  configuration that breaks non-interleaving
+\*   NilTips        crates/crdt/src/field/text.rs nil_heads, through
+\*                  text_value in TextField's CausalCrdt::replay: null when
+\*                  every head writes null
+\*   NullRule       "heads" is NilTips on a concurrent merge; "last" exists
+\*                  only for the RED configuration that takes the null flag
+\*                  from whichever block arrived last
 \*   blocks         the document's DAG blocks for one Text field
 \*   applied        the blocks a peer has merged
 \*   tree, dead     the replay state a peer holds while it merges
+\*   isnull         whether the field reads null on a peer: the stored value
+\*                  is null rather than a text
 \*   order          the order a peer merged blocks in, used only by the RED
 \*                  configuration that orders siblings by arrival
-
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS
@@ -67,18 +106,24 @@ CONSTANTS
   MaxBlocks,    \* how many edit blocks may be written in all, so the model stays finite
   SiblingKey,   \* "id": siblings ordered by block ID (the design); "arrival": by arrival order
   CausalBuffer, \* TRUE: a block is merged only after its parents (the design)
-  ResolveAt     \* "parent": positions read in the block's parent version (the design);
+  ResolveAt,    \* "parent": positions read in the block's parent version (the design);
                 \* "current": in the receiving peer's current text
+  PlaceRule,    \* "fugue": a character whose left origin has no right child becomes
+                \* it (the design); "next": always the left child of the node after
+                \* its left origin
+  NullRule      \* "heads": a concurrent merge reads null from the heads (the design);
+                \* "last": from the block it merges, whatever came before
 
 VARIABLES
   blocks,   \* the blocks written so far, in the order they were written; the index is the block ID
   applied,  \* for each peer, the IDs of the blocks it has merged
   tree,     \* for each peer, its Fugue tree: one [id, parent, side] node per inserted character
   dead,     \* for each peer, its deletions: one [by, target] pair per merged delete block
-  order     \* for each peer, the block IDs in the order it merged them
+  order,    \* for each peer, the block IDs in the order it merged them
+  isnull    \* for each peer, whether the field reads null there
 
 \* Every variable, for "nothing changed".
-vars == <<blocks, applied, tree, dead, order>>
+vars == <<blocks, applied, tree, dead, order, isnull>>
 
 \* The IDs blocks may take. A real CID is a hash; here it is a number, and IDs
 \* are handed out in the order blocks are written. Since the model tries every
@@ -135,8 +180,10 @@ Place(T, D, pos, k) ==
       p    == Min(pos, Len(vis))                        \* a position past the end means the end
       lo   == IF p = 0 THEN Root ELSE vis[p]            \* the left origin: the character before
       i    == IF lo = Root THEN 0 ELSE IndexOf(full, lo) \* where the left origin sits, all counted
-  IN IF Kids(T, lo, "R") = {}
+  IN IF PlaceRule = "fugue" /\ Kids(T, lo, "R") = {}
        THEN [parent |-> lo, side |-> "R"]               \* no right child: become it
+       ELSE IF i + 1 > Len(full)                         \* the RED rule, at the very end:
+       THEN [parent |-> lo, side |-> "R"]               \* there is no next node to hang under
        ELSE [parent |-> full[i + 1], side |-> "L"]      \* else the left child of the next node
 
 \* The character a delete at position pos of the text T and D show removes.
@@ -161,13 +208,17 @@ IdKey == [i \in 0..MaxBlocks |-> i]
 Step(st, b, blk, V, k) ==
   LET T == Restrict(st.tree, V)    \* the tree as the version V shows it
       D == DeadIn(st.dead, V)      \* the deletions the version V shows
+      vis == Visible(T, D, k)      \* the characters the version V shows
   IN IF blk.kind = "ins"
        THEN [st EXCEPT !.tree = @ \cup                         \* add one node:
               {[id |-> b,                                       \* the new character,
                 parent |-> Place(T, D, blk.pos, k).parent,      \* under the node Fugue picks,
                 side |-> Place(T, D, blk.pos, k).side]}]        \* on the side Fugue picks
-       ELSE [st EXCEPT !.dead = @ \cup                         \* add one deletion:
+       ELSE IF blk.kind = "del"
+       THEN [st EXCEPT !.dead = @ \cup                         \* add one deletion:
               {[by |-> b, target |-> Target(T, D, blk.pos, k)]}] \* this block removes its character
+       ELSE [st EXCEPT !.dead = @ \cup                         \* a write of null clears
+              {[by |-> b, target |-> vis[i]] : i \in 1..Len(vis)}] \* every character the version shows
 
 \* Replaying the blocks in S from scratch, smallest ID first. IDs follow the
 \* order blocks were written, so every block comes after its parents, and each
@@ -206,11 +257,28 @@ Merged(p, b, blk) ==
        IF ResolveAt = "parent" THEN blk.anc ELSE applied[p], \* the version positions count in
        PeerKey(order[p]))                                    \* how it orders siblings
 
+\* The blocks of S nothing in S comes after: the heads S leaves.
+Tips(S) == {b \in S : \A c \in S : b \notin blocks[c].anc}
+
+\* The blocks of S leave the field null: there are some, and every head writes null.
+NilTips(S) == S # {} /\ \A t \in Tips(S) : blocks[t].kind = "nil"
+
+\* Whether the field reads null on peer p once it merges block b, with record
+\* blk. A block whose parents are the peer's heads (the blocks before it are
+\* all the peer holds, as for a block its author writes) is the only head after
+\* it, so it alone decides. Any other block merges beside a head, and the
+\* design reads the new heads; the RED configuration still asks only the block.
+NullAfter(p, b, blk) ==
+  IF NullRule = "last" \/ blk.anc = Closure(applied[p]) \* the block lands on the peer's heads
+    THEN blk.kind = "nil"                         \* null exactly when it writes null
+    ELSE NilTips(applied[p] \cup {b})             \* else what the new heads say
+
 \* Peer p records block b, with record blk, as merged.
 Record(p, b, blk) ==
   LET st == Merged(p, b, blk)                             \* the state after merging
   IN /\ tree' = [tree EXCEPT ![p] = st.tree]              \* its new tree
      /\ dead' = [dead EXCEPT ![p] = st.dead]              \* its new deletions
+     /\ isnull' = [isnull EXCEPT ![p] = NullAfter(p, b, blk)] \* whether it reads null
      /\ applied' = [applied EXCEPT ![p] = @ \cup {b}]     \* b is merged here
      /\ order' = [order EXCEPT ![p] = Append(@, b)]       \* and arrived last
 
@@ -218,11 +286,12 @@ Record(p, b, blk) ==
 TypeOK ==
   /\ Len(blocks) <= MaxBlocks                                \* no more blocks than allowed
   /\ \A i \in 1..Len(blocks) :                               \* each block is
-       blocks[i] \in [kind : {"ins", "del"},                 \* an insert or a delete,
+       blocks[i] \in [kind : {"ins", "del", "nil"},          \* an insert, a delete or a null,
                       pos : 0..MaxBlocks,                    \* at a position,
                       anc : SUBSET Ids]                      \* with the blocks before it
   /\ applied \in [Peers -> SUBSET Ids]                       \* each peer merged some blocks
   /\ order \in [Peers -> Seq(Ids)]                           \* in some order
+  /\ isnull \in [Peers -> BOOLEAN]                           \* each peer reads null or not
   /\ \A p \in Peers : \A x \in tree[p] : x.id \in Ids        \* tree nodes are characters
   /\ \A p \in Peers : \A d \in dead[p] : d.by \in Ids        \* deletions come from blocks
 
@@ -233,6 +302,7 @@ Init ==
   /\ tree = [p \in Peers |-> {}]        \* every tree is just the root
   /\ dead = [p \in Peers |-> {}]        \* nothing deleted
   /\ order = [p \in Peers |-> <<>>]     \* nothing arrived
+  /\ isnull = [p \in Peers |-> FALSE]  \* nothing reads null yet
 
 \* Peer q writes an edit of kind kind at position pos of the text it shows.
 \* Its parents are the blocks it has merged, and it merges its own block at once.
@@ -244,13 +314,14 @@ Create(q, kind, pos) ==
      IN /\ blocks' = Append(blocks, blk)           \* the block exists now
         /\ Record(q, b, blk)                       \* and its author has merged it
 
-\* Some peer writes some edit: an insert anywhere in its text, or a delete of
-\* one of its characters.
+\* Some peer writes some edit: an insert anywhere in its text, a delete of
+\* one of its characters, or a write of null.
 Write ==
   \E q \in Peers :                                      \* some peer
     LET n == Len(PeerText(q))                           \* the length of its text
     IN \/ \E pos \in 0..n : Create(q, "ins", pos)       \* inserts before, between or after
        \/ n > 0 /\ \E pos \in 0..(n - 1) : Create(q, "del", pos) \* or deletes a character
+       \/ Create(q, "nil", 0)                           \* or writes null
 
 \* Block b reaches peer p and is merged. The design waits until every block
 \* before it is merged; the RED configuration merges it on arrival.
@@ -281,6 +352,18 @@ INV_Converge ==
 \* A set of blocks that holds every block before each of its own.
 Closed(S) == Closure(S) = S
 
+\* Two peers that merged the same blocks agree on whether the field is null.
+INV_NullConverge ==
+  \A p, q \in Peers : applied[p] = applied[q] => isnull[p] = isnull[q]
+
+\* A peer's null flag, built one block at a time, is what its heads say.
+INV_NullMatchesReplay ==
+  \A p \in Peers : Closed(applied[p]) => (isnull[p] <=> NilTips(applied[p]))
+
+\* A field that reads null shows no character.
+INV_NullEmpty ==
+  \A p \in Peers : isnull[p] => PeerText(p) = <<>>
+
 \* A peer's text, built one block at a time in whatever order they came, is the
 \* text replaying its blocks from scratch shows.
 INV_MatchesReplay ==
@@ -292,15 +375,18 @@ InsertAt(s, pos, x) == SubSeq(s, 1, pos) \o <<x>> \o SubSeq(s, pos + 1, Len(s))
 \* Sequence s with its element number pos + 1 taken out.
 RemoveAt(s, pos) == SubSeq(s, 1, pos) \o SubSeq(s, pos + 2, Len(s))
 
-\* An insert at position p of its parent version lands right there, and a
-\* delete at position p removes exactly that character; nothing else moves.
+\* An insert at position p of its parent version lands right there, a delete
+\* at position p removes exactly that character, and a write of null removes
+\* every character; nothing else moves.
 INV_Intent ==
   \A b \in Created :
     LET before == CanonText(blocks[b].anc)            \* the parent version's text
         after  == CanonText(blocks[b].anc \cup {b})   \* that text with this block added
     IN IF blocks[b].kind = "ins"
          THEN after = InsertAt(before, blocks[b].pos, b) \* the character is at its position
-         ELSE after = RemoveAt(before, blocks[b].pos)    \* the character at its position is gone
+       ELSE IF blocks[b].kind = "del"
+         THEN after = RemoveAt(before, blocks[b].pos)    \* the character at its position is gone
+         ELSE after = <<>>                               \* nothing is left
 
 \* Every peer puts each character, and each deletion, exactly where the
 \* block's author put it in the block's own parent version.
@@ -308,4 +394,24 @@ INV_PlacedAsIntended ==
   \A p \in Peers :
     /\ \A x \in tree[p] : x \in Canon(blocks[x.id].anc \cup {x.id}).tree \* same parent and side
     /\ \A d \in dead[p] : d \in Canon(blocks[d.by].anc \cup {d.by}).dead  \* same character removed
+
+\* Block b2 was typed right after block b1: both insert, b1 is before b2 in the
+\* DAG, and in the text b2's author made, b2 sits right after b1.
+TypedAfter(b1, b2) ==
+  /\ blocks[b1].kind = "ins"                               \* b1 inserts a character
+  /\ blocks[b2].kind = "ins"                               \* so does b2
+  /\ b1 \in blocks[b2].anc                                \* b2's author knew b1
+  /\ LET t == CanonText(blocks[b2].anc \cup {b2})        \* the text right after b2
+     IN \E i \in 1..(Len(t) - 1) : t[i] = b1 /\ t[i + 1] = b2 \* where b2 follows b1
+
+\* A character typed right after another is never split from it by one
+\* written without knowing the first: whatever sits between them in any
+\* peer's text was written by someone who had seen b1. So two runs typed at
+\* one spot at the same time each stay whole.
+INV_NoInterleave ==
+  \A p \in Peers : \A b1, b2 \in applied[p] :                \* on every peer, each pair
+    TypedAfter(b1, b2) =>                                     \* of typed-after characters
+      LET t == PeerText(p)                                    \* in the text it shows
+      IN \A i, j, m \in 1..Len(t) :                           \* any character between them
+           (t[i] = b1 /\ t[j] = b2 /\ i < m /\ m < j) => b1 \in blocks[t[m]].anc \* knew b1
 ====

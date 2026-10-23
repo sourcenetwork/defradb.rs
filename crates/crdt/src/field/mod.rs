@@ -6,10 +6,16 @@
 //! states merge. Callers find a type through [`field_crdt`] (by the field's
 //! declared type), [`delta_crdt`] (by the block that carries it) or
 //! [`part_crdt`] (by the stored part), and never branch on the kind.
+//!
+//! Most types merge a block into the stored value on its own. A type whose
+//! operations count in the value they edit, such as positions in a text,
+//! merges by causal replay instead ([`CausalCrdt`]).
 
+mod causal;
 mod counter;
 mod lww;
 pub mod testing;
+mod text;
 
 use defra_core::block::CrdtDelta;
 use document::{FieldOp, NormalValue};
@@ -17,8 +23,10 @@ use schema::{CType, FieldDescription};
 
 use crate::stored::{Part, StoredField, ValueKind};
 
+pub use causal::{history_op, CausalBlock, CausalCrdt};
 pub use counter::{counter_kind, CounterField};
 pub use lww::LwwField;
+pub use text::TextField;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FieldCrdtError {
@@ -34,6 +42,8 @@ pub enum FieldCrdtError {
     Decode { field: String, message: String },
     #[error("cannot encode block data: {0}")]
     Encode(String),
+    #[error("the history of field {field} cannot be replayed: {message}")]
+    History { field: String, message: String },
     #[error(transparent)]
     Stored(#[from] document::Error),
     #[error("field '{field}' is declared {declared}, but its block is of type {block}")]
@@ -58,7 +68,9 @@ pub struct DeltaParts<'name> {
 
 /// What a local write's block carries, and how it reaches the document value.
 pub struct FieldWrite<'value> {
-    /// The value or operation the block carries.
+    /// The value or operation the block carries, unless the type writes its
+    /// block data otherwise ([`FieldCrdt::block_data`]), and the operand the
+    /// document value takes.
     pub data: &'value NormalValue,
     /// Whether `data` merges into the stored value as an operand. When it does
     /// not, the document value is put whole.
@@ -115,6 +127,16 @@ pub trait FieldCrdt: Send + Sync {
         op: Option<&'value FieldOp>,
     ) -> FieldWrite<'value>;
 
+    /// The data of the block a local write of `value`, by `op` when it has
+    /// one, carries; `None` when the write leaves nothing to replicate.
+    fn block_data(
+        &self,
+        value: &NormalValue,
+        op: Option<&FieldOp>,
+    ) -> Result<Option<Vec<u8>>, FieldCrdtError> {
+        self.encode(self.write(value, op).data).map(Some)
+    }
+
     /// The block data of `data`, the value or operation a block carries.
     fn encode(&self, data: &NormalValue) -> Result<Vec<u8>, FieldCrdtError> {
         let mut bytes = Vec::with_capacity(data.cbor_size_hint());
@@ -159,11 +181,27 @@ pub trait FieldCrdt: Send + Sync {
     /// Whether merges into states like `state` give the same result in any
     /// grouping, so two pending operands may fold before their base is known.
     fn folds_exactly(&self, state: Part<'_>) -> bool;
+
+    /// How the type merges by causal replay, for a type whose operations
+    /// count in the value they edit; `None` for a type whose blocks merge into
+    /// the stored value one by one.
+    fn causal(&self) -> Option<&dyn CausalCrdt> {
+        None
+    }
+
+    /// Whether a write's operation is blind: it does not depend on the value
+    /// it lands on, so the write decides nothing on that value. True for a
+    /// type that replicates operations, unless they count in the value they
+    /// edit.
+    fn blind_op(&self) -> bool {
+        self.replicates_ops() && self.causal().is_none()
+    }
 }
 
 static LWW: LwwField = LwwField;
 static P_COUNTER: CounterField = CounterField::new(CType::PCounter);
 static PN_COUNTER: CounterField = CounterField::new(CType::PnCounter);
+static TEXT: TextField = TextField;
 
 /// The CRDT type a field declares, or `None` for a type with no field blocks
 /// (`None`, `Object`, `Composite`, unknown).
@@ -172,6 +210,7 @@ pub fn field_crdt(ctype: CType) -> Option<&'static dyn FieldCrdt> {
         CType::LwwRegister => Some(&LWW),
         CType::PCounter => Some(&P_COUNTER),
         CType::PnCounter => Some(&PN_COUNTER),
+        CType::Text => Some(&TEXT),
         _ => None,
     }
 }
@@ -195,9 +234,13 @@ pub fn delta_crdt(
         block,
     };
     match (delta, declared) {
-        (CrdtDelta::Lww(_), CType::PCounter | CType::PnCounter) => Err(mismatched("LWW")),
+        (CrdtDelta::Text(_), CType::Text | CType::None) => Ok(&TEXT),
+        (CrdtDelta::Text(_), _) => Err(mismatched("text")),
+        (CrdtDelta::Lww(_), CType::PCounter | CType::PnCounter | CType::Text) => {
+            Err(mismatched("LWW"))
+        }
         (CrdtDelta::Lww(_), _) => Ok(&LWW),
-        (CrdtDelta::Counter(_), CType::LwwRegister) => Err(mismatched("counter")),
+        (CrdtDelta::Counter(_), CType::LwwRegister | CType::Text) => Err(mismatched("counter")),
         (CrdtDelta::Counter(_), CType::PnCounter) => Ok(&PN_COUNTER),
         (CrdtDelta::Counter(_), _) => Ok(&P_COUNTER),
         _ => Err(FieldCrdtError::NotAFieldBlock),
@@ -210,5 +253,6 @@ pub fn part_crdt(kind: ValueKind) -> &'static dyn FieldCrdt {
     match kind {
         ValueKind::Lww => &LWW,
         ValueKind::Int64 | ValueKind::Float32 | ValueKind::Float64 => &PN_COUNTER,
+        ValueKind::Text => &TEXT,
     }
 }

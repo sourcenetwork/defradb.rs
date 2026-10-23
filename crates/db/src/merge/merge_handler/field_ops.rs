@@ -122,7 +122,7 @@ where
 /// The field's part of the document value, as an operand target, when the
 /// stored value is on `collection`'s schema version and has part IDs. `None`
 /// otherwise: such a value is rewritten whole by its composite.
-async fn op_target(
+pub(super) async fn op_target(
     datastore: &NamespaceView,
     collection: &Collection,
     doc_short_id: u64,

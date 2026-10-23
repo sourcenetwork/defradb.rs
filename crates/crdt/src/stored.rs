@@ -22,6 +22,7 @@ pub enum ValueKind {
     Int64 = 1,
     Float32 = 2,
     Float64 = 3,
+    Text = 4,
 }
 
 impl ValueKind {
@@ -31,6 +32,7 @@ impl ValueKind {
             1 => ValueKind::Int64,
             2 => ValueKind::Float32,
             3 => ValueKind::Float64,
+            4 => ValueKind::Text,
             _ => return None,
         })
     }

@@ -28,6 +28,8 @@ mod replication_advanced;
 mod resilience;
 #[path = "p2p/sync.rs"]
 mod sync;
+#[path = "p2p/text_crdt.rs"]
+mod text_crdt;
 #[path = "p2p/transports.rs"]
 mod transports;
 #[path = "p2p/trust_boundary.rs"]

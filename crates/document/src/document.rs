@@ -316,8 +316,8 @@ impl Document {
 
     /// Express an operation on a field. The field must exist in the collection
     /// definition. `Set` writes the value, as [`Document::set`] does. Any other
-    /// operation is kept as the field's pending operation and leaves its value
-    /// alone: the caller holds the type's arithmetic and sets the value the
+    /// operation follows the field's pending operation ([`FieldOp::then`]) and
+    /// leaves its value alone: the caller holds the type's arithmetic and sets the value the
     /// operation materializes to.
     pub fn edit(&mut self, field: impl Into<String>, op: FieldOp) -> Result<()> {
         let field = field.into();
@@ -327,6 +327,10 @@ impl Document {
                 if self.crdt_type(&field).is_none() {
                     return Err(Error::FieldNotExist(field));
                 }
+                let op = match self.pending_ops.remove(&field) {
+                    Some(pending) => pending.then(op),
+                    None => op,
+                };
                 self.pending_ops.insert(field, op);
                 self.is_dirty = true;
                 Ok(())

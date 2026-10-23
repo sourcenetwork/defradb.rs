@@ -54,9 +54,9 @@ mod tests;
 /// field's last-writer-wins order exactly as every replica settles the two
 /// blocks. So a write loses a race on its fields at most once. A field whose
 /// old value a rule reads stays decided on every run: an index component, an
-/// embedding source, an immutable field, a field a filter compares, and every
-/// field of a downsampled collection, whose series claim moves with the old
-/// value.
+/// embedding source, an immutable field, a field a filter compares, a causal
+/// field, whose operation counts in its old value, and every field of a
+/// downsampled collection, whose series claim moves with the old value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Run {
     /// The write's first run, or a run after it lost for another reason.
@@ -98,7 +98,7 @@ impl Run {
         let mut parts = self.written(collection, &collection.indexes, patch, |name| {
             field(collection, name)
                 .and_then(|field| crdt::field_crdt(field.crdt_type))
-                .is_some_and(|crdt| crdt.replicates_ops())
+                .is_some_and(|crdt| crdt.blind_op())
         });
         if let Some(filter) = filter {
             parts.extend(compared(collection, filter)?);
@@ -121,7 +121,11 @@ impl Run {
         let merged = |name: &str| {
             self == Self::AfterLostPart
                 && collection.downsample_source.is_none()
-                && field(collection, name).is_some_and(|field| !field.immutable)
+                && field(collection, name).is_some_and(|field| {
+                    !field.immutable
+                        && crdt::field_crdt(field.crdt_type)
+                            .is_none_or(|crdt| crdt.causal().is_none())
+                })
         };
         let mut parts: RapidHashSet<String> = modified
             .iter()

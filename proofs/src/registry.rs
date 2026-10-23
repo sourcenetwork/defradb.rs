@@ -394,17 +394,19 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
-        // The Text CRDT (#2127) is specified before it is written. Peers that
-        // merged the same blocks show the same text, a peer's text built one
-        // block at a time equals a replay from scratch, and every edit lands
-        // at its position in its own parent version. Bound as a boundary until
-        // crates/crdt/src/text.rs exists.
+        // Peers that merged the same blocks show the same text, a peer's text
+        // built one block at a time equals a replay from scratch, every edit
+        // lands at its position in its own parent version, and a run typed at
+        // one spot is never split by a concurrent one; a write of null reads
+        // null exactly while every head writes null. The crdt tests check the
+        // same invariants on random DAGs; the db tests merge real blocks
+        // between two nodes.
         family: "Text CRDT convergence",
-        name: "INV_Converge / INV_MatchesReplay / INV_Intent / INV_PlacedAsIntended: Fugue text converges and keeps every edit where its author put it",
+        name: "INV_Converge / INV_MatchesReplay / INV_Intent / INV_PlacedAsIntended / INV_NoInterleave / INV_NullConverge / INV_NullMatchesReplay / INV_NullEmpty: Fugue text converges, keeps every edit where its author put it, never interleaves runs, and reads null only when every head writes null",
         axis: Tla,
-        anchor: "planned: crates/crdt/src/text.rs (Fugue placement, CID sibling order, replay); crates/db/src/merge/merge_handler/text.rs (merge after parents)",
-        model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText}.cfg",
-        tiers: &[Boundary],
+        anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, replay; crates/crdt/src/field/text.rs TextField (block_data, CausalCrdt diff, block_op, replay, nil_heads); crates/db/src/merge/merge_handler/field_causal.rs merge_field_causal, causal_history; crates/db/src/write/autocommit/helpers.rs apply_field_ops; crates/crdt/src/fugue_tests.rs, crates/crdt/src/field/testing.rs check_causal, crates/db/tests/merge/text_merge.rs",
+        model_ref: "MC_TextCrdt_{Green,Red_ArrivalOrder,Red_NoCausalBuffer,Red_CurrentText,Red_NextNode,Red_NullLast}.cfg",
+        tiers: &[Contract],
     },
     Property {
         // Fugue's rule puts an inserted character right after its left origin
@@ -413,9 +415,9 @@ pub const PROPERTIES: &[Property] = &[
         family: "Text CRDT convergence",
         name: "place_visible / delete_visible / attach_comm: intention preservation and arrival-order independence of the Fugue tree",
         axis: Lean,
-        anchor: "planned: crates/crdt/src/text.rs",
+        anchor: "crates/crdt/src/fugue.rs Tree::apply, Tree::attach, Tree::traverse",
         model_ref: "TextCrdt.Fugue (lake build)",
-        tiers: &[Boundary],
+        tiers: &[Contract],
     },
     Property {
         family: "Storage transaction validation",

@@ -1,7 +1,8 @@
 //! One field block merged into its document, whichever CRDT wrote it. A state
 //! joins the field's register ([`field_state`](super::field_state)); an
 //! operation applies to the document value exactly once
-//! ([`field_ops`](super::field_ops)).
+//! ([`field_ops`](super::field_ops)), or, for a causal type, in its parent
+//! version ([`field_causal`](super::field_causal)).
 use super::*;
 use crate::collection::value::FieldOrder;
 
@@ -70,6 +71,8 @@ where
             fallback_collection_id,
             doc_id_str,
             doc_short_id,
+            None,
+            None,
             &mut super::block_reads::BlockReads::default(),
             true,
         )
@@ -77,7 +80,8 @@ where
     }
 
     /// [`merge_field_in_txn`](Self::merge_field_in_txn), or with `standalone`
-    /// false, for a block of a composite merge, sharing its block reads.
+    /// false, for a block of a composite merge, sharing its block reads;
+    /// `parents` are the block's own, when the caller has decoded it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn merge_field_delta_in_txn(
         &self,
@@ -88,6 +92,8 @@ where
         fallback_collection_id: Option<&str>,
         doc_id_str: &str,
         doc_short_id: u64,
+        parents: Option<&[Cid]>,
+        metadata: Option<&BlockMetadata<'_>>,
         reads: &mut super::block_reads::BlockReads,
         standalone: bool,
     ) -> std::result::Result<FieldMergeResult, MergeError> {
@@ -149,6 +155,25 @@ where
                 field_delta.field_name
             ))
         })?;
+        if let Some(causal) = crdt.causal() {
+            return self
+                .merge_field_causal(
+                    datastore,
+                    headstore,
+                    cid,
+                    crdt,
+                    causal,
+                    collection,
+                    field,
+                    &field_delta,
+                    doc_id_str,
+                    doc_short_id,
+                    parents,
+                    metadata,
+                    reads,
+                )
+                .await;
+        }
         self.apply_field_op_once(
             datastore,
             headstore,

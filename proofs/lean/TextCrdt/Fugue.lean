@@ -27,10 +27,14 @@ its parents, positions read in the parent version) is the TLA+ model
 `proofs/tla/TextCrdt.tla`; this file carries the tree laws that model checks
 only on small cases.
 
-Rust anchors: the Text CRDT is not written yet. This file is its contract
-(issue #2127), for `crates/crdt/src/text.rs` (Fugue placement, sibling order
-by CID, replay) and `crates/db/src/merge/merge_handler/text.rs` (merging a
-received block).
+Rust anchors, in `crates/crdt/src/fugue.rs`: `Tree::apply` hangs a new
+character as `Tree.place` does (`place_visible`, `place_root_first`) and marks a
+deleted one dead as `delete_visible` does; `Tree::attach` keeps siblings
+sorted by ID, block CID then offset, as `Tree.attach` and `insSorted` do
+(`attach_comm`); `Tree::traverse` reads the tree as `Tree.trav` does.
+`replay` builds the tree; `crates/crdt/src/field/text.rs` `TextField` replays
+a field's history with it, and `crates/db/src/merge/merge_handler/field_causal.rs`
+`merge_field_causal` merges a received block through it.
 -/
 
 namespace TextCrdt
