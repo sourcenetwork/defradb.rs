@@ -95,15 +95,15 @@ impl ActionExecutionLease {
         Ok(Self { registry, key })
     }
 
-    fn collection_id(&self) -> &str {
+    pub(crate) fn collection_id(&self) -> &str {
         &self.key.collection_id
     }
 
-    fn action(&self) -> Action {
+    pub(crate) fn action(&self) -> Action {
         self.key.action
     }
 
-    fn subject(&self) -> &str {
+    pub(crate) fn subject(&self) -> &str {
         &self.key.subject
     }
 }
@@ -122,6 +122,25 @@ async fn delete_keys(systemstore: &datastore::NamespaceView, keys: &[Vec<u8>]) -
         systemstore.delete(key).await.map_err(Error::Storage)?;
     }
     Ok(())
+}
+
+/// Mark an action's record errored with `reason`, keeping its progress.
+pub(crate) async fn stage_action_failure(
+    systemstore: &datastore::NamespaceView,
+    collection_id: &str,
+    action: Action,
+    subject: &str,
+    reason: &str,
+) -> Result<()> {
+    let [status_key, reason_key, _] = action_record_keys(collection_id, action, subject);
+    systemstore
+        .set(&status_key, &encode_status(ActionStatus::ERRORED))
+        .await
+        .map_err(Error::Storage)?;
+    systemstore
+        .set(&reason_key, reason.as_bytes())
+        .await
+        .map_err(Error::Storage)
 }
 
 impl Drop for ActionExecutionLease {
@@ -206,32 +225,33 @@ impl<S: Store> crate::database::DB<S> {
     }
 
     pub async fn fail_action(&self, lease: ActionExecutionLease, reason: &str) -> Result<()> {
-        let collection_id = lease.collection_id();
-        let action = lease.action();
-        let subject = lease.subject();
         let txn = self.new_txn(false).await?;
         let systemstore = txn.systemstore()?;
-        let [status_key, reason_key, progress] = action_record_keys(collection_id, action, subject);
-        systemstore
-            .set(&status_key, &encode_status(ActionStatus::ERRORED))
-            .await
-            .map_err(Error::Storage)?;
-        systemstore
-            .set(&reason_key, reason.as_bytes())
-            .await
-            .map_err(Error::Storage)?;
+        stage_action_failure(
+            &systemstore,
+            lease.collection_id(),
+            lease.action(),
+            lease.subject(),
+            reason,
+        )
+        .await?;
+        let [_, _, progress] =
+            action_record_keys(lease.collection_id(), lease.action(), lease.subject());
         delete_keys(&systemstore, &[progress]).await?;
         drop(systemstore);
         txn.commit().await?;
+        self.publish_failed_action(&lease, reason);
+        Ok(())
+    }
 
+    pub(crate) fn publish_failed_action(&self, lease: &ActionExecutionLease, reason: &str) {
         self.publish_action(ActionExecution {
-            collection_id: collection_id.to_string(),
-            action,
-            subject: subject.to_string(),
+            collection_id: lease.collection_id().to_string(),
+            action: lease.action(),
+            subject: lease.subject().to_string(),
             status: ActionStatus::ERRORED,
             reason: reason.to_string(),
         });
-        Ok(())
     }
 
     pub async fn complete_action(&self, lease: ActionExecutionLease) -> Result<()> {
