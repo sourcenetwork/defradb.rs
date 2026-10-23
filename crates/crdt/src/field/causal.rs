@@ -23,8 +23,10 @@ pub struct CausalBlock {
 /// - a block whose parents are exactly the field's heads applies to the stored
 ///   value through [`FieldCrdt::apply`], since the stored value is then its
 ///   parent version;
-/// - any other block replays the field's history: every block under the
-///   field's heads, and the block.
+/// - any other block merges from the field's last critical block, one every
+///   other block of the field comes before or after, when the type can
+///   ([`merge_from`](Self::merge_from)), and otherwise replays the field's
+///   history: every block under the field's heads, and the block.
 ///
 /// The stored value is the replay of the field's history. Every write and
 /// merge of the field reads it validated and replaces it whole, so its part
@@ -55,6 +57,39 @@ pub trait CausalCrdt: Send + Sync {
         field: &FieldDescription,
         history: &[CausalBlock],
     ) -> Result<NormalValue, FieldCrdtError>;
+
+    /// The value after merging the block `new` into `current`, the value of
+    /// every other block, from a critical block whose data is `critical`:
+    /// every block of the field comes before or after it. `after` holds the
+    /// blocks after it, `new` among them; a parent they name outside `after`
+    /// is the critical block or one before it. `None` when the type cannot
+    /// merge from there (by default, always), or `current` does not fit the
+    /// blocks; the caller then replays the whole history. Whatever it returns
+    /// equals that replay.
+    fn merge_from(
+        &self,
+        _field: &FieldDescription,
+        _current: Option<&NormalValue>,
+        _critical: &[u8],
+        _after: &[CausalBlock],
+        _new: &[u8],
+    ) -> Result<Option<NormalValue>, FieldCrdtError> {
+        Ok(None)
+    }
+
+    /// Refuse a block whose `data` records something of its own version that
+    /// `value`, that version, contradicts. A merge whose result is the
+    /// block's own version (its parents hold every block merged before)
+    /// checks it, so a block only becomes critical for
+    /// [`merge_from`](Self::merge_from) once what it records holds.
+    fn check_version(
+        &self,
+        _field: &FieldDescription,
+        _data: &[u8],
+        _value: &NormalValue,
+    ) -> Result<(), FieldCrdtError> {
+        Ok(())
+    }
 }
 
 /// The operation a block of a causal field's history makes: its own, when a

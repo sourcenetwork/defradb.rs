@@ -55,6 +55,18 @@
 \* row, each the parent of the next, so every character of a run is the right
 \* child of the one before it (crdt::fugue::Tree::apply).
 \*
+\* Merging a block that is concurrent with the field's heads does not replay
+\* the whole history. It finds the last critical block: one that every other
+\* block either comes before or after in the DAG. The text at that block is
+\* known in length (every block records the length of its own version's text,
+\* checked when it merged), and the stored text supplies its characters. The
+\* replay starts from a chain of placeholder characters standing for that
+\* text, and runs only the blocks after the critical one. The characters
+\* deleted before it are gone from the chain, yet the result must equal a
+\* full replay. A block that is merely an ancestor of every head is not
+\* enough: something concurrent with it would be replayed against a text
+\* that already holds it.
+\*
 \* Correspondence table (model -> Rust):
 \*   Create         crates/db/src/write/autocommit/helpers.rs apply_field_ops:
 \*                  a write diffs the stored text against the new value
@@ -84,11 +96,22 @@
 \*                  CausalCrdt::replay, from causal_history in
 \*                  merge_handler/field_causal.rs; the stored value is the
 \*                  replayed text, the tree is thrown away
+\*   PhReplay       crates/crdt/src/fugue.rs merge_text (Tree::with_placeholder
+\*                  builds the chain), through TextField's CausalCrdt::merge_from,
+\*                  called from merge_handler/field_causal.rs merge_field_causal
+\*                  once critical_block has found the block; its length is
+\*                  TextEdits::len of that block
+\*   Critical       crates/db/src/merge/merge_handler/field_causal.rs
+\*                  critical_block: the walk down from the heads and the new
+\*                  block that stops when one block is left and no root was
+\*                  passed
+\*   ReplayFrom     "critical" is critical_block; "ancestor" exists only for
+\*                  the RED configuration
 \*   PlaceRule      "fugue" is Tree::apply; "next" exists only for the RED
 \*                  configuration that breaks non-interleaving
 \*   NilTips        crates/crdt/src/field/text.rs nil_heads, through
-\*                  text_value in TextField's CausalCrdt::replay: null when
-\*                  every head writes null
+\*                  text_value in TextField's CausalCrdt::replay and
+\*                  merge_from: null when every head writes null
 \*   NullRule       "heads" is NilTips on a concurrent merge; "last" exists
 \*                  only for the RED configuration that takes the null flag
 \*                  from whichever block arrived last
@@ -111,6 +134,8 @@ CONSTANTS
   PlaceRule,    \* "fugue": a character whose left origin has no right child becomes
                 \* it (the design); "next": always the left child of the node after
                 \* its left origin
+  ReplayFrom,   \* "critical": a concurrent merge replays from a critical block (the
+                \* design); "ancestor": from any block before every head
   NullRule      \* "heads": a concurrent merge reads null from the heads (the design);
                 \* "last": from the block it merges, whatever came before
 
@@ -368,6 +393,38 @@ INV_NullEmpty ==
 \* text replaying its blocks from scratch shows.
 INV_MatchesReplay ==
   \A p \in Peers : Closed(applied[p]) => PeerText(p) = CanonText(applied[p])
+
+\* Block x is critical in S: every other block of S comes before x or after it.
+Critical(S, x) ==
+  \A b \in S : b = x \/ b \in blocks[x].anc \/ x \in blocks[b].anc
+
+\* The blocks a concurrent merge of S may replay from. The design takes the
+\* critical ones; the RED configuration takes any block before every head.
+StartPoints(S) ==
+  IF ReplayFrom = "critical"
+    THEN {x \in S : Critical(S, x)}                               \* every block on one side of x
+    ELSE {x \in S : \A t \in Tips(S) : t = x \/ x \in blocks[t].anc} \* x is under every head
+
+\* The text at x's version as a chain of placeholder characters: each the
+\* right child of the one before, the first under the root. A placeholder
+\* keeps the ID of the character it stands for; the deleted ones are gone.
+Chain(base) ==
+  {[id |-> base[i],                                  \* the character it stands for
+    parent |-> IF i = 1 THEN Root ELSE base[i - 1],  \* hung on the one before it
+    side |-> "R"] : i \in 1..Len(base)}              \* as its right child
+
+\* The text replaying S from x shows: the placeholders for x's version, then
+\* every block of S after x, each reading positions in its own parent version.
+PhReplay(S, x) ==
+  LET C  == {x} \cup blocks[x].anc                            \* x and everything before it
+      st == CanonFrom(S \ C, [tree |-> Chain(CanonText(C)), dead |-> {}]) \* the rest replayed
+  IN Visible(st.tree, {d.target : d \in st.dead}, IdKey)      \* read with siblings by ID
+
+\* Replaying a peer's blocks from any start point the merge may pick gives the
+\* same text as replaying them all.
+INV_CriticalReplay ==
+  \A p \in Peers : Closed(applied[p]) =>
+    \A x \in StartPoints(applied[p]) : PhReplay(applied[p], x) = CanonText(applied[p])
 
 \* Sequence s with x put in after its first pos elements.
 InsertAt(s, pos, x) == SubSeq(s, 1, pos) \o <<x>> \o SubSeq(s, pos + 1, Len(s))

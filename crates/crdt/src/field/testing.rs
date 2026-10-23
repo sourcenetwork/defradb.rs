@@ -214,10 +214,21 @@ pub fn check_causal(
             "diff({current:?}, {value:?}) applied"
         );
         assert_eq!(block_op(value, Some(&op)), op, "{op:?} round trips");
+        let data = crdt
+            .block_data(value, Some(&op))
+            .expect("block data encodes")
+            .expect("an edit makes a block");
+        causal
+            .check_version(field, &data, value)
+            .expect("a block fits its own version");
         op
     };
     let values: Vec<&NormalValue> = values.iter().filter(|value| !value.is_nil()).collect();
     for &base in &values {
+        let first_data = crdt
+            .block_data(base, None)
+            .expect("block data encodes")
+            .expect("a write of a value makes a block");
         let first = block(0, &[], block_op(base, None));
         assert_eq!(
             &replay(std::slice::from_ref(&first)),
@@ -238,6 +249,22 @@ pub fn check_causal(
                 let right = block(2, &[0], diff(base, b));
                 let concurrent = [first.clone(), left.clone(), right];
                 let merged = replay(&concurrent);
+                let left_value = crdt.apply(field, Some(base), &left.op).expect("applies");
+                if let Some(from_first) = causal
+                    .merge_from(
+                        field,
+                        Some(&left_value),
+                        &first_data,
+                        &concurrent[1..],
+                        &concurrent[2].id,
+                    )
+                    .expect("a merge from the first block")
+                {
+                    assert_eq!(
+                        from_first, merged,
+                        "{a:?} and {b:?} merged from the first block"
+                    );
+                }
                 for order in permutations(&concurrent) {
                     assert_eq!(replay(&order), merged, "merge order {order:?}");
                 }

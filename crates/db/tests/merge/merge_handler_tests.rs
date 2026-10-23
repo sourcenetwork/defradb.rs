@@ -1529,7 +1529,12 @@ fn a_text_block_on_an_lww_field_is_refused() {
             field_name: "name".to_string(),
             schema_version_id: "v1".to_string(),
             priority: 2,
-            data: defra_core::TextOp::encode_all(&defra_core::TextOp::diff("", "Bo")).unwrap(),
+            data: defra_core::TextEdits {
+                ops: defra_core::TextOp::diff("", "Bo"),
+                len: 2,
+            }
+            .encode()
+            .unwrap(),
         };
         let block = Block::new(CrdtDelta::Text(payload.clone()), vec![], vec![]);
         let cid = block.generate_cid().unwrap();
