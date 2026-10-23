@@ -73,7 +73,7 @@ section is the **diff**: what is proven vs. the accepted gap.
 | Text CRDT convergence | TLA+ & Lean | crdt, db-merge |
 | JSON CRDT per-path merge | TLA+ & Lean | crdt, db-merge (specified before the code, #2129) |
 | Custom CRDT types | TLA+ & Lean | crdt, schema, db-merge, p2p (#2183) |
-| Document create pipeline | TLA+ | db, db-block-builder |
+| Document write pipeline | TLA+ | db, db-block-builder |
 
 ### Backlog — current retry-era gaps
 This inventory includes legacy models and does not mean every current mechanism is

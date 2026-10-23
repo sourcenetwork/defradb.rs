@@ -1,11 +1,9 @@
-use super::helpers::{
-    register_block_doc_id_mappings, write_branchable_collection_block, write_local_update,
-};
 use super::*;
 use events::{Message, Update};
 use storage::corekv::OnCommit;
 
-use crate::block::builder::DocRef;
+use crate::write::update as pipeline;
+use crate::write::WriteStores;
 use query::runner::DocFetcher;
 
 struct UpdateRetryAttempt<S: Store> {
@@ -351,7 +349,6 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 other => query::error::QueryError::execution(other.to_string()),
             })?;
         current_doc.set_id(canonical_doc_id.clone());
-        let embedding_config = self.db.options().embedding_config();
         let inputs = attempt.prepared_inputs.clone().unwrap_or_default();
         let index_manager = IndexManager::from_indexes(
             collection.resolved_root_id(),
@@ -364,62 +361,39 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
         let index_manager = index_manager.with_vector_caches(self.db.vector_codes());
         let result: query::error::Result<(Document, usize, Cid, Bytes, Option<(Cid, Bytes)>)> =
             async {
-                self.db
-                    .validate_downsample_write(
-                        &datastore,
-                        &systemstore,
-                        &collection,
-                        &current_doc,
-                        Some(&modified_fields),
-                    )
-                    .await
-                    .map_err(|error| query::error::QueryError::execution(error.to_string()))?;
-                let heads = attempt.heads.for_attempt(&headstore, doc_short_id).await?;
-                write_local_update(
-                    &datastore,
-                    &collection,
-                    &mut current_doc,
+                let stores = WriteStores {
+                    datastore: &datastore,
+                    systemstore: &systemstore,
+                    blockstore: &blockstore,
+                    headstore: &headstore,
+                };
+                let doc_id_text = canonical_doc_id.to_string();
+                let target = pipeline::Target {
+                    collection_name: &attempt.collection_name,
+                    collection: &collection,
                     doc_short_id,
+                    doc_id: &doc_id_text,
+                };
+                let heads = attempt.heads.for_attempt(&headstore, doc_short_id).await?;
+                pipeline::write_local(
+                    &self.db,
+                    &stores,
+                    &target,
+                    &mut current_doc,
                     &index_manager,
                     &mut modified_fields,
                     &heads,
                     run,
-                    &embedding_config,
                     &inputs,
                 )
                 .await?;
-                let block_result = write_document_blocks_with_inputs(
-                    &blockstore,
-                    &headstore,
-                    &current_doc,
-                    collection.schema(),
-                    DocRef::new(collection.resolved_root_id(), doc_short_id),
-                    Some(&modified_fields),
-                    attempt.context.encryption(),
-                    attempt.context.signing(),
-                    attempt.context.batch_session(),
-                    self.db.kms().as_ref(),
-                    attempt.prepared_inputs.as_ref(),
-                    Some(heads.into_owned()),
-                )
-                .await
-                .map_err(|error| {
-                    error.into_query_error_in("failed to write document blocks for update")
-                })?;
-                register_block_doc_id_mappings(
-                    &systemstore,
-                    &block_result,
-                    &canonical_doc_id.to_string(),
-                )
-                .await?;
-                let col_data = write_branchable_collection_block(
+                let updated = pipeline::write_blocks(
                     &self.db,
-                    &attempt.collection_name,
-                    &collection,
-                    &blockstore,
-                    &headstore,
-                    block_result.cid,
-                    doc_short_id,
+                    &stores,
+                    &target,
+                    &current_doc,
+                    &modified_fields,
+                    heads.into_owned(),
                     &attempt.context,
                     attempt.prepared_inputs.as_ref(),
                 )
@@ -427,9 +401,9 @@ impl<S: Store + 'static> AutoCommitMutator<S> {
                 Ok((
                     current_doc.clone(),
                     current_doc.values().len(),
-                    block_result.cid,
-                    block_result.block,
-                    col_data,
+                    updated.cid,
+                    updated.block,
+                    updated.collection_block,
                 ))
             }
             .await;
