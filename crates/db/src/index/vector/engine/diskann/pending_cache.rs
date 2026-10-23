@@ -110,6 +110,16 @@ impl Copy {
         self.oversized
     }
 
+    /// Whether `entries` more inserts of `code_len`-byte codes still fit
+    /// under [`MAX_PENDING_CACHE_BYTES`].
+    pub fn can_hold(&self, entries: u64, code_len: usize) -> bool {
+        let per_entry = (size_of::<NodeId>() + code_len) as u64;
+        entries
+            .checked_mul(per_entry)
+            .and_then(|more| more.checked_add(self.bytes as u64))
+            .is_some_and(|total| total <= MAX_PENDING_CACHE_BYTES as u64)
+    }
+
     pub fn fits(&self) -> bool {
         self.bytes <= MAX_PENDING_CACHE_BYTES
     }

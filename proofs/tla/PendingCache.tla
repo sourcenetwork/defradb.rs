@@ -36,6 +36,8 @@
 \* snapshot, then:
 \*   1. the cache is of its generation: it reads the log entries after pos up
 \*      to its head, adds what they insert to the cache, and uses the cache;
+\*      or, when those entries could not fit under the cache's cap or one
+\*      of them is gone, it reads the log and loads the cache from that read;
 \*   2. the cache is of an older generation, or there is none: it reads the
 \*      log and loads the cache from that read;
 \*   3. otherwise (the cache is newer than the search): it reads the log.
@@ -96,7 +98,9 @@
 \*                by store/kv.rs own_pending_log (regolith
 \*                Transaction::appended)
 \*   Search       graph.rs pending_candidates: the three rules above, the
-\*                own appends, and PendingCache::publish. A copy past the
+\*                own appends, and PendingCache::publish. Rule 1's full load
+\*                is Copy::can_hold refusing the gap, or read_pending_log
+\*                finding an entry gone. A copy past the
 \*                64 MiB cap is published as an oversized marker that is
 \*                never read as cover, so it acts as no cache: the log read
 \*                of the last rule
@@ -227,9 +231,13 @@ Search(r) ==
         \* Rule 1, nothing to catch up on.
         THEN done(seen.ids) /\ UNCHANGED cache
         ELSE IF sameGen
-        \* Rule 1, caught up through the search's head, then published.
-        THEN LET next == [seen EXCEPT !.pos = st.head, !.ids = @ \cup added]
-             IN done(next.ids) /\ Publish(next)
+        \* Rule 1, caught up through the search's head, then published; or,
+        \* when the gap is past the cap or an entry is gone, a full load from
+        \* the log, then published. TLC tries both, since either may happen.
+        THEN \/ LET next == [seen EXCEPT !.pos = st.head, !.ids = @ \cup added]
+                IN done(next.ids) /\ Publish(next)
+             \/ done(Pending(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,
+                                              ids |-> Pending(st)])
         ELSE IF seen.gen < st.gen
         \* Rule 2: a full load from the log, then published.
         THEN done(Pending(st)) /\ Publish([gen |-> st.gen, pos |-> st.head,

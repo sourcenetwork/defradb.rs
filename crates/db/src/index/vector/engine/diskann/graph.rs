@@ -337,7 +337,8 @@ impl<S: VectorNodeStore> DiskAnn<S> {
     /// ranked by its code: the transaction's own appends, plus the shared copy
     /// where it provably covers the snapshot and a scan of the log where it
     /// may not (`proofs/tla/PendingCache.tla`). A scan the copy could not
-    /// stand in for reloads it.
+    /// stand in for reloads it, and so does a gap too big to fit under the
+    /// cap: one ordered scan instead of a point read per missing entry.
     async fn pending_candidates(
         &self,
         pq: &ProductQuantizer,
@@ -372,11 +373,13 @@ impl<S: VectorNodeStore> DiskAnn<S> {
                     copy.for_each(m, push);
                     return Ok(());
                 }
-                if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
-                    let next = Arc::new(copy.caught_up(head, added));
-                    next.for_each(m, push);
-                    cache.publish(next);
-                    return Ok(());
+                if copy.can_hold(head - tag.position, m) {
+                    if let Some(added) = self.read_pending_log(m, tag.position, head).await? {
+                        let next = Arc::new(copy.caught_up(head, added));
+                        next.for_each(m, push);
+                        cache.publish(next);
+                        return Ok(());
+                    }
                 }
                 true
             }
