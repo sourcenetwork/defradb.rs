@@ -36,6 +36,7 @@ pub const MODELED_FAMILIES: &[&str] = &[
     "Vector index link maintenance",
     "DiskANN resident code table",
     "DiskANN walk cutoff",
+    "PQ distance four sums",
     "Commit-ordered document arrivals",
     "Retry input and marker fencing",
     "Collection schema-version OCC",
