@@ -54,7 +54,7 @@ fn non_nillable_field_rejects_null_and_missing_values() {
         vec![FieldDescription::new(
             "1",
             "createdAt",
-            FieldKind::Scalar(ScalarKind::NonNillableDateTime),
+            FieldKind::Scalar(ScalarKind::DateTime),
         )],
     ));
 

@@ -28,7 +28,7 @@ fn composite_range(
                 || candidate
                     .kind
                     .as_scalar()
-                    .is_some_and(|kind| kind.base_kind() == ScalarKind::Json)
+                    .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson)
         })
     {
         return None;
@@ -105,7 +105,7 @@ pub fn filter_to_index_scan(
         .map(|f| &f.kind);
     let first_field_is_json = first_field_kind
         .and_then(FieldKind::as_scalar)
-        .is_some_and(|kind| kind.base_kind() == ScalarKind::Json);
+        .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson);
 
     // Find conditions on the first index field
     // For JSON fields, ensure top-level conditions get an empty json_path

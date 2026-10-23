@@ -41,15 +41,15 @@ fn test_parse_non_null_scalars() {
     let post = &collections[0];
     assert_eq!(
         post.field_by_name("title").unwrap().kind,
-        FieldKind::Scalar(ScalarKind::NonNillableString)
+        FieldKind::Scalar(ScalarKind::String)
     );
     assert_eq!(
         post.field_by_name("publishedAt").unwrap().kind,
-        FieldKind::Scalar(ScalarKind::NonNillableDateTime)
+        FieldKind::Scalar(ScalarKind::DateTime)
     );
     assert_eq!(
         post.field_by_name("metadata").unwrap().kind,
-        FieldKind::Scalar(ScalarKind::NonNillableJson)
+        FieldKind::Scalar(ScalarKind::Json)
     );
 }
 
@@ -766,7 +766,7 @@ fn test_collection_id_matches_go_when_link_string_order_differs_from_cid_order()
 
 #[test]
 fn test_field_ids_are_deterministic() {
-    let string_kind = FieldKind::Scalar(ScalarKind::String);
+    let string_kind = FieldKind::Scalar(ScalarKind::NillableString);
     let id1 = generate_field_id("name", &string_kind, CType::LwwRegister);
     let id2 = generate_field_id("name", &string_kind, CType::LwwRegister);
     assert_eq!(id1, id2, "same field should produce same field ID");
@@ -778,7 +778,7 @@ fn test_field_ids_are_deterministic() {
     );
 
     // Different types should produce different IDs
-    let int_kind = FieldKind::Scalar(ScalarKind::Int);
+    let int_kind = FieldKind::Scalar(ScalarKind::NillableInt);
     let id4 = generate_field_id("count", &string_kind, CType::LwwRegister);
     let id5 = generate_field_id("count", &int_kind, CType::LwwRegister);
     assert_ne!(

@@ -16,22 +16,22 @@ fn test_scalar_repr_values_match_go() {
     // These values MUST match Go DefraDB for datastore compatibility
     assert_eq!(ScalarKind::None as u8, 0);
     assert_eq!(ScalarKind::DocID as u8, 1);
-    assert_eq!(ScalarKind::Bool as u8, 2);
-    assert_eq!(ScalarKind::Int as u8, 4);
-    assert_eq!(ScalarKind::Float64 as u8, 6);
-    assert_eq!(ScalarKind::Float32 as u8, 8);
-    assert_eq!(ScalarKind::DateTime as u8, 10);
-    assert_eq!(ScalarKind::String as u8, 11);
-    assert_eq!(ScalarKind::Blob as u8, 13);
-    assert_eq!(ScalarKind::Json as u8, 14);
-    assert_eq!(ScalarKind::NonNillableBool as u8, 15);
-    assert_eq!(ScalarKind::NonNillableInt as u8, 23);
-    assert_eq!(ScalarKind::NonNillableFloat64 as u8, 24);
-    assert_eq!(ScalarKind::NonNillableFloat32 as u8, 25);
-    assert_eq!(ScalarKind::NonNillableString as u8, 26);
-    assert_eq!(ScalarKind::NonNillableDateTime as u8, 27);
-    assert_eq!(ScalarKind::NonNillableBlob as u8, 28);
-    assert_eq!(ScalarKind::NonNillableJson as u8, 29);
+    assert_eq!(ScalarKind::NillableBool as u8, 2);
+    assert_eq!(ScalarKind::NillableInt as u8, 4);
+    assert_eq!(ScalarKind::NillableFloat64 as u8, 6);
+    assert_eq!(ScalarKind::NillableFloat32 as u8, 8);
+    assert_eq!(ScalarKind::NillableDateTime as u8, 10);
+    assert_eq!(ScalarKind::NillableString as u8, 11);
+    assert_eq!(ScalarKind::NillableBlob as u8, 13);
+    assert_eq!(ScalarKind::NillableJson as u8, 14);
+    assert_eq!(ScalarKind::Bool as u8, 15);
+    assert_eq!(ScalarKind::Int as u8, 23);
+    assert_eq!(ScalarKind::Float64 as u8, 24);
+    assert_eq!(ScalarKind::Float32 as u8, 25);
+    assert_eq!(ScalarKind::String as u8, 26);
+    assert_eq!(ScalarKind::DateTime as u8, 27);
+    assert_eq!(ScalarKind::Blob as u8, 28);
+    assert_eq!(ScalarKind::Json as u8, 29);
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn test_is_nillable() {
     assert!(FieldKind::string().is_nillable());
     assert!(FieldKind::int().is_nillable());
     assert!(FieldKind::doc_id().is_nillable());
-    assert!(!FieldKind::Scalar(ScalarKind::NonNillableString).is_nillable());
+    assert!(!FieldKind::Scalar(ScalarKind::String).is_nillable());
     assert!(FieldKind::int_array().is_nillable());
     assert!(FieldKind::nillable_int_array().is_nillable());
     assert!(FieldKind::relation("users", false).is_nillable());
@@ -106,30 +106,33 @@ fn test_has_nillable_elements() {
 #[test]
 fn test_scalar_to_array() {
     assert_eq!(
-        ScalarKind::Bool.to_array_kind(),
+        ScalarKind::NillableBool.to_array_kind(),
         Some(ScalarArrayKind::BoolArray)
     );
     assert_eq!(
-        ScalarKind::Int.to_array_kind(),
+        ScalarKind::NillableInt.to_array_kind(),
         Some(ScalarArrayKind::IntArray)
     );
     assert_eq!(ScalarKind::DocID.to_array_kind(), None);
     assert_eq!(
-        ScalarKind::DateTime.to_array_kind(),
+        ScalarKind::NillableDateTime.to_array_kind(),
         Some(ScalarArrayKind::DateTimeArray)
     );
 }
 
 #[test]
 fn test_array_element_kind() {
-    assert_eq!(ScalarArrayKind::IntArray.element_kind(), ScalarKind::Int);
+    assert_eq!(
+        ScalarArrayKind::IntArray.element_kind(),
+        ScalarKind::NillableInt
+    );
     assert_eq!(
         ScalarArrayKind::NillableIntArray.element_kind(),
-        ScalarKind::Int
+        ScalarKind::NillableInt
     );
     assert_eq!(
         ScalarArrayKind::Float64Array.element_kind(),
-        ScalarKind::Float64
+        ScalarKind::NillableFloat64
     );
 }
 
@@ -369,42 +372,26 @@ fn test_go_compat_all_scalar_kinds_roundtrip() {
     // All user-facing scalar kinds should roundtrip through both accepted encodings.
     let scalars = vec![
         (FieldKind::Scalar(ScalarKind::DocID), 1, "ID"),
-        (FieldKind::Scalar(ScalarKind::Bool), 2, "Boolean"),
-        (FieldKind::Scalar(ScalarKind::Int), 4, "Int"),
-        (FieldKind::Scalar(ScalarKind::Float64), 6, "Float64"),
-        (FieldKind::Scalar(ScalarKind::Float32), 8, "Float32"),
-        (FieldKind::Scalar(ScalarKind::DateTime), 10, "DateTime"),
-        (FieldKind::Scalar(ScalarKind::String), 11, "String"),
-        (FieldKind::Scalar(ScalarKind::Blob), 13, "Blob"),
-        (FieldKind::Scalar(ScalarKind::Json), 14, "JSON"),
+        (FieldKind::Scalar(ScalarKind::NillableBool), 2, "Boolean"),
+        (FieldKind::Scalar(ScalarKind::NillableInt), 4, "Int"),
+        (FieldKind::Scalar(ScalarKind::NillableFloat64), 6, "Float64"),
+        (FieldKind::Scalar(ScalarKind::NillableFloat32), 8, "Float32"),
         (
-            FieldKind::Scalar(ScalarKind::NonNillableBool),
-            15,
-            "Boolean!",
+            FieldKind::Scalar(ScalarKind::NillableDateTime),
+            10,
+            "DateTime",
         ),
-        (FieldKind::Scalar(ScalarKind::NonNillableInt), 23, "Int!"),
-        (
-            FieldKind::Scalar(ScalarKind::NonNillableFloat64),
-            24,
-            "Float64!",
-        ),
-        (
-            FieldKind::Scalar(ScalarKind::NonNillableFloat32),
-            25,
-            "Float32!",
-        ),
-        (
-            FieldKind::Scalar(ScalarKind::NonNillableString),
-            26,
-            "String!",
-        ),
-        (
-            FieldKind::Scalar(ScalarKind::NonNillableDateTime),
-            27,
-            "DateTime!",
-        ),
-        (FieldKind::Scalar(ScalarKind::NonNillableBlob), 28, "Blob!"),
-        (FieldKind::Scalar(ScalarKind::NonNillableJson), 29, "JSON!"),
+        (FieldKind::Scalar(ScalarKind::NillableString), 11, "String"),
+        (FieldKind::Scalar(ScalarKind::NillableBlob), 13, "Blob"),
+        (FieldKind::Scalar(ScalarKind::NillableJson), 14, "JSON"),
+        (FieldKind::Scalar(ScalarKind::Bool), 15, "Boolean!"),
+        (FieldKind::Scalar(ScalarKind::Int), 23, "Int!"),
+        (FieldKind::Scalar(ScalarKind::Float64), 24, "Float64!"),
+        (FieldKind::Scalar(ScalarKind::Float32), 25, "Float32!"),
+        (FieldKind::Scalar(ScalarKind::String), 26, "String!"),
+        (FieldKind::Scalar(ScalarKind::DateTime), 27, "DateTime!"),
+        (FieldKind::Scalar(ScalarKind::Blob), 28, "Blob!"),
+        (FieldKind::Scalar(ScalarKind::Json), 29, "JSON!"),
     ];
 
     for (kind, expected_int, canonical) in scalars {

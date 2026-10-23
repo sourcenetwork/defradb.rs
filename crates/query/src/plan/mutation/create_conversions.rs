@@ -142,11 +142,11 @@ pub fn json_to_normal_value_with_kind_and_time(
         match kind {
             FieldKind::Scalar(scalar) => match scalar.base_kind() {
                 // JSON fields: wrap ALL values as JSON
-                ScalarKind::Json => Ok(NormalValue::Json(value.clone())),
+                ScalarKind::NillableJson => Ok(NormalValue::Json(value.clone())),
                 // DateTime fields: parse RFC 3339 strings or special values like UTC_NOW.
                 // The string/number → Time mapping is delegated to the shared `document`
                 // converter so the create and reindex paths cannot drift.
-                ScalarKind::DateTime => {
+                ScalarKind::NillableDateTime => {
                     if let JsonValue::String(s) = value {
                         if s == "UTC_NOW" {
                             let time = request_time.unwrap_or_else(|| {
@@ -174,12 +174,12 @@ pub fn json_to_normal_value_with_kind_and_time(
                     )
                 }
                 // Float fields: convert integers to the declared float representation.
-                ScalarKind::Float64 | ScalarKind::Float32 => {
+                ScalarKind::NillableFloat64 | ScalarKind::NillableFloat32 => {
                     document::encoding::json_to_normal_value_for_kind(value, scalar).ok_or_else(
                         || {
                             QueryError::execution(format!(
                                 "Expected number for {} field, got: {:?}",
-                                if scalar.base_kind() == ScalarKind::Float64 {
+                                if scalar.base_kind() == ScalarKind::NillableFloat64 {
                                     "Float64"
                                 } else {
                                     "Float32"
@@ -192,7 +192,7 @@ pub fn json_to_normal_value_with_kind_and_time(
                 // Blob: production stores hex text as String (Go parity). When
                 // DEFRA_TEST_BLOB_AS_BYTES is set, hex-decode into Bytes so e2e
                 // tests can exercise NormalValue::Bytes JSON converters (#1294).
-                ScalarKind::Blob => {
+                ScalarKind::NillableBlob => {
                     if document::encoding::test_blob_as_bytes_enabled() {
                         let s = value.as_str().ok_or_else(|| {
                             QueryError::execution(format!(
