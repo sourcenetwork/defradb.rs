@@ -49,7 +49,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                             && !field
                                 .kind
                                 .as_scalar()
-                                .is_some_and(|kind| kind.base_kind() == ScalarKind::Json)
+                                .is_some_and(|kind| kind.base_kind() == ScalarKind::NillableJson)
                     })
                     .map(|field| field.name.as_str())
                     .collect()

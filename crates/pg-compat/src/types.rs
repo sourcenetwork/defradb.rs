@@ -17,14 +17,14 @@ fn scalar_to_pg_type(kind: ScalarKind) -> Type {
     match kind.base_kind() {
         ScalarKind::None => Type::TEXT,
         ScalarKind::DocID => Type::TEXT,
-        ScalarKind::Bool => Type::BOOL,
-        ScalarKind::Int => Type::INT8,
-        ScalarKind::Float64 => Type::FLOAT8,
-        ScalarKind::Float32 => Type::FLOAT4,
-        ScalarKind::DateTime => Type::TIMESTAMPTZ,
-        ScalarKind::String => Type::TEXT,
-        ScalarKind::Blob => Type::BYTEA,
-        ScalarKind::Json => Type::JSONB,
+        ScalarKind::NillableBool => Type::BOOL,
+        ScalarKind::NillableInt => Type::INT8,
+        ScalarKind::NillableFloat64 => Type::FLOAT8,
+        ScalarKind::NillableFloat32 => Type::FLOAT4,
+        ScalarKind::NillableDateTime => Type::TIMESTAMPTZ,
+        ScalarKind::NillableString => Type::TEXT,
+        ScalarKind::NillableBlob => Type::BYTEA,
+        ScalarKind::NillableJson => Type::JSONB,
         _ => Type::TEXT,
     }
 }
@@ -35,10 +35,10 @@ mod tests {
 
     #[test]
     fn scalar_kinds_map_correctly() {
-        assert_eq!(scalar_to_pg_type(ScalarKind::Int), Type::INT8);
-        assert_eq!(scalar_to_pg_type(ScalarKind::String), Type::TEXT);
-        assert_eq!(scalar_to_pg_type(ScalarKind::Bool), Type::BOOL);
-        assert_eq!(scalar_to_pg_type(ScalarKind::Float64), Type::FLOAT8);
+        assert_eq!(scalar_to_pg_type(ScalarKind::NillableInt), Type::INT8);
+        assert_eq!(scalar_to_pg_type(ScalarKind::NillableString), Type::TEXT);
+        assert_eq!(scalar_to_pg_type(ScalarKind::NillableBool), Type::BOOL);
+        assert_eq!(scalar_to_pg_type(ScalarKind::NillableFloat64), Type::FLOAT8);
         assert_eq!(scalar_to_pg_type(ScalarKind::DocID), Type::TEXT);
     }
 

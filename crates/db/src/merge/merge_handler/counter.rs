@@ -336,9 +336,9 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             FieldKind::Scalar(scalar_kind) => {
                 use schema::ScalarKind;
                 match scalar_kind.base_kind() {
-                    ScalarKind::Int => Ok(NumericKind::Int64),
-                    ScalarKind::Float32 => Ok(NumericKind::Float32),
-                    ScalarKind::Float64 => Ok(NumericKind::Float64),
+                    ScalarKind::NillableInt => Ok(NumericKind::Int64),
+                    ScalarKind::NillableFloat32 => Ok(NumericKind::Float32),
+                    ScalarKind::NillableFloat64 => Ok(NumericKind::Float64),
                     other => Err(MergeError::UnsupportedDelta(format!(
                         "Counter field '{}' has unsupported scalar kind: {:?}",
                         field.name, other

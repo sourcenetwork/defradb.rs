@@ -486,7 +486,7 @@ mod tests {
                     FieldDescription::new(
                         "1",
                         "name",
-                        FieldKind::Scalar(schema::ScalarKind::NonNillableString),
+                        FieldKind::Scalar(schema::ScalarKind::String),
                     ),
                     FieldDescription::new(
                         "2",
@@ -543,7 +543,7 @@ mod tests {
                     FieldDescription::new(
                         "1",
                         "name",
-                        FieldKind::Scalar(schema::ScalarKind::String),
+                        FieldKind::Scalar(schema::ScalarKind::NillableString),
                     ),
                     FieldDescription::new(
                         "2",

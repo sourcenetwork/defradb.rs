@@ -251,14 +251,18 @@ fn test_time_format_matches_go_rfc3339_nano() {
 fn datetime_string_becomes_time_not_string() {
     // The regression: a DateTime field MUST coerce to Time so reindexed
     // index entries match freshly-written ones (encode_time, not encode_string).
-    let nv = json_to_normal_value_for_kind(&json!("2026-05-29T13:06:28Z"), &ScalarKind::DateTime);
+    let nv = json_to_normal_value_for_kind(
+        &json!("2026-05-29T13:06:28Z"),
+        &ScalarKind::NillableDateTime,
+    );
     let expected = DateTime::parse_from_rfc3339("2026-05-29T13:06:28Z").unwrap();
     assert_eq!(nv, Some(NormalValue::Time(expected)));
 }
 
 #[test]
 fn datetime_unix_timestamp_becomes_time() {
-    let nv = json_to_normal_value_for_kind(&json!(1_764_421_588_i64), &ScalarKind::DateTime);
+    let nv =
+        json_to_normal_value_for_kind(&json!(1_764_421_588_i64), &ScalarKind::NillableDateTime);
     match nv {
         Some(NormalValue::Time(_)) => {}
         other => panic!("expected Time, got {other:?}"),
@@ -268,23 +272,23 @@ fn datetime_unix_timestamp_becomes_time() {
 #[test]
 fn scalar_kinds_coerce_as_expected() {
     assert_eq!(
-        json_to_normal_value_for_kind(&json!(42), &ScalarKind::Int),
+        json_to_normal_value_for_kind(&json!(42), &ScalarKind::NillableInt),
         Some(NormalValue::Int(42))
     );
     assert_eq!(
-        json_to_normal_value_for_kind(&json!(1.5), &ScalarKind::Float64),
+        json_to_normal_value_for_kind(&json!(1.5), &ScalarKind::NillableFloat64),
         Some(NormalValue::Float64(1.5))
     );
     assert_eq!(
-        json_to_normal_value_for_kind(&json!(1.5), &ScalarKind::Float32),
+        json_to_normal_value_for_kind(&json!(1.5), &ScalarKind::NillableFloat32),
         Some(NormalValue::Float32(1.5))
     );
     assert_eq!(
-        json_to_normal_value_for_kind(&json!(true), &ScalarKind::Bool),
+        json_to_normal_value_for_kind(&json!(true), &ScalarKind::NillableBool),
         Some(NormalValue::Bool(true))
     );
     assert_eq!(
-        json_to_normal_value_for_kind(&json!("hi"), &ScalarKind::String),
+        json_to_normal_value_for_kind(&json!("hi"), &ScalarKind::NillableString),
         Some(NormalValue::String("hi".to_string()))
     );
 }
@@ -341,7 +345,7 @@ fn coerce_stored_datetime_string_to_time() {
     // The #72 repair: a DateTime read back from CBOR storage is a String;
     // it must coerce to Time so the index encoder matches live-write entries.
     let v = NormalValue::String("2026-05-29T13:06:28Z".to_string());
-    let got = coerce_stored_value_for_kind(v, &ScalarKind::DateTime);
+    let got = coerce_stored_value_for_kind(v, &ScalarKind::NillableDateTime);
     let expected = DateTime::parse_from_rfc3339("2026-05-29T13:06:28Z").unwrap();
     assert_eq!(got, NormalValue::Time(expected));
 }
@@ -351,19 +355,19 @@ fn coerce_stored_value_is_noop_for_non_datetime_and_correct_values() {
     // A genuine String field is untouched (even if it looks date-like).
     let s = NormalValue::String("2026-05-29T13:06:28Z".to_string());
     assert_eq!(
-        coerce_stored_value_for_kind(s.clone(), &ScalarKind::String),
+        coerce_stored_value_for_kind(s.clone(), &ScalarKind::NillableString),
         s
     );
     // An already-correct Time is untouched.
     let t = NormalValue::Time(DateTime::parse_from_rfc3339("2026-05-29T13:06:28Z").unwrap());
     assert_eq!(
-        coerce_stored_value_for_kind(t.clone(), &ScalarKind::DateTime),
+        coerce_stored_value_for_kind(t.clone(), &ScalarKind::NillableDateTime),
         t
     );
     // A non-RFC3339 string for a DateTime field is left as-is (no panic).
     let bad = NormalValue::String("not-a-date".to_string());
     assert_eq!(
-        coerce_stored_value_for_kind(bad.clone(), &ScalarKind::DateTime),
+        coerce_stored_value_for_kind(bad.clone(), &ScalarKind::NillableDateTime),
         bad
     );
 }
@@ -373,12 +377,12 @@ fn unrepresentable_value_returns_none() {
     // A non-RFC3339 string for a DateTime field cannot be coerced; the caller
     // decides whether that's an error (create) or a fallback (reindex).
     assert_eq!(
-        json_to_normal_value_for_kind(&json!("not-a-date"), &ScalarKind::DateTime),
+        json_to_normal_value_for_kind(&json!("not-a-date"), &ScalarKind::NillableDateTime),
         None
     );
     // Json/None kinds are handled by callers, not here.
     assert_eq!(
-        json_to_normal_value_for_kind(&json!({"a": 1}), &ScalarKind::Json),
+        json_to_normal_value_for_kind(&json!({"a": 1}), &ScalarKind::NillableJson),
         None
     );
 }

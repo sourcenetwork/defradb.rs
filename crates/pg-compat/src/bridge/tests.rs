@@ -407,8 +407,8 @@ fn count_distinct_detection() {
 #[test]
 fn insert_coerces_number_to_string_for_string_field() {
     let mut types = FieldTypeMap::new();
-    types.insert("version".to_string(), ScalarKind::String);
-    types.insert("count".to_string(), ScalarKind::Int);
+    types.insert("version".to_string(), ScalarKind::NillableString);
+    types.insert("count".to_string(), ScalarKind::NillableInt);
 
     let stmt = sql_to_graphql_typed(
         "INSERT INTO session (version, count) VALUES (2, 42)",
@@ -452,7 +452,7 @@ fn insert_without_types_preserves_numbers() {
 #[test]
 fn update_coerces_number_to_string_for_string_field() {
     let mut types = FieldTypeMap::new();
-    types.insert("version".to_string(), ScalarKind::String);
+    types.insert("version".to_string(), ScalarKind::NillableString);
 
     let stmt = sql_to_graphql_typed(
         "UPDATE session SET version = 3 WHERE id = 'abc'",
