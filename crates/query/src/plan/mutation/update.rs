@@ -7,6 +7,7 @@ use rapidhash::{HashMapExt, RapidHashMap, RapidHashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use crdt::Crdts;
 use defra_core::RequestContext;
 use document::{DocID, Document};
 use schema::CollectionVersion;
@@ -67,15 +68,17 @@ impl UpdateInput {
     /// increment rather than a replacement, matching Go DefraDB behavior.
     pub fn apply_to(
         &self,
+        crdts: &Crdts,
         doc: &mut Document,
         collection: Option<&CollectionVersion>,
     ) -> Result<usize> {
-        self.apply_to_with_time(doc, collection, None)
+        self.apply_to_with_time(crdts, doc, collection, None)
     }
 
     /// Apply this update to a document with an optional pre-computed request time for UTC_NOW.
     pub fn apply_to_with_time(
         &self,
+        crdts: &Crdts,
         doc: &mut Document,
         collection: Option<&CollectionVersion>,
         request_time: Option<DateTime<FixedOffset>>,
@@ -90,16 +93,16 @@ impl UpdateInput {
                 field_def.map(|f| &f.kind),
                 request_time,
             )?;
-            let op = update_ops::implicit_op(field_def, normal_value)?;
-            update_ops::write_op(doc, field_name, field_def, op)?;
+            let op = update_ops::implicit_op(crdts, field_def, normal_value)?;
+            update_ops::write_op(crdts, doc, field_name, field_def, op)?;
             modified_count += 1;
         }
 
         for (field_name, op) in &self.ops {
             let field_def =
                 collection.and_then(|c| c.fields.iter().find(|f| f.name == *field_name));
-            let op = update_ops::named_op(field_name, field_def, op, request_time)?;
-            update_ops::write_op(doc, field_name, field_def, op)?;
+            let op = update_ops::named_op(crdts, field_name, field_def, op, request_time)?;
+            update_ops::write_op(crdts, doc, field_name, field_def, op)?;
             modified_count += 1;
         }
 
@@ -320,9 +323,12 @@ impl UpdateNode {
         }
         let collection = self.collection.as_deref()?;
         let patch: RapidHashSet<String> = self.input.field_names();
-        self.mutator
-            .update_run()
-            .planned(collection, &patch, self.filter.as_ref())
+        self.mutator.update_run().planned(
+            &self.mutator.crdts(),
+            collection,
+            &patch,
+            self.filter.as_ref(),
+        )
     }
 }
 
@@ -444,6 +450,7 @@ impl PlanNode for UpdateNode {
 
                     // Apply update input with schema-aware coercion and request time
                     self.input.apply_to_with_time(
+                        &self.mutator.crdts(),
                         &mut doc,
                         self.collection.as_deref(),
                         self.request_time,
@@ -670,6 +677,10 @@ mod prepared_target_tests {
 
     #[async_trait]
     impl DocMutator for RecordingMutator {
+        fn crdts(&self) -> crdt::Crdts {
+            crdt::Crdts::default()
+        }
+
         async fn create(&self, _collection: &str, _doc: Document) -> Result<CreateResult> {
             Err(QueryError::execution("unused in update target test"))
         }

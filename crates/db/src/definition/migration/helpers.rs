@@ -235,7 +235,11 @@ pub(crate) async fn cache_migrated_document(
         {
             if changes_block_state(
                 collection,
-                &crdt::stored::document_from_storage(&bytes, collection.schema_arc())?,
+                &crdt::stored::document_from_storage(
+                    &bytes,
+                    collection.schema_arc(),
+                    collection.crdts(),
+                )?,
                 doc,
             ) {
                 return Ok(false);
@@ -255,7 +259,9 @@ pub(crate) async fn cache_migrated_document(
 /// (Json) and causal (Text) fields.
 fn block_state_fields(collection: &Collection) -> impl Iterator<Item = &schema::FieldDescription> {
     collection.schema().fields.iter().filter(|field| {
-        crdt::field_crdt(field.crdt_type)
+        collection
+            .crdts()
+            .field(field.crdt_type)
             .is_some_and(|crdt| crdt.tagged().is_some() || crdt.causal().is_some())
     })
 }
@@ -308,7 +314,11 @@ pub(crate) async fn cache_migrated_document_with_indexes(
     let Some(old_data) = datastore.get(&key).await.map_err(Error::Storage)? else {
         return Ok(false);
     };
-    let mut old_doc = crdt::stored::document_from_storage(&old_data, collection.schema_arc())?;
+    let mut old_doc = crdt::stored::document_from_storage(
+        &old_data,
+        collection.schema_arc(),
+        collection.crdts(),
+    )?;
     old_doc.set_id(doc_id.clone());
     if changes_block_state(collection, &old_doc, doc) {
         return Ok(false);

@@ -229,6 +229,11 @@ pub trait Store: MaybeSendSync + private::Sealed {
     /// creation depend on it, so omission must fail at compile time.
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>>;
 
+    /// The CRDT types of the node the store belongs to, which its merge
+    /// operator folds document parts by. Store wrappers must forward it, so a
+    /// node's reads and its store's merges never disagree on a type.
+    fn crdts(&self) -> &crdt::Crdts;
+
     /// Transaction diagnostics for stores that keep them.
     fn transaction_stats_handle(&self) -> Option<crate::backends::TransactionStatsHandle> {
         None

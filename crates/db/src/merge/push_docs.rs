@@ -40,8 +40,9 @@ async fn document_matches_filter<R: Reader + ?Sized>(
         return Ok(false);
     };
 
-    let doc = crdt::stored::document_from_storage(&doc_data, collection.schema_arc())
-        .map_err(|e| format!("failed to decode document for replication filter: {}", e))?;
+    let doc =
+        crdt::stored::document_from_storage(&doc_data, collection.schema_arc(), collection.crdts())
+            .map_err(|e| format!("failed to decode document for replication filter: {}", e))?;
     let document_json = serde_json::Value::Object(
         doc.to_map()
             .map_err(|e| format!("failed to encode document for replication filter: {}", e))?
@@ -587,6 +588,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 let doc = match crdt::stored::document_from_storage(
                     &doc_data,
                     collection.schema_arc(),
+                    collection.crdts(),
                 ) {
                     Ok(d) => d,
                     Err(e) => {

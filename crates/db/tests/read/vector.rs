@@ -25,7 +25,7 @@ fn doc_id(index: usize) -> document::DocID {
 const COLLECTION_SHORT_ID: u32 = 1;
 
 fn collection() -> Collection {
-    Collection::new(schema())
+    Collection::new(schema(), crdt::Crdts::default())
 }
 
 fn schema() -> CollectionVersion {

@@ -174,7 +174,12 @@ impl<S: Store> VersionedFetcher<S> {
 
         let mut documents = Vec::with_capacity(members.len());
         for doc_id in members {
-            documents.push(replay_deltas(&collection, &sorted_blocks, &doc_id)?);
+            documents.push(replay_deltas(
+                txn.crdts(),
+                &collection,
+                &sorted_blocks,
+                &doc_id,
+            )?);
         }
         Ok(documents)
     }
@@ -295,7 +300,7 @@ impl<S: Store> VersionedFetcher<S> {
             let mut sorted_blocks: Vec<(Cid, Block)> = blocks.into_iter().collect();
             sorted_blocks.sort_by_key(|(_, block)| block.delta.priority());
 
-            let document = replay_deltas(&collection, &sorted_blocks, &doc_id)?;
+            let document = replay_deltas(txn.crdts(), &collection, &sorted_blocks, &doc_id)?;
             documents.push(document);
         }
 
@@ -638,6 +643,7 @@ impl<S: Store> VersionedFetcher<S> {
 ///
 /// Blocks should be sorted by priority (ascending) before calling this method.
 fn replay_deltas(
+    crdts: &crdt::Crdts,
     collection: &Arc<CollectionVersion>,
     blocks: &[(Cid, Block)],
     doc_id: &str,
@@ -661,10 +667,24 @@ fn replay_deltas(
     });
     for (cid, block, delta) in deltas {
         if let Some(field_delta) = delta.field() {
-            if !causal_history(collection, &mut histories, cid, block, &delta, &field_delta)?
-                && !tagged_history(collection, &mut tagged, cid, block, &delta, &field_delta)
-            {
-                replay_field(collection, &mut fields, &delta, &field_delta);
+            if !causal_history(
+                crdts,
+                collection,
+                &mut histories,
+                cid,
+                block,
+                &delta,
+                &field_delta,
+            )? && !tagged_history(
+                crdts,
+                collection,
+                &mut tagged,
+                cid,
+                block,
+                &delta,
+                &field_delta,
+            ) {
+                replay_field(crdts, collection, &mut fields, &delta, &field_delta);
             }
             continue;
         }
@@ -686,7 +706,7 @@ fn replay_deltas(
         let Some(field) = collection.field_by_name(&name) else {
             continue;
         };
-        let Some(crdt) = crdt::field_crdt(field.crdt_type) else {
+        let Some(crdt) = crdts.field(field.crdt_type) else {
             continue;
         };
         let Some(causal) = crdt.causal() else {
@@ -703,7 +723,7 @@ fn replay_deltas(
     for (name, history) in tagged {
         let Some((field, tagged)) = collection
             .field_by_name(&name)
-            .and_then(|field| Some((field, crdt::field_crdt(field.crdt_type)?.tagged()?)))
+            .and_then(|field| Some((field, crdts.field(field.crdt_type)?.tagged()?)))
         else {
             continue;
         };
@@ -722,7 +742,7 @@ fn replay_deltas(
         if state.value.is_empty() {
             continue;
         }
-        match state.materialize() {
+        match state.materialize(crdts) {
             Some(value) => document.set_unchecked(field_name, value),
             None => tracing::warn!(
                 field_name = %field_name,
@@ -749,6 +769,7 @@ fn replay_deltas(
 /// read: every later block counts in its version, so the history cannot
 /// replay without it.
 fn causal_history(
+    crdts: &crdt::Crdts,
     collection: &CollectionVersion,
     histories: &mut RapidHashMap<String, Vec<CausalBlock>>,
     cid: &Cid,
@@ -758,11 +779,14 @@ fn causal_history(
 ) -> Result<bool> {
     let name = field_delta.field_name;
     let Some(field) = collection.field_by_name(name).filter(|field| {
-        crdt::field_crdt(field.crdt_type).is_some_and(|crdt| crdt.causal().is_some())
+        crdts
+            .field(field.crdt_type)
+            .is_some_and(|crdt| crdt.causal().is_some())
     }) else {
         return Ok(false);
     };
-    let op = crdt::delta_crdt(delta, field.crdt_type)
+    let op = crdts
+        .delta(delta, field.crdt_type)
         .map_err(|error| error.to_string())
         .and_then(|writer| {
             crdt::history_op(writer, field, field_delta.data).map_err(|error| error.to_string())
@@ -786,6 +810,7 @@ fn causal_history(
 /// Add a field block to its field's history when the field is tagged, and
 /// report whether it was.
 fn tagged_history(
+    crdts: &crdt::Crdts,
     collection: &CollectionVersion,
     histories: &mut RapidHashMap<String, Vec<TaggedBlock>>,
     cid: &Cid,
@@ -795,11 +820,13 @@ fn tagged_history(
 ) -> bool {
     let name = field_delta.field_name;
     let Some(field) = collection.field_by_name(name).filter(|field| {
-        crdt::field_crdt(field.crdt_type).is_some_and(|crdt| crdt.tagged().is_some())
+        crdts
+            .field(field.crdt_type)
+            .is_some_and(|crdt| crdt.tagged().is_some())
     }) else {
         return false;
     };
-    match crdt::delta_crdt(delta, field.crdt_type) {
+    match crdts.delta(delta, field.crdt_type) {
         Ok(_) => histories
             .entry(name.to_owned())
             .or_default()
@@ -819,6 +846,7 @@ fn tagged_history(
 /// Merge one field block into the replayed states, through the CRDT that
 /// wrote it, exactly as a live merge does.
 fn replay_field(
+    crdts: &crdt::Crdts,
     collection: &CollectionVersion,
     fields: &mut RapidHashMap<String, StoredField>,
     delta: &CrdtDelta,
@@ -826,8 +854,7 @@ fn replay_field(
 ) {
     let name = field_delta.field_name;
     let declared = collection.field_by_name(name);
-    let crdt = match crdt::delta_crdt(delta, declared.map_or(CType::None, |field| field.crdt_type))
-    {
+    let crdt = match crdts.delta(delta, declared.map_or(CType::None, |field| field.crdt_type)) {
         Ok(crdt) => crdt,
         Err(error) => {
             tracing::warn!(field_name = %name, %error, "Refused field block during replay");

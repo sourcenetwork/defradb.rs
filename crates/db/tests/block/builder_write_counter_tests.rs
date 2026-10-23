@@ -13,7 +13,7 @@ use storage::RegolithStore;
 async fn first_counter_update() -> Cid {
     let store = RegolithStore::in_memory().unwrap();
     let txn = store.new_txn(false).await.unwrap();
-    let shared = SharedTxn::new(txn);
+    let shared = SharedTxn::new(txn, storage::Crdts::default());
     let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
     let headstore = NamespaceView::new(shared, Namespace::Headstore);
     let identity = DocStorageIdentity::new(1, 1);
@@ -97,7 +97,10 @@ fn counter_nonce(block: &[u8]) -> i64 {
 fn a_counter_create_writes_nonce_zero_and_an_update_a_nonzero_one() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
-        let shared = SharedTxn::new(store.new_txn(false).await.unwrap());
+        let shared = SharedTxn::new(
+            store.new_txn(false).await.unwrap(),
+            storage::Crdts::default(),
+        );
         let blockstore = NamespaceView::new(shared.clone(), Namespace::Blockstore);
         let headstore = NamespaceView::new(shared, Namespace::Headstore);
         let collection = schema::CollectionVersion::new(

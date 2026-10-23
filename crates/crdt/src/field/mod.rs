@@ -12,18 +12,25 @@
 //! merges by causal replay instead ([`CausalCrdt`]). A type whose state
 //! records its operations by ID, and whose operations act only on those their
 //! writer had seen, merges by its block's causal past ([`TaggedCrdt`]).
+//!
+//! The trait is also the contract for a custom type, one a third party
+//! implements and registers on the node builder under a [`CType::Custom`]
+//! name ([`register`]). Its laws are stated method by method below, and
+//! [`testing::check_field_crdt`] checks them.
 
 mod causal;
 mod counter;
 mod json;
 mod lww;
+mod registry;
 pub mod tagged;
 pub mod testing;
 mod text;
+mod unregistered;
 
 use defra_core::block::CrdtDelta;
 use document::{FieldOp, NormalValue};
-use schema::{CType, FieldDescription};
+use schema::{CType, CrdtName, FieldDescription};
 
 use crate::stored::{Part, StoredField, ValueKind};
 
@@ -31,6 +38,7 @@ pub use causal::{history_op, CausalBlock, CausalCrdt};
 pub use counter::{counter_kind, CounterField};
 pub use json::JsonField;
 pub use lww::LwwField;
+pub use registry::{CrdtRef, Crdts, PartCrdts, Registration, RegistryError};
 pub use tagged::{InPast, Tag, TaggedBlock, TaggedCrdt};
 pub use text::TextField;
 
@@ -44,6 +52,8 @@ pub enum FieldCrdtError {
     UnsupportedOp { crdt: CType, op: &'static str },
     #[error("{crdt} fields merge increments and cannot be set; use `increment`")]
     SetOnCounter { crdt: CType },
+    #[error("{crdt} fields cannot hold {message}")]
+    InvalidInput { crdt: CType, message: String },
     #[error("unsupported counter field {0}")]
     UnsupportedKind(String),
     #[error("cannot decode the data of field {field}: {message}")]
@@ -64,6 +74,11 @@ pub enum FieldCrdtError {
     },
     #[error("not a field block")]
     NotAFieldBlock,
+    #[error(
+        "'{crdt}' is a custom CRDT type this node does not have; register it with \
+         NodeBuilder::with_crdt to write or merge its fields"
+    )]
+    Unregistered { crdt: CrdtName },
 }
 
 /// What a field block carries besides the data.
@@ -107,18 +122,26 @@ impl MergeResult {
 
 /// A CRDT type. Object safe, so a type is looked up and used through
 /// `&dyn FieldCrdt`.
+///
+/// Every method is a pure function of its arguments: replicas call them in
+/// different orders and on different threads, and must reach the same state.
+/// [`testing::check_field_crdt`] checks the laws below on sample values.
 pub trait FieldCrdt: Send + Sync {
+    /// The type's name in field definitions. Constant for the type; a custom
+    /// type answers `CType::Custom` of the name it registers under.
     fn ctype(&self) -> CType;
 
     /// Whether the type replicates operations rather than states. An operation
     /// is never restated and must take effect exactly once: an input always
     /// counts as a change, an update's block carries a fresh nonce so equal
     /// operations stay distinct blocks, a nil value is not stored, and a merge
-    /// applies each block once.
+    /// applies each block once. A state type's merge is idempotent instead.
     fn replicates_ops(&self) -> bool;
 
     /// The operation an input expresses, refused when the type cannot take
     /// it. `creating` is true when the operation is the field's first write.
+    /// Law: an operation this accepts as a first write applies to every value
+    /// the type stores.
     fn op(&self, input: NormalValue, creating: bool) -> Result<FieldOp, FieldCrdtError>;
 
     /// The operation a client names, refused when the type cannot take it.
@@ -133,7 +156,9 @@ pub trait FieldCrdt: Send + Sync {
         }
     }
 
-    /// The value `current` takes once `op` is applied to it.
+    /// The value `current` takes once `op` is applied to it. Law: the
+    /// value equals what merging the write's state ([`write`](Self::write),
+    /// [`state`](Self::state)) into `current`'s state reads as.
     fn apply(
         &self,
         field: &FieldDescription,
@@ -142,7 +167,8 @@ pub trait FieldCrdt: Send + Sync {
     ) -> Result<NormalValue, FieldCrdtError>;
 
     /// What a local write of `value`, by `op` when it has one, puts in its
-    /// block and merges into the document value.
+    /// block and merges into the document value. `value` is the field's value
+    /// after [`apply`](Self::apply). A state type's write merges.
     fn write<'value>(
         &self,
         value: &'value NormalValue,
@@ -160,6 +186,9 @@ pub trait FieldCrdt: Send + Sync {
     }
 
     /// The block data of `data`, the value or operation a block carries.
+    /// Law: [`decode`](Self::decode) reads it back as `data`. Block data is
+    /// content-addressed and replicated, so the encoding never changes once
+    /// a block of the type exists.
     fn encode(&self, data: &NormalValue) -> Result<Vec<u8>, FieldCrdtError> {
         let mut bytes = Vec::with_capacity(data.cbor_size_hint());
         ciborium::into_writer(data, &mut bytes)
@@ -168,13 +197,21 @@ pub trait FieldCrdt: Send + Sync {
     }
 
     /// The value or operation a block's data carries, read as `field` declares.
+    /// Refuses bytes that are not the type's data, never panics on them: they
+    /// come from peers.
     fn decode(&self, field: &FieldDescription, data: &[u8]) -> Result<NormalValue, FieldCrdtError>;
 
-    /// The block delta in the Go-readable wire shape.
+    /// The block delta in the Go-readable wire shape. Law: it carries the
+    /// field name, priority, version ID and data it is given, and a blind
+    /// operation's delta carries the nonce. A custom type writes
+    /// [`CrdtDelta::Custom`] naming itself.
     fn delta(&self, parts: DeltaParts<'_>) -> CrdtDelta;
 
     /// The state of `field` holding `value` at `priority`, as the document
-    /// value stores it.
+    /// value stores it. Law: [`materialize`](Self::materialize) reads it back
+    /// as `value`. A custom type's state is of kind
+    /// [`ValueKind::Custom`](crate::stored::ValueKind::Custom) of its name, so
+    /// the store's merge operator finds the type from the part alone.
     fn state(
         &self,
         field: &FieldDescription,
@@ -182,7 +219,8 @@ pub trait FieldCrdt: Send + Sync {
         value: &NormalValue,
     ) -> Result<StoredField, FieldCrdtError>;
 
-    /// The state a block at `priority` carrying `data` merges in.
+    /// The state a block at `priority` carrying `data` merges in. Law: it
+    /// reads as the state of the value `data` decodes to.
     fn block_state(
         &self,
         field: &FieldDescription,
@@ -198,6 +236,10 @@ pub trait FieldCrdt: Send + Sync {
 
     /// Merge `incoming` into `state`, both of this type. A state with empty
     /// bytes is the type's starting state. `None` when either is malformed.
+    /// Laws: merges commute; a state type's merge is idempotent and picks the
+    /// same winner in any order; where [`folds_exactly`](Self::folds_exactly)
+    /// holds, merges associate. The store runs it inside regolith's merge
+    /// operator, so it neither blocks nor reaches outside its arguments.
     fn merge(&self, state: &mut StoredField, incoming: StoredField) -> Option<MergeResult>;
 
     /// Whether merges into states like `state` give the same result in any
@@ -206,14 +248,14 @@ pub trait FieldCrdt: Send + Sync {
 
     /// How the type merges by causal replay, for a type whose operations
     /// count in the value they edit; `None` for a type whose blocks merge into
-    /// the stored value one by one.
+    /// the stored value one by one. Laws: [`testing::check_causal`].
     fn causal(&self) -> Option<&dyn CausalCrdt> {
         None
     }
 
     /// How the type merges by its blocks' causal past, for a type whose state
     /// records its operations by ID; `None` for any other. A type is at most
-    /// one of causal and tagged.
+    /// one of causal and tagged. Laws: [`testing::check_tagged`].
     fn tagged(&self) -> Option<&dyn TaggedCrdt> {
         None
     }
@@ -233,9 +275,11 @@ static PN_COUNTER: CounterField = CounterField::new(CType::PnCounter);
 static TEXT: TextField = TextField;
 static JSON: JsonField = JsonField;
 
-/// The CRDT type a field declares, or `None` for a type with no field blocks
-/// (`None`, `Object`, `Composite`, unknown).
-pub fn field_crdt(ctype: CType) -> Option<&'static dyn FieldCrdt> {
+/// The native CRDT type a field declares, or `None` for a type with no field
+/// blocks (`None`, `Object`, `Composite`, unknown) and for a custom type,
+/// which only a node's [`Crdts`] knows: a field of a stored definition is
+/// looked up through [`Crdts::field`].
+pub fn native(ctype: CType) -> Option<&'static dyn FieldCrdt> {
     match ctype {
         CType::LwwRegister => Some(&LWW),
         CType::PCounter => Some(&P_COUNTER),
@@ -246,16 +290,25 @@ pub fn field_crdt(ctype: CType) -> Option<&'static dyn FieldCrdt> {
     }
 }
 
-/// The CRDT type that wrote a field block, by its wire variant; a counter
-/// block takes the field's declared counter, positive unless it allows
-/// decrements. A block of another family than the declared type is refused,
-/// as Go refuses it: merging it would sum into a register or overwrite a
-/// counter. `CType::None` declares nothing, so any field block is read as its
-/// variant says.
-pub fn delta_crdt(
+/// The native CRDT type of a stored part's kind, or `None` for a custom
+/// kind, which only a node's [`Crdts`] knows.
+pub(crate) fn native_part(kind: ValueKind) -> Option<&'static dyn FieldCrdt> {
+    match kind {
+        ValueKind::Lww => Some(&LWW),
+        ValueKind::Int64 | ValueKind::Float32 | ValueKind::Float64 => Some(&PN_COUNTER),
+        ValueKind::Text => Some(&TEXT),
+        ValueKind::Json => Some(&JSON),
+        ValueKind::Custom(_) => None,
+    }
+}
+
+/// The native CRDT type that wrote a field block ([`Crdts::delta`]), or the
+/// name of the custom type a custom block names, once it is checked against
+/// the declared type.
+pub(crate) fn native_delta(
     delta: &CrdtDelta,
     declared: CType,
-) -> Result<&'static dyn FieldCrdt, FieldCrdtError> {
+) -> Result<Result<&'static dyn FieldCrdt, CrdtName>, FieldCrdtError> {
     let mismatched = |block: &'static str| FieldCrdtError::MismatchedBlock {
         field: delta
             .field()
@@ -264,31 +317,43 @@ pub fn delta_crdt(
         declared,
         block,
     };
-    match (delta, declared) {
-        (CrdtDelta::Text(_), CType::Text | CType::None) => Ok(&TEXT),
-        (CrdtDelta::Text(_), _) => Err(mismatched("text")),
-        (CrdtDelta::Json(_), CType::Json | CType::None) => Ok(&JSON),
-        (CrdtDelta::Json(_), _) => Err(mismatched("json")),
+    let native: &'static dyn FieldCrdt = match (delta, declared) {
+        (CrdtDelta::Custom(custom), CType::Custom(_) | CType::None) => {
+            let named = CrdtName::new(&custom.crdt).map_err(|_| mismatched("custom"))?;
+            if declared != CType::None && declared != CType::Custom(named) {
+                return Err(mismatched("custom"));
+            }
+            return Ok(Err(named));
+        }
+        (CrdtDelta::Custom(_), _) => return Err(mismatched("custom")),
+        (_, CType::Custom(_)) if delta.field().is_some() => {
+            return Err(mismatched(native_block(delta)))
+        }
+        (CrdtDelta::Text(_), CType::Text | CType::None) => &TEXT,
+        (CrdtDelta::Text(_), _) => return Err(mismatched("text")),
+        (CrdtDelta::Json(_), CType::Json | CType::None) => &JSON,
+        (CrdtDelta::Json(_), _) => return Err(mismatched("json")),
         (CrdtDelta::Lww(_), CType::PCounter | CType::PnCounter | CType::Text | CType::Json) => {
-            Err(mismatched("LWW"))
+            return Err(mismatched("LWW"))
         }
-        (CrdtDelta::Lww(_), _) => Ok(&LWW),
+        (CrdtDelta::Lww(_), _) => &LWW,
         (CrdtDelta::Counter(_), CType::LwwRegister | CType::Text | CType::Json) => {
-            Err(mismatched("counter"))
+            return Err(mismatched("counter"))
         }
-        (CrdtDelta::Counter(_), CType::PnCounter) => Ok(&PN_COUNTER),
-        (CrdtDelta::Counter(_), _) => Ok(&P_COUNTER),
-        _ => Err(FieldCrdtError::NotAFieldBlock),
-    }
+        (CrdtDelta::Counter(_), CType::PnCounter) => &PN_COUNTER,
+        (CrdtDelta::Counter(_), _) => &P_COUNTER,
+        _ => return Err(FieldCrdtError::NotAFieldBlock),
+    };
+    Ok(Ok(native))
 }
 
-/// The CRDT type that stores and merges a part of `kind`. Both counters store
-/// and merge alike.
-pub fn part_crdt(kind: ValueKind) -> &'static dyn FieldCrdt {
-    match kind {
-        ValueKind::Lww => &LWW,
-        ValueKind::Int64 | ValueKind::Float32 | ValueKind::Float64 => &PN_COUNTER,
-        ValueKind::Text => &TEXT,
-        ValueKind::Json => &JSON,
+/// The name of a native field block's family, as a refusal names it.
+fn native_block(delta: &CrdtDelta) -> &'static str {
+    match delta {
+        CrdtDelta::Lww(_) => "LWW",
+        CrdtDelta::Counter(_) => "counter",
+        CrdtDelta::Text(_) => "text",
+        CrdtDelta::Json(_) => "json",
+        _ => "custom",
     }
 }

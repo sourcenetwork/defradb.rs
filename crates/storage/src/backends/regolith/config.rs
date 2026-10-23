@@ -33,6 +33,9 @@ pub struct RegolithStoreOptions {
     /// The environment the store's files live in, beneath the pool's
     /// placement wrapper ([`Self::files_env`]).
     files_env: Option<Arc<dyn regolith::Env>>,
+    /// The CRDT types of the node the store belongs to: its merge operator
+    /// folds document parts by them ([`Self::with_crdts`]).
+    crdts: crdt::Crdts,
 }
 
 impl RegolithStoreOptions {
@@ -56,6 +59,17 @@ impl RegolithStoreOptions {
         I: IntoIterator<Item = [u8; 32]>,
     {
         Ok(self.with_keys(AtRestKeys::rotated(current, older)?))
+    }
+
+    /// The node's CRDT types, which the store's merge operator folds document
+    /// parts by. Without them only the native types merge.
+    pub fn with_crdts(mut self, crdts: crdt::Crdts) -> Self {
+        self.crdts = crdts;
+        self
+    }
+
+    pub(super) fn crdts(&self) -> &crdt::Crdts {
+        &self.crdts
     }
 
     fn with_keys(mut self, keys: AtRestKeys) -> Self {
@@ -93,7 +107,9 @@ impl RegolithStoreOptions {
     /// writable one does.
     pub(super) fn engine_for_open(&self) -> Options {
         self.engine_with_keys()
-            .merge_operator(Some(Arc::new(super::merge::DefraMergeOperator)))
+            .merge_operator(Some(Arc::new(super::merge::DefraMergeOperator::new(
+                self.crdts.clone(),
+            ))))
             .prefix_extractor(Some(Arc::new(super::prefix::DefraPrefixExtractor)))
     }
 
@@ -106,6 +122,7 @@ impl RegolithStoreOptions {
             at_rest: None,
             pool: None,
             files_env: None,
+            crdts: crdt::Crdts::default(),
         }
     }
 

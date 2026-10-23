@@ -3,38 +3,76 @@
 //!
 //! This format is separate from the canonical CBOR used for blocks and DocIDs.
 //! What a part's bytes mean, and how two parts merge, is up to the
-//! [`FieldCrdt`](crate::FieldCrdt) that stores its kind ([`part_crdt`]).
+//! [`FieldCrdt`](crate::FieldCrdt) that stores its kind ([`PartCrdts`](crate::PartCrdts)).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use document::{Document, Error, NormalValue, Result};
-use schema::CollectionVersion;
+use schema::{CollectionVersion, CrdtName};
 
-use crate::field::part_crdt;
+use crate::field::PartCrdts;
 
 const MAGIC: &[u8; 4] = b"DFV\x01";
 
-/// The kind of state a part holds, as its stored tag byte.
+/// The kind of state a part holds, stored as its tag byte. A custom type's
+/// part stores its name after the tag, so the value finds its type without
+/// the field's definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum ValueKind {
-    Lww = 0,
-    Int64 = 1,
-    Float32 = 2,
-    Float64 = 3,
-    Text = 4,
-    Json = 5,
+    Lww,
+    Int64,
+    Float32,
+    Float64,
+    Text,
+    Json,
+    /// The state of the custom CRDT type of that name.
+    Custom(CrdtName),
 }
 
+const CUSTOM_TAG: u8 = 6;
+
 impl ValueKind {
-    fn from_tag(tag: u8) -> Option<Self> {
-        Some(match tag {
+    fn tag(self) -> u8 {
+        match self {
+            ValueKind::Lww => 0,
+            ValueKind::Int64 => 1,
+            ValueKind::Float32 => 2,
+            ValueKind::Float64 => 3,
+            ValueKind::Text => 4,
+            ValueKind::Json => 5,
+            ValueKind::Custom(_) => CUSTOM_TAG,
+        }
+    }
+
+    /// The tag, then a custom type's name: one byte of length and the name.
+    fn encode(self, bytes: &mut Vec<u8>) {
+        bytes.push(self.tag());
+        if let ValueKind::Custom(name) = self {
+            bytes.push(name.as_str().len() as u8);
+            bytes.extend_from_slice(name.as_str().as_bytes());
+        }
+    }
+
+    fn encoded_len(self) -> usize {
+        match self {
+            ValueKind::Custom(name) => 2 + name.as_str().len(),
+            _ => 1,
+        }
+    }
+
+    fn decode(input: &mut &[u8]) -> Option<Self> {
+        Some(match take(input, 1)?[0] {
             0 => ValueKind::Lww,
             1 => ValueKind::Int64,
             2 => ValueKind::Float32,
             3 => ValueKind::Float64,
             4 => ValueKind::Text,
             5 => ValueKind::Json,
+            CUSTOM_TAG => {
+                let length = usize::from(take(input, 1)?[0]);
+                let name = std::str::from_utf8(take(input, length)?).ok()?;
+                ValueKind::Custom(CrdtName::new(name).ok()?)
+            }
             _ => return None,
         })
     }
@@ -49,8 +87,11 @@ pub struct StoredField {
 }
 
 impl StoredField {
-    pub fn materialize(&self) -> Option<NormalValue> {
-        self.part().materialize()
+    pub fn materialize<R>(&self, crdts: &R) -> Option<NormalValue>
+    where
+        R: PartCrdts + ?Sized,
+    {
+        self.part().materialize(crdts)
     }
 
     pub fn part(&self) -> Part<'_> {
@@ -74,10 +115,19 @@ pub struct Part<'a> {
 }
 
 impl Part<'_> {
+    /// Whether the part's bytes are a state of its kind. A custom kind's
+    /// bytes are the type's own, checked when the node's type reads them.
+    fn is_valid(self) -> bool {
+        crate::field::native_part(self.kind).is_none_or(|native| native.materialize(self).is_some())
+    }
+
     /// The value the part reads as, or `None` when its bytes are not a state
     /// of its kind.
-    pub fn materialize(self) -> Option<NormalValue> {
-        part_crdt(self.kind).materialize(self)
+    pub fn materialize<R>(self, crdts: &R) -> Option<NormalValue>
+    where
+        R: PartCrdts + ?Sized,
+    {
+        crdts.part_crdt(self.kind).materialize(self)
     }
 }
 
@@ -93,7 +143,10 @@ pub fn encode_parts<'a>(
     let (count, size) = parts
         .clone()
         .fold((0usize, 0usize), |(count, size), (_, part)| {
-            (count + 1, size + 21 + part.name.len() + part.value.len())
+            (
+                count + 1,
+                size + 20 + part.kind.encoded_len() + part.name.len() + part.value.len(),
+            )
         });
     let mut bytes = Vec::with_capacity(prefix.len() + MAGIC.len() + 4 + size);
     bytes.extend_from_slice(prefix);
@@ -105,7 +158,7 @@ pub fn encode_parts<'a>(
     for (id, part) in parts {
         if previous.is_some_and(|previous| previous >= id)
             || part.name.is_empty()
-            || part.materialize().is_none()
+            || !part.is_valid()
         {
             return None;
         }
@@ -114,7 +167,7 @@ pub fn encode_parts<'a>(
             names.push(part.name);
         }
         bytes.extend_from_slice(&id.to_be_bytes());
-        bytes.push(part.kind as u8);
+        part.kind.encode(&mut bytes);
         bytes.extend_from_slice(&part.priority.to_be_bytes());
         for value in [part.name.as_bytes(), part.value] {
             bytes.extend_from_slice(&u32::try_from(value.len()).ok()?.to_be_bytes());
@@ -167,7 +220,7 @@ impl StoredDocument {
         let mut fields = BTreeMap::new();
         for _ in 0..count {
             let id = u32::from_be_bytes(take(&mut input, 4)?.try_into().ok()?);
-            let kind = ValueKind::from_tag(take(&mut input, 1)?[0])?;
+            let kind = ValueKind::decode(&mut input)?;
             let priority = u64::from_be_bytes(take(&mut input, 8)?.try_into().ok()?);
             let name = std::str::from_utf8(take_sized(&mut input)?)
                 .ok()?
@@ -180,7 +233,7 @@ impl StoredDocument {
                 value,
             };
             if field.name.is_empty()
-                || (validate_values && field.materialize().is_none())
+                || (validate_values && !field.part().is_valid())
                 || fields.insert(id, field).is_some()
             {
                 return None;
@@ -194,10 +247,20 @@ impl StoredDocument {
         input.is_empty().then_some(Self { fields })
     }
 
-    pub fn materialize(&self, collection: impl Into<Arc<CollectionVersion>>) -> Option<Document> {
+    pub fn materialize<C, R>(&self, collection: C, crdts: &R) -> Option<Document>
+    where
+        C: Into<Arc<CollectionVersion>>,
+        R: PartCrdts + ?Sized,
+    {
         let mut doc = Document::new(collection);
         for field in self.fields.values() {
-            let value = field.materialize()?;
+            let crdt = crdts.part_crdt(field.kind);
+            // A part of a custom type the node lacks stays stored, unread: the
+            // node's queries do not have its field.
+            if crdt.registered().is_none() {
+                continue;
+            }
+            let value = crdt.materialize(field.part())?;
             if !value.is_nil() {
                 doc.load(field.name.clone(), value);
             }
@@ -212,12 +275,15 @@ impl StoredDocument {
     /// ([`TaggedCrdt::settle`](crate::field::TaggedCrdt::settle)). Callers
     /// put a fresh value instead when the schema version changes; IDs and
     /// names cannot be repurposed.
-    pub fn apply(&mut self, operand: Self) -> Option<()> {
+    pub fn apply<R>(&mut self, operand: Self, crdts: &R) -> Option<()>
+    where
+        R: PartCrdts + ?Sized,
+    {
         let ids: Vec<u32> = operand.fields.keys().copied().collect();
-        self.fold(operand)?;
+        self.fold(operand, crdts)?;
         for id in ids {
             let part = self.fields.get_mut(&id)?;
-            if let Some(tagged) = part_crdt(part.kind).tagged() {
+            if let Some(tagged) = crdts.part_crdt(part.kind).tagged() {
                 tagged.settle(part)?;
             }
         }
@@ -227,7 +293,10 @@ impl StoredDocument {
     /// Fold a later operand into this one, leaving an operand for a value
     /// not known yet: as [`apply`](Self::apply), but a tagged part keeps what
     /// it removes from that value.
-    pub fn fold(&mut self, operand: Self) -> Option<()> {
+    pub fn fold<R>(&mut self, operand: Self, crdts: &R) -> Option<()>
+    where
+        R: PartCrdts + ?Sized,
+    {
         for (id, incoming) in operand.fields {
             if !self.fields.contains_key(&id)
                 && self
@@ -246,7 +315,7 @@ impl StoredDocument {
             if current.kind != incoming.kind || current.name != incoming.name {
                 return None;
             }
-            part_crdt(incoming.kind).merge(current, incoming)?;
+            crdts.part_crdt(incoming.kind).merge(current, incoming)?;
         }
         Some(())
     }
@@ -264,13 +333,14 @@ fn take_sized<'a>(input: &mut &'a [u8]) -> Option<&'a [u8]> {
 
 /// A document from its local stored value, in this format or as the whole
 /// CBOR value written before it existed. The wire CBOR decoder is unchanged.
-pub fn document_from_storage(
-    bytes: &[u8],
-    collection: impl Into<Arc<CollectionVersion>>,
-) -> Result<Document> {
+pub fn document_from_storage<C, R>(bytes: &[u8], collection: C, crdts: &R) -> Result<Document>
+where
+    C: Into<Arc<CollectionVersion>>,
+    R: PartCrdts + ?Sized,
+{
     if StoredDocument::is_field_format(bytes) {
         StoredDocument::decode_inner(bytes, false)
-            .and_then(|value| value.materialize(collection))
+            .and_then(|value| value.materialize(collection, crdts))
             .ok_or_else(|| Error::CborDecode("invalid local document value".into()))
     } else {
         Document::from_cbor(bytes, collection)

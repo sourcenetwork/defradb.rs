@@ -434,7 +434,7 @@ pub(crate) async fn write_document_blocks_with_inputs(
                     + 1
             };
 
-            let crdt = field_crdt_of(doc, field_name)?;
+            let crdt = field_crdt_of(blockstore.crdts(), doc, field_name)?;
             if is_create {
                 crdt.op(field_value.value().clone(), true)
                     .map_err(|error| error.to_string())?;

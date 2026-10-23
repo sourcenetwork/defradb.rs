@@ -13,7 +13,10 @@ fn cursor_boundary_uses_doc_short_id_suffix() {
     workers::block_on(async {
         let store = RegolithStore::in_memory().unwrap();
         let txn = store.new_txn(false).await.unwrap();
-        let systemstore = NamespaceView::new(SharedTxn::new(txn), Namespace::Systemstore);
+        let systemstore = NamespaceView::new(
+            SharedTxn::new(txn, storage::Crdts::default()),
+            Namespace::Systemstore,
+        );
         db::docid::map::set_doc_id_mapping(&systemstore, 7, 42, "bae-boundary")
             .await
             .unwrap();

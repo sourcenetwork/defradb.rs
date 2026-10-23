@@ -22,6 +22,7 @@ pub mod action;
 pub(crate) mod dump;
 pub(crate) mod spawn;
 pub mod storage_stats;
+pub(crate) mod stored_crdts;
 
 pub use storage::corekv::DEFAULT_MAX_TXN_RETRIES;
 
@@ -381,6 +382,7 @@ impl<S: Store> DB<S> {
     where
         S: 'static,
     {
+        self.check_stored_crdts().await?;
         self.load_collections().await?;
         self.initialize_migrations().await?;
         self.migrate_document_parts().await?;
@@ -753,6 +755,11 @@ impl<S: Store> DB<S> {
     /// Get a reference to the underlying store.
     pub fn store(&self) -> &Arc<S> {
         &self.store
+    }
+
+    /// The CRDT types of this database's node, as its store merges by them.
+    pub fn crdts(&self) -> &crdt::Crdts {
+        self.store.crdts()
     }
 
     /// Get the database options.

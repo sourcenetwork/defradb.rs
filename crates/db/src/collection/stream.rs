@@ -94,9 +94,12 @@ impl DocStream for CollectionDocStream {
                 continue;
             };
 
-            let mut doc =
-                crdt::stored::document_from_storage(&pair.value, self.collection.schema_arc())
-                    .map_err(|e| self.fuse_err("document decode error", e))?;
+            let mut doc = crdt::stored::document_from_storage(
+                &pair.value,
+                self.collection.schema_arc(),
+                self.collection.crdts(),
+            )
+            .map_err(|e| self.fuse_err("document decode error", e))?;
 
             let Some(doc_id_str) = crate::docid::map::get_doc_id(&self.systemstore, doc_short_id)
                 .await

@@ -90,6 +90,7 @@ where
                 order: None,
                 deferred: false,
                 op: None,
+                parked: None,
             });
         }
         let part = state.as_ref().map(|state| state.part());
@@ -113,6 +114,12 @@ where
                     storage::merge::document_part(part, operand.part()).ok_or_else(|| {
                         MergeError::MergeFailed(format!("invalid operand on '{}'", field.name))
                     })?;
+                crate::database::stored_crdts::record(
+                    datastore,
+                    crate::database::stored_crdts::custom([operand.kind]),
+                )
+                .await
+                .map_err(|e| MergeError::Storage(e.to_string()))?;
                 datastore
                     .merge(&collection.doc_key(doc_short_id), &bytes)
                     .await
@@ -132,6 +139,7 @@ where
             order: None,
             deferred: false,
             op,
+            parked: None,
         })
     }
 
@@ -168,7 +176,7 @@ where
             let writer = block
                 .delta
                 .field()
-                .and_then(|_| crdt::delta_crdt(&block.delta, field.crdt_type).ok());
+                .and_then(|_| self.db.crdts().delta(&block.delta, field.crdt_type).ok());
             if writer.is_some_and(|writer| writer.tagged().is_some()) {
                 let data = self.block_data(&block, metadata).await?;
                 let parent_ids: Vec<Vec<u8>> = block_parents.iter().map(Cid::to_bytes).collect();

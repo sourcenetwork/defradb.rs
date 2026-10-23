@@ -1,5 +1,5 @@
 use crdt::field::testing::check_field_crdt;
-use crdt::{delta_crdt, field_crdt, FieldCrdt, JsonField};
+use crdt::{Crdts, FieldCrdt, FieldCrdtError, JsonField};
 use defra_core::block::CrdtDelta;
 use defra_core::block_delta::{JsonDeltaPayload, LwwDeltaPayload, TextDeltaPayload};
 use defra_core::json_crdt::{JsonEdit, JsonOp};
@@ -13,7 +13,7 @@ fn field() -> FieldDescription {
 }
 
 fn json_crdt() -> &'static dyn FieldCrdt {
-    field_crdt(CType::Json).unwrap()
+    crdt::field::native(CType::Json).unwrap()
 }
 
 fn values(values: &[Value]) -> Vec<NormalValue> {
@@ -71,7 +71,7 @@ fn json_block() -> CrdtDelta {
 fn a_json_block_is_refused_like_any_other_family() {
     let refusal = |delta: &CrdtDelta, declared| match delta_crdt(delta, declared) {
         Err(error) => error.to_string(),
-        Ok(crdt) => panic!("{declared} accepted a {} block", crdt.ctype()),
+        Ok(ctype) => panic!("{declared} accepted a {} block", ctype),
     };
     let json = json_block();
     for declared in [
@@ -86,10 +86,7 @@ fn a_json_block_is_refused_like_any_other_family() {
         );
     }
     for declared in [CType::Json, CType::None] {
-        assert_eq!(
-            delta_crdt(&json, declared).map(|crdt| crdt.ctype()).ok(),
-            Some(CType::Json)
-        );
+        assert_eq!(delta_crdt(&json, declared).ok(), Some(CType::Json));
     }
     let lww = CrdtDelta::Lww(LwwDeltaPayload {
         field_name: "meta".into(),
@@ -151,7 +148,7 @@ fn a_json_field_takes_sets_and_path_edits() {
         assert!(json.named_op(op).is_err());
     }
     for ctype in [CType::LwwRegister, CType::Text, CType::PnCounter] {
-        let message = field_crdt(ctype)
+        let message = crdt::field::native(ctype)
             .unwrap()
             .named_op(delete.clone())
             .unwrap_err()
@@ -248,4 +245,11 @@ fn json_path_edits_in_one_write_stack_in_order() {
     doc.edit("meta", FieldOp::Set(NormalValue::Json(json!(1))))
         .unwrap();
     assert_eq!(doc.pending_op("meta"), None, "a set drops the edits");
+}
+
+/// The type a native node reads a field block as.
+fn delta_crdt(delta: &CrdtDelta, declared: CType) -> Result<CType, FieldCrdtError> {
+    Crdts::default()
+        .delta(delta, declared)
+        .map(|crdt| crdt.ctype())
 }

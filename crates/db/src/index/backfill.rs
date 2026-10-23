@@ -274,7 +274,8 @@ impl storage::corekv::RetryAttemptFn for FinishIndexAttempt {
     ) -> storage::corekv::RetryAttemptFuture<'a> {
         Box::pin(async move {
             let io = retry.begin_attempt_io()?;
-            let txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+            let txn =
+                datastore::BasicTxn::from_retry_attempt_io(io, 0, self.collection.crdts().clone());
             let datastore = txn.datastore();
             let systemstore = txn.systemstore();
             let built: Result<()> = async move {

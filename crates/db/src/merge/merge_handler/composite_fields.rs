@@ -145,7 +145,12 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     .map_or(link_name.as_str(), |delta| delta.field_name);
                 if immutable_fields.contains(field_name) {
                     if let Some(baseline) = immutable_baseline.as_ref() {
-                        Self::check_immutable_delta(baseline, field_name, effective)?;
+                        Self::check_immutable_delta(
+                            self.db.crdts(),
+                            baseline,
+                            field_name,
+                            effective,
+                        )?;
                     }
                 }
             }
@@ -158,6 +163,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
 
         // Phase 2: persist the decoded deltas.
         for (link_cid, parents, deltas) in pending {
+            let mut parked = false;
             for effective in deltas {
                 let Some(delta) = effective.field() else {
                     return Err(MergeError::UnsupportedDelta(format!(
@@ -184,6 +190,30 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                         false,
                     )
                     .await?;
+                if let Some(crdt) = result.parked {
+                    let collection = context
+                        .collection
+                        .as_ref()
+                        .map(|collection| collection.collection_id())
+                        .or(context.metadata.collection_id)
+                        .unwrap_or(delta.schema_version_id);
+                    self.park(
+                        datastore,
+                        crdt,
+                        &link_cid,
+                        super::parked::Place {
+                            collection,
+                            doc_id: context.doc_id_str,
+                            doc_short_id: context.doc_short_id,
+                            field: delta.field_name,
+                            collection_id: context.metadata.collection_id,
+                            priority: delta.priority,
+                        },
+                    )
+                    .await?;
+                    parked = true;
+                    continue;
+                }
                 match result.order {
                     Some(order) => {
                         state.field_priorities.insert(field_name.clone(), order);
@@ -201,7 +231,10 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     state.field_values.insert(field_name, value);
                 }
             }
-            state.linked_field_cids.push(link_cid);
+            // A parked block's head is published when it merges.
+            if !parked {
+                state.linked_field_cids.push(link_cid);
+            }
         }
 
         Ok(None)
@@ -216,6 +249,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
     /// immutable field merges, so rejecting first-set would false-reject the
     /// legitimate block.
     fn check_immutable_delta(
+        crdts: &crdt::Crdts,
         baseline: &Document,
         field_name: &str,
         effective: &CrdtDelta,
@@ -227,7 +261,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
         let Some(delta) = effective.field() else {
             return Ok(());
         };
-        if crdt::delta_crdt(effective, CType::None)
+        if crdts
+            .delta(effective, CType::None)
             .ok()
             .is_none_or(|crdt| crdt.replicates_ops())
         {

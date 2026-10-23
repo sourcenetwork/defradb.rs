@@ -161,6 +161,27 @@ impl DefraKms {
         self.test_ephemeral.store_some(eph);
     }
 
+    /// The answer for `cid` from this node's own store: `None` when the key
+    /// is not here, or here before the node knows who may have it.
+    async fn local_answer(
+        &self,
+        actor: Option<&Did>,
+        cid: &EncryptionCid,
+    ) -> Result<Option<Result<[u8; 32]>>> {
+        let Some(stored) = self.tier.get(cid).await? else {
+            return Ok(None);
+        };
+        Ok(match self.local_release_decision(actor, cid, None).await? {
+            LocalRelease::Allow => Some(Ok(stored.key)),
+            LocalRelease::Deny => Some(Err(Error::AccessDenied {
+                reason: "policy denied".into(),
+            })),
+            // We hold the block but not its ownership yet (e.g. a
+            // replication fetch before merge). Defer to the owner.
+            LocalRelease::OwnershipUnknown => None,
+        })
+    }
+
     /// Local release decision for the DEK stored under `cid`.
     ///
     /// Encryption blocks carry no identity (Go #4838): ownership is
@@ -281,18 +302,7 @@ impl KmsService for DefraKms {
         let mut answers: Vec<Option<Result<[u8; 32]>>> = Vec::with_capacity(cids.len());
         let mut remote = Vec::new();
         for (index, cid) in cids.iter().enumerate() {
-            let answer = match self.tier.get(cid).await? {
-                Some(stored) => match self.local_release_decision(user_actor, cid, None).await? {
-                    LocalRelease::Allow => Some(Ok(stored.key)),
-                    LocalRelease::Deny => Some(Err(Error::AccessDenied {
-                        reason: "policy denied".into(),
-                    })),
-                    // We hold the block but not its ownership yet (e.g. a
-                    // replication fetch before merge). Defer to the owner.
-                    LocalRelease::OwnershipUnknown => None,
-                },
-                None => None,
-            };
+            let answer = self.local_answer(user_actor, cid).await?;
             if answer.is_none() {
                 remote.push((index, Self::remote_key(ctx, *cid)));
             }
@@ -321,6 +331,20 @@ impl KmsService for DefraKms {
             .into_iter()
             .map(|answer| answer.unwrap_or(Err(Error::KeyUnavailable)))
             .collect())
+    }
+
+    async fn get_local_keys_each(
+        &self,
+        ctx: &RequestContext,
+        cids: &[EncryptionCid],
+    ) -> Result<Vec<Result<[u8; 32]>>> {
+        let user_actor = ctx.user_identity();
+        let mut answers = Vec::with_capacity(cids.len());
+        for cid in cids {
+            let answer = self.local_answer(user_actor, cid).await?;
+            answers.push(answer.unwrap_or(Err(Error::KeyUnavailable)));
+        }
+        Ok(answers)
     }
 
     async fn prefetch_keys(&self, ctx: &RequestContext, cids: &[EncryptionCid]) {

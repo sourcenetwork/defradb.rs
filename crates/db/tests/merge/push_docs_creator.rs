@@ -30,7 +30,10 @@ fn resolve_push_creator_uses_owner_for_protected_document() {
 #[test]
 fn resolve_push_creator_falls_back_without_collection_policy() {
     workers::block_on(async {
-        let collection = Collection::new(CollectionVersion::new("Users", "v1", "col1", vec![]));
+        let collection = Collection::new(
+            CollectionVersion::new("Users", "v1", "col1", vec![]),
+            crdt::Crdts::default(),
+        );
 
         let creator = resolve_push_creator(None, &collection, "doc1", "local-peer").await;
 
@@ -83,6 +86,7 @@ fn protected_collection() -> Collection {
     Collection::new(
         CollectionVersion::new("Users", "v1", "col1", vec![])
             .with_policy(PolicyDescription::new("policy-1", "Users")),
+        crdt::Crdts::default(),
     )
 }
 

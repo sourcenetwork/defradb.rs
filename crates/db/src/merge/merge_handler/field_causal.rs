@@ -133,6 +133,7 @@ where
             order,
             deferred: false,
             op: None,
+            parked: None,
         })
     }
 
@@ -163,6 +164,12 @@ where
         let operand = storage::merge::document_part(part, state.part()).ok_or_else(|| {
             MergeError::MergeFailed(format!("invalid merged value of '{}'", field.name))
         })?;
+        crate::database::stored_crdts::record(
+            datastore,
+            crate::database::stored_crdts::custom([state.kind]),
+        )
+        .await
+        .map_err(storage)?;
         datastore
             .merge(&collection.doc_key(doc_short_id), &operand)
             .await
@@ -322,7 +329,10 @@ where
         let op = if id == *cid {
             causal.block_op(field, data).map_err(failed)?
         } else {
-            let writer = crdt::delta_crdt(&block.delta, field.crdt_type)
+            let writer = self
+                .db
+                .crdts()
+                .delta(&block.delta, field.crdt_type)
                 .map_err(|error| MergeError::UnsupportedDelta(error.to_string()))?;
             crdt::history_op(writer, field, &self.block_data(block, metadata).await?)
                 .map_err(failed)?

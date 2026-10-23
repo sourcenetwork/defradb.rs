@@ -283,6 +283,10 @@ impl crate::corekv::private::Sealed for FaultyTransactStore {}
 
 #[async_trait]
 impl Store for FaultyTransactStore {
+    fn crdts(&self) -> &crdt::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> Result<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }

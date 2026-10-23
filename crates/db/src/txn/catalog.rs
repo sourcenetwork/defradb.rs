@@ -137,7 +137,10 @@ mod tests {
     use schema::CollectionVersion;
 
     fn collection(name: &str) -> Collection {
-        Collection::new(CollectionVersion::new(name, name, name, vec![]))
+        Collection::new(
+            CollectionVersion::new(name, name, name, vec![]),
+            crdt::Crdts::default(),
+        )
     }
 
     #[test]

@@ -116,6 +116,39 @@ pub struct JsonDeltaPayload {
     pub data: Vec<u8>,
 }
 
+/// Custom delta payload for block embedding: a field block written by a CRDT
+/// type registered on the node by name.
+///
+/// Shaped as an LWW delta, so a field's encryption treats it alike; `data` is
+/// whatever the type encodes. `crdt` names the type, so a node that does not
+/// have it can refuse the block by name. `nonce` keeps two equal operations
+/// distinct blocks, for a type that replicates operations; a state type leaves
+/// it out. A Rust-only delta: Go peers cannot decode it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomDeltaPayload {
+    /// The custom CRDT type's name
+    pub crdt: String,
+
+    /// Field name
+    #[serde(rename = "fieldName")]
+    pub field_name: String,
+
+    /// Priority
+    pub priority: u64,
+
+    /// Nonce for idempotency, for a type that replicates operations
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<i64>,
+
+    /// Collection version identifier
+    #[serde(rename = "collectionVersionID")]
+    pub schema_version_id: String,
+
+    /// The encoded value or operation
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
 /// Counter delta payload for block embedding
 ///
 /// Matches Go's `crdt.CounterDelta` structure.
@@ -203,6 +236,16 @@ pub struct FieldDefinitionDeltaPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crdt: Option<u8>,
 
+    /// The custom CRDT type's name, beside `crdt`'s custom code. Skipped when
+    /// absent, so a native field's delta serialises to the bytes it did
+    /// before custom types existed.
+    #[serde(
+        rename = "customCrdt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub custom_crdt: Option<String>,
+
     /// Scalar kind (for scalar fields)
     #[serde(
         rename = "scalarKind",
@@ -248,6 +291,7 @@ impl FieldDefinitionDeltaPayload {
             priority,
             name: None,
             crdt: None,
+            custom_crdt: None,
             scalar_kind: None,
             collection_id: None,
             relative_id: None,
@@ -264,6 +308,12 @@ impl FieldDefinitionDeltaPayload {
     /// Set the CRDT type
     pub fn with_crdt(mut self, crdt: u8) -> Self {
         self.crdt = Some(crdt);
+        self
+    }
+
+    /// Set the custom CRDT type's name
+    pub fn with_custom_crdt(mut self, name: impl Into<String>) -> Self {
+        self.custom_crdt = Some(name.into());
         self
     }
 

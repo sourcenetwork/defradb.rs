@@ -93,6 +93,7 @@ impl Fixture {
         doc.set("name", NormalValue::String("Alice".to_string()))
             .unwrap();
         let genesis = db::block::builder::build_blocks_from_document(
+            &storage::Crdts::default(),
             &doc,
             &crate::common::schema::version("v1"),
             &blockstore,

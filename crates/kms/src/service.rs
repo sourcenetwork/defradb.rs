@@ -66,6 +66,19 @@ pub trait KmsService: MaybeSendSync {
             .collect())
     }
 
+    /// One answer per CID, in the order asked, from the keys this node holds
+    /// and may release: no peer is asked. A key held elsewhere is
+    /// [`Error::KeyUnavailable`].
+    ///
+    /// The default holds no keys.
+    async fn get_local_keys_each(
+        &self,
+        _ctx: &RequestContext,
+        cids: &[EncryptionCid],
+    ) -> Result<Vec<Result<[u8; 32]>>> {
+        Ok(cids.iter().map(|_| Err(Error::KeyUnavailable)).collect())
+    }
+
     /// Starts fetching the keys of `cids` this node does not hold, without
     /// waiting for them, so a merge that needs a key later finds it local or
     /// joins the request in flight instead of making another.

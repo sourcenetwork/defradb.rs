@@ -56,7 +56,8 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> BatchMergeRetryAtt
         let io = retry
             .begin_attempt_io()
             .map_err(|error| MergeError::Database(crate::error::Error::Storage(error)))?;
-        let basic_txn = datastore::BasicTxn::from_retry_attempt_io(io, 0);
+        let basic_txn =
+            datastore::BasicTxn::from_retry_attempt_io(io, 0, self.handler.db.crdts().clone());
         let txn = self.handler.db.new_db_txn(basic_txn);
         for block in &self.blocks {
             if let Some(collection) = self
@@ -472,7 +473,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
 
         // A causal or tagged field's heads move only with its composite, so
         // its block merges there, against those heads.
-        if crdt::delta_crdt(&block.delta, CType::None)
+        if self
+            .db
+            .crdts()
+            .delta(&block.delta, CType::None)
             .is_ok_and(|crdt| crdt.causal().is_some() || crdt.tagged().is_some())
         {
             return Ok(MergeOutcome::terminal_skip(

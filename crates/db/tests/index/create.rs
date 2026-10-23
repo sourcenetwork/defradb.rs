@@ -546,6 +546,10 @@ impl storage::corekv::private::Sealed for PauseDefinitionCommitStore {}
 
 #[async_trait]
 impl Store for PauseDefinitionCommitStore {
+    fn crdts(&self) -> &storage::Crdts {
+        self.inner.crdts()
+    }
+
     async fn allocate(&self, key: &[u8], count: u64) -> StorageResult<std::ops::Range<u64>> {
         self.inner.allocate(key, count).await
     }
@@ -822,7 +826,7 @@ fn index_backfill_resumes_after_a_restart() {
         )
         .bytes();
 
-        let indexed = Collection::new(schema.clone());
+        let indexed = Collection::new(schema.clone(), crdt::Crdts::default());
         let manager = IndexManager::from_collection(schema.resolved_root_id(), &schema).unwrap();
         let txn = db.new_txn(false).await.unwrap();
         {
