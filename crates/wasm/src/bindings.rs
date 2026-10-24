@@ -36,6 +36,14 @@ pub struct ClientConfig {
     pub require_sync_handles: bool,
 }
 
+/// Options for `execRequest`, the subset of Go's this client can honour.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecRequestOptions {
+    /// Values for the request's `$variables`.
+    pub variables: Option<rapidhash::RapidHashMap<String, serde_json::Value>>,
+}
+
 /// Collection info returned to JavaScript.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CollectionInfo {

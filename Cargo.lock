@@ -4130,6 +4130,7 @@ dependencies = [
  "js-sys",
  "p2p",
  "query",
+ "rapidhash",
  "schema",
  "serde",
  "serde-wasm-bindgen",

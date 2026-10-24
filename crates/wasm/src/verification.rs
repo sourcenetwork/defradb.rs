@@ -16,7 +16,7 @@ use crate::error::{Result, WasmError};
 /// * `public_key_hex` - Hex-encoded Ed25519 public key (64 hex chars)
 /// * `message` - The message bytes that were signed
 /// * `signature_hex` - Hex-encoded signature (128 hex chars)
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = verifyEd25519Signature)]
 pub fn verify_ed25519_signature(
     public_key_hex: &str,
     message: &[u8],
@@ -43,7 +43,7 @@ fn verify_ed25519_impl(public_key_hex: &str, message: &[u8], signature_hex: &str
 /// * `public_key_hex` - Hex-encoded secp256k1 public key (compressed or uncompressed)
 /// * `message` - The message bytes that were signed
 /// * `signature_hex` - Hex-encoded signature
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = verifySecp256k1Signature)]
 pub fn verify_secp256k1_signature(
     public_key_hex: &str,
     message: &[u8],
@@ -71,7 +71,7 @@ fn verify_secp256k1_impl(
 /// Compute SHA-256 hash of data.
 ///
 /// Returns the hash as a hex string.
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = sha256Hash)]
 pub fn sha256_hash(data: &[u8]) -> String {
     let hash = sha256(data);
     hex::encode(hash)
@@ -81,7 +81,7 @@ pub fn sha256_hash(data: &[u8]) -> String {
 ///
 /// The document should be a JSON object. The CID is computed from the
 /// DAG-CBOR encoding of the document.
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = computeDocumentCID)]
 pub fn compute_document_cid(document_json: &str) -> std::result::Result<String, JsValue> {
     compute_cid_impl(document_json).map_err(|e| e.into())
 }
@@ -104,7 +104,7 @@ fn compute_cid_impl(document_json: &str) -> Result<String> {
 /// Returns a JSON object with:
 /// - `private_key`: Hex-encoded private key
 /// - `public_key`: Hex-encoded public key
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = generateEd25519Keypair)]
 pub fn generate_ed25519_keypair() -> std::result::Result<JsValue, JsValue> {
     generate_ed25519_impl().map_err(|e| e.into())
 }
@@ -126,7 +126,7 @@ fn generate_ed25519_impl() -> Result<JsValue> {
 /// Returns a JSON object with:
 /// - `private_key`: Hex-encoded private key
 /// - `public_key`: Hex-encoded public key
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = generateSecp256k1Keypair)]
 pub fn generate_secp256k1_keypair() -> std::result::Result<JsValue, JsValue> {
     generate_secp256k1_impl().map_err(|e| e.into())
 }
