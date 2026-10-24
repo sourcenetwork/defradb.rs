@@ -48,7 +48,11 @@ async fn rust_index_drop_during_backfill_leaves_no_action() {
                 .expect("create index status")
         }
     });
-    while actions(&api).await == json!([]) && !create.is_finished() {
+    while actions(&api).await == json!([]) {
+        assert!(
+            !create.is_finished(),
+            "the backfill finished before the drop could race it"
+        );
         tokio::task::yield_now().await;
     }
     client
