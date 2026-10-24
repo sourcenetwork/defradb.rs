@@ -1,0 +1,69 @@
+flowchart LR
+    classDef op fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef free fill:#d6e6f8,stroke:#1565c0,color:#000
+    classDef one fill:#fde7c9,stroke:#c77700,color:#000
+
+    subgraph OPS["defradb.rs write operations: on a worker, inside transact"]
+        C["create a document"]
+        U["update a document"]
+        D["delete a document"]
+        M["P2P merge of remote blocks"]
+        K["counter increment"]
+        X["DDL: schema or index change"]
+        A["ACP: register an owner,<br/>add or remove a relationship"]
+        PO["ACP: create a policy"]
+    end
+
+    subgraph FREE["never conflicts"]
+        B["blocks: b plus CID<br/>ContentAddressed put"]
+        H["head sets: blind merge with its set operator,<br/>or a CommutativePrefix"]
+        V["document value: blind merge of a part operand"]
+        I["secondary index entries: blind puts and deletes"]
+        J["arrival journal: append with the document as once key"]
+        S["short IDs and policy IDs: Db allocate"]
+        CNT["counter: blind merge, exact partial_merge"]
+        OWN["block ownership: blind puts"]
+    end
+
+    subgraph ONE["one winner by design: Conflict with its reason"]
+        UQ["unique index key"]
+        MAP["DocID mapping: one winner per document"]
+        DEL["deletion marker: delete racing delete or update"]
+        DEF["definition key: DDL against its writers"]
+        ACPK["ACP owner and tuples, in the authorized transaction:<br/>registration by scan_validated of the owner prefix,<br/>revocation against the checks it races"]
+        AP["applied key per remote block: exactly once"]
+        SAME["the same document parts written by two updates"]
+    end
+
+    C --> B
+    C --> H
+    C --> V
+    C --> I
+    C --> UQ
+    C --> J
+    C --> S
+    C --> MAP
+    C --> OWN
+    U --> B
+    U --> H
+    U --> V
+    U --> I
+    U --> UQ
+    U --> SAME
+    D --> DEL
+    D --> H
+    D --> I
+    M --> B
+    M --> H
+    M --> V
+    M --> AP
+    M --> J
+    M --> MAP
+    K --> CNT
+    X --> DEF
+    A --> ACPK
+    PO --> S
+
+    class C,U,D,M,K,X,A,PO op
+    class B,H,V,I,J,S,CNT,OWN free
+    class UQ,MAP,DEL,DEF,ACPK,AP,SAME one

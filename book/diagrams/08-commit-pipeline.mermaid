@@ -1,0 +1,29 @@
+flowchart TB
+    classDef p6 fill:#fff3cd,stroke:#b8860b,color:#000
+    classDef p7 fill:#d6e6f8,stroke:#1565c0,color:#000
+    classDef io fill:#ffffff,stroke:#999999,color:#000
+
+    subgraph P6["Phase 6: group commit, one short critical section"]
+        direction LR
+        Q["queued transactions"] --> V1["validate against a sampled horizon,<br/>outside the critical section"]
+        V1 --> V2["inside it: only the delta,<br/>plus earlier group members' write sets"]
+        V2 --> AS["assign in group order:<br/>sequences, log positions, allocations"]
+        AS --> WR["one WAL write for the whole group"]
+        WR --> FS["one fsync: a unit on every member's IoQueue,<br/>run by the first member core to poll it,<br/>or by a blocking commit"]
+        FS --> PUB["publish visibility in order;<br/>each member's completion pushed to its own queue"]
+    end
+
+    subgraph P7["Phase 7, after the per-core hot paths: lock-free pipeline, no critical section"]
+        direction LR
+        RS["reserve a ring slot: one fetch_add"] --> DC["decide slots in ring order:<br/>any thread may decide slot i, helping"]
+        DC --> WS["write each decided slot at its offset:<br/>any thread, idempotent"]
+        WS --> DW["durable watermark: fsync the written prefix,<br/>a unit any waiting core may claim"]
+        DW --> AP["apply to the multi-writer memtable:<br/>idempotent per key and sequence"]
+        AP --> PB["publish the contiguous prefix;<br/>completions to each committer's own queue"]
+        DC -->|"aborted"| VOID["no sequence, no log position:<br/>no hole anywhere"]
+    end
+
+    P6 -->|"Phase 7 replaces the critical section"| P7
+
+    class Q,V1,V2,AS,WR,FS,PUB p6
+    class RS,DC,WS,DW,AP,PB,VOID p7
