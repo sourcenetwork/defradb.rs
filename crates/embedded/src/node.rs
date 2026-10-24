@@ -110,7 +110,7 @@ impl<S: storage::corekv::Store + 'static> EmbeddedNode<S> {
         }
     }
 
-    pub async fn add_schema(&self, sdl: &str) -> Result<()> {
+    pub async fn add_collection(&self, sdl: &str) -> Result<()> {
         let context = self.node_context();
         let (database, document_acp) = (Arc::clone(&self.database), self.document_acp.clone());
         let sdl = sdl.to_owned();

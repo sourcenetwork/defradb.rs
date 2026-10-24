@@ -59,9 +59,9 @@ fn embedded_node_acts_as_self_with_nac_enabled() {
         assert_eq!(node.node_identity_did(), Some(did.as_str()));
 
         // Schema mutation runs as the node identity (CollectionPatch gate).
-        node.add_schema("type Widget { name: String }")
+        node.add_collection("type Widget { name: String }")
             .await
-            .expect("add_schema must succeed as node identity");
+            .expect("add_collection must succeed as node identity");
 
         // Document create via execute() (DocumentUpdate gate in the mutators).
         let create = node
@@ -106,9 +106,9 @@ fn embedded_multi_mutation_and_multi_doc_create_under_nac() {
             .await
             .expect("node with NAC enabled should build");
 
-        node.add_schema("type Widget { name: String }")
+        node.add_collection("type Widget { name: String }")
             .await
-            .expect("add_schema must succeed as node identity");
+            .expect("add_collection must succeed as node identity");
 
         // Multiple mutations in a single execute() request route through the
         // implicit BatchMutator (mutations.len() > 1). Without the restore-safe

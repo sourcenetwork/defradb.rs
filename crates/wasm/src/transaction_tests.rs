@@ -21,7 +21,7 @@ mod tests {
         let handle = registry.begin(false).await.unwrap();
 
         registry
-            .add_schema_in_txn(handle.as_str(), "type TxnOnly { value: Int }")
+            .add_collection_in_txn(handle.as_str(), "type TxnOnly { value: Int }")
             .await
             .unwrap();
 

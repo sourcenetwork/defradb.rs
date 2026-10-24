@@ -180,7 +180,7 @@ pub unsafe extern "C" fn add_schema_in_txn(
             }
 
             let created_versions = registry
-                .add_schema_in_txn_with_acp_as(&context, &txn_str, &schema_str, Some(document_acp.clone()), creator.clone())
+                .add_collection_in_txn_with_acp_as(&context, &txn_str, &schema_str, Some(document_acp.clone()), creator.clone())
                 .await
                 .map_err(|e| format!("failed to create collection in txn: {}", e))?;
 

@@ -22,7 +22,7 @@ const DID_B: &str = "did:key:z6MkfXG2FkNy3u7Eg3jm8e2YQpGz7Z1JqWgHDAP1hLk9r2bR";
 async fn node_with_protected_users() -> (EmbeddedNode, String) {
     let node = EmbeddedNode::builder().build().await.unwrap();
     let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
     ))
     .await
@@ -106,11 +106,11 @@ fn add_dac_policy_returns_id_and_validates_policy() {
 }
 
 #[test]
-fn add_schema_rejects_unregistered_policy_id() {
+fn add_collection_rejects_unregistered_policy_id() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.unwrap();
         let err = node
-            .add_schema(
+            .add_collection(
                 "type Users @policy(id: \"deadbeef\", resource: \"users\") { name: String }",
             )
             .await
@@ -120,7 +120,7 @@ fn add_schema_rejects_unregistered_policy_id() {
             "{err:#}"
         );
 
-        node.add_schema("type Plain { name: String }")
+        node.add_collection("type Plain { name: String }")
             .await
             .expect("a schema without @policy must not need the policy store");
         node.shutdown().await;
@@ -132,7 +132,7 @@ fn add_schema_rejects_unregistered_policy_id() {
 fn add_view_rejects_unregistered_policy_id() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.unwrap();
-        node.add_schema("type Plain { name: String }")
+        node.add_collection("type Plain { name: String }")
             .await
             .unwrap();
 
@@ -254,7 +254,7 @@ fn dac_wildcard_grant_opens_document_to_every_actor() {
 fn dac_relationship_requires_a_collection_policy() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.unwrap();
-        node.add_schema("type Plain { name: String }")
+        node.add_collection("type Plain { name: String }")
             .await
             .unwrap();
 
@@ -332,7 +332,7 @@ fn node_identity_does_not_bypass_protected_history_reads() {
         .await
         .unwrap();
     let policy_id = node.add_dac_policy(DID_A, POLICY_YAML).await.unwrap();
-    node.add_schema(&format!(
+    node.add_collection(&format!(
         "type Users @policy(id: \"{policy_id}\", resource: \"users\") {{ name: String }}"
     ))
     .await
@@ -450,7 +450,7 @@ fn policy_id_reproducible_with_explicit_counter() {
     assert_eq!(again, id);
 
     follower
-        .add_schema(&format!(
+        .add_collection(&format!(
             "type Users @policy(id: \"{reproduced}\", resource: \"users\") {{ name: String }}"
         ))
         .await

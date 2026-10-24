@@ -135,7 +135,7 @@ pub fn generate_field_cid_with_priority_and_heads(
 /// Field CIDs are included as DAGLinks (matching Go's behavior where collection blocks
 /// link to their field definition blocks).
 ///
-/// NOTE: This calculates priority as (num_fields + 1). For Go AddSchema compatibility,
+/// NOTE: This calculates priority as (num_fields + 1). For Go AddCollection compatibility,
 /// use `generate_collection_cid_with_priority` with priority=1 instead.
 pub fn generate_collection_cid(name: &str, field_cids: &[Cid]) -> crate::Result<Cid> {
     // Priority = num_fields + 1 (legacy behavior)
@@ -149,7 +149,7 @@ pub fn generate_collection_cid(name: &str, field_cids: &[Cid]) -> crate::Result<
 /// Field CIDs are included as DAGLinks (matching Go's behavior where collection blocks
 /// link to their field definition blocks).
 ///
-/// IMPORTANT: Go's actual AddSchema uses priority=1 for ALL blocks (both field and collection),
+/// IMPORTANT: Go's actual AddCollection uses priority=1 for ALL blocks (both field and collection),
 /// not incrementing priorities. Use priority=1 for Go interoperability.
 pub fn generate_collection_cid_with_priority(
     name: &str,

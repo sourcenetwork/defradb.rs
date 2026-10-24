@@ -34,7 +34,7 @@
 //! const client = await DefraClient.create({ db_name: 'defradb' });
 //!
 //! // Add schema
-//! await client.add_schema(`
+//! await client.add_collection(`
 //!   type Account {
 //!     address: String
 //!     balance: Int

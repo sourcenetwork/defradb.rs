@@ -97,7 +97,7 @@ pub async fn get_collections_in_txn(
 /// the same transaction can use the new collections immediately.
 ///
 /// Requires `CollectionPatch` permission when NAC is enabled.
-pub async fn add_schema_in_txn(
+pub async fn add_collection_in_txn(
     State(state): State<AppState>,
     identity: ExtractIdentity,
     Path(params): Path<TxnPathParam>,
@@ -110,7 +110,7 @@ pub async fn add_schema_in_txn(
     let txn_id = params.id.clone();
 
     let collections = txn_ops
-        .add_schema_in_txn(&txn_id, &body)
+        .add_collection_in_txn(&txn_id, &body)
         .await
         .map_err(http_error_from_backend_message)?;
 

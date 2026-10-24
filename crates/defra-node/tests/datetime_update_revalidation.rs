@@ -58,7 +58,7 @@ async fn create_get_id(node: &EmbeddedNode, coll: &str) -> Result<String> {
 fn datetime_update_revalidation_noindex() -> Result<()> {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await?;
-    node.add_schema(SDL_NOINDEX).await?;
+    node.add_collection(SDL_NOINDEX).await?;
     let id = create_get_id(&node, "Probe").await?;
 
     let set_dt = format!(
@@ -93,7 +93,7 @@ fn datetime_update_revalidation_noindex() -> Result<()> {
 fn datetime_update_revalidation_indexed() -> Result<()> {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await?;
-    node.add_schema(SDL_INDEXED).await?;
+    node.add_collection(SDL_INDEXED).await?;
     let id = create_get_id(&node, "ProbeIdx").await?;
 
     let set_dt = format!(

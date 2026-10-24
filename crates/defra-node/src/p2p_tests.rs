@@ -1280,11 +1280,11 @@ fn live_replicator_pushes_post_config_writes() {
                 .expect("build node1");
 
             node0
-                .add_schema("type User { name: String age: Int }")
+                .add_collection("type User { name: String age: Int }")
                 .await
                 .expect("schema on node0");
             node1
-                .add_schema("type User { name: String age: Int }")
+                .add_collection("type User { name: String age: Int }")
                 .await
                 .expect("schema on node1");
 
@@ -1358,7 +1358,7 @@ fn p2p_document_subscriptions_survive_restart_and_delete() {
                 let node =
                     build_persistent_p2p_node(data_path.clone(), secret_key_path.clone()).await;
 
-                node.add_schema("type Note { text: String }")
+                node.add_collection("type Note { text: String }")
                     .await
                     .expect("add schema");
                 let response = node
@@ -1465,11 +1465,11 @@ fn p2p_replicator_survives_embedded_restart() {
                     build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
 
                 node0
-                    .add_schema("type User { name: String age: Int }")
+                    .add_collection("type User { name: String age: Int }")
                     .await
                     .expect("schema on node0");
                 node1
-                    .add_schema("type User { name: String age: Int }")
+                    .add_collection("type User { name: String age: Int }")
                     .await
                     .expect("schema on node1");
 
@@ -1547,11 +1547,11 @@ fn filtered_p2p_replicator_metadata_survives_embedded_restart() {
         let node1 = build_persistent_p2p_node(data_path1.clone(), secret_key_path1.clone()).await;
 
         node0
-            .add_schema(AGENT_SCHEMA)
+            .add_collection(AGENT_SCHEMA)
             .await
             .expect("schema on node0");
         node1
-            .add_schema(AGENT_SCHEMA)
+            .add_collection(AGENT_SCHEMA)
             .await
             .expect("schema on node1");
 
@@ -1659,11 +1659,11 @@ fn live_replicator_same_session_followup_turn_converges() {
         .expect("build node1");
 
     node0
-        .add_schema(SESSION_TURN_SDL)
+        .add_collection(SESSION_TURN_SDL)
         .await
         .expect("schema on node0");
     node1
-        .add_schema(SESSION_TURN_SDL)
+        .add_collection(SESSION_TURN_SDL)
         .await
         .expect("schema on node1");
 
@@ -1783,11 +1783,11 @@ fn live_replicator_filtered_push_respects_predicate() {
         .expect("build receiver");
 
     sender
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on sender");
     receiver
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on receiver");
 
@@ -1854,11 +1854,11 @@ fn filtered_backfill_via_transport_pusher_respects_predicate() {
         .expect("build receiver");
 
     sender
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on sender");
     receiver
-        .add_schema(AGENT_SCHEMA)
+        .add_collection(AGENT_SCHEMA)
         .await
         .expect("schema on receiver");
 
@@ -2000,8 +2000,8 @@ fn branchable_sync_pulls_collection_from_embedded_peer() {
         .expect("build joiner");
 
     const SCHEMA: &str = "type BranchNote @branchable { name: String age: Int }";
-    source.add_schema(SCHEMA).await.expect("schema on source");
-    joiner.add_schema(SCHEMA).await.expect("schema on joiner");
+    source.add_collection(SCHEMA).await.expect("schema on source");
+    joiner.add_collection(SCHEMA).await.expect("schema on joiner");
 
     // Documents exist before the joiner ever connects: this is the
     // late-joiner catch-up path, not live replication.
@@ -2094,8 +2094,8 @@ fn encrypted_create_replicates_plaintext_to_replicator() {
         .expect("build replica");
 
     const SCHEMA: &str = "type SecretNote { name: String age: Int }";
-    writer.add_schema(SCHEMA).await.expect("schema on writer");
-    replica.add_schema(SCHEMA).await.expect("schema on replica");
+    writer.add_collection(SCHEMA).await.expect("schema on writer");
+    replica.add_collection(SCHEMA).await.expect("schema on replica");
 
     install_one_way_replicator(&writer, &replica, &["SecretNote"]).await;
 

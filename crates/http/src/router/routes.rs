@@ -95,7 +95,10 @@ pub(crate) fn create_router_with_state_and_body_limits(
         )
         .route(
             "/{id}/schema",
-            capped(post(handlers::txn_ops::add_schema_in_txn), limits.schema),
+            capped(
+                post(handlers::txn_ops::add_collection_in_txn),
+                limits.schema,
+            ),
         );
 
     // Collection routes (REST API)
@@ -108,7 +111,10 @@ pub(crate) fn create_router_with_state_and_body_limits(
                 .delete(handlers::delete_collections_by_names)
                 // Merged rather than chained so the cap binds only the schema
                 // POST, not the sibling patch/delete methods on this path.
-                .merge(capped(post(handlers::schema::add_schema), limits.schema)),
+                .merge(capped(
+                    post(handlers::schema::add_collection),
+                    limits.schema,
+                )),
         )
         .route("/default", post(handlers::set_active))
         .route(
@@ -304,7 +310,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
         .route("/schema", get(handlers::schema))
         .route(
             "/schema",
-            capped(post(handlers::schema::add_schema), limits.schema),
+            capped(post(handlers::schema::add_collection), limits.schema),
         )
         .route("/version", get(handlers::version))
         .route("/actions", get(handlers::actions::list_actions))
