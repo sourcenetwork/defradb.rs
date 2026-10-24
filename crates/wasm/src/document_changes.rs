@@ -17,7 +17,7 @@ use crate::bindings::to_js;
 /// # Example (JavaScript)
 ///
 /// ```javascript
-/// const changes = client.document_changes();
+/// const changes = client.documentChanges();
 /// for (let batch; (batch = await changes.next()) !== null; ) {
 ///   // batch.changes: [{ collection_id, doc_id, local }], batch.resync_required
 /// }
