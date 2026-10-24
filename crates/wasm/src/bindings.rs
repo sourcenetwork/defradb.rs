@@ -38,10 +38,28 @@ pub struct ClientConfig {
 
 /// Options for `execRequest`, the subset of Go's this client can honour.
 #[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ExecRequestOptions {
     /// Values for the request's `$variables`.
     pub variables: Option<rapidhash::RapidHashMap<String, serde_json::Value>>,
+}
+
+impl ExecRequestOptions {
+    /// Read the options object, rejecting any key but `variables`: an option
+    /// this client cannot honour must fail, not be ignored.
+    pub fn from_js(opts: JsValue) -> Result<Self> {
+        if opts.is_undefined() || opts.is_null() {
+            return Ok(Self::default());
+        }
+        for key in js_sys::Object::keys(&js_sys::Object::from(opts.clone())) {
+            if key.as_string().as_deref() != Some("variables") {
+                return Err(WasmError::Query(format!(
+                    "unsupported execRequest option: {}",
+                    key.as_string().unwrap_or_default()
+                )));
+            }
+        }
+        from_js(opts)
+    }
 }
 
 /// Collection info returned to JavaScript.
