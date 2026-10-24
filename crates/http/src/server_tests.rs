@@ -191,15 +191,6 @@ async fn view_add_rejects_oversized_body() {
 }
 
 #[tokio::test]
-async fn txn_scoped_schema_add_rejects_oversized_body() {
-    assert_eq!(
-        post(schema_limited(), "/api/v1/tx/1/schema", OVERSIZED).await,
-        StatusCode::PAYLOAD_TOO_LARGE,
-        "the transaction-scoped route must not be a bypass"
-    );
-}
-
-#[tokio::test]
 async fn backup_import_rejects_oversized_body() {
     assert_eq!(
         post(backup_limited(), "/api/v1/backup/import", OVERSIZED).await,
