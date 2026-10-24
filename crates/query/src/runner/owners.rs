@@ -33,9 +33,9 @@ where
             || doc_ids.len() > MAX_OWNER_OBSERVATIONS
             || doc_ids.iter().any(|id| id.is_empty() || id.len() > 1024)
         {
-            return Err(QueryError::parse(
-                "choose a collection and between 1 and 64 known document IDs",
-            ));
+            return Err(QueryError::parse(format!(
+                "choose a collection and between 1 and {MAX_OWNER_OBSERVATIONS} known document IDs",
+            )));
         }
         let context = context.or_ambient();
         let identity = match identity {
