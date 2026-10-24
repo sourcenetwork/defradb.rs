@@ -147,6 +147,15 @@ pub trait DocFetcher: MaybeSendSync {
         Ok(None)
     }
 
+    /// An authorization provider actually bound to this fetcher's transaction.
+    /// A capability flag or an unbound provider cannot certify a row snapshot.
+    async fn transaction_acp(
+        &self,
+        _provider: std::sync::Arc<dyn acp::DocumentACP>,
+    ) -> Result<Option<std::sync::Arc<dyn acp::DocumentACP>>> {
+        Ok(None)
+    }
+
     /// Use the row snapshot for local authorization; remote providers remain external.
     async fn scoped_acp(
         &self,
