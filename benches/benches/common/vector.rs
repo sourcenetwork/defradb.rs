@@ -254,3 +254,62 @@ impl Index {
         index
     }
 }
+
+/// A trained IVF-PQ index behind `VectorIndex`, the path a collection takes.
+/// Every call there builds a fresh engine that decodes the codebooks again,
+/// which an `Index` held across iterations never does.
+pub async fn trained_ivfpq(
+    dimensions: usize,
+) -> (
+    storage::RegolithStore,
+    db::index::vector::index::VectorIndex,
+) {
+    use storage::corekv::Store;
+    use storage::index::CollectionIndex;
+
+    const NLIST: u32 = 64;
+    let description = schema::IndexDescription {
+        name: "by_embedding".to_string(),
+        id: 1,
+        fields: vec![schema::IndexedFieldDescription {
+            name: "embedding".to_string(),
+            descending: false,
+        }],
+        unique: false,
+        kind: None,
+        auto_generated: false,
+    }
+    .as_vector(schema::VectorIndexDescription {
+        algorithm: schema::VectorAlgorithm::IvfPq,
+        metric: schema::DistanceMetric::Cosine,
+        dimensions: dimensions as u32,
+        hnsw: None,
+        ivfpq: Some(schema::IvfPqParams {
+            nlist: NLIST,
+            nprobe: 8,
+            ..schema::IvfPqParams::default()
+        }),
+        ivfflat: None,
+        ssg: None,
+        diskann: None,
+    });
+    let store = storage::RegolithStore::in_memory().expect("an in-memory store");
+    let index =
+        db::index::vector::index::VectorIndex::try_new(41, description).expect("a vector index");
+    let mut corpus = Corpus::new(SEED ^ 0x1F9);
+    let mut txn = store.new_txn(false).await.expect("a transaction");
+    let train = IvfPqParams {
+        nlist: NLIST,
+        ..IvfPqParams::default()
+    }
+    .resolved_train_threshold();
+    for id in 1..=train {
+        let value = vec![document::NormalValue::Float32Array(
+            corpus.vector(dimensions),
+        )];
+        index.save(&mut txn, id, &value).await.expect("save");
+    }
+    index.build_if_needed(&mut txn).await.expect("build");
+    txn.commit().await.expect("commit");
+    (store, index)
+}
