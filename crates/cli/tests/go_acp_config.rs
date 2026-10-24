@@ -77,3 +77,17 @@ fn remote_dac_address_flag_and_go_key_set_the_remote_address() {
     );
     assert_eq!(config.acp.remote_address, "acct-yaml");
 }
+
+#[test]
+fn go_keyname_is_ignored_and_the_rest_loads() {
+    let with_keyname = load(
+        "document_type: none\ndocument:\n  remote:\n    keyname: signer\n    address: acct\n",
+        &[],
+    );
+    let without = load(
+        "document_type: none\ndocument:\n  remote:\n    address: acct\n",
+        &[],
+    );
+    assert_eq!(with_keyname.acp.remote_address, without.acp.remote_address);
+    assert_eq!(with_keyname.acp.document_type, without.acp.document_type);
+}
