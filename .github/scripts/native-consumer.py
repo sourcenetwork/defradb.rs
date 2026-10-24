@@ -176,7 +176,7 @@ def interrupted(_signal, _frame):
 
 
 class Runner:
-    def __init__(self, root, vera, temporary, runtime_ref=None):
+    def __init__(self, root, vera, temporary, runtime_ref=None, cache_dir=None):
         self.root, self.vera = root, vera
         self.sdk_revision = revision(root)
         expected = self.sdk_revision if runtime_ref is None else runtime_revision(runtime_ref)
@@ -186,11 +186,46 @@ class Runner:
         self.private = Path(tempfile.mkdtemp(prefix="defra-native-consumer-", dir=temporary))
         self.summary = temporary / "native-consumer-summary.json"
         self.env = clean_environment(os.environ)
+        self.cache_dir = cache_dir
         self.target = self.private / "target"
         self.env["CARGO_TARGET_DIR"] = str(self.target)
         self.env.update(VERA_E2E_DIR=str(self.private / "vera-state"), VERA_E2E_KEEP="1", DEFRA_E2E_KEEP="1")
         self.records, self.binaries = [], {}
         self.save()
+
+    def runtime_identity(self):
+        return {"version": 1, "source": self.sources["vera"], "rust": "1.98.0",
+                "profile": "release", "driver_sha256": digest(Path(__file__))}
+
+    def restore_runtime(self):
+        if self.cache_dir is None:
+            return False
+        directory = self.cache_dir / "vera-runtime"
+        manifest = directory / "manifest.json"
+        if not manifest.is_file():
+            return False
+        record = json.loads(manifest.read_text())
+        if {k: v for k, v in record.items() if k != "sha256"} != self.runtime_identity():
+            return False
+        binary = directory / "verad"
+        if binary.is_symlink() or not binary.is_file() or digest(binary) != record["sha256"]:
+            raise ValueError("cached Vera runtime checksum differs")
+        shutil.copy2(binary, self.private / "verad")
+        self.binaries["verad"] = {"sha256": record["sha256"]}
+        self.env["VERAD_BINARY"] = str(self.private / "verad")
+        self.records.append({"phase": "restore-vera", "exit_code": 0})
+        self.save()
+        return True
+
+    def cache_runtime(self):
+        if self.cache_dir is None:
+            return
+        directory = self.cache_dir / "vera-runtime"
+        directory.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.private / "verad", directory / "verad")
+        (directory / "manifest.json").write_text(json.dumps({**self.runtime_identity(),
+            "sha256": self.binaries["verad"]["sha256"]}, indent=2) + "\n")
+
 
     def guard(self):
         if self.sources != {"defra": source(self.root), "vera": source(self.vera)}:
@@ -250,11 +285,16 @@ class Runner:
 def qualify(runner):
     # Locked metadata downloads the exact host dependencies before frozen compilation.
     fetch = CARGO + ["metadata", "--locked", "--format-version=1", "--filter-platform=x86_64-unknown-linux-gnu"]
-    runner.run("fetch-vera", fetch, runner.vera)
-    log = runner.run("build-vera", CARGO + ["build", *BUILD, "-p", "verad", "--bin", "verad", "--message-format=json"], runner.vera)
-    runner.env["VERAD_BINARY"] = runner.stage(log, "verad", "verad")
-    # This target was created by this driver, never shared with another job.
-    shutil.rmtree(runner.target)
+    if not runner.restore_runtime():
+        runner.run("fetch-vera", fetch, runner.vera)
+        log = runner.run("build-vera", CARGO + ["build", *BUILD, "-p", "verad", "--bin", "verad", "--message-format=json"], runner.vera)
+        runner.env["VERAD_BINARY"] = runner.stage(log, "verad", "verad")
+        runner.cache_runtime()
+        # Only this driver-created temporary target is removed. Defra's cache is separate.
+        shutil.rmtree(runner.target)
+    if runner.cache_dir is not None:
+        runner.target = runner.cache_dir / "defra-target"
+        runner.env["CARGO_TARGET_DIR"] = str(runner.target)
     runner.run("fetch-defra", fetch)
     log = runner.run("build-defra", CARGO + ["build", *BUILD, "-p", "cli", "--bin", "defra", "--features", "vera", "--message-format=json"])
     runner.env["DEFRA_RUST_BINARY"] = runner.stage(log, "defra", "defra")
@@ -274,6 +314,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vera-ref", action="store_true")
     parser.add_argument("--vera", type=Path)
+    parser.add_argument("--cache-dir", type=Path, help="Runner-local cache for compiled dependencies and pinned Vera")
     parser.add_argument("--runtime-ref", type=runtime_revision,
                         help="Vera runtime commit; defaults to the native SDK revision")
     args = parser.parse_args()
@@ -286,7 +327,8 @@ def main():
         parser.error("--vera and RUNNER_TEMP are required")
     os.umask(0o077)
     signal.signal(signal.SIGTERM, interrupted)
-    runner = Runner(root, args.vera.resolve(), Path(os.environ["RUNNER_TEMP"]).resolve(), args.runtime_ref)
+    runner = Runner(root, args.vera.resolve(), Path(os.environ["RUNNER_TEMP"]).resolve(), args.runtime_ref,
+                    args.cache_dir.resolve() if args.cache_dir else None)
     try:
         qualify(runner)
         runner.records.append({"phase": "qualification", "exit_code": 0, "passed": len(UNIT_TESTS) + len(LIVE_CASES)})
