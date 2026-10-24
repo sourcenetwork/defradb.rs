@@ -7,6 +7,15 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_RootedAuthorization_Green.cfg RootedAuthorization.tla GREEN"
+  "MC_RootedAuthorization_Red_DuplicateOwner.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_LostResume.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_StaleEviction.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_OverReserve.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_Slots.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_ActiveBudget.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_CancelNoWake.cfg RootedAuthorization.tla RED"
+  "MC_RootedAuthorization_Red_UnreachedGrant.cfg RootedAuthorization.tla RED"
   "MC_PeerConnection_Green.cfg PeerConnection.tla GREEN"
   "MC_PeerConnection_Red_StaleObservation.cfg PeerConnection.tla RED"
   "MC_SchemaPublication_Green.cfg SchemaPublication.tla GREEN"
