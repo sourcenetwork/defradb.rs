@@ -28,6 +28,10 @@ pub type ResponseCallback = Box<dyn Respond>;
 pub const TXN_CONFLICT_ERROR_CODE: &str = "TXN_CONFLICT";
 pub const TXN_RETRY_EXHAUSTED_ERROR_CODE: &str = "TXN_RETRY_EXHAUSTED";
 
+/// The storage operation failed with a typed disk-full cause. Commit outcome
+/// remains unknown; clients must not infer that replaying a mutation is safe.
+pub const STORAGE_FULL_ERROR_CODE: &str = "STORAGE_FULL";
+
 /// Stable conflict message recognized by the remote DefraDB client.
 pub const TXN_CONFLICT_MESSAGE: &str = "transaction conflict. Please retry";
 
@@ -286,13 +290,17 @@ impl QueryResponseError {
             .map(|extensions| extensions.code.as_str())
     }
 
-    /// Convert a query error while retaining retryable conflict metadata.
+    /// Convert a query error while retaining machine-readable failure metadata.
     pub fn from_query_error(error: crate::error::QueryError) -> Self {
         let is_transaction_conflict =
             matches!(&error, crate::error::QueryError::TransactionConflict(_));
         let is_transaction_retry_exhausted = matches!(
             &error,
             crate::error::QueryError::TransactionRetryExhausted(_)
+        );
+        let is_storage_full = matches!(
+            &error,
+            crate::error::QueryError::Storage(cause) if cause.is_storage_full()
         );
         let retry_input = match &error {
             crate::error::QueryError::NeedsInput(request) => Some(request.clone()),
@@ -303,6 +311,8 @@ impl QueryResponseError {
             response_error.with_code(TXN_CONFLICT_ERROR_CODE)
         } else if is_transaction_retry_exhausted {
             response_error.with_code(TXN_RETRY_EXHAUSTED_ERROR_CODE)
+        } else if is_storage_full {
+            response_error.with_code(STORAGE_FULL_ERROR_CODE)
         } else {
             response_error
         };

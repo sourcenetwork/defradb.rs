@@ -28,6 +28,10 @@ pub enum TransactionError {
     #[error("transaction error: {0}")]
     Execution(String),
 
+    /// Typed storage failure; it does not authorize resubmitting a transaction.
+    #[error("transaction storage error: {0}")]
+    Storage(#[from] storage::corekv::Error),
+
     /// The commit lost a write conflict; re-running the transaction may succeed.
     #[error("transaction conflict: {0}")]
     Conflict(String),
@@ -81,6 +85,8 @@ impl TransactionError {
     /// - `NotSupported`: Not retryable - transactions aren't available in this config.
     /// - `Execution`: Retryable - transient storage errors that may succeed on retry
     ///   with a new transaction.
+    /// - `Storage`: Uses the storage owner's classification; a full disk or
+    ///   uncertain WAL does not authorize replay.
     /// - `Conflict`: Retryable - another commit won a write conflict.
     /// - `LockPoisoned`: Not retryable - indicates a panic occurred and the system
     ///   may be in a corrupted state.
@@ -90,6 +96,7 @@ impl TransactionError {
             Self::AlreadyFinalized(_) => false,
             Self::NotSupported(_) => false,
             Self::Execution(_) => true,
+            Self::Storage(source) => source.is_retriable(),
             Self::Conflict(_) => true,
             Self::LockPoisoned(_) => false,
         }

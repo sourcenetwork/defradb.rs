@@ -334,7 +334,9 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
                 .await
             {
                 Err(TransactionError::NotSupported(_)) => {}
-                Err(error @ TransactionError::Execution(_)) => return answered(None, Err(error)),
+                Err(error @ (TransactionError::Execution(_) | TransactionError::Storage(_))) => {
+                    return answered(None, Err(error));
+                }
                 Err(error) => {
                     return QueryResponse::error(format!(
                         "failed to create implicit read-only transaction: {}",

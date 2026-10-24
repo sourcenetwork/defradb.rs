@@ -238,7 +238,7 @@ impl Store for RegolithStore {
             Some(queue) => super::worker_io::settle(|| db.allocate_nowait(queue, key, count)).await,
             None => db.allocate(key, count),
         }
-        .map_err(|error| Error::Backend(error.to_string()))
+        .map_err(Error::from)
     }
 
     fn transaction_stats_handle(&self) -> Option<TransactionStatsHandle> {

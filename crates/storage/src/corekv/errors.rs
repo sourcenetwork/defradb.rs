@@ -128,7 +128,7 @@ pub enum Error {
     ///
     /// This wraps underlying I/O errors from the storage backend.
     #[error("I/O error: {0}")]
-    Io(String),
+    Io(#[from] super::IoFailure),
 
     /// Serialization error occurred.
     ///
@@ -156,6 +156,11 @@ pub enum Error {
 }
 
 impl Error {
+    /// The typed I/O cause reports full storage; message text is not evidence.
+    pub fn is_storage_full(&self) -> bool {
+        matches!(self, Self::Io(cause) if cause.kind() == std::io::ErrorKind::StorageFull)
+    }
+
     /// Check if this error indicates a key was not found.
     pub fn is_not_found(&self) -> bool {
         matches!(self, Error::NotFound)
@@ -186,7 +191,16 @@ impl Error {
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        Error::Io(err.to_string())
+        Error::Io(err.into())
+    }
+}
+
+impl From<regolith::Error> for Error {
+    fn from(error: regolith::Error) -> Self {
+        match error {
+            regolith::Error::Io(cause) => cause.into(),
+            other => Self::Backend(other.to_string()),
+        }
     }
 }
 
