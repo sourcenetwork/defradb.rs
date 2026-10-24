@@ -122,7 +122,7 @@ iroh-tickets = "1.0.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Storage
-regolith = "0.2.1"
+regolith = "0.2.2"
 
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["serde", "zeroize"] }
@@ -332,5 +332,3 @@ commonware-resolver = { git = "https://github.com/iverc/commonware-upstream", re
 commonware-macros = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }
 commonware-glue = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }
 commonware-stream = { git = "https://github.com/iverc/commonware-upstream", rev = "0ebcf164594621f2c82769eef7e9f3a21153055f" }
-
-regolith = { git = "https://github.com/sourcenetwork/regolith", rev = "021c5ecde81fd6f73a934966e83841b86d9397a5" }
