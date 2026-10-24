@@ -251,21 +251,6 @@ fn all_registered_routes_return_expected_permission() {
             Method::DELETE,
             RoutePermission::IdentityOnly,
         ),
-        (
-            "/api/v0/tx/{id}/lens",
-            Method::POST,
-            RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
-        (
-            "/api/v0/tx/{id}/collections",
-            Method::GET,
-            RoutePermission::Required(NodePermission::CollectionGet),
-        ),
-        (
-            "/api/v0/tx/{id}/schema",
-            Method::POST,
-            RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
         // Collections
         (
             "/api/v0/collections",
@@ -286,11 +271,6 @@ fn all_registered_routes_return_expected_permission() {
             "/api/v0/collections/default",
             Method::POST,
             RoutePermission::Required(NodePermission::CollectionPatch),
-        ),
-        (
-            "/api/v0/collections/versions",
-            Method::GET,
-            RoutePermission::Required(NodePermission::CollectionGet),
         ),
         (
             "/api/v0/collections/versions",

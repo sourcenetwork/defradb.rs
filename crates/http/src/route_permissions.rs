@@ -67,9 +67,6 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
         // =====================================================================
         "/api/v0/tx" => RoutePermission::IdentityOnly,
         "/api/v0/tx/{id}" => RoutePermission::IdentityOnly,
-        "/api/v0/tx/{id}/lens" => RoutePermission::Required(NodePermission::CollectionPatch),
-        "/api/v0/tx/{id}/collections" => RoutePermission::Required(NodePermission::CollectionGet),
-        "/api/v0/tx/{id}/schema" => RoutePermission::Required(NodePermission::CollectionPatch),
 
         // =====================================================================
         // Collections
@@ -85,18 +82,10 @@ pub fn route_permission(path: &str, method: &Method) -> RoutePermission {
             _ => RoutePermission::Required(NodePermission::CollectionGet),
         },
         "/api/v0/collections/default" => RoutePermission::Required(NodePermission::CollectionPatch),
-        "/api/v0/collections/versions" => match *method {
-            Method::GET => RoutePermission::Required(NodePermission::CollectionGet),
-            Method::DELETE => RoutePermission::Required(NodePermission::CollectionPatch),
-            _ => RoutePermission::Required(NodePermission::CollectionGet),
-        },
+        "/api/v0/collections/versions" => {
+            RoutePermission::Required(NodePermission::CollectionPatch)
+        }
         "/api/v0/collections/migrations" => RoutePermission::Required(NodePermission::MigrationSet),
-        "/api/v0/collections/by-id/{id}" => {
-            RoutePermission::Required(NodePermission::CollectionGet)
-        }
-        "/api/v0/collections/by-version/{id}" => {
-            RoutePermission::Required(NodePermission::CollectionGet)
-        }
         "/api/v0/collections/indexes" => RoutePermission::Required(NodePermission::IndexList),
         // PATCH and DELETE here are Go's filtered document operations, not
         // collection ones, so they are document permissions. Dropping a

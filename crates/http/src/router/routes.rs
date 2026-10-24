@@ -87,19 +87,7 @@ pub(crate) fn create_router_with_state_and_body_limits(
     let tx_routes = Router::new()
         .route("/", post(handlers::tx_begin))
         .route("/{id}", post(handlers::tx_commit))
-        .route("/{id}", delete(handlers::tx_discard))
-        .route("/{id}/lens", post(handlers::txn_ops::set_migration_in_txn))
-        .route(
-            "/{id}/collections",
-            get(handlers::txn_ops::get_collections_in_txn),
-        )
-        .route(
-            "/{id}/schema",
-            capped(
-                post(handlers::txn_ops::add_collection_in_txn),
-                limits.schema,
-            ),
-        );
+        .route("/{id}", delete(handlers::tx_discard));
 
     // Collection routes (REST API)
     // Static routes must come before parametric `{name}` routes.
@@ -117,16 +105,8 @@ pub(crate) fn create_router_with_state_and_body_limits(
                 )),
         )
         .route("/default", post(handlers::set_active))
-        .route(
-            "/versions",
-            get(handlers::get_all_collections).delete(handlers::delete_collection_versions),
-        )
+        .route("/versions", delete(handlers::delete_collection_versions))
         .route("/migrations", post(handlers::lens::set_migration))
-        .route("/by-id/{id}", get(handlers::find_collection_by_id))
-        .route(
-            "/by-version/{id}",
-            get(handlers::get_collection_by_version_id),
-        )
         // Go-compatible list-all-indexes route (no path param)
         .route("/indexes", get(handlers::index::go_list_all_indexes))
         .route(

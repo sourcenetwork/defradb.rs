@@ -97,6 +97,12 @@ async fn the_removed_aliases_are_not_served() {
         Call::post("/api/v0/nac/admin").json("{}"),
         Call::post("/api/v0/p2p/replicator").method(Method::GET),
         Call::post("/api/v0/p2p/peers").method(Method::GET),
+        Call::post("/api/v0/tx/1/lens").json("{}"),
+        Call::post("/api/v0/tx/1/collections").method(Method::GET),
+        Call::post("/api/v0/tx/1/schema").body("type A { a: String }"),
+        Call::post("/api/v0/collections/by-id/x").method(Method::GET),
+        Call::post("/api/v0/collections/by-version/x").method(Method::GET),
+        Call::post("/api/v0/collections/versions").method(Method::GET),
     ];
     for call in calls {
         let (status, body) = call.send().await;
