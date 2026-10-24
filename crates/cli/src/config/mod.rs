@@ -6,6 +6,7 @@
 //! 3. Config file (config.yaml in rootdir)
 //! 4. Default values
 
+mod go_layout;
 mod iroh_relay_server;
 mod secret_file;
 mod sections;
@@ -159,10 +160,13 @@ impl Config {
             source: e,
         })?;
 
-        serde_yaml::from_str(&contents).map_err(|e| Error::ParseConfig {
+        let parse_error = |source| Error::ParseConfig {
             path: path.to_path_buf(),
-            source: e,
-        })
+            source,
+        };
+        let mut value: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(parse_error)?;
+        go_layout::apply(&mut value);
+        serde_yaml::from_value(value).map_err(parse_error)
     }
 
     fn load_secret_file(&self) -> Result<()> {
@@ -232,6 +236,10 @@ impl Config {
         }
         if let Some(ref doc_type) = cli.acp_document_type {
             self.acp.document_type = doc_type.parse()?;
+        }
+
+        if let Some(ref addr) = cli.remote_dac_address {
+            self.acp.remote_address = addr.clone();
         }
 
         // Vera
