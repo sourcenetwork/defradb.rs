@@ -366,11 +366,7 @@ impl DefraClient {
 
     async fn exec_request_impl(&self, request: &str, opts: JsValue) -> Result<JsValue> {
         self.ensure_open()?;
-        let opts: ExecRequestOptions = if opts.is_undefined() || opts.is_null() {
-            ExecRequestOptions::default()
-        } else {
-            from_js(opts)?
-        };
+        let opts = ExecRequestOptions::from_js(opts)?;
         let response = match self.run_request(request, opts.variables.as_ref()).await {
             Ok(data) => serde_json::json!({ "gql": { "data": data } }),
             Err(e) => serde_json::json!({
@@ -1249,14 +1245,14 @@ mod tests {
         let created: serde_json::Value = from_js(
             client
                 .exec_request(
-                    r#"mutation { create_Note(input: {text: "hi"}) { text } }"#,
+                    r#"mutation { add_Note(input: {text: "hi"}) { text } }"#,
                     JsValue::UNDEFINED,
                 )
                 .await
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(created["gql"]["data"]["create_Note"][0]["text"], "hi");
+        assert_eq!(created["gql"]["data"]["add_Note"][0]["text"], "hi");
         assert!(created["gql"].get("errors").is_none());
         let read: serde_json::Value = from_js(
             client
