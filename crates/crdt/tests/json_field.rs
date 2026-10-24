@@ -249,3 +249,65 @@ fn json_path_edits_in_one_write_stack_in_order() {
         .unwrap();
     assert_eq!(doc.pending_op("meta"), None, "a set drops the edits");
 }
+
+/// A delete through a missing path creates nothing, so a later set of an
+/// empty map in the same write still makes its block, which the set
+/// replacing the path no longer needs the delete in.
+#[test]
+fn a_delete_through_a_missing_path_leaves_a_later_set_in_the_write() {
+    let op = |path: &[&str], edit| JsonOp {
+        path: path.iter().map(|key| key.to_string()).collect(),
+        edit,
+    };
+    let empty = NormalValue::Json(json!({}));
+    let delete = op(&["a", "b"], JsonEdit::Delete);
+    assert_eq!(
+        json_crdt()
+            .apply(
+                &field(),
+                Some(&empty),
+                &FieldOp::Paths(vec![delete.clone()])
+            )
+            .unwrap(),
+        empty
+    );
+    let write = FieldOp::Paths(vec![delete.clone(), op(&["a"], JsonEdit::Set(json!({})))]);
+    let data = json_crdt()
+        .block_data(&empty, Some(&write))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        defra_core::json_crdt::decode_ops(&data).unwrap(),
+        vec![op(&["a"], JsonEdit::Map)]
+    );
+}
+
+fn json_edit() -> impl Strategy<Value = JsonOp> {
+    let path = proptest::collection::vec("[a-b]", 1..4);
+    let edit = prop_oneof![
+        Just(JsonEdit::Delete),
+        Just(JsonEdit::Map),
+        json_value().prop_map(JsonEdit::Set),
+    ];
+    (path, edit).prop_map(|(path, edit)| JsonOp { path, edit })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2048))]
+
+    /// The ops a write of several path edits carries land on the stored
+    /// state as the value the write reads its edits against.
+    #[test]
+    fn a_path_edit_write_lands_as_it_reads(
+        stored in json_value(),
+        edits in proptest::collection::vec(json_edit(), 1..4),
+    ) {
+        let tagged = json_crdt().tagged().expect("Json is tagged");
+        let current = NormalValue::Json(stored);
+        let state = tagged.state(&field(), 1, &current).unwrap();
+        let op = FieldOp::Paths(edits);
+        let write = crdt::field::tagged::local_write(tagged, &field(), Some(&state), &op, 2, &[vec![0]], 0)
+            .unwrap();
+        prop_assert_eq!(write.value, json_crdt().apply(&field(), Some(&current), &op).unwrap());
+    }
+}

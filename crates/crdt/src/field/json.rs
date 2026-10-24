@@ -75,8 +75,11 @@ fn map_of(node: &mut Value) -> &mut Map<String, Value> {
     }
 }
 
-/// `value` after `ops`, in order, each at its path. A path through a value
-/// that is not a map makes it one, as the merge does.
+/// `value` after `ops`, in order, each at its path. A map edit sets an empty
+/// map, dropping what was below. A set through a value that is not a map
+/// makes it one, as the merge does. A delete never creates
+/// anything: one through a missing path or a value that is not a map changes
+/// nothing.
 fn apply_ops(value: &mut Option<Value>, ops: &[JsonOp]) {
     for op in ops {
         let Some((last, parents)) = op.path.split_last() else {
@@ -87,6 +90,18 @@ fn apply_ops(value: &mut Option<Value>, ops: &[JsonOp]) {
             };
             continue;
         };
+        if let JsonEdit::Delete = op.edit {
+            let mut node = value.as_mut();
+            for key in parents {
+                node = node
+                    .and_then(Value::as_object_mut)
+                    .and_then(|map| map.get_mut(key));
+            }
+            if let Some(map) = node.and_then(Value::as_object_mut) {
+                map.remove(last);
+            }
+            continue;
+        }
         let mut node = value.get_or_insert(Value::Null);
         for key in parents {
             node = map_of(node).entry(key.clone()).or_insert(Value::Null);
@@ -97,11 +112,9 @@ fn apply_ops(value: &mut Option<Value>, ops: &[JsonOp]) {
                 map.insert(last.clone(), new.clone());
             }
             JsonEdit::Map => {
-                map_of(map.entry(last.clone()).or_insert(Value::Null));
+                map.insert(last.clone(), Value::Object(Map::new()));
             }
-            JsonEdit::Delete => {
-                map.remove(last);
-            }
+            JsonEdit::Delete => {}
         }
     }
 }
@@ -137,6 +150,22 @@ fn deep_set(path: &mut Vec<String>, current: Option<&Value>, value: &Value, ops:
     }
 }
 
+/// Make the ops written so far in a block agree with an edit at `path` that
+/// follows them. A block's ops are one edit to the frontier, none in the
+/// past of another, so an edit does not remove what the same block wrote
+/// below it, and a value the block wrote above it races the map the edit
+/// implies. Read in order, the edit replaces what is at and below `path`
+/// and makes each path above it a map: the earlier ops at or below `path`
+/// are dropped, and a value above it becomes a map.
+fn settle_earlier(ops: &mut Vec<JsonOp>, path: &[String]) {
+    ops.retain(|op| !op.path.starts_with(path));
+    for op in ops.iter_mut() {
+        if path.starts_with(&op.path) && matches!(op.edit, JsonEdit::Set(_)) {
+            op.edit = JsonEdit::Map;
+        }
+    }
+}
+
 /// The ops a block carries for `op` written over `current`: a set is the
 /// diff from `current`, and a set of an object at a path is a set of each of
 /// its leaves. Each op is read against the value the ones before it left.
@@ -152,8 +181,9 @@ fn block_ops(current: Option<&Value>, op: &FieldOp) -> Result<Vec<JsonOp>, Field
         }
     };
     let mut working = current.cloned();
-    let mut ops = Vec::with_capacity(edits.len());
+    let mut ops: Vec<JsonOp> = Vec::with_capacity(edits.len());
     for edit in edits {
+        settle_earlier(&mut ops, &edit.path);
         let start = ops.len();
         match &edit.edit {
             JsonEdit::Set(value) => {
