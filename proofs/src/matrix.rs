@@ -10,6 +10,7 @@ use crate::registry::{Property, Tier, PROPERTIES};
 /// self-contained; if the README grows a family, this list and `PROPERTIES`
 /// must both grow or the tests fail, and the README must list exactly these.
 pub const MODELED_FAMILIES: &[&str] = &[
+    "Storage failure classification",
     "B3 filtered replication",
     "DAG convergence (partition / eviction / restart)",
     "CRDT merge laws",

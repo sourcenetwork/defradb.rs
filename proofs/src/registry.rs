@@ -48,6 +48,22 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Storage failure classification",
+        name: "ClassificationPreserved / NoReplayAuthority",
+        axis: Tla,
+        anchor: "crates/storage/src/corekv/errors.rs; crates/db/src/error/mod.rs; crates/query/src/runner/turn.rs; crates/query/src/executor.rs; crates/http/src/error.rs",
+        model_ref: "MC_StorageFailure_Green.cfg / MC_StorageFailure_Red_LostCause.cfg / MC_StorageFailure_Red_Text.cfg / MC_StorageFailure_Red_Retry.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Storage failure classification",
+        name: "StorageFailure.preserves / full_code / other_code / opaque_code",
+        axis: Lean,
+        anchor: "crates/storage/src/corekv/io_failure.rs; crates/storage/src/backends/regolith/transaction.rs map_txn_error; crates/query/src/executor.rs QueryResponseError::from_query_error; crates/query/tests/storage_failure.rs",
+        model_ref: "StorageFailure.lean",
+        tiers: &[Contract],
+    },
+    Property {
         family: "ACP soundness + revocation + dual-path commits",
         name: "Owner observations retain read gates and the transaction snapshot",
         axis: Tla,

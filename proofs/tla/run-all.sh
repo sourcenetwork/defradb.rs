@@ -7,6 +7,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_StorageFailure_Green.cfg StorageFailure.tla GREEN"
+  "MC_StorageFailure_Red_LostCause.cfg StorageFailure.tla RED"
+  "MC_StorageFailure_Red_Text.cfg StorageFailure.tla RED"
+  "MC_StorageFailure_Red_Retry.cfg StorageFailure.tla RED"
   "MC_OwnerObservation_Green.cfg OwnerObservation.tla GREEN"
   "MC_OwnerObservation_Red_Actor.cfg OwnerObservation.tla RED"
   "MC_OwnerObservation_Red_Node.cfg OwnerObservation.tla RED"

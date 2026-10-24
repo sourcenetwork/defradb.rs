@@ -59,3 +59,6 @@ lean_lib GossipFrame where
 
 @[default_target]
 lean_lib ServiceRecord where
+
+@[default_target]
+lean_lib StorageFailure where
