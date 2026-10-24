@@ -55,6 +55,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: native-consumer-1.98
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
           cache-targets: true
           cache-workspace-crates: true
