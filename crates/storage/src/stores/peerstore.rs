@@ -18,13 +18,15 @@ use tracing;
 
 const RETRY_MARKER_GENERATION_MAGIC: &[u8] = b"DFRGMARKER1";
 
-fn encode_retry_marker_generation(generation: u64) -> Vec<u8> {
+/// Encode the shared peer-incarnation and retry-generation value format.
+pub fn encode_retry_marker_generation(generation: u64) -> Vec<u8> {
     let mut bytes = RETRY_MARKER_GENERATION_MAGIC.to_vec();
     bytes.extend_from_slice(&generation.to_be_bytes());
     bytes
 }
 
-fn decode_retry_marker_generation(bytes: &[u8]) -> Option<u64> {
+/// Decode a peer incarnation or retry generation, rejecting malformed values.
+pub fn decode_retry_marker_generation(bytes: &[u8]) -> Option<u64> {
     let generation_bytes = bytes.strip_prefix(RETRY_MARKER_GENERATION_MAGIC)?;
     let generation_bytes: [u8; 8] = generation_bytes.try_into().ok()?;
     Some(u64::from_be_bytes(generation_bytes))

@@ -490,57 +490,6 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             &target_peer_id,
         )?;
 
-        let collections_with_changed_capabilities = crate::collections_with_changed_capabilities(
-            &collection_cids,
-            &validated_capabilities,
-            |collection_id, capability| {
-                self.handle
-                    .explicit_replay_capability_matches(peer_id, collection_id, capability)
-            },
-        );
-
-        self.handle
-            .clear_explicit_replay_capability(peer_id, &collection_cids);
-        for (collection_id, capability) in validated_capabilities {
-            self.handle.set_explicit_replay_capability(
-                peer_id,
-                std::slice::from_ref(&collection_id),
-                &capability,
-            );
-        }
-
-        // Check existing replicator state before creating/updating so we can
-        // skip the expensive initial replay when the replicator already exists
-        // with the same collections and replay capability.
-        let (existing_collection_ids, existing_filters): (
-            RapidHashSet<String>,
-            p2p::ReplicationFilters,
-        ) = {
-            let result = if let Some(ref coordinator) = self.sync_coordinator {
-                let transport_peer_id = p2p::transport::PeerId::from(peer_id);
-                coordinator
-                    .get_replicator(&transport_peer_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))
-            } else {
-                self.handle
-                    .get_replicator(peer_id)
-                    .await
-                    .map_err(|error| P2PError::transport(error.to_string()))
-            };
-            match result {
-                Ok(Some(info)) => (info.collections.into_iter().collect(), info.filters),
-                Ok(None) => (RapidHashSet::new(), p2p::ReplicationFilters::new()),
-                Err(e) => {
-                    tracing::warn!(
-                        peer_id = %peer_id,
-                        error = %e,
-                        "Failed to check existing replicator state; falling back to full replay"
-                    );
-                    (RapidHashSet::new(), p2p::ReplicationFilters::new())
-                }
-            }
-        };
         self.handle
             .dial(peer_id, vec![parsed.transport_addr])
             .await
@@ -556,15 +505,29 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
             vec![addr_str.to_string()],
             replication_filters.clone(),
         );
-        if let Some(ref pusher) = self.doc_pusher {
-            pusher
-                .persist_replicator_info(&replicator_info)
-                .await
-                .map_err(|error| {
-                    P2PError::persistence(format!(
-                        "failed to durably register replicator {peer_id}: {error}"
-                    ))
-                })?;
+        let mut replay = if let Some(pusher) = &self.doc_pusher {
+            let request = crate::ReplicatorInstallRequest::new(
+                replicator_info.clone(),
+                effective_collections.clone(),
+                &validated_capabilities,
+            );
+            let plan = pusher.prepare_replicator_install(&request).await?;
+            Some(crate::replicator_replay::ReplayOwner::new(
+                Arc::clone(pusher),
+                plan,
+                self.event_bus.clone(),
+            ))
+        } else {
+            None
+        };
+        self.handle
+            .clear_explicit_replay_capability(peer_id, &collection_cids);
+        for (collection_id, capability) in validated_capabilities {
+            self.handle.set_explicit_replay_capability(
+                peer_id,
+                std::slice::from_ref(&collection_id),
+                &capability,
+            );
         }
 
         if let Some(ref coordinator) = self.sync_coordinator {
@@ -580,23 +543,16 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
                 .map_err(|error| P2PError::transport(error.to_string()))?;
         }
 
-        // Replay new collections, plus collections whose explicit replay
-        // capability changed. The latter case matters for encrypted ACP
-        // replay where a previous configuration may have carried an invalid
-        // authorizer capability and therefore skipped storing the document.
-        let collection_names_requiring_replay = crate::collections_requiring_replay(
-            &effective_collections,
-            &collection_cids,
-            &existing_collection_ids,
-            &existing_filters,
-            &replication_filters,
-            &collections_with_changed_capabilities,
-        );
-
-        if !collection_names_requiring_replay.is_empty() {
-            if let Some(ref pusher) = self.doc_pusher {
-                let push_pusher = Arc::clone(pusher);
-                let push_event_bus = self.event_bus.clone();
+        if let Some(mut replay) = replay.take() {
+            let collections = replay
+                .plan
+                .as_ref()
+                .expect("new replay owns its plan")
+                .replay
+                .clone();
+            if !collections.is_empty() {
+                let push_pusher =
+                    Arc::clone(self.doc_pusher.as_ref().expect("replay has a pusher"));
                 let push_options = self.replicator_push_options.load();
                 let push_se_key = push_options.se_encryption_key;
                 let push_identity = push_options.se_identity_pubkey;
@@ -604,39 +560,40 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
 
                 tracing::info!(
                     peer_id = %peer_id,
-                    replay_collections = ?collection_names_requiring_replay,
+                    replay_collections = ?collections,
                     "Replaying existing docs for collections requiring replay"
                 );
 
                 n0_future::task::spawn(async move {
-                    if let Err(error) = push_pusher
+                    let result = push_pusher
                         .push_existing_docs(
                             &p2p::transport::PeerId::from(peer_id),
-                            &collection_names_requiring_replay,
+                            &collections,
                             &push_filters,
                             push_se_key.as_ref().map(|key| key.as_slice()),
                             push_identity.as_deref(),
                         )
-                        .await
-                    {
+                        .await;
+                    if let Err(ref error) = result {
                         tracing::error!(error = %error, "Failed to push existing docs to replicator");
                     }
-                    if let Some(bus) = push_event_bus {
-                        tracing::debug!("publishing ReplicatorCompleted event");
-                        bus.publish(events::Message::replicator_completed());
-                        tracing::debug!("ReplicatorCompleted event published");
-                    }
+                    replay
+                        .complete(result.err().map(|error| error.to_string()))
+                        .await;
                 });
-            } else if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+            } else {
+                replay.complete(None).await;
             }
         } else {
-            tracing::debug!(
-                peer_id = %peer_id,
-                "Replicator already exists with same collections and replay capability, skipping initial replay"
-            );
             if let Some(ref bus) = self.event_bus {
-                bus.publish(events::Message::replicator_completed());
+                bus.publish(events::Message::replicator_completed_with_data(
+                    events::ReplicatorCompletedData {
+                        peer_id: peer_id.to_string(),
+                        collections: effective_collections.to_vec(),
+                        skipped: true,
+                        error: None,
+                    },
+                ));
             }
         }
 
@@ -1138,6 +1095,10 @@ impl<B: Blockstore + 'static> P2POperations for P2PAdapter<B> {
 }
 
 #[cfg(test)]
+#[path = "../tests/libp2p/replicator_completion.rs"]
+mod completion_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use blockstore::DefraBlockstore;
@@ -1220,7 +1181,7 @@ mod tests {
     /// The adapter under test carries no sync coordinator, so the blockstore
     /// generic is never exercised; a do-nothing implementation satisfies it.
     #[derive(Debug)]
-    struct NoopBlockstore;
+    pub(super) struct NoopBlockstore;
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -1299,7 +1260,7 @@ mod tests {
     /// Dials `handle_a` to `handle_b` and waits until each side observes the
     /// other as connected. Mirrors `assert_hosts_connect_over` in
     /// `crates/p2p/tests/host_tests.rs`.
-    async fn connect_hosts(handle_a: &P2PHostHandle, handle_b: &P2PHostHandle) {
+    pub(super) async fn connect_hosts(handle_a: &P2PHostHandle, handle_b: &P2PHostHandle) {
         handle_b
             .listen("/ip4/127.0.0.1/tcp/0".parse().unwrap())
             .await
@@ -1313,7 +1274,7 @@ mod tests {
         wait_until_connected(handle_b, peer_a).await;
     }
 
-    fn identity_test_adapter(handle: P2PHostHandle) -> P2PAdapter<NoopBlockstore> {
+    pub(super) fn identity_test_adapter(handle: P2PHostHandle) -> P2PAdapter<NoopBlockstore> {
         P2PAdapter {
             handle,
             sync_coordinator: None,
