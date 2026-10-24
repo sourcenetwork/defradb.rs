@@ -42,7 +42,7 @@ jobs:
               -p defra-http -p embedded -p cli -p ffi -p defra-node
               -p lens-host -p defra-wasm -p benches -p ffi-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
