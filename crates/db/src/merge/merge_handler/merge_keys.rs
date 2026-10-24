@@ -135,6 +135,51 @@ where
         }
     }
 
+    /// This handler, decrypting with this node's own keys only: those of
+    /// every encrypted block in the history below `tips`, read from the
+    /// blockstore and fetched now. A key held elsewhere is unavailable, and
+    /// no peer is asked.
+    pub(crate) async fn with_local_history_keys(&self, tips: &[Cid]) -> Self {
+        let mut handler = self.clone();
+        handler.local_keys_only = true;
+        let Some(kms) = self.kms() else {
+            return handler;
+        };
+        let mut cids = Vec::new();
+        let mut seen = RapidHashSet::default();
+        let mut walk = tips.to_vec();
+        while let Some(cid) = walk.pop() {
+            if !seen.insert(cid) {
+                continue;
+            }
+            let Ok(Some(data)) = self.blockstore.get(&cid).await else {
+                continue;
+            };
+            let Ok(block) = Block::from_dag_cbor(&data) else {
+                continue;
+            };
+            cids.extend(block.encryption);
+            walk.extend(block.heads.into_iter().flatten());
+        }
+        if cids.is_empty() {
+            return handler;
+        }
+        let context = Self::kms_request_context(None);
+        let answers: Vec<(Cid, MergeKeyAnswer)> =
+            match kms.get_local_keys_each(&context, &cids).await {
+                Ok(answers) => cids
+                    .iter()
+                    .copied()
+                    .zip(answers.into_iter().map(|answer| answer.map(Zeroizing::new)))
+                    .collect(),
+                Err(error) => cids.iter().map(|cid| (*cid, Err(error.clone()))).collect(),
+            };
+        let keys: PreparedMergeKeys = Arc::new(HopscotchMap::with_hasher(RandomState::default()));
+        keys.extend(answers);
+        handler.prepared_keys = Some(keys);
+        handler
+    }
+
     /// The answer fetched for `cid` before this merge's transaction, if any.
     pub(crate) fn prepared_key(&self, cid: &Cid) -> Option<MergeKeyAnswer> {
         self.prepared_keys.as_ref()?.get(cid)

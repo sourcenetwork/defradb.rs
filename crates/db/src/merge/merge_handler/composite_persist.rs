@@ -53,7 +53,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             return Ok(None);
         }
 
-        if state.field_values.is_empty() {
+        if state.field_values.is_empty() && !state.parked_fields {
             return Ok(None);
         }
 

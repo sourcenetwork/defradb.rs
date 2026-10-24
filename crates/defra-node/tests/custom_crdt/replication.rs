@@ -294,3 +294,47 @@ fn a_parked_block_that_cannot_merge_does_not_hold_up_the_others() {
         })
         .unwrap()
 }
+
+/// A document whose only field is of a type the node lacks still exists on
+/// it, so its parked block has a document to merge into once the node has
+/// the type.
+#[test]
+fn a_document_of_parked_fields_only_merges_once_the_node_has_the_type() {
+    edge::testing::edge()
+        .block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let a = node(true, None).await;
+            let c = node(false, Some(dir.path())).await;
+            let c_address = address(&c).await;
+            replicate(&a, &c_address, |sender| authorize(&c, sender)).await;
+
+            run(&a, r#"mutation { add_Score(input: {best: 5}) { _docID } }"#).await;
+            run(
+                &a,
+                r#"mutation { add_Note(input: {text: "last"}) { _docID } }"#,
+            )
+            .await;
+            eventually("c has every block", || async {
+                run(&c, "{ Note { text } }").await["Note"] == serde_json::json!([{"text": "last"}])
+            })
+            .await;
+            assert_eq!(
+                run(&c, "{ Score { player } }").await["Score"],
+                serde_json::json!([{"player": null}]),
+                "c holds the document"
+            );
+
+            a.shutdown().await;
+            c.shutdown().await;
+            drop(c);
+            let c = EmbeddedNode::builder()
+                .data_path(dir.path())
+                .with_crdt(MaxRegister::new())
+                .build()
+                .await
+                .unwrap();
+            eventually("the parked block merges", || async { best(&c).await == 5 }).await;
+            c.shutdown().await;
+        })
+        .unwrap()
+}

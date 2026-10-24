@@ -61,6 +61,9 @@ pub struct CompositeMergeState {
     /// ([`FieldMergeResult::op`](super::field::FieldMergeResult)).
     pub(crate) field_ops: RapidHashMap<String, document::FieldOp>,
     pub(crate) any_field_applied: bool,
+    /// A field block of a type this node lacks was parked: the document is
+    /// still made, so the block's replay has one to merge into.
+    pub(crate) parked_fields: bool,
     pub(crate) encrypted_policy_checked: bool,
     pub(crate) field_block_heads: RapidHashMap<String, Vec<Cid>>,
     pub(crate) owned_field_cids: Vec<Cid>,

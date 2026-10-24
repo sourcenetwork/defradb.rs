@@ -114,7 +114,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                 return decrypt_with_key(data, key.as_slice());
             }
             let ctx = Self::kms_request_context(metadata);
-            if local_only {
+            if local_only || self.local_keys_only {
                 let mut answers = kms
                     .get_local_keys_each(&ctx, std::slice::from_ref(enc_cid))
                     .await?;

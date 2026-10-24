@@ -56,9 +56,39 @@ struct Parked {
 }
 
 /// Whether an error is the block's own, so the block fails and the replay
-/// goes on, or the store's, so the replay stops until the next build.
+/// goes on. A store error keeps its class through the database and index
+/// errors that wrap it, and stops the replay until the next build; a key
+/// this node does not hold leaves the block parked ([`keyless`]).
 fn the_blocks(error: &MergeError) -> bool {
-    !matches!(error, MergeError::Storage(_))
+    match error {
+        MergeError::Storage(_) => false,
+        MergeError::Database(error) => !matches!(
+            error,
+            crate::error::Error::Storage(_) | crate::error::Error::Datastore(_)
+        ),
+        error => !keyless(error),
+    }
+}
+
+/// Whether merging a block needs a key this node does not hold: the block
+/// stays parked, and the rest of the replay goes on.
+fn keyless(error: &MergeError) -> bool {
+    matches!(
+        error,
+        MergeError::Kms(_)
+            | MergeError::NeedsDecryptionKey(_)
+            | MergeError::NeedsBatchDecryptionKey { .. }
+    )
+}
+
+/// An index error as a merge error: a store failure stays one.
+fn index_error(error: crate::index::error::Error) -> MergeError {
+    match error {
+        crate::index::error::Error::Storage(error) => {
+            MergeError::Database(crate::error::Error::Storage(error))
+        }
+        error => MergeError::MergeFailed(error.to_string()),
+    }
 }
 
 impl<S, B> DbMergeHandler<S, B>
@@ -254,38 +284,55 @@ where
                 return Ok(0);
             }
             let failed = Arc::new(AtomicUsize::new(usize::MAX));
-            match self.merge_page(&page, &failed).await {
+            let kept = Arc::new(AtomicUsize::new(usize::MAX));
+            match self.merge_page(&page, &failed, &kept).await {
                 Ok(merged) => {
                     self.best_effort_finalize_linked_field_blocks(&merged).await;
                     return Ok(merged.len());
                 }
-                Err(error) => match failed.load(Ordering::Acquire) {
-                    usize::MAX => return Err(error),
-                    index => {
-                        let block = page.remove(index);
-                        self.fail(&block.key, block.record, &error).await?;
+                Err(error) => {
+                    match (failed.load(Ordering::Acquire), kept.load(Ordering::Acquire)) {
+                        (usize::MAX, usize::MAX) => return Err(error),
+                        (usize::MAX, index) => {
+                            let block = page.remove(index);
+                            tracing::warn!(cid = block.record.cid, %error, "a parked block stays parked");
+                        }
+                        (index, _) => {
+                            let block = page.remove(index);
+                            self.fail(&block.key, block.record, &error).await?;
+                        }
                     }
-                },
+                }
             }
         }
     }
 
-    /// One transaction merging `page`; on a block's own error, `failed`
-    /// names it.
+    /// One transaction merging `page`, decrypting with this node's own keys
+    /// only, fetched before it; on a block's own error, `failed` names it,
+    /// and on a key this node does not hold, `kept` does.
     async fn merge_page(
         &self,
         page: &[Ready],
         failed: &Arc<AtomicUsize>,
+        kept: &Arc<AtomicUsize>,
     ) -> std::result::Result<Vec<Cid>, MergeError> {
-        let handler = self.clone();
+        let tips: Vec<Cid> = page
+            .iter()
+            .flat_map(|block| block.parents.iter().copied())
+            .collect();
+        let handler = self.with_local_history_keys(&tips).await;
         let page: Arc<[Ready]> = page.iter().map(Ready::clone).collect();
-        let failed = Arc::clone(failed);
+        let (failed, kept) = (Arc::clone(failed), Arc::clone(kept));
         datastore::transact(
             self.db.store().as_ref(),
             self.db.options().retry_options(),
             move |txn| {
-                let (handler, page, failed) =
-                    (handler.clone(), Arc::clone(&page), Arc::clone(&failed));
+                let (handler, page, failed, kept) = (
+                    handler.clone(),
+                    Arc::clone(&page),
+                    Arc::clone(&failed),
+                    Arc::clone(&kept),
+                );
                 Box::pin(async move {
                     let mut merged = Vec::with_capacity(page.len());
                     for (index, block) in page.iter().enumerate() {
@@ -302,6 +349,8 @@ where
                             .map_err(|error| {
                                 if the_blocks(&error) {
                                     failed.store(index, Ordering::Release);
+                                } else if keyless(&error) {
+                                    kept.store(index, Ordering::Release);
                                 }
                                 RetryAttemptError::Abort(Box::new(error))
                             })?;
@@ -456,7 +505,7 @@ where
                     .await
                     .map_err(MergeError::Database)?;
                 IndexManager::from_collection(collection.resolved_root_id(), collection.schema())
-                    .map_err(|error| MergeError::MergeFailed(error.to_string()))?
+                    .map_err(index_error)?
                     .on_document_update_merge(
                         &datastore,
                         &systemstore,
@@ -466,7 +515,7 @@ where
                         collection.schema(),
                     )
                     .await
-                    .map_err(|error| MergeError::MergeFailed(error.to_string()))?;
+                    .map_err(index_error)?;
             }
         }
         systemstore.delete(key).await.map_err(storage)?;

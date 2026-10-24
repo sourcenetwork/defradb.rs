@@ -212,6 +212,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                     )
                     .await?;
                     parked = true;
+                    state.parked_fields = true;
                     continue;
                 }
                 match result.order {

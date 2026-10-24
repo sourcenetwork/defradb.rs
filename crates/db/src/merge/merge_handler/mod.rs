@@ -138,6 +138,9 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     /// Keys fetched before this merge's own transaction (see
     /// `merge_keys`): consulted before any request to the KMS.
     prepared_keys: Option<merge_keys::PreparedMergeKeys>,
+    /// Decrypt with keys this node holds only: a key held elsewhere is
+    /// unavailable, and no peer is asked.
+    local_keys_only: bool,
     /// Encryption CIDs with a background DEK prefetch currently in flight, so
     /// repeated deliveries of the same deferred field block
     /// (pushlog + gossip + retries) don't fan out duplicate cross-peer
@@ -175,6 +178,7 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
             retry_decryption_keys: self.retry_decryption_keys.clone(),
             retry_prefetch_requested: self.retry_prefetch_requested.clone(),
             prepared_keys: self.prepared_keys.clone(),
+            local_keys_only: self.local_keys_only,
             prefetched_dek_cids: Arc::clone(&self.prefetched_dek_cids),
             deferred: Arc::clone(&self.deferred),
             rejected_governed: Arc::clone(&self.rejected_governed),
@@ -304,6 +308,7 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             retry_decryption_keys: None,
             retry_prefetch_requested: None,
             prepared_keys: None,
+            local_keys_only: false,
             prefetched_dek_cids: Arc::new(cid_set()),
             deferred: Arc::new(Default::default()),
             rejected_governed: Arc::new(cid_set()),
