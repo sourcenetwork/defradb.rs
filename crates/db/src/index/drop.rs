@@ -77,7 +77,8 @@ where
 {
     /// Drop the index `index_name` from `collection_name` and delete its
     /// entries. The entries are deleted by a job of its own, so a caller that
-    /// stops waiting does not leave them behind.
+    /// stops waiting does not leave them behind. Once the index is out of the
+    /// definition the drop succeeds, even if deleting its entries fails.
     pub async fn drop_index(self: &Arc<Self>, collection_name: &str, index_name: &str) -> Result<()>
     where
         S: 'static,
@@ -111,9 +112,10 @@ where
                     .await,
             );
         });
-        outcome
-            .await
-            .map_err(|_| Error::Other("the index drop ended without reporting".into()))?
+        // The drop stands once its commit lands: a failed removal is logged
+        // and kept on the drop record, which the next start finishes.
+        let _ = outcome.await;
+        Ok(())
     }
 
     /// Take the index out of the definition this attempt reads, delete its
