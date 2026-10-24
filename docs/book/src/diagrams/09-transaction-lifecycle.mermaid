@@ -1,0 +1,26 @@
+stateDiagram-v2
+    [*] --> Open: begin at a snapshot, owned by one core
+    Open --> Open: reads see own writes and merges in operation order
+    Open --> Open: put, delete, merge, append are buffered
+    Open --> Open: savepoint, rollback to savepoint
+    Open --> RolledBack: rollback or drop
+    Open --> Validating: commit or commit_nowait
+
+    Validating --> WriteFree: wrote nothing, every read at the snapshot
+    WriteFree --> Done: no validation, no critical section
+
+    Validating --> Conflicted: a key lost its race
+    Validating --> Decided: every key accepted
+
+    Decided --> Written: WAL write, positions and allocations assigned
+    Written --> Durable: fsync, a unit on the committer's IoQueue, or a blocking commit
+    Durable --> Visible: published in sequence order
+    Visible --> Done: receipt with seq, completion on the committer's own queue
+
+    Conflicted --> Retrying: transact hands the reason to the re-run
+    Retrying --> Open: a fresh transaction at a new snapshot
+    Conflicted --> Failed: business logic stops, or attempts run out
+
+    RolledBack --> [*]
+    Done --> [*]
+    Failed --> [*]

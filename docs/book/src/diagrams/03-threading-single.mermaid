@@ -1,0 +1,29 @@
+flowchart TB
+    classDef loop fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef rego fill:#d6e6f8,stroke:#1565c0,color:#000
+    classDef io fill:#fff3cd,stroke:#b8860b,color:#000
+
+    EL["one thread: wasm main thread or a single-core embedded target<br/>one local executor runs every task; one IoQueue"]
+    RUN["run the next ready task"]
+    CALL["regolith call: synchronous, inline on this thread"]
+    DONE["result: the task continues"]
+    SUSP["WouldBlock or a pending ticket:<br/>the unit goes on this thread's IoQueue,<br/>the task awaits it, the thread runs another task"]
+    HELP["a committer helps every earlier commit itself:<br/>no wait on another thread"]
+    POLL["IoQueue poll with a budget:<br/>WAL sync, queued block reads,<br/>a flush or compaction step owed with no worker,<br/>opt-in (D23)"]
+    WAKE["completions on its own queue:<br/>their tasks resume"]
+
+    EL --> RUN
+    RUN --> CALL
+    CALL -->|"completes"| DONE
+    CALL -->|"commit"| HELP
+    HELP --> DONE
+    CALL -->|"needs I/O or a stall"| SUSP
+    SUSP --> EL
+    DONE --> EL
+    EL -->|"when no task is ready"| POLL
+    POLL --> WAKE
+    WAKE --> EL
+
+    class EL,RUN,DONE,SUSP,WAKE loop
+    class CALL,HELP rego
+    class POLL io

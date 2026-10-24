@@ -1,0 +1,28 @@
+[book]
+title = "The Book of Defra"
+description = "A subsystem-by-subsystem guide to defradb.rs: its storage engine, transactions, threading, replication, access control, and the reasons behind each design."
+authors = ["Source Network"]
+src = "src"
+language = "en"
+
+[output.html]
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/sourcenetwork/defradb.rs"
+edit-url-template = "https://github.com/sourcenetwork/defradb.rs/edit/main/docs/book/{path}"
+site-url = "/defradb.rs/book/"
+smart-punctuation = true
+definition-lists = true
+admonitions = true
+mathjax-support = false
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["theme/css/custom.css"]
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-boolean-and = true
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
