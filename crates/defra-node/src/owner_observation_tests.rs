@@ -77,9 +77,9 @@ fn owner_observation_preserves_actor_document_and_collection_boundaries() {
                 Some(Did::new(A).unwrap()),
             )
             .await;
-        if let Ok(observations) = wrong {
-            assert!(observations.iter().all(|entry| entry.owner.is_none()));
-        }
+        let observations = wrong.unwrap();
+        assert_eq!(observations.len(), 1);
+        assert!(observations[0].owner.is_none());
         node.runner()
             .rollback_txn_as(&context, &handle)
             .await
@@ -242,6 +242,44 @@ fn owner_observation_does_not_treat_a_deleted_document_as_a_live_member() {
             .await
             .unwrap();
         assert!(result[0].owner.is_none());
+        node.runner()
+            .rollback_txn_as(&context, &handle)
+            .await
+            .unwrap();
+        node.shutdown().await;
+    })
+    .unwrap();
+}
+
+#[test]
+fn owner_observation_reports_the_registrant_to_a_different_authorized_reader() {
+    workers::block_on(async {
+        let (node, policy, doc) = fixture().await;
+        node.document_acp()
+            .add_actor_relationship(
+                &Did::new(A).unwrap(),
+                &Did::new(B).unwrap(),
+                &policy,
+                "rows",
+                &doc,
+                "reader",
+                &[],
+            )
+            .await
+            .unwrap();
+        let context = RequestContext::default();
+        let handle = node.runner().begin_txn_as(&context, true).await.unwrap();
+        let observations = node
+            .observe_document_owners_in_txn(
+                &handle,
+                "Users",
+                std::slice::from_ref(&doc),
+                Some(Did::new(B).unwrap()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].owner.as_ref().map(Did::as_str), Some(A));
         node.runner()
             .rollback_txn_as(&context, &handle)
             .await
