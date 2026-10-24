@@ -257,6 +257,7 @@ pub fn check_tagged(tagged: &dyn TaggedCrdt, field: &FieldDescription, values: &
         tagged.causal().is_none(),
         "a type is at most one of causal and tagged"
     );
+    let crdts = Checked::new(tagged);
     let write = |state: Option<&StoredField>, value: &NormalValue, priority, parents: &[u8]| {
         let parents: Vec<Vec<u8>> = parents.iter().map(|&parent| vec![parent]).collect();
         local_write(
@@ -348,12 +349,10 @@ pub fn check_tagged(tagged: &dyn TaggedCrdt, field: &FieldDescription, values: &
                 pair.fields.insert(0, left.operand.clone());
                 let mut later = StoredDocument::default();
                 later.fields.insert(0, right.operand.clone());
-                pair.fold(later, &Crdts::default()).expect("operands fold");
+                pair.fold(later, &crdts).expect("operands fold");
                 let mut folded = StoredDocument::default();
                 folded.fields.insert(0, root.clone());
-                folded
-                    .apply(pair, &Crdts::default())
-                    .expect("a folded operand lands");
+                folded.apply(pair, &crdts).expect("a folded operand lands");
                 assert_eq!(folded.fields[&0], both, "{a:?} and {b:?} folded first");
                 let history = [
                     first_block.clone(),
