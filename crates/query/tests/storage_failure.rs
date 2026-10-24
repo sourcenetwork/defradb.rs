@@ -4,16 +4,8 @@ use std::process::Command;
 use query::{QueryError, QueryResponse, QueryResponseError};
 
 #[test]
+#[ignore = "requires Lean; executed explicitly by the Lean Conformance CI job"]
 fn storage_failure_classification_matches_executed_model() {
-    // The model-equipped proof gate runs this binding; ordinary Rust-only
-    // environments do not install an additional toolchain during tests.
-    if !Command::new("lake")
-        .arg("--version")
-        .output()
-        .is_ok_and(|out| out.status.success())
-    {
-        return;
-    }
     let output = Command::new("lake")
         .args(["env", "lean", "--run", "StorageFailure.lean"])
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../proofs/lean"))
