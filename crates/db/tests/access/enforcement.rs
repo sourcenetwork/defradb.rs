@@ -289,18 +289,18 @@ fn delete_collection_gated_by_nac() {
 }
 
 // =============================================================================
-// Transactional schema-mutation gate (`DbTransactionRegistry::add_schema_in_txn`).
+// Transactional schema-mutation gate (`DbTransactionRegistry::add_collection_in_txn`).
 //
 // The non-transactional `create_collection` wrapper is gated, but the
 // transactional entry point used by HTTP/FFI/CLI txn handlers is a separate
-// code path. These prove `add_schema_in_txn` calls `check_node_access` so a
+// code path. These prove `add_collection_in_txn` calls `check_node_access` so a
 // stranger cannot bypass NAC by routing schema creation through a transaction.
 // =============================================================================
 
 const WIDGET_SDL: &str = "type Widget { name: String }";
 
 #[test]
-fn add_schema_in_txn_denied_for_non_owner() {
+fn add_collection_in_txn_denied_for_non_owner() {
     workers::block_on(async {
         let _serial = AMBIENT_GUARD.lock().await;
 
@@ -312,25 +312,25 @@ fn add_schema_in_txn_denied_for_non_owner() {
             defra_core::current_identity::scoped_current_identity(Some(STRANGER_DID.to_string()));
         let txn_id = registry.begin(false).await.unwrap();
         let err = registry
-            .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
+            .add_collection_in_txn(txn_id.as_str(), WIDGET_SDL)
             .await
-            .expect_err("non-owner must be denied transactional add_schema_in_txn");
+            .expect_err("non-owner must be denied transactional add_collection_in_txn");
         drop(guard);
 
         assert!(
             matches!(err, db::error::Error::NotAuthorized { .. }),
-            "expected NotAuthorized from add_schema_in_txn, got: {err:?}"
+            "expected NotAuthorized from add_collection_in_txn, got: {err:?}"
         );
         assert!(
             db.get_collection("Widget").unwrap().is_none(),
-            "denied add_schema_in_txn must not persist the collection"
+            "denied add_collection_in_txn must not persist the collection"
         );
     })
     .unwrap()
 }
 
 #[test]
-fn add_schema_in_txn_allowed_for_owner() {
+fn add_collection_in_txn_allowed_for_owner() {
     workers::block_on(async {
         let _serial = AMBIENT_GUARD.lock().await;
 
@@ -342,15 +342,15 @@ fn add_schema_in_txn_allowed_for_owner() {
             defra_core::current_identity::scoped_current_identity(Some(OWNER_DID.to_string()));
         let txn_id = registry.begin(false).await.unwrap();
         registry
-            .add_schema_in_txn(txn_id.as_str(), WIDGET_SDL)
+            .add_collection_in_txn(txn_id.as_str(), WIDGET_SDL)
             .await
-            .expect("owner must be allowed to add_schema_in_txn");
+            .expect("owner must be allowed to add_collection_in_txn");
         registry.commit(&txn_id).await.expect("commit must succeed");
         drop(guard);
 
         assert!(
             db.get_collection("Widget").unwrap().is_some(),
-            "owner add_schema_in_txn must persist the collection after commit"
+            "owner add_collection_in_txn must persist the collection after commit"
         );
     })
     .unwrap()

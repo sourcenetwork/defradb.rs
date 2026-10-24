@@ -38,8 +38,8 @@ async fn assert_replicator_acknowledges_current_heads(schema: &str, collection: 
         .build()
         .await
         .expect("build node1");
-    node0.add_schema(schema).await.expect("schema on node0");
-    node1.add_schema(schema).await.expect("schema on node1");
+    node0.add_collection(schema).await.expect("schema on node0");
+    node1.add_collection(schema).await.expect("schema on node1");
     install_one_way_replicator(&node0, &node1, &[collection]).await;
     let peer1 = node1
         .p2p()
@@ -146,7 +146,7 @@ fn explicit_replay_acknowledges_only_selected_document_heads() {
                 .await
                 .unwrap();
             for node in [&node0, &node1] {
-                node.add_schema(
+                node.add_collection(
                     "type Control { value: String } type Note @branchable { body: String }",
                 )
                 .await

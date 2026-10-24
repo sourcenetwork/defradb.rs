@@ -290,7 +290,7 @@ mod tests {
     async fn writes_work_before_during_and_after_p2p() {
         let mut client = client("p2p_writes", None).await;
         client
-            .add_schema("type Note { text: String }")
+            .add_collection("type Note { text: String }")
             .await
             .unwrap();
         let create = |text: &str| {

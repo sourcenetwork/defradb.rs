@@ -142,14 +142,14 @@ fn test_begin_readwrite_transaction() {
 }
 
 #[test]
-fn add_schema_in_txn_rejects_an_unpaired_relation() {
+fn add_collection_in_txn_rejects_an_unpaired_relation() {
     workers::block_on(async {
         let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
         let registry = DbTransactionRegistry::new(db);
         let txn_id = registry.begin(false).await.unwrap();
 
         let error = registry
-            .add_schema_in_txn(
+            .add_collection_in_txn(
                 txn_id.as_str(),
                 r#"
                 type User {

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use defra_core::RequestContext;
 
-use defra_http::router::{AcpOperations, SchemaOperations};
+use defra_http::router::{AcpOperations, CollectionOperations};
 use identity::Did;
 use schema::CollectionVersion;
 use storage::corekv::Store;
@@ -16,7 +16,7 @@ pub struct SchemaAdapter<S: Store> {
     database: Arc<db::DB<S>>,
     /// Optional ACP handle for schema-time DRI validation (#746).
     ///
-    /// When `Some`, `add_schema` validates `@policy(id:, resource:)`
+    /// When `Some`, `add_collection` validates `@policy(id:, resource:)`
     /// directives against the ACP store before creating collections:
     /// the policy must exist, the resource must exist on it, and the
     /// resource must declare the DPI-required `read`/`update`/`delete`
@@ -59,7 +59,7 @@ impl<S: Store + 'static> SchemaAdapter<S> {
     }
 
     /// Create an Arc-wrapped adapter for HTTP schema operations.
-    pub fn new_arc(database: Arc<db::DB<S>>) -> Arc<dyn SchemaOperations> {
+    pub fn new_arc(database: Arc<db::DB<S>>) -> Arc<dyn CollectionOperations> {
         Arc::new(Self::new(database))
     }
 
@@ -69,7 +69,7 @@ impl<S: Store + 'static> SchemaAdapter<S> {
         database: Arc<db::DB<S>>,
         acp: Arc<dyn AcpOperations>,
         document_acp: Arc<dyn acp::DocumentACP>,
-    ) -> Arc<dyn SchemaOperations> {
+    ) -> Arc<dyn CollectionOperations> {
         Arc::new(Self::new_with_acp(database, acp, document_acp))
     }
 
@@ -96,7 +96,7 @@ impl<S: Store + 'static> SchemaAdapter<S> {
         Arc::new(Self::new_with_acp(database, acp, document_acp))
     }
 
-    async fn add_schema_inner(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+    async fn add_collection_inner(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
         // Fail closed: a present-but-malformed acting identity must error, not
         // silently degrade a permissioned collection to public (unregistered).
         let context = self.context();
@@ -155,8 +155,8 @@ impl<S: Store + 'static> SchemaAdapter<S> {
 }
 
 #[async_trait]
-impl<S: Store + 'static> SchemaOperations for SchemaAdapter<S> {
-    fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn SchemaOperations>> {
+impl<S: Store + 'static> CollectionOperations for SchemaAdapter<S> {
+    fn bind_request(&self, context: &RequestContext) -> Option<Arc<dyn CollectionOperations>> {
         Some(Arc::new(Self {
             database: Arc::clone(&self.database),
             acp: self.acp.clone(),
@@ -165,16 +165,16 @@ impl<S: Store + 'static> SchemaOperations for SchemaAdapter<S> {
         }))
     }
 
-    async fn add_schema(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
-        self.add_schema_inner(sdl).await
+    async fn add_collection(&self, sdl: &str) -> Result<Vec<CollectionVersion>, String> {
+        self.add_collection_inner(sdl).await
     }
 }
 
 #[cfg(feature = "postgres")]
 #[async_trait]
 impl<S: Store + 'static> pg_compat::SchemaManager for SchemaAdapter<S> {
-    async fn add_schema(&self, sdl: &str) -> Result<(), String> {
-        self.add_schema_inner(sdl).await?;
+    async fn add_collection(&self, sdl: &str) -> Result<(), String> {
+        self.add_collection_inner(sdl).await?;
         Ok(())
     }
 }

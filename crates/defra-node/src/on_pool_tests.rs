@@ -30,12 +30,14 @@ fn api_calls_make_no_storage_call_off_the_pool() {
         let before = off_pool_calls(&node);
 
         let policy_id = node.add_dac_policy(OWNER, POLICY_YAML).await.unwrap();
-        node.add_schema(&format!(
+        node.add_collection(&format!(
             "type Notes @policy(id: \"{policy_id}\", resource: \"notes\") {{ title: String }}"
         ))
         .await
         .unwrap();
-        node.add_schema("type Tag { label: String }").await.unwrap();
+        node.add_collection("type Tag { label: String }")
+            .await
+            .unwrap();
         let versions = node.get_all_collection_versions().await.unwrap();
         let tag = versions
             .iter()

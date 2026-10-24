@@ -37,7 +37,7 @@ fn embedded_transaction_mutation_uses_node_signer() {
         .build()
         .await
         .expect("build signed node");
-    node.add_schema("type Widget { name: String }")
+    node.add_collection("type Widget { name: String }")
         .await
         .expect("add schema");
 
@@ -188,7 +188,7 @@ fn embedded_transaction_mutation_uses_node_signer() {
         .build()
         .await
         .expect("build unsigned node");
-    node.add_schema("type UnsignedWidget { name: String }")
+    node.add_collection("type UnsignedWidget { name: String }")
         .await
         .expect("add schema");
 

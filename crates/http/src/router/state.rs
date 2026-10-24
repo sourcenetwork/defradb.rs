@@ -10,9 +10,9 @@ use serde_json::Map;
 
 use super::{
     AcpOperations, BackupOperations, BlockOperations, CollectionManagementOperations,
-    CollectionVersionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, LensOperations, ManageRequester, NodeAcpOperations, P2POperations,
-    SchemaOperations, TransactionOperations, ViewOperations,
+    CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
+    EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
+    P2POperations, TransactionOperations, ViewOperations,
 };
 
 struct CollectionVersionsFromManagement(Arc<dyn CollectionManagementOperations>);
@@ -45,7 +45,7 @@ pub struct AppState {
     pub encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     pub backup: Option<Arc<dyn BackupOperations>>,
     pub block: Option<Arc<dyn BlockOperations>>,
-    pub schema: Option<Arc<dyn SchemaOperations>>,
+    pub schema: Option<Arc<dyn CollectionOperations>>,
     pub lens: Option<Arc<dyn LensOperations>>,
     pub nac: Option<Arc<dyn NodeAcpOperations>>,
     pub collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
@@ -85,7 +85,7 @@ impl std::fmt::Debug for AppState {
             .field("block", &self.block.as_ref().map(|_| "<BlockOperations>"))
             .field(
                 "schema",
-                &self.schema.as_ref().map(|_| "<SchemaOperations>"),
+                &self.schema.as_ref().map(|_| "<CollectionOperations>"),
             )
             .field("lens", &self.lens.as_ref().map(|_| "<LensOperations>"))
             .field("nac", &self.nac.as_ref().map(|_| "<NodeAcpOperations>"))
@@ -190,7 +190,9 @@ impl AppState {
     }
 
     /// Get schema operations or return ServiceUnavailable error.
-    pub fn require_schema(&self) -> Result<&Arc<dyn SchemaOperations>, crate::error::HttpError> {
+    pub fn require_schema(
+        &self,
+    ) -> Result<&Arc<dyn CollectionOperations>, crate::error::HttpError> {
         self.schema.as_ref().ok_or_else(|| {
             crate::error::HttpError::ServiceUnavailable(
                 "Schema operations are not enabled. Start the server with schema enabled to use this feature.".into()
@@ -288,7 +290,7 @@ pub struct AppStateBuilder {
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
-    schema: Option<Arc<dyn SchemaOperations>>,
+    schema: Option<Arc<dyn CollectionOperations>>,
     lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
@@ -397,7 +399,7 @@ impl AppStateBuilder {
     }
 
     /// Set schema operations.
-    pub fn with_schema(mut self, schema: Arc<dyn SchemaOperations>) -> Self {
+    pub fn with_schema(mut self, schema: Arc<dyn CollectionOperations>) -> Self {
         self.schema = Some(schema);
         self
     }

@@ -11,7 +11,7 @@ const SCHEMA: &str = "type SignedNote { text: String }";
 
 #[wasm_bindgen_test]
 async fn a_signed_browser_documents_signature_survives_the_hop() {
-    node::add_schema(SCHEMA, None).await;
+    node::add_collection(SCHEMA, None).await;
     node::subscribe(&["SignedNote"]).await;
     let author = Key::generate();
     let mut browser = Browser::start("p2p_relay_signed", Some(&author), SCHEMA).await;

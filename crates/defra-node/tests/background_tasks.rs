@@ -24,7 +24,7 @@ type MetricRollup @downsample(interval: "1000ms", timeField: "ts") {
 fn downsample_view_refreshes_without_a_manual_refresh() {
     workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
-    node.add_schema("type Metric { label: String  ts: DateTime  value: Int }")
+    node.add_collection("type Metric { label: String  ts: DateTime  value: Int }")
         .await
         .unwrap();
     node.add_view("Metric { label ts value }", ROLLUP_SDL)
