@@ -20,7 +20,10 @@ fn fold<'state>(states: impl IntoIterator<Item = &'state StoredField>) -> Stored
     document
 }
 
-fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+fn permutations<T>(items: &[T]) -> Vec<Vec<T>>
+where
+    T: Clone,
+{
     if items.len() <= 1 {
         return vec![items.to_vec()];
     }
