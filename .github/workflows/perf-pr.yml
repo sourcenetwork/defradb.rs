@@ -68,10 +68,10 @@ jobs:
       DEFRA_BASELINE_PROFILE: release-fast
       CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: head
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
@@ -79,7 +79,7 @@ jobs:
       # Its own interpreter rather than the system one: a PEP 668 image refuses
       # to let pip touch the system environment, and this gate must not be the
       # thing that fails before it has checked anything.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       # A bench target the matrix does not name measures nothing, and nothing
@@ -205,7 +205,7 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body: payload });
             }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: perf-quick
