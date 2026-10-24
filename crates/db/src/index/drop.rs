@@ -1,5 +1,6 @@
 //! Dropping an index: one commit takes the index out of the definition,
-//! deletes its backfill record and writes a `DROP_INDEX` record; the entries
+//! retires its id, deletes its backfill record and writes a `DROP_INDEX`
+//! record; the entries
 //! are then deleted a page at a time. Nothing adds an entry once that commit
 //! lands, because every writer and every backfill page reads the definition
 //! it maintains the index for, so the pages need no guard. The drop record
@@ -27,7 +28,7 @@ use crate::database::action::{
 };
 use crate::database::spawn::spawn_task;
 use crate::error::{Error, Result};
-use crate::index::manager::IndexType;
+use crate::index::manager::{retire_index_id, IndexType};
 use crate::index::pages::{Page, PAGE_ITEMS};
 use crate::txn::DbTxn;
 use crate::DB;
@@ -138,6 +139,7 @@ where
                 index: index_name.to_string(),
             })?;
         let index = schema.indexes.remove(position);
+        retire_index_id(&txn.datastore()?, schema.resolved_root_id(), index.id).await?;
         let data = serde_json::to_vec(&schema).map_err(|error| {
             Error::collection_schema_json(
                 format!("failed to serialize schema for collection '{collection_name}'"),

@@ -296,3 +296,31 @@ fn a_restart_clears_a_failed_backfill_of_a_dropped_index() {
     })
     .unwrap()
 }
+
+#[test]
+fn a_dropped_index_id_is_never_handed_out_again() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store).unwrap());
+        // An index from the SDL numbers its id from a counter of its own,
+        // which the id of an index created later used not to look past.
+        for schema in query::parse_sdl("type Reused { name: String @index }").unwrap() {
+            db.create_collection(schema).await.unwrap();
+        }
+        let dropped = db.require_collection("Reused").unwrap().schema().indexes[0].clone();
+        db.drop_index("Reused", &dropped.name).await.unwrap();
+
+        let (fields, kind) = by_name();
+        let created = db
+            .create_index("Reused", Some("by_name"), fields, kind)
+            .await
+            .unwrap();
+        assert!(
+            created.id > dropped.id,
+            "dropped id {} came back as {}",
+            dropped.id,
+            created.id
+        );
+    })
+    .unwrap()
+}
