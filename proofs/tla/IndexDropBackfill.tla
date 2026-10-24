@@ -7,8 +7,9 @@
 \*
 \* Who acts: the backfill (reading the definition, committing a page,
 \* failing for some unrelated reason, or finishing), the drop (taking the
-\* index out of the definition, then deleting its entries a page at a time),
-\* and the process itself, which can crash once and restart.
+\* index out of the definition, then deleting its entries a page at a time,
+\* or failing on a page), someone who creates a new index once the drop has
+\* committed, and the process itself, which can crash once and restart.
 \*
 \* What must never happen:
 \*   - the dropped index keeps a backfill record, so the action list shows a
@@ -16,7 +17,9 @@
 \*   - the drop says it is done while some of the index's entries are still
 \*     on disk;
 \*   - a drop that committed never finishes deleting its entries, even
-\*     across a restart.
+\*     across a restart;
+\*   - the drop deletes an entry of the new index, because the new index
+\*     got the dropped one's id and so shares its keys.
 \*
 \* Every transaction reads the definition key as a validated read: if the
 \* definition changes between the read and the commit, the commit conflicts
@@ -24,9 +27,12 @@
 \* and the model leans on it rather than adding any lock.
 \*
 \* Code it models (crates/db/src/index):
-\*   drop.rs      DB::drop_index, DropIndexAttempt (definition, backfill record and
-\*                drop record in one commit), DropPage (entries in pages),
-\*                DB::resume_index_drops (restart)
+\*   drop.rs      DB::drop_index, DropIndexAttempt (definition, backfill record,
+\*                drop record and the retired id in one commit), DropPage
+\*                (entries in pages), DB::remove_dropped_entries (a failed page
+\*                keeps the record), DB::resume_index_drops (restart)
+\*   manager/mod.rs  IndexManager::next_index_id and index_id_floor (a new
+\*                index never gets a retired id)
 \*   backfill.rs  BackfillPage::index (validated definition read per page),
 \*                DB::backfill_index, FailBackfillAttempt (a failure is recorded
 \*                only while the index is still defined),
@@ -38,7 +44,8 @@ CONSTANTS
   RecordMode,  \* "Clear": the drop deletes the backfill record in its commit | "Keep": it leaves it
   FailMode,    \* "Checked": a failure is written only if the index is still defined | "Blind": always
   EntryMode,   \* "AfterDefinition": entries go in pages after the definition commits | "SameTxn": in the drop's own commit
-  ResumeMode   \* "Resume": a restart continues an unfinished drop | "Forget": it does not
+  ResumeMode,  \* "Resume": a restart continues an unfinished drop | "Forget": it does not
+  IdMode       \* "Retire": the drop retires its index's id | "Reuse": a new index can get it again
 
 \* There is at least one old document, or there is nothing to backfill.
 ASSUME Docs # {}
@@ -47,6 +54,7 @@ ASSUME RecordMode \in {"Clear", "Keep"}
 ASSUME FailMode \in {"Checked", "Blind"}
 ASSUME EntryMode \in {"AfterDefinition", "SameTxn"}
 ASSUME ResumeMode \in {"Resume", "Forget"}
+ASSUME IdMode \in {"Retire", "Reuse"}
 
 VARIABLES
   defined,    \* the index is in the collection's definition
@@ -60,10 +68,16 @@ VARIABLES
   dropPc,     \* where the drop is (see DropStates)
   dropSeen,   \* the entries the drop's open transaction saw, in "SameTxn" mode
   dropRec,    \* the drop's durable "drop in progress" record
-  crashed     \* the one crash has happened
+  crashed,    \* the one crash has happened
+  newId,      \* the id of the index created after the drop: "None", "Same" or "Fresh"
+  newEntries  \* the old documents that have an entry in that new index
 
 vars == <<defined, version, entries, record, bfPc, bfLeft, bfVersion,
-          bfDefined, dropPc, dropSeen, dropRec, crashed>>
+          bfDefined, dropPc, dropSeen, dropRec, crashed, newId, newEntries>>
+
+\* The variables the new index adds, which the backfill and drop steps that
+\* do not touch it leave alone.
+newVars == <<newId, newEntries>>
 
 \* The backfill runs ("Run": about to read), holds an open page ("Page"),
 \* is settling a failure ("Fail": about to read, "FailCommit": holding the
@@ -71,10 +85,18 @@ vars == <<defined, version, entries, record, bfPc, bfLeft, bfVersion,
 BfStates == {"Run", "Page", "Fail", "FailCommit", "Done", "Stopped"}
 
 \* The drop has not started ("Idle"), holds its open transaction
-\* ("Commit"), is deleting entries ("Removing"), lost its work in a crash
-\* ("Crashed"), finished ("Done"), or never committed before a crash
+\* ("Commit"), is deleting entries ("Removing"), stopped on a failed page
+\* with its record kept for the next start ("Failed"), lost its work in a
+\* crash ("Crashed"), finished ("Done"), or never committed before a crash
 \* ("Abandoned": the caller saw an error and nothing changed).
-DropStates == {"Idle", "Commit", "Removing", "Crashed", "Done", "Abandoned"}
+DropStates == {"Idle", "Commit", "Removing", "Failed", "Crashed", "Done", "Abandoned"}
+
+\* The drop's commit landed, whatever happened to it after.
+DropCommitted == dropPc \in {"Removing", "Failed", "Crashed", "Done"}
+
+\* The keys the drop deletes: the dropped index's entries, and the new
+\* index's too when it got the same id, since a key names only the id.
+DropKeys == entries \cup (IF newId = "Same" THEN newEntries ELSE {})
 
 \* Every variable stays in its range.
 TypeOK ==
@@ -90,6 +112,8 @@ TypeOK ==
   /\ dropSeen \subseteq Docs                            \* entries a drop read saw
   /\ dropRec \in BOOLEAN                                \* the drop record exists or not
   /\ crashed \in BOOLEAN                                \* the crash happened or not
+  /\ newId \in {"None", "Same", "Fresh"}                \* no new index, or which id it got
+  /\ newEntries \subseteq Docs                          \* its entries are for old documents
 
 \* The index was just created: it is defined, its backfill record says
 \* "in progress", no old document has an entry yet, and no drop has started.
@@ -106,6 +130,8 @@ Init ==
   /\ dropSeen = {}               \* no drop read yet
   /\ dropRec = FALSE             \* no drop record
   /\ crashed = FALSE             \* the process has not crashed
+  /\ newId = "None"              \* no new index yet
+  /\ newEntries = {}             \* so no entry for it
 
 \* ---------------------------------------------------------------- backfill
 
@@ -116,7 +142,7 @@ BfRead ==
   /\ bfVersion' = version                            \* remember what it read
   /\ bfDefined' = defined                            \* and whether the index was there
   /\ bfPc' = "Page"                                  \* now holding the open page
-  /\ UNCHANGED <<defined, version, entries, record, bfLeft, dropPc, dropSeen, dropRec, crashed>>
+  /\ UNCHANGED <<defined, version, entries, record, bfLeft, dropPc, dropSeen, dropRec, crashed, newId, newEntries>>
 
 \* The page tries to commit. A definition that changed since the read is a
 \* conflict, and the page runs again. An index that was already gone stops
@@ -139,7 +165,7 @@ BfCommit ==
           /\ bfLeft' = bfLeft \ {d}                                 \* and it is done
           /\ bfPc' = "Run"                                          \* on to the next page
           /\ UNCHANGED record                                       \* the record still says in progress
-  /\ UNCHANGED <<defined, version, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed>>
+  /\ UNCHANGED <<defined, version, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed, newId, newEntries>>
 
 \* A page fails for a reason that has nothing to do with the drop (a
 \* storage error, a lens transform error). The backfill goes to the
@@ -147,7 +173,7 @@ BfCommit ==
 BfError ==
   /\ bfPc = "Run"                                    \* between pages
   /\ bfPc' = "Fail"                                  \* settle the failure
-  /\ UNCHANGED <<defined, version, entries, record, bfLeft, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed>>
+  /\ UNCHANGED <<defined, version, entries, record, bfLeft, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed, newId, newEntries>>
 
 \* "Checked": the failure is settled in a transaction of its own that first
 \* reads the definition. "Blind": the failure is written at once.
@@ -161,7 +187,7 @@ BfFailRead ==
      ELSE /\ record' = "Errored"                                    \* write the failure, no questions
           /\ bfPc' = "Stopped"                                      \* the backfill is over
           /\ UNCHANGED <<bfVersion, bfDefined>>                     \* no read
-  /\ UNCHANGED <<defined, version, entries, bfLeft, dropPc, dropSeen, dropRec, crashed>>
+  /\ UNCHANGED <<defined, version, entries, bfLeft, dropPc, dropSeen, dropRec, crashed, newId, newEntries>>
 
 \* The checked failure commits. A definition that changed is a conflict and
 \* the failure is read again. An index that is still defined gets the
@@ -174,7 +200,7 @@ BfFailCommit ==
           /\ UNCHANGED record                                       \* nothing committed
      ELSE /\ record' = IF bfDefined THEN "Errored" ELSE record      \* only a live index fails
           /\ bfPc' = "Stopped"                                      \* the backfill is over
-  /\ UNCHANGED <<defined, version, entries, bfLeft, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed>>
+  /\ UNCHANGED <<defined, version, entries, bfLeft, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed, newId, newEntries>>
 
 \* -------------------------------------------------------------------- drop
 
@@ -186,7 +212,7 @@ DropRead ==
   /\ defined                                         \* the index is there to drop
   /\ dropSeen' = entries                             \* what a scan sees now
   /\ dropPc' = "Commit"                              \* hold the open transaction
-  /\ UNCHANGED <<defined, version, entries, record, bfPc, bfLeft, bfVersion, bfDefined, dropRec, crashed>>
+  /\ UNCHANGED <<defined, version, entries, record, bfPc, bfLeft, bfVersion, bfDefined, dropRec, crashed, newId, newEntries>>
 
 \* The drop commits: the index leaves the definition, which bumps its
 \* version. "Clear" deletes the backfill record in the same commit.
@@ -204,31 +230,58 @@ DropCommit ==
      ELSE /\ dropRec' = TRUE                                        \* remember the unfinished drop
           /\ dropPc' = "Removing"                                   \* delete entries next
           /\ UNCHANGED entries                                      \* none deleted yet
-  /\ UNCHANGED <<bfPc, bfLeft, bfVersion, bfDefined, dropSeen, crashed>>
+  /\ UNCHANGED <<bfPc, bfLeft, bfVersion, bfDefined, dropSeen, crashed, newId, newEntries>>
 
-\* One page of the drop deletes an entry. Nothing can add an entry any more:
-\* every writer and every backfill page read the old definition, and the
-\* drop's commit changed it, so they conflict and see the index gone.
+\* One page of the drop deletes a key under the dropped index's id. Nothing
+\* can add an entry for the dropped index any more: every writer and every
+\* backfill page read the old definition, and the drop's commit changed it,
+\* so they conflict and see the index gone. A new index with the same id
+\* shares those keys, so the page deletes its entries too.
 DropRemove ==
   /\ dropPc = "Removing"                             \* deleting entries
-  /\ \E d \in entries : entries' = entries \ {d}     \* one entry goes
-  /\ UNCHANGED <<defined, version, record, bfPc, bfLeft, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed>>
+  /\ \E d \in DropKeys :                             \* one key under the id goes
+       /\ entries' = entries \ {d}                   \* the dropped index's entry
+       /\ newEntries' = IF newId = "Same"            \* and, sharing the key,
+                        THEN newEntries \ {d}        \* the new index's entry
+                        ELSE newEntries              \* or nothing of it
+  /\ UNCHANGED <<defined, version, record, bfPc, bfLeft, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed, newId>>
 
-\* No entry is left: the drop deletes its record and is done.
+\* A page fails (a storage error). The drop stops and writes the failure on
+\* its record, keeping the record and the entries left, so the next start
+\* picks it up again.
+DropFail ==
+  /\ dropPc = "Removing"                             \* deleting entries
+  /\ dropPc' = "Failed"                              \* the drop stops for now
+  /\ UNCHANGED <<defined, version, entries, record, bfPc, bfLeft, bfVersion, bfDefined, dropSeen, dropRec, crashed, newId, newEntries>>
+
+\* No key is left under the id: the drop deletes its record and is done.
 DropFinish ==
   /\ dropPc = "Removing"                             \* deleting entries
-  /\ entries = {}                                    \* none left
+  /\ DropKeys = {}                                   \* none left
   /\ dropRec' = FALSE                                \* complete_action deletes the drop record
   /\ dropPc' = "Done"                                \* the drop is over
-  /\ UNCHANGED <<defined, version, entries, record, bfPc, bfLeft, bfVersion, bfDefined, dropSeen, crashed>>
+  /\ UNCHANGED <<defined, version, entries, record, bfPc, bfLeft, bfVersion, bfDefined, dropSeen, crashed, newId, newEntries>>
+
+\* --------------------------------------------------------------- new index
+
+\* Once the drop has committed, someone creates a new index on the same
+\* collection and its backfill indexes every old document. "Retire": the drop
+\* retired the old id, so the new index gets a fresh one. "Reuse": the new
+\* index gets the dropped one's id again.
+ReCreate ==
+  /\ DropCommitted                                   \* the old index is gone
+  /\ newId = "None"                                  \* only one new index
+  /\ newId' = IF IdMode = "Retire" THEN "Fresh" ELSE "Same"   \* which id it gets
+  /\ newEntries' = Docs                              \* its backfill indexed every old document
+  /\ UNCHANGED <<defined, version, entries, record, bfPc, bfLeft, bfVersion, bfDefined, dropPc, dropSeen, dropRec, crashed>>
 
 \* ------------------------------------------------------------------- crash
 
 \* The process crashes once and restarts. Open transactions are lost; only
 \* what committed survives. On restart, a backfill record in progress
 \* resumes its backfill if the index is defined and is deleted if not; an
-\* errored record is deleted if its index is gone. A drop record resumes the
-\* drop under "Resume" and is ignored under "Forget".
+\* errored record is deleted if its index is gone. A drop record, failed or
+\* not, resumes the drop under "Resume" and is ignored under "Forget".
 Restart ==
   /\ ~crashed                                                       \* only one crash
   /\ crashed' = TRUE                                                \* it happens now
@@ -240,16 +293,18 @@ Restart ==
                 [] dropPc = "Commit" -> "Abandoned"                 \* never committed
                 [] dropRec /\ ResumeMode = "Resume" -> "Removing"   \* resumed from its record
                 [] OTHER -> "Crashed"                               \* left unfinished
-  /\ UNCHANGED <<defined, version, entries, bfLeft, bfVersion, bfDefined, dropSeen, dropRec>>
+  /\ UNCHANGED <<defined, version, entries, bfLeft, bfVersion, bfDefined, dropSeen, dropRec, newId, newEntries>>
 
 \* Any one step happens next.
 Next ==
   \/ BfRead \/ BfCommit \/ BfError \/ BfFailRead \/ BfFailCommit
-  \/ DropRead \/ DropCommit \/ DropRemove \/ DropFinish
+  \/ DropRead \/ DropCommit \/ DropRemove \/ DropFail \/ DropFinish
+  \/ ReCreate
   \/ Restart
 
 \* Every step that can keep going eventually does: a backfill and a drop
-\* are never left waiting forever while they could move.
+\* are never left waiting forever while they could move. A failure and a
+\* crash may happen but never have to.
 Fairness ==
   /\ WF_vars(BfRead) /\ WF_vars(BfCommit) /\ WF_vars(BfFailRead) /\ WF_vars(BfFailCommit)
   /\ WF_vars(DropCommit) /\ WF_vars(DropRemove) /\ WF_vars(DropFinish)
@@ -267,6 +322,11 @@ INV_NoRecordForGoneIndex == ~defined => record = "None"
 \* A drop that says it is done left no entry of the index on disk.
 INV_NoOrphanEntries == dropPc = "Done" => entries = {}
 
-\* A drop that committed always finishes, a restart included.
-LIVE_DropFinishes == (dropRec \/ dropPc = "Removing") ~> (dropPc = "Done")
+\* A drop never takes an entry from the index created after it: once built,
+\* the new index keeps an entry for every old document.
+INV_NewIndexIntact == newId # "None" => newEntries = Docs
+
+\* A drop that committed always finishes, or stops on a failed page with its
+\* record kept for the next start, which then finishes it.
+LIVE_DropFinishes == dropRec ~> (dropPc \in {"Done", "Failed"})
 ====

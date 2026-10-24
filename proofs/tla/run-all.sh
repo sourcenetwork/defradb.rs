@@ -52,6 +52,7 @@ RUNS=(
   "MC_IndexDropBackfill_Red_BlindFail.cfg IndexDropBackfill.tla RED" # the backfill writes its failure for a gone index (INV_NoRecordForGoneIndex)
   "MC_IndexDropBackfill_Red_SameTxn.cfg IndexDropBackfill.tla RED" # entries deleted from an unvalidated scan in the drop commit (INV_NoOrphanEntries)
   "MC_IndexDropBackfill_Red_Forget.cfg IndexDropBackfill.tla RED" # a restart ignores an unfinished drop (LIVE_DropFinishes)
+  "MC_IndexDropBackfill_Red_ReuseId.cfg IndexDropBackfill.tla RED" # a new index gets the dropped id and the drop deletes its entries (INV_NewIndexIntact)
   "M1Convergence.cfg            M1Convergence.tla            GREEN"  # B3 control (S1')
   "M1Naive.cfg                  M1Convergence.tla            RED"    # B3 #2721 (S1)
   "MC_S2.cfg                    MC_S2.tla                    GREEN"  # B3 ideal (S2)
