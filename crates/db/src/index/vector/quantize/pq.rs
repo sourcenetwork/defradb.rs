@@ -1,8 +1,9 @@
 //! Product quantization: a vector as `m` bytes.
 
-use super::kmeans::{Centroids, Clusterer};
+use super::kmeans::{self, Centroids, Clusterer};
 use crate::index::error::{Error, Result};
 use defra_core::vector::squared_euclidean;
+use regolith::sync::OnceCell;
 
 /// Codebook entries per subquantizer. `nbits = 8`, so a code component is a
 /// `u8` and a list scan is a byte lookup; that is the whole reason the scan is
@@ -13,13 +14,77 @@ pub const CODEBOOK_SIZE: usize = 256;
 /// codebook, so `m` bytes stand in for `dimensions` floats.
 ///
 /// At 768 dimensions and `m = 96` that is 96 bytes against 3,072: **32x**.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct ProductQuantizer {
     dimensions: usize,
     m: usize,
     dsub: usize,
     /// `m` codebooks, each `CODEBOOK_SIZE * dsub` values.
     books: Vec<Centroids>,
+    /// Each codebook again, dimension-major: `dsub` rows of `k` values. Built
+    /// on the first encode that reads it, so a quantizer that only scores
+    /// codes, or whose subspaces are wide, never pays for the copy.
+    columns: OnceCell<Vec<Vec<f32>>>,
+}
+
+impl Clone for ProductQuantizer {
+    fn clone(&self) -> Self {
+        Self {
+            dimensions: self.dimensions,
+            m: self.m,
+            dsub: self.dsub,
+            books: self.books.clone(),
+            columns: OnceCell::new(),
+        }
+    }
+}
+
+impl PartialEq for ProductQuantizer {
+    fn eq(&self, other: &Self) -> bool {
+        self.dimensions == other.dimensions && self.books == other.books
+    }
+}
+
+/// Centroids an encode compares at once, one per lane.
+const ENCODE_LANES: usize = 16;
+
+/// Transposes `book` so that one dimension of every centroid is contiguous.
+fn columns(book: &Centroids) -> Vec<f32> {
+    let mut out = vec![0.0f32; book.k * book.dimensions];
+    for c in 0..book.k {
+        for (d, value) in book.get(c).iter().enumerate() {
+            out[d * book.k + c] = *value;
+        }
+    }
+    out
+}
+
+/// [`Centroids::nearest`] for a subspace narrower than `kmeans::LANES`,
+/// sixteen centroids at a time. There `nearest` sums each centroid's terms one
+/// after another; so does this, in the same order, and ties go to the lower
+/// index, so the code is bit-identical: a stored code must equal a re-encode
+/// of its vector.
+fn nearest_by_columns(columns: &[f32], k: usize, part: &[f32]) -> usize {
+    let mut best = (0usize, f32::INFINITY);
+    let mut c0 = 0;
+    while c0 < k {
+        let width = ENCODE_LANES.min(k - c0);
+        let mut acc = [0.0f32; ENCODE_LANES];
+        for (d, x) in part.iter().enumerate() {
+            let row = &columns[d * k + c0..d * k + c0 + width];
+            for (sum, q) in acc.iter_mut().zip(row) {
+                let diff = x - q;
+                *sum += diff * diff;
+            }
+        }
+        for (lane, distance) in acc[..width].iter().enumerate() {
+            if *distance < best.1 {
+                best = (c0 + lane, *distance);
+            }
+        }
+        c0 += width;
+    }
+    best.0
 }
 
 impl ProductQuantizer {
@@ -63,6 +128,7 @@ impl ProductQuantizer {
             dimensions,
             m,
             dsub,
+            columns: OnceCell::new(),
             books,
         })
     }
@@ -85,6 +151,7 @@ impl ProductQuantizer {
             dimensions,
             m,
             dsub,
+            columns: OnceCell::new(),
             books,
         })
     }
@@ -117,7 +184,15 @@ impl Quantizer for ProductQuantizer {
             if book.k == 0 || vector.len() < (j + 1) * self.dsub || code.len() <= j {
                 continue;
             }
-            let (nearest, _) = book.nearest(self.subspace(vector, j));
+            let part = self.subspace(vector, j);
+            let nearest = if self.dsub < kmeans::LANES {
+                let transposed = self
+                    .columns
+                    .get_or_init_racy(|| self.books.iter().map(columns).collect());
+                nearest_by_columns(&transposed[j], book.k, part)
+            } else {
+                book.nearest(part).0
+            };
             code[j] = nearest as u8;
         }
     }
