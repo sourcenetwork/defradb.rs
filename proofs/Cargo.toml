@@ -27,7 +27,7 @@ thiserror.workspace = true
 [dev-dependencies]
 defra-harness = { git = "https://github.com/sourcenetwork/backbone.git", rev = "7d67ddbbb0d3d671b95dfe322b920e2e943c1daa" }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
-serial_test = "3"
+serial_test = "4"
 
 [lints]
 workspace = true
