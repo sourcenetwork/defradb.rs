@@ -47,15 +47,22 @@ impl Browser {
     }
 
     pub async fn query(&self, query: &str) -> Value {
-        let result: Value =
-            serde_wasm_bindgen::from_value(self.client.query(query).await.unwrap()).unwrap();
-        result["data"].clone()
+        self.exec(query).await
     }
 
     pub async fn mutate(&self, mutation: &str) -> Value {
-        let result: Value =
-            serde_wasm_bindgen::from_value(self.client.mutate(mutation).await.unwrap()).unwrap();
-        result["data"].clone()
+        self.exec(mutation).await
+    }
+
+    async fn exec(&self, request: &str) -> Value {
+        let result: Value = serde_wasm_bindgen::from_value(
+            self.client
+                .exec_request(request, JsValue::UNDEFINED)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        result["gql"]["data"].clone()
     }
 }
 
