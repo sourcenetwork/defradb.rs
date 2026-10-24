@@ -35,4 +35,29 @@ theorem outcome_stable (r : Record) (id : Nat) (failure : Option String)
   -- Completed records fail the pending part of the predicate.
   simp [finish, h]
 
+-- A stale preallocated identity is a request to decide again, never a storage failure.
+inductive AllocationDecision where
+  | install
+  | reallocate
+  deriving DecidableEq
+
+-- Only an allocation at least as new as the durable peer incarnation may install.
+def allocationDecision (current allocated : Nat) : AllocationDecision :=
+  if allocated < current then .reallocate else .install
+
+-- A newer committed incarnation sends the caller back to its bounded install loop.
+theorem stale_allocation_redecides (current allocated : Nat) (h : allocated < current) :
+    allocationDecision current allocated = .reallocate := by
+  -- The deciding transaction observes the same strict ordering as the runtime.
+  simp [allocationDecision, h]
+
+-- Installing a fresh identity cannot move the durable incarnation backwards.
+theorem install_preserves_incarnation (current allocated : Nat)
+    (h : allocationDecision current allocated = .install) : current ≤ allocated := by
+  -- An allocation older than the current incarnation cannot select installation.
+  unfold allocationDecision at h
+  split at h
+  · contradiction
+  · exact Nat.le_of_not_lt ‹¬ allocated < current›
+
 end ReplicatorInstall

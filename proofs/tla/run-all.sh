@@ -7,6 +7,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_ReplicatorIncarnation_Green.cfg ReplicatorIncarnation.tla GREEN"
+  "MC_ReplicatorIncarnation_Red_Error.cfg ReplicatorIncarnation.tla RED"
+  "MC_ReplicatorIncarnation_Red_Rollback.cfg ReplicatorIncarnation.tla RED"
   "MC_ReplicatorInstall_Green.cfg ReplicatorInstall.tla GREEN"
   "MC_ReplicatorInstall_Red_Validation.cfg ReplicatorInstall.tla RED"
   "MC_ReplicatorInstall_Red_Active.cfg ReplicatorInstall.tla RED"

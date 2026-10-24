@@ -82,6 +82,7 @@ fn persistence_error(error: impl std::fmt::Display) -> P2PError {
 }
 
 enum Decision {
+    Reallocate,
     Busy(u64),
     Installed(ReplicatorInstall),
 }
@@ -150,7 +151,7 @@ impl RetryAttemptFn for Prepare {
                 .transpose()?
                 .unwrap_or(0);
             if incarnation > self.id {
-                return Err(storage_error("stale peer incarnation allocation").into());
+                return Ok(Box::new(Decision::Reallocate) as RetryAttemptValue);
             }
             let plan = ReplicatorInstall {
                 id: self.id,
@@ -232,6 +233,7 @@ where
         .await
         .map_err(|error| persistence_error(error.into_storage()))?;
         let id = match decision {
+            Decision::Reallocate => continue,
             Decision::Installed(plan) => return Ok(plan),
             Decision::Busy(id) => id,
         };

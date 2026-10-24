@@ -349,3 +349,77 @@ async fn conflicting_installs_redecide_in_the_engine_transaction() {
     let next = h.prepare(&request("peer", &["Note"])).await.unwrap();
     assert_eq!(next.replay, ["Note"]);
 }
+
+struct ReorderedAllocation {
+    harness: Harness,
+    allocations: std::sync::atomic::AtomicUsize,
+    newer: std::sync::atomic::AtomicU64,
+}
+
+impl storage::corekv::private::Sealed for ReorderedAllocation {}
+
+#[async_trait::async_trait]
+impl Store for ReorderedAllocation {
+    async fn allocate(&self, key: &[u8], count: u64) -> corekv::Result<std::ops::Range<u64>> {
+        use std::sync::atomic::Ordering;
+        let reserved = self.harness.store.allocate(key, count).await?;
+        if self.allocations.fetch_add(1, Ordering::SeqCst) == 0 {
+            // A later allocation commits while the first caller has not entered its transaction.
+            let newer = self
+                .harness
+                .prepare(&request("peer", &["Note"]))
+                .await
+                .unwrap();
+            self.harness.finish(&newer, None).await.unwrap();
+            self.newer.store(newer.id, Ordering::SeqCst);
+        }
+        Ok(reserved)
+    }
+
+    async fn new_txn(&self, readonly: bool) -> corekv::Result<Box<dyn corekv::Txn>> {
+        self.harness.store.new_txn(readonly).await
+    }
+
+    async fn transact_retry(
+        &self,
+        options: RetryOptions,
+        attempt: corekv::RetryAttempt,
+    ) -> Result<RetryAttemptValue, corekv::RetryAttemptError> {
+        self.harness.store.transact_retry(options, attempt).await
+    }
+
+    async fn close(&self) -> corekv::Result<()> {
+        self.harness.store.close().await
+    }
+}
+
+#[tokio::test]
+async fn stale_preallocated_identity_redecides_after_a_newer_install() {
+    use std::sync::atomic::Ordering;
+    let store = ReorderedAllocation {
+        harness: Harness::default(),
+        allocations: std::sync::atomic::AtomicUsize::new(0),
+        newer: std::sync::atomic::AtomicU64::new(0),
+    };
+    let plan = prepare_with_timeout(
+        &store,
+        retry(),
+        &store.harness.waiters,
+        &request("peer", &["Note", "User"]),
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    assert_eq!(store.allocations.load(Ordering::SeqCst), 2);
+    assert!(plan.id > store.newer.load(Ordering::SeqCst));
+    assert_eq!(plan.replay, ["User"]);
+    let snapshot = store.new_txn(true).await.unwrap();
+    let incarnation = snapshot
+        .get(&ReplicatorIncarnationKey::new("peer").bytes())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(decode_retry_marker_generation(&incarnation), Some(plan.id));
+    drop(snapshot);
+    store.harness.finish(&plan, None).await.unwrap();
+}
