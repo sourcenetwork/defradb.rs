@@ -43,6 +43,10 @@ impl<S: Store + 'static> DocStream for LensedDocStream<S> {
         Ok(Some((processed, is_deleted)))
     }
 
+    fn index_fetches(&self) -> u64 {
+        self.inner.index_fetches()
+    }
+
     async fn close(&mut self) -> query::error::Result<()> {
         let closed = self.inner.close().await;
         // A closed stream no longer holds its transaction, so the fetcher
@@ -119,5 +123,37 @@ impl<S: Store + 'static> LensedDocFetcher<S> {
             datastore,
             has_migrations,
         }))
+    }
+}
+
+impl<S: Store + 'static> LensedDocFetcher<S> {
+    pub(super) async fn stream_index_scan_impl(
+        &self,
+        collection_name: &str,
+        params: &query::planner::index_selection::IndexScanParams,
+        show_deleted: bool,
+    ) -> query::error::Result<Option<Box<dyn DocStream>>> {
+        use crate::read::index_stream::IndexDocStream;
+        if !IndexDocStream::supports(params) {
+            return Ok(None);
+        }
+        let (collection, datastore, systemstore) =
+            get_collection_with_lazy_load(&*self.shared_txn()?, collection_name).await?;
+        let (_, has_migrations) = self.load_versions_and_check_migrations(&collection).await?;
+        let inner = IndexDocStream::open(
+            collection.clone(),
+            datastore.clone(),
+            systemstore,
+            params,
+            show_deleted,
+        )
+        .await?;
+        Ok(Some(Box::new(LensedDocStream {
+            inner: Box::new(inner),
+            fetcher: self.stream_clone(),
+            collection,
+            datastore,
+            has_migrations,
+        })))
     }
 }

@@ -66,6 +66,30 @@ impl<S: Store> P2PHost<S> {
         }
     }
 
+    pub(super) fn handle_peer_connection(
+        &self,
+        peer_id: PeerId,
+        response: tokio::sync::oneshot::Sender<Option<crate::transport::PeerConnectionInfo>>,
+    ) {
+        let open = self.connection_manager.peer_connections(&peer_id);
+        let info =
+            open.first().map(
+                |&(path, dialed_by_us, _)| crate::transport::PeerConnectionInfo {
+                    path,
+                    remote_address: self.peer_addrs.get(&peer_id).map(|addr| addr.to_string()),
+                    open_connections: open.len() as u32,
+                    rtt_micros: None,
+                    bytes_sent: None,
+                    bytes_received: None,
+                    dialed_by_us: Some(dialed_by_us),
+                    connected_for_secs: open.iter().map(|&(_, _, at)| at.elapsed().as_secs()).max(),
+                },
+            );
+        if response.send(info).is_err() {
+            debug!("PeerConnection command response dropped - caller cancelled");
+        }
+    }
+
     pub(super) fn handle_peer_addresses(
         &self,
         response: tokio::sync::oneshot::Sender<Vec<String>>,

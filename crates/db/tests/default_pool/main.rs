@@ -37,36 +37,39 @@ fn tasks(pool: &workers::Pool) -> Vec<u64> {
         .collect()
 }
 
-#[tokio::test]
-async fn create_many_without_a_pool_computes_blocks_across_the_default_pools_workers() {
-    let pool = workers::Pool::start(workers::Config::unplaced(4)).unwrap();
-    assert!(pool.make_default());
+#[test]
+fn create_many_without_a_pool_computes_blocks_across_the_default_pools_workers() {
+    workers::block_on(async {
+        let pool = workers::Pool::start(workers::Config::unplaced(4)).unwrap();
+        assert!(pool.make_default());
 
-    let batched = pool_less_db().await;
-    assert!(batched.pool().is_none());
-    let before = tasks(&pool);
-    let created = AutoCommitMutator::new(batched)
-        .create_many("Users", documents())
-        .await
-        .unwrap();
-    let ran: Vec<u64> = tasks(&pool)
-        .iter()
-        .zip(&before)
-        .map(|(after, before)| after - before)
-        .collect();
-    assert!(
-        ran.iter().all(|tasks| *tasks > 0),
-        "every worker of the default pool computes a run of the documents: {ran:?}"
-    );
+        let batched = pool_less_db().await;
+        assert!(batched.pool().is_none());
+        let before = tasks(&pool);
+        let created = AutoCommitMutator::new(batched)
+            .create_many("Users", documents())
+            .await
+            .unwrap();
+        let ran: Vec<u64> = tasks(&pool)
+            .iter()
+            .zip(&before)
+            .map(|(after, before)| after - before)
+            .collect();
+        assert!(
+            ran.iter().all(|tasks| *tasks > 0),
+            "every worker of the default pool computes a run of the documents: {ran:?}"
+        );
 
-    // The same documents, one create at a time, on another database.
-    let single = AutoCommitMutator::new(pool_less_db().await);
-    assert_eq!(created.len(), DOCUMENTS);
-    for (doc, batched) in documents().into_iter().zip(&created) {
-        let one = single.create("Users", doc).await.unwrap();
-        assert_eq!(one.doc_id, batched.doc_id);
-        assert_eq!(one.commit_cid, batched.commit_cid);
-        assert_eq!(one.document, batched.document);
-    }
-    pool.shutdown_blocking().unwrap();
+        // The same documents, one create at a time, on another database.
+        let single = AutoCommitMutator::new(pool_less_db().await);
+        assert_eq!(created.len(), DOCUMENTS);
+        for (doc, batched) in documents().into_iter().zip(&created) {
+            let one = single.create("Users", doc).await.unwrap();
+            assert_eq!(one.doc_id, batched.doc_id);
+            assert_eq!(one.commit_cid, batched.commit_cid);
+            assert_eq!(one.document, batched.document);
+        }
+        pool.shutdown_blocking().unwrap();
+    })
+    .unwrap()
 }

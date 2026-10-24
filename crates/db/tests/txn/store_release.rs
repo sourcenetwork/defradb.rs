@@ -50,17 +50,26 @@ async fn assert_store_released(name: &str, finish: Finish) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[tokio::test]
-async fn commit_releases_the_store() {
-    assert_store_released("txn-store-release-commit", Finish::Commit).await;
+#[test]
+fn commit_releases_the_store() {
+    workers::block_on(async {
+        assert_store_released("txn-store-release-commit", Finish::Commit).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn rollback_releases_the_store() {
-    assert_store_released("txn-store-release-rollback", Finish::Rollback).await;
+#[test]
+fn rollback_releases_the_store() {
+    workers::block_on(async {
+        assert_store_released("txn-store-release-rollback", Finish::Rollback).await;
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn abandon_releases_the_store() {
-    assert_store_released("txn-store-release-abandon", Finish::Abandon).await;
+#[test]
+fn abandon_releases_the_store() {
+    workers::block_on(async {
+        assert_store_released("txn-store-release-abandon", Finish::Abandon).await;
+    })
+    .unwrap()
 }

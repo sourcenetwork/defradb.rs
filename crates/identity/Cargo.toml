@@ -27,7 +27,7 @@ web-time.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+workers = { path = "../workers" }
 
 [lints]
 workspace = true

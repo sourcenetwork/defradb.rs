@@ -93,31 +93,34 @@ fn test_cache_populate() {
     assert!(cache.contains("Posts"));
 }
 
-#[tokio::test]
-async fn active_collection_versions_exclude_inactive_cache_entries() {
-    let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .expect("open");
-
-    let active = test_collection("Users").schema().clone();
-    let mut inactive = test_collection("Orders").schema().clone();
-    inactive.is_active = false;
-    assert_eq!(
-        db.add_collection_to_cache(active)
+#[test]
+fn active_collection_versions_exclude_inactive_cache_entries() {
+    workers::block_on(async {
+        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
             .await
-            .expect("cache active"),
-        db::Cached::Taken
-    );
-    assert_eq!(
-        db.add_collection_to_cache(inactive)
-            .await
-            .expect("cache inactive"),
-        db::Cached::Taken
-    );
+            .expect("open");
 
-    let versions = db
-        .get_active_collection_versions()
-        .expect("read active versions");
-    assert_eq!(versions.len(), 1);
-    assert_eq!(versions[0].name, "Users");
+        let active = test_collection("Users").schema().clone();
+        let mut inactive = test_collection("Orders").schema().clone();
+        inactive.is_active = false;
+        assert_eq!(
+            db.add_collection_to_cache(active)
+                .await
+                .expect("cache active"),
+            db::Cached::Taken
+        );
+        assert_eq!(
+            db.add_collection_to_cache(inactive)
+                .await
+                .expect("cache inactive"),
+            db::Cached::Taken
+        );
+
+        let versions = db
+            .get_active_collection_versions()
+            .expect("read active versions");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].name, "Users");
+    })
+    .unwrap()
 }

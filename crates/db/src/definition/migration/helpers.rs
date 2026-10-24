@@ -294,33 +294,3 @@ pub(crate) async fn cache_migrated_document_with_indexes(
 
     Ok(true)
 }
-
-/// Advance only a document's stored schema version.
-pub(crate) async fn cache_document_version(
-    datastore: &NamespaceView,
-    systemstore: &NamespaceView,
-    collection: &Collection,
-    doc: &Document,
-) -> Result<bool> {
-    let Some(doc_id) = doc.id() else {
-        return Ok(false);
-    };
-    let Some(doc_short_id) = collection.resolve_doc_short_id(systemstore, doc_id).await? else {
-        return Ok(false);
-    };
-
-    collection
-        .validate_write_definition(datastore, true)
-        .await?;
-    if collection
-        .load_version(datastore, doc_short_id)
-        .await?
-        .as_deref()
-        == Some(collection.version_id())
-    {
-        return Ok(false);
-    }
-
-    collection.store_version(datastore, doc_short_id).await?;
-    Ok(true)
-}

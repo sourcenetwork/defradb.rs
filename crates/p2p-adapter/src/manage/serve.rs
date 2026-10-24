@@ -29,10 +29,11 @@ pub async fn serve_manage_request<T: P2PTransport>(
     transport: &T,
     peer_id: &PeerId,
     request: ManageRequest,
+    token: Option<T::ResponseToken>,
 ) {
     let mut reply = build_manage_reply(hooks.ops.as_ref(), hooks.nac.as_ref(), request).await;
     if p2p::signing::sign_with_transport(transport, &mut reply).is_ok() {
-        if let Err(error) = transport.send_manage_response(peer_id, reply).await {
+        if let Err(error) = transport.send_manage_response(peer_id, token, reply).await {
             tracing::warn!(error = %error, "failed to send manage response");
         }
     }
@@ -46,10 +47,14 @@ pub async fn serve_manage_query_request<T: P2PTransport>(
     transport: &T,
     peer_id: &PeerId,
     request: ManageQueryRequest,
+    token: Option<T::ResponseToken>,
 ) {
     let mut reply = build_manage_query_reply(hooks.ops.as_ref(), hooks.nac.as_ref(), request).await;
     if p2p::signing::sign_with_transport(transport, &mut reply).is_ok() {
-        if let Err(error) = transport.send_manage_query_response(peer_id, reply).await {
+        if let Err(error) = transport
+            .send_manage_query_response(peer_id, token, reply)
+            .await
+        {
             tracing::warn!(error = %error, "failed to send manage query response");
         }
     }

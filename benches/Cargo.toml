@@ -49,6 +49,7 @@ document = { path = "../crates/document" }
 query = { path = "../crates/query" }
 schema = { path = "../crates/schema" }
 storage = { path = "../crates/storage" }
+workers = { path = "../crates/workers" }
 
 # How a bench reports what it measured to the performance site.
 defra-perf = { path = "../tools/perf" }
@@ -101,6 +102,10 @@ harness = false
 
 [[bench]]
 name = "write_baseline"
+harness = false
+
+[[bench]]
+name = "read_baseline"
 harness = false
 
 [[bench]]

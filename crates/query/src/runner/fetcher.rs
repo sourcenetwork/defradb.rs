@@ -206,6 +206,17 @@ impl DocFetcher for FetcherWrapper {
             })
     }
 
+    async fn stream_index_scan(
+        &self,
+        collection_name: &str,
+        params: &IndexScanParams,
+        show_deleted: bool,
+    ) -> Result<Option<Box<dyn DocStream>>> {
+        self.get_fetcher()
+            .stream_index_scan(collection_name, params, show_deleted)
+            .await
+    }
+
     async fn get_by_index_scan(
         &self,
         collection_name: &str,

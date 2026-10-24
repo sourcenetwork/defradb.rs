@@ -58,99 +58,114 @@ fn an_embedded_only_view_is_never_refreshed() {
 /// Go looks a version up directly and propagates not-found
 /// (`internal/db/collection.go:211`), so a typo must not read as success. The
 /// filter alone returned `Ok(())` over an empty list.
-#[tokio::test]
-async fn an_unknown_version_id_is_an_error_not_a_silent_success() {
-    let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .expect("open");
+#[test]
+fn an_unknown_version_id_is_an_error_not_a_silent_success() {
+    workers::block_on(async {
+        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .expect("open");
 
-    let error = db
-        .refresh_views(CollectionSelector {
+        let error = db
+            .refresh_views(CollectionSelector {
+                version_id: Some("bae-does-not-exist".to_string()),
+                ..CollectionSelector::all()
+            })
+            .await
+            .expect_err("an unknown version must be reported");
+
+        assert!(
+            error.to_string().contains("bae-does-not-exist"),
+            "the error must name the version: {error}"
+        );
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_name_precedes_an_unknown_version_id() {
+    workers::block_on(async {
+        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .expect("open");
+        db.create_collection(materialized("OrdersView"))
+            .await
+            .expect("store view");
+
+        db.refresh_views(CollectionSelector {
+            names: Some(vec!["OrdersView".to_string()]),
             version_id: Some("bae-does-not-exist".to_string()),
             ..CollectionSelector::all()
         })
         .await
-        .expect_err("an unknown version must be reported");
-
-    assert!(
-        error.to_string().contains("bae-does-not-exist"),
-        "the error must name the version: {error}"
-    );
-}
-
-#[tokio::test]
-async fn a_name_precedes_an_unknown_version_id() {
-    let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .expect("open");
-    db.create_collection(materialized("OrdersView"))
-        .await
-        .expect("store view");
-
-    db.refresh_views(CollectionSelector {
-        names: Some(vec!["OrdersView".to_string()]),
-        version_id: Some("bae-does-not-exist".to_string()),
-        ..CollectionSelector::all()
+        .expect("the version id only filters the active name candidate");
     })
-    .await
-    .expect("the version id only filters the active name candidate");
+    .unwrap()
 }
 
-#[tokio::test]
-async fn an_unknown_collection_id_is_an_error() {
-    let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .expect("open");
+#[test]
+fn an_unknown_collection_id_is_an_error() {
+    workers::block_on(async {
+        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .expect("open");
 
-    let error = db
-        .refresh_views(CollectionSelector {
-            collection_id: Some("no-such-collection".to_string()),
+        let error = db
+            .refresh_views(CollectionSelector {
+                collection_id: Some("no-such-collection".to_string()),
+                ..CollectionSelector::all()
+            })
+            .await
+            .expect_err("an unknown collection must be reported");
+
+        assert!(error.to_string().contains("no-such-collection"), "{error}");
+    })
+    .unwrap()
+}
+
+#[test]
+fn get_inactive_is_allowed_when_no_inactive_view_is_selected() {
+    workers::block_on(async {
+        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .expect("open");
+
+        db.refresh_views(CollectionSelector {
+            get_inactive: true,
             ..CollectionSelector::all()
         })
         .await
-        .expect_err("an unknown collection must be reported");
-
-    assert!(error.to_string().contains("no-such-collection"), "{error}");
-}
-
-#[tokio::test]
-async fn get_inactive_is_allowed_when_no_inactive_view_is_selected() {
-    let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .expect("open");
-
-    db.refresh_views(CollectionSelector {
-        get_inactive: true,
-        ..CollectionSelector::all()
+        .expect("including inactive candidates must not fail an active-only selection");
     })
-    .await
-    .expect("including inactive candidates must not fail an active-only selection");
+    .unwrap()
 }
 
 /// Refusing beats corrupting. `build_view_cache` resolves against the active
 /// schemas and matches by name, so refreshing an actually inactive version
 /// would clear the shared cache and rebuild it from the active definition.
-#[tokio::test]
-async fn refreshing_a_selected_inactive_view_is_refused() {
-    let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
-        .await
-        .expect("open");
-    let mut inactive_view = materialized("InactiveView");
-    inactive_view.is_active = false;
-    db.create_collection(inactive_view)
-        .await
-        .expect("store inactive view");
+#[test]
+fn refreshing_a_selected_inactive_view_is_refused() {
+    workers::block_on(async {
+        let db = db::DB::open(storage::backends::RegolithStore::in_memory().unwrap())
+            .await
+            .expect("open");
+        let mut inactive_view = materialized("InactiveView");
+        inactive_view.is_active = false;
+        db.create_collection(inactive_view)
+            .await
+            .expect("store inactive view");
 
-    let error = db
-        .refresh_views(CollectionSelector {
-            get_inactive: true,
-            ..CollectionSelector::all()
-        })
-        .await
-        .expect_err("inactive selection must be refused, not silently wrong");
+        let error = db
+            .refresh_views(CollectionSelector {
+                get_inactive: true,
+                ..CollectionSelector::all()
+            })
+            .await
+            .expect_err("inactive selection must be refused, not silently wrong");
 
-    assert!(
-        error.to_string().contains("not supported"),
-        "the refusal must say why: {error}"
-    );
+        assert!(
+            error.to_string().contains("not supported"),
+            "the refusal must say why: {error}"
+        );
+    })
+    .unwrap()
 }

@@ -37,7 +37,7 @@ use crate::{BackfillSource, DB};
 
 type History = RapidHashMap<String, TargetedHistoryLink>;
 
-/// Documents per backfill transaction at most ([`PAGE_ITEMS`]).
+/// Documents per backfill transaction at most (`PAGE_ITEMS`).
 pub const BACKFILL_BATCH_DOCS: usize = PAGE_ITEMS;
 
 /// What a backfill needs to know to run or resume.

@@ -2,13 +2,14 @@
 
 use std::time::Duration;
 
+use crate::clock::sleep;
 use crate::outcome::Result;
 use acp::StorePolicyOptions;
 use defra_core::current_identity::with_scoped_identity;
 use embedded::EmbeddedNode;
 use identity::{Did, Identity};
 use query::{QueryRequest, QueryResponse};
-use tokio::time::{sleep, Instant};
+use std::time::Instant;
 
 const POLICY: &str = r#"name: test-user-policy
 description: A test policy for user document access control

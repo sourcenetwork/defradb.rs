@@ -59,17 +59,14 @@ hex = "0.4"
 default = []
 wasm = []
 # The backend conformance suite (`backends::test_suite`), for a test that
-# links the library. It drives concurrent transactions from tokio tasks, so
-# tokio comes with it and with nothing else in this crate.
-test-suite = ["dep:tokio"]
+# links the library.
+test-suite = []
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 uuid = { version = "1.0", features = ["v4", "js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Only for the `test-suite` feature.
-tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"], optional = true }
 # Catches a panicking post-commit hook; the conformance suite joins its tasks.
 futures.workspace = true
 # Decrypts, once, a store the previous release encrypted value by value.
@@ -77,7 +74,6 @@ crypto = { path = "../crypto" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 regolith = { workspace = true, features = ["testing"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 # The crate's own conformance suite, for its integration test.
 storage = { path = ".", features = ["test-suite"] }
 

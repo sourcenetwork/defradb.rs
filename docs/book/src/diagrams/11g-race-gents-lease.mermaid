@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    participant RN as gents renewal: extend the lease of request r
+    participant AP as gents appender: append a segment for r
+    participant IL as client: latch an interrupt on r
+    participant D as defradb.rs worker and regolith
+
+    RN->>D: get_parts(r, state, generation, expiry)
+    AP->>D: get_parts(r, state, generation)
+    IL->>D: merge(r, operand touching interrupt only)
+    RN->>D: merge(r, operand touching expiry)
+    AP->>D: create segment, append(journal)
+    IL->>D: commit
+    D-->>IL: committed
+    RN->>D: commit
+    D-->>RN: committed: the interrupt touched a part renewal did not read
+    AP->>D: commit
+    alt after gents decides on generation, not on the expiry deadline
+        D-->>AP: committed: renewal touched expiry, a part the appender did not read
+    else with gents' current lease model, the appender also reads expiry
+        D-->>AP: Conflict: mine ReadParts, theirs Merge on expiry
+        Note over AP: a race gents' own model requires today, removable by its lease change
+    end

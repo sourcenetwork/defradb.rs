@@ -59,8 +59,13 @@ jobs:
       PERF_PROFILE: release-fast
       PERF_THRESHOLD: '5'
       # The write path, the allocation counts that catch a stray clone before
-      # the clock does, cold start, and the storage transaction seam.
-      QUICK_FAMILIES: document_write allocs startup transaction
+      # the clock does, cold start, the storage transaction seam, and reads
+      # through the router on the worker pool.
+      QUICK_FAMILIES: document_write allocs startup transaction read_baseline
+      # read_baseline at a quarter of its requests, with this job's load guard.
+      DEFRA_BASELINE_OPERATIONS: '256'
+      DEFRA_BASELINE_LOAD_GUARD: ${{ github.workspace }}/loadguard.json
+      DEFRA_BASELINE_PROFILE: release-fast
       CARGO_TARGET_DIR: ${{ github.workspace }}/head/target
     steps:
       - uses: actions/checkout@v4

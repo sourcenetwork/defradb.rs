@@ -40,6 +40,7 @@
 //! - `POST /api/v1/p2p/disconnect` - Disconnect from peers in Go-compatible format (`handlers/p2p/peers.rs`)
 //! - `GET /api/v1/p2p/peers` - List connected peers (`handlers/p2p/peers.rs`)
 //! - `POST /api/v1/p2p/peers` - Connect to peer (`handlers/p2p/peers.rs`)
+//! - `GET /api/v1/p2p/peers/{peer_id}` - Everything known about one peer (`handlers/p2p/peers.rs`)
 //! - `GET /api/v1/p2p/replicators` - List replicators (`handlers/p2p/replicators.rs`)
 //! - `POST /api/v1/p2p/replicators` - Add replicator (`handlers/p2p/replicators.rs`)
 //! - `DELETE /api/v1/p2p/replicators` - Remove replicator (`handlers/p2p/replicators.rs`)

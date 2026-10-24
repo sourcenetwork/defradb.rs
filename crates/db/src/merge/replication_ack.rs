@@ -19,6 +19,48 @@ pub async fn replication_acknowledged<S: Store + 'static>(
     collection_name: &str,
     doc_ids: &[String],
 ) -> Result<Vec<bool>, String> {
+    acknowledged_heads(
+        db,
+        peer_id,
+        collection_name,
+        doc_ids,
+        AcknowledgmentScope::CollectionIfBranchable,
+    )
+    .await
+}
+
+/// Checks only the selected documents' current composite heads, including in
+/// branchable collections. Selective replay does not acknowledge unrelated
+/// collection heads.
+pub async fn document_heads_acknowledged<S: Store + 'static>(
+    db: &DB<S>,
+    peer_id: &str,
+    collection_name: &str,
+    doc_ids: &[String],
+) -> Result<Vec<bool>, String> {
+    acknowledged_heads(
+        db,
+        peer_id,
+        collection_name,
+        doc_ids,
+        AcknowledgmentScope::Document,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum AcknowledgmentScope {
+    CollectionIfBranchable,
+    Document,
+}
+
+async fn acknowledged_heads<S: Store + 'static>(
+    db: &DB<S>,
+    peer_id: &str,
+    collection_name: &str,
+    doc_ids: &[String],
+    scope: AcknowledgmentScope,
+) -> Result<Vec<bool>, String> {
     let collection = db
         .get_collection(collection_name)
         .map_err(|error| error.to_string())?
@@ -30,7 +72,9 @@ pub async fn replication_acknowledged<S: Store + 'static>(
     let headstore = txn.headstore().map_err(|error| error.to_string())?;
     let blockstore = txn.blockstore().map_err(|error| error.to_string())?;
 
-    let collection_acknowledged = if collection.schema().is_branchable {
+    let collection_acknowledged = if collection.schema().is_branchable
+        && matches!(scope, AcknowledgmentScope::CollectionIfBranchable)
+    {
         let short_id =
             crate::collection::require_persisted_collection_short_id(&systemstore, &collection_id)
                 .await

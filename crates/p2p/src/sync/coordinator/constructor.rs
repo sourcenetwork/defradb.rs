@@ -228,6 +228,7 @@ impl<B: Blockstore + 'static, T: P2PTransport> SyncCoordinator<B, T> {
                 selective_car_access: Arc::clone(&selective_car_access),
                 failure_tx: Arc::clone(&failure_tx),
                 send_timeout: push_send_timeout,
+                peer_state: Arc::clone(&peer_state),
             }),
             &shutdown,
         );

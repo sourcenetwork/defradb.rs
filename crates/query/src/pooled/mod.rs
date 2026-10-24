@@ -90,7 +90,7 @@ fn leaving_the_caller(mut request: QueryRequest) -> QueryRequest {
 /// A request the pool could not run: it was shutting down, or the task
 /// panicked.
 fn unavailable(error: workers::Error) -> QueryError {
-    QueryError::execution(format!("the request did not run: {error}"))
+    QueryError::execution(error.report("GraphQL request"))
 }
 
 #[async_trait]

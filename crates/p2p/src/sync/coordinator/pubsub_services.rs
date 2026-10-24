@@ -129,7 +129,7 @@ impl HandlerContext {
     /// Mirrors Go's `doc-sync` pubsub handler: connected peers may ask for
     /// heads, with ACP enforced by block serving and merge/read policy.
     async fn peer_may_doc_sync(&self, peer: &libp2p::PeerId) -> bool {
-        self.authorizer.peer_connected(&peer.to_string())
+        self.authorizer.peer_connected(&peer.to_string()).await
             || self
                 .authorizer
                 .peer_authorized_for_any(&peer.to_string())
@@ -140,7 +140,7 @@ impl HandlerContext {
     /// of `collection_id`. Mirrors Go: connected peers may request the
     /// collection heads; per-document ACP still applies at merge/read time.
     async fn peer_may_branchable_sync(&self, peer: &libp2p::PeerId, collection_id: &str) -> bool {
-        self.authorizer.peer_connected(&peer.to_string())
+        self.authorizer.peer_connected(&peer.to_string()).await
             || self
                 .authorizer
                 .peer_authorized_for_collection(&peer.to_string(), collection_id)
@@ -254,7 +254,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl AccessAuthorizer for AllowAllAuthorizer {
-        fn peer_connected(&self, _peer_id_str: &str) -> bool {
+        async fn peer_connected(&self, _peer_id_str: &str) -> bool {
             true
         }
 
@@ -275,7 +275,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl AccessAuthorizer for DenyAllAuthorizer {
-        fn peer_connected(&self, _peer_id_str: &str) -> bool {
+        async fn peer_connected(&self, _peer_id_str: &str) -> bool {
             false
         }
 
@@ -313,7 +313,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl AccessAuthorizer for RecordingAuthorizer {
-        fn peer_connected(&self, _peer_id_str: &str) -> bool {
+        async fn peer_connected(&self, _peer_id_str: &str) -> bool {
             false
         }
 

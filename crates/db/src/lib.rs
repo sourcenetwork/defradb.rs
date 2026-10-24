@@ -125,3 +125,12 @@ pub use nac::{create_memory_nac_manager, NacConfig, NacInfo, NacManager, NacMana
 pub use datastore::{BasicTxn, NamespaceView};
 pub use document::{DocID, Document, NormalValue};
 pub use schema::CollectionVersion;
+
+#[cfg(test)]
+#[path = "../tests/common/worker_io.rs"]
+mod worker_io;
+
+#[cfg(test)]
+mod common {
+    pub(crate) use super::worker_io;
+}

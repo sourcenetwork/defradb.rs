@@ -1,0 +1,17 @@
+sequenceDiagram
+    autonumber
+    participant D1 as worker 1: delete doc d
+    participant D2 as worker 2: delete doc d
+    participant R as regolith
+
+    D1->>R: get(d): present
+    D2->>R: get(d): present
+    D1->>R: put deletion marker, delete index entries
+    D2->>R: put deletion marker, delete index entries
+    D1->>R: commit
+    R-->>D1: committed
+    D2->>R: commit
+    Note over R: the key it read changed: the only conflict left on document paths
+    R-->>D2: Conflict: mine Read, theirs Delete
+    Note over D2: business logic: already deleted, return success as a no-op
+    Note over D1,D2: a blind delete of an already deleted key would not even conflict: it is elided

@@ -21,6 +21,11 @@ impl BackgroundTasks {
         Self { tasks: queue }
     }
 
+    #[cfg(feature = "vera")]
+    pub(crate) fn push(&self, task: workers::Background) {
+        self.tasks.push(task);
+    }
+
     /// Stop and await all node-owned background tasks.
     ///
     /// Awaiting the stop is important for persistent stores: a stopped task
@@ -42,10 +47,20 @@ impl Drop for BackgroundTasks {
     }
 }
 
+/// Runs `future`, which lives as long as the node, on the network edge as a
+/// service: shutdown stops it, then waits for it to let go of what it holds.
+#[cfg(feature = "libp2p")]
+pub(crate) fn spawn_node_task<F>(edge: &edge::Edge, future: F) -> edge::Service
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    edge.spawn_service(future)
+}
+
 #[cfg(feature = "libp2p")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_libp2p_event_handler<B, S>(
-    events: tokio::sync::mpsc::Receiver<p2p::HostEvent>,
+    events: p2p::HostEventReceiver,
     coordinator: Arc<p2p::sync::Libp2pSyncCoordinator<B>>,
     store: Arc<S>,
     retry_peers: storage::stores::Peerstore<S>,
@@ -53,12 +68,13 @@ pub(crate) fn spawn_libp2p_event_handler<B, S>(
     handle: p2p::P2PHostHandle,
     se_correlator: p2p::SeQueryCorrelator,
     manage_hooks: defra_p2p_adapter::manage::hooks::ManageHooksCell,
-) -> tokio::task::JoinHandle<()>
+    edge: &edge::Edge,
+) -> edge::Service
 where
     B: blockstore::Blockstore + 'static,
     S: storage::corekv::Store + 'static,
 {
-    tokio::spawn(async move {
+    spawn_node_task(edge, async move {
         let handler_coordinator = coordinator.clone();
         coordinator.run_event_dispatcher(events, move |event, admission| {
             let coordinator = handler_coordinator.clone();
@@ -149,13 +165,17 @@ where
                     }
                     return;
                 }
-                p2p::TransportEvent::SEQueryRequest { peer_id, request } => {
+                p2p::TransportEvent::SEQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                     let transport = p2p::Libp2pTransport::new(handle.clone());
                     db::merge::se::serve::handle_query_request(
                         store.as_ref(),
                         &transport,
                         peer_id,
-                        request,
+                        request, token,
                     )
                     .await;
                     return;
@@ -164,11 +184,15 @@ where
                     se_correlator.deliver(reply);
                     return;
                 }
-                p2p::TransportEvent::ManageRequest { peer_id, request } => {
+                p2p::TransportEvent::ManageRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                     if let Some(hooks) = manage_hooks.get() {
                         let transport = p2p::Libp2pTransport::new(handle.clone());
                         defra_p2p_adapter::manage::serve::serve_manage_request(
-                            hooks, &transport, &peer_id, request,
+                            hooks, &transport, &peer_id, request, token,
                         )
                         .await;
                     } else {
@@ -176,11 +200,15 @@ where
                     }
                     return;
                 }
-                p2p::TransportEvent::ManageQueryRequest { peer_id, request } => {
+                p2p::TransportEvent::ManageQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                     if let Some(hooks) = manage_hooks.get() {
                         let transport = p2p::Libp2pTransport::new(handle.clone());
                         defra_p2p_adapter::manage::serve::serve_manage_query_request(
-                            hooks, &transport, &peer_id, request,
+                            hooks, &transport, &peer_id, request, token,
                         )
                         .await;
                     } else {
@@ -260,16 +288,17 @@ async fn handle_se_artifacts_received<S: storage::corekv::Store + 'static>(
 #[cfg(feature = "libp2p")]
 pub(crate) fn spawn_replication_loop<B, T, S>(
     coordinator: Arc<p2p::sync::SyncCoordinator<B, T>>,
-    sync_events_rx: tokio::sync::mpsc::Receiver<p2p::sync::SyncEvent>,
+    sync_events_rx: p2p::sync::SyncEventReceiver,
     merge_handler: Arc<db::merge::PooledMergeHandler<EmbeddedMergeHandler<S>>>,
     event_bus: Arc<dyn events::Bus>,
-) -> tokio::task::JoinHandle<()>
+    edge: &edge::Edge,
+) -> edge::Service
 where
     B: blockstore::Blockstore + 'static,
     T: p2p::P2PTransport,
     S: storage::corekv::Store + 'static,
 {
-    tokio::spawn(async move {
+    spawn_node_task(edge, async move {
         let local_peer = coordinator.local_peer_id().to_string();
         ReplicationLoop::run(
             coordinator,
