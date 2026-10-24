@@ -126,6 +126,9 @@ pub unsafe extern "C" fn delete_index(
                     db::Error::IndexNotFound { index, .. } => {
                         format!("index with name doesn't exists. Name: {}", index)
                     }
+                    db::Error::CollectionNotFound(collection) => {
+                        format!("collection '{}' not found", collection)
+                    }
                     other => format!("failed to delete index: {}", other),
                 })?;
 
