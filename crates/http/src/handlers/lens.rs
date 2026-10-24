@@ -30,7 +30,7 @@ pub struct SetMigrationResponse {
 
 /// Set a lens migration between schema versions.
 ///
-/// POST /api/v0/lens/set
+/// POST /api/v0/collections/migrations
 ///
 /// Accepts lens configuration in JSON format in the request body.
 /// The configuration should include source and destination schema version IDs

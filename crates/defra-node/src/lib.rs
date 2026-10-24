@@ -1990,7 +1990,7 @@ mod tests {
                     .await
                     .unwrap();
                 let client = reqwest::Client::new();
-                let schema_url = format!("http://{address}/api/v0/schema");
+                let schema_url = format!("http://{address}/api/v0/collections");
                 let created = edge::testing::edge()
                     .timeout(std::time::Duration::from_secs(5), async {
                         loop {
@@ -2030,7 +2030,7 @@ mod tests {
                     .unwrap();
                 assert!(schema.contains("type Book"));
 
-                let url = format!("http://{address}/api/v0/collections/versions");
+                let url = format!("http://{address}/api/v0/collections?get_inactive=true");
                 let versions = edge::testing::edge()
                     .timeout(std::time::Duration::from_secs(5), async {
                         loop {
