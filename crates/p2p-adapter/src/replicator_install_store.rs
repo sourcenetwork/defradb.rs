@@ -369,27 +369,8 @@ where
         let recovered: P2PResult<()> = async {
             let peer = std::str::from_utf8(&entry.key[PENDING_PREFIX.len()..])
                 .map_err(persistence_error)?;
-            let Some(bytes) = snapshot.get(&key(peer)).await.map_err(persistence_error)? else {
-                return Err(persistence_error("pending install has no durable record"));
-            };
-            let plan: ReplicatorInstall =
-                serde_json::from_slice(&bytes).map_err(persistence_error)?;
-            if decode_retry_marker_generation(&entry.value) != Some(plan.id) || !plan.pending {
-                return Err(persistence_error(
-                    "pending install index does not match its record",
-                ));
-            }
-            if plan.pending && !waiters.runtime.install_is_running(&plan.peer_id, plan.id) {
-                finish(
-                    store,
-                    retry,
-                    Arc::clone(&waiters),
-                    bus.clone(),
-                    &plan,
-                    Some(INTERRUPTED.to_owned()),
-                )
-                .await?;
-            }
+            let plan = read_pending_install(snapshot.as_ref(), peer, &entry.value).await?;
+            recover_plan(store, retry, &waiters, bus.clone(), &plan).await?;
             Ok(())
         }
         .await;
@@ -398,4 +379,63 @@ where
         }
     }
     Ok(())
+}
+
+async fn read_pending_install(
+    snapshot: &dyn corekv::Txn,
+    peer: &str,
+    pending: &[u8],
+) -> P2PResult<ReplicatorInstall> {
+    let Some(bytes) = snapshot.get(&key(peer)).await.map_err(persistence_error)? else {
+        return Err(persistence_error("pending install has no durable record"));
+    };
+    let plan: ReplicatorInstall = serde_json::from_slice(&bytes).map_err(persistence_error)?;
+    if decode_retry_marker_generation(pending) != Some(plan.id) || !plan.pending {
+        return Err(persistence_error(
+            "pending install index does not match its record",
+        ));
+    }
+    Ok(plan)
+}
+
+async fn recover_plan<S: Store>(
+    store: &S,
+    retry: RetryOptions,
+    waiters: &Arc<ReplicatorInstalls>,
+    bus: Option<Arc<dyn Bus>>,
+    plan: &ReplicatorInstall,
+) -> P2PResult<()> {
+    if !waiters.runtime.install_is_running(&plan.peer_id, plan.id) {
+        finish(
+            store,
+            retry,
+            Arc::clone(waiters),
+            bus,
+            plan,
+            Some(INTERRUPTED.to_owned()),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// An install request recovers only its peer; periodic sweeps own global recovery.
+pub(crate) async fn recover_peer<S: Store>(
+    store: &S,
+    retry: RetryOptions,
+    waiters: Arc<ReplicatorInstalls>,
+    bus: Option<Arc<dyn Bus>>,
+    peer: &str,
+) -> P2PResult<()> {
+    let snapshot = store.new_txn(true).await.map_err(persistence_error)?;
+    let Some(pending) = snapshot
+        .get(&pending_key(peer))
+        .await
+        .map_err(persistence_error)?
+    else {
+        return Ok(());
+    };
+    let plan = read_pending_install(snapshot.as_ref(), peer, &pending).await?;
+    drop(snapshot);
+    recover_plan(store, retry, &waiters, bus, &plan).await
 }

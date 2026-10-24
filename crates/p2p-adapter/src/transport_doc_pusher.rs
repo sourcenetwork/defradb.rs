@@ -211,9 +211,17 @@ impl<S: storage::corekv::Store + 'static, T: P2PTransport> TransportDocPusher
         &self,
         request: &crate::ReplicatorInstallRequest,
     ) -> P2PResult<crate::ReplicatorInstall> {
-        self.recover_replicator_installs().await?;
+        let peerstore = self.db.peerstore();
+        crate::replicator_install_store::recover_peer(
+            &peerstore,
+            self.db.options().retry_options(),
+            Arc::clone(&self.installs),
+            self.db.event_bus().cloned(),
+            request.info.peer_id_str(),
+        )
+        .await?;
         crate::replicator_install_store::prepare(
-            &self.db.peerstore(),
+            &peerstore,
             self.db.options().retry_options(),
             &self.installs,
             request,

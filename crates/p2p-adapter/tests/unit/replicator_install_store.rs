@@ -423,3 +423,35 @@ async fn stale_preallocated_identity_redecides_after_a_newer_install() {
     drop(snapshot);
     store.harness.finish(&plan, None).await.unwrap();
 }
+
+#[tokio::test]
+async fn request_recovery_settles_only_the_requested_peer() {
+    let h = Harness::default();
+    let mut events = h.bus.subscribe(&[EventName::ReplicatorCompleted]);
+    let mut target = h.prepare(&request("target", &["Note"])).await.unwrap();
+    let mut other = h.prepare(&request("other", &["User"])).await.unwrap();
+    drop(target._owner.take());
+    drop(other._owner.take());
+    recover_peer(
+        &*h.store,
+        retry(),
+        h.waiters.clone(),
+        Some(h.bus.clone()),
+        "target",
+    )
+    .await
+    .unwrap();
+    let event = events.recv().await.unwrap();
+    let completion = event.as_replicator_completed().unwrap();
+    assert_eq!(completion.peer_id, "target");
+    assert_eq!(completion.error.as_deref(), Some(INTERRUPTED));
+    assert!(events.try_recv().is_err());
+    let snapshot = h.store.new_txn(true).await.unwrap();
+    assert!(snapshot.has(&pending_key("other")).await.unwrap());
+    assert!(!snapshot.has(&pending_key("target")).await.unwrap());
+    drop(snapshot);
+    h.recover().await;
+    let event = events.recv().await.unwrap();
+    assert_eq!(event.as_replicator_completed().unwrap().peer_id, "other");
+    assert!(events.try_recv().is_err());
+}
