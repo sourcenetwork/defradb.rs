@@ -96,7 +96,12 @@ impl<S: Store> crate::database::DB<S> {
                 .map(|idx| idx.id)
                 .max()
                 .unwrap_or(0);
-            let mut next_index_id = schema_max_index_id;
+            let retired = crate::index::manager::index_id_floor(
+                &txn.datastore()?,
+                new_schema.resolved_root_id(),
+            )
+            .await?;
+            let mut next_index_id = schema_max_index_id.max(retired);
 
             let mut indexes_to_add = Vec::new();
             for field in &new_schema.fields {
@@ -578,13 +583,19 @@ impl<S: Store> crate::database::DB<S> {
             let mut needs_update = false;
             let mut updated_schema = other_schema.clone();
 
+            let txn = self.new_txn(false).await?;
             let max_index_id = updated_schema
                 .indexes
                 .iter()
                 .map(|idx| idx.id)
                 .max()
                 .unwrap_or(0);
-            let mut next_id = max_index_id;
+            let retired = crate::index::manager::index_id_floor(
+                &txn.datastore()?,
+                updated_schema.resolved_root_id(),
+            )
+            .await?;
+            let mut next_id = max_index_id.max(retired);
 
             for field in &other_schema.fields {
                 if !field.kind.is_relation() || field.kind.is_array() || !field.is_primary {
@@ -626,7 +637,6 @@ impl<S: Store> crate::database::DB<S> {
 
             if needs_update {
                 // Store updated schema with new indexes
-                let txn = self.new_txn(false).await?;
                 let key = CollectionKey::new(&updated_schema.version_id);
                 let data = serde_json::to_vec(&updated_schema).map_err(|e| {
                     Error::collection_schema_json(
