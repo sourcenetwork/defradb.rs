@@ -39,7 +39,7 @@ use crate::p2p::P2PRuntime;
 /// await init();
 /// const client = await DefraClient.create({ storage: 'memory' });
 ///
-/// await client.add_schema(`
+/// await client.add_collection(`
 ///   type User {
 ///     name: String
 ///     email: String
@@ -92,7 +92,7 @@ impl DefraClient {
     /// # Example
     ///
     /// ```javascript
-    /// await client.add_schema(`
+    /// await client.add_collection(`
     ///   type User {
     ///     name: String
     ///     email: String
@@ -104,7 +104,6 @@ impl DefraClient {
     ///   }
     /// `);
     /// ```
-    #[wasm_bindgen(js_name = add_schema)]
     pub async fn add_collection(&mut self, sdl: &str) -> std::result::Result<JsValue, JsValue> {
         self.add_collection_impl(sdl).await.map_err(|e| e.into())
     }
