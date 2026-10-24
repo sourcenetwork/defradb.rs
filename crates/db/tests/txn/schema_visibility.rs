@@ -20,7 +20,7 @@ fn statements_in_a_transaction_see_the_collection_it_added() {
             .await
             .unwrap();
         registry
-            .add_schema_in_txn_as(
+            .add_collection_in_txn_as(
                 &defra_core::RequestContext::default(),
                 handle.as_str(),
                 "type TxnOnly { value: Int }",

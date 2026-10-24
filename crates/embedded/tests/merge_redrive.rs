@@ -60,7 +60,7 @@ async fn plain_node() -> Result<Node> {
         .with_iroh(iroh_config())
         .build()
         .await?;
-    node.add_schema(SDL).await?;
+    node.add_collection(SDL).await?;
     Ok(node)
 }
 
@@ -76,7 +76,7 @@ fn a_composite_merged_by_redrive_reaches_this_nodes_replicators() -> Result<()> 
                 )
                 .build()
                 .await?;
-            middle.add_schema(SDL).await?;
+            middle.add_collection(SDL).await?;
             let tail = plain_node().await?;
 
             connect(&author, &middle).await?;

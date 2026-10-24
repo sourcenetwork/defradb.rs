@@ -33,7 +33,7 @@ const TXN_ID_KEY: &str = "txn_id";
 #[async_trait::async_trait]
 pub trait SchemaManager: Send + Sync {
     /// Add a schema from a GraphQL SDL string.
-    async fn add_schema(&self, sdl: &str) -> Result<(), String>;
+    async fn add_collection(&self, sdl: &str) -> Result<(), String>;
 }
 
 /// Handler for Postgres wire protocol queries.

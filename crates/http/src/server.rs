@@ -26,9 +26,9 @@ use crate::error::Result;
 use crate::router::{
     create_router_with_state_and_body_limits, AcpOperations, AppState, AppStateBuilder,
     BackupOperations, BlockOperations, BodyLimits, CollectionManagementOperations,
-    CollectionVersionOperations, DocumentAcpOperations, DumpOperations, EncryptedIndexOperations,
-    IndexOperations, LensOperations, ManageRequester, NodeAcpOperations, P2POperations,
-    SchemaOperations, TransactionOperations, ViewOperations,
+    CollectionOperations, CollectionVersionOperations, DocumentAcpOperations, DumpOperations,
+    EncryptedIndexOperations, IndexOperations, LensOperations, ManageRequester, NodeAcpOperations,
+    P2POperations, TransactionOperations, ViewOperations,
 };
 
 /// Default cap on an inline backup import body (100 MiB).
@@ -104,7 +104,7 @@ pub struct Server {
     encrypted_index: Option<Arc<dyn EncryptedIndexOperations>>,
     backup: Option<Arc<dyn BackupOperations>>,
     block: Option<Arc<dyn BlockOperations>>,
-    schema: Option<Arc<dyn SchemaOperations>>,
+    schema: Option<Arc<dyn CollectionOperations>>,
     lens: Option<Arc<dyn LensOperations>>,
     nac: Option<Arc<dyn NodeAcpOperations>>,
     collection_versions: Option<Arc<dyn CollectionVersionOperations>>,
@@ -290,13 +290,13 @@ impl Server {
     ///
     /// When schema operations are configured, the server enables:
     /// - `POST /api/v0/schema` - Add schema from SDL
-    pub fn with_schema<S: SchemaOperations + 'static>(mut self, schema: S) -> Self {
+    pub fn with_schema<S: CollectionOperations + 'static>(mut self, schema: S) -> Self {
         self.schema = Some(Arc::new(schema));
         self
     }
 
     /// Set schema operations from an Arc.
-    pub fn with_schema_arc(mut self, schema: Arc<dyn SchemaOperations>) -> Self {
+    pub fn with_schema_arc(mut self, schema: Arc<dyn CollectionOperations>) -> Self {
         self.schema = Some(schema);
         self
     }

@@ -27,7 +27,7 @@ fn list_collections_reports_added_schema() -> Result<()> {
 
         assert!(node.list_collections()?.is_empty());
 
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let names = node.list_collections()?;
         assert_eq!(names, vec!["User".to_string()]);
@@ -40,7 +40,7 @@ fn list_collections_reports_added_schema() -> Result<()> {
 fn get_collection_returns_active_schema() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let collection = node
             .get_collection("User")?
@@ -60,11 +60,11 @@ fn get_collection_returns_active_schema() -> Result<()> {
 fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let original = node
             .get_collection("User")?
-            .expect("User should exist after add_schema");
+            .expect("User should exist after add_collection");
 
         let patch = r#"[
         {"op": "add", "path": "/User/Fields/-", "value": {"Name": "email", "Kind": "String"}}
@@ -89,7 +89,7 @@ fn patch_collection_adds_field_and_bumps_version() -> Result<()> {
 fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let v0 = node
             .get_collection("User")?
@@ -124,7 +124,7 @@ fn patch_collection_chained_evolutions_produce_distinct_versions() -> Result<()>
 fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let original_version = node
             .get_collection("User")?
@@ -157,7 +157,7 @@ fn get_collection_by_version_id_finds_prior_and_new() -> Result<()> {
 fn get_all_collection_versions_returns_history() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let initial = node.get_all_collection_versions().await?;
         assert_eq!(initial.len(), 1);
@@ -182,7 +182,7 @@ fn get_all_collection_versions_returns_history() -> Result<()> {
 fn set_active_collection_version_round_trips_to_original() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let original_version = node
             .get_collection("User")?
@@ -220,7 +220,7 @@ fn set_active_collection_version_round_trips_to_original() -> Result<()> {
 fn set_migration_registers_lens_between_versions() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let original_version = node
             .get_collection("User")?
@@ -249,7 +249,7 @@ fn set_migration_registers_lens_between_versions() -> Result<()> {
 fn materialize_collection_is_exposed_on_embedded_node() -> Result<()> {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await?;
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
 
         let patch =
             r#"[{"op":"add","path":"/User/Fields/-","value":{"Name":"email","Kind":"String"}}]"#;
@@ -266,7 +266,7 @@ fn introspection_supports_idempotent_schema_ensure() -> Result<()> {
     workers::block_on(async {
         // Demonstrates the idempotent bootstrap pattern the issue calls out:
         // the application checks whether a collection exists before falling
-        // back to add_schema. Running twice must not error.
+        // back to add_collection. Running twice must not error.
         let node = EmbeddedNode::builder().build().await?;
 
         ensure_user_schema(&node).await?;
@@ -280,7 +280,7 @@ fn introspection_supports_idempotent_schema_ensure() -> Result<()> {
 
 async fn ensure_user_schema(node: &EmbeddedNode) -> Result<()> {
     if node.get_collection("User")?.is_none() {
-        node.add_schema(USER_SDL).await?;
+        node.add_collection(USER_SDL).await?;
     }
     Ok(())
 }

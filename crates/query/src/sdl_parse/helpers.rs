@@ -307,7 +307,7 @@ pub(super) fn hash_to_hex(hash: &[u8]) -> String {
 /// Like Go, includes field definition CIDs as links in the collection block.
 ///
 /// IMPORTANT: Go uses priority=1 for ALL fields and the collection block,
-/// not incrementing priorities. This was verified by comparing actual AddSchema
+/// not incrementing priorities. This was verified by comparing actual AddCollection
 /// output with manual CID generation.
 ///
 /// IMPORTANT: Secondary relation fields (where relation_name is set but is_primary is false)

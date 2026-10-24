@@ -15,7 +15,7 @@ use storage::corekv::{IterOptions, Store};
 fn branchable_directive_survives_sdl_parsing() {
     workers::block_on(async {
         let node = EmbeddedNode::builder().build().await.expect("build node");
-        node.add_schema("type Note @branchable { title: String }")
+        node.add_collection("type Note @branchable { title: String }")
             .await
             .expect("add schema");
 
@@ -43,7 +43,7 @@ fn graphql_write_records_collection_head_under_persisted_id() {
             .build()
             .await
             .expect("build node");
-        node.add_schema("type Note @branchable { title: String }")
+        node.add_collection("type Note @branchable { title: String }")
             .await
             .expect("add schema");
         let response = node
@@ -135,7 +135,7 @@ fn signed_graphql_write_records_collection_head_under_persisted_id() {
             .build()
             .await
             .expect("build signed node");
-        node.add_schema("type Note @branchable { title: String }")
+        node.add_collection("type Note @branchable { title: String }")
             .await
             .expect("add schema");
         let response = node

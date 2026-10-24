@@ -307,7 +307,7 @@ fn extract_policy_id(value: &serde_json::Value) -> Option<String> {
 
 /// Try to add a schema via the authenticated schema endpoint and return the
 /// error message, if any. `None` = success.
-fn try_add_schema(
+fn try_add_collection(
     node: &integration_test::DefraClient,
     sdl: &str,
     hex_key: &str,
@@ -687,7 +687,7 @@ async fn acp_link_collection_empty_args_reject(cluster: TestCluster) {
 
     // Case 1: `@policy` directive with no arguments.
     let sdl_no_args = r#"type Users @policy { name: String age: Int }"#;
-    let err = try_add_schema(&node, sdl_no_args, &alice.private_key_hex)
+    let err = try_add_collection(&node, sdl_no_args, &alice.private_key_hex)
         .expect("@policy with no args must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -702,7 +702,7 @@ async fn acp_link_collection_empty_args_reject(cluster: TestCluster) {
 
     // Case 2: `@policy(id: "", resource: "")` — both args empty strings.
     let sdl_empty_args = r#"type Users @policy(resource: "", id: "") { name: String age: Int }"#;
-    let err = try_add_schema(&node, sdl_empty_args, &alice.private_key_hex)
+    let err = try_add_collection(&node, sdl_empty_args, &alice.private_key_hex)
         .expect("@policy with empty-string args must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -734,7 +734,7 @@ async fn acp_link_collection_missing_id_arg_reject(cluster: TestCluster) {
     let _ = add_users_policy(&node, users_policy(), &alice.private_key_hex);
 
     let sdl = r#"type Users @policy(resource: "users") { name: String age: Int }"#;
-    let err = try_add_schema(&node, sdl, &alice.private_key_hex)
+    let err = try_add_collection(&node, sdl, &alice.private_key_hex)
         .expect("@policy without id must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -766,7 +766,7 @@ async fn acp_link_collection_missing_resource_arg_reject(cluster: TestCluster) {
         r#"type Users @policy(id: "{}") {{ name: String age: Int }}"#,
         policy_id
     );
-    let err = try_add_schema(&node, &sdl, &alice.private_key_hex)
+    let err = try_add_collection(&node, &sdl, &alice.private_key_hex)
         .expect("@policy without resource must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -794,7 +794,7 @@ async fn acp_link_collection_invalid_arg_type_reject(cluster: TestCluster) {
 
     // Case 1: id is a numeric literal (not a String).
     let sdl_bad_id = r#"type Users @policy(id: 123, resource: "users") { name: String age: Int }"#;
-    let err = try_add_schema(&node, sdl_bad_id, &alice.private_key_hex)
+    let err = try_add_collection(&node, sdl_bad_id, &alice.private_key_hex)
         .expect("@policy with numeric id must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -813,7 +813,7 @@ async fn acp_link_collection_invalid_arg_type_reject(cluster: TestCluster) {
         r#"type Users @policy(id: "{}", resource: 123) {{ name: String age: Int }}"#,
         policy_id
     );
-    let err = try_add_schema(&node, &sdl_bad_resource, &alice.private_key_hex)
+    let err = try_add_collection(&node, &sdl_bad_resource, &alice.private_key_hex)
         .expect("@policy with numeric resource must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -857,7 +857,7 @@ async fn acp_link_collection_nonexistent_policy_reject(cluster: TestCluster) {
         r#"type UsersA @policy(id: "{}", resource: "users") {{ name: String age: Int }}"#,
         nonexistent_policy_id
     );
-    let err = try_add_schema(&node, &sdl, &alice.private_key_hex)
+    let err = try_add_collection(&node, &sdl, &alice.private_key_hex)
         .expect("schema with nonexistent policy id must be rejected");
     assert!(
         err.to_lowercase().contains("does not exist with acp"),
@@ -872,7 +872,7 @@ async fn acp_link_collection_nonexistent_policy_reject(cluster: TestCluster) {
         r#"type UsersB @policy(id: "{}", resource: "users") {{ name: String age: Int }}"#,
         nonexistent_policy_id
     );
-    let err = try_add_schema(&node, &sdl_b, &alice.private_key_hex).expect(
+    let err = try_add_collection(&node, &sdl_b, &alice.private_key_hex).expect(
         "schema with nonexistent policy id must still be rejected (unrelated policy present)",
     );
     assert!(
@@ -902,7 +902,7 @@ async fn acp_link_collection_nonexistent_resource_reject(cluster: TestCluster) {
         r#"type Users @policy(id: "{}", resource: "doesNotExist") {{ name: String age: Int }}"#,
         policy_id
     );
-    let err = try_add_schema(&node, &sdl, &alice.private_key_hex)
+    let err = try_add_collection(&node, &sdl, &alice.private_key_hex)
         .expect("schema with nonexistent resource must be rejected");
     assert!(
         err.to_lowercase()
@@ -952,7 +952,7 @@ async fn acp_link_collection_missing_read_perm_reject(cluster: TestCluster) {
         r#"type Users @policy(id: "{}", resource: "users") {{ name: String age: Int }}"#,
         policy_id
     );
-    let err = try_add_schema(&node, &sdl, &alice.private_key_hex)
+    let err = try_add_collection(&node, &sdl, &alice.private_key_hex)
         .expect("schema with missing-read DRI must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -992,7 +992,7 @@ async fn acp_link_collection_missing_update_perm_reject(cluster: TestCluster) {
         r#"type Users @policy(id: "{}", resource: "users") {{ name: String age: Int }}"#,
         policy_id
     );
-    let err = try_add_schema(&node, &sdl, &alice.private_key_hex)
+    let err = try_add_collection(&node, &sdl, &alice.private_key_hex)
         .expect("schema with missing-update DRI must be rejected");
     let el = err.to_lowercase();
     assert!(
@@ -1032,7 +1032,7 @@ async fn acp_link_collection_missing_delete_perm_reject(cluster: TestCluster) {
         r#"type Users @policy(id: "{}", resource: "users") {{ name: String age: Int }}"#,
         policy_id
     );
-    let err = try_add_schema(&node, &sdl, &alice.private_key_hex)
+    let err = try_add_collection(&node, &sdl, &alice.private_key_hex)
         .expect("schema with missing-delete DRI must be rejected");
     let el = err.to_lowercase();
     assert!(

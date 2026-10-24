@@ -97,13 +97,13 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
         .await
     }
 
-    /// [`Self::add_schema_in_txn_as`] in [`RequestContext::ambient`].
-    pub async fn add_schema_in_txn(
+    /// [`Self::add_collection_in_txn_as`] in [`RequestContext::ambient`].
+    pub async fn add_collection_in_txn(
         &self,
         txn_id: &str,
         sdl: &str,
     ) -> Result<Vec<schema::CollectionVersion>> {
-        self.add_schema_in_txn_as(&RequestContext::ambient(), txn_id, sdl)
+        self.add_collection_in_txn_as(&RequestContext::ambient(), txn_id, sdl)
             .await
     }
 
@@ -112,25 +112,25 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
     /// Parses the SDL and creates collections within the transaction.
     /// The collections are only visible after the transaction is committed,
     /// but can be used by queries within the same transaction.
-    pub async fn add_schema_in_txn_as(
+    pub async fn add_collection_in_txn_as(
         &self,
         context: &RequestContext,
         txn_id: &str,
         sdl: &str,
     ) -> Result<Vec<schema::CollectionVersion>> {
-        self.add_schema_in_txn_with_acp_as(context, txn_id, sdl, None, None)
+        self.add_collection_in_txn_with_acp_as(context, txn_id, sdl, None, None)
             .await
     }
 
-    /// [`Self::add_schema_in_txn_with_acp_as`] in [`RequestContext::ambient`].
-    pub async fn add_schema_in_txn_with_acp(
+    /// [`Self::add_collection_in_txn_with_acp_as`] in [`RequestContext::ambient`].
+    pub async fn add_collection_in_txn_with_acp(
         &self,
         txn_id: &str,
         sdl: &str,
         document_acp: Option<Arc<dyn acp::DocumentACP>>,
         creator: Option<identity::Did>,
     ) -> Result<Vec<schema::CollectionVersion>> {
-        self.add_schema_in_txn_with_acp_as(
+        self.add_collection_in_txn_with_acp_as(
             &RequestContext::ambient(),
             txn_id,
             sdl,
@@ -142,7 +142,7 @@ impl<S: Store + 'static> DbTransactionRegistry<S> {
 
     /// Add a schema within an existing transaction, optionally registering
     /// branchable collection ACP objects before the storage commit.
-    pub async fn add_schema_in_txn_with_acp_as(
+    pub async fn add_collection_in_txn_with_acp_as(
         &self,
         context: &RequestContext,
         txn_id: &str,

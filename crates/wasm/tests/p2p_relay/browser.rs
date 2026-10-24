@@ -25,7 +25,7 @@ impl Browser {
             None => json!({ "db_name": db_name }),
         };
         let mut client = DefraClient::create(js(&config)).await.unwrap();
-        client.add_schema(sdl).await.unwrap();
+        client.add_collection(sdl).await.unwrap();
         let endpoint_id = client
             .start_p2p(js(&json!({ "relay_urls": [node::RELAY] })))
             .await

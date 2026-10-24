@@ -28,7 +28,7 @@ async fn node() -> Result<Node> {
         .with_iroh(iroh_config())
         .build()
         .await?;
-    node.add_schema(SDL).await?;
+    node.add_collection(SDL).await?;
     Ok(node)
 }
 

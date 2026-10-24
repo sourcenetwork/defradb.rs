@@ -341,7 +341,7 @@ impl DefraQueryHandler {
         })?;
 
         debug!(sdl, "Creating collection from DDL");
-        mgr.add_schema(sdl)
+        mgr.add_collection(sdl)
             .await
             .map_err(|e| pg_error("42000", e))?;
 

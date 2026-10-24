@@ -1863,8 +1863,8 @@ fn test_collection_cid_matches_go_with_sorted_fields() {
     // Go debug output (from running TestDebugUsersCIDGeneration):
     // Collection 'Users' (p=4, 3 field links): bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq
     //
-    // Note: This CID comes from Go's actual AddSchema behavior, not the debug test
-    // which manually specifies field order. The actual AddSchema sorts fields.
+    // Note: This CID comes from Go's actual AddCollection behavior, not the debug test
+    // which manually specifies field order. The actual AddCollection sorts fields.
     const GO_EXPECTED_CID: &str = "bafyreihsneodeja4lfer5puptim3lkwvketyckrmkhfpgxm67ch5wenjwq";
 
     let sdl = r#"
