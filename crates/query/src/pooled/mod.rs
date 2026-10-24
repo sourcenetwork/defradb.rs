@@ -153,6 +153,25 @@ impl QueryExecutor for PooledExecutor {
         self.inner.execute_in_txn(request, handle).await
     }
 
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        self.inner
+            .observe_document_owners_in_txn(
+                context.or_ambient(),
+                handle,
+                collection,
+                doc_ids,
+                identity,
+            )
+            .await
+    }
+
     async fn begin_txn(
         &self,
         readonly: bool,
