@@ -11,7 +11,7 @@ use crate::bindings::to_js;
 /// whether by a write in this client or by a merge from a peer. It carries no
 /// values: read the documents again. Repeated changes to one document coalesce
 /// into one entry, and when too many distinct documents change at once the
-/// batch sets `resync_required` instead of naming them, so a view should reload
+/// batch sets `resyncRequired` instead of naming them, so a view should reload
 /// everything it shows.
 ///
 /// # Example (JavaScript)
@@ -19,7 +19,7 @@ use crate::bindings::to_js;
 /// ```javascript
 /// const changes = client.documentChanges();
 /// for (let batch; (batch = await changes.next()) !== null; ) {
-///   // batch.changes: [{ collection_id, doc_id, local }], batch.resync_required
+///   // batch.changes: [{ collectionId, docId, local }], batch.resyncRequired
 /// }
 /// ```
 #[wasm_bindgen]
@@ -28,6 +28,7 @@ pub struct DocumentChanges {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Change<'a> {
     collection_id: &'a str,
     doc_id: &'a str,
@@ -36,6 +37,7 @@ struct Change<'a> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Batch<'a> {
     changes: Vec<Change<'a>>,
     resync_required: bool,

@@ -18,16 +18,16 @@ impl Browser {
     pub async fn start(db_name: &str, key: Option<&Key>, sdl: &str) -> Self {
         let config = match key {
             Some(key) => json!({
-                "db_name": db_name,
-                "private_key": key.private_key_hex,
-                "key_type": "secp256k1",
+                "dbName": db_name,
+                "privateKey": key.private_key_hex,
+                "keyType": "secp256k1",
             }),
-            None => json!({ "db_name": db_name }),
+            None => json!({ "dbName": db_name }),
         };
         let mut client = DefraClient::create(js(&config)).await.unwrap();
         client.add_collection(sdl).await.unwrap();
         let endpoint_id = client
-            .start_p2p(js(&json!({ "relay_urls": [node::RELAY] })))
+            .start_p2p(js(&json!({ "relayUrls": [node::RELAY] })))
             .await
             .unwrap();
         let node_address = node::address(&node::endpoint_id().await);

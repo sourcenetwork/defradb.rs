@@ -14,8 +14,8 @@ use crate::p2p::{P2PConfig, P2PRuntime};
 impl DefraClient {
     /// Join the network as a peer, reaching others through a relay.
     ///
-    /// `config` is `{ relay_urls, secret_key_hex, discovery }`, all optional.
-    /// With an identity set and no `secret_key_hex`, the endpoint key is
+    /// `config` is `{ relayUrls, secretKeyHex, discovery }`, all optional.
+    /// With an identity set and no `secretKeyHex`, the endpoint key is
     /// derived from the identity, so the endpoint id survives a reload.
     /// Returns the endpoint id, which is what a peer dials back.
     ///
@@ -24,7 +24,7 @@ impl DefraClient {
     /// # Example
     ///
     /// ```javascript
-    /// const id = await client.startP2P({ relay_urls: ['https://relay.example.com'] });
+    /// const id = await client.startP2P({ relayUrls: ['https://relay.example.com'] });
     /// await client.connectPeer(`${nodeId}@https://relay.example.com`);
     /// await client.addReplicator(`${nodeId}@https://relay.example.com`, ['User']);
     /// ```
@@ -218,7 +218,7 @@ mod tests {
     }
 
     fn no_relays() -> JsValue {
-        js_sys::JSON::parse(r#"{"relay_urls":["http://127.0.0.1:9"]}"#).unwrap()
+        js_sys::JSON::parse(r#"{"relayUrls":["http://127.0.0.1:9"]}"#).unwrap()
     }
 
     #[wasm_bindgen_test]

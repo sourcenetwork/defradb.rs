@@ -18,15 +18,14 @@ pub fn from_js<T: DeserializeOwned>(value: JsValue) -> Result<T> {
 }
 
 /// Client configuration passed from JavaScript.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[serde(default)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClientConfig {
     /// Database name for storage
     pub db_name: Option<String>,
     /// Hex-encoded private key this client authors with, if it holds one.
     pub private_key: Option<String>,
-    /// Key type of `private_key`: ed25519, secp256k1 or secp256r1.
+    /// Key type of `privateKey`: ed25519, secp256k1 or secp256r1.
     pub key_type: Option<String>,
     /// Fail to open unless OPFS synchronous access handles are granted,
     /// rather than falling back to the in-memory mirror. For a client in a
@@ -64,6 +63,7 @@ impl ExecRequestOptions {
 
 /// Collection info returned to JavaScript.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CollectionInfo {
     pub name: String,
     #[serde(rename = "VersionID")]
@@ -73,6 +73,7 @@ pub struct CollectionInfo {
 
 /// Field info within a collection.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FieldInfo {
     pub name: String,
     pub kind: String,

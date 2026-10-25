@@ -102,8 +102,8 @@ fn compute_cid_impl(document_json: &str) -> Result<String> {
 /// Generate a new Ed25519 keypair.
 ///
 /// Returns a JSON object with:
-/// - `private_key`: Hex-encoded private key
-/// - `public_key`: Hex-encoded public key
+/// - `privateKey`: Hex-encoded private key
+/// - `publicKey`: Hex-encoded public key
 #[wasm_bindgen(js_name = generateEd25519Keypair)]
 pub fn generate_ed25519_keypair() -> std::result::Result<JsValue, JsValue> {
     generate_ed25519_impl().map_err(|e| e.into())
@@ -114,8 +114,8 @@ fn generate_ed25519_impl() -> Result<JsValue> {
     let public_key = private_key.public_key();
 
     let result = serde_json::json!({
-        "private_key": private_key.to_hex_string(),
-        "public_key": public_key.to_hex_string(),
+        "privateKey": private_key.to_hex_string(),
+        "publicKey": public_key.to_hex_string(),
     });
 
     crate::bindings::to_js(&result)
@@ -124,8 +124,8 @@ fn generate_ed25519_impl() -> Result<JsValue> {
 /// Generate a new secp256k1 keypair.
 ///
 /// Returns a JSON object with:
-/// - `private_key`: Hex-encoded private key
-/// - `public_key`: Hex-encoded public key
+/// - `privateKey`: Hex-encoded private key
+/// - `publicKey`: Hex-encoded public key
 #[wasm_bindgen(js_name = generateSecp256k1Keypair)]
 pub fn generate_secp256k1_keypair() -> std::result::Result<JsValue, JsValue> {
     generate_secp256k1_impl().map_err(|e| e.into())
@@ -136,8 +136,8 @@ fn generate_secp256k1_impl() -> Result<JsValue> {
     let public_key = private_key.public_key();
 
     let result = serde_json::json!({
-        "private_key": private_key.to_hex_string(),
-        "public_key": public_key.to_hex_string(),
+        "privateKey": private_key.to_hex_string(),
+        "publicKey": public_key.to_hex_string(),
     });
 
     crate::bindings::to_js(&result)

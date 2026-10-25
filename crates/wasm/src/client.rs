@@ -73,16 +73,16 @@ impl DefraClient {
     /// # Configuration
     ///
     /// Pass a JavaScript object with:
-    /// - `db_name`: the OPFS directory the store lives in (optional)
-    /// - `private_key`, `key_type`: a key to author with (optional)
-    /// - `require_sync_handles`: fail instead of falling back to the
+    /// - `dbName`: the OPFS directory the store lives in (optional)
+    /// - `privateKey`, `keyType`: a key to author with (optional)
+    /// - `requireSyncHandles`: fail instead of falling back to the
     ///   in-memory mirror when OPFS synchronous access handles are refused,
     ///   so a Worker taking over a database can retry (optional)
     ///
     /// # Example
     ///
     /// ```javascript
-    /// const client = await DefraClient.create({ db_name: 'defradb' });
+    /// const client = await DefraClient.create({ dbName: 'defradb' });
     /// ```
     #[wasm_bindgen(js_name = create)]
     pub async fn create(config: JsValue) -> std::result::Result<DefraClient, JsValue> {
@@ -360,7 +360,7 @@ impl DefraClient {
         self.persist_impl().await?;
 
         to_js(&serde_json::json!({
-            "collections_added": added,
+            "collectionsAdded": added,
         }))
     }
 
@@ -813,6 +813,12 @@ mod tests {
         assert!(!client.closed);
     }
 
+    #[wasm_bindgen_test]
+    async fn a_snake_case_config_key_is_rejected() {
+        let config = js_sys::JSON::parse(r#"{"db_name":"test_snake_case"}"#).unwrap();
+        assert!(DefraClient::create(config).await.is_err());
+    }
+
     /// Tests run on the page's main thread, where browsers refuse synchronous
     /// access handles. Requiring them must fail the open rather than mount
     /// the mirror, and must leave nothing held that stops the same database
@@ -869,10 +875,7 @@ mod tests {
             serde_wasm_bindgen::from_value(changes.next_batch().await.unwrap()).unwrap();
         let change = batch["changes"]
             .as_array()
-            .and_then(|all| {
-                all.iter()
-                    .find(|change| change["doc_id"] == doc_id.as_str())
-            })
+            .and_then(|all| all.iter().find(|change| change["docId"] == doc_id.as_str()))
             .unwrap_or_else(|| panic!("{doc_id} is not in {batch}"));
         assert_eq!(change["local"], true, "a write here is local: {batch}");
 

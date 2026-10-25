@@ -31,7 +31,7 @@
 //! await init();
 //!
 //! // Create client
-//! const client = await DefraClient.create({ db_name: 'defradb' });
+//! const client = await DefraClient.create({ dbName: 'defradb' });
 //!
 //! // Add schema
 //! await client.addCollection(`
