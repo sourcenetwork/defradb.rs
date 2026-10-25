@@ -1,7 +1,8 @@
 /-!
-Explicit selected-document transfer can precede continuous replication. Such a
-transfer owns only its selected heads and reports failure if they are not all
-acknowledged. Initial replay instead requires an installed replicator; removal
+Explicit selected-document transfer is independent of continuous replication.
+It owns only its selected heads and reports failure unless they are all
+acknowledged, even when a subscription exists or disappears during the transfer.
+Initial replay instead requires an installed replicator; removal
 cannot turn it into an independent transfer or manufacture durable retry work.
 The existing rooted grant and retry-registration owners retain their contracts.
 -/
@@ -12,9 +13,9 @@ inductive Ownership where
   | replicator
   deriving DecidableEq, Repr
 
-/-- Selection does not install a replicator or change a captured replay's owner. -/
+/-- An explicit call owns its acknowledgements; a subscription cannot defer them. -/
 def ownership (explicit present : Bool) : Option Ownership :=
-  if present then some .replicator else if explicit then some .selected else none
+  if explicit then some .selected else if present then some .replicator else none
 
 /-- Every dispatched head remains inside the selection and owns a serving grant. -/
 def canSend (owner : Ownership) (present insideSelection hasGrant : Bool) : Bool :=
@@ -35,8 +36,13 @@ theorem enrollment_without_subscription : ownership true false = some .selected 
 
 theorem absent_replay_is_refused : ownership false false = none := rfl
 
-theorem installed_selection_keeps_replay_owner (explicit : Bool) :
-    ownership explicit true = some .replicator := rfl
+/-- Subscription presence cannot change an explicitly selected transfer's owner. -/
+theorem selection_owns_acknowledgements (present : Bool) :
+    ownership true present = some .selected := rfl
+
+/-- Continuous replay still requires and retains its installed subscription. -/
+theorem installed_replay_is_owned :
+    ownership false true = some .replicator := rfl
 
 theorem removed_replay_cannot_send (insideSelection hasGrant : Bool) :
     canSend .replicator false insideSelection hasGrant = false := by
@@ -62,6 +68,11 @@ def emit : IO Unit := do
     for present in [false, true] do
       for acknowledged in [false, true] do
         let owner := ownership explicit present
+        -- The native binding reads ownership from this executable owner.
+        let ownerTag := match owner with
+          | none => "refused"
+          | some .selected => "selected"
+          | some .replicator => "replicator"
         let outcome := owner.map fun own => completion own acknowledged present
         let tag := match outcome with
           | none => "refused"
@@ -69,7 +80,7 @@ def emit : IO Unit := do
           | some .retainedRetry => "retainedRetry"
           | some .failed => "failed"
         IO.println (String.intercalate "\t"
-          [toString explicit, toString present, toString acknowledged, tag])
+          [toString explicit, toString present, toString acknowledged, ownerTag, tag])
 
 end DocumentPush
 

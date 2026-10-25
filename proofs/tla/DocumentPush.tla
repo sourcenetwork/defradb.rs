@@ -1,8 +1,9 @@
 ---- MODULE DocumentPush ----
+\* An explicit selection owns acknowledgement independently of any subscription.
 \* One operation captures its owner once. Work admitted before removal can finish;
 \* removal forbids another tracked registration and cannot create a new owner.
 EXTENDS Naturals, FiniteSets
-CONSTANTS AllowSelected, CheckSelection, CheckGrant, CheckFence, CheckMarkerOwner, CheckAcknowledgements
+CONSTANTS AllowSelected, CheckExplicitOwner, CheckSelection, CheckGrant, CheckFence, CheckMarkerOwner, CheckAcknowledgements
 VARIABLES explicit, initiallyPresent, present, owner, grants, prepared, sent,
           acknowledged, refused, markers, stable, result, crossedFence
 vars == <<explicit, initiallyPresent, present, owner, grants, prepared, sent,
@@ -16,8 +17,9 @@ Init == /\ explicit \in BOOLEAN /\ present \in BOOLEAN
         /\ prepared = {} /\ sent = {} /\ acknowledged = {} /\ refused = {}
         /\ markers = {} /\ stable = TRUE /\ result = "pending" /\ crossedFence = FALSE
 Choose == /\ owner = "new"
-          /\ owner' = IF present THEN "replicator"
-                       ELSE IF explicit /\ AllowSelected THEN "selected" ELSE "refused"
+          \* The ownership mutant lets a transient subscription capture an explicit call.
+          /\ owner' = IF explicit /\ AllowSelected /\ (CheckExplicitOwner \/ ~present)
+                       THEN "selected" ELSE IF present THEN "replicator" ELSE "refused"
           /\ UNCHANGED <<explicit, initiallyPresent, present, grants, prepared, sent,
                          acknowledged, refused, markers, stable, result, crossedFence>>
 Remove == /\ Active /\ present /\ present' = FALSE /\ markers' = {}
@@ -65,7 +67,7 @@ TypeOK == /\ explicit \in BOOLEAN /\ initiallyPresent \in BOOLEAN /\ present \in
           /\ acknowledged \subseteq sent /\ refused \subseteq sent /\ markers \subseteq Docs
           /\ stable \in BOOLEAN /\ crossedFence \in BOOLEAN
           /\ result \in {"pending", "acknowledged", "retainedRetry", "failed"}
-INV_SelectedAdmitted == (owner # "new" /\ explicit /\ ~initiallyPresent) => owner = "selected"
+INV_SelectedAdmitted == (owner # "new" /\ explicit) => owner = "selected"
 INV_SelectionScoped == prepared \subseteq Wanted
 INV_GrantRequired == sent \subseteq grants
 INV_ReplayFence == ~crossedFence

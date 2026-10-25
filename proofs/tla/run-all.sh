@@ -59,6 +59,7 @@ RUNS=(
   "MC_ReplicatorInstall_Red_Recovery.cfg ReplicatorInstall.tla RED"
   "MC_DocumentPush_Green.cfg DocumentPush.tla GREEN"
   "MC_DocumentPush_Red_Admission.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Ownership.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Selection.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Grant.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Fence.cfg DocumentPush.tla RED"

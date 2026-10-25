@@ -25,13 +25,14 @@ fn selected_document_transfers_match_executed_model() {
     let mut count = 0;
     for line in cases.lines() {
         let fields: Vec<_> = line.split('\t').collect();
-        let [explicit, present, acknowledged, expected] = fields.as_slice() else {
+        let [explicit, present, acknowledged, owner, expected] = fields.as_slice() else {
             panic!("invalid model case: {line}")
         };
         workers::block_on(exercise(
             explicit.parse().unwrap(),
             present.parse().unwrap(),
             acknowledged.parse().unwrap(),
+            owner,
             expected,
         ))
         .unwrap();
@@ -40,7 +41,7 @@ fn selected_document_transfers_match_executed_model() {
     assert!(count > 0, "model emitted no transfer cases");
 }
 
-async fn exercise(explicit: bool, present: bool, acknowledged: bool, expected: &str) {
+async fn exercise(explicit: bool, present: bool, acknowledged: bool, owner: &str, expected: &str) {
     let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store).unwrap());
     db.set_network(edge::testing::edge());
@@ -128,8 +129,11 @@ async fn exercise(explicit: bool, present: bool, acknowledged: bool, expected: &
         peerstore.has_replicator(peer.as_str()).await.unwrap(),
         present
     );
-    if !present {
-        assert!(retries.is_empty());
+    if owner != "replicator" {
+        assert!(
+            retries.is_empty(),
+            "explicit={explicit} present={present} acknowledged={acknowledged} owner={owner}"
+        );
     }
     match expected {
         "refused" => {

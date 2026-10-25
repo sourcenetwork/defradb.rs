@@ -127,8 +127,8 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
 }
 
 /// Push an explicit `(collection_name, doc_id)` set without adding a subscription.
-/// An installed replicator retains replay ownership. Without one, success requires
-/// acknowledgements for every selected document's unchanged heads.
+/// Success requires acknowledgements for every selected document's unchanged
+/// heads, independently of continuous replication to the same peer.
 #[allow(clippy::too_many_arguments)]
 pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -213,21 +213,20 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let peerstore = db
         .peerstore()
         .with_retry_schedule(replay_config.retry_schedule.clone());
-    let mut ownership = match (
-        peerstore
+    let mut ownership = if let Some(docs) = allowlist {
+        PushOwnership::Selected(docs.iter().cloned().collect())
+    } else {
+        if peerstore
             .get_replicator(peer_id.as_str())
             .await
             .map_err(|error| format!("failed to load replicator: {error}"))?
-            .is_some(),
-        allowlist,
-    ) {
-        (true, _) => PushOwnership::Replicator,
-        (false, Some(docs)) => PushOwnership::Selected(docs.iter().cloned().collect()),
-        (false, None) => {
+            .is_none()
+        {
             return Err(format!(
                 "replicator {peer_id} removed before existing-document replay"
             ));
         }
+        PushOwnership::Replicator
     };
     let txn = db
         .new_txn(true)
