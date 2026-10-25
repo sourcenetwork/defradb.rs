@@ -54,8 +54,18 @@ impl Fixture {
                 "v1",
                 "col-users",
                 vec![
-                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                    FieldDescription::new("2", "name", FieldKind::string()),
+                    FieldDescription::new(
+                        "1",
+                        "_docID",
+                        FieldKind::doc_id(),
+                        schema::CType::LwwRegister,
+                    ),
+                    FieldDescription::new(
+                        "2",
+                        "name",
+                        FieldKind::string(),
+                        schema::CType::LwwRegister,
+                    ),
                 ],
             )
             .with_policy(PolicyDescription::new("policy-1", "users")),
@@ -64,8 +74,9 @@ impl Fixture {
         .unwrap();
         let blockstore = Arc::new(DefraBlockstore::new(store, false));
         let handler = DbMergeHandler::new_with_max_merge_depth(db, blockstore.clone(), 8);
-        let mut doc = Document::new();
-        doc.set("name", NormalValue::String("Alice".into()));
+        let mut doc = Document::new(crate::common::schema::open_collection(&["name"]));
+        doc.set("name", NormalValue::String("Alice".into()))
+            .unwrap();
         let collection = handler
             .db()
             .find_collection_by_id("col-users")

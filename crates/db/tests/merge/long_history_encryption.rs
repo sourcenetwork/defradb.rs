@@ -47,9 +47,11 @@ fn incomplete_encrypted_ancestor_retries_then_preserves_all_fields() {
         let handler =
             DbMergeHandler::new_with_max_merge_depth(base.db().clone(), blockstore.clone(), 8)
                 .with_single_history_turn();
-        let mut initial = Document::new();
-        initial.set("name", NormalValue::String("Alice".into()));
-        initial.set("age", NormalValue::Int(20));
+        let mut initial = Document::new(crate::common::schema::open_collection(&["name", "age"]));
+        initial
+            .set("name", NormalValue::String("Alice".into()))
+            .unwrap();
+        initial.set("age", NormalValue::Int(20)).unwrap();
         let collection = handler
             .db()
             .find_collection_by_id("col-users")

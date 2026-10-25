@@ -62,8 +62,10 @@ fn committed_history_frames_release_deferred_composites_before_cleanup() {
             .find_collection_by_id("col-users")
             .unwrap()
             .unwrap();
-        let mut document = Document::new();
-        document.set("name", NormalValue::String("waiting".into()));
+        let mut document = Document::new(crate::common::schema::open_collection(&["name"]));
+        document
+            .set("name", NormalValue::String("waiting".into()))
+            .unwrap();
         let blocks = db::block::builder::build_blocks_from_document(
             &document,
             collection.schema(),

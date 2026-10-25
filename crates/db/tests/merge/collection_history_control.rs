@@ -45,7 +45,12 @@ fn standalone_collection_preserves_linked_driver_errors() {
                 "Users",
                 "v1",
                 "col-users",
-                vec![FieldDescription::new("1", "_docID", FieldKind::doc_id())],
+                vec![FieldDescription::new(
+                    "1",
+                    "_docID",
+                    FieldKind::doc_id(),
+                    schema::CType::LwwRegister,
+                )],
             ))
             .await
             .unwrap();
