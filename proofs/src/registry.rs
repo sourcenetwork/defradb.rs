@@ -49,6 +49,22 @@ use Tier::{Behavioral, Boundary, Contract};
 pub const PROPERTIES: &[Property] = &[
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Replicator installs validate their row, settle before completion, and retain interrupted outcomes",
+        axis: Tla,
+        anchor: "crates/p2p-adapter/src/replicator_install_store.rs; crates/p2p-adapter/src/replicator_installs.rs",
+        model_ref: "MC_ReplicatorInstall_{Green,Red_*}.cfg; MC_ReplicatorIncarnation_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Install completion is identity-fenced and idempotent; stale allocations re-decide without regressing the incarnation",
+        axis: Lean,
+        anchor: "crates/p2p-adapter/src/replicator_install_store.rs finish",
+        model_ref: "ReplicatorInstall (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "INV_Released — an early reconciliation return releases its queued continuation slot",
         axis: Tla,
         anchor: "crates/p2p/src/sync/replication/handlers.rs::process_one_event; crates/p2p/src/sync/replication/continuation_tests.rs::already_merged_duplicate_continuation_releases_reservation_without_handler",

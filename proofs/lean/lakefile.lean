@@ -34,6 +34,9 @@ lean_lib CommitFence where
 lean_lib HistoryTurns where
 
 @[default_target]
+lean_lib ReplicatorInstall where
+
+@[default_target]
 lean_lib EngineTickers where
 
 @[default_target]

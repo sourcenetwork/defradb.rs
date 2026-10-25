@@ -207,6 +207,16 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let peerstore = db
         .peerstore()
         .with_retry_schedule(replay_config.retry_schedule.clone());
+    if peerstore
+        .get_replicator(peer_id.as_str())
+        .await
+        .map_err(|error| format!("failed to load replicator: {error}"))?
+        .is_none()
+    {
+        return Err(format!(
+            "replicator {peer_id} removed before existing-document replay"
+        ));
+    }
     let txn = db
         .new_txn(true)
         .await
@@ -334,7 +344,19 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 .await
                 .map_err(|error| format!("failed to register replay marker: {error}"))?
             else {
-                return Ok(());
+                // Tasks already spawned are still pushing. Join them so the
+                // error below is the whole truth, then report the removal:
+                // Ok(()) here would let a caller publish a completion event
+                // while pushes are on the wire.
+                let mut error =
+                    format!("replicator {peer_id} removed during existing-document replay");
+                for (_, _, _, _, _, handle) in push_handles.drain(..) {
+                    let outcome: Option<bool> = handle.await;
+                    if outcome.is_none() {
+                        error.push_str("; replay push task panicked or its runtime stopped");
+                    }
+                }
+                return Err(error);
             };
 
             let mut requests = Vec::new();
