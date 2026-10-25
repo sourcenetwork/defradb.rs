@@ -165,7 +165,10 @@ async fn assert_local_turn(
     root: Cid,
 ) {
     let event = events.try_recv().expect("scheduled continuation");
-    assert!(matches!(&event, SyncEvent::DagReady { root_cid, .. } if *root_cid == root));
+    assert!(
+        matches!(&event, SyncEvent::DagReady { root_cid, .. } if *root_cid == root),
+        "expected local continuation for {root}, received {event:?}"
+    );
     coordinator
         .manager()
         .event_sender()
@@ -196,12 +199,15 @@ async fn thousands_of_yielded_turns_remain_pending_without_refetch_or_backoff() 
 
     for turn in 0..=TURNS {
         if turn != 0 {
-            assert_eq!(dispatch(&coordinator), 0, "no immediate spinning");
-            tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
             assert_eq!(
                 dispatch(&coordinator),
                 1,
-                "no exponential backoff at turn {turn}"
+                "local progress is ready at turn {turn}"
+            );
+            assert_eq!(
+                dispatch(&coordinator),
+                0,
+                "the queued continuation owns its slot"
             );
             assert_local_turn(&coordinator, &mut events, root).await;
         }
@@ -280,6 +286,8 @@ async fn continuation_reservations_bound_queued_work_and_allow_independent_root(
     assert_eq!(dispatch(&coordinator), 0);
     drop(owner);
     assert_eq!(coordinator.pending_dag_work_count(), 0);
+    // Keep the independent root strictly older than the next committed yield.
+    tokio::time::advance(Duration::from_millis(1)).await;
     // Consume the event as the individual (duplicate-CID fallback) path does.
     let handler = RetryThenMergeHandler::yielding(root, 2);
     let event = events.try_recv().unwrap();
@@ -422,7 +430,10 @@ async fn duplicate_continuation_batch_completes_only_after_final_turn() {
     tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
     assert_eq!(dispatch(&coordinator), 1);
     let event = events.try_recv().unwrap();
-    assert!(matches!(&event, SyncEvent::DagReady { root_cid, .. } if *root_cid == root));
+    assert!(
+        matches!(&event, SyncEvent::DagReady { root_cid, .. } if *root_cid == root),
+        "expected local continuation for {root}, received {event:?}"
+    );
     // A second arrival for the same root switches the production batch
     // runner to its serialized per-CID path.
     coordinator
@@ -586,7 +597,7 @@ async fn failed_continuation_validation_releases_batch_and_duplicate_reservation
                 .merge_continuation
         );
         assert_eq!(coordinator.pending_dag_work_count(), 0);
-        tokio::time::advance(PENDING_MERGE_CONTINUATION_DELAY).await;
+        tokio::time::advance(crate::sync::manager::pending::PENDING_RETRY_BASE).await;
         assert_eq!(
             dispatch(&coordinator),
             1,
@@ -627,7 +638,7 @@ async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinni
         [ReplicationResult::Failed { .. }]
     ));
 
-    let mut delay = PENDING_MERGE_CONTINUATION_DELAY;
+    let mut delay = crate::sync::manager::pending::PENDING_RETRY_BASE;
     for round in 1..=3 {
         assert_eq!(coordinator.pending_dag_work_count(), 0);
         assert!(
@@ -676,4 +687,69 @@ async fn retryable_error_after_yield_returns_to_paced_fetch_retry_without_spinni
     assert!(!blockstore.is_merged(&root).await.unwrap());
     assert_eq!(pending.load_all().await.unwrap().len(), 1);
     coordinator.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_clock_continues_local_history_without_a_timer_tick() {
+    let (blockstore, pending) = stores();
+    let root = seed(&blockstore, &pending, "ready-now").await;
+    let view = Arc::new(PersistedView::default());
+    pending.sweep(&view).await.unwrap();
+    assert!(pending.remove(&root, &view).await.unwrap());
+    let (coordinator, mut events) = restart(blockstore.clone(), pending).await;
+    let coordinator = Arc::new(coordinator);
+    let clock_coordinator = coordinator.clone();
+    let clock = tokio::spawn(async move {
+        clock_coordinator
+            .run_pending_dag_retry_clock(Duration::from_secs(60))
+            .await
+    });
+    let handler = RetryThenMergeHandler::yielding(root, 2);
+    coordinator
+        .manager()
+        .event_sender()
+        .send(SyncEvent::BlockReceived {
+            cid: root,
+            doc_id: "ready-now".into(),
+            collection_id: "col1".into(),
+            creator: "creator".into(),
+            sender_peer: Some("source".into()),
+            is_explicit_replicator: false,
+            explicit_replay_authorization: None,
+        })
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    for turn in 0..3 {
+        let results = tokio::time::timeout(
+            Duration::from_millis(1),
+            ReplicationLoop::process_next_batch(
+                &coordinator,
+                &mut events,
+                &handler,
+                &ReplicationConfig::default(),
+            ),
+        )
+        .await
+        .expect("locally ready history must not wait for a retry timer");
+        if turn < 2 {
+            assert!(matches!(
+                results.as_slice(),
+                [ReplicationResult::Skipped {
+                    terminal: false,
+                    ..
+                }]
+            ));
+        } else {
+            assert!(matches!(
+                results.as_slice(),
+                [ReplicationResult::Merged { .. }]
+            ));
+        }
+    }
+    assert_eq!(tokio::time::Instant::now(), started);
+    assert!(blockstore.is_merged(&root).await.unwrap());
+    assert_eq!(coordinator.pending_dag_count(), 0);
+    coordinator.shutdown().await;
+    clock.await.unwrap().unwrap();
 }

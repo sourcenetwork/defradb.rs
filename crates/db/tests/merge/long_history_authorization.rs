@@ -511,3 +511,78 @@ fn batch_resumption_rechecks_revoked_permission() {
     })
     .unwrap()
 }
+
+async fn collection_carrier_propagates_deep_ancestor_rejection(batch: bool) {
+    let owner = signer();
+    let attacker = signer();
+    let fixture = Fixture::new(&owner, None).await;
+    let root = fixture.history(&owner, Some(&attacker), 64).await;
+    let block = Block::new(
+        CrdtDelta::Collection(CollectionDeltaPayload {
+            schema_version_id: "v1".into(),
+            priority: 1,
+        }),
+        vec![],
+        vec![DAGLink::new("_head", root.cid)],
+    );
+    let cid = block.generate_cid().unwrap();
+    let expected = MergeOutcome::rejected(format!(
+        "signer {} lacks update permission on protected document {}",
+        attacker.did, fixture.doc_id,
+    ));
+    let handler = fixture.handler.with_single_history_turn();
+    for _ in 0..128 {
+        let outcome = if batch {
+            let carrier = MergeBlock {
+                cid,
+                block_data: block.to_dag_cbor().unwrap().into(),
+                doc_id: String::new(),
+                collection_id: "col-users".into(),
+                creator: owner.did.clone(),
+                sender_peer: Some("peer".into()),
+                is_explicit_replicator: false,
+                explicit_replay_authorization: None,
+                verified_creator: None,
+            };
+            handler
+                .handle_block_batch(&[carrier])
+                .await
+                .remove(0)
+                .unwrap()
+        } else {
+            handler
+                .handle_block(
+                    &cid,
+                    &block.to_dag_cbor().unwrap(),
+                    BlockMetadata::normal("", "col-users", &owner.did, Some("peer"), false),
+                )
+                .await
+                .unwrap()
+        };
+        if outcome != MergeOutcome::Yielded {
+            assert_eq!(outcome, expected);
+            let txn = handler.db().new_txn(true).await.unwrap();
+            let store = txn.systemstore().unwrap();
+            assert!(!store
+                .has(format!("/merge-history/v1/admissions/{}", root.cid).as_bytes())
+                .await
+                .unwrap());
+            assert!(!store
+                .has(format!("/merge-history/v1/{}/state", root.cid).as_bytes())
+                .await
+                .unwrap());
+            return;
+        }
+    }
+    panic!("collection carrier lost the terminal history rejection");
+}
+
+#[test]
+fn standalone_collection_propagates_deep_ancestor_rejection() {
+    workers::block_on(collection_carrier_propagates_deep_ancestor_rejection(false)).unwrap();
+}
+
+#[test]
+fn batch_collection_propagates_deep_ancestor_rejection() {
+    workers::block_on(collection_carrier_propagates_deep_ancestor_rejection(true)).unwrap();
+}

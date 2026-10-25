@@ -318,8 +318,8 @@ impl SharedPendingDags {
 
 /// Base delay before the first scheduled re-dispatch of a pending root.
 pub const PENDING_RETRY_BASE: Duration = Duration::from_secs(2);
-/// Pace committed local work without climbing the provider-failure ladder.
-pub const PENDING_MERGE_CONTINUATION_DELAY: Duration = Duration::from_secs(2);
+/// Local committed work is immediately eligible; the bounded scheduler owns fairness.
+pub const PENDING_MERGE_CONTINUATION_DELAY: Duration = Duration::ZERO;
 /// Ceiling for the per-root dispatch backoff.
 pub const PENDING_RETRY_CAP: Duration = Duration::from_secs(60);
 

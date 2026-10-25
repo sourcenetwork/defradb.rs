@@ -544,3 +544,61 @@ fn idle_cursor_reclamation_preserves_blocks_and_allows_the_history_to_restart() 
     })
     .unwrap()
 }
+
+#[test]
+fn production_replication_handler_yields_before_history_completion() {
+    workers::block_on(async {
+        let initial = make_handler().await;
+        let handler = db::merge::replication::create_merge_handler_with_max_merge_depth(
+            initial.db().clone(),
+            initial.blockstore().clone(),
+            8,
+        );
+        let mut history = History::default();
+        history
+            .append(handler.blockstore().as_ref(), 64, "revision")
+            .await;
+        let root = history.root();
+        let mut yielded = false;
+        let mut completed = false;
+        for _ in 0..128 {
+            let outcome = handler
+                .handle_block(
+                    &root.cid,
+                    &root.block_data,
+                    BlockMetadata::normal(
+                        &root.doc_id,
+                        &root.collection_id,
+                        &root.creator,
+                        root.sender_peer.as_deref(),
+                        false,
+                    ),
+                )
+                .await
+                .unwrap();
+            if outcome == MergeOutcome::Yielded {
+                yielded = true;
+            } else {
+                assert!(
+                    outcome.is_merged() || outcome.is_terminal_skip(),
+                    "{outcome:?}"
+                );
+                completed = true;
+                break;
+            }
+        }
+        assert!(
+            yielded,
+            "production construction must return control after a bounded history turn"
+        );
+        assert!(
+            completed,
+            "subsequent deliveries must finish the retained history"
+        );
+        assert_eq!(
+            read_document(&handler, root).await.unwrap().get("score"),
+            Some(&NormalValue::Int(64))
+        );
+    })
+    .unwrap();
+}

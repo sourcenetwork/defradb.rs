@@ -7,6 +7,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_HistoryDriver_Red_UnpacedRetry.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Red_TimerDelay.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Green.cfg HistoryDriver.tla GREEN"
+  "MC_HistoryDriver_Red_LocalLoop.cfg HistoryDriver.tla RED"
+  "MC_HistoryDriver_Red_SwallowedAbort.cfg HistoryDriver.tla RED"
   "MC_ContinuationSlot_Green.cfg ContinuationSlot.tla GREEN"
   "MC_ContinuationSlot_Red_LateClaim.cfg ContinuationSlot.tla RED"
   "MC_HistoryTurns_Green.cfg HistoryTurns.tla GREEN"

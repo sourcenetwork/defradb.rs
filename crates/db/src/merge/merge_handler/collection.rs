@@ -248,6 +248,15 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
                                 retryable_skip.get_or_insert(outcome);
                             }
                             Err(e) => {
+                                if matches!(
+                                    e,
+                                    MergeError::HistoryRequired
+                                        | MergeError::HistoryAborted(_)
+                                        | MergeError::NeedsDecryptionKey(_)
+                                        | MergeError::DepthExceeded { .. }
+                                ) {
+                                    return Err(e);
+                                }
                                 tracing::debug!(link_cid = %link_cid, error = %e, "Composite merge failed");
                                 if e.disposition() == MergeErrorDisposition::Retryable {
                                     unprocessed.get_or_insert_with(|| {
@@ -696,3 +705,7 @@ async fn append_merged_collection_head(
     .await
     .map_err(storage_error)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/merge/collection_history_control.rs"]
+mod history_control_tests;

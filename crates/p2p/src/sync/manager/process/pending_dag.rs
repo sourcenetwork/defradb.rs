@@ -469,8 +469,8 @@ impl<B: Blockstore + 'static> SyncManager<B> {
                     return false;
                 }
                 if dag.merge_continuation {
-                    dag.next_retry_at =
-                        now + super::super::pending::PENDING_MERGE_CONTINUATION_DELAY;
+                    // A committed yield makes the root ready again; errors or lost claims keep retry pacing.
+                    dag.next_retry_at = now + super::super::pending::PENDING_RETRY_BASE;
                 } else {
                     dag.dispatches = dag.dispatches.saturating_add(1);
                     dag.next_retry_at = now + super::super::pending::retry_backoff(dag.dispatches);

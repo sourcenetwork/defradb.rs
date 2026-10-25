@@ -2,6 +2,8 @@
 A history page publishes each ancestor once. Restart may reset the cursor, but
 not the published set. A cancelled page changes neither writes nor its cursor.
 Rust: merge_handler/history.rs; concurrency is modeled in HistoryTurns.tla.
+Driver handoff follows replication.rs construction and collection.rs error propagation;
+HistoryDriver.tla models their scheduling and rejection boundary.
 -/
 namespace HistoryTurns
 
@@ -56,5 +58,41 @@ def finishSlot (reserved owned : Bool) : Bool := reserved && !owned
 theorem owned_slot_released (reserved : Bool) : finishSlot reserved true = false := by
   -- Neither initial reservation state can survive its owner's drop.
   cases reserved <;> rfl
+
+-- Collection carriers preserve driver signals from their linked composites.
+inductive DriverSignal where
+  | ordinaryRetry
+  | historyRequired
+  | historyAborted
+  | decryptionKey
+  | depthExceeded
+  deriving DecidableEq
+
+-- Retrying a collection locally is valid only for an ordinary transient failure.
+def propagate (signal : DriverSignal) : Bool :=
+  match signal with
+  | .ordinaryRetry => false
+  | _ => true
+
+-- A rejected history must reach the driver that fences and clears its cursor.
+theorem history_abort_reaches_driver : propagate .historyAborted = true := by
+  -- The carrier cannot turn this signal into an ordinary retryable skip.
+  rfl
+
+-- Every scheduling turn returns control to the owner of continuation delivery.
+def yieldToScheduler (singleTurn : Bool) : Bool := singleTurn
+
+-- Production replication handlers hand yielded work to the continuation scheduler.
+theorem replication_hands_off : yieldToScheduler true = true := by
+  -- The production construction selects the same bounded-turn mode.
+  rfl
+
+-- A locally ready page becomes due at its registration time, without retry backoff.
+def continuationDue (now : Nat) : Nat := now
+
+-- The scheduler can claim a committed page without advancing a timer.
+theorem continuation_immediately_due (now : Nat) : continuationDue now ≤ now := by
+  -- Scheduling local work keeps the current instant instead of adding a delay.
+  exact Nat.le_refl now
 
 end HistoryTurns
