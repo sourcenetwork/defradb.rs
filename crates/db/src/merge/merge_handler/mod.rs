@@ -18,6 +18,7 @@ mod doc_identity;
 mod encryption;
 pub(crate) mod error;
 mod frame_source;
+mod history;
 pub mod hook;
 mod lww;
 mod merge_keys;
@@ -27,8 +28,8 @@ pub mod se_merge;
 mod signature;
 pub(crate) use signature::verify_signature_data;
 
-pub use error::MergeError;
 pub(crate) use error::{CounterMergeResult, LwwMergeResult};
+pub use error::{HistoryRejection, MergeError};
 
 use kovan_map::HopscotchMap;
 use kovan_queue::seg_queue::SegQueue;
@@ -105,6 +106,8 @@ pub struct DbMergeHandler<S: Store, B: blockstore::Blockstore> {
     pub(crate) blockstore: Arc<B>,
     /// Shared parent-chain depth policy for identity and merge traversals.
     max_merge_depth: usize,
+    history_mode: bool,
+    single_history_turn: bool,
     /// Optional merge hook for policy-specific behavior around composite merges.
     composite_merge_hook: Arc<regolith::sync::OnceCell<Arc<dyn CompositeMergeHook>>>,
     /// Tracks composite CIDs that have already been merged, preventing
@@ -159,6 +162,8 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
             db: Arc::clone(&self.db),
             blockstore: Arc::clone(&self.blockstore),
             max_merge_depth: self.max_merge_depth,
+            history_mode: self.history_mode,
+            single_history_turn: self.single_history_turn,
             composite_merge_hook: Arc::clone(&self.composite_merge_hook),
             merged_composites: Arc::clone(&self.merged_composites),
             merged_collections: Arc::clone(&self.merged_collections),
@@ -178,6 +183,15 @@ impl<S: Store, B: blockstore::Blockstore> Clone for DbMergeHandler<S, B> {
 }
 
 impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
+    /// Return a driver that commits at most one history page per call.
+    /// Callers must reschedule `MergeOutcome::Yielded`; ordinary handlers keep
+    /// working on the document's worker, yielding between committed pages.
+    pub fn with_single_history_turn(&self) -> Self {
+        let mut handler = self.clone();
+        handler.single_history_turn = true;
+        handler
+    }
+
     pub(super) fn with_retry_decryption_context(
         &self,
         keys: RetryDecryptionKeys,
@@ -277,6 +291,8 @@ impl<S: Store, B: blockstore::Blockstore> DbMergeHandler<S, B> {
             db,
             blockstore,
             max_merge_depth,
+            history_mode: false,
+            single_history_turn: false,
             composite_merge_hook: Arc::new(regolith::sync::OnceCell::new()),
             merged_composites: Arc::new(cid_set()),
             merged_collections: Arc::new(cid_set()),

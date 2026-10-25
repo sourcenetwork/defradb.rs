@@ -4,6 +4,16 @@ use cid::Cid;
 use defra_core::merge::MergeErrorDisposition;
 use document::NormalValue;
 
+/// A rejected history attempt and the exact cursor incarnation it observed.
+#[derive(Debug, thiserror::Error)]
+#[error("history {root} rejected: {reason}")]
+pub struct HistoryRejection {
+    pub(super) root: Cid,
+    pub(super) context: [u8; 32],
+    pub(super) generation: [u8; 16],
+    pub(super) reason: String,
+}
+
 /// Error type for database merge operations.
 #[derive(Debug, thiserror::Error)]
 pub enum MergeError {
@@ -77,6 +87,14 @@ pub enum MergeError {
     #[error("block signature verification failed for cid={cid}: {reason}")]
     SignatureVerificationFailed { cid: Cid, reason: String },
 
+    /// The caller must discard its shared transaction and resume per root.
+    #[error("history requires a resumable merge turn")]
+    HistoryRequired,
+
+    /// Discard the data attempt before recording a history's rejection.
+    #[error(transparent)]
+    HistoryAborted(Box<HistoryRejection>),
+
     /// DAG traversal depth limit exceeded.
     ///
     /// A maliciously crafted deeply-nested DAG could otherwise consume unbounded resources.
@@ -112,7 +130,9 @@ impl MergeError {
             | Self::Storage(_)
             | Self::Kms(_)
             | Self::NeedsDecryptionKey(_)
-            | Self::NeedsBatchDecryptionKey { .. } => MergeErrorDisposition::Retryable,
+            | Self::NeedsBatchDecryptionKey { .. }
+            | Self::HistoryRequired
+            | Self::HistoryAborted(_) => MergeErrorDisposition::Retryable,
         }
     }
 }
