@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LogConfig {
     pub level: LogLevel,
     pub output: LogOutput,
@@ -43,6 +44,7 @@ impl Default for LogConfig {
 
 /// API configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ApiConfig {
     pub address: String,
     #[serde(default)]
@@ -186,6 +188,7 @@ impl ApiConfig {
 
 /// Embedding configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EmbeddingConfig {
     #[serde(default)]
     pub url: String,
@@ -211,6 +214,7 @@ impl Default for EmbeddingConfig {
 
 /// Datastore configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DatastoreConfig {
     pub store: DatastoreType,
     pub path: String,
@@ -289,6 +293,7 @@ impl std::fmt::Debug for NetworkSecretHex {
 
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NetConfig {
     pub p2p_disabled: bool,
     pub p2p_addresses: Vec<String>,
@@ -574,6 +579,7 @@ impl NetConfig {
 
 /// Keyring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeyringConfig {
     pub backend: KeyringBackend,
     pub path: String,
@@ -598,6 +604,7 @@ impl Default for KeyringConfig {
 /// - Node Access Control (NAC): Controls access to node-level operations
 /// - Document Access Control (DAC): Controls access to individual documents
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AcpConfig {
     /// Enable Node Access Control (NAC).
     ///

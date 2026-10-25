@@ -35,6 +35,7 @@ pub use types::KeyringBackend;
 
 /// Complete configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     #[serde(skip)]
     pub rootdir: PathBuf,

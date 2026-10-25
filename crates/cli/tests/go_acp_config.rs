@@ -2,24 +2,18 @@ use clap::Parser;
 use cli::cli::Cli;
 use cli::config::Config;
 
-fn load(acp_yaml: &str, extra: &[&str]) -> Config {
-    let mut value = serde_yaml::to_value(Config::default()).unwrap();
-    let mut acp: serde_yaml::Mapping = serde_yaml::from_str(acp_yaml).unwrap();
-    acp.insert("node_enable".into(), false.into());
-    value
-        .as_mapping_mut()
-        .unwrap()
-        .insert("acp".into(), acp.into());
-    let root = tempfile::tempdir().unwrap();
-    std::fs::write(
-        root.path().join("config.yaml"),
-        serde_yaml::to_string(&value).unwrap(),
-    )
-    .unwrap();
-    let mut args = vec!["defradb", "--rootdir", root.path().to_str().unwrap()];
+fn load_dir(root: &std::path::Path, extra: &[&str]) -> Config {
+    let mut args = vec!["defradb", "--rootdir", root.to_str().unwrap()];
     args.extend_from_slice(extra);
     args.push("version");
     Config::load(&Cli::try_parse_from(args).unwrap()).unwrap()
+}
+
+fn load(acp_yaml: &str, extra: &[&str]) -> Config {
+    let root = tempfile::tempdir().unwrap();
+    let indented: String = acp_yaml.lines().map(|line| format!("  {line}\n")).collect();
+    std::fs::write(root.path().join("config.yaml"), format!("acp:\n{indented}")).unwrap();
+    load_dir(root.path(), extra)
 }
 
 #[cfg(feature = "vera")]
@@ -90,4 +84,25 @@ fn go_keyname_is_ignored_and_the_rest_loads() {
     );
     assert_eq!(with_keyname.acp.remote_address, without.acp.remote_address);
     assert_eq!(with_keyname.acp.document_type, without.acp.document_type);
+}
+
+#[test]
+fn acp_only_config_loads_every_other_section_from_defaults() {
+    let root = tempfile::tempdir().unwrap();
+    let defaults = load_dir(root.path(), &[]);
+    std::fs::write(
+        root.path().join("config.yaml"),
+        "acp:\n  document:\n    type: none\n    remote:\n      address: acct\n",
+    )
+    .unwrap();
+    let loaded = load_dir(root.path(), &[]);
+
+    assert_eq!(loaded.acp.remote_address, "acct");
+    assert_eq!(loaded.acp.node_enable, defaults.acp.node_enable);
+    let without_acp = |config: &Config| {
+        let mut value = serde_yaml::to_value(config).unwrap();
+        value.as_mapping_mut().unwrap().remove("acp");
+        value
+    };
+    assert_eq!(without_acp(&loaded), without_acp(&defaults));
 }
