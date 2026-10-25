@@ -89,7 +89,7 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
-        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred",
+        name: "selection_owns_acknowledgements / absent_replay_is_refused / selected_failure_is_not_deferred / selected_retains_heads / absent_peer_has_no_observation",
         axis: Lean,
         anchor: "crates/db/src/merge/push_docs.rs; crates/db/tests/merge/push_docs_selection.rs",
         model_ref: "DocumentPush.lean; selected_document_transfers_match_executed_model",

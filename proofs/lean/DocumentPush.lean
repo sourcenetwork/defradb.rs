@@ -32,6 +32,22 @@ def completion (owner : Ownership) (allHeadsAcknowledged retryRetained : Bool) :
   if allHeadsAcknowledged then .acknowledged
   else if owner == .replicator && retryRetained then .retainedRetry else .failed
 
+/-- Retained observation belongs to the installed peer, independently of transfer ownership.
+Removing the peer discards its observations; an independent transfer still reports
+its actual acknowledgement without creating a subscription. -/
+def retainedAcknowledgement (explicit present acknowledged : Bool) : Bool :=
+  (ownership explicit present).isSome && present && acknowledged
+
+/-- A selected transfer retains accepted heads while the peer remains installed. -/
+theorem selected_retains_heads (present acknowledged : Bool) :
+    retainedAcknowledgement true present acknowledged = (present && acknowledged) := by
+  simp [retainedAcknowledgement, ownership]
+
+/-- Successful standalone transfers do not invent retained peer state. -/
+theorem absent_peer_has_no_observation (explicit acknowledged : Bool) :
+    retainedAcknowledgement explicit false acknowledged = false := by
+  cases explicit <;> simp [retainedAcknowledgement, ownership]
+
 theorem enrollment_without_subscription : ownership true false = some .selected := rfl
 
 theorem absent_replay_is_refused : ownership false false = none := rfl
@@ -80,7 +96,8 @@ def emit : IO Unit := do
           | some .retainedRetry => "retainedRetry"
           | some .failed => "failed"
         IO.println (String.intercalate "\t"
-          [toString explicit, toString present, toString acknowledged, ownerTag, tag])
+          [toString explicit, toString present, toString acknowledged, ownerTag, tag,
+           toString (retainedAcknowledgement explicit present acknowledged)])
 
 end DocumentPush
 

@@ -65,6 +65,7 @@ RUNS=(
   "MC_DocumentPush_Red_Fence.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Marker.cfg DocumentPush.tla RED"
   "MC_DocumentPush_Red_Acknowledgement.cfg DocumentPush.tla RED"
+  "MC_DocumentPush_Red_Retained.cfg DocumentPush.tla RED"
   "MC_StorageFailure_Green.cfg StorageFailure.tla GREEN"
   "MC_StorageFailure_Red_LostCause.cfg StorageFailure.tla RED"
   "MC_StorageFailure_Red_Text.cfg StorageFailure.tla RED"

@@ -503,6 +503,10 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     });
                     continue;
                 }
+                let acknowledged_heads = current_heads
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
                 if let Some(marker_generation) = marker_generation {
                     peerstore
                         .complete_retry_scope(
@@ -511,13 +515,21 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                             &collection_id,
                             false,
                             marker_generation,
-                            &current_heads
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>(),
+                            &acknowledged_heads,
                         )
                         .await
                         .map_err(|error| format!("failed to clear replay marker: {error}"))?;
+                } else {
+                    peerstore
+                        .record_acknowledged_heads(
+                            peer_id.as_str(),
+                            &doc_id,
+                            &collection_id,
+                            false,
+                            &acknowledged_heads,
+                        )
+                        .await
+                        .map_err(|error| format!("failed to record selected heads: {error}"))?;
                 }
                 if let PushOwnership::Selected(pending) = &mut ownership {
                     pending.remove(&(collection_name, doc_id));

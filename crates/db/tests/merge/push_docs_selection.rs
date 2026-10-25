@@ -1,5 +1,8 @@
 use super::push_docs_replay::ConnectedPeerTransport;
-use db::merge::{push_existing_docs, push_existing_docs_by_id, PushExistingDocsSeOptions};
+use db::merge::{
+    document_heads_acknowledged, push_existing_docs, push_existing_docs_by_id,
+    PushExistingDocsSeOptions,
+};
 use db::{AutoCommitMutator, DB};
 use document::Document;
 use p2p::transport::PeerId;
@@ -25,7 +28,7 @@ fn selected_document_transfers_match_executed_model() {
     let mut count = 0;
     for line in cases.lines() {
         let fields: Vec<_> = line.split('\t').collect();
-        let [explicit, present, acknowledged, owner, expected] = fields.as_slice() else {
+        let [explicit, present, acknowledged, owner, expected, retained] = fields.as_slice() else {
             panic!("invalid model case: {line}")
         };
         workers::block_on(exercise(
@@ -34,6 +37,7 @@ fn selected_document_transfers_match_executed_model() {
             acknowledged.parse().unwrap(),
             owner,
             expected,
+            retained.parse().unwrap(),
         ))
         .unwrap();
         count += 1;
@@ -41,7 +45,14 @@ fn selected_document_transfers_match_executed_model() {
     assert!(count > 0, "model emitted no transfer cases");
 }
 
-async fn exercise(explicit: bool, present: bool, acknowledged: bool, owner: &str, expected: &str) {
+async fn exercise(
+    explicit: bool,
+    present: bool,
+    acknowledged: bool,
+    owner: &str,
+    expected: &str,
+    retained: bool,
+) {
     let store = Arc::new(storage::RegolithStore::in_memory().unwrap());
     let db = Arc::new(DB::from_arc(store).unwrap());
     db.set_network(edge::testing::edge());
@@ -135,6 +146,14 @@ async fn exercise(explicit: bool, present: bool, acknowledged: bool, owner: &str
             "explicit={explicit} present={present} acknowledged={acknowledged} owner={owner}"
         );
     }
+    let observed = document_heads_acknowledged(&db, peer.as_str(), "PushNote", &ids)
+        .await
+        .unwrap();
+    assert_eq!(
+        observed,
+        vec![retained, retained && !explicit],
+        "retained heads: explicit={explicit} present={present} acknowledged={acknowledged}"
+    );
     match expected {
         "refused" => {
             assert!(result.is_err());
