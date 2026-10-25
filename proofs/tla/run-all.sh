@@ -7,6 +7,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # rows: <cfg> <module> <GREEN|RED>
 RUNS=(
+  "MC_EndpointBind_Green.cfg EndpointBind.tla GREEN"
+  "MC_EndpointBind_Red_Retain.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Address.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Port.cfg EndpointBind.tla RED"
+  "MC_EndpointBind_Red_Defaults.cfg EndpointBind.tla RED"
   "MC_RootedAuthorization_Green.cfg RootedAuthorization.tla GREEN"
   "MC_RootedAuthorization_Red_DuplicateOwner.cfg RootedAuthorization.tla RED"
   "MC_RootedAuthorization_Red_LostResume.cfg RootedAuthorization.tla RED"
