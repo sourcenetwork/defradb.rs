@@ -31,6 +31,9 @@ lean_lib SingleFlight where
 lean_lib CommitFence where
 
 @[default_target]
+lean_lib HistoryTurns where
+
+@[default_target]
 lean_lib EngineTickers where
 
 @[default_target]

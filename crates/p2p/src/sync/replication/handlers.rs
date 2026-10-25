@@ -259,6 +259,10 @@ where
     H: MergeHandler + ?Sized + 'static,
 {
     // Load block from blockstore
+    let _pending_owner = coordinator.pending_dag_merge_guard(cid);
+    coordinator
+        .manager()
+        .consume_pending_merge_continuation(&cid);
     let block_data = match coordinator.blockstore().get(&cid).await {
         Ok(Some(data)) => data,
         Ok(None) => {
@@ -342,7 +346,10 @@ where
     let sender_peer = metadata.sender_peer;
 
     // Delegate merge to handler
-    match handler.handle_block(&cid, &block_data, metadata).await {
+    match handler
+        .handle_block(&cid, &block_data, metadata.clone())
+        .await
+    {
         Ok(MergeOutcome::Merged) => {
             if let Some(peer_id) = sender_peer {
                 coordinator.peer_state().record_block_received(peer_id);
@@ -436,6 +443,21 @@ where
                 cid,
                 doc_id: doc_id_for_result,
                 collection_id: collection_id_for_result,
+            }
+        }
+        Ok(MergeOutcome::Yielded) => {
+            if !coordinator.manager().continue_merge(&cid, Some(&metadata)) {
+                return ReplicationResult::Failed {
+                    cid,
+                    error: "merge continuation capacity reached".into(),
+                };
+            }
+            ReplicationResult::Skipped {
+                cid,
+                doc_id: doc_id_for_result,
+                collection_id: collection_id_for_result,
+                reason: "merge work budget yielded".to_string(),
+                terminal: false,
             }
         }
         Ok(MergeOutcome::Skipped { reason, terminal }) => {
@@ -612,6 +634,17 @@ where
 {
     let mut merge_blocks = Vec::with_capacity(events.len());
     let mut results = Vec::new();
+    let _pending_owners: Vec<_> = events
+        .iter()
+        .filter_map(event_merge_cid)
+        .map(|cid| {
+            let owner = coordinator.pending_dag_merge_guard(cid);
+            coordinator
+                .manager()
+                .consume_pending_merge_continuation(&cid);
+            owner
+        })
+        .collect();
 
     // Load block data for each event from blockstore
     for event in &events {
@@ -695,6 +728,34 @@ where
                     cid: block.cid,
                     doc_id: block.doc_id.clone(),
                     collection_id: block.collection_id.clone(),
+                });
+            }
+            Ok(MergeOutcome::Yielded) => {
+                let mut metadata = BlockMetadata::normal(
+                    &block.doc_id,
+                    &block.collection_id,
+                    &block.creator,
+                    block.sender_peer.as_deref(),
+                    block.is_explicit_replicator,
+                );
+                metadata.explicit_replay_authorization =
+                    block.explicit_replay_authorization.clone();
+                if !coordinator
+                    .manager()
+                    .continue_merge(&block.cid, Some(&metadata))
+                {
+                    results.push(ReplicationResult::Failed {
+                        cid: block.cid,
+                        error: "merge continuation capacity reached".into(),
+                    });
+                    continue;
+                }
+                results.push(ReplicationResult::Skipped {
+                    cid: block.cid,
+                    doc_id: block.doc_id.clone(),
+                    collection_id: block.collection_id.clone(),
+                    reason: "merge work budget yielded".to_string(),
+                    terminal: false,
                 });
             }
             Ok(MergeOutcome::Skipped { reason, terminal }) => {
@@ -972,7 +1033,7 @@ where
 
 /// Process one sync event, unless the block it would merge already merged.
 ///
-/// It claims nothing and waits for no other merge or fetch of the CID: one
+/// It takes no merge lock and waits for no other merge or fetch of the CID: one
 /// merge per CID comes from the exactly-once race on the block's applied key
 /// (`h/p/`) in the merge transaction, which a concurrent merge of the same
 /// block loses or finds already applied.
@@ -987,6 +1048,9 @@ where
     T: P2PTransport,
     H: MergeHandler + ?Sized + 'static,
 {
+    // Own the queued slot before reconciliation can return without merging.
+    let _pending_owner =
+        event_merge_cid(&event).and_then(|cid| coordinator.pending_dag_merge_guard(cid));
     if let Some(cid) = event_merge_cid(&event) {
         if let Some(result) = skipped_if_already_merged(coordinator, &event, cid).await {
             return result;

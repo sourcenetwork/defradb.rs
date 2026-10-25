@@ -24,6 +24,7 @@ struct MergeRetryAttempt<S: Store, B: blockstore::Blockstore> {
     authorization: Option<ExplicitReplayAuthorization>,
     is_recovery: bool,
     is_schema_block: bool,
+    history_rejection: Option<Box<super::HistoryRejection>>,
 }
 
 impl<S: Store + 'static, B: blockstore::Blockstore + 'static> storage::corekv::RetryAttemptFn
@@ -72,27 +73,38 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> MergeRetryAttempt<
             is_recovery: self.is_recovery,
             is_schema_block: self.is_schema_block,
         };
-        let result = self
-            .handler
-            .process_block_in_txn(
-                &datastore,
-                &headstore,
-                &systemstore,
-                &self.cid,
-                &self.block_data,
-                &metadata,
-                &batch_merged,
-                &batch_merged_collections,
-                &pending_events,
-                &pending_post_commit_actions,
-                &pending_field_block_finalizations,
-            )
-            .await;
+        let result = if let Some(rejection) = &self.history_rejection {
+            self.handler
+                .reject_history(
+                    &systemstore,
+                    &rejection.root,
+                    &rejection.context,
+                    &rejection.generation,
+                    &rejection.reason,
+                )
+                .await
+        } else {
+            self.handler
+                .process_block_in_txn(
+                    &datastore,
+                    &headstore,
+                    &systemstore,
+                    &self.cid,
+                    &self.block_data,
+                    &metadata,
+                    &batch_merged,
+                    &batch_merged_collections,
+                    &pending_events,
+                    &pending_post_commit_actions,
+                    &pending_field_block_finalizations,
+                )
+                .await
+        };
         drop(datastore);
         drop(headstore);
         drop(systemstore);
         let outcome = match result {
-            Ok(MergeOutcome::Rejected { reason }) => {
+            Ok(MergeOutcome::Rejected { reason }) if self.history_rejection.is_none() => {
                 let _ = txn.discard();
                 return Err(MergeError::RetryRejected(reason));
             }
@@ -241,7 +253,10 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
             .creator
             .map(str::to_owned)
             .or_else(|| recovered.as_ref().map(|value| value.creator.clone()));
-        let retry_deks = super::retry_decryption_keys();
+        let mut retry_deks = super::retry_decryption_keys();
+        let mut history_mode = false;
+        let mut prepare_history_keys = false;
+        let mut history_rejection = None;
         let prefetch_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let retry_metadata = BlockMetadata {
             doc_id: doc_id.as_deref(),
@@ -261,11 +276,21 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 .await;
         }
         let result = loop {
+            if prepare_history_keys && history_rejection.is_none() {
+                if let Ok(block) = Block::from_dag_cbor(block_data) {
+                    let cids = self.history_key_cids(&block, cid).await?;
+                    self.prefill_retry_keys(&kms_context, &cids, &retry_deks)
+                        .await;
+                }
+                prepare_history_keys = false;
+            }
+            let mut handler = self.with_retry_decryption_context(
+                Arc::clone(&retry_deks),
+                Arc::clone(&prefetch_requested),
+            );
+            handler.history_mode = history_mode;
             let attempt = MergeRetryAttempt {
-                handler: self.with_retry_decryption_context(
-                    Arc::clone(&retry_deks),
-                    Arc::clone(&prefetch_requested),
-                ),
+                handler,
                 cid: *cid,
                 block_data: block_data.to_vec(),
                 doc_id: doc_id.clone(),
@@ -276,6 +301,7 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 authorization: metadata.explicit_replay_authorization.clone(),
                 is_recovery: metadata.is_recovery,
                 is_schema_block: metadata.is_schema_block,
+                history_rejection: history_rejection.take(),
             };
             let result = self
                 .db
@@ -284,12 +310,30 @@ impl<S: Store + 'static, B: blockstore::Blockstore + 'static> DbMergeHandler<S, 
                 .await;
             match result {
                 Ok(value) => {
-                    break value
+                    let outcome = value
                         .downcast::<MergeOutcome>()
                         .map(|outcome| *outcome)
-                        .map_err(|_| MergeError::MergeFailed("invalid merge retry result".into()));
+                        .map_err(|_| {
+                            MergeError::MergeFailed("invalid merge retry result".into())
+                        })?;
+                    if matches!(outcome, MergeOutcome::Yielded) && !self.single_history_turn {
+                        retry_deks = super::retry_decryption_keys();
+                        prepare_history_keys = history_mode;
+                        workers::yield_now().await;
+                        continue;
+                    }
+                    break Ok(outcome);
                 }
                 Err(error) => match error.downcast_abort::<MergeError>() {
+                    Ok(MergeError::HistoryRequired | MergeError::DepthExceeded { .. })
+                        if !history_mode =>
+                    {
+                        history_mode = true;
+                        prepare_history_keys = true;
+                    }
+                    Ok(MergeError::HistoryAborted(rejection)) => {
+                        history_rejection = Some(rejection);
+                    }
                     Ok(MergeError::NeedsDecryptionKey(enc_cid)) => {
                         if retry_deks.contains_key(&enc_cid) {
                             break Err(super::repeated_key_request(&enc_cid));

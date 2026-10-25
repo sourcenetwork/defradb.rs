@@ -48,6 +48,46 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "INV_Released — an early reconciliation return releases its queued continuation slot",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/replication/handlers.rs::process_one_event; crates/p2p/src/sync/replication/continuation_tests.rs::already_merged_duplicate_continuation_releases_reservation_without_handler",
+        model_ref: "MC_ContinuationSlot_{Green,Red_LateClaim}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "owned_slot_released — dropping the continuation owner releases its slot",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs::claim_pending_dag_merge; crates/p2p/src/sync/replication/handlers.rs::process_one_event",
+        model_ref: "HistoryTurns.owned_slot_released (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Rejected-page cleanup compares the cursor incarnation before removing it",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/history.rs::reject_history; crates/db/tests/merge/history_cursor.rs",
+        model_ref: "MC_RetryMarkerGeneration_{Green,Red_StaleAck,Red_Readd}.cfg (incarnation-fenced retirement abstraction)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "History turns commit cursor and writes together; reclaim preserves publications",
+        axis: Tla,
+        anchor: "crates/db/src/merge/merge_handler/history.rs; history_registry.rs; dispatch.rs; crates/db/src/merge/replication.rs; crates/db/tests/merge/collection_history_control.rs",
+        model_ref: "MC_HistoryTurns_{Green,Red_*}.cfg; MC_HistoryDriver_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Ancestor publication is idempotent; cleanup and collection carriers preserve driver ownership",
+        axis: Lean,
+        anchor: "crates/db/src/merge/merge_handler/history.rs",
+        model_ref: "HistoryTurns (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Peer connection observation",
         name: "NoSpuriousDenial — queued lifecycle notification cannot hide a connected peer",
         axis: Tla,
