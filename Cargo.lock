@@ -1796,6 +1796,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
+ "workers",
  "x25519-dalek 2.0.1",
 ]
 

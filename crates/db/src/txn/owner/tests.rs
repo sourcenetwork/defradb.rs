@@ -237,3 +237,43 @@ fn abandoning_or_dropping_the_registry_ends_the_transaction() {
     }
     pool.shutdown_blocking().unwrap();
 }
+
+#[test]
+fn a_standalone_read_called_on_a_worker_runs_on_that_worker() {
+    let pool = pool(4);
+    for index in 0..4 {
+        let on_pool = pool.clone();
+        let ran = block_on(async {
+            pool.submit(workers::Target::Worker(index), move || async move {
+                let owners = Probes::new(on_pool);
+                owners
+                    .run_anywhere("read", || async {
+                        workers::current_worker().unwrap().index
+                    })
+                    .await
+            })
+            .await
+            .unwrap()
+            .await
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            ran,
+            Ok(index),
+            "the read stays on the worker it was called from"
+        );
+    }
+    pool.shutdown_blocking().unwrap();
+}
+
+#[test]
+fn a_standalone_read_called_off_the_workers_runs_on_one() {
+    let owners = Probes::new(pool(4));
+    let ran = block_on(owners.run_anywhere("read", || async {
+        workers::current_worker().map(|worker| worker.index)
+    }))
+    .unwrap()
+    .unwrap();
+    assert!(ran.is_some(), "the read runs on a worker of the pool");
+}

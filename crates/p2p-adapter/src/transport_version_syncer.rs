@@ -244,7 +244,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static, T: P2PTranspo
             syncer.sync(version_ids, connected_peers).await
         })
         .await
-        .map_err(|_| P2PError::internal("the node is shutting down; try again"))?
+        .map_err(|error| P2PError::internal(error.report("version sync")))?
     }
 
     /// A browser's one worker is the page's thread: the sync runs in place.

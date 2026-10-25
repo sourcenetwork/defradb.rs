@@ -319,6 +319,8 @@ jobs:
           build: true
           test: false
           use-mathlib-cache: false
+      - name: Check storage failure model binding
+        run: cargo test -p query --test storage_failure -- --ignored
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 

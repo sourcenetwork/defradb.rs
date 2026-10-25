@@ -1,0 +1,18 @@
+sequenceDiagram
+    autonumber
+    participant W as worker W: write doc d as identity i
+    participant A as worker A: revoke i's relationship on d
+    participant R as regolith
+
+    W->>R: ACP check in this transaction: point reads and scan_validated of the tuples granting i on d
+    R-->>W: tuple present: allowed
+    W->>R: merge(d, part operand)
+    A->>R: delete the tuple
+    A->>R: commit
+    R-->>A: committed: i is revoked
+    W->>R: commit
+    Note over R: the tuple the decision rested on changed
+    R-->>W: Conflict: mine Read or ScannedRange, theirs Delete on the ACP tuple
+    W->>R: transact re-runs with the reason
+    W->>R: ACP check: tuple absent
+    Note over W: business logic: deny, a write never commits after a revocation it raced

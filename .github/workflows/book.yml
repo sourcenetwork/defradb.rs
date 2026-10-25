@@ -1,0 +1,70 @@
+name: book
+
+# Build the Book of Defra and deploy it to the book/ directory of the gh-pages
+# branch whenever the book's sources change on main (merge or direct push), or
+# on demand. The perf workflow publishes the performance dashboard (index.html
+# and runs/) to the same branch with keep_files, so this job must never wipe
+# it: it publishes into book/ only, keeping every other path.
+# Served at https://sourcenetwork.github.io/defradb.rs/book/
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/book/**"
+      - ".github/workflows/book.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: book-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MDBOOK_VERSION: "0.5.4"
+  MDBOOK_MERMAID_VERSION: "0.17.1"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail on unrendered mermaid sources
+        run: |
+          # Every diagram the book embeds as a PNG must also keep its source
+          # beside it, so a diagram can always be edited and re-rendered.
+          missing=0
+          for png in docs/book/src/diagrams/*.png; do
+            src="${png%.png}.mermaid"
+            if [ ! -f "$src" ]; then
+              echo "missing mermaid source for $png"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Install mdbook and mdbook-mermaid
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@${{ env.MDBOOK_VERSION }},mdbook-mermaid@${{ env.MDBOOK_MERMAID_VERSION }}
+
+      - name: Build the book
+        run: mdbook build docs/book
+
+      - name: Check internal links resolve
+        run: |
+          # mdbook warns on broken intra-book links; surface them as failures.
+          set -o pipefail
+          mdbook build docs/book 2>&1 | tee /tmp/book-build.log
+          ! grep -E "WARN.*\[output\.html\]|linking to non-existent" /tmp/book-build.log
+
+      - name: Deploy to gh-pages under book/
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/book/book
+          publish_branch: gh-pages
+          destination_dir: book
+          commit_message: "deploy: book of defra"

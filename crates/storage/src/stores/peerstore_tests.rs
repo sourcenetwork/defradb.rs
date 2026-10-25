@@ -247,7 +247,7 @@ impl FaultyTransactStore {
     fn new(io_failures: usize, conflicts: usize) -> Arc<Self> {
         Self::over(
             Arc::new(RegolithStore::in_memory().unwrap()),
-            crate::corekv::Error::Io("injected marker write failure".into()),
+            crate::corekv::Error::from(std::io::Error::other("injected marker write failure")),
             io_failures,
             conflicts,
         )
@@ -399,7 +399,9 @@ fn transient_marker_io_failure_recovers_durable_scopes() {
         for (doc_id, failure) in [
             (
                 "doc",
-                crate::corekv::Error::Io("injected transient marker failure".to_string()),
+                crate::corekv::Error::from(std::io::Error::other(
+                    "injected transient marker failure",
+                )),
             ),
             (
                 "",

@@ -138,7 +138,10 @@ impl Names {
 }
 
 fn io_error(error: io::Error, action: String) -> Error {
-    Error::Io(format!("store rewrite could not {action}: {error}"))
+    Error::Io(
+        crate::corekv::IoFailure::from(error)
+            .with_context(format!("store rewrite could not {action}")),
+    )
 }
 
 /// The exclusive lock one program holds while it repairs or rewrites the

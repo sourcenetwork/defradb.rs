@@ -60,10 +60,7 @@ impl PooledDocPusher {
             call(inner)
         })
         .await
-        .map_err(|error| {
-            tracing::warn!(%error, "a P2P storage call did not run on the worker pool");
-            P2PError::internal("the node is shutting down; try again")
-        })?
+        .map_err(|error| P2PError::internal(error.report("P2P storage call")))?
     }
 }
 
