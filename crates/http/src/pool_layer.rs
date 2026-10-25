@@ -26,9 +26,10 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use axum::extract::{MatchedPath, Request};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use tower::{Layer, Service, ServiceExt};
+
+use crate::error::pool_failure;
 
 /// The route prefixes, under each API prefix (`go_paths::API_PREFIXES`),
 /// whose requests run on the pool.
@@ -162,14 +163,7 @@ where
         Box::pin(async move {
             match workers::run_on(Some(&pool), target, move || inner.oneshot(request)).await {
                 Ok(response) => response,
-                Err(error) => {
-                    tracing::warn!(route = %path, %error, "a request did not run on the worker pool");
-                    Ok((
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "the node is shutting down; try again",
-                    )
-                        .into_response())
-                }
+                Err(error) => Ok(pool_failure(&path, error).into_response()),
             }
         })
     }

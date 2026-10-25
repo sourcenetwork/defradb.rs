@@ -1,0 +1,254 @@
+/* The Book of Defra: source.network brand theme.
+   Blue #10CBFF from the DefraDB logo, green #06B250 / #00c951 from
+   source.network. Gradients blend the two. Base theme: ayu. */
+
+:root {
+  --sn-blue: #10cbff;
+  --sn-blue-deep: #0aa2d8;
+  --sn-green: #06b250;
+  --sn-green-bright: #00c951;
+  --sn-gradient: linear-gradient(90deg, #10cbff 0%, #17b6b0 45%, #06b250 100%);
+  --sn-gradient-soft: linear-gradient(135deg, rgba(16, 203, 255, 0.18), rgba(6, 178, 80, 0.18));
+  /* Brand wash: still dark, the blue-green gradient clearly present. */
+  --sn-wash:
+    radial-gradient(1200px 800px at 88% -10%, rgba(16, 203, 255, 0.16), transparent 60%),
+    radial-gradient(1200px 850px at -10% 110%, rgba(6, 178, 80, 0.16), transparent 60%),
+    linear-gradient(160deg, rgba(16, 203, 255, 0.07) 0%, transparent 45%, rgba(6, 178, 80, 0.07) 100%);
+}
+
+/* ---------- Page background: dark, with the subtle gradient wash ---------- */
+
+html {
+  background-color: var(--bg);
+  background-image: var(--sn-wash);
+  background-attachment: fixed;
+}
+
+.page-wrapper,
+.sidebar {
+  background-color: transparent;
+}
+
+/* The menu bar needs to occlude scrolled content behind it: dark, but translucent
+   enough to carry the wash. */
+#mdbook-menu-bar {
+  background-color: color-mix(in srgb, var(--bg) 88%, transparent);
+}
+
+@media print {
+  html, .page-wrapper, .sidebar, #mdbook-menu-bar {
+    background-image: none;
+    background-color: var(--bg);
+  }
+}
+
+/* ---------- Top bar ---------- */
+
+nav.chrome-nav {
+  border-bottom: 2px solid transparent;
+  border-image: var(--sn-gradient) 1;
+}
+
+/* ---------- Sidebar ---------- */
+
+.sidebar .chapter li.active > a,
+.sidebar .chapter li a:hover {
+  color: var(--sn-blue);
+}
+.sidebar .chapter li.active > a {
+  border-left: 3px solid transparent;
+  border-image: var(--sn-gradient) 1;
+  background: var(--sn-gradient-soft);
+}
+#sidebar-toggle-anchor:checked ~ .sidebar {
+  border-right: 2px solid transparent;
+  border-image: var(--sn-gradient) 1;
+}
+
+/* ---------- Headings: gradient h1, green h2 ---------- */
+
+.content h1 {
+  background: var(--sn-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  padding-bottom: 0.25em;
+  margin-bottom: 0.6em;
+  position: relative;
+}
+.content h1::after {
+  content: "";
+  display: block;
+  height: 2px;
+  background: var(--sn-gradient);
+  border-radius: 2px;
+  margin-top: 0.15em;
+}
+.content h2 {
+  color: var(--sn-green-bright);
+  border-bottom: 1px solid transparent;
+  border-image: var(--sn-gradient) 1;
+  padding-bottom: 0.2em;
+}
+.content h3 { color: var(--sn-blue); }
+.content h4 { color: var(--sn-green-bright); }
+.content h5, .content h6 { color: #b6c2cf; }
+
+.light .content h2 { color: #05803a; }
+.light .content h3 { color: #0a7ca8; }
+.light .content h4 { color: #05803a; }
+.light .content h5, .light .content h6 { color: #475569; }
+
+/* ---------- Links ---------- */
+
+.content a { color: var(--sn-blue); }
+.content a:hover { color: var(--sn-green-bright); }
+.light .content a { color: var(--sn-blue-deep); }
+.light .content a:hover { color: #05803a; }
+.content .headerlink:hover { color: var(--sn-green-bright); }
+
+/* ---------- Tables: gradient header ---------- */
+
+table thead {
+  background: #12202b;
+  border-bottom: 2px solid transparent;
+  border-image: var(--sn-gradient) 1;
+}
+table thead th { color: var(--sn-blue); }
+.light table thead { background: #eaf7f0; }
+.light table thead th { color: #05803a; }
+table tbody tr:hover { background: rgba(16, 203, 255, 0.06); }
+table {
+  border-bottom: 1px solid #253040;
+}
+.light table { border-bottom-color: #d4dde6; }
+
+/* ---------- Blockquotes: gradient rail ---------- */
+
+.content blockquote {
+  border-left: 4px solid transparent;
+  border-image: var(--sn-gradient) 1;
+  background: var(--sn-gradient-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 0.6em 1em;
+  color: inherit;
+}
+.light .content blockquote { background: #eefaf4; }
+
+/* ---------- Admonitions (mdbook >= 0.5) ---------- */
+
+.content .mdbook-admonition {
+  border: 1px solid #253040;
+  border-left-width: 4px;
+  border-radius: 8px;
+}
+.content .mdbook-admonition-tip,
+.content .mdbook-admonition-note {
+  border-left-color: var(--sn-blue);
+}
+.content .mdbook-admonition-important,
+.content .mdbook-admonition-warning {
+  border-left-color: #ffb454;
+}
+.content .mdbook-admonition-caution,
+.content .mdbook-admonition-danger {
+  border-left-color: #ff6b6b;
+}
+
+/* ---------- Rules and dividers ---------- */
+
+.content hr {
+  border: none;
+  height: 2px;
+  background: var(--sn-gradient);
+  border-radius: 2px;
+  margin: 2em 0;
+}
+
+/* ---------- Mermaid diagrams: framed with the gradient ---------- */
+
+.content .mermaid {
+  display: flex;
+  justify-content: center;
+  background: rgba(16, 203, 255, 0.07);
+  border: 1px solid #253040;
+  border-bottom: 3px solid transparent;
+  border-image: linear-gradient(90deg, #10cbff, #06b250) 1;
+  border-radius: 8px;
+  padding: 1em;
+  margin: 1.5em auto;
+  overflow-x: auto;
+}
+.light .content .mermaid {
+  background: #f7fcfb;
+  border-color: #d4e6e0;
+}
+.content .mermaid svg { max-width: 100%; height: auto; }
+
+/* Embedded diagram images (PNG renders). */
+.content img {
+  border-radius: 8px;
+}
+.content p > img[src*="diagrams/"] {
+  display: block;
+  margin: 1.5em auto;
+  border: 1px solid #253040;
+  border-bottom: 3px solid transparent;
+  border-image: linear-gradient(90deg, #10cbff, #06b250) 1;
+  padding: 0.75em;
+  background: rgba(16, 203, 255, 0.05);
+  max-width: min(100%, 1100px);
+}
+.light .content p > img[src*="diagrams/"] {
+  background: #fbfefe;
+  border-color: #d4e6e0;
+}
+
+/* Logo on the intro page. */
+.content img.defra-logo {
+  display: block;
+  margin: 0 auto 1.5em auto;
+  width: 320px;
+  max-width: 70%;
+  height: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  border-image: none;
+}
+
+/* ---------- Code ---------- */
+
+pre {
+  border: 1px solid #253040;
+  border-radius: 8px;
+}
+pre code { color: inherit; }
+.light pre { border-color: #d4dde6; }
+
+/* Inline code keeps ayu's accent but sits on the brand tint. */
+:not(pre) > code {
+  background: rgba(16, 203, 255, 0.08);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.light :not(pre) > code { background: #e8f6fd; }
+
+/* ---------- Search ---------- */
+
+.markdown-section .searchresults__result:hover {
+  border-left-color: var(--sn-blue);
+}
+#searchbar #searchinput {
+  border: 1px solid #253040;
+}
+#searchbar #searchinput:focus {
+  border-color: var(--sn-blue);
+  outline: none;
+}
+
+/* ---------- Page footer (previous / next arrows) ---------- */
+
+.nav-wrapper .nav-arrows .nav-link:hover {
+  color: var(--sn-blue);
+}

@@ -58,10 +58,7 @@ impl NacAdapter {
             move || call(nac),
         )
         .await
-        .map_err(|error| {
-            tracing::warn!(%error, "a node access call did not run on the worker pool");
-            "the node is shutting down; try again".to_string()
-        })?
+        .map_err(|error| error.report("node access call").to_string())?
         .map_err(|e| e.to_string())
     }
 

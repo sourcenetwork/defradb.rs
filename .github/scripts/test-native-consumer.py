@@ -199,6 +199,31 @@ class Tests(unittest.TestCase):
         self.assertEqual(public['phases'][0]['panic_site'], {'file': 'poll.rs', 'line': 47, 'column': 9})
         self.assertNotIn('secret-value', runner.summary.read_text())
 
+    def test_cached_runtime_requires_exact_source_configuration_and_bytes(self):
+        self.sdk_fixture()
+        sources = {"revision": "a" * 40, "lock_sha256": "b" * 64}
+        with patch.object(driver, 'source', return_value=sources):
+            runner = driver.Runner(self.root, self.root / 'vera', self.root,
+                                   cache_dir=self.root / 'cache')
+            self.assertFalse(runner.restore_runtime())
+            binary = runner.private / 'verad'
+            binary.write_bytes(b'normal-release')
+            runner.binaries['verad'] = {'sha256': driver.digest(binary)}
+            runner.cache_runtime()
+            binary.unlink()
+            self.assertTrue(runner.restore_runtime())
+            self.assertEqual(binary.read_bytes(), b'normal-release')
+            manifest = runner.cache_dir / 'vera-runtime/manifest.json'
+            original = json.loads(manifest.read_text())
+            for key, value in [('profile', 'dev'), ('rust', 'changed'),
+                               ('source', {'revision': 'c' * 40, 'lock_sha256': 'b' * 64})]:
+                manifest.write_text(json.dumps({**original, key: value}))
+                self.assertFalse(runner.restore_runtime())
+            manifest.write_text(json.dumps(original))
+            (runner.cache_dir / 'vera-runtime/verad').write_bytes(b'corrupted')
+            with self.assertRaises(ValueError):
+                runner.restore_runtime()
+
     def test_pipeline_stages_normal_binaries_before_tests_and_runs_exact_cases_once(self):
         class Fake:
             def __init__(self, root):
@@ -206,6 +231,11 @@ class Tests(unittest.TestCase):
                 self.target = root / 'target'
                 self.target.mkdir()
                 self.env, self.calls = {}, []
+                self.cache_dir = None
+            def restore_runtime(self):
+                return False
+            def cache_runtime(self):
+                pass
             def run(self, phase, args, cwd=None):
                 self.calls.append(('run', phase, args, dict(self.env)))
                 return phase

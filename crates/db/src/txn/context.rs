@@ -1,13 +1,11 @@
 //! One request's view of an explicit transaction, on the worker that owns it.
 //!
-//! The owner lends the transaction to the request ([`OwnedTxn`]'s turn), and
+//! The owner lends the transaction to the request (`OwnedTxn`'s turn), and
 //! the context hands it to the request's handles: one lensed fetcher for the
 //! whole request, a mutator and a collection provider made on demand. They
 //! share the transaction through `&self`, with no lock. None of them holds
 //! it: the owner does, and takes it back once no operation of theirs is in
 //! flight; a handle kept past its request finds the transaction gone.
-//!
-//! [`OwnedTxn`]: crate::txn::registry::owned::OwnedTxn
 
 use std::sync::{Arc, Weak};
 

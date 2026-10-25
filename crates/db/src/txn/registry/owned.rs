@@ -156,7 +156,7 @@ where
     }
 
     fn turn_error(error: Error) -> TransactionError {
-        TransactionError::execution(error.to_string())
+        crate::error::transaction_error(error)
     }
 }
 

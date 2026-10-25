@@ -90,7 +90,7 @@ fn leaving_the_caller(mut request: QueryRequest) -> QueryRequest {
 /// A request the pool could not run: it was shutting down, or the task
 /// panicked.
 fn unavailable(error: workers::Error) -> QueryError {
-    QueryError::execution(format!("the request did not run: {error}"))
+    QueryError::execution(error.report("GraphQL request"))
 }
 
 #[async_trait]
@@ -151,6 +151,25 @@ impl QueryExecutor for PooledExecutor {
         handle: &TransactionHandle,
     ) -> QueryResponse {
         self.inner.execute_in_txn(request, handle).await
+    }
+
+    async fn observe_document_owners_in_txn(
+        &self,
+        context: RequestContext,
+        handle: &TransactionHandle,
+        collection: &str,
+        doc_ids: &[String],
+        identity: Option<identity::Did>,
+    ) -> Result<Vec<crate::owners::DocumentOwnerObservation>> {
+        self.inner
+            .observe_document_owners_in_txn(
+                context.or_ambient(),
+                handle,
+                collection,
+                doc_ids,
+                identity,
+            )
+            .await
     }
 
     async fn begin_txn(

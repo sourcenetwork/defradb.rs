@@ -29,7 +29,7 @@ use query::subscription::{
 };
 use query::{parse_request_with_limits, ParsedOperation, QueryLimits};
 
-use crate::error::HttpError;
+use crate::error::{pool_failure, HttpError};
 use crate::identity_extractor::ExtractIdentity;
 use crate::nac_guard::require_permission;
 use crate::query_context::{
@@ -338,10 +338,7 @@ pub async fn graphql_transactional(
                 Ok::<_, HttpError>(execute_with_context(&state, &identity, query_request).await)
             })
             .await;
-            ran.map_err(|error| {
-                tracing::warn!(%error, "a GraphQL request did not run on the worker pool");
-                HttpError::ServiceUnavailable("the node is shutting down; try again".into())
-            })??
+            ran.map_err(|error| pool_failure("graphql", error))??
         }
     };
 

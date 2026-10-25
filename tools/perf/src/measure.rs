@@ -48,6 +48,14 @@ pub fn median(samples: &mut [f64]) -> f64 {
     }
 }
 
+/// The nearest-rank `percent`th percentile of `samples`, in milliseconds.
+pub fn percentile_ms(samples: &[std::time::Duration], percent: usize) -> f64 {
+    assert!(!samples.is_empty(), "percentile of an empty sample");
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    sorted[(sorted.len() * percent).div_ceil(100) - 1].as_secs_f64() * 1000.0
+}
+
 pub fn min_max(samples: &[f64]) -> (f64, f64) {
     assert!(!samples.is_empty(), "min_max of an empty sample");
     samples

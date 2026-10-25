@@ -224,7 +224,7 @@ impl<S: storage::corekv::Store + 'static, B: Blockstore + 'static> VersionSyncer
             syncer.sync(&handle, version_ids, connected_peers).await
         })
         .await
-        .map_err(|_| P2PError::internal("the node is shutting down; try again"))?
+        .map_err(|error| P2PError::internal(error.report("version sync")))?
     }
 }
 

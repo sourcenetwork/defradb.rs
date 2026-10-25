@@ -32,6 +32,7 @@ mod fetcher;
 pub(crate) mod introspection;
 mod mutation;
 mod mutation_inputs;
+mod owners;
 mod plan;
 mod plan_aggregates;
 mod plan_drive;
@@ -773,3 +774,6 @@ impl<F: DocFetcher + 'static, R: TransactionRegistry> QueryRunner<F, R> {
         }
     }
 }
+
+#[cfg(test)]
+mod owners_tests;

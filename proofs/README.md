@@ -20,9 +20,10 @@ Status of the effort across the 40-crate surface, from the per-crate survey in
 are plumbing covered by integration tests / Go-FFI parity / unit tests. The point of this
 section is the **diff**: what is proven vs. the accepted gap.
 
-### Modeled: 40 families (bounded model claims)
+### Modeled: 41 families (bounded model claims)
 | Family | Tool | Crates it covers |
 |---|---|---|
+| Storage failure classification | TLA+ / Lean | storage, db, query, http |
 | B3 filtered replication | TLA+ | p2p, db-merge |
 | DAG convergence (partition / eviction / restart) | TLA+ | p2p, db-merge, blockstore |
 | CRDT merge laws | Lean | crdt, defra-core |

@@ -58,7 +58,7 @@ impl Codes {
     }
 }
 
-/// A reload swaps the whole [`Loaded`] in one step, and misses fill a small
+/// A reload swaps the whole `Loaded` in one step, and misses fill a small
 /// map beside the loaded codes. A fill that races a reload can land in the
 /// map the reload just replaced; that code is read again on its next miss.
 #[derive(Debug, Default)]
