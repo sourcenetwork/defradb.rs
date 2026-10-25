@@ -34,6 +34,9 @@ lean_lib CommitFence where
 lean_lib RootedAuthorization where
 
 @[default_target]
+lean_lib ReplicatorInstall where
+
+@[default_target]
 lean_lib EngineTickers where
 
 @[default_target]

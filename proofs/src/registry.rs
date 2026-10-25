@@ -49,6 +49,22 @@ use Tier::{Behavioral, Boundary, Contract};
 pub const PROPERTIES: &[Property] = &[
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Replicator installs validate their row, settle before completion, and retain interrupted outcomes",
+        axis: Tla,
+        anchor: "crates/p2p-adapter/src/replicator_install_store.rs; crates/p2p-adapter/src/replicator_installs.rs",
+        model_ref: "MC_ReplicatorInstall_{Green,Red_*}.cfg; MC_ReplicatorIncarnation_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Install completion is identity-fenced and idempotent; stale allocations re-decide without regressing the incarnation",
+        axis: Lean,
+        anchor: "crates/p2p-adapter/src/replicator_install_store.rs finish",
+        model_ref: "ReplicatorInstall (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Rooted authorization: one producer, exact grants, bounded optional retention, fenced eviction and cancellation wakeup",
         axis: Tla,
         anchor: "crates/p2p/src/sync/car_authorization.rs walk_with_limits; car_authorization_registry.rs; crates/p2p/tests/unit/car_authorization_limits.rs",

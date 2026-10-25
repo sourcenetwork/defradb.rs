@@ -179,6 +179,10 @@ pub async fn events_sse(
     for permission in filter.permissions {
         require_permission(&state, &identity, *permission).await?;
     }
+    let can_read_replicators =
+        require_permission(&state, &identity, NodePermission::P2pReplicatorList)
+            .await
+            .is_ok();
 
     let event_bus = state
         .event_bus
@@ -268,9 +272,18 @@ pub async fn events_sse(
                     }
                 })
             } else if message.name == events::EventName::ReplicatorCompleted {
+                let data = message.as_replicator_completed().filter(|_| can_read_replicators).map_or_else(
+                    || serde_json::json!({}),
+                    |data| serde_json::json!({
+                        "peer_id": data.peer_id,
+                        "collections": data.collections,
+                        "skipped": data.skipped,
+                        "error": data.error,
+                    }),
+                );
                 serde_json::json!({
                     "name": "replicator-completed",
-                    "data": {}
+                    "data": data
                 })
             } else {
                 continue;
