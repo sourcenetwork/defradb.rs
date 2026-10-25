@@ -55,32 +55,6 @@ struct Parked {
     error: Option<String>,
 }
 
-/// Whether an error is the block's own, so the block fails and the replay
-/// goes on. A store error keeps its class through the database and index
-/// errors that wrap it, and stops the replay until the next build; a key
-/// this node does not hold leaves the block parked ([`keyless`]).
-fn the_blocks(error: &MergeError) -> bool {
-    match error {
-        MergeError::Storage(_) => false,
-        MergeError::Database(error) => !matches!(
-            error,
-            crate::error::Error::Storage(_) | crate::error::Error::Datastore(_)
-        ),
-        error => !keyless(error),
-    }
-}
-
-/// Whether merging a block needs a key this node does not hold: the block
-/// stays parked, and the rest of the replay goes on.
-fn keyless(error: &MergeError) -> bool {
-    matches!(
-        error,
-        MergeError::Kms(_)
-            | MergeError::NeedsDecryptionKey(_)
-            | MergeError::NeedsBatchDecryptionKey { .. }
-    )
-}
-
 /// An index error as a merge error: a store failure stays one.
 fn index_error(error: crate::index::error::Error) -> MergeError {
     match error {
@@ -190,7 +164,7 @@ where
                             record,
                         }),
                         Ok(None) => {}
-                        Err(error) if the_blocks(&error) => {
+                        Err(error) if error.fails_block() => {
                             self.fail(&key, record, &error).await?;
                         }
                         Err(error) => return Err(error),
@@ -347,9 +321,9 @@ where
                             )
                             .await
                             .map_err(|error| {
-                                if the_blocks(&error) {
+                                if error.fails_block() {
                                     failed.store(index, Ordering::Release);
-                                } else if keyless(&error) {
+                                } else if error.needs_key() {
                                     kept.store(index, Ordering::Release);
                                 }
                                 RetryAttemptError::Abort(Box::new(error))

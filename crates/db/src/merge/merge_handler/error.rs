@@ -112,6 +112,33 @@ impl MergeError {
         MergeError::DepthExceeded { cid: *cid, depth }
     }
 
+    /// Whether a parked block's replay failed for a reason of the block's
+    /// own, so the block fails and the replay goes on. A store error keeps
+    /// its class through the database and index errors that wrap it, and
+    /// stops the replay until the next build; a key this node does not hold
+    /// leaves the block parked ([`MergeError::needs_key`]).
+    pub fn fails_block(&self) -> bool {
+        match self {
+            MergeError::Storage(_) => false,
+            MergeError::Database(error) => !matches!(
+                error,
+                crate::error::Error::Storage(_) | crate::error::Error::Datastore(_)
+            ),
+            error => !error.needs_key(),
+        }
+    }
+
+    /// Whether merging a block needs a key this node does not hold: a parked
+    /// block stays parked, and the rest of the replay goes on.
+    pub fn needs_key(&self) -> bool {
+        matches!(
+            self,
+            MergeError::Kms(_)
+                | MergeError::NeedsDecryptionKey(_)
+                | MergeError::NeedsBatchDecryptionKey { .. }
+        )
+    }
+
     /// Classify failures that cannot change while replaying the same block.
     pub(crate) fn disposition(&self) -> MergeErrorDisposition {
         match self {

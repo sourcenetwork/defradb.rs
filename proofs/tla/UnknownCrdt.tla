@@ -35,7 +35,7 @@
 \*   crates/db/src/merge/merge_handler/field.rs merge_field_delta_in_txn (Unregistered -> a FieldMergeResult with `parked`)
 \*   crates/db/src/merge/merge_handler/composite_fields.rs process_linked_field_blocks (the other fields merge; the parked block's head waits; CompositeMergeState::parked_fields)
 \*   crates/db/src/merge/merge_handler/composite_persist.rs persist_merged_document (a composite whose fields were all parked still makes the document: docB)
-\*   crates/db/src/merge/merge_handler/parked.rs park (the record, keyed by collection, document, field and block), replay_parked and replay_in_txn (merge into the stored document, then remove the record, in one transaction), the_blocks and keyless (a store error or a missing key leaves the block parked: Stall)
+\*   crates/db/src/merge/merge_handler/parked.rs park (the record, keyed by collection, document, field and block), replay_parked and replay_in_txn (merge into the stored document, then remove the record, in one transaction), error.rs MergeError::fails_block and MergeError::needs_key (a store error or a missing key leaves the block parked: Stall)
 \*   crates/db/src/merge/merge_handler/merge_keys.rs with_local_history_keys (a replay decrypts its block's history with this node's own keys, fetched before its transaction; a key held elsewhere is a Stall, never a peer request)
 \*   crates/db/src/merge/merge_handler/parked.rs DB::start_parked_replay (a background task started when a node is built with its types, paging through the records)
 \*   crates/db/src/database/stored_crdts.rs     record (the stored-type record) and DB::check_stored_crdts (the refusal to open without a stored type)
