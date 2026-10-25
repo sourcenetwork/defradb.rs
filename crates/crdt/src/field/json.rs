@@ -166,6 +166,30 @@ fn settle_earlier(ops: &mut Vec<JsonOp>, path: &[String]) {
     }
 }
 
+/// What `frontier` reads as once a local block carrying `ops` lands on it.
+/// The block's priority is above every stored edit's.
+fn landed(frontier: &Frontier, ops: &[JsonOp]) -> Option<Value> {
+    let mut landed = frontier.clone();
+    landed.compose(frontier.local_delta(ops, &[], u64::MAX));
+    landed.materialize()
+}
+
+/// The shallowest path where `landed` and `read` differ other than in what
+/// two maps hold, or `None` when they are equal.
+fn mismatch(landed: Option<&Value>, read: Option<&Value>) -> Option<Vec<String>> {
+    match (landed, read) {
+        (Some(Value::Object(landed)), Some(Value::Object(read))) => {
+            landed.keys().chain(read.keys()).find_map(|key| {
+                let mut path = mismatch(landed.get(key), read.get(key))?;
+                path.insert(0, key.clone());
+                Some(path)
+            })
+        }
+        (landed, read) if landed == read => None,
+        _ => Some(Vec::new()),
+    }
+}
+
 /// The ops a block carries for `op` written over `current`: a set is the
 /// diff from `current`, and a set of an object at a path is a set of each of
 /// its leaves. Each op is read against the value the ones before it left.
@@ -387,16 +411,26 @@ impl TaggedCrdt for JsonField {
     ) -> Result<Vec<u8>, FieldCrdtError> {
         let frontier = frontier(field, state)?;
         let current = frontier.materialize();
-        let ops = block_ops(current.as_ref(), op)?;
-        // A map the stored value reads as may only be implied by an edit
-        // below it, which a diff of values cannot see: when the diff's edits
-        // do not leave the written value, the write rewrites it whole.
-        if let FieldOp::Set(value) = op {
-            let target = json_of(Some(value));
-            let mut written = frontier.clone();
-            written.compose(frontier.local_delta(&ops, &[], 0));
-            if written.materialize() != target {
-                return encode_write(nonce, &json_crdt::diff(None, target.as_ref()));
+        let mut ops = block_ops(current.as_ref(), op)?;
+        let mut read = current;
+        apply_ops(&mut read, &ops);
+        // A map the stored value reads as may only be implied by a set below
+        // it, which the write cannot see: a delete of that set takes the map
+        // with it. Where the ops do not land as the write reads, the write
+        // rewrites that subtree whole, which anchors the map.
+        while let Some(path) = mismatch(landed(&frontier, &ops).as_ref(), read.as_ref()) {
+            ops.retain(|op| !op.path.starts_with(&path));
+            match value_at(read.as_ref(), &path) {
+                Some(value) => ops.extend(json_crdt::diff(None, Some(value)).into_iter().map(
+                    |op| JsonOp {
+                        path: path.iter().chain(&op.path).cloned().collect(),
+                        edit: op.edit,
+                    },
+                )),
+                None => ops.push(JsonOp {
+                    path,
+                    edit: JsonEdit::Delete,
+                }),
             }
         }
         encode_write(nonce, &ops)

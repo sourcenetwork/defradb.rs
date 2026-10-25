@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc f79e0945d64498aed431b4c3649aa58da5b93c0b5b87208537e0e52ed2377a20 # shrinks to stored = Null, edits = [JsonOp { path: ["b", "a"], edit: Map }, JsonOp { path: ["b"], edit: Delete }]
 cc b6b567c7cf017fbc6c8588bf53aa6a0e9e53be8320c98e6e600804dc93da2865 # shrinks to stored = Object {"a": Object {"a": Null}}, edits = [JsonOp { path: ["a"], edit: Map }]
+cc 11b4b6544272b282314ac34bc0aaa8e628925094ed2ffc1cfc2874d3d146f507 # shrinks to stored = Null, earlier = [JsonOp { path: ["b", "b", "a"], edit: Map }], edits = [JsonOp { path: ["b", "b"], edit: Delete }]

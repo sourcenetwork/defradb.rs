@@ -166,6 +166,11 @@ RUNS=(
   "MC_JsonCrdt_Red_NoCid.cfg JsonCrdt.tla RED" # priority ties kept by arrival: peers with the same blocks differ (INV_Converge)
   "MC_JsonCrdt_Red_DeleteImpliesMap.cfg JsonCrdt.tla RED" # a delete below a path implies a map: the path comes back with no set behind it (INV_DeleteCreatesNothing)
   "MC_JsonCrdt_Red_SharedId.cfg JsonCrdt.tla RED" # equal edits with no nonce share an ID: a delete that saw one wipes both on one peer only (INV_Converge)
+  "MC_JsonCrdt_Green_MultiPath.cfg JsonCrdt.tla GREEN" # JSON CRDT, blocks editing several paths: same blocks same JSON, incremental equals replay, a write lands as it reads
+  "MC_JsonCrdt_Red_NoAnchor.cfg JsonCrdt.tla RED" # a delete below a map only its sets hold goes out bare: the map vanishes (INV_WriteLandsAsRead)
+  "MC_JsonCrdt_Red_NoSettle.cfg JsonCrdt.tla RED" # a block goes out with a value above a set it carries: its own value wins (INV_WriteLandsAsRead)
+  "MC_JsonCrdt_Red_DeleteMakesParent.cfg JsonCrdt.tla RED" # the writer reads a delete through a missing path as making a map (INV_WriteLandsAsRead)
+  "MC_JsonCrdt_Red_MapKeepsBelow.cfg JsonCrdt.tla RED" # the writer reads {} over a map as keeping what is below (INV_WriteLandsAsRead)
   "MC_Capability_Green.cfg         MC_Capability_Common.tla   GREEN" # capability: only legit tokens authorized
   "MC_Capability_Red_Forge.cfg     MC_Capability_Common.tla   RED"   # capability: forged token accepted (INV_OnlyLegitAccepted)
   "MC_Capability_Red_Ttl.cfg       MC_Capability_Common.tla   RED"   # capability: over-cap TTL accepted (INV_TtlCapped)

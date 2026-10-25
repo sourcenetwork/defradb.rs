@@ -2,10 +2,19 @@
 \* The story, in plain words.
 \*
 \* A JSON field holds a small tree of maps, lists and plain values, and many
-\* peers edit it at once. Every edit is one block in the document's DAG. A
-\* block knows every block its author had seen (its causal past) and says one
-\* thing about one path in the tree: "set this path to a value", "set it to
-\* an empty map {}", "set it to an empty list []", or "delete this path".
+\* peers edit it at once. Every write is one block in the document's DAG. A
+\* block knows every block its author had seen (its causal past) and carries
+\* one edit for each path it touches: "set this path to a value", "set it to
+\* an empty map {}", "set it to an empty list []", or "delete this path". A
+\* block can touch several paths at once, such as {} at "a" with 1 at "a.b".
+\*
+\* The writer reads its own block as a list of edits done in order, over the
+\* JSON it had. Before the block goes out, the writer settles its edits so
+\* the tree takes them all at once and still ends where the list does: an
+\* edit drops the block's earlier edits at and below its path, and an earlier
+\* value above it becomes {}. A block never sets "a" to a value and "a.b" too.
+\* And where a delete would take away the last set holding a map up, the
+\* writer writes {} at the map too, so the map stays as the writer read it.
 \*
 \* Each path is its own register, so edits to different paths never touch.
 \* When edits to one path race, the one with the higher priority (the DAG
@@ -47,7 +56,8 @@
 \*   * a concurrent delete above an edit removes it;
 \*   * a delete makes a path present with no set behind it;
 \*   * a type clash resolves other than by that same order;
-\*   * the conflicts query lists anything but the racing edits that lost.
+\*   * the conflicts query lists anything but the racing edits that lost;
+\*   * a write lands as anything but what its writer read it as.
 \*
 \* Code this models (defradb.rs):
 \*   crates/defra-core/src/json_crdt.rs            the per-path registers: the
@@ -67,9 +77,24 @@
 \*   Create        json.rs write_data (block_ops, deep_set; json_crdt.rs diff):
 \*                 a write turns a JSON value into ops at paths;
 \*                 prepare_tagged_writes gives its block the field's heads as
-\*                 parents. A model block edits one path. A Rust block may
-\*                 carry ops at several distinct paths; this model does not
-\*                 check those, and covers single-path blocks only
+\*                 parents. With MultiPath a model block edits several paths,
+\*                 at most one edit each, as a Rust block does
+\*   Settled       json.rs settle_earlier: the shape a block's ops have once
+\*                 block_ops has settled them; Settle = FALSE is the RED that
+\*                 skips it
+\*   Anchored      json.rs write_data (landed, mismatch): where a write's ops
+\*                 do not land as it reads, it rewrites that subtree whole,
+\*                 so a delete below a map that only sets below hold writes
+\*                 {} there too; Anchor = FALSE is the RED that skips it
+\*   ApplyOps      json.rs apply_ops: what the writer reads its ops as, in
+\*                 order; ReadAs names the two REDs the property test
+\*                 a_path_edit_write_lands_as_it_reads found
+\*                 (crates/crdt/tests/json_field.rs)
+\*   Invariants    INV_DisjointKept, INV_SamePathLww, INV_UpdateWins,
+\*                 INV_TypeClash and INV_DeleteCreatesNothing speak of a
+\*                 block's one path and are checked on single-path runs; the
+\*                 multi-path run checks convergence, replay, conflicts and
+\*                 that every write lands as it reads
 \*   Deliver       field_tagged.rs merge_field_tagged: a received block is
 \*                 merged once every parent block is local; b \notin known[n]
 \*                 is the block's published priority entry (h/p/), which
@@ -92,6 +117,11 @@
 \*                 plain ops: it stands in for the CID, which a local writer
 \*                 does not know yet when it writes the stored value
 \*   Implied       json_crdt.rs Index::racers: the sets below a path
+\*   WinKind       json_crdt.rs Index::node: the winning entry's edit, or a
+\*                 map for an implied one; a block's own entry comes first,
+\*                 so it wins a tie with the block's own implied map
+\*   RaceKind      json_crdt.rs Frontier::conflicts: a block is listed once
+\*                 per path, by its first entry there
 \*   Doc           json_crdt.rs Frontier::materialize
 \*   Conflicts     json_crdt.rs Frontier::conflicts, read by _jsonConflicts
 \*                 (crates/db/src/read/json_conflicts.rs); an edit's `seen`
@@ -109,7 +139,11 @@ CONSTANTS
   UseCid,           \* TRUE: a priority tie is broken by the CID (the design)
   DeleteWins,       \* TRUE: a delete beats a concurrent edit below it (a RED)
   DeleteImpliesMap, \* TRUE: a delete below a path says the path is a map (a RED)
-  SharedIds         \* TRUE: equal edits on the same past share one ID (a RED)
+  SharedIds,        \* TRUE: equal edits on the same past share one ID (a RED)
+  MultiPath,        \* TRUE: a block may edit several paths at once
+  Settle,           \* TRUE: a block's edits are settled before it goes out (the design)
+  ReadAs,           \* how the writer reads its edits: "design" or a RED's misreading
+  Anchor            \* TRUE: a delete below a map held up only by sets below it also writes {} there (the design)
 
 VARIABLES
   blocks,   \* the blocks written so far; the index is the block ID
@@ -150,14 +184,34 @@ Absent == 0     \* the path is not there
 MapVal == 100   \* the path holds a map
 ListVal == 101  \* the path holds a list
 
+\* What a block does at a path it does not touch.
+None == "none"
+
 \* A slot for a block not written yet.
-NoBlock == [author |-> "none", path |-> "none", kind |-> "none", past |-> {}, prio |-> 0]
+NoBlock == [author |-> "none", ops |-> [p \in Paths |-> None], past |-> {}, prio |-> 0]
 
 \* Shorthands for a block's fields, by ID.
-PathOf(b) == blocks[b].path   \* the path it edits
-KindOf(b) == blocks[b].kind   \* what it does there
+At(b, p) == blocks[b].ops[p]  \* what it does at path p, or None
+Edits(b, p) == At(b, p) # None \* whether it touches path p
+OpPaths(b) == {p \in Paths : Edits(b, p)} \* the paths it touches
 Past(b) == blocks[b].past     \* the blocks its author had seen
 Prio(b) == blocks[b].prio     \* its priority: one more than the highest it saw
+
+\* For a block that touches one path: that path, and what it does there.
+PathOf(b) == CHOOSE p \in Paths : Edits(b, p)
+KindOf(b) == At(b, PathOf(b))
+
+\* The edits a block may carry: at least one path, each with one kind.
+\* Settled: a block never sets "a" to a value or a list and also edits
+\* "a.b", since a later edit of "a.b" turns an earlier value of "a" into {},
+\* and a later edit of "a" drops the earlier edits of "a.b".
+Settled(o) == o["ab"] # None => o["a"] \in {None, "map", "delete"}
+OpChoices ==
+  IF MultiPath
+    THEN {o \in [Paths -> Kinds \cup {None}] :
+            /\ \E p \in Paths : o[p] # None          \* it edits something
+            /\ Settle => Settled(o)}                  \* settled, in the design
+    ELSE {[q \in Paths |-> IF q = p THEN k ELSE None] : p \in Paths, k \in Kinds} \* one path each
 
 \* The operation ID of block b. In the design every update draws a nonce, and
 \* a create is the root of its own document (a DocID is the CID of its first
@@ -167,10 +221,10 @@ Prio(b) == blocks[b].prio     \* its priority: one more than the highest it saw
 OpId(b) ==
   IF ~SharedIds THEN b
   ELSE CHOOSE x \in 1..b :
-         /\ PathOf(x) = PathOf(b) /\ KindOf(x) = KindOf(b)       \* the same edit
+         /\ blocks[x].ops = blocks[b].ops                          \* the same edits
          /\ Past(x) = Past(b) /\ Prio(x) = Prio(b)               \* on the same past
          /\ \A y \in 1..(x - 1) :                                \* and the first such
-              ~(PathOf(y) = PathOf(b) /\ KindOf(y) = KindOf(b) /\ Past(y) = Past(b) /\ Prio(y) = Prio(b))
+              ~(blocks[y].ops = blocks[b].ops /\ Past(y) = Past(b) /\ Prio(y) = Prio(b))
 
 \* Two blocks race when neither author had seen the other's block.
 Concurrent(x, y) == x # y /\ x \notin Past(y) /\ y \notin Past(x)
@@ -188,40 +242,50 @@ Best(s) == IF s = {} THEN 0 ELSE CHOOSE x \in s : \A y \in s : ~Beats(y, x)
 \* The highest number in a set of numbers, 0 for none.
 Max(s) == IF s = {} THEN 0 ELSE CHOOSE m \in s : \A n \in s : n <= m
 
-\* What block b says about path p: its own edit if it edits p, and "p is a
-\* map" if it sets a path below p.
-KindAt(b, p) == IF PathOf(b) = p THEN KindOf(b) ELSE "map"
-
-\* The edits in frontiers f below path p that say "p is a map": the sets. A
-\* delete below says nothing about p, so it can't bring p back. In the RED,
-\* deletes below count too.
+\* The blocks in frontiers f with an edit below path p that says "p is a
+\* map": the sets. A delete below says nothing about p, so it can't bring p
+\* back. In the RED, deletes below count too.
 Implied(f, p) ==
-  {b \in UNION {f[q] : q \in Below(p)} :                 \* every edit below p
-     DeleteImpliesMap \/ KindOf(b) # "delete"}           \* that sets something
+  {b \in UNION {f[q] : q \in Below(p)} :                 \* every block with an edit below p
+     \E q \in Below(p) :
+       b \in f[q] /\ (DeleteImpliesMap \/ At(b, q) # "delete")} \* that sets something there
 
-\* What a winning block makes path p read as.
-ValueOf(b, p) ==
-  CASE KindAt(b, p) = "value"  -> OpId(b)   \* the plain value it set
-    [] KindAt(b, p) = "map"    -> MapVal    \* a map
-    [] KindAt(b, p) = "list"   -> ListVal   \* a list
-    [] KindAt(b, p) = "delete" -> Absent    \* gone
+\* The blocks racing at p with their own edit of p. With sets below, a
+\* delete of p sits out (an update beats a concurrent delete), except in the
+\* RED where deletes race too.
+Own(f, p) ==
+  IF DeleteWins \/ Implied(f, p) = {} THEN f[p]          \* every own edit races
+  ELSE {b \in f[p] : At(b, p) # "delete"}               \* deletes sit out
+
+\* What path p reads as when block b wins there: its own edit when that is
+\* in the race (a block's own edit comes first, so it wins a tie with the
+\* map its own edit below implies), and a map when b won with a set below.
+WinKind(f, b, p) == IF b \in Own(f, p) THEN At(b, p) ELSE "map"
+
+\* What block b counts as in p's conflicts: its own edit of p if it has one
+\* there, and a map otherwise. A block is listed once.
+RaceKind(f, b, p) == IF b \in f[p] THEN At(b, p) ELSE "map"
+
+\* The value an edit of kind k by block b gives its path.
+KindVal(b, k) ==
+  CASE k = "value"  -> OpId(b)   \* the plain value it set
+    [] k = "map"    -> MapVal    \* a map
+    [] k = "list"   -> ListVal   \* a list
+    [] k = "delete" -> Absent    \* gone
 
 \* The winner at path p, read from frontiers f and own-edit winners w. The
-\* sets below p each say "p is a map". When any exist, a delete of p can't
-\* win (an update beats a concurrent delete), so the race is between p's
-\* other edits and those implied maps. With no sets below, p's own winner
-\* stands. In the RED, deletes stay in the race.
+\* sets below p each say "p is a map". When any exist, the race is between
+\* p's own edits (Own) and those implied maps. With no sets below, p's own
+\* winner stands.
 Winner(f, w, p) ==
   LET below == Implied(f, p)                                  \* sets below p
-      own == IF DeleteWins THEN f[p]                          \* RED: deletes race too
-             ELSE {b \in f[p] : KindOf(b) # "delete"}         \* design: deletes sit out
   IN IF below = {} THEN w[p]                                  \* no sets below: own winner
-     ELSE Best(own \cup below)                                \* else everything races
+     ELSE Best(Own(f, p) \cup below)                          \* else everything races
 
 \* What path p reads as on its own, before looking above it.
 NodeVal(f, w, p) ==
   LET b == Winner(f, w, p)                     \* the winning edit
-  IN IF b = 0 THEN Absent ELSE ValueOf(b, p)   \* none: absent; else its value
+  IN IF b = 0 THEN Absent ELSE KindVal(b, WinKind(f, b, p)) \* none: absent; else its value
 
 \* The JSON: each path's value, absent when the path above isn't a map.
 DocOf(f, w) ==
@@ -240,7 +304,7 @@ ConflictsOf(f, w, p) ==
   IN IF b = 0 THEN {}                                        \* no winner, no conflict
      ELSE {c \in racers :
              /\ Concurrent(c, b)                             \* it raced the winner
-             /\ ~(KindAt(c, p) = "map" /\ KindAt(b, p) = "map")} \* and said something else
+             /\ ~(RaceKind(f, c, p) = "map" /\ WinKind(f, b, p) = "map")} \* and said something else
 
 \* The conflicts query at every path.
 AllConflicts(f, w) == [p \in Paths |-> ConflictsOf(f, w, p)]
@@ -251,15 +315,13 @@ Conf(n) == AllConflicts(front[n], win[n])
 
 \* ---- The same, read straight from a set of blocks k ----
 
-\* Block b was seen by a later edit of its own path: superseded.
-Superseded(k, b) == \E y \in k : PathOf(y) = PathOf(b) /\ b \in Past(y)
+\* Block b's edit of p is gone in k: a later block that had seen b edits p
+\* (superseded) or a path above p (wiped out).
+Gone(k, b, p) ==
+  \E y \in k : b \in Past(y) /\ \E q \in OpPaths(y) : q = p \/ Above(q, p)
 
-\* Block b was seen by an edit of a path above it: wiped out.
-Wiped(k, b) == \E x \in k : Above(PathOf(x), PathOf(b)) /\ b \in Past(x)
-
-\* The frontier of path p in k: its edits nothing later has seen.
-SpecFront(k) == [p \in Paths |->
-                   {b \in k : PathOf(b) = p /\ ~Superseded(k, b) /\ ~Wiped(k, b)}]
+\* The frontier of path p in k: the edits of p nothing later has seen.
+SpecFront(k) == [p \in Paths |-> {b \in k : Edits(b, p) /\ ~Gone(k, b, p)}]
 
 \* Each path's own winner in k.
 SpecWin(k) == [p \in Paths |-> Best(SpecFront(k)[p])]
@@ -281,6 +343,11 @@ PeerSymmetry == Permutations(Peers)
 FirstSetsValueOrMap == nblocks = 0 \/ KindOf(1) \in {"value", "map"}
 FirstSetsListOrDeletes == nblocks = 0 \/ KindOf(1) \in {"list", "delete"}
 
+\* The multi-path check is split the same way, by what the first block does
+\* at "a": sets {} there, or anything else (including leaving "a" alone).
+FirstMapsA == nblocks = 0 \/ At(1, "a") = "map"
+FirstOtherA == nblocks = 0 \/ At(1, "a") # "map"
+
 \* The kinds of value each variable may hold.
 TypeOK ==
   /\ nblocks \in 0..MaxBlocks                                 \* within the allowance
@@ -297,39 +364,59 @@ Init ==
   /\ front = [n \in Peers |-> [p \in Paths |-> {}]]      \* every frontier empty
   /\ win = [n \in Peers |-> [p \in Paths |-> 0]]         \* no winner anywhere
 
-\* Peer n merges block b: its edit, by ID, joins its path's frontier, and
-\* the edits it had seen leave that frontier and every frontier below. A path
-\* keeps its winner unless the new block beats it or the winner just left;
-\* then the best of what remains takes over. A block whose ID the frontier
-\* already holds changes nothing.
+\* Peer n merges block b: each of its edits, by ID, joins its path's
+\* frontier, and the edits it had seen leave the frontiers at and below each
+\* path it edits. Its own edits never remove each other: they are one write.
+\* A path keeps its winner unless the new block beats it or the winner just
+\* left; then the best of what remains takes over. A block whose ID the
+\* frontier already holds changes nothing.
 Apply(n, b) ==
-  LET p == PathOf(b)                                          \* the path b edits
-      i == OpId(b)                                            \* the ID its edit goes by
+  LET i == OpId(b)                                            \* the ID its edits go by
       seen == {OpId(x) : x \in Past(b)}                       \* the IDs of what it saw
       dup == \E q \in Paths : i \in front[n][q]               \* an edit by that ID is held
+      reached(q) == \E p \in OpPaths(b) : p = q \/ Above(p, q) \* b edits q or a path above
       f == [q \in Paths |->
               IF dup THEN front[n][q]                         \* a held edit: nothing changes
-              ELSE IF q = p THEN (front[n][q] \ seen) \cup {i} \* b joins, what it saw leaves
-              ELSE IF Above(p, q) THEN front[n][q] \ seen      \* below: what it saw is wiped
-              ELSE front[n][q]]                               \* elsewhere: untouched
+              ELSE (IF reached(q) THEN front[n][q] \ seen     \* what it saw there leaves
+                    ELSE front[n][q])                         \* elsewhere: untouched
+                   \cup (IF Edits(b, q) THEN {i} ELSE {})]    \* its own edit of q joins
       old == win[n]                                           \* the winners before
       w == [q \in Paths |->
               IF old[q] \notin f[q] THEN Best(f[q])           \* winner gone: best remaining
-              ELSE IF ~dup /\ q = p /\ Beats(i, old[q]) THEN i \* b beats it: b
+              ELSE IF ~dup /\ Edits(b, q) /\ Beats(i, old[q]) THEN i \* b beats it: b
               ELSE old[q]]                                    \* otherwise it stays
   IN /\ known' = [known EXCEPT ![n] = @ \cup {b}]             \* n now holds b
      /\ front' = [front EXCEPT ![n] = f]                      \* its new frontiers
      /\ win' = [win EXCEPT ![n] = w]                          \* its new winners
 
-\* Peer n writes a new block: an edit of kind k at path p, having seen every
-\* block it holds. It merges the block itself through Deliver, and writes
-\* nothing else until it has, as a real author merges its own edit at once.
-Create(n, p, k) ==
+\* Whether path p is a map for peer n only because of sets below it: n reads
+\* p as a map, but p's own best edit is not {}. Take those sets away and p
+\* falls back to its own edit, or to nothing.
+HeldBySetsBelow(n, p) ==
+  /\ Doc(n)[p] = MapVal                                       \* n reads p as a map
+  /\ ~(win[n][p] # 0 /\ At(win[n][p], p) = "map")             \* its own best edit isn't {}
+
+\* The anchor: a write that deletes below such a path, without editing the
+\* path itself, writes {} at the path too (and sets again what it keeps
+\* below; here the only path below "a" is "a.b", the one deleted), so its
+\* delete can't take the map with it. The anchored block is another choice
+\* of edits, so in the design the bare delete is simply never written.
+Anchored(n, o) ==
+  \A p \in Paths :
+    ~(/\ o[p] = None                                          \* p left alone
+      /\ \E q \in Below(p) : o[q] = "delete"                  \* a delete below it
+      /\ HeldBySetsBelow(n, p))                               \* and p held only by sets
+
+\* Peer n writes a new block with edits o, having seen every block it holds.
+\* It merges the block itself through Deliver, and writes nothing else until
+\* it has, as a real author merges its own edit at once.
+Create(n, o) ==
   LET b == nblocks + 1                                        \* the next ID
   IN /\ nblocks < MaxBlocks                                   \* within the allowance
+     /\ Anchor => Anchored(n, o)                              \* the design anchors the map
      /\ \A x \in 1..nblocks : blocks[x].author = n => x \in known[n] \* its own blocks are merged
      /\ blocks' = [blocks EXCEPT ![b] =
-                    [author |-> n, path |-> p, kind |-> k, past |-> known[n],
+                    [author |-> n, ops |-> o, past |-> known[n],
                      prio |-> 1 + Max({Prio(x) : x \in known[n]})]] \* one above anything it saw
      /\ nblocks' = b                                          \* one more block
      /\ UNCHANGED <<known, front, win>>
@@ -348,7 +435,7 @@ Done == nblocks = MaxBlocks /\ \A n \in Peers : known[n] = 1..nblocks
 \* One step: a peer writes a block or receives one. Once everything is
 \* written and delivered nothing more happens, which is not a deadlock.
 Next ==
-  \/ \E n \in Peers, p \in Paths, k \in Kinds : Create(n, p, k)  \* someone edits
+  \/ \E n \in Peers, o \in OpChoices : Create(n, o)               \* someone edits
   \/ \E n \in Peers, b \in Ids : Deliver(n, b)                    \* someone receives
   \/ Done /\ UNCHANGED vars                                       \* or all is settled
 
@@ -365,7 +452,35 @@ SharedIdEdits ==
 \* ---- What must hold ----
 
 \* The value block b sets at its own path.
-OwnVal(b) == ValueOf(b, PathOf(b))
+OwnVal(b) == KindVal(b, KindOf(b))
+
+\* What the writer of block b reads its edits as: each one done in order,
+\* "a" before "a.b" (a settled block edits "a" first), over the JSON d it
+\* had. A set replaces what is at and below its path and makes the path
+\* above a map; {} is an empty map. A delete removes its path and what is
+\* below; through a missing path or a value that isn't a map it changes
+\* nothing.
+\*   RED "deleteMakesParent": a delete of "a.b" makes "a" a map first.
+\*   RED "mapKeepsBelow": {} at a path that holds a map keeps what is below.
+Step(b, d, p) ==
+  LET k == At(b, p) IN                                         \* b's edit at p
+  CASE k = None -> d                                           \* b leaves p alone
+    [] k = "delete" ->
+         IF p = "ab" /\ d["a"] # MapVal                        \* through a non-map
+           THEN IF ReadAs = "deleteMakesParent"
+                  THEN [d EXCEPT !["a"] = MapVal, !["ab"] = Absent] \* RED: makes "a" a map
+                  ELSE d                                       \* design: changes nothing
+           ELSE [q \in Paths |-> IF q = p \/ Above(p, q) THEN Absent ELSE d[q]] \* gone, with below
+    [] OTHER ->
+         [q \in Paths |->
+            IF q = p THEN KindVal(b, k)                         \* the new value
+            ELSE IF Above(p, q)                                 \* below it
+              THEN IF ReadAs = "mapKeepsBelow" /\ k = "map" /\ d[p] = MapVal
+                     THEN d[q]                                  \* RED: kept
+                     ELSE Absent                                \* design: replaced
+            ELSE IF Above(q, p) THEN MapVal                     \* above it: a map
+            ELSE d[q]]                                          \* elsewhere: untouched
+ApplyOps(d, b) == Step(b, Step(b, Step(b, d, "a"), "ab"), "c")
 
 \* The blocks of k on path p's line: p itself and the paths above and below.
 Line(k, p) == {b \in k : Related(PathOf(b), p)}
@@ -426,8 +541,14 @@ INV_ConflictsAreLosers ==
     /\ b \notin Conf(n)[p]                                        \* never the winner
     /\ \A c \in Conf(n)[p] : Concurrent(c, b)                     \* only racers
     /\ \A c \in front[n][p] :                                     \* every racing own edit
-         (Concurrent(c, b) /\ ~(KindAt(c, p) = "map" /\ KindAt(b, p) = "map"))
+         (Concurrent(c, b) /\ ~(RaceKind(front[n], c, p) = "map" /\ WinKind(front[n], b, p) = "map"))
            => c \in Conf(n)[p]
+
+\* A write lands as its writer read it: the JSON its block and the block's
+\* past say, read from scratch, is the JSON the writer had with its edits
+\* done in order.
+INV_WriteLandsAsRead ==
+  \A b \in 1..nblocks : SpecDoc(Past(b) \cup {b}) = ApplyOps(SpecDoc(Past(b)), b)
 
 \* A delete never creates anything: take away a delete that no other held
 \* block had seen, and any path it turns from absent to present is held up by

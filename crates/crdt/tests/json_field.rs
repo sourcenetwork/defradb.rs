@@ -296,18 +296,47 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(2048))]
 
     /// The ops a write of several path edits carries land on the stored
-    /// state as the value the write reads its edits against.
+    /// state as the value the write reads its edits against, including a
+    /// state an earlier path-edit write left, whose maps may be held up only
+    /// by the sets below them.
     #[test]
     fn a_path_edit_write_lands_as_it_reads(
         stored in json_value(),
+        earlier in proptest::collection::vec(json_edit(), 0..3),
         edits in proptest::collection::vec(json_edit(), 1..4),
     ) {
         let tagged = json_crdt().tagged().expect("Json is tagged");
         let current = NormalValue::Json(stored);
         let state = tagged.state(&field(), 1, &current).unwrap();
-        let op = FieldOp::Paths(edits);
-        let write = crdt::field::tagged::local_write(tagged, &field(), Some(&state), &op, 2, &[vec![0]], 0)
+        let earlier = FieldOp::Paths(earlier);
+        let first = crdt::field::tagged::local_write(tagged, &field(), Some(&state), &earlier, 2, &[vec![0]], 0)
             .unwrap();
-        prop_assert_eq!(write.value, json_crdt().apply(&field(), Some(&current), &op).unwrap());
+        let state = crdt::field::tagged::land(tagged, Some(&state), first.operand).unwrap();
+        let op = FieldOp::Paths(edits);
+        let write = crdt::field::tagged::local_write(tagged, &field(), Some(&state), &op, 3, &[vec![1]], 1)
+            .unwrap();
+        prop_assert_eq!(write.value, json_crdt().apply(&field(), Some(&first.value), &op).unwrap());
     }
+}
+
+#[test]
+fn a_delete_below_a_map_only_its_sets_hold_keeps_the_map() {
+    let op = |path: &[&str], edit| JsonOp {
+        path: path.iter().map(|key| key.to_string()).collect(),
+        edit,
+    };
+    let tagged = json_crdt().tagged().expect("Json is tagged");
+    let state = tagged
+        .state(&field(), 1, &NormalValue::Json(json!({})))
+        .unwrap();
+    let set = FieldOp::Paths(vec![op(&["a", "b"], JsonEdit::Set(json!(1)))]);
+    let first =
+        crdt::field::tagged::local_write(tagged, &field(), Some(&state), &set, 2, &[vec![0]], 0)
+            .unwrap();
+    let state = crdt::field::tagged::land(tagged, Some(&state), first.operand).unwrap();
+    let delete = FieldOp::Paths(vec![op(&["a", "b"], JsonEdit::Delete)]);
+    let write =
+        crdt::field::tagged::local_write(tagged, &field(), Some(&state), &delete, 3, &[vec![1]], 1)
+            .unwrap();
+    assert_eq!(write.value, NormalValue::Json(json!({"a": {}})));
 }
