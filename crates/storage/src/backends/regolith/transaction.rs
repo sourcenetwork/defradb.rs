@@ -171,6 +171,7 @@ impl Drop for RegolithTxn {
 
 pub(super) fn map_txn_error(error: TransactionError) -> Error {
     match error {
+        TransactionError::Engine(error) => error.into(),
         TransactionError::Conflict(conflict) => {
             Error::TxnConflictDetails(crate::corekv::TransactionConflict::from(&conflict))
         }
@@ -205,8 +206,7 @@ impl Reader for RegolithTxn {
         // `Bytes::from_owner` adopts that borrow, so a read copies
         // nothing on the way to the caller.
         let slice = match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key))
-                .map_err(|error| Error::Backend(error.to_string()))?,
+            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key)).map_err(Error::from)?,
             Handle::Writable(txn) => readied!(txn.get_slice(key)).map_err(map_txn_error)?,
         };
         Ok(slice.map(Bytes::from_owner))
@@ -217,8 +217,7 @@ impl Reader for RegolithTxn {
             return Err(Error::EmptyKey);
         }
         let slice = match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key))
-                .map_err(|error| Error::Backend(error.to_string()))?,
+            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key)).map_err(Error::from)?,
             Handle::Writable(txn) => readied!(txn.get_parts(key, parts)).map_err(map_txn_error)?,
         };
         Ok(slice.map(Bytes::from_owner))
@@ -229,9 +228,7 @@ impl Reader for RegolithTxn {
             return Err(Error::EmptyKey);
         }
         match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => {
-                settled!(snapshot.has(key)).map_err(|error| Error::Backend(error.to_string()))
-            }
+            Handle::ReadOnly(snapshot) => settled!(snapshot.has(key)).map_err(Error::from),
             // A writing transaction has to consult its own buffer, which
             // `has` on the snapshot underneath would miss.
             Handle::Writable(txn) => Ok(readied!(txn.get_slice(key))
@@ -245,9 +242,7 @@ impl Reader for RegolithTxn {
             return Err(Error::EmptyKey);
         }
         match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => {
-                settled!(snapshot.get_size(key)).map_err(|error| Error::Backend(error.to_string()))
-            }
+            Handle::ReadOnly(snapshot) => settled!(snapshot.get_size(key)).map_err(Error::from),
             Handle::Writable(txn) => Ok(readied!(txn.get_slice(key))
                 .map_err(map_txn_error)?
                 .map(|v| v.len())),
@@ -458,6 +453,36 @@ impl Txn for RegolithTxn {
 
     fn callback_count(&self) -> usize {
         self.callbacks.len()
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn transaction_mapping_retains_io_facts_without_making_them_retryable() {
+        let os = std::io::Error::from_raw_os_error(28);
+        let kind = os.kind();
+        let message = os.to_string();
+        let error = map_txn_error(TransactionError::Engine(regolith::Error::Io(os)));
+        assert!(!error.is_retriable());
+        let Error::Io(cause) = error else {
+            panic!("I/O cause lost")
+        };
+        assert_eq!(cause.kind(), kind);
+        assert_eq!(cause.raw_os_error(), Some(28));
+        assert_eq!(cause.to_string(), message);
+        assert_eq!(cause.clone(), cause);
+    }
+
+    #[test]
+    fn corruption_with_disk_full_text_is_not_an_io_failure() {
+        let error = map_txn_error(TransactionError::Engine(regolith::Error::Corruption(
+            std::io::Error::new(std::io::ErrorKind::StorageFull, "full"),
+        )));
+        assert!(matches!(error, Error::Backend(_)));
+        assert!(!error.is_retriable());
     }
 }
 

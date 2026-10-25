@@ -332,6 +332,29 @@ pub(super) fn answered(
         Err(TransactionError::Execution(message)) => QueryResponse::error(
             QueryResponseError::from_query_error(QueryError::execution(message)),
         ),
+        Err(TransactionError::Storage(cause)) => QueryResponse::error(
+            QueryResponseError::from_query_error(QueryError::Storage(cause)),
+        ),
         Err(error) => QueryResponse::error(error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod storage_failure_tests {
+    use super::*;
+
+    #[test]
+    fn transaction_storage_failure_retains_code_without_authorizing_retry() {
+        let error = TransactionError::Storage(storage::Error::from(std::io::Error::new(
+            std::io::ErrorKind::StorageFull,
+            "localized storage failure",
+        )));
+        assert!(!error.is_retryable());
+        let response = answered(None, Err(error));
+        assert_eq!(
+            response.errors[0].code(),
+            Some(crate::executor::STORAGE_FULL_ERROR_CODE)
+        );
+        assert!(!response.is_transaction_conflict());
     }
 }

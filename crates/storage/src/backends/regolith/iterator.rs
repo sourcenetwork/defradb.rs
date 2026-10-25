@@ -260,11 +260,9 @@ impl RegolithIterator {
                     // The worker's queue reads the block; the next item
                     // resumes the walk where it stopped.
                     Some(Err(regolith::Error::WouldBlock(would_block))) => {
-                        wait_out(would_block)
-                            .await
-                            .map_err(|error| Error::Backend(error.to_string()))?;
+                        wait_out(would_block).await.map_err(Error::from)?;
                     }
-                    Some(Err(error)) => return Err(Error::Backend(error.to_string())),
+                    Some(Err(error)) => return Err(Error::from(error)),
                     None => return Ok(None),
                 }
             },
