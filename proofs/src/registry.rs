@@ -65,6 +65,22 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Selective CAR capacity: observed completed grants yield to active sends; in-flight scope and quiescent limits are preserved",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/selective_car_access.rs register, reclaim_completed and allows_root",
+        model_ref: "MC_SelectiveCarCapacity_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "admitted_bounded / warm_does_not_refuse / reclaim_preserves_active / authorized_scope / expired_completed_refused",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/selective_car_access.rs register, reclaim_completed and allows_root",
+        model_ref: "SelectiveCarCapacity (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Rooted authorization: one producer, exact grants, bounded optional retention, fenced eviction and cancellation wakeup",
         axis: Tla,
         anchor: "crates/p2p/src/sync/car_authorization.rs walk_with_limits; car_authorization_registry.rs; crates/p2p/tests/unit/car_authorization_limits.rs",

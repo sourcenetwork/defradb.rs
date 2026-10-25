@@ -40,6 +40,9 @@ lean_lib HistoryTurns where
 lean_lib RootedAuthorization where
 
 @[default_target]
+lean_lib SelectiveCarCapacity where
+
+@[default_target]
 lean_lib ReplicatorInstall where
 
 @[default_target]

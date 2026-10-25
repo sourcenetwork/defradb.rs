@@ -91,8 +91,14 @@ impl SelectiveCarAccess {
                 expires_at: Atom::new(None),
             }),
         );
-        let peer_count = peer_grants.len();
-        let total_grants: usize = self.grants.values().map(|grants| grants.len()).sum();
+        let mut peer_count = peer_grants.len();
+        let mut total_grants = self.grant_count();
+        if peer_count > MAX_SELECTIVE_CAR_GRANTS_PER_PEER || total_grants > MAX_SELECTIVE_CAR_GRANTS
+        {
+            self.reclaim_completed(&peer_grants);
+            peer_count = peer_grants.len();
+            total_grants = self.grant_count();
+        }
         if peer_count > MAX_SELECTIVE_CAR_GRANTS_PER_PEER || total_grants > MAX_SELECTIVE_CAR_GRANTS
         {
             peer_grants.remove(&grant_id);
@@ -111,6 +117,40 @@ impl SelectiveCarAccess {
             peer_id,
             grant_id,
         })
+    }
+
+    fn grant_count(&self) -> usize {
+        self.grants.values().map(|grants| grants.len()).sum()
+    }
+
+    fn reclaim_completed(&self, target_peer: &PeerGrants) {
+        Self::reclaim_completed_while(target_peer, || {
+            target_peer.len() > MAX_SELECTIVE_CAR_GRANTS_PER_PEER
+        });
+        for peer_grants in self.grants.values() {
+            if self.grant_count() <= MAX_SELECTIVE_CAR_GRANTS {
+                break;
+            }
+            Self::reclaim_completed_while(&peer_grants, || {
+                self.grant_count() > MAX_SELECTIVE_CAR_GRANTS
+            });
+        }
+    }
+
+    fn reclaim_completed_while<F>(peer_grants: &PeerGrants, over_capacity: F)
+    where
+        F: Fn() -> bool,
+    {
+        for (grant_id, grant) in peer_grants.iter() {
+            if !over_capacity() {
+                break;
+            }
+            // Expiry is published only when the registration's guard is dropped;
+            // that completed entry cannot become an active send again.
+            if grant.expires_at.peek(Option::is_some) {
+                peer_grants.remove(&grant_id);
+            }
+        }
     }
 
     pub(super) fn allows_root(&self, peer_id: &PeerId, root_cid: &Cid) -> bool {
@@ -192,69 +232,4 @@ impl Drop for SelectiveCarAccessGuard {
 }
 
 #[cfg(test)]
-mod tests {
-    use multihash_codetable::{Code, MultihashDigest};
-
-    use super::*;
-
-    fn cid(label: &[u8]) -> Cid {
-        Cid::new_v1(0x71, Code::Sha2_256.digest(label))
-    }
-
-    #[test]
-    fn completed_push_grants_post_ack_recovery_for_its_peer_and_root() {
-        let access = Arc::new(SelectiveCarAccess::default());
-        let peer = PeerId::new("peer-a".to_string());
-        let other_peer = PeerId::new("peer-b".to_string());
-        let root = cid(b"root");
-        let child = cid(b"child");
-        let unrelated = cid(b"unrelated");
-
-        let guard = access.register(peer.clone(), root).unwrap();
-        drop(guard);
-
-        assert!(access.allows_root(&peer, &root));
-        assert!(!access.allows_root(&peer, &unrelated));
-        assert!(!access.allows_root(&peer, &child));
-        assert!(!access.allows_root(&other_peer, &root));
-    }
-
-    #[test]
-    fn post_ack_grant_expires_after_recovery_window() {
-        let access = Arc::new(SelectiveCarAccess::with_recovery_window(Duration::ZERO));
-        let peer = PeerId::new("peer".to_string());
-        let root = cid(b"root");
-        let guard = access.register(peer.clone(), root).unwrap();
-        assert!(access.allows_root(&peer, &root));
-
-        drop(guard);
-        assert!(!access.allows_root(&peer, &root));
-    }
-
-    #[test]
-    fn overlapping_push_grants_finish_independently() {
-        let access = Arc::new(SelectiveCarAccess::with_recovery_window(Duration::ZERO));
-        let peer = PeerId::new("peer".to_string());
-        let root = cid(b"root");
-        let first = access.register(peer.clone(), root).unwrap();
-        let second = access.register(peer.clone(), root).unwrap();
-        drop(first);
-        assert!(access.allows_root(&peer, &root));
-
-        drop(second);
-        assert!(!access.allows_root(&peer, &root));
-    }
-
-    #[test]
-    fn active_authority_is_bounded_and_overflow_is_actionable() {
-        let access = Arc::new(SelectiveCarAccess::default());
-        let peer = PeerId::new("peer".to_string());
-        let root = cid(b"root");
-        let mut grants = Vec::new();
-        for _ in 0..MAX_SELECTIVE_CAR_GRANTS_PER_PEER {
-            grants.push(access.register(peer.clone(), root).unwrap());
-        }
-        assert!(access.register(peer, root).is_none());
-        assert_eq!(grants.len(), MAX_SELECTIVE_CAR_GRANTS_PER_PEER);
-    }
-}
+mod tests;
