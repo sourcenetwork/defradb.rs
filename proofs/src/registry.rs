@@ -81,6 +81,22 @@ pub const PROPERTIES: &[Property] = &[
     },
     Property {
         family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "Selected transfer needs no subscription; replay stays fenced, scoped and grant-bound, with truthful completion",
+        axis: Tla,
+        anchor: "crates/db/src/merge/push_docs.rs push_existing_docs_by_id",
+        model_ref: "MC_DocumentPush_{Green,Red_*}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
+        name: "enrollment_without_subscription / absent_replay_is_refused / selected_failure_is_not_deferred",
+        axis: Lean,
+        anchor: "crates/db/src/merge/push_docs.rs; crates/db/tests/merge/push_docs_selection.rs",
+        model_ref: "DocumentPush.lean; selected_document_transfers_match_executed_model",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Sync ownership transfer (head hint / receiver pull)",
         name: "Rooted authorization: one producer, exact grants, bounded optional retention, fenced eviction and cancellation wakeup",
         axis: Tla,
         anchor: "crates/p2p/src/sync/car_authorization.rs walk_with_limits; car_authorization_registry.rs; crates/p2p/tests/unit/car_authorization_limits.rs",

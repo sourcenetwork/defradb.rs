@@ -433,17 +433,28 @@ fn a_first_replay_hint_seeds_the_missing_retry_schedule() {
 }
 
 #[derive(Clone)]
-struct ConnectedPeerTransport {
+pub(super) struct ConnectedPeerTransport {
     local: PeerId,
     remote: PeerId,
+    replies: Option<(bool, regolith::sync::BoundedSender<p2p::PushLogRequest>)>,
 }
 
 impl ConnectedPeerTransport {
-    fn new(local: &str, remote: &str) -> Self {
+    pub(super) fn new(local: &str, remote: &str) -> Self {
         Self {
             local: PeerId::new(local.to_string()),
             remote: PeerId::new(remote.to_string()),
+            replies: None,
         }
+    }
+
+    pub(super) fn with_replies(
+        mut self,
+        acknowledged: bool,
+        requests: regolith::sync::BoundedSender<p2p::PushLogRequest>,
+    ) -> Self {
+        self.replies = Some((acknowledged, requests));
+        self
     }
 }
 
@@ -530,9 +541,19 @@ impl p2p::P2PTransport for ConnectedPeerTransport {
     async fn send_two_stream_request(
         &self,
         _peer_id: &PeerId,
-        _req: p2p::PushLogRequest,
+        req: p2p::PushLogRequest,
     ) -> p2p::Result<PushLogReply> {
-        Err(unreachable_transport())
+        let Some((acknowledged, requests)) = &self.replies else {
+            return Err(unreachable_transport());
+        };
+        requests
+            .try_send(req)
+            .expect("bounded test request capture");
+        Ok(if *acknowledged {
+            PushLogReply::success("selected-transfer")
+        } else {
+            PushLogReply::error("selected-transfer", "receiver refused the head")
+        })
     }
 
     async fn send_two_stream_response(

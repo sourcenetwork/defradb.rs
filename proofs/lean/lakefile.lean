@@ -104,3 +104,6 @@ lean_lib RobustPruneBlocks where
 
 @[default_target]
 lean_lib BackEdgesInPlace where
+
+@[default_target]
+lean_lib DocumentPush where

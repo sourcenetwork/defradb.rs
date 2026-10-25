@@ -15,6 +15,11 @@ use crate::merge::push_docs_replay::{
     persist_replay_failures, ReplayDocumentFailure, ReplayPushConfig, ReplayPushGate,
 };
 
+enum PushOwnership {
+    Replicator,
+    Selected(RapidHashSet<(String, String)>),
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PushExistingDocsSeOptions<'a> {
     pub encryption_key: Option<&'a [u8]>,
@@ -121,9 +126,9 @@ pub async fn push_existing_docs<S: Store + 'static, T: P2PTransport>(
     .await
 }
 
-/// Push an explicit `(collection_name, doc_id)` set through the existing
-/// replay path (connection wait, retry guard, ACP creator resolution,
-/// bounded PushLog, marker registration).
+/// Push an explicit `(collection_name, doc_id)` set without adding a subscription.
+/// An installed replicator retains replay ownership. Without one, success requires
+/// acknowledgements for every selected document's unchanged heads.
 #[allow(clippy::too_many_arguments)]
 pub async fn push_existing_docs_by_id<S: Store + 'static, T: P2PTransport>(
     transport: &T,
@@ -208,16 +213,22 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
     let peerstore = db
         .peerstore()
         .with_retry_schedule(replay_config.retry_schedule.clone());
-    if peerstore
-        .get_replicator(peer_id.as_str())
-        .await
-        .map_err(|error| format!("failed to load replicator: {error}"))?
-        .is_none()
-    {
-        return Err(format!(
-            "replicator {peer_id} removed before existing-document replay"
-        ));
-    }
+    let mut ownership = match (
+        peerstore
+            .get_replicator(peer_id.as_str())
+            .await
+            .map_err(|error| format!("failed to load replicator: {error}"))?
+            .is_some(),
+        allowlist,
+    ) {
+        (true, _) => PushOwnership::Replicator,
+        (false, Some(docs)) => PushOwnership::Selected(docs.iter().cloned().collect()),
+        (false, None) => {
+            return Err(format!(
+                "replicator {peer_id} removed before existing-document replay"
+            ));
+        }
+    };
     let txn = db
         .new_txn(true)
         .await
@@ -326,32 +337,31 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 continue;
             }
 
-            // Conservation comes before the fallible serving capability. If
-            // the bounded selective-CAR table is full (or signing fails), the
-            // durable marker keeps this document and every later document in
-            // the replay eligible for the shared retry clock.
-            let Some(marker_generation) = peerstore
-                .observe_push_head_with_generation(
-                    peer_id.as_str(),
-                    doc_id,
-                    collection.collection_id(),
-                )
-                .await
-                .map_err(|error| format!("failed to register replay marker: {error}"))?
-            else {
-                // Tasks already spawned are still pushing. Join them so the
-                // error below is the whole truth, then report the removal:
-                // Ok(()) here would let a caller publish a completion event
-                // while pushes are on the wire.
-                let mut error =
-                    format!("replicator {peer_id} removed during existing-document replay");
-                for (_, _, _, _, _, handle) in push_handles.drain(..) {
-                    let outcome: Option<bool> = handle.await;
-                    if outcome.is_none() {
-                        error.push_str("; replay push task panicked or its runtime stopped");
+            // Tracked replay registers before the fallible serving capability,
+            // so a refused grant or signature leaves its durable retry owner intact.
+            let marker_generation = if matches!(&ownership, PushOwnership::Replicator) {
+                let Some(generation) = peerstore
+                    .observe_push_head_with_generation(
+                        peer_id.as_str(),
+                        doc_id,
+                        collection.collection_id(),
+                    )
+                    .await
+                    .map_err(|error| format!("failed to register replay marker: {error}"))?
+                else {
+                    let mut error =
+                        format!("replicator {peer_id} removed during existing-document replay");
+                    for (_, _, _, _, _, _, handle) in push_handles.drain(..) {
+                        let outcome: Option<bool> = handle.await;
+                        if outcome.is_none() {
+                            error.push_str("; replay push task panicked or its runtime stopped");
+                        }
                     }
-                }
-                return Err(error);
+                    return Err(error);
+                };
+                Some(generation)
+            } else {
+                None
             };
 
             let mut requests = Vec::new();
@@ -361,7 +371,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                         %peer_id,
                         %doc_id,
                         %block_cid,
-                        "Selective CAR authority full; retaining replay marker"
+                        "Selective CAR authority full"
                     );
                     continue 'documents;
                 };
@@ -374,7 +384,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                 );
                 if let Err(e) = p2p::signing::sign_with_transport(transport, &mut request) {
                     tracing::warn!(error = %e, "Failed to sign PushLog request");
-                    continue;
+                    continue 'documents;
                 }
                 requests.push((grant, request));
             }
@@ -393,6 +403,7 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     .await
                     .map_err(|e| format!("replay gate closed before scheduling push: {e}"))?;
                 push_handles.push((
+                    col_name.clone(),
                     replay_doc_id,
                     replay_collection_id,
                     *doc_short_id,
@@ -463,8 +474,15 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
 
     tracing::debug!(task_count = push_handles.len(), "awaiting push tasks");
     let mut replay_failures = Vec::new();
-    for (doc_id, collection_id, doc_short_id, attempted_heads, marker_generation, jh) in
-        push_handles
+    for (
+        collection_name,
+        doc_id,
+        collection_id,
+        doc_short_id,
+        attempted_heads,
+        marker_generation,
+        jh,
+    ) in push_handles
     {
         match jh.await {
             Some(true) => {
@@ -486,20 +504,25 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
                     });
                     continue;
                 }
-                peerstore
-                    .complete_retry_scope(
-                        peer_id.as_str(),
-                        &doc_id,
-                        &collection_id,
-                        false,
-                        marker_generation,
-                        &current_heads
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>(),
-                    )
-                    .await
-                    .map_err(|error| format!("failed to clear replay marker: {error}"))?;
+                if let Some(marker_generation) = marker_generation {
+                    peerstore
+                        .complete_retry_scope(
+                            peer_id.as_str(),
+                            &doc_id,
+                            &collection_id,
+                            false,
+                            marker_generation,
+                            &current_heads
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>(),
+                        )
+                        .await
+                        .map_err(|error| format!("failed to clear replay marker: {error}"))?;
+                }
+                if let PushOwnership::Selected(pending) = &mut ownership {
+                    pending.remove(&(collection_name, doc_id));
+                }
             }
             Some(false) => replay_failures.push(ReplayDocumentFailure {
                 doc_id,
@@ -515,7 +538,18 @@ async fn push_existing_docs_with_config_and_allowlist<S: Store + 'static, T: P2P
         }
     }
     tracing::debug!("all push tasks completed");
-    persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
+    match &ownership {
+        PushOwnership::Replicator => {
+            persist_replay_failures(&peerstore, peer_id, &replay_failures).await?;
+        }
+        PushOwnership::Selected(pending) if !pending.is_empty() => {
+            return Err(format!(
+                "selected document push did not acknowledge all requested heads ({} documents incomplete)",
+                pending.len()
+            ));
+        }
+        PushOwnership::Selected(_) => {}
+    }
 
     if let Some(se_key) = se_options.encryption_key {
         let coordinator = match se_options.identity_pubkey {

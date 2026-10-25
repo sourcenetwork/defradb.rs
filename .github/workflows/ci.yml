@@ -323,6 +323,8 @@ jobs:
         run: cargo test -p query --test storage_failure -- --ignored
       - name: Check native listener model binding
         run: cargo test -p p2p --features iroh-transport --lib iroh::endpoint_config::bind_tests::native_bindings_match_executed_model -- --exact --ignored
+      - name: Check selected document push model binding
+        run: cargo test -p db --test merge selected_document_transfers_match_executed_model -- --ignored
       - name: Check Lean-to-Rust conformance
         run: cargo nextest run -p conformance --lib --test lean_conformance
 
