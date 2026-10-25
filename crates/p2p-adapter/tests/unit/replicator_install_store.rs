@@ -130,6 +130,48 @@ async fn finish_is_fenced_idempotent_and_preserves_the_requested_set() {
 
 #[tokio::test]
 async fn waiting_has_a_deadline_and_does_not_clear_the_active_install() {
+    assert_waiting_has_a_deadline_and_preserves_the_install().await;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn waiting_on_a_database_worker_needs_no_network_reactor() {
+    let pool = workers::Pool::start(workers::Config::unplaced(1)).unwrap();
+    let result = workers::block_on_timeout(
+        workers::run_on(Some(&pool), workers::Target::LeastLoaded, || async {
+            assert!(workers::on_worker());
+            assert_waiting_has_a_deadline_and_preserves_the_install().await;
+            assert_waiting_rechecks_the_completed_install().await;
+        }),
+        Duration::from_secs(5),
+    );
+    pool.shutdown_blocking().unwrap();
+    result.unwrap().unwrap();
+}
+
+async fn assert_waiting_rechecks_the_completed_install() {
+    use std::future::Future as _;
+    use std::task::Poll;
+
+    let h = Harness::default();
+    let request = request("peer", &["Note"]);
+    let first = h.prepare(&request).await.unwrap();
+    let mut waiting = std::pin::pin!(h.prepare(&request));
+    std::future::poll_fn(|cx| match waiting.as_mut().poll(cx) {
+        Poll::Ready(_) => panic!("pending install completed before release"),
+        Poll::Pending if !h.waiters.is_empty() => Poll::Ready(()),
+        Poll::Pending => Poll::Pending,
+    })
+    .await;
+    h.finish(&first, None).await.unwrap();
+    let next = waiting.await.unwrap();
+    assert_ne!(next.id, first.id);
+    assert!(next.replay.is_empty());
+    assert!(h.waiters.is_empty());
+    h.finish(&next, None).await.unwrap();
+}
+
+async fn assert_waiting_has_a_deadline_and_preserves_the_install() {
     let h = Harness::default();
     let request = request("peer", &["Note"]);
     let first = h.prepare(&request).await.unwrap();

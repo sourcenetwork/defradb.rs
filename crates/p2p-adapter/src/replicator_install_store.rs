@@ -250,7 +250,12 @@ where
             let remaining = deadline.saturating_duration_since(n0_future::time::Instant::now());
             workers::timeout(remaining, watch.wait())
                 .await
-                .map_err(|_| P2PError::transport("replicator replay is still active; try again"))?;
+                .map_err(|error| match error {
+                    workers::Error::TimedOut => {
+                        P2PError::transport("replicator replay is still active; try again")
+                    }
+                    error => P2PError::internal(error.report("replicator install wait")),
+                })?;
         }
         // A notification only ends the wait. The next transaction decides again.
     }
