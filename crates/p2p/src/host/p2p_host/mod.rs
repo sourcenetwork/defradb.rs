@@ -41,7 +41,7 @@ use crate::message::PushLogReply;
 use crate::two_stream::{TwoStreamHandler, TwoStreamRunner};
 use crate::QueryId;
 
-use connection_manager::ActiveConnectionManager;
+pub(in crate::host) use connection_manager::ActiveConnectionManager;
 
 use super::command::HostCommand;
 use super::event::HostEvent;
@@ -278,7 +278,7 @@ pub struct P2PHost<S: Store> {
     pub(super) node_identity: Option<Arc<identity::RawIdentity>>,
     /// Tracks established connections and actively prunes them after the
     /// Go-compatible low/high watermarks are exceeded.
-    connection_manager: ActiveConnectionManager,
+    pub(super) connection_manager: ActiveConnectionManager,
     /// Topics whose incoming gossipsub messages bypass the PushLog decoder
     /// and flow through `HostEvent::GossipRawMessage` instead. Populated
     /// by `HostCommand::RegisterPubsubRpcTopic` when the coordinator wires

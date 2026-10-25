@@ -17,6 +17,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  NEXTEST_PROFILE: ci
   CARGO_INCREMENTAL: '0'
   # Standard hosted runners have 14 GB of storage. Keep test artifacts small
   # enough for a clean runner without changing runtime behavior.
@@ -226,14 +227,17 @@ jobs:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: integration-binaries
           save-if: false
-      - run: cargo test --profile super-dev -p telemetry --features otlp
-      - run: cargo test --profile super-dev -p cli --features otel --test telemetry_dedup
-      - run: cargo test --profile super-dev -p defra-node --features p2p
+      - run: cargo nextest run --cargo-profile super-dev -p telemetry --features otlp
+      - run: cargo nextest run --cargo-profile super-dev -p cli --features otel --test telemetry_dedup
+      - run: cargo nextest run --cargo-profile super-dev -p defra-node --features p2p
 
   wasm-check:
     name: WASM Build Check
@@ -294,6 +298,9 @@ jobs:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -312,8 +319,10 @@ jobs:
           build: true
           test: false
           use-mathlib-cache: false
+      - name: Check storage failure model binding
+        run: cargo test -p query --test storage_failure -- --ignored
       - name: Check Lean-to-Rust conformance
-        run: cargo test -p conformance --lib --test lean_conformance
+        run: cargo nextest run -p conformance --lib --test lean_conformance
 
   conformance:
     name: Conformance
@@ -330,6 +339,9 @@ jobs:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
@@ -341,7 +353,7 @@ jobs:
           path: target/ci
       - run: chmod +x target/ci/defra target/ci/defra-iroh
       - name: Run conformance tests
-        run: cargo test --profile super-dev -p conformance --lib --test tla_conformance -- --test-threads=1
+        run: cargo nextest run --cargo-profile super-dev -p conformance --lib --test tla_conformance
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -372,6 +384,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
@@ -461,35 +476,35 @@ jobs:
       - name: Run rust integration tests (basic)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo test --profile super-dev -p integration-test --test basic
-          -- --test-threads=1 --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test basic
+          -- --skip ::go_
       - name: Run rust integration tests (core suites)
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo test --profile super-dev -p integration-test
+          cargo nextest run --cargo-profile super-dev -p integration-test
           --test query --test acp --test nac --test encryption --test identity
           --test backup --test fts --test vector --test acp_replay_outage_repro
-          -- --test-threads=1 --skip ::go_
+          -- --skip ::go_
       - name: Run rust integration tests on a one-worker pool (basic, query)
         if: matrix.suite == 'one-worker'
         env:
           # Every node the suites start runs its data path on one worker.
           DEFRA_WORKERS: '1'
         run: >-
-          cargo test --profile super-dev -p integration-test --test basic --test query
-          -- --test-threads=1 --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test basic --test query
+          -- --skip ::go_
       - name: Run rust P2P integration tests
         if: matrix.suite == 'rust' || matrix.suite == 'signed-docs'
         run: >-
-          cargo test --profile super-dev -p integration-test --test p2p
-          -- --test-threads=1 --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          -- --skip ::go_
       - name: Run go-compat integration tests
         if: matrix.suite == 'go-compat'
         run: >-
-          cargo test --profile super-dev -p integration-test
+          cargo nextest run --cargo-profile super-dev -p integration-test
           --test basic --test query --test acp --test nac --test backup --test p2p --test identity
           --test encryption --test vera
-          -- --test-threads=1 go_
+          -- go_
           --skip go_acp_link_collection_nonexistent_policy_reject
           --skip go_acp_link_collection_nonexistent_resource_reject
           --skip go_acp_link_collection_missing_read_perm_reject
@@ -500,8 +515,8 @@ jobs:
         env:
           DEFRA_CONFORMANCE_BINARY: ${{ github.workspace }}/target/ci/defra
         run: >-
-          cargo test --profile super-dev -p conformance --test tla_conformance
-          -- --ignored --test-threads=1
+          cargo nextest run --cargo-profile super-dev -p conformance --test tla_conformance
+          -- --ignored
           parity_counter_3node parity_counter_storm_go_go parity_delete_update
           parity_indexed_lww parity_mixed_fields_3node parity_lww_tie_partition
           parity_samedoc_mixed_restart
@@ -509,16 +524,16 @@ jobs:
       - name: Run iroh integration tests
         if: matrix.suite == 'iroh'
         run: >-
-          cargo test --profile super-dev -p integration-test --test p2p_iroh
-          -- --test-threads=1 connection::
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh
+          -- connection::
           sync::version::initial_col_version sync::version::patch_version_of_
       - name: Run iroh sync ownership fences
         if: matrix.suite == 'iroh'
         run: |
-          cargo test --profile super-dev -p integration-test --test p2p_iroh \
-            peer::create::create_propagates_to_last_node_in_chain -- --test-threads=1
-          cargo test --profile super-dev -p integration-test --test p2p_iroh \
-            peer::create::head_hint_fanout_above_car_worker_bound_quiesces -- --test-threads=1
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+            peer::create::create_propagates_to_last_node_in_chain
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_iroh \
+            peer::create::head_hint_fanout_above_car_worker_bound_quiesces
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -544,6 +559,9 @@ jobs:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - run: .github/scripts/install-linux-ci-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
@@ -556,15 +574,15 @@ jobs:
       - run: chmod +x target/ci/defra target/ci/defra-iroh
       - name: Run rust P2P integration tests
         run: >-
-          cargo test --profile super-dev -p integration-test --test p2p
-          -- --test-threads=1 --skip ::go_
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p
+          -- --skip ::go_
       - name: Run P2P ownership durability fences
         run: |
-          cargo test --profile super-dev -p integration-test --test p2p_admission -- --test-threads=1
-          cargo test --profile super-dev -p integration-test --test p2p_admission_restart -- --test-threads=1
-          cargo test --profile super-dev -p integration-test --test p2p_admission_fairness -- --test-threads=1
-          cargo test --profile super-dev -p integration-test --test p2p_backlog -- --test-threads=1
-          cargo test --profile super-dev -p integration-test --test issue1154_repro -- --test-threads=1
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_restart
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_admission_fairness
+          cargo nextest run --cargo-profile super-dev -p integration-test --test p2p_backlog
+          cargo nextest run --cargo-profile super-dev -p integration-test --test issue1154_repro
       - name: Upload harness node logs
         if: failure()
         uses: actions/upload-artifact@v4

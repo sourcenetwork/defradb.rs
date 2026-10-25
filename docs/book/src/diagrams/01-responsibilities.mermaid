@@ -1,0 +1,75 @@
+flowchart TB
+    classDef gents fill:#fde7c9,stroke:#c77700,color:#000
+    classDef boundary fill:#e8e8e8,stroke:#666666,color:#000
+    classDef defra fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef traits fill:#f3e5f5,stroke:#7b1fa2,color:#000
+    classDef rego fill:#d6e6f8,stroke:#1565c0,color:#000
+    classDef disk fill:#ffffff,stroke:#999999,color:#000
+
+    subgraph GENTS["gents: client"]
+        G1["agent runtime: requests, leases, claims,<br/>streaming segments, event sources"]
+        G2["GraphQL queries and mutations,<br/>explicit transactions, _documentArrivals"]
+    end
+
+    subgraph DEFRA["defradb.rs"]
+        subgraph NB["network edge: one tokio runtime, held in one place"]
+            N1["HTTP and embedded API"]
+            N2["P2P networking"]
+            N3["remote inputs: KMS keys, signatures,<br/>Vera decisions, embeddings:<br/>single-flight, batched, cached"]
+        end
+        subgraph POOL["thread-per-core: one pinned async executor per core, no task stealing"]
+            W1["GraphQL parsing and query planning"]
+            W2["DAG blocks: CIDs, signatures, encryption"]
+            W3["CRDT rules: LWW order, counters, head sets"]
+            W4["indexes: unique, secondary, full-text, vector"]
+            W5["ACP policy decisions"]
+            W6["lens migrations"]
+            W7["business logic per conflict reason"]
+        end
+        subgraph IMPLS["trait implementations: defradb.rs code"]
+            T1["KeyClassifier: one match on key prefixes"]
+            T2["MergeOperator: counters, head sets,<br/>document parts, touches"]
+            T3["LogLayout: arrival journal keys"]
+            T4["EventListener on_conflict: telemetry"]
+            T5["KeyProvider: keys for encryption at rest"]
+        end
+    end
+
+    subgraph REGO["regolith"]
+        subgraph DL["DefraLevel mechanisms: generic, no downstream names"]
+            R1["key classes: Ordinary, CommutativePrefix,<br/>ContentAddressed, Log"]
+            R2["blind merges, projected reads,<br/>value-validated reads"]
+            R3["commit-ordered append, Db allocate"]
+            R4["write-free transactions,<br/>read-your-own-writes"]
+            R5["transact, Conflict reasons, commit receipt"]
+            R6["validated scans"]
+        end
+        subgraph ENG["engine: every user"]
+            E1["non-blocking API on per-thread IoQueues:<br/>commit_nowait, tickets, CacheOnly reads, WouldBlock;<br/>every completion on the asking thread's own queue"]
+            E2["group commit; per-core hot paths;<br/>then the lock-free commit pipeline"]
+            E3["memtables, WAL format 2, SSTs, manifest"]
+            E4["stripe-aware compaction worker:<br/>the only regolith thread"]
+            E5["regolith sync: lock-free, syscall-free primitives"]
+            E6["encryption at rest: AEAD in SST block,<br/>WAL record and manifest frames;<br/>values plaintext inside the engine"]
+        end
+    end
+
+    DISK[("disk, OPFS or memory env")]
+
+    G1 --> G2
+    G2 -->|"GraphQL over HTTP or embedded calls"| N1
+    N1 -->|"routed at the edge: owner core,<br/>document affinity, lock-free inbox"| POOL
+    N2 -->|"remote blocks, lock-free channel"| POOL
+    N3 -->|"inputs before the transaction"| POOL
+    POOL -->|"implements"| IMPLS
+    POOL -->|"calls inline on its own core;<br/>completions on its own IoQueue"| DL
+    IMPLS -.->|"plugged into"| DL
+    DL --> ENG
+    ENG --> DISK
+
+    class G1,G2 gents
+    class N1,N2,N3 boundary
+    class W1,W2,W3,W4,W5,W6,W7 defra
+    class T1,T2,T3,T4,T5 traits
+    class R1,R2,R3,R4,R5,R6,E1,E2,E3,E4,E5,E6 rego
+    class DISK disk

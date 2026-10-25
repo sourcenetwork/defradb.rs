@@ -171,6 +171,7 @@ impl Drop for RegolithTxn {
 
 pub(super) fn map_txn_error(error: TransactionError) -> Error {
     match error {
+        TransactionError::Engine(error) => error.into(),
         TransactionError::Conflict(conflict) => {
             Error::TxnConflictDetails(crate::corekv::TransactionConflict::from(&conflict))
         }
@@ -205,8 +206,7 @@ impl Reader for RegolithTxn {
         // `Bytes::from_owner` adopts that borrow, so a read copies
         // nothing on the way to the caller.
         let slice = match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key))
-                .map_err(|error| Error::Backend(error.to_string()))?,
+            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key)).map_err(Error::from)?,
             Handle::Writable(txn) => readied!(txn.get_slice(key)).map_err(map_txn_error)?,
         };
         Ok(slice.map(Bytes::from_owner))
@@ -217,8 +217,7 @@ impl Reader for RegolithTxn {
             return Err(Error::EmptyKey);
         }
         let slice = match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key))
-                .map_err(|error| Error::Backend(error.to_string()))?,
+            Handle::ReadOnly(snapshot) => settled!(snapshot.get_slice(key)).map_err(Error::from)?,
             Handle::Writable(txn) => readied!(txn.get_parts(key, parts)).map_err(map_txn_error)?,
         };
         Ok(slice.map(Bytes::from_owner))
@@ -229,9 +228,7 @@ impl Reader for RegolithTxn {
             return Err(Error::EmptyKey);
         }
         match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => {
-                settled!(snapshot.has(key)).map_err(|error| Error::Backend(error.to_string()))
-            }
+            Handle::ReadOnly(snapshot) => settled!(snapshot.has(key)).map_err(Error::from),
             // A writing transaction has to consult its own buffer, which
             // `has` on the snapshot underneath would miss.
             Handle::Writable(txn) => Ok(readied!(txn.get_slice(key))
@@ -245,9 +242,7 @@ impl Reader for RegolithTxn {
             return Err(Error::EmptyKey);
         }
         match self.handle()?.as_ref() {
-            Handle::ReadOnly(snapshot) => {
-                settled!(snapshot.get_size(key)).map_err(|error| Error::Backend(error.to_string()))
-            }
+            Handle::ReadOnly(snapshot) => settled!(snapshot.get_size(key)).map_err(Error::from),
             Handle::Writable(txn) => Ok(readied!(txn.get_slice(key))
                 .map_err(map_txn_error)?
                 .map(|v| v.len())),
@@ -462,21 +457,54 @@ impl Txn for RegolithTxn {
 }
 
 #[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn transaction_mapping_retains_io_facts_without_making_them_retryable() {
+        let os = std::io::Error::from_raw_os_error(28);
+        let kind = os.kind();
+        let message = os.to_string();
+        let error = map_txn_error(TransactionError::Engine(regolith::Error::Io(os)));
+        assert!(!error.is_retriable());
+        let Error::Io(cause) = error else {
+            panic!("I/O cause lost")
+        };
+        assert_eq!(cause.kind(), kind);
+        assert_eq!(cause.raw_os_error(), Some(28));
+        assert_eq!(cause.to_string(), message);
+        assert_eq!(cause.clone(), cause);
+    }
+
+    #[test]
+    fn corruption_with_disk_full_text_is_not_an_io_failure() {
+        let error = map_txn_error(TransactionError::Engine(regolith::Error::Corruption(
+            std::io::Error::new(std::io::ErrorKind::StorageFull, "full"),
+        )));
+        assert!(matches!(error, Error::Backend(_)));
+        assert!(!error.is_retriable());
+    }
+}
+
+#[cfg(test)]
 mod append_tests {
     use crate::backends::RegolithStore;
     use crate::corekv::{AppendLog, Store, Writer};
 
     /// A pending append holds the layout its log already shares, not a copy.
-    #[tokio::test]
-    async fn an_append_shares_its_log_layout() {
-        let store = RegolithStore::in_memory().unwrap();
-        let log = AppendLog::new(b"s/arrival/c1/head".to_vec(), b"s/arrival/c1/row/".to_vec());
-        let mut txn = store.new_txn(false).await.unwrap();
-        txn.append(&log, b"doc-1", Some(b"s/arrival/c1/doc/doc-1"))
-            .await
-            .unwrap();
-        assert_eq!(std::sync::Arc::strong_count(log.keys()), 2);
-        txn.discard();
+    #[test]
+    fn an_append_shares_its_log_layout() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let log = AppendLog::new(b"s/arrival/c1/head".to_vec(), b"s/arrival/c1/row/".to_vec());
+            let mut txn = store.new_txn(false).await.unwrap();
+            txn.append(&log, b"doc-1", Some(b"s/arrival/c1/doc/doc-1"))
+                .await
+                .unwrap();
+            assert_eq!(std::sync::Arc::strong_count(log.keys()), 2);
+            txn.discard();
+        })
+        .unwrap()
     }
 }
 
@@ -497,108 +525,121 @@ mod callback_tests {
 
     /// A before-commit error fails the commit: nothing is written, the abort
     /// callbacks run, and the commit callbacks do not.
-    #[tokio::test]
-    async fn a_failing_before_commit_fails_the_commit_and_runs_the_abort_callbacks() {
-        let store = RegolithStore::in_memory().unwrap();
-        let committed = Arc::new(AtomicUsize::new(0));
-        let aborted = Arc::new(AtomicUsize::new(0));
-        let mut txn = store.new_txn(false).await.unwrap();
-        txn.set(b"key", b"value").await.unwrap();
-        txn.on_commit(OnCommit::Sync(counting(&committed))).unwrap();
-        txn.on_abort(OnAbort::Sync(counting(&aborted)));
-        txn.before_commit(Box::new(|| Err(Error::Other("not yet".into()))));
-        let error = txn.commit().await.unwrap_err();
-        assert!(error.to_string().contains("not yet"), "{error}");
-        assert_eq!(committed.load(Ordering::SeqCst), 0);
-        assert_eq!(aborted.load(Ordering::SeqCst), 1);
-        let reader = store.new_txn(true).await.unwrap();
-        assert!(reader.get(b"key").await.unwrap().is_none());
+    #[test]
+    fn a_failing_before_commit_fails_the_commit_and_runs_the_abort_callbacks() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let committed = Arc::new(AtomicUsize::new(0));
+            let aborted = Arc::new(AtomicUsize::new(0));
+            let mut txn = store.new_txn(false).await.unwrap();
+            txn.set(b"key", b"value").await.unwrap();
+            txn.on_commit(OnCommit::Sync(counting(&committed))).unwrap();
+            txn.on_abort(OnAbort::Sync(counting(&aborted)));
+            txn.before_commit(Box::new(|| Err(Error::Other("not yet".into()))));
+            let error = txn.commit().await.unwrap_err();
+            assert!(error.to_string().contains("not yet"), "{error}");
+            assert_eq!(committed.load(Ordering::SeqCst), 0);
+            assert_eq!(aborted.load(Ordering::SeqCst), 1);
+            let reader = store.new_txn(true).await.unwrap();
+            assert!(reader.get(b"key").await.unwrap().is_none());
+        })
+        .unwrap()
     }
 
     /// A transaction dropped without a commit or a discard ends without
     /// committing, so its abort callbacks run, once.
-    #[tokio::test]
-    async fn a_dropped_transaction_runs_its_abort_callbacks_once() {
-        let store = RegolithStore::in_memory().unwrap();
-        let aborted = Arc::new(AtomicUsize::new(0));
-        let mut dropped = store.new_txn(false).await.unwrap();
-        dropped.set(b"key", b"value").await.unwrap();
-        dropped.on_abort(OnAbort::Sync(counting(&aborted)));
-        drop(dropped);
-        assert_eq!(aborted.load(Ordering::SeqCst), 1);
+    #[test]
+    fn a_dropped_transaction_runs_its_abort_callbacks_once() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let aborted = Arc::new(AtomicUsize::new(0));
+            let mut dropped = store.new_txn(false).await.unwrap();
+            dropped.set(b"key", b"value").await.unwrap();
+            dropped.on_abort(OnAbort::Sync(counting(&aborted)));
+            drop(dropped);
+            assert_eq!(aborted.load(Ordering::SeqCst), 1);
 
-        let mut explicit = store.new_txn(false).await.unwrap();
-        explicit.on_abort(OnAbort::Sync(counting(&aborted)));
-        explicit.discard();
-        assert_eq!(aborted.load(Ordering::SeqCst), 2);
+            let mut explicit = store.new_txn(false).await.unwrap();
+            explicit.on_abort(OnAbort::Sync(counting(&aborted)));
+            explicit.discard();
+            assert_eq!(aborted.load(Ordering::SeqCst), 2);
 
-        let mut committed = store.new_txn(false).await.unwrap();
-        committed.set(b"key", b"value").await.unwrap();
-        committed.on_abort(OnAbort::Sync(counting(&aborted)));
-        committed.commit().await.unwrap();
-        assert_eq!(aborted.load(Ordering::SeqCst), 2);
+            let mut committed = store.new_txn(false).await.unwrap();
+            committed.set(b"key", b"value").await.unwrap();
+            committed.on_abort(OnAbort::Sync(counting(&aborted)));
+            committed.commit().await.unwrap();
+            assert_eq!(aborted.load(Ordering::SeqCst), 2);
+        })
+        .unwrap()
     }
 
     /// A commit that loses a conflict runs its abort callbacks once and none
     /// of its commit callbacks, ordered ones included.
-    #[tokio::test]
-    async fn a_commit_that_loses_runs_only_its_abort_callbacks() {
-        let store = RegolithStore::in_memory().unwrap();
-        let mut seed = store.new_txn(false).await.unwrap();
-        seed.set(b"key", b"one").await.unwrap();
-        seed.commit().await.unwrap();
+    #[test]
+    fn a_commit_that_loses_runs_only_its_abort_callbacks() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            let mut seed = store.new_txn(false).await.unwrap();
+            seed.set(b"key", b"one").await.unwrap();
+            seed.commit().await.unwrap();
 
-        let (committed, aborted) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-        let mut loser = store.new_txn(false).await.unwrap();
-        assert!(loser.get(b"key").await.unwrap().is_some());
-        loser.set(b"key", b"loser").await.unwrap();
-        loser
-            .on_commit(OnCommit::Sync(counting(&committed)))
-            .unwrap();
-        loser
-            .on_commit(OnCommit::Ordered(counting(&committed)))
-            .unwrap();
-        loser.on_abort(OnAbort::Sync(counting(&aborted)));
-        let aborted_async = Arc::clone(&aborted);
-        loser.on_abort(OnAbort::Async(Box::new(move || {
-            Box::pin(async move {
-                aborted_async.fetch_add(1, Ordering::SeqCst);
-            })
-        })));
-        let mut winner = store.new_txn(false).await.unwrap();
-        winner.set(b"key", b"winner").await.unwrap();
-        winner.commit().await.unwrap();
+            let (committed, aborted) =
+                (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+            let mut loser = store.new_txn(false).await.unwrap();
+            assert!(loser.get(b"key").await.unwrap().is_some());
+            loser.set(b"key", b"loser").await.unwrap();
+            loser
+                .on_commit(OnCommit::Sync(counting(&committed)))
+                .unwrap();
+            loser
+                .on_commit(OnCommit::Ordered(counting(&committed)))
+                .unwrap();
+            loser.on_abort(OnAbort::Sync(counting(&aborted)));
+            let aborted_async = Arc::clone(&aborted);
+            loser.on_abort(OnAbort::Async(Box::new(move || {
+                Box::pin(async move {
+                    aborted_async.fetch_add(1, Ordering::SeqCst);
+                })
+            })));
+            let mut winner = store.new_txn(false).await.unwrap();
+            winner.set(b"key", b"winner").await.unwrap();
+            winner.commit().await.unwrap();
 
-        assert!(loser.commit().await.is_err());
-        assert_eq!(committed.load(Ordering::SeqCst), 0);
-        assert_eq!(aborted.load(Ordering::SeqCst), 2);
+            assert!(loser.commit().await.is_err());
+            assert_eq!(committed.load(Ordering::SeqCst), 0);
+            assert_eq!(aborted.load(Ordering::SeqCst), 2);
+        })
+        .unwrap()
     }
 
     /// After a commit the async callbacks are awaited before the sync ones
     /// run, each kind in registration order; a read-only transaction runs
     /// them the same way and refuses ordered work.
-    #[tokio::test]
-    async fn a_commit_awaits_its_async_callbacks_before_its_sync_ones() {
-        let store = RegolithStore::in_memory().unwrap();
-        for readonly in [false, true] {
-            let seen = Arc::new(SegQueue::new());
-            let mut txn = store.new_txn(readonly).await.unwrap();
-            for name in ["sync-1", "async-1", "sync-2", "async-2"] {
-                let seen = Arc::clone(&seen);
-                let callback = if name.starts_with("async") {
-                    OnCommit::Async(Box::new(move || Box::pin(async move { seen.push(name) })))
-                } else {
-                    OnCommit::Sync(Box::new(move || seen.push(name)))
-                };
-                txn.on_commit(callback).unwrap();
+    #[test]
+    fn a_commit_awaits_its_async_callbacks_before_its_sync_ones() {
+        workers::block_on(async {
+            let store = RegolithStore::in_memory().unwrap();
+            for readonly in [false, true] {
+                let seen = Arc::new(SegQueue::new());
+                let mut txn = store.new_txn(readonly).await.unwrap();
+                for name in ["sync-1", "async-1", "sync-2", "async-2"] {
+                    let seen = Arc::clone(&seen);
+                    let callback = if name.starts_with("async") {
+                        OnCommit::Async(Box::new(move || Box::pin(async move { seen.push(name) })))
+                    } else {
+                        OnCommit::Sync(Box::new(move || seen.push(name)))
+                    };
+                    txn.on_commit(callback).unwrap();
+                }
+                assert_eq!(
+                    txn.on_commit(OnCommit::Ordered(Box::new(|| {}))).is_err(),
+                    readonly
+                );
+                txn.commit().await.unwrap();
+                let order: Vec<&str> = std::iter::from_fn(|| seen.pop()).collect();
+                assert_eq!(order, ["async-1", "async-2", "sync-1", "sync-2"]);
             }
-            assert_eq!(
-                txn.on_commit(OnCommit::Ordered(Box::new(|| {}))).is_err(),
-                readonly
-            );
-            txn.commit().await.unwrap();
-            let order: Vec<&str> = std::iter::from_fn(|| seen.pop()).collect();
-            assert_eq!(order, ["async-1", "async-2", "sync-1", "sync-2"]);
-        }
+        })
+        .unwrap()
     }
 }

@@ -130,10 +130,17 @@ where
         let limiter = coordinator.dag_fetch_limiter();
         let diagnostics = coordinator.manager().diagnostics();
         let source_peer = crate::transport::PeerId::new(source_peer);
-        let alternate_providers: Vec<crate::transport::PeerId> = providers
+        let mut alternate_providers: Vec<crate::transport::PeerId> = providers
             .into_iter()
             .map(crate::transport::PeerId::new)
             .collect();
+        crate::sync::coordinator::dag_fetcher::add_collection_providers(
+            &transport,
+            &collection_id,
+            &source_peer,
+            &mut alternate_providers,
+        )
+        .await;
         let context = DagFetchContext::new(doc_id, collection_id, creator, source_peer)
             .with_alternate_providers(alternate_providers)
             .with_explicit_replicator(is_explicit_replicator)
@@ -332,9 +339,14 @@ where
         }
     }
 
+    let sender_peer = metadata.sender_peer;
+
     // Delegate merge to handler
     match handler.handle_block(&cid, &block_data, metadata).await {
         Ok(MergeOutcome::Merged) => {
+            if let Some(peer_id) = sender_peer {
+                coordinator.peer_state().record_block_received(peer_id);
+            }
             // Merge successful - mark as merged
             if let Err(e) = coordinator.mark_as_merged(&cid).await {
                 // Return a distinct result so callers know the merge succeeded
@@ -445,6 +457,11 @@ where
             }
         }
         Ok(MergeOutcome::Rejected { reason }) => {
+            if let Some(peer_id) = sender_peer {
+                coordinator
+                    .peer_state()
+                    .record_block_failed(peer_id, format!("quarantined: {reason}"));
+            }
             coordinator.quarantine_pending_dag(&cid, &reason).await;
 
             ReplicationResult::Quarantined {
@@ -459,6 +476,11 @@ where
             error: "unsupported merge outcome".to_string(),
         },
         Err(error) => {
+            if let Some(peer_id) = sender_peer {
+                coordinator
+                    .peer_state()
+                    .record_block_failed(peer_id, error.to_string());
+            }
             merge_error_result(
                 coordinator,
                 handler,
@@ -665,6 +687,9 @@ where
     for (block, result) in merge_blocks.iter().zip(batch_results) {
         match result {
             Ok(MergeOutcome::Merged) => {
+                if let Some(peer_id) = &block.sender_peer {
+                    coordinator.peer_state().record_block_received(peer_id);
+                }
                 merged_cids.push(block.cid);
                 results.push(ReplicationResult::Merged {
                     cid: block.cid,
@@ -685,6 +710,11 @@ where
                 });
             }
             Ok(MergeOutcome::Rejected { reason }) => {
+                if let Some(peer_id) = &block.sender_peer {
+                    coordinator
+                        .peer_state()
+                        .record_block_failed(peer_id, format!("quarantined: {reason}"));
+                }
                 // Deliberately NOT added to merged_cids: quarantine leaves
                 // the block unmerged (see `quarantine_pending_dag`).
                 coordinator
@@ -705,6 +735,11 @@ where
                 });
             }
             Err(error) => {
+                if let Some(peer_id) = &block.sender_peer {
+                    coordinator
+                        .peer_state()
+                        .record_block_failed(peer_id, error.to_string());
+                }
                 results.push(
                     merge_error_result(
                         coordinator,

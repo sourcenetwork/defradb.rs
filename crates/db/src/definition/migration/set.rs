@@ -249,7 +249,7 @@ impl<S: Store> DB<S> {
             let collections = std::sync::Arc::clone(&self.collections);
             let collection_name = collection_name.clone();
             let dest_version_id = dest_version_id.clone();
-            txn.on_commit(OnCommit::Ordered(Box::new(move || {
+            txn.on_commit(OnCommit::OrderedAndWait(Box::new(move || {
                 collections.rcu(|old| {
                     let mut cache = old.clone();
                     let matches_dest = cache

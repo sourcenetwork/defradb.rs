@@ -145,9 +145,9 @@ impl From<crate::index::Error> for Error {
         match err {
             crate::index::Error::Storage(e) => Error::Storage(e),
             crate::index::Error::InvalidDocument(msg) => Error::InvalidDocument(msg),
-            other @ crate::index::Error::VectorEntryPointNotFound { .. } => {
-                Error::Other(other.to_string())
-            }
+            other @ (crate::index::Error::VectorEntryPointNotFound { .. }
+            | crate::index::Error::DiskAnnCodeLength { .. }
+            | crate::index::Error::DiskAnnCodeSlots { .. }) => Error::Other(other.to_string()),
             other @ crate::index::Error::VectorDimensionMismatch { .. } => {
                 Error::InvalidDocument(other.to_string())
             }
@@ -186,6 +186,15 @@ impl Error {
         matches!(self, Error::Storage(source) if source.is_unique_constraint_violation())
     }
 
+    pub fn is_storage_full(&self) -> bool {
+        match self {
+            Self::Storage(source) | Self::Datastore(datastore::Error::Storage(source)) => {
+                source.is_storage_full()
+            }
+            _ => false,
+        }
+    }
+
     pub fn document_at_key(key: &[u8], source: document::Error) -> Self {
         Self::DocumentAtKey {
             key: String::from_utf8_lossy(key).into_owned(),
@@ -219,7 +228,7 @@ pub fn index_write_query_error(operation: &str, error: Error) -> query::error::Q
     if error.is_unique_constraint_violation() {
         query::error::QueryError::execution(storage::corekv::UNIQUE_CONSTRAINT_VIOLATION_MESSAGE)
     } else {
-        query::error::QueryError::execution(format!("{operation} error: {error}"))
+        storage_query_error(error, &format!("{operation} error"))
     }
 }
 
@@ -230,9 +239,67 @@ pub fn commit_query_error(error: Error) -> query::error::QueryError {
     } else if error.is_txn_conflict() {
         query::error::QueryError::transaction_conflict(message)
     } else {
-        query::error::QueryError::execution(message)
+        storage_query_error(error, "commit error")
+    }
+}
+
+fn storage_query_error(error: Error, context: &str) -> query::error::QueryError {
+    match error {
+        Error::Storage(storage::Error::Io(cause))
+        | Error::Datastore(datastore::Error::Storage(storage::Error::Io(cause))) => {
+            query::error::QueryError::Storage(storage::Error::Io(cause.with_context(context)))
+        }
+        other => query::error::QueryError::execution(format!("{context}: {other}")),
+    }
+}
+
+pub(crate) fn transaction_error(error: Error) -> query::error::TransactionError {
+    match error {
+        Error::Storage(cause @ storage::Error::Io(_))
+        | Error::Datastore(datastore::Error::Storage(cause @ storage::Error::Io(_))) => {
+            query::error::TransactionError::Storage(cause)
+        }
+        other => query::error::TransactionError::execution(other.to_string()),
     }
 }
 
 /// Result type for database operations.
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod storage_failure_tests {
+    use super::*;
+
+    #[test]
+    fn commit_and_index_errors_keep_the_storage_full_wire_code() {
+        for datastore in [false, true] {
+            for commit in [false, true] {
+                let cause = storage::Error::from(std::io::Error::new(
+                    std::io::ErrorKind::StorageFull,
+                    "full",
+                ));
+                let error = if datastore {
+                    Error::Datastore(datastore::Error::Storage(cause))
+                } else {
+                    Error::Storage(cause)
+                };
+                assert!(error.is_storage_full());
+                let error = if commit {
+                    commit_query_error(error)
+                } else {
+                    index_write_query_error("index write", error)
+                };
+                let response = query::QueryResponseError::from_query_error(error);
+                assert_eq!(
+                    response.code(),
+                    Some(query::executor::STORAGE_FULL_ERROR_CODE)
+                );
+                assert!(response.message.contains(if commit {
+                    "commit error"
+                } else {
+                    "index write error"
+                }));
+            }
+        }
+    }
+}

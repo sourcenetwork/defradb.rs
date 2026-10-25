@@ -398,6 +398,19 @@ impl<B: Blockstore + 'static> SyncManager<B> {
         self.persisted.quarantined()
     }
 
+    /// Quarantined roots this peer announced, from the durable store.
+    pub async fn quarantined_from(
+        &self,
+        peer: &str,
+    ) -> crate::error::Result<Vec<(Cid, crate::sync::pending_store::PersistedQuarantinedDag)>> {
+        let Some(store) = self.pending_store() else {
+            return Ok(Vec::new());
+        };
+        let mut records = store.load_quarantined().await?;
+        records.retain(|(_, dag)| dag.record.source_peer.as_deref() == Some(peer));
+        Ok(records)
+    }
+
     pub(super) fn pending_store(&self) -> Option<Arc<dyn PendingDagStorage>> {
         self.pending_store.get().cloned()
     }

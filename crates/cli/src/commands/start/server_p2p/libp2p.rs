@@ -327,12 +327,16 @@ impl Node {
                         }
                         return;
                     }
-                    p2p::TransportEvent::SEQueryRequest { peer_id, request } => {
+                    p2p::TransportEvent::SEQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                         db::merge::se::serve::handle_query_request(
                             se_store.as_ref(),
                             &se_transport_serve,
                             peer_id,
-                            request,
+                            request, token,
                         )
                         .await;
                         return;
@@ -341,13 +345,17 @@ impl Node {
                         se_correlator_for_events.deliver(reply);
                         return;
                     }
-                    p2p::TransportEvent::ManageRequest { peer_id, request } => {
+                    p2p::TransportEvent::ManageRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                         if let Some(hooks) = manage_hooks_for_events.get() {
                             defra_p2p_adapter::manage::serve::serve_manage_request(
                                 hooks,
                                 &se_transport_serve,
                                 &peer_id,
-                                request,
+                                request, token,
                             )
                             .await;
                         } else {
@@ -355,13 +363,17 @@ impl Node {
                         }
                         return;
                     }
-                    p2p::TransportEvent::ManageQueryRequest { peer_id, request } => {
+                    p2p::TransportEvent::ManageQueryRequest {
+ peer_id,
+ request,
+ token,
+ } => {
                         if let Some(hooks) = manage_hooks_for_events.get() {
                             defra_p2p_adapter::manage::serve::serve_manage_query_request(
                                 hooks,
                                 &se_transport_serve,
                                 &peer_id,
-                                request,
+                                request, token,
                             )
                             .await;
                         } else {

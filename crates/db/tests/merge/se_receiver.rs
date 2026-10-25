@@ -71,21 +71,24 @@ fn test_deserialize_multiple_artifacts() {
     assert_eq!(batch.artifacts.len(), 2);
 }
 
-#[tokio::test]
-async fn test_receive_and_store_reports_stored_doc_ids() {
-    let tag = vec![0u8; SEARCH_TAG_SIZE];
-    let data = build_cbor_request(
-        "users",
-        vec![("doc2", "age", tag.clone()), ("doc1", "age", tag.clone())],
-    );
-    let store = storage::RegolithStore::in_memory().unwrap();
-    let mut txn = store.new_txn(false).await.unwrap();
+#[test]
+fn test_receive_and_store_reports_stored_doc_ids() {
+    workers::block_on(async {
+        let tag = vec![0u8; SEARCH_TAG_SIZE];
+        let data = build_cbor_request(
+            "users",
+            vec![("doc2", "age", tag.clone()), ("doc1", "age", tag.clone())],
+        );
+        let store = storage::RegolithStore::in_memory().unwrap();
+        let mut txn = store.new_txn(false).await.unwrap();
 
-    let result = receive_and_store(&mut txn, &data).await.unwrap();
-    txn.commit().await.unwrap();
+        let result = receive_and_store(&mut txn, &data).await.unwrap();
+        txn.commit().await.unwrap();
 
-    assert_eq!(result.collection_id, "users");
-    assert_eq!(result.stored, 2);
-    assert_eq!(result.rejected, 0);
-    assert_eq!(result.doc_ids, vec!["doc1".to_string(), "doc2".to_string()]);
+        assert_eq!(result.collection_id, "users");
+        assert_eq!(result.stored, 2);
+        assert_eq!(result.rejected, 0);
+        assert_eq!(result.doc_ids, vec!["doc1".to_string(), "doc2".to_string()]);
+    })
+    .unwrap()
 }

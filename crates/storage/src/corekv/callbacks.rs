@@ -10,7 +10,8 @@
 //! After a commit, in this order: the hooks ([`OnCommit::OrderedAsync`]) are
 //! awaited and the events ([`OnCommit::Ordered`]) handed to the stream that
 //! sends every commit's events out in commit-receipt order; then the async
-//! callbacks are awaited and the sync ones run. After any other end the
+//! callbacks are awaited and the sync ones run. [`OnCommit::OrderedAndWait`]
+//! adds its publication completion to those awaited callbacks. After any other end the
 //! async callbacks come first too: awaited after a failed commit, spawned
 //! after a discard or a drop, whose caller cannot await. Each kind keeps its
 //! registration order.
@@ -25,9 +26,10 @@
 //! single-threaded browser ([`MaybeSend`]).
 
 use std::future::Future;
+use std::sync::Arc;
 
 use defra_core::thread_bounds::MaybeBoxFuture;
-use regolith::sync::{OnceCell, SegQueue};
+use regolith::sync::{Event, OnceCell, SegQueue};
 
 use super::errors::{Error, Result};
 use super::traits::MaybeSend;
@@ -60,6 +62,10 @@ pub enum OnCommit {
     /// An event: sent out with every commit's events, in commit-receipt
     /// order.
     Ordered(TxnCallback),
+    /// An ordered publication that must finish before commit returns, such as
+    /// a schema cache needed by the caller's next request. Other commits do
+    /// not wait for this callback unless they request the same guarantee.
+    OrderedAndWait(TxnCallback),
     /// A hook: awaited before this commit's events go out, which holds back
     /// the events of every later commit until it finishes.
     OrderedAsync(CommitHook),
@@ -68,7 +74,10 @@ pub enum OnCommit {
 impl OnCommit {
     /// Whether it is ordered by the commit's receipt.
     fn is_ordered(&self) -> bool {
-        matches!(self, Self::Ordered(_) | Self::OrderedAsync(_))
+        matches!(
+            self,
+            Self::Ordered(_) | Self::OrderedAndWait(_) | Self::OrderedAsync(_)
+        )
     }
 
     /// Whether a transaction that is `read_only` takes it: one never gets a
@@ -235,6 +244,17 @@ impl TxnCallbacks {
                     committed.then.asynchronous.push(callback)
                 }
                 Entry::Commit(OnCommit::Ordered(event)) => committed.events.push(event),
+                Entry::Commit(OnCommit::OrderedAndWait(event)) => {
+                    let signal = Arc::new(Event::new());
+                    let done = PublicationDone(Arc::clone(&signal));
+                    committed.events.push(Box::new(move || {
+                        let _done = done;
+                        event();
+                    }));
+                    committed.then.asynchronous.push(Box::new(move || {
+                        Box::pin(async move { signal.wait().await })
+                    }));
+                }
                 Entry::Commit(OnCommit::OrderedAsync(hook)) => committed.hooks.push(hook),
                 Entry::Abort(OnAbort::Sync(callback)) => aborted.sync.push(callback),
                 Entry::Abort(OnAbort::Async(callback)) => aborted.asynchronous.push(callback),
@@ -443,3 +463,12 @@ where
 
 #[cfg(test)]
 mod tests;
+
+/// An event panic must release its caller too; the dispatcher reports it.
+struct PublicationDone(Arc<Event>);
+
+impl Drop for PublicationDone {
+    fn drop(&mut self) {
+        self.0.set();
+    }
+}

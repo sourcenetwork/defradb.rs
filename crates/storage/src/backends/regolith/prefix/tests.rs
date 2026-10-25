@@ -54,79 +54,82 @@ async fn scan(handle: &Arc<Handle>, options: &IterOptions) -> Vec<Vec<u8>> {
 /// it reads, which is every stored key with the prefix, and passes over the
 /// tables whose prefix filter lacks the entity: here, documents, collections,
 /// indexes and ACP objects that have no keys between ones that do.
-#[tokio::test]
-async fn a_prefix_scan_reads_what_it_did_and_skips_tables_without_its_entity() {
-    let statistics = Arc::new(Statistics::new());
-    let options = RegolithStoreOptions::memory()
-        .engine_for_open()
-        .statistics(Some(Arc::clone(&statistics)));
-    let db = OptimisticTransactionDb::open("prefix-filters", options).unwrap();
-    let mut keys: Vec<Vec<u8>> = Vec::new();
-    for entity in [1u8, 3] {
-        let digit = b'0' + entity;
-        keys.extend([
-            [b"h/r/".as_slice(), &[entity], b"/field/a"].concat(),
-            [b"h/r/".as_slice(), &[entity], b"/field/b"].concat(),
-            [b"h/p/".as_slice(), &[entity], b"/0000000000000001/a"].concat(),
-            [b"d/d/col".as_slice(), &[digit], b"/\x01"].concat(),
-            [b"d/\x01/".as_slice(), &[entity], b"/value/\x01"].concat(),
-            [
-                b"a/zanzibar/1/rel/users/bae-".as_slice(),
-                &[digit],
-                b"/owner/x",
-            ]
-            .concat(),
-        ]);
-    }
-    // A key that names no entity, between the others.
-    keys.push(b"h/p/".to_vec());
-    keys.sort();
-    for key in &keys {
-        db.db().put(key, key).unwrap();
-    }
-    db.db().flush().unwrap();
+#[test]
+fn a_prefix_scan_reads_what_it_did_and_skips_tables_without_its_entity() {
+    workers::block_on(async {
+        let statistics = Arc::new(Statistics::new());
+        let options = RegolithStoreOptions::memory()
+            .engine_for_open()
+            .statistics(Some(Arc::clone(&statistics)));
+        let db = OptimisticTransactionDb::open("prefix-filters", options).unwrap();
+        let mut keys: Vec<Vec<u8>> = Vec::new();
+        for entity in [1u8, 3] {
+            let digit = b'0' + entity;
+            keys.extend([
+                [b"h/r/".as_slice(), &[entity], b"/field/a"].concat(),
+                [b"h/r/".as_slice(), &[entity], b"/field/b"].concat(),
+                [b"h/p/".as_slice(), &[entity], b"/0000000000000001/a"].concat(),
+                [b"d/d/col".as_slice(), &[digit], b"/\x01"].concat(),
+                [b"d/\x01/".as_slice(), &[entity], b"/value/\x01"].concat(),
+                [
+                    b"a/zanzibar/1/rel/users/bae-".as_slice(),
+                    &[digit],
+                    b"/owner/x",
+                ]
+                .concat(),
+            ]);
+        }
+        // A key that names no entity, between the others.
+        keys.push(b"h/p/".to_vec());
+        keys.sort();
+        for key in &keys {
+            db.db().put(key, key).unwrap();
+        }
+        db.db().flush().unwrap();
 
-    let snapshot = Arc::new(Handle::ReadOnly(db.db().snapshot()));
-    let transaction = Arc::new(Handle::Writable(Box::new(db.begin(&TxnOptions::new()))));
-    let mut prefixes: Vec<Vec<u8>> = Vec::new();
-    for entity in [1u8, 2, 3] {
-        let digit = b'0' + entity;
-        prefixes.extend([
-            [b"h/r/".as_slice(), &[entity], b"/"].concat(),
-            [b"h/r/".as_slice(), &[entity], b"/field/"].concat(),
-            [b"h/p/".as_slice(), &[entity], b"/"].concat(),
-            [b"d/d/col".as_slice(), &[digit], b"/"].concat(),
-            [b"d/\x01/".as_slice(), &[entity], b"/value/"].concat(),
-            [b"a/zanzibar/1/rel/users/bae-".as_slice(), &[digit], b"/"].concat(),
-        ]);
-    }
-    // Prefixes that stop short of an entity, or name none.
-    prefixes.extend([b"h/p/".to_vec(), b"h/".to_vec(), b"d/".to_vec(), Vec::new()]);
-    prefixes.push(vec![0xff, 0xff]);
-    for prefix in prefixes {
-        let options = IterOptions::new().with_prefix(prefix.clone());
-        let expected: Vec<Vec<u8>> = keys
-            .iter()
-            .filter(|key| key.starts_with(&prefix))
-            .cloned()
-            .collect();
-        assert_eq!(scan(&snapshot, &options).await, expected, "{prefix:?}");
-        assert_eq!(scan(&transaction, &options).await, expected, "{prefix:?}");
-    }
+        let snapshot = Arc::new(Handle::ReadOnly(db.db().snapshot()));
+        let transaction = Arc::new(Handle::Writable(Box::new(db.begin(&TxnOptions::new()))));
+        let mut prefixes: Vec<Vec<u8>> = Vec::new();
+        for entity in [1u8, 2, 3] {
+            let digit = b'0' + entity;
+            prefixes.extend([
+                [b"h/r/".as_slice(), &[entity], b"/"].concat(),
+                [b"h/r/".as_slice(), &[entity], b"/field/"].concat(),
+                [b"h/p/".as_slice(), &[entity], b"/"].concat(),
+                [b"d/d/col".as_slice(), &[digit], b"/"].concat(),
+                [b"d/\x01/".as_slice(), &[entity], b"/value/"].concat(),
+                [b"a/zanzibar/1/rel/users/bae-".as_slice(), &[digit], b"/"].concat(),
+            ]);
+        }
+        // Prefixes that stop short of an entity, or name none.
+        prefixes.extend([b"h/p/".to_vec(), b"h/".to_vec(), b"d/".to_vec(), Vec::new()]);
+        prefixes.push(vec![0xff, 0xff]);
+        for prefix in prefixes {
+            let options = IterOptions::new().with_prefix(prefix.clone());
+            let expected: Vec<Vec<u8>> = keys
+                .iter()
+                .filter(|key| key.starts_with(&prefix))
+                .cloned()
+                .collect();
+            assert_eq!(scan(&snapshot, &options).await, expected, "{prefix:?}");
+            assert_eq!(scan(&transaction, &options).await, expected, "{prefix:?}");
+        }
 
-    let before = statistics.get_ticker(Ticker::BloomFilterUseful);
-    for absent in [
-        b"h/r/\x02/".as_slice(),
-        b"h/p/\x02/",
-        b"d/d/col2/",
-        b"d/\x01/\x02/",
-        b"a/zanzibar/1/rel/users/bae-2/",
-    ] {
-        let options = IterOptions::new().with_prefix(absent.to_vec());
-        assert!(scan(&snapshot, &options).await.is_empty(), "{absent:?}");
-    }
-    assert!(
-        statistics.get_ticker(Ticker::BloomFilterUseful) > before,
-        "no table was passed over by its prefix filter"
-    );
+        let before = statistics.get_ticker(Ticker::BloomFilterUseful);
+        for absent in [
+            b"h/r/\x02/".as_slice(),
+            b"h/p/\x02/",
+            b"d/d/col2/",
+            b"d/\x01/\x02/",
+            b"a/zanzibar/1/rel/users/bae-2/",
+        ] {
+            let options = IterOptions::new().with_prefix(absent.to_vec());
+            assert!(scan(&snapshot, &options).await.is_empty(), "{absent:?}");
+        }
+        assert!(
+            statistics.get_ticker(Ticker::BloomFilterUseful) > before,
+            "no table was passed over by its prefix filter"
+        );
+    })
+    .unwrap()
 }

@@ -134,54 +134,59 @@ mod retry_tests {
         }
     }
 
-    #[tokio::test]
-    async fn prepared_read_validation_defers_provider_and_keys_all_decision_inputs() {
-        let provider = Arc::new(Validator(AtomicUsize::new(0)));
-        let validator: Arc<dyn ReadValidator> = provider.clone();
-        let mut schema = CollectionVersion::new("Users", "v1", "users", vec![]);
-        schema.root_id = 42;
-        let reader = Some(Did::new("did:key:reader").unwrap());
-        let memo = crate::prepared::PreparedInputMemo::default();
-        let check = AppReadCheck::bind(Some(&validator), reader.clone(), &schema)
-            .unwrap()
-            .with_retry_inputs(Some(memo.clone()));
-        let crate::error::QueryError::NeedsInput(request) = check.allows("doc1").await.unwrap_err()
-        else {
-            panic!("expected input miss");
-        };
-        assert_eq!(provider.0.load(Ordering::SeqCst), 0);
-        // Resolve through the ordinary provider path outside the strict attempt.
-        let input: ReadValidationInput = serde_json::from_slice(request.exact_request()).unwrap();
-        assert_eq!(input.identity.as_deref(), Some("did:key:reader"));
-        assert_eq!(input.collection, schema);
-        assert_eq!(input.doc_id, "doc1");
-        let resolved = AppReadCheck::bind(Some(&validator), reader.clone(), &input.collection)
-            .unwrap()
-            .allows(&input.doc_id)
-            .await
-            .unwrap();
-        memo.insert(request, serde_json::to_vec(&resolved).unwrap());
-        assert!(check.allows("doc1").await.unwrap());
-        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
-        assert!(matches!(
-            check.allows("doc2").await,
-            Err(crate::error::QueryError::NeedsInput(_))
-        ));
-        let other_reader = AppReadCheck::bind(Some(&validator), None, &schema)
-            .unwrap()
-            .with_retry_inputs(Some(memo.clone()));
-        assert!(matches!(
-            other_reader.allows("doc1").await,
-            Err(crate::error::QueryError::NeedsInput(_))
-        ));
-        let changed_schema = CollectionVersion::new("Users", "v2", "users", vec![]);
-        let other_schema = AppReadCheck::bind(Some(&validator), reader, &changed_schema)
-            .unwrap()
-            .with_retry_inputs(Some(memo));
-        assert!(matches!(
-            other_schema.allows("doc1").await,
-            Err(crate::error::QueryError::NeedsInput(_))
-        ));
-        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+    #[test]
+    fn prepared_read_validation_defers_provider_and_keys_all_decision_inputs() {
+        workers::block_on(async {
+            let provider = Arc::new(Validator(AtomicUsize::new(0)));
+            let validator: Arc<dyn ReadValidator> = provider.clone();
+            let mut schema = CollectionVersion::new("Users", "v1", "users", vec![]);
+            schema.root_id = 42;
+            let reader = Some(Did::new("did:key:reader").unwrap());
+            let memo = crate::prepared::PreparedInputMemo::default();
+            let check = AppReadCheck::bind(Some(&validator), reader.clone(), &schema)
+                .unwrap()
+                .with_retry_inputs(Some(memo.clone()));
+            let crate::error::QueryError::NeedsInput(request) =
+                check.allows("doc1").await.unwrap_err()
+            else {
+                panic!("expected input miss");
+            };
+            assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+            // Resolve through the ordinary provider path outside the strict attempt.
+            let input: ReadValidationInput =
+                serde_json::from_slice(request.exact_request()).unwrap();
+            assert_eq!(input.identity.as_deref(), Some("did:key:reader"));
+            assert_eq!(input.collection, schema);
+            assert_eq!(input.doc_id, "doc1");
+            let resolved = AppReadCheck::bind(Some(&validator), reader.clone(), &input.collection)
+                .unwrap()
+                .allows(&input.doc_id)
+                .await
+                .unwrap();
+            memo.insert(request, serde_json::to_vec(&resolved).unwrap());
+            assert!(check.allows("doc1").await.unwrap());
+            assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+            assert!(matches!(
+                check.allows("doc2").await,
+                Err(crate::error::QueryError::NeedsInput(_))
+            ));
+            let other_reader = AppReadCheck::bind(Some(&validator), None, &schema)
+                .unwrap()
+                .with_retry_inputs(Some(memo.clone()));
+            assert!(matches!(
+                other_reader.allows("doc1").await,
+                Err(crate::error::QueryError::NeedsInput(_))
+            ));
+            let changed_schema = CollectionVersion::new("Users", "v2", "users", vec![]);
+            let other_schema = AppReadCheck::bind(Some(&validator), reader, &changed_schema)
+                .unwrap()
+                .with_retry_inputs(Some(memo));
+            assert!(matches!(
+                other_schema.allows("doc1").await,
+                Err(crate::error::QueryError::NeedsInput(_))
+            ));
+            assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+        })
+        .unwrap()
     }
 }

@@ -44,26 +44,29 @@ async fn raw_collection_head_keys(store: &Arc<RegolithStore>) -> Vec<String> {
     keys
 }
 
-#[tokio::test]
-async fn branchable_collection_writes_expose_collection_heads() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let db = Arc::new(DB::from_arc(store.clone()).unwrap());
-    db.create_collection(branchable_schema()).await.unwrap();
+#[test]
+fn branchable_collection_writes_expose_collection_heads() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let db = Arc::new(DB::from_arc(store.clone()).unwrap());
+        db.create_collection(branchable_schema()).await.unwrap();
 
-    let mutator = AutoCommitMutator::new(db.clone());
-    let mut doc = Document::new();
-    doc.set("body", "first".to_string());
-    mutator.create("Transcript", doc).await.unwrap();
+        let mutator = AutoCommitMutator::new(db.clone());
+        let mut doc = Document::new();
+        doc.set("body", "first".to_string());
+        mutator.create("Transcript", doc).await.unwrap();
 
-    let raw = raw_collection_head_keys(&store).await;
-    let provider = DbHeadProvider::new(db);
-    let heads = provider
-        .get_collection_heads("col-transcript")
-        .await
-        .unwrap();
-    assert!(
-        !heads.is_empty(),
-        "a branchable collection with one committed document must expose \
+        let raw = raw_collection_head_keys(&store).await;
+        let provider = DbHeadProvider::new(db);
+        let heads = provider
+            .get_collection_heads("col-transcript")
+            .await
+            .unwrap();
+        assert!(
+            !heads.is_empty(),
+            "a branchable collection with one committed document must expose \
          collection heads to BranchableSync; raw '/hc/' keys in the store: {raw:?}"
-    );
+        );
+    })
+    .unwrap()
 }

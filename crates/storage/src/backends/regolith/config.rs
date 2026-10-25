@@ -210,22 +210,25 @@ mod tests {
 
     /// A read-only open folds merged values as the writable open does. It
     /// opened without the merge operator before, and the read failed.
-    #[tokio::test]
-    async fn a_read_only_open_reads_merged_values() {
-        let dir = tempfile::tempdir().unwrap();
-        let options = RegolithStoreOptions::default();
-        let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
-        for delta in [2, 3] {
-            let mut txn = store.new_txn(false).await.unwrap();
-            txn.merge(b"counter", &counter_i64(delta)).await.unwrap();
-            txn.commit().await.unwrap();
-        }
-        store.close().await.unwrap();
-        drop(store);
-        let txn = RegolithTxn::open_read_only(dir.path(), options).unwrap();
-        assert_eq!(
-            txn.get(b"counter").await.unwrap().as_deref(),
-            Some(5i64.to_be_bytes().as_slice())
-        );
+    #[test]
+    fn a_read_only_open_reads_merged_values() {
+        workers::block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let options = RegolithStoreOptions::default();
+            let store = RegolithStore::open_with_options(dir.path(), options.clone()).unwrap();
+            for delta in [2, 3] {
+                let mut txn = store.new_txn(false).await.unwrap();
+                txn.merge(b"counter", &counter_i64(delta)).await.unwrap();
+                txn.commit().await.unwrap();
+            }
+            store.close().await.unwrap();
+            drop(store);
+            let txn = RegolithTxn::open_read_only(dir.path(), options).unwrap();
+            assert_eq!(
+                txn.get(b"counter").await.unwrap().as_deref(),
+                Some(5i64.to_be_bytes().as_slice())
+            );
+        })
+        .unwrap()
     }
 }

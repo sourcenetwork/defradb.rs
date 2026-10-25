@@ -260,11 +260,9 @@ impl RegolithIterator {
                     // The worker's queue reads the block; the next item
                     // resumes the walk where it stopped.
                     Some(Err(regolith::Error::WouldBlock(would_block))) => {
-                        wait_out(would_block)
-                            .await
-                            .map_err(|error| Error::Backend(error.to_string()))?;
+                        wait_out(would_block).await.map_err(Error::from)?;
                     }
-                    Some(Err(error)) => return Err(Error::Backend(error.to_string())),
+                    Some(Err(error)) => return Err(Error::from(error)),
                     None => return Ok(None),
                 }
             },
@@ -480,32 +478,35 @@ mod scan_tests {
 
     /// A scan of a writing transaction walks the tables once, as a snapshot
     /// scan does, rather than seeking them again for every page.
-    #[tokio::test]
-    async fn an_unvalidated_scan_of_a_writing_transaction_reads_each_block_once() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = RegolithStore::open(directory.path()).unwrap();
-        let rows = 3 * PAGE_ENTRIES + 7;
-        let mut seed = store.new_txn(false).await.unwrap();
-        for row in 0..rows {
-            seed.set(format!("row/{row:06}").as_bytes(), &[7; 64])
-                .await
-                .unwrap();
-        }
-        seed.commit().await.unwrap();
-        store.engine().db().flush().unwrap();
+    #[test]
+    fn an_unvalidated_scan_of_a_writing_transaction_reads_each_block_once() {
+        workers::block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let store = RegolithStore::open(directory.path()).unwrap();
+            let rows = 3 * PAGE_ENTRIES + 7;
+            let mut seed = store.new_txn(false).await.unwrap();
+            for row in 0..rows {
+                seed.set(format!("row/{row:06}").as_bytes(), &[7; 64])
+                    .await
+                    .unwrap();
+            }
+            seed.commit().await.unwrap();
+            store.engine().db().flush().unwrap();
 
-        let level = PerfContext::set_level(PerfLevel::EnableCount);
-        let snapshot = store.new_txn(true).await.unwrap();
-        let snapshot_lookups = scan_lookups(snapshot.as_ref(), rows).await;
-        snapshot.discard();
-        let mut writing = store.new_txn(false).await.unwrap();
-        writing.set(b"other", b"own").await.unwrap();
-        let writing_lookups = scan_lookups(writing.as_ref(), rows).await;
-        writing.discard();
-        PerfContext::set_level(level);
+            let level = PerfContext::set_level(PerfLevel::EnableCount);
+            let snapshot = store.new_txn(true).await.unwrap();
+            let snapshot_lookups = scan_lookups(snapshot.as_ref(), rows).await;
+            snapshot.discard();
+            let mut writing = store.new_txn(false).await.unwrap();
+            writing.set(b"other", b"own").await.unwrap();
+            let writing_lookups = scan_lookups(writing.as_ref(), rows).await;
+            writing.discard();
+            PerfContext::set_level(level);
 
-        assert!(snapshot_lookups > 0);
-        assert_eq!(writing_lookups, snapshot_lookups);
-        store.close().await.unwrap();
+            assert!(snapshot_lookups > 0);
+            assert_eq!(writing_lookups, snapshot_lookups);
+            store.close().await.unwrap();
+        })
+        .unwrap()
     }
 }

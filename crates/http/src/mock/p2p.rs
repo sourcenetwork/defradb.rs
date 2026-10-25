@@ -95,6 +95,18 @@ impl P2POperations for MockP2POperations {
         Ok(self.peers.load_clone())
     }
 
+    async fn peer_details(
+        &self,
+        peer_id: &crate::router::TransportPeerId,
+    ) -> P2PResult<serde_json::Value> {
+        let connected = self
+            .peers
+            .load_clone()
+            .iter()
+            .any(|peer| peer == peer_id.as_str());
+        Ok(serde_json::json!({ "peer_id": peer_id.as_str(), "connected": connected }))
+    }
+
     async fn connect_peer(&self, addr: &str) -> P2PResult<()> {
         // Extract a mock peer ID from the address
         let peer_id = if addr.contains("/p2p/") {

@@ -2,7 +2,7 @@
 
 use cli::config::{
     ApiConfig, DatastoreConfig, DatastoreType, KeyringBackend, KeyringConfig, LogConfig, LogFormat,
-    LogLevel, LogOutput, NetConfig,
+    LogLevel, LogOutput, NetConfig, NetworkSecretHex,
 };
 use cli::error::Error;
 use storage::backends::DurabilityMode;
@@ -161,6 +161,43 @@ fn test_net_config_validate_skipped_when_p2p_disabled() {
         ..Default::default()
     };
     assert!(config.validate().is_ok());
+}
+
+#[test]
+fn service_record_settings_are_checked() {
+    let secret = "ab".repeat(32);
+    let valid = NetConfig {
+        iroh_network_secret: Some(NetworkSecretHex(secret.clone())),
+        iroh_service_role: Some("archive".into()),
+        iroh_custom_services: vec!["search".into()],
+        ..Default::default()
+    };
+    assert!(valid.validate().is_ok());
+    assert!(
+        !format!("{valid:?}").contains(&secret),
+        "the secret is redacted"
+    );
+
+    for invalid in [
+        NetConfig {
+            iroh_network_secret: Some(NetworkSecretHex("abcd".into())),
+            ..Default::default()
+        },
+        NetConfig {
+            iroh_network_secret: Some(NetworkSecretHex("zz".repeat(32))),
+            ..Default::default()
+        },
+        NetConfig {
+            iroh_service_role: Some("leader".into()),
+            ..Default::default()
+        },
+        NetConfig {
+            iroh_custom_services: vec!["x".repeat(129)],
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(invalid.validate(), Err(Error::InvalidConfig(_))));
+    }
 }
 
 /// Every node started on a pre-`Option<u64>` binary had the old 1 GiB default

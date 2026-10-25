@@ -5,6 +5,20 @@ use super::*;
 use async_trait::async_trait;
 use query::txn::{TransactionHandle, TransactionRegistry, TxnJob};
 use storage::corekv::MaybeSend;
+use web_time::Instant;
+
+fn report_slow_phase(operation: &'static str, phase: &'static str, started: Instant) {
+    let elapsed = started.elapsed();
+    if elapsed >= Duration::from_secs(1) {
+        tracing::warn!(
+            target: "defradb.transaction_phase",
+            operation,
+            phase,
+            elapsed_ms = elapsed.as_millis() as u64,
+            "slow native transaction owner phase"
+        );
+    }
+}
 
 /// Runs `job` until it finishes or `timeout` passes, when the job is dropped
 /// and the request fails.
@@ -38,20 +52,24 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
         context: &RequestContext,
         readonly: bool,
     ) -> std::result::Result<TransactionHandle, TransactionError> {
+        let queued = Instant::now();
         let db = self.db.clone();
         let broadcaster = self.broadcaster.clone();
         let opened = self
             .owners()
             .map_err(|error| TransactionError::execution(error.to_string()))?
             .begin(caller(context), move |id| async move {
-                let mut txn = db.new_txn(readonly).await?;
+                report_slow_phase("begin", "queue", queued);
+                let started = Instant::now();
+                let result = db.new_txn(readonly).await;
+                report_slow_phase("begin", "execute", started);
+                let mut txn = result?;
                 txn.make_explicit();
                 OwnedTxn::new(id, txn, db, broadcaster)
             })
             .await
             .map_err(|error| TransactionError::execution(error.to_string()))?;
-        let id = opened
-            .map_err(|error| TransactionError::execution(format!("storage error: {}", error)))?;
+        let id = opened.map_err(crate::error::transaction_error)?;
         Ok(TransactionHandle::new(id.to_string()))
     }
 
@@ -82,11 +100,15 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             TransactionError::not_found(format!("transaction '{handle}' not found"))
         })?;
         let scope = context.clone();
+        let queued = Instant::now();
         self.owners()
             .map_err(|error| unavailable(error, handle))?
             .run(id, &caller(context), move |owned| {
                 Box::pin(async move {
+                    report_slow_phase("run", "queue", queued);
+                    let started = Instant::now();
                     let ran = scope.mirror(within(timeout, job(owned))).await;
+                    report_slow_phase("run", "execute", started);
                     owned.after_request();
                     ran
                 })
@@ -115,22 +137,28 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
     where
         T: MaybeSend + 'static,
     {
+        let queued = Instant::now();
         let db = self.db.clone();
         let scope = context.clone();
         self.owners()
             .map_err(|error| TransactionError::execution(error.to_string()))?
             .run_anywhere("txn.read", move || async move {
-                scope
+                report_slow_phase("read", "queue", queued);
+                let started = Instant::now();
+                let result = scope
                     .mirror(async move {
-                        let txn = db.new_txn(true).await.map_err(|error| {
-                            TransactionError::execution(format!("storage error: {}", error))
-                        })?;
+                        let txn = db
+                            .new_txn(true)
+                            .await
+                            .map_err(crate::error::transaction_error)?;
                         // A snapshot of its own, never registered: no ID names it.
                         let mut owned = OwnedTxn::new(TxnId::unnamed(), txn, db, None)
                             .map_err(|error| TransactionError::execution(error.to_string()))?;
                         within(timeout, job(&mut owned)).await
                     })
-                    .await
+                    .await;
+                report_slow_phase("read", "execute", started);
+                result
             })
             .await
             .map_err(|error| TransactionError::execution(error.to_string()))?
@@ -152,14 +180,16 @@ impl<S: Store + 'static> TransactionRegistry for DbTransactionRegistry<S> {
             TransactionError::not_found(format!("transaction '{handle}' not found"))
         })?;
         let label = handle.to_string();
+        let queued = Instant::now();
         self.owners()
             .map_err(|error| unavailable(error, handle))?
             .finish(id, &caller(context), move |owned| {
                 Box::pin(async move {
-                    owned
-                        .commit()
-                        .await
-                        .map_err(|error| commit_error(&label, error))
+                    report_slow_phase("commit", "queue", queued);
+                    let started = Instant::now();
+                    let result = owned.commit().await;
+                    report_slow_phase("commit", "execute", started);
+                    result.map_err(|error| commit_error(&label, error))
                 })
             })
             .await
@@ -204,6 +234,13 @@ fn commit_error(handle: &str, error: crate::error::Error) -> TransactionError {
     if error.is_txn_conflict() {
         TransactionError::conflict(message)
     } else {
-        TransactionError::execution(message)
+        match crate::error::transaction_error(error) {
+            TransactionError::Storage(storage::Error::Io(cause)) => {
+                TransactionError::Storage(storage::Error::Io(
+                    cause.with_context(format!("commit error for transaction '{handle}'")),
+                ))
+            }
+            _ => TransactionError::execution(message),
+        }
     }
 }

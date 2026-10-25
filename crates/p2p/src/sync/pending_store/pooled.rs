@@ -57,10 +57,7 @@ impl PooledPendingStore {
             call(inner)
         })
         .await
-        .map_err(|error| {
-            tracing::warn!(%error, "a pending DAG transition did not run on the worker pool");
-            Error::Storage("the node is shutting down; try again".to_string())
-        })?
+        .map_err(|error| Error::Storage(error.report("pending DAG transition").to_string()))?
     }
 }
 

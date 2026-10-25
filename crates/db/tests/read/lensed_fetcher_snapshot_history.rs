@@ -8,8 +8,9 @@ use storage::RegolithStore;
 use super::LensedDocFetcher;
 use crate::database::DB;
 
-#[tokio::test]
-async fn readonly_history_stays_in_its_snapshot_and_new_snapshot_observes_schema_change() {
+#[test]
+fn readonly_history_stays_in_its_snapshot_and_new_snapshot_observes_schema_change() {
+    workers::block_on(async {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     db.create_collections_atomic(
         query::parse_sdl("type SnapshotHistory { value: String }").unwrap(),
@@ -57,10 +58,13 @@ async fn readonly_history_stays_in_its_snapshot_and_new_snapshot_observes_schema
             .len(),
         1
     );
+})
+    .unwrap()
 }
 
-#[tokio::test]
-async fn writable_history_observes_its_own_migration_registration() {
+#[test]
+fn writable_history_observes_its_own_migration_registration() {
+    workers::block_on(async {
     let db = Arc::new(DB::new(RegolithStore::in_memory().unwrap()).unwrap());
     db.create_collections_atomic(
         query::parse_sdl("type WritableHistory { value: String }").unwrap(),
@@ -116,4 +120,6 @@ async fn writable_history_observes_its_own_migration_registration() {
         .get(generation, collection_id)
         .is_none());
     let _ = fetcher.take_txn().await.unwrap().discard();
+})
+    .unwrap()
 }

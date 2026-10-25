@@ -48,6 +48,70 @@ use Tier::{Behavioral, Boundary, Contract};
 
 pub const PROPERTIES: &[Property] = &[
     Property {
+        family: "Storage failure classification",
+        name: "ClassificationPreserved / NoReplayAuthority",
+        axis: Tla,
+        anchor: "crates/storage/src/corekv/errors.rs; crates/db/src/error/mod.rs; crates/query/src/runner/turn.rs; crates/query/src/executor.rs; crates/http/src/error.rs",
+        model_ref: "MC_StorageFailure_Green.cfg / MC_StorageFailure_Red_LostCause.cfg / MC_StorageFailure_Red_Text.cfg / MC_StorageFailure_Red_Retry.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Storage failure classification",
+        name: "StorageFailure.preserves / full_code / other_code / opaque_code",
+        axis: Lean,
+        anchor: "crates/storage/src/corekv/io_failure.rs; crates/storage/src/backends/regolith/transaction.rs map_txn_error; crates/query/src/executor.rs QueryResponseError::from_query_error; crates/query/tests/storage_failure.rs",
+        model_ref: "StorageFailure.lean",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Owner observations retain read gates and the transaction snapshot",
+        axis: Tla,
+        anchor: "crates/query/src/runner/owners.rs; crates/db/src/read/lensed/fetcher/mod.rs",
+        model_ref: "MC_OwnerObservation_Green.cfg / MC_OwnerObservation_Red_*.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "ACP soundness + revocation + dual-path commits",
+        name: "Acp.OwnerObservation.exact_snapshot and denied-owner noninterference",
+        axis: Lean,
+        anchor: "crates/query/src/runner/owners.rs",
+        model_ref: "Acp.OwnerObservation",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "NoSpuriousDenial — queued lifecycle notification cannot hide a connected peer",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/authorizer.rs RuntimeAuthorizer::peer_connected; access_tests.rs live_connection_allows_pull_before_lifecycle_notification_without_granting_push",
+        model_ref: "MC_PeerConnection_Green.cfg / MC_PeerConnection_Red_StaleObservation.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Peer connection observation",
+        name: "PeerConnection.live_is_connected / connection_does_not_grant_push",
+        axis: Lean,
+        anchor: "crates/p2p/src/sync/coordinator/authorizer.rs RuntimeAuthorizer::peer_connected",
+        model_ref: "PeerConnection.lean",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Schema publication completion",
+        name: "VisibleBeforeReply — committed schemas are published before their callers resume",
+        axis: Tla,
+        anchor: "crates/storage/src/corekv/callbacks.rs OnCommit::OrderedAndWait; crates/db/tests/collection/schema_publication.rs",
+        model_ref: "MC_SchemaPublication_Green.cfg / MC_SchemaPublication_Red_EarlyReply.cfg",
+        tiers: &[Contract],
+    },
+    Property {
+        family: "Schema publication completion",
+        name: "SchemaPublication.preserves",
+        axis: Lean,
+        anchor: "crates/storage/src/corekv/callbacks.rs OnCommit::OrderedAndWait; crates/db/tests/collection/schema_publication.rs",
+        model_ref: "SchemaPublication.lean",
+        tiers: &[Contract],
+    },
+    Property {
         family: "Vector index link maintenance",
         name: "INV_NoLostLinks — blind additions preserve links and stale structural pruning aborts",
         axis: Tla,
@@ -248,7 +312,7 @@ pub const PROPERTIES: &[Property] = &[
         family: "Sync ownership transfer (head hint / receiver pull)",
         name: "acquire_exclusive / join_acks_only_durable / join_processes_only_unowned: the CID guard is exclusive and a join acks only a safe block",
         axis: Lean,
-        anchor: "crates/p2p/src/sync/queue.rs ProcessQueue::try_acquire, release_sync; crates/p2p/src/sync/manager/process/pushlog.rs join_in_flight",
+        anchor: "crates/p2p/src/sync/queue.rs ProcessQueue::try_acquire, release_sync; crates/p2p/src/sync/manager/process/pushlog.rs join_in_flight; crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootClaim::drop",
         model_ref: "SingleFlight.Join (lake build)",
         tiers: &[Boundary],
     },
@@ -427,6 +491,76 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // Every open store exports its engine's commit and policy tickers. A
+        // read of the totals, or the store's close, adds what the engine
+        // counted past the export's mark by swapping the mark forward with one
+        // compare-and-swap; only the winner adds, exactly the stretch it
+        // claimed. The close adds before it leaves the map. The finding
+        // configuration shows the claim and the add are two steps: a read can
+        // briefly miss a closed store's counts that another read claimed and
+        // has not added yet. The race test exercises the code on real threads;
+        // nothing drives this model against the binary.
+        family: "Engine ticker export",
+        name: "INV_Accounted / INV_NeverOvercount / INV_ClosedComplete / INV_LeftClaimed / INV_QuiescentExact / PROP_TotalNeverBack / PROP_MarkNeverBack / LIVE_EveryCallEnds: every count reaches the exported total once, and the total never goes back",
+        axis: Tla,
+        anchor: "crates/telemetry/src/engine_tickers.rs Source::publish, EngineTickerExport::drop, engine_ticker_totals; crates/storage/src/backends/shared.rs TransactionMetrics",
+        model_ref: "MC_EngineTickers_{Green,Green_TwoSources,Red_Backward,Red_BlindStore,Red_GiveUp,Red_StaleSeen,Red_RemoveFirst,Red_WeakClose,Red_Reset,Red_SharedStats,Red_CountAfterClose,Finding_ClaimGap}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Engine ticker export",
+        name: "failed_attempt_changes_nothing / run_gain / run_total_eq_gains / publishAlone_comm / closed_export_adds_exactly: a mark moved by compare-and-swap adds each count once",
+        axis: Lean,
+        anchor: "crates/telemetry/src/engine_tickers.rs Source::publish",
+        model_ref: "EngineTickers.Mark, EngineTickers.Race (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // A placed pool claims its CPUs in the process's ledger, one counter
+        // per CPU: alone, moving each counter from 0 to 1 with one
+        // compare-and-swap and giving back what it took when one CPU is
+        // held; or shared, adding one whatever the counter was. After its
+        // capped claims alone fail it shares and says so. Its Hold gives back
+        // exactly what it raised once the pool and every thread placed
+        // through it are gone.
+        family: "Worker pool CPU ledger",
+        name: "INV_AloneTakesDisjoint / INV_AloneRunsAlone / INV_TakenAlone / INV_AllOrNothing / INV_HeldNeverFree / INV_CountExact / INV_DoneLeavesNothing / LIVE_StartEnds: placed pools never share a CPU unless one of them says it shares",
+        axis: Tla,
+        anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop; crates/workers/src/placement/reserve.rs reserve, shared; crates/workers/src/pool/placer.rs Placer::holding; crates/workers/src/pool/start.rs Pool::start_in",
+        model_ref: "MC_CpuLedger_{Green,Red_SplitTake,Red_NoRollback,Red_ReleaseLoser,Red_ShareUncounted,Red_NoAttemptCap,Red_ReleaseEarly,Red_RunOutsideHold,Red_DoubleRelease,Red_ForgetHold}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Worker pool CPU ledger",
+        name: "hold_all_or_nothing / rollback_restores / hold_won_alone / hold_step / share_step / release_alone_step / release_shared_step: a claim alone takes all or nothing, the counters stay exact, Holds claimed alone stay apart",
+        axis: Lean,
+        anchor: "crates/workers/src/ledger.rs Ledger::hold, Ledger::share, Hold::drop",
+        model_ref: "CpuLedger.{Hold,Count,Exclusive} (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        // `default_pool()` answers the first registered pool that still runs,
+        // else one pool started once for the process. Registration moves the
+        // slot only off a pool that stopped, with one compare-and-swap; the
+        // started pool is built under a one-permit turn and published once; a
+        // worker thread never waits for that start; `Pool::stop` never times
+        // its own deadline on the pool it stops.
+        family: "Worker default pool",
+        name: "INV_NeverHandsOutClosing / INV_FirstRunningWins / INV_RegisteredWins / INV_OneStart / INV_OneDefault / INV_ErrorHonest / INV_StopDeadlineElsewhere / INV_MakeDefaultTellsTruth / INV_WorkerNeverWaits / INV_RegistrationKeepsNothingAlive / LIVE_EveryCallReturns / LIVE_EveryRegisterReturns: one default pool, never a closing one",
+        axis: Tla,
+        anchor: "crates/workers/src/pool/default.rs default_pool, Pool::make_default, DefaultPool::register, DefaultPool::get, DefaultPool::started; crates/workers/src/pool/mod.rs Pool::stop; crates/workers/src/pool/deadline.rs delay_on",
+        model_ref: "MC_DefaultPool_{Green,Red_AnswerYes,Red_BlindRegister,Red_FailKeepsTurn,Red_NoClosingCheck,Red_NoRecheck,Red_NoRetry,Red_NoTurn,Red_RacyCell,Red_RegisterClosing,Red_RegisterOverwrites,Red_ShutStarted,Red_StartedFirst,Red_StopAsksFirst,Red_StrongSlot,Red_WorkerRefusedFirst,Red_WorkerWaits}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Worker default pool",
+        name: "first_running_wins / stopped_never_selected / later_registrations_change_nothing / first_calls_agree / registered_wins / stop_deadline_elsewhere: the first running registered pool wins, a stopped one never does, every caller gets one started pool",
+        axis: Lean,
+        anchor: "crates/workers/src/pool/default.rs DefaultPool::register, DefaultPool::get",
+        model_ref: "DefaultPool.{Slot,Cell,Get} (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         // `partition::convergence_delete_update_race_preserves_tombstone`
         // partitions a replicated doc, deletes on one side, updates a mutable field
         // on the other, then heals and asserts the merged materialized view stays
@@ -483,6 +617,17 @@ pub const PROPERTIES: &[Property] = &[
         tiers: &[Boundary],
     },
     Property {
+        // The flat code table is a pure in-memory structure loaded once per
+        // graph generation; its laws are proven, and the unit tests in
+        // crates/db/tests/vector/diskann_resident.rs exercise the Rust side.
+        family: "DiskANN resident code table",
+        name: "get_returns_inserted / get_in_bounds / insert_refuses_other_length: each slot reads back its own code, in bounds",
+        axis: Lean,
+        anchor: "crates/db/src/index/vector/engine/diskann/cache.rs Codes::insert, Codes::get",
+        model_ref: "DiskAnnCodes (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
         family: "Index-maintenance consistency",
         name: "onDocumentUpdate_correct / _no_stale / _none_missing",
         axis: Lean,
@@ -501,5 +646,105 @@ pub const PROPERTIES: &[Property] = &[
         anchor: "crates/db (merge) LWW materialization; crates/db (index) on_document_update",
         model_ref: "MC_IndexReconciliation_Green.cfg",
         tiers: &[Behavioral],
+    },
+    Property {
+        // A node's shutdown aborts every task it holds and waits for each to
+        // let go of storage before the pool stops and regolith closes; the
+        // drain gives up at its deadline; a refused telemetry flush moves to
+        // a thread of its own instead of the caller.
+        family: "Node shutdown order",
+        name: "INV_NoStorageAfterClose / INV_NothingDetached / INV_CallerNeverJoinsExporter / LIVE_ShutdownTerminates: no task reaches storage after regolith closes, none outlives shutdown, shutdown returns",
+        axis: Tla,
+        anchor: "crates/defra-node/src/lib.rs EmbeddedNode::shutdown; crates/defra-node/src/node_acp.rs gate_external_acp; crates/embedded/src/node.rs EmbeddedNode::shutdown, ShutdownHandle::shutdown, stop_services; crates/embedded/src/node_acp.rs gate_external_acp; crates/edge/src/task.rs Service::stopped; crates/edge/src/handle.rs Scope::drain",
+        model_ref: "MC_NodeShutdown_{Green,Red_RedriveDetached,Red_ServicesNotAwaited,Red_NoDrainDeadline,Red_FlushOnCaller}.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Inbound stream admission",
+        name: "INV_ResidentWithinBudget / INV_ShareBound / LIVE_HealthyHandled / LIVE_WaitEnds",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/endpoint_streams.rs admit_stream; crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, InboundBudget::peer_share, InboundDeadlines::body; crates/p2p/src/sync/dispatch_queue.rs dispatch_queue; crates/p2p/src/sync/event_dispatcher.rs run_event_dispatcher",
+        model_ref: "MC_InboundAdmission_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Inbound stream admission",
+        name: "acquire_conserves / release_all_restores / admit_failure_keeps_nothing",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/inbound_budget.rs InboundBudget::admit, InboundLease",
+        model_ref: "ByteBudget (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Peer fetch stats",
+        name: "roll_ratio_stays_a_ratio / rolling_over_samples / bump_never_overflows",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/fetch_stats.rs PeerCounters::record, roll",
+        model_ref: "FetchStats (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Gossip connection ownership",
+        name: "INV_RevokedHasNoGossip / INV_PathOnLiveConnection / INV_GossipNeverClosesShared / LIVE_HealthyReached / LIVE_AskAnswered",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/gossip/driver.rs Driver::send, Driver::connected, Driver::forget; crates/p2p/src/iroh/gossip/mod.rs GossipHandle::connected; crates/p2p/src/iroh/endpoint_rpc.rs connect_with_cache; crates/p2p/src/iroh/endpoint_commands.rs handle_deny_peer",
+        model_ref: "MC_GossipOwnership_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Gossip connection ownership",
+        name: "LIVE_RequestAnswered",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/gossip/inbox.rs Inbox::push, Inbox::offer, Inbox::next; crates/p2p/src/iroh/gossip/driver.rs read_stream, Driver::emit; crates/p2p/src/iroh/records/task.rs RecordsHandle::push_change, RecordsHandle::push, RecordsHandle::next",
+        model_ref: "MC_GossipInbox_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Gossip connection ownership",
+        name: "decode_encode / decode_all_encode_all / decode_rejects_oversized / read_tag_write_tag",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/gossip/frame.rs write_gossip_frame, read_gossip_frame; crates/p2p/src/iroh/protocols.rs write_stream_tag, read_stream_tag",
+        model_ref: "GossipFrame (lake build)",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Iroh service records",
+        name: "INV_SeqNeverGoesBack / INV_NoExpiredChosen / LIVE_NewestReached",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/refresh.rs Refresh::check; crates/p2p/src/iroh/records/task.rs Records::renew, Records::on_input, Records::rotate",
+        model_ref: "MC_ServiceRecords_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Reply-driven DAG fetch",
+        name: "INV_OneFetchPerRoot / INV_NoReplyLost",
+        axis: Tla,
+        anchor: "crates/p2p/src/sync/coordinator/mod.rs DagFetchLimiter::claim_root, RootKey, RootClaim; crates/p2p/src/sync/coordinator/event_handler/doc_sync.rs handle_doc_sync_reply; crates/p2p/src/sync/coordinator/event_handler/branchable_sync.rs handle_branchable_sync_reply",
+        model_ref: "MC_RootSingleFlight_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Iroh service records",
+        name: "INV_AskOnlyWhenEmpty / LIVE_Found",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/records/task.rs Records::providers, Records::on_message",
+        model_ref: "MC_ProviderLookup_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Iroh solicited replies",
+        name: "INV_NoUnsolicitedAdmitted / INV_SolicitedAdmitted / INV_NoReplyStreamOnV2",
+        axis: Tla,
+        anchor: "crates/p2p/src/iroh/solicited.rs Solicited::expect, Solicited::take, Solicited::prune; crates/p2p/src/iroh/endpoint_streams.rs admit_stream, dispatch_stream; crates/p2p/src/iroh/endpoint_commands.rs handle_command; crates/p2p/src/iroh/endpoint_rpc.rs handle_reply_on_stream",
+        model_ref: "MC_SolicitedReplies_Green.cfg",
+        tiers: &[Boundary],
+    },
+    Property {
+        family: "Iroh service records",
+        name: "validate_sound / validate_complete / offer_never_lowers / offer_replaces_expired / offer_keeps_only_valid / live_not_expired / encodeKey_injective / no_secret_not_advertised / distinct_ids_distinct_keys / parse_print / providers_exclude_self / providers_nodup / providers_from_book / providers_within_cap / providers_sorted",
+        axis: Lean,
+        anchor: "crates/p2p/src/iroh/records/verify.rs verify; crates/p2p/src/iroh/records/book.rs Book::offer, Book::live; crates/p2p/src/iroh/records/key.rs blind, advertised_key, CollectionKey::encode; crates/p2p/src/iroh/records/pointer.rs Pointer::print, Pointer::parse; crates/p2p/src/iroh/records/task.rs Records::providers, rank",
+        model_ref: "ServiceRecord (lake build)",
+        tiers: &[Boundary],
     },
 ];

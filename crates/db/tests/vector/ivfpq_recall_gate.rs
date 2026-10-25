@@ -97,54 +97,66 @@ async fn measure(nprobe: u32, m: u32) -> Measured {
 
 /// Every list probed, so the coarse step is exhaustive and the only error left
 /// is the codec's. This is the row that gates the quantizer.
-#[tokio::test]
-async fn quantization_error_alone_stays_bounded() {
-    let m = measure(8, 8).await;
-    println!(
-        "nprobe=8 m=8: recall@10={:.4} dist/best={:.4}",
-        m.recall, m.ratio
-    );
-    assert!(m.recall >= 0.90, "recall@10 fell to {:.4}", m.recall);
-    assert!(
-        m.ratio <= 1.02,
-        "returned neighbours are {:.4}x ideal",
-        m.ratio
-    );
+#[test]
+fn quantization_error_alone_stays_bounded() {
+    workers::block_on(async {
+        let m = measure(8, 8).await;
+        println!(
+            "nprobe=8 m=8: recall@10={:.4} dist/best={:.4}",
+            m.recall, m.ratio
+        );
+        assert!(m.recall >= 0.90, "recall@10 fell to {:.4}", m.recall);
+        assert!(
+            m.ratio <= 1.02,
+            "returned neighbours are {:.4}x ideal",
+            m.ratio
+        );
+    })
+    .unwrap()
 }
 
 /// One list probed: most of the loss is the coarse step missing a neighbour it
 /// never scanned. A floor, so a broken probe ordering is caught.
-#[tokio::test]
-async fn a_single_probe_still_finds_most_neighbours() {
-    let m = measure(1, 8).await;
-    println!(
-        "nprobe=1 m=8: recall@10={:.4} dist/best={:.4}",
-        m.recall, m.ratio
-    );
-    assert!(m.recall >= 0.55, "recall@10 fell to {:.4}", m.recall);
+#[test]
+fn a_single_probe_still_finds_most_neighbours() {
+    workers::block_on(async {
+        let m = measure(1, 8).await;
+        println!(
+            "nprobe=1 m=8: recall@10={:.4} dist/best={:.4}",
+            m.recall, m.ratio
+        );
+        assert!(m.recall >= 0.55, "recall@10 fell to {:.4}", m.recall);
+    })
+    .unwrap()
 }
 
 /// Probing more lists can only see more candidates.
-#[tokio::test]
-async fn recall_rises_with_nprobe() {
-    let one = measure(1, 8).await.recall;
-    let all = measure(8, 8).await.recall;
-    assert!(
-        all > one,
-        "probing every list ({all:.4}) was no better than one ({one:.4})"
-    );
+#[test]
+fn recall_rises_with_nprobe() {
+    workers::block_on(async {
+        let one = measure(1, 8).await.recall;
+        let all = measure(8, 8).await.recall;
+        assert!(
+            all > one,
+            "probing every list ({all:.4}) was no better than one ({one:.4})"
+        );
+    })
+    .unwrap()
 }
 
 /// Finer codes can only rank better.
-#[tokio::test]
-async fn recall_rises_with_finer_codes() {
-    let coarse = measure(8, 2).await;
-    let fine = measure(8, 8).await;
-    assert!(
-        fine.recall >= coarse.recall,
-        "m=8 ({:.4}) was worse than m=2 ({:.4})",
-        fine.recall,
-        coarse.recall
-    );
-    assert!(fine.ratio <= coarse.ratio);
+#[test]
+fn recall_rises_with_finer_codes() {
+    workers::block_on(async {
+        let coarse = measure(8, 2).await;
+        let fine = measure(8, 8).await;
+        assert!(
+            fine.recall >= coarse.recall,
+            "m=8 ({:.4}) was worse than m=2 ({:.4})",
+            fine.recall,
+            coarse.recall
+        );
+        assert!(fine.ratio <= coarse.ratio);
+    })
+    .unwrap()
 }

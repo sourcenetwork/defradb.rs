@@ -32,8 +32,9 @@ tools/otel-smoke/output/
 .mcp.json
 AGENTS.md
 
-# Local docs
-docs/
+# Local docs (the mdbook under docs/book is tracked and deployed by CI)
+docs/*
+!docs/book/
 
 # Local dev tooling installed by `just setup`
 .tooling/

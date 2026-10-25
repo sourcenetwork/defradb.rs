@@ -1,25 +1,28 @@
 use super::*;
 
-#[tokio::test]
-async fn test_subscription_recv() {
-    let (tx, rx) = async_channel::bounded(10);
-    let mut sub = Subscription::new(1, rx);
+#[test]
+fn test_subscription_recv() {
+    workers::block_on(async {
+        let (tx, rx) = async_channel::bounded(10);
+        let mut sub = Subscription::new(1, rx);
 
-    // Send a message
-    let msg = Message::merge();
-    tx.send(msg).await.unwrap();
+        // Send a message
+        let msg = Message::merge();
+        tx.send(msg).await.unwrap();
 
-    // Receive it
-    let received = sub.recv().await;
-    assert!(received.is_some());
-    assert_eq!(received.unwrap().name, crate::event::EventName::Merge);
+        // Receive it
+        let received = sub.recv().await;
+        assert!(received.is_some());
+        assert_eq!(received.unwrap().name, crate::event::EventName::Merge);
 
-    // Close the channel
-    drop(tx);
+        // Close the channel
+        drop(tx);
 
-    // Receive should return None
-    let received = sub.recv().await;
-    assert!(received.is_none());
+        // Receive should return None
+        let received = sub.recv().await;
+        assert!(received.is_none());
+    })
+    .unwrap()
 }
 
 #[test]

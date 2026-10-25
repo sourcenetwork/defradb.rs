@@ -467,3 +467,91 @@ pub fn test_global_limits_evicts_disconnected_first() {
     assert!(tracker.is_connected(&peer3));
     assert!(tracker.is_connected(&peer4));
 }
+
+fn history(tracker: &PeerStateTracker, peer: &str) -> p2p::PeerHistory {
+    tracker.history(peer).expect("peer is tracked")
+}
+
+#[test]
+pub fn test_peer_history_counts_connections_in_wall_clock_time() {
+    let tracker = PeerStateTracker::new();
+    let peer = test_peer_id();
+    let before = chrono::Utc::now() - chrono::Duration::milliseconds(1);
+
+    assert!(tracker.history(&peer).is_none());
+    tracker.peer_connected(&peer);
+    let connected = history(&tracker, &peer);
+    assert!(connected.connected);
+    assert_eq!(connected.connect_count, 1);
+    let connected_at = connected.last_connected_at.expect("connect recorded");
+    assert!(connected_at >= before);
+    assert!(connected_at <= chrono::Utc::now() + chrono::Duration::milliseconds(1));
+    assert_eq!(connected.last_seen_at, Some(connected_at));
+    assert_eq!(
+        connected.blocks_received,
+        p2p::sync::SyncOutcomes::default()
+    );
+
+    std::thread::sleep(Duration::from_millis(5));
+    tracker.peer_has_cid(&peer, test_cid());
+    let announced = history(&tracker, &peer);
+    assert_eq!(announced.known_block_count, 1);
+    assert!(announced.last_seen_at > connected.last_seen_at);
+
+    std::thread::sleep(Duration::from_millis(5));
+    tracker.peer_disconnected(&peer);
+    tracker.peer_connected(&peer);
+    let reconnected = history(&tracker, &peer);
+    assert_eq!(reconnected.connect_count, 2);
+    assert_eq!(reconnected.disconnect_count, 1);
+    assert!(reconnected.last_disconnected_at > announced.last_seen_at);
+}
+
+#[test]
+pub fn test_peer_history_records_each_sync_direction() {
+    let tracker = PeerStateTracker::new();
+    let peer = test_peer_id();
+
+    tracker.record_block_received(&peer);
+    tracker.record_block_failed(&peer, "merge failed".to_string());
+    std::thread::sleep(Duration::from_millis(5));
+    tracker.record_head_push_failed(&peer, "no reply within 30000ms".to_string());
+    tracker.record_head_acked(&peer);
+
+    let peer_history = history(&tracker, &peer);
+    let received = &peer_history.blocks_received;
+    assert_eq!((received.succeeded, received.failed), (1, 1));
+    assert_eq!(
+        received
+            .last_failure
+            .as_ref()
+            .map(|failure| failure.error.as_str()),
+        Some("merge failed")
+    );
+    let pushed = &peer_history.heads_pushed;
+    assert_eq!((pushed.succeeded, pushed.failed), (1, 1));
+    assert!(pushed.last_succeeded_at > received.last_succeeded_at);
+    assert_eq!(peer_history.last_seen_at, pushed.last_succeeded_at);
+
+    let summary = tracker
+        .summaries()
+        .into_iter()
+        .find(|summary| summary.peer_id == peer)
+        .expect("peer is summarized");
+    assert_eq!(summary.last_block_received_at, received.last_succeeded_at);
+    assert_eq!(summary.last_head_acked_at, pushed.last_succeeded_at);
+    assert_eq!(Some(summary.last_seen_at), peer_history.last_seen_at);
+}
+
+#[test]
+pub fn test_peer_summary_serializes_rfc3339_times() {
+    let tracker = PeerStateTracker::new();
+    let peer = test_peer_id();
+    tracker.record_head_acked(&peer);
+
+    let json = serde_json::to_value(&tracker.summaries()[0]).unwrap();
+    let seen = json["last_seen_at"].as_str().expect("time is a string");
+    assert!(chrono::DateTime::parse_from_rfc3339(seen).is_ok(), "{seen}");
+    assert_eq!(json["last_head_acked_at"], json["last_seen_at"]);
+    assert!(json["last_block_received_at"].is_null());
+}

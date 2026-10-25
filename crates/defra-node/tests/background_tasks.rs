@@ -20,8 +20,9 @@ type MetricRollup @downsample(interval: "1000ms", timeField: "ts") {
 }
 "#;
 
-#[tokio::test]
-async fn downsample_view_refreshes_without_a_manual_refresh() {
+#[test]
+fn downsample_view_refreshes_without_a_manual_refresh() {
+    workers::block_on(async {
     let node = EmbeddedNode::builder().build().await.unwrap();
     node.add_schema("type Metric { label: String  ts: DateTime  value: Int }")
         .await
@@ -51,8 +52,10 @@ async fn downsample_view_refreshes_without_a_manual_refresh() {
             Instant::now() < deadline,
             "MetricRollup never refreshed: {rows}"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        workers::delay(Duration::from_millis(100)).unwrap().await.unwrap();
     }
 
     node.shutdown().await;
+})
+    .unwrap()
 }

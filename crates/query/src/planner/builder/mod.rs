@@ -738,6 +738,37 @@ impl Planner {
         // Position: after Select/joins/similarity but before GroupBy/Aggregates/OrderBy/Limit.
         plan = self.maybe_wrap_with_acp_filter(plan, &collection);
 
+        let ordered_prefix = if select.group_by.is_none()
+            && select
+                .fields
+                .iter()
+                .all(|field| !matches!(field, Requestable::Select(_) | Requestable::Aggregate(_)))
+            && select
+                .filter
+                .as_ref()
+                .is_none_or(|filter| !filter.has_relation_filters())
+        {
+            index_scan
+                .as_ref()
+                .and_then(|scan| {
+                    let index = collection
+                        .indexes
+                        .iter()
+                        .find(|index| index.name == scan.index_name)?;
+                    let order = select.order_by.as_ref()?;
+                    let filter = select.filter.as_ref()?;
+                    Some(
+                        crate::planner::index_selection::filtered_index_order_prefix(
+                            order, index, filter,
+                        )
+                        .0,
+                    )
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         // Apply GroupBy/OrderBy/Limit (or just OrderBy/Aggregates/Limit without GROUP BY)
         plan = self.apply_groupby_ordering_limit(
             plan,
@@ -745,6 +776,7 @@ impl Planner {
             &scan_mapping,
             index_provides_ordering,
             join_provides_ordering,
+            ordered_prefix,
         )?;
 
         Ok(PlanResult {

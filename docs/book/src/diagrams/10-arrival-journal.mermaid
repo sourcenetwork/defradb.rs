@@ -1,0 +1,21 @@
+sequenceDiagram
+    autonumber
+    participant A as worker A: create doc a
+    participant B as worker B: create doc b
+    participant M as worker M: P2P merge creates doc b too
+    participant C as regolith commit pipeline
+    participant R as reader: gents event source
+
+    Note over A,B: both creates run at the same time, in the same collection
+    A->>C: append(journal, a, once key doc a)
+    B->>C: append(journal, b, once key doc b)
+    M->>C: append(journal, b, once key doc b)
+    Note over C: no validation for appends: nothing conflicts
+    C->>C: B commits first: head 41 becomes 42, row 42 is b, doc b is 42
+    C->>C: A commits next: head 42 becomes 43, row 43 is a, doc a is 43
+    C->>C: M commits: once key doc b already holds 42, so no new row
+    Note over C: positions follow commit order and become visible in sequence order
+    R->>C: read at its snapshot: head 43
+    C-->>R: rows 1 to 43, dense, no gap, b before a
+    R->>R: process, then store its cursor 43 in its own transaction
+    Note over R: a reader never skips a row: a later row lands above 43

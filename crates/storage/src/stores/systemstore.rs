@@ -57,23 +57,26 @@ mod tests {
     use crate::keys::systemstore::CollectionKey;
     use bytes::Bytes;
 
-    #[tokio::test]
-    async fn test_systemstore_basic() {
-        let store = Arc::new(RegolithStore::in_memory().unwrap());
-        let systemstore = Systemstore::new(store);
+    #[test]
+    fn test_systemstore_basic() {
+        workers::block_on(async {
+            let store = Arc::new(RegolithStore::in_memory().unwrap());
+            let systemstore = Systemstore::new(store);
 
-        let key = CollectionKey::new("users_v1");
+            let key = CollectionKey::new("users_v1");
 
-        // Write
-        let mut txn = systemstore.new_txn(false).await.unwrap();
-        txn.set(&key.bytes(), b"collection_definition")
-            .await
-            .unwrap();
-        txn.commit().await.unwrap();
+            // Write
+            let mut txn = systemstore.new_txn(false).await.unwrap();
+            txn.set(&key.bytes(), b"collection_definition")
+                .await
+                .unwrap();
+            txn.commit().await.unwrap();
 
-        // Read
-        let txn = systemstore.new_txn(true).await.unwrap();
-        let value = txn.get(&key.bytes()).await.unwrap();
-        assert_eq!(value, Some(Bytes::from_static(b"collection_definition")));
+            // Read
+            let txn = systemstore.new_txn(true).await.unwrap();
+            let value = txn.get(&key.bytes()).await.unwrap();
+            assert_eq!(value, Some(Bytes::from_static(b"collection_definition")));
+        })
+        .unwrap()
     }
 }

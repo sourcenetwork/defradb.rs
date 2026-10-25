@@ -371,6 +371,11 @@ fn all_registered_routes_return_expected_permission() {
             RoutePermission::Required(NodePermission::P2pPeerInfo),
         ),
         (
+            "/api/v0/p2p/peers/{peer_id}",
+            Method::GET,
+            RoutePermission::Required(NodePermission::P2pPeerInfo),
+        ),
+        (
             "/api/v0/p2p/active-peers",
             Method::GET,
             RoutePermission::Required(NodePermission::P2pPeerActive),

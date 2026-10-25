@@ -29,3 +29,36 @@ lean_lib SingleFlight where
 
 @[default_target]
 lean_lib CommitFence where
+
+@[default_target]
+lean_lib EngineTickers where
+
+@[default_target]
+lean_lib CpuLedger where
+
+@[default_target]
+lean_lib DefaultPool where
+
+@[default_target]
+lean_lib DiskAnnCodes where
+
+@[default_target]
+lean_lib SchemaPublication where
+
+@[default_target]
+lean_lib PeerConnection where
+
+@[default_target]
+lean_lib ByteBudget where
+
+@[default_target]
+lean_lib FetchStats where
+
+@[default_target]
+lean_lib GossipFrame where
+
+@[default_target]
+lean_lib ServiceRecord where
+
+@[default_target]
+lean_lib StorageFailure where

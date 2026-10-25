@@ -1,0 +1,56 @@
+flowchart TD
+    classDef q fill:#ffffff,stroke:#555555,color:#000
+    classDef ok fill:#d8f0d8,stroke:#2e7d32,color:#000
+    classDef cf fill:#fde7c9,stroke:#c77700,color:#000
+    classDef rego fill:#d6e6f8,stroke:#1565c0,color:#000
+    classDef defra fill:#f3e5f5,stroke:#7b1fa2,color:#000
+
+    CM["regolith commit: each key in the validation set,<br/>checked before the mutex, only the delta under it"] --> CLS{"what did this transaction do with the key?"}
+
+    CLS -->|"blind merge"| BM{"a newer put, delete or range delete?"}
+    BM -->|"no: only newer operands, which commute"| OK["accepted"]
+    BM -->|"yes"| C1["Conflict: mine Merge, theirs Put or Delete"]
+
+    CLS -->|"ContentAddressed put, Log append, unvalidated read"| OK
+
+    CLS -->|"ContentAddressed read that found the key"| CAR{"is the newest state a delete?"}
+    CAR -->|"no"| OK
+    CAR -->|"yes"| C2["Conflict: mine ReadPresence, theirs Delete"]
+
+    CLS -->|"projected read"| PR{"does a newer write touch the parts?"}
+    PR -->|"no"| OK
+    PR -->|"yes"| C3["Conflict: mine ReadParts, theirs Put, Merge or Delete"]
+
+    CLS -->|"Ordinary read"| ORR{"is there a newer value with different bytes?"}
+    ORR -->|"no: unchanged or identical rewrite"| OK
+    ORR -->|"yes"| C4["Conflict: mine Read or ReadForUpdate"]
+
+    CLS -->|"scan_validated"| VR{"a newer write inside the covered range?"}
+    VR -->|"no"| OK
+    VR -->|"yes: a key left or appeared"| C6["Conflict: mine ScannedRange"]
+    CLS -->|"Ordinary put or delete"| OW{"a newer write?"}
+    OW -->|"no, or identical bytes, or a delete of an absent key"| OK
+    OW -->|"yes"| C5["Conflict: mine Put or Delete"]
+
+    OK --> COMMIT["commit decided: group WAL write,<br/>one fsync per group, a unit on the members' own queues,<br/>visible in order"]
+
+    C1 --> RSN
+    C2 --> RSN
+    C3 --> RSN
+    C4 --> RSN
+    C5 --> RSN
+    C6 --> RSN
+    RSN["regolith returns Conflict with its reason,<br/>calls EventListener on_conflict,<br/>transact re-runs f with the reason"] --> BL{"defradb.rs business logic on the reason"}
+
+    BL -->|"theirs Delete after mine Read or Delete"| R1["already deleted: no-op or not-found"]
+    BL -->|"mine ReadParts: a part it used changed"| R2["re-run on the new value, merge its writes again"]
+    BL -->|"unique key or compare-and-set lost"| R3["report the lost race to the client"]
+    BL -->|"an ACP tuple it relied on was revoked"| R4["deny: no write commits after a revocation"]
+    BL -->|"mine ReadPresence: block collected"| R5["re-run: the re-run puts the block again"]
+    BL -->|"a definition changed: DDL"| R6["re-run against the new definition"]
+
+    class CLS,BM,CAR,PR,ORR,OW,VR,BL q
+    class OK,COMMIT ok
+    class C1,C2,C3,C4,C5,C6 cf
+    class CM,RSN rego
+    class R1,R2,R3,R4,R5,R6 defra

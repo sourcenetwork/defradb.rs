@@ -71,80 +71,83 @@ impl Blockstore for MergeStateUnreadable {
     }
 }
 
-#[tokio::test]
-async fn unreadable_merge_state_fails_the_counter_merge() {
-    let store = Arc::new(RegolithStore::in_memory().unwrap());
-    let database = Arc::new(DB::from_arc(store.clone()).unwrap());
-    database
-        .create_collection(CollectionVersion::new(
-            "Counters",
-            "v1",
-            "col-counters",
-            vec![
-                FieldDescription::new("1", "_docID", FieldKind::doc_id()),
-                FieldDescription::new("2", "score", FieldKind::int())
-                    .with_crdt_type(CType::PnCounter),
-            ],
-        ))
-        .await
-        .unwrap();
-    let blocks = Arc::new(MergeStateUnreadable(DefraBlockstore::new(store, true)));
-    let handler = DbMergeHandler::new(database.clone(), blocks.clone());
-
-    let mut data = Vec::new();
-    ciborium::into_writer(&5_i64, &mut data).unwrap();
-    let payload = CounterDeltaPayload {
-        field_name: "score".to_string(),
-        schema_version_id: "v1".to_string(),
-        priority: 1,
-        data,
-        nonce: 31,
-    };
-    let block = Block {
-        delta: CrdtDelta::Counter(payload.clone()),
-        heads: None,
-        links: None,
-        encryption: None,
-        signature: None,
-    };
-    let cid = block.generate_cid().unwrap();
-    blocks
-        .put(&cid, &block.to_dag_cbor().unwrap())
-        .await
-        .unwrap();
-
-    let doc_id = DocID::new_v0(
-        "bafyreihgg6a5auqhikq4nvw6fj3kbreovdbazlisbs5kerkahoqwwiz75i"
-            .parse()
-            .unwrap(),
-    )
-    .to_string();
-    let short_id = database
-        .get_collection("Counters")
-        .unwrap()
-        .unwrap()
-        .resolved_root_id();
-    let txn = database.new_txn(false).await.unwrap();
-    {
-        let systemstore = txn.systemstore().unwrap();
+#[test]
+fn unreadable_merge_state_fails_the_counter_merge() {
+    workers::block_on(async {
+        let store = Arc::new(RegolithStore::in_memory().unwrap());
+        let database = Arc::new(DB::from_arc(store.clone()).unwrap());
         database
-            .resolve_or_allocate_doc_short_id(&systemstore, short_id, &doc_id)
+            .create_collection(CollectionVersion::new(
+                "Counters",
+                "v1",
+                "col-counters",
+                vec![
+                    FieldDescription::new("1", "_docID", FieldKind::doc_id()),
+                    FieldDescription::new("2", "score", FieldKind::int())
+                        .with_crdt_type(CType::PnCounter),
+                ],
+            ))
             .await
             .unwrap();
-        db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &doc_id)
-            .await
-            .unwrap();
-    }
-    txn.force_commit().await.unwrap();
+        let blocks = Arc::new(MergeStateUnreadable(DefraBlockstore::new(store, true)));
+        let handler = DbMergeHandler::new(database.clone(), blocks.clone());
 
-    let metadata = BlockMetadata::normal(&doc_id, "col-counters", "did:key:z6Mkr", None, false);
-    let error = handler
-        .process_counter_delta(&cid, &payload, &metadata)
-        .await
-        .expect_err("an unreadable merged-block state must fail the merge");
-    assert!(matches!(error, MergeError::Storage(_)), "{error:?}");
-    assert_eq!(
-        handler.error_disposition(&error),
-        MergeErrorDisposition::Retryable
-    );
+        let mut data = Vec::new();
+        ciborium::into_writer(&5_i64, &mut data).unwrap();
+        let payload = CounterDeltaPayload {
+            field_name: "score".to_string(),
+            schema_version_id: "v1".to_string(),
+            priority: 1,
+            data,
+            nonce: 31,
+        };
+        let block = Block {
+            delta: CrdtDelta::Counter(payload.clone()),
+            heads: None,
+            links: None,
+            encryption: None,
+            signature: None,
+        };
+        let cid = block.generate_cid().unwrap();
+        blocks
+            .put(&cid, &block.to_dag_cbor().unwrap())
+            .await
+            .unwrap();
+
+        let doc_id = DocID::new_v0(
+            "bafyreihgg6a5auqhikq4nvw6fj3kbreovdbazlisbs5kerkahoqwwiz75i"
+                .parse()
+                .unwrap(),
+        )
+        .to_string();
+        let short_id = database
+            .get_collection("Counters")
+            .unwrap()
+            .unwrap()
+            .resolved_root_id();
+        let txn = database.new_txn(false).await.unwrap();
+        {
+            let systemstore = txn.systemstore().unwrap();
+            database
+                .resolve_or_allocate_doc_short_id(&systemstore, short_id, &doc_id)
+                .await
+                .unwrap();
+            db::docid::map::set_block_doc_id_mapping(&systemstore, &cid.to_string(), &doc_id)
+                .await
+                .unwrap();
+        }
+        txn.force_commit().await.unwrap();
+
+        let metadata = BlockMetadata::normal(&doc_id, "col-counters", "did:key:z6Mkr", None, false);
+        let error = handler
+            .process_counter_delta(&cid, &payload, &metadata)
+            .await
+            .expect_err("an unreadable merged-block state must fail the merge");
+        assert!(matches!(error, MergeError::Storage(_)), "{error:?}");
+        assert_eq!(
+            handler.error_disposition(&error),
+            MergeErrorDisposition::Retryable
+        );
+    })
+    .unwrap()
 }

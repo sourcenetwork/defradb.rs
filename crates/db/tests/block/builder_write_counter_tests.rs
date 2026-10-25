@@ -56,9 +56,12 @@ async fn first_counter_update() -> Cid {
     .field_cids[0]
 }
 
-#[tokio::test]
-async fn first_counter_updates_on_existing_document_have_distinct_cids() {
-    let (left, right) = tokio::join!(first_counter_update(), first_counter_update());
+#[test]
+fn first_counter_updates_on_existing_document_have_distinct_cids() {
+    workers::block_on(async {
+        let (left, right) = futures::join!(first_counter_update(), first_counter_update());
 
-    assert_ne!(left, right);
+        assert_ne!(left, right);
+    })
+    .unwrap()
 }

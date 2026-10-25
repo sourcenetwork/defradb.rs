@@ -207,39 +207,42 @@ async fn score_ssg(vectors: &[Vec<f32>], queries: &[Vec<f32>], pool: u32) -> Sco
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
-async fn recall_per_node_read() {
-    println!(
-        "{:>18} {:>7} {:>6} {:>10} {:>8} {:>14}",
-        "index", "N", "effort", "recall@10", "reads", "recall/1k reads"
-    );
+fn recall_per_node_read() {
+    workers::block_on(async {
+        println!(
+            "{:>18} {:>7} {:>6} {:>10} {:>8} {:>14}",
+            "index", "N", "effort", "recall@10", "reads", "recall/1k reads"
+        );
 
-    for dimensions in [32usize, 128] {
-        let mut corpus = crate::support::Corpus::new(SEED);
-        let vectors = corpus.clustered(5_000, dimensions, 50, 0.35);
-        let queries = corpus.vectors(QUERIES, dimensions);
+        for dimensions in [32usize, 128] {
+            let mut corpus = crate::support::Corpus::new(SEED);
+            let vectors = corpus.clustered(5_000, dimensions, 50, 0.35);
+            let queries = corpus.vectors(QUERIES, dimensions);
 
-        for effort in [32usize, 64, 128, 256] {
-            let hnsw = score_hnsw(&vectors, &queries, effort).await;
-            println!(
-                "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
-                format!("hnsw d={dimensions}"),
-                vectors.len(),
-                hnsw.recall,
-                hnsw.reads,
-                hnsw.per_read()
-            );
+            for effort in [32usize, 64, 128, 256] {
+                let hnsw = score_hnsw(&vectors, &queries, effort).await;
+                println!(
+                    "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
+                    format!("hnsw d={dimensions}"),
+                    vectors.len(),
+                    hnsw.recall,
+                    hnsw.reads,
+                    hnsw.per_read()
+                );
 
-            let ssg = score_ssg(&vectors, &queries, effort as u32).await;
-            println!(
-                "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
-                format!("ssg d={dimensions}"),
-                vectors.len(),
-                ssg.recall,
-                ssg.reads,
-                ssg.per_read()
-            );
+                let ssg = score_ssg(&vectors, &queries, effort as u32).await;
+                println!(
+                    "{:>18} {:>7} {effort:>6} {:>10.4} {:>8.0} {:>14.4}",
+                    format!("ssg d={dimensions}"),
+                    vectors.len(),
+                    ssg.recall,
+                    ssg.reads,
+                    ssg.per_read()
+                );
+            }
         }
-    }
+    })
+    .unwrap()
 }

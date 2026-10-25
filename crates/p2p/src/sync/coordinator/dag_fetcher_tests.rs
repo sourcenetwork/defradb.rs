@@ -66,6 +66,7 @@ struct TestTransport {
     skip_serving_syncs: Arc<AtomicUsize>,
     fail_connected_peers: Arc<AtomicBool>,
     connected_peers: Arc<Atom<Vec<PeerId>>>,
+    record_providers: Arc<Atom<Vec<PeerId>>>,
     cancelled_queries: Arc<SegQueue<u64>>,
     hang_car_requests: Arc<AtomicBool>,
     streamed_rooted_blocks: StreamedBlocks,
@@ -116,6 +117,7 @@ impl TestTransport {
                 PeerId::new("alt-peer".to_string()),
                 PeerId::new("other-peer".to_string()),
             ])),
+            record_providers: Arc::new(Atom::new(Vec::new())),
             cancelled_queries: Arc::new(SegQueue::new()),
             hang_car_requests: Arc::new(AtomicBool::new(false)),
             streamed_rooted_blocks: Arc::new(AtomOption::none()),
@@ -176,6 +178,10 @@ impl TestTransport {
 
     fn set_connected_peers(&self, peers: Vec<PeerId>) {
         self.connected_peers.store(peers);
+    }
+
+    fn set_record_providers(&self, peers: Vec<PeerId>) {
+        self.record_providers.store(peers);
     }
 
     fn cancelled_queries(&self) -> Vec<u64> {
@@ -274,6 +280,10 @@ impl P2PTransport for TestTransport {
             ));
         }
         Ok(self.connected_peers.load_clone())
+    }
+
+    async fn collection_providers(&self, _collection_id: &str) -> P2PResult<Vec<PeerId>> {
+        Ok(self.record_providers.load_clone())
     }
 
     async fn listen_addresses(&self) -> P2PResult<Vec<PeerAddr>> {
@@ -1572,6 +1582,70 @@ async fn poll_fetch_dag_completes_from_source_when_peer_listing_fails() {
     ));
     assert!(matches!(blockstore.has(&child_cid).await, Ok(true)));
     assert_eq!(transport.sync_providers(), vec!["remote-peer".to_string()]);
+}
+
+fn peers(names: &[&str]) -> Vec<PeerId> {
+    names
+        .iter()
+        .map(|name| PeerId::new(name.to_string()))
+        .collect()
+}
+
+async fn fetch_providers(transport: &TestTransport, root_cid: &Cid) -> Vec<PeerId> {
+    let source = PeerId::new("remote-peer".to_string());
+    let alternates = alternate_providers(transport, root_cid, "collection-id", &source).await;
+    DagFetchContext::new(
+        "doc-id".to_string(),
+        "collection-id".to_string(),
+        "creator-id".to_string(),
+        source,
+    )
+    .with_alternate_providers(alternates)
+    .providers()
+}
+
+/// Connected peers alone fill the alternates cap, so a record provider is
+/// kept only through its reserved slot: the best one, skipping the source.
+#[tokio::test]
+async fn record_provider_keeps_an_alternate_slot_past_connected_peers() {
+    let store = Arc::new(RegolithStore::in_memory().unwrap());
+    let blockstore = Arc::new(DefraBlockstore::new(store, true));
+    let (root_cid, root_data, _, _) = single_child_dag();
+    let transport = TestTransport::new(
+        blockstore,
+        root_cid,
+        root_data,
+        RapidHashMap::new(),
+        RapidHashMap::new(),
+    );
+
+    transport.set_record_providers(peers(&["remote-peer", "record-peer", "second-record"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "dead-peer", "alt-peer", "record-peer"])
+    );
+
+    transport.set_connected_peers(peers(&["a", "b", "c", "remote-peer", "record-peer"]));
+    transport.set_record_providers(peers(&["record-peer"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "a", "b", "record-peer"]),
+        "a connected record provider past the cap moves into the slot"
+    );
+
+    transport.set_connected_peers(peers(&["remote-peer", "record-peer", "a", "b"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "record-peer", "a", "b"]),
+        "a record provider already kept stays where it is"
+    );
+
+    transport.set_connected_peers(Vec::new());
+    transport.set_record_providers(peers(&["record-peer", "second-record"]));
+    assert_eq!(
+        fetch_providers(&transport, &root_cid).await,
+        peers(&["remote-peer", "record-peer", "second-record"])
+    );
 }
 
 /// The limiter permit must be released during retry backoff: a second

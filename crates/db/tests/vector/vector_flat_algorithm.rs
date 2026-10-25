@@ -92,102 +92,118 @@ async fn ranked(
         .collect()
 }
 
-#[tokio::test]
-async fn the_flat_algorithm_is_selectable_and_dispatched() {
-    let store = RegolithStore::in_memory().unwrap();
-    let index = index(VectorAlgorithm::Flat);
-    let mut write = txn(&store).await;
-    index
-        .save(
-            &mut write,
-            1,
-            &[NormalValue::Float64Array(vec![1.0; DIMENSIONS as usize])],
-        )
-        .await
-        .unwrap();
-    write.commit().await.unwrap();
+#[test]
+fn the_flat_algorithm_is_selectable_and_dispatched() {
+    workers::block_on(async {
+        let store = RegolithStore::in_memory().unwrap();
+        let index = index(VectorAlgorithm::Flat);
+        let mut write = txn(&store).await;
+        index
+            .save(
+                &mut write,
+                1,
+                &[NormalValue::Float64Array(vec![1.0; DIMENSIONS as usize])],
+            )
+            .await
+            .unwrap();
+        write.commit().await.unwrap();
 
-    let mut read = txn(&store).await;
-    let kv = KvNodeStore::new(&mut read, COLLECTION, INDEX_ID, 0);
-    let node = kv.get_node(NodeId(1)).await.unwrap().unwrap();
-    assert!(
-        node.layers.is_empty(),
-        "flat stores no graph layers, got {:?}",
-        node.layers
-    );
+        let mut read = txn(&store).await;
+        let kv = KvNodeStore::new(&mut read, COLLECTION, INDEX_ID, 0);
+        let node = kv.get_node(NodeId(1)).await.unwrap().unwrap();
+        assert!(
+            node.layers.is_empty(),
+            "flat stores no graph layers, got {:?}",
+            node.layers
+        );
+    })
+    .unwrap()
 }
 
 /// Flat is exact, so it must agree with a brute-force ranking on every query.
-#[tokio::test]
-async fn flat_returns_the_exact_ranking() {
-    let mut corpus = crate::support::Corpus::new(0xF1A7);
-    let vectors = corpus.vectors(200, DIMENSIONS as usize);
-    let query: Vec<f64> = vectors[11].iter().map(|x| *x as f64).collect();
+#[test]
+fn flat_returns_the_exact_ranking() {
+    workers::block_on(async {
+        let mut corpus = crate::support::Corpus::new(0xF1A7);
+        let vectors = corpus.vectors(200, DIMENSIONS as usize);
+        let query: Vec<f64> = vectors[11].iter().map(|x| *x as f64).collect();
 
-    let got = ranked(VectorAlgorithm::Flat, &vectors, &query, 10).await;
-    let query_narrow: Vec<f32> = query.iter().map(|x| *x as f32).collect();
-    let want: Vec<u64> = crate::support::scored(&vectors, &query_narrow, 10)
-        .into_iter()
-        .map(|id| id.0 + 1)
-        .collect();
+        let got = ranked(VectorAlgorithm::Flat, &vectors, &query, 10).await;
+        let query_narrow: Vec<f32> = query.iter().map(|x| *x as f32).collect();
+        let want: Vec<u64> = crate::support::scored(&vectors, &query_narrow, 10)
+            .into_iter()
+            .map(|id| id.0 + 1)
+            .collect();
 
-    assert_eq!(got, want, "flat must be exact");
+        assert_eq!(got, want, "flat must be exact");
+    })
+    .unwrap()
 }
 
 /// The two algorithms answer the same question, so on a corpus small enough for
 /// the graph to be exact they must return the same documents.
-#[tokio::test]
-async fn flat_and_hnsw_agree_on_a_small_corpus() {
-    let mut corpus = crate::support::Corpus::new(0xA6B3);
-    let vectors = corpus.vectors(60, DIMENSIONS as usize);
-    let query: Vec<f64> = vectors[3].iter().map(|x| *x as f64).collect();
+#[test]
+fn flat_and_hnsw_agree_on_a_small_corpus() {
+    workers::block_on(async {
+        let mut corpus = crate::support::Corpus::new(0xA6B3);
+        let vectors = corpus.vectors(60, DIMENSIONS as usize);
+        let query: Vec<f64> = vectors[3].iter().map(|x| *x as f64).collect();
 
-    let flat = ranked(VectorAlgorithm::Flat, &vectors, &query, 5).await;
-    let hnsw = ranked(VectorAlgorithm::Hnsw, &vectors, &query, 5).await;
-    assert_eq!(flat, hnsw);
+        let flat = ranked(VectorAlgorithm::Flat, &vectors, &query, 5).await;
+        let hnsw = ranked(VectorAlgorithm::Hnsw, &vectors, &query, 5).await;
+        assert_eq!(flat, hnsw);
+    })
+    .unwrap()
 }
 
-#[tokio::test]
-async fn flat_honours_deletes() {
-    let mut corpus = crate::support::Corpus::new(0x0DE1);
-    let vectors = corpus.vectors(20, DIMENSIONS as usize);
-    let query: Vec<f64> = vectors[0].iter().map(|x| *x as f64).collect();
+#[test]
+fn flat_honours_deletes() {
+    workers::block_on(async {
+        let mut corpus = crate::support::Corpus::new(0x0DE1);
+        let vectors = corpus.vectors(20, DIMENSIONS as usize);
+        let query: Vec<f64> = vectors[0].iter().map(|x| *x as f64).collect();
 
-    let (store, index) = populated(VectorAlgorithm::Flat, &vectors).await;
-    let mut write = txn(&store).await;
-    index.delete(&mut write, 1, &[]).await.unwrap();
-    write.commit().await.unwrap();
+        let (store, index) = populated(VectorAlgorithm::Flat, &vectors).await;
+        let mut write = txn(&store).await;
+        index.delete(&mut write, 1, &[]).await.unwrap();
+        write.commit().await.unwrap();
 
-    let mut read = txn(&store).await;
-    let hits: Vec<u64> = index
-        .search(&mut read, &query, 5, None)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|hit| hit.id.0)
-        .collect();
-    assert!(
-        !hits.contains(&1),
-        "a deleted document must not rank: {hits:?}"
-    );
+        let mut read = txn(&store).await;
+        let hits: Vec<u64> = index
+            .search(&mut read, &query, 5, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.id.0)
+            .collect();
+        assert!(
+            !hits.contains(&1),
+            "a deleted document must not rank: {hits:?}"
+        );
+    })
+    .unwrap()
 }
 
 /// Flat has no build parameters, so an out-of-range HNSW block must not stop it
 /// being created; the same block must still be refused for HNSW.
-#[tokio::test]
-async fn flat_ignores_hnsw_parameters_that_hnsw_refuses() {
-    let bad = HnswParams {
-        m: 16,
-        ef_construction: 1_000_000,
-        ef_search: 64,
-    };
-    assert!(
-        VectorIndex::try_new(COLLECTION, description(VectorAlgorithm::Hnsw, Some(bad))).is_err()
-    );
-    assert!(
-        VectorIndex::try_new(COLLECTION, description(VectorAlgorithm::Flat, Some(bad))).is_ok()
-    );
-    assert!(VectorIndex::try_new(COLLECTION, description(VectorAlgorithm::Flat, None)).is_ok());
+#[test]
+fn flat_ignores_hnsw_parameters_that_hnsw_refuses() {
+    workers::block_on(async {
+        let bad = HnswParams {
+            m: 16,
+            ef_construction: 1_000_000,
+            ef_search: 64,
+        };
+        assert!(
+            VectorIndex::try_new(COLLECTION, description(VectorAlgorithm::Hnsw, Some(bad)))
+                .is_err()
+        );
+        assert!(
+            VectorIndex::try_new(COLLECTION, description(VectorAlgorithm::Flat, Some(bad))).is_ok()
+        );
+        assert!(VectorIndex::try_new(COLLECTION, description(VectorAlgorithm::Flat, None)).is_ok());
+    })
+    .unwrap()
 }
 
 #[test]
@@ -204,55 +220,58 @@ fn only_hnsw_is_go_compatible() {
 }
 
 /// IVF-PQ dispatched through `VectorIndex`, the way a collection reaches it.
-#[tokio::test]
-async fn the_ivfpq_algorithm_is_selectable() {
-    let mut desc = description(VectorAlgorithm::IvfPq, None);
-    desc = desc.as_vector(schema::VectorIndexDescription {
-        algorithm: VectorAlgorithm::IvfPq,
-        metric: DistanceMetric::Cosine,
-        dimensions: DIMENSIONS,
-        hnsw: None,
-        ivfpq: Some(schema::IvfPqParams {
-            nlist: 4,
-            nprobe: 4,
-            m: 4,
-            ..schema::IvfPqParams::default()
-        }),
-        ivfflat: None,
-        ssg: None,
-        diskann: None,
-    });
-    let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF-PQ description");
+#[test]
+fn the_ivfpq_algorithm_is_selectable() {
+    workers::block_on(async {
+        let mut desc = description(VectorAlgorithm::IvfPq, None);
+        desc = desc.as_vector(schema::VectorIndexDescription {
+            algorithm: VectorAlgorithm::IvfPq,
+            metric: DistanceMetric::Cosine,
+            dimensions: DIMENSIONS,
+            hnsw: None,
+            ivfpq: Some(schema::IvfPqParams {
+                nlist: 4,
+                nprobe: 4,
+                m: 4,
+                ..schema::IvfPqParams::default()
+            }),
+            ivfflat: None,
+            ssg: None,
+            diskann: None,
+        });
+        let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid IVF-PQ description");
 
-    let store = RegolithStore::in_memory().unwrap();
-    let mut corpus = crate::support::Corpus::new(0x1F);
-    let vectors = corpus.vectors(60, DIMENSIONS as usize);
+        let store = RegolithStore::in_memory().unwrap();
+        let mut corpus = crate::support::Corpus::new(0x1F);
+        let vectors = corpus.vectors(60, DIMENSIONS as usize);
 
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors.iter().enumerate() {
-        let wide: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
-        index
-            .save(&mut write, i as u64 + 1, &[NormalValue::Float64Array(wide)])
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors.iter().enumerate() {
+            let wide: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
+            index
+                .save(&mut write, i as u64 + 1, &[NormalValue::Float64Array(wide)])
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
+
+        // Untrained, so this is an exact scan and must match brute force exactly.
+        let query: Vec<f64> = vectors[3].iter().map(|x| *x as f64).collect();
+        let mut read = txn(&store).await;
+        let got: Vec<u64> = index
+            .search(&mut read, &query, 5, None)
             .await
-            .unwrap();
-    }
-    write.commit().await.unwrap();
-
-    // Untrained, so this is an exact scan and must match brute force exactly.
-    let query: Vec<f64> = vectors[3].iter().map(|x| *x as f64).collect();
-    let mut read = txn(&store).await;
-    let got: Vec<u64> = index
-        .search(&mut read, &query, 5, None)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|hit| hit.id.0)
-        .collect();
-    let want: Vec<u64> = crate::support::scored(&vectors, &vectors[3], 5)
-        .into_iter()
-        .map(|id| id.0 + 1)
-        .collect();
-    assert_eq!(got, want);
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.id.0)
+            .collect();
+        let want: Vec<u64> = crate::support::scored(&vectors, &vectors[3], 5)
+            .into_iter()
+            .map(|id| id.0 + 1)
+            .collect();
+        assert_eq!(got, want);
+    })
+    .unwrap()
 }
 
 /// A metric IVF-PQ cannot rank must be refused where the index is built, not
@@ -278,39 +297,43 @@ fn an_ivfpq_index_with_an_unrankable_metric_is_refused() {
 }
 
 /// SSG dispatched through `VectorIndex`, the way a collection reaches it.
-#[tokio::test]
-async fn the_ssg_algorithm_is_selectable() {
-    let desc = description(VectorAlgorithm::Ssg, None).as_vector(schema::VectorIndexDescription {
-        algorithm: VectorAlgorithm::Ssg,
-        metric: DistanceMetric::Cosine,
-        dimensions: DIMENSIONS,
-        hnsw: None,
-        ivfpq: None,
-        ivfflat: None,
-        ssg: Some(schema::SsgParams::default()),
-        diskann: None,
-    });
-    let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid SSG description");
+#[test]
+fn the_ssg_algorithm_is_selectable() {
+    workers::block_on(async {
+        let desc =
+            description(VectorAlgorithm::Ssg, None).as_vector(schema::VectorIndexDescription {
+                algorithm: VectorAlgorithm::Ssg,
+                metric: DistanceMetric::Cosine,
+                dimensions: DIMENSIONS,
+                hnsw: None,
+                ivfpq: None,
+                ivfflat: None,
+                ssg: Some(schema::SsgParams::default()),
+                diskann: None,
+            });
+        let index = VectorIndex::try_new(COLLECTION, desc).expect("a valid SSG description");
 
-    let store = RegolithStore::in_memory().unwrap();
-    let mut corpus = crate::support::Corpus::new(0x55);
-    let vectors = corpus.clustered(120, DIMENSIONS as usize, 6, 0.2);
+        let store = RegolithStore::in_memory().unwrap();
+        let mut corpus = crate::support::Corpus::new(0x55);
+        let vectors = corpus.clustered(120, DIMENSIONS as usize, 6, 0.2);
 
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors.iter().enumerate() {
-        let wide: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
-        index
-            .save(&mut write, i as u64 + 1, &[NormalValue::Float64Array(wide)])
-            .await
-            .unwrap();
-    }
-    write.commit().await.unwrap();
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors.iter().enumerate() {
+            let wide: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
+            index
+                .save(&mut write, i as u64 + 1, &[NormalValue::Float64Array(wide)])
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
 
-    let query: Vec<f64> = vectors[4].iter().map(|x| *x as f64).collect();
-    let mut read = txn(&store).await;
-    let hits = index.search(&mut read, &query, 5, None).await.unwrap();
-    assert_eq!(hits.len(), 5);
-    assert_eq!(hits[0].id.0, 5, "a vector is nearest itself");
+        let query: Vec<f64> = vectors[4].iter().map(|x| *x as f64).collect();
+        let mut read = txn(&store).await;
+        let hits = index.search(&mut read, &query, 5, None).await.unwrap();
+        assert_eq!(hits.len(), 5);
+        assert_eq!(hits[0].id.0, 5, "a vector is nearest itself");
+    })
+    .unwrap()
 }
 
 /// Out-of-range SSG parameters are refused where the index is built.
@@ -350,58 +373,61 @@ fn diskann_description(params: schema::DiskAnnParams) -> schema::IndexDescriptio
 ///
 /// Enough vectors that a save trains and builds the graph on the writing
 /// transaction, so the read on a fresh one walks what regolith persisted.
-#[tokio::test]
-async fn the_diskann_algorithm_is_selectable() {
-    let params = schema::DiskAnnParams {
-        r: 16,
-        l_build: 48,
-        m: 4,
-        ..Default::default()
-    };
-    let index = VectorIndex::try_new(COLLECTION, diskann_description(params))
-        .expect("a valid DISKANN description");
+#[test]
+fn the_diskann_algorithm_is_selectable() {
+    workers::block_on(async {
+        let params = schema::DiskAnnParams {
+            r: 16,
+            l_build: 48,
+            m: 4,
+            ..Default::default()
+        };
+        let index = VectorIndex::try_new(COLLECTION, diskann_description(params))
+            .expect("a valid DISKANN description");
 
-    let store = RegolithStore::in_memory().unwrap();
-    let mut corpus = crate::support::Corpus::new(0xD15C);
-    let count = db::index::vector::engine::diskann::TRAIN_THRESHOLD as usize + 100;
-    let vectors = corpus.clustered(count, DIMENSIONS as usize, 6, 0.2);
+        let store = RegolithStore::in_memory().unwrap();
+        let mut corpus = crate::support::Corpus::new(0xD15C);
+        let count = db::index::vector::engine::diskann::TRAIN_THRESHOLD as usize + 100;
+        let vectors = corpus.clustered(count, DIMENSIONS as usize, 6, 0.2);
 
-    let mut write = txn(&store).await;
-    for (i, vector) in vectors.iter().enumerate() {
-        let wide: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
-        index
-            .save(&mut write, i as u64 + 1, &[NormalValue::Float64Array(wide)])
+        let mut write = txn(&store).await;
+        for (i, vector) in vectors.iter().enumerate() {
+            let wide: Vec<f64> = vector.iter().map(|x| *x as f64).collect();
+            index
+                .save(&mut write, i as u64 + 1, &[NormalValue::Float64Array(wide)])
+                .await
+                .unwrap();
+        }
+        write.commit().await.unwrap();
+
+        let query: Vec<f64> = vectors[4].iter().map(|x| *x as f64).collect();
+        let mut read = txn(&store).await;
+        let hits = index.search(&mut read, &query, 5, None).await.unwrap();
+        assert_eq!(hits.len(), 5);
+        assert_eq!(hits[0].id.0, 5, "a vector is nearest itself");
+
+        let engine = db::index::vector::engine::diskann::DiskAnn::try_new(
+            KvNodeStore::new(&mut read, COLLECTION, INDEX_ID, 0),
+            defra_core::vector::Metric::Cosine,
+            params.into(),
+            0,
+        )
+        .unwrap();
+        let state = engine
+            .state()
             .await
-            .unwrap();
-    }
-    write.commit().await.unwrap();
-
-    let query: Vec<f64> = vectors[4].iter().map(|x| *x as f64).collect();
-    let mut read = txn(&store).await;
-    let hits = index.search(&mut read, &query, 5, None).await.unwrap();
-    assert_eq!(hits.len(), 5);
-    assert_eq!(hits[0].id.0, 5, "a vector is nearest itself");
-
-    let engine = db::index::vector::engine::diskann::DiskAnn::try_new(
-        KvNodeStore::new(&mut read, COLLECTION, INDEX_ID, 0),
-        defra_core::vector::Metric::Cosine,
-        params.into(),
-        0,
-    )
-    .unwrap();
-    let state = engine
-        .state()
-        .await
-        .unwrap()
-        .expect("a save trained the index");
-    let trained = db::index::vector::engine::diskann::TRAIN_THRESHOLD;
-    assert_eq!(state.live, trained, "training indexed what it saw");
-    let plan = engine.merge_plan().await.unwrap();
-    assert_eq!(
-        plan.pending.len(),
-        count - trained as usize,
-        "the rest are pending"
-    );
+            .unwrap()
+            .expect("a save trained the index");
+        let trained = db::index::vector::engine::diskann::TRAIN_THRESHOLD;
+        assert_eq!(state.live, trained, "training indexed what it saw");
+        let plan = engine.merge_plan().await.unwrap();
+        assert_eq!(
+            plan.pending.len(),
+            count - trained as usize,
+            "the rest are pending"
+        );
+    })
+    .unwrap()
 }
 
 /// Out-of-range DiskANN parameters are refused where the index is built.

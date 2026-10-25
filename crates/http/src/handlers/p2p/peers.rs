@@ -1,6 +1,9 @@
 //! P2P peer management handlers.
 
-use axum::{extract::State, Json};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{map_p2p_bad_request, map_p2p_internal};
@@ -89,6 +92,27 @@ pub async fn sync_status(
     let p2p = bound(state.require_p2p()?, &identity.context());
     let status = p2p.sync_status().await.map_err(map_p2p_internal)?;
     Ok(Json(status))
+}
+
+/// Everything this node knows about one peer, for debugging.
+///
+/// GET /api/v0/p2p/peers/{peer_id}
+///
+/// Returns the `p2p::sync::PeerDetails` JSON plus `did` and `push_retries`;
+/// the compact per-peer overview is `peers` in `/p2p/sync/status`.
+///
+/// Requires `P2pPeerInfo` permission when NAC is enabled.
+pub async fn peer_details(
+    State(state): State<AppState>,
+    identity: ExtractIdentity,
+    Path(peer_id): Path<String>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    require_permission(&state, &identity, NodePermission::P2pPeerInfo).await?;
+
+    let peer_id = crate::router::TransportPeerId::new(peer_id).map_err(map_p2p_bad_request)?;
+    let p2p = bound(state.require_p2p()?, &identity.context());
+    let details = p2p.peer_details(&peer_id).await.map_err(map_p2p_internal)?;
+    Ok(Json(details))
 }
 
 /// Get the single best shareable P2P address, if available.

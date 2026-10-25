@@ -21,6 +21,7 @@ use futures::future::LocalBoxFuture;
 use regolith::sync::{ArrayQueue, UnboundedReceiver, UnboundedSender};
 use web_time::Instant;
 
+use super::idle::expired;
 use super::{Shared, TxnId};
 use crate::txn::fence::Landing;
 
@@ -134,7 +135,7 @@ pub(super) async fn own<T, K>(
                 break;
             }
             Message::Expire { max_idle, reply } => {
-                let stale = active.elapsed() >= max_idle;
+                let stale = expired(active, Instant::now(), max_idle);
                 if let Some(reply) = reply {
                     let _ = reply.try_send(stale);
                 }
